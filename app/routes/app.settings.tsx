@@ -40,7 +40,7 @@ import {
   DEFAULT_POLICY_INSTRUCTIONS
 } from "../constants/aiInstructionsDefaults";
 import { logger } from "~/utils/logger.server";
-import { checkAndSyncSubscription } from "~/services/billing.server";
+import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
@@ -286,6 +286,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Get subscription plan
     const subscriptionPlan = settings.subscriptionPlan || "free";
 
+    // Live trial detection for the Plan tab banner. One unconditional
+    // getCurrentSubscription call (normal settings loads otherwise make no
+    // subscription GraphQL call). Fail-safe: on any error, no banner.
+    let inTrial = false;
+    let trialRemainingDays = 0;
+    try {
+      const sub = await getCurrentSubscription(admin);
+      const info = getTrialInfo({
+        subscriptionStatus: sub?.status ?? null,
+        trialDays: sub?.trialDays ?? 0,
+        currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      });
+      inTrial = info.inTrial;
+      trialRemainingDays = info.remainingDays;
+    } catch (e) {
+      logger.warn("[SETTINGS] Could not load subscription for trial banner", { error: e });
+    }
+
     // Check if this is a development/partner test store
     let isTestStore = false;
     try {
@@ -358,6 +376,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       localeCount,
       isTestStore,
       subscriptionPlan,
+      inTrial,
+      trialRemainingDays,
       imageManagerSettings,
       showImageManagerTab,
       showSkuTab,
@@ -650,7 +670,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1103,6 +1123,8 @@ export default function SettingsPage() {
                   )}
                   <SettingsPlanTab
                     subscriptionPlan={subscriptionPlan}
+                    inTrial={inTrial}
+                    trialRemainingDays={trialRemainingDays}
                     isTestStore={isTestStore}
                     productCount={productCount}
                     localeCount={localeCount}

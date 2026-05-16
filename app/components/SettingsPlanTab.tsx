@@ -23,6 +23,8 @@ import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 
 interface SettingsPlanTabProps {
   subscriptionPlan: string;
+  inTrial: boolean;
+  trialRemainingDays: number;
   isTestStore: boolean;
   productCount: number;
   localeCount: number;
@@ -35,6 +37,8 @@ interface SettingsPlanTabProps {
 
 export function SettingsPlanTab({
   subscriptionPlan,
+  inTrial,
+  trialRemainingDays,
   isTestStore,
   productCount,
   localeCount,
@@ -272,6 +276,17 @@ export function SettingsPlanTab({
           );
         })}
       </div>
+
+      {/* Active trial banner for paid-plan users currently in the Shopify trial */}
+      {inTrial && (
+        <Banner tone="info">
+          <Text as="p">
+            {t.settings?.trialPeriod
+              ? t.settings.trialPeriod.replace('{days}', String(trialRemainingDays))
+              : `Sie befinden sich in der ${trialRemainingDays}-tägigen Testphase.`}
+          </Text>
+        </Banner>
+      )}
 
       {/* Trial info for free plan users */}
       {subscriptionPlan === "free" && (
