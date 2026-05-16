@@ -28,9 +28,10 @@ app/
 │   ├── PlanBadge.tsx               # Visual Plan-Indikator
 │   └── UpgradePrompt.tsx           # Upgrade-Call-to-Action
 └── routes/
-    ├── app.tsx                     # Plan im Loader laden
+    ├── app.tsx                     # Plan im Loader laden (checkAndSyncSubscription)
     ├── app.products.tsx            # Plan-basierte Produkt-Limits
-    └── api.update-plan.tsx         # API für Plan-Wechsel
+    ├── api.billing.create-subscription.tsx  # Upgrade via Shopify Billing API
+    └── api.billing.cancel-subscription.tsx  # Downgrade via Shopify Billing API
 
 prisma/
 ├── schema.prisma                   # subscriptionPlan Feld
@@ -47,8 +48,11 @@ prisma/
 - **Design**: 4 Segmented Buttons (Free | Basic | Pro | Max)
 - **Funktion**:
   - Aktueller Plan ist hervorgehoben (`pressed` State)
-  - Click sendet POST-Request an `/api/update-plan`
-  - Nach erfolgreichem Wechsel: Page Reload
+  - Plan-Wechsel läuft ausschließlich über die Shopify Billing API:
+    Upgrade via `/api/billing/create-subscription`, Downgrade via
+    `/api/billing/cancel-subscription` (siehe `SettingsPlanTab`)
+  - Der gespeicherte Plan wird serverseitig aus dem von Shopify
+    verifizierten aktiven Abo abgeleitet (`checkAndSyncSubscription`)
 
 ### 2. Plan-basierte Content-Type-Zugriffskontrolle
 
@@ -138,41 +142,22 @@ COMMENT ON COLUMN "AISettings"."subscriptionPlan" IS 'Valid values: free, basic,
 
 ## API Endpoints
 
-### POST `/api/update-plan`
+Plan-Wechsel erfolgt **ausschließlich über die Shopify Billing API**. Es gibt
+keinen Endpoint, der den Plan aus einem Request-Body setzt.
 
-**Request:**
-```json
-{
-  "plan": "free" | "basic" | "pro" | "max"
-}
-```
+- `POST /api/billing/create-subscription` — startet ein bezahltes Abo
+  (Upgrade); Shopify führt durch den Bestätigungs-/Bezahlflow.
+- `POST /api/billing/cancel-subscription` — kündigt das Abo (Downgrade auf Free).
+- `GET /api/billing/status` — liefert den aktuellen, von Shopify verifizierten
+  Plan.
 
-**Response:**
-```json
-{
-  "success": true,
-  "plan": "free",
-  "cleanupStats": {
-    "deletedProducts": 85,
-    "deletedProductImages": 342,
-    "deletedArticles": 12,
-    ...
-  },
-  "cacheStats": {
-    "before": {
-      "products": 100,
-      "articles": 12,
-      ...
-    },
-    "after": {
-      "products": 15,
-      "articles": 0,
-      ...
-    }
-  },
-  "message": "Successfully switched to free plan"
-}
-```
+Der in der DB gespeicherte `subscriptionPlan` wird serverseitig durch
+`checkAndSyncSubscription()` (`app/services/billing.server.ts`) aus dem von
+Shopify verifizierten aktiven Abo abgeleitet — aufgerufen in den Loadern
+(`app.tsx`, `app.settings.tsx`), im Billing-Callback und im
+`APP_SUBSCRIPTIONS_UPDATE`-Webhook. Bei einem verifizierten Plan-Wechsel wird
+dabei automatisch `cleanupCacheForPlan()` ausgeführt (auch bei realen
+Downgrades).
 
 ## Plan-Verhalten
 
@@ -285,8 +270,8 @@ console.log(stats);
 ### Plan wechselt nicht
 
 - Check Browser Console für Fetch-Errors
-- Check Server Logs für `/api/update-plan` Errors
-- Verify `subscriptionPlan` wurde in DB gespeichert
+- Check Server Logs für `[Billing]` Errors (`api.billing.*`, `checkAndSyncSubscription`)
+- Verify Shopify-Abo ist `ACTIVE` und `subscriptionPlan` wurde in DB gespeichert
 
 ### Content-Types nicht deaktiviert
 
@@ -318,7 +303,9 @@ console.log(stats);
 ### Plan-Manipulation verhindern
 
 - Plan ist in DB gespeichert (nicht Client-Side)
-- API `/api/update-plan` erfordert Shopify Auth
+- Plan wird **nie** aus einem Request-Body gesetzt — ausschließlich aus dem
+  von Shopify verifizierten aktiven Abo abgeleitet (`checkAndSyncSubscription`)
+- Billing-Endpoints erfordern Shopify Auth (`authenticate.admin`)
 - Multi-Tenant-Safe: Jeder Shop hat eigenen Plan
 
 ### Cleanup-Sicherheit

@@ -9,6 +9,7 @@ import type { Session } from '@shopify/shopify-api';
 import { BILLING_PLANS, type BillingPlan, isPaidPlan } from '~/config/billing';
 import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
+import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
 
 interface ShopifyAdminClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -257,24 +258,58 @@ export async function syncSubscriptionToDatabase(shop: string, plan: BillingPlan
 }
 
 /**
- * Checks subscription status and updates database accordingly
+ * Reconciles the local Prisma content cache with the limits of the
+ * Shopify-verified plan. Only runs when the plan actually changed, and never
+ * from the error/catch path (a transient Shopify API error must not trigger a
+ * destructive cache purge). Failures here are non-fatal — the plan sync itself
+ * has already succeeded.
+ */
+async function reconcileCacheForVerifiedPlan(shop: string, previousPlan: BillingPlan, newPlan: BillingPlan) {
+  if (newPlan === previousPlan) return;
+
+  try {
+    const stats = await cleanupCacheForPlan(shop, newPlan);
+    logger.info('[Billing] Cache reconciled after verified plan change', { shop, from: previousPlan, to: newPlan, stats });
+  } catch (cleanupError) {
+    logger.warn('[Billing] Cache cleanup failed after plan change (plan sync still successful)', {
+      shop,
+      from: previousPlan,
+      to: newPlan,
+      error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+    });
+  }
+}
+
+/**
+ * Checks subscription status and updates database accordingly.
+ *
+ * The plan is derived exclusively from the Shopify-verified active
+ * subscription (never from any client input). When the verified plan differs
+ * from the previously stored one, the local content cache is reconciled to the
+ * new plan's limits (covers real downgrades via subscription cancel).
  */
 export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: string): Promise<BillingPlan> {
+  const existing = await prisma.aISettings.findUnique({ where: { shop } });
+  const previousPlan = (existing?.subscriptionPlan as BillingPlan | undefined) ?? 'free';
+
   try {
     const subscription = await getCurrentSubscription(admin);
 
     if (!subscription || subscription.status !== 'ACTIVE') {
       // No active subscription, downgrade to free
       await syncSubscriptionToDatabase(shop, 'free');
+      await reconcileCacheForVerifiedPlan(shop, previousPlan, 'free');
       return 'free';
     }
 
     const plan = getPlanFromSubscription(subscription);
     await syncSubscriptionToDatabase(shop, plan);
+    await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
     return plan;
   } catch (error) {
     logger.error('Error checking subscription', { error });
-    // On error, default to free to be safe
+    // On error, default to free to be safe. Deliberately NO cache cleanup here:
+    // a transient Shopify API failure must not purge cached content.
     await syncSubscriptionToDatabase(shop, 'free');
     return 'free';
   }
