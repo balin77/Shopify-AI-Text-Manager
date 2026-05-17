@@ -651,6 +651,17 @@ model ShopInstallState {
   // null = initial sync not yet completed (run onboarding). Deleted together
   // with products on full GDPR wipe (gdpr.service) → reinstall re-onboards.
   initialSyncCompletedAt DateTime?
+  // Server-side initial-sync progress, written (throttled) by the sync scheduler
+  // so the persistent onboarding banner can poll it without an open SSE stream.
+  // initialSyncStartedAt anchors the 3h bypass cap (process-restart safe).
+  // initialSyncForceRequested is set by the Settings "Sync Products" re-sync
+  // trigger and consumed (force-delete + full re-pull) by the scheduler.
+  initialSyncStartedAt      DateTime?
+  initialSyncPhase          String?
+  initialSyncPercent        Int?
+  initialSyncStats          Json?
+  initialSyncError          String?
+  initialSyncForceRequested Boolean   @default(false)
   updatedAt              DateTime  @updatedAt
 
   @@index([uninstalledAt])

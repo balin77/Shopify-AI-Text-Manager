@@ -133,6 +133,21 @@ const shopify = shopifyApp({
       } catch (error) {
         logger.warn(`[SHOPIFY.SERVER] afterAuth uninstall-marker clear failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
       }
+
+      // Kick off the background scheduler at install time (fire-and-forget).
+      // The initial full sync now runs server-side, so it must start even if the
+      // user closes the tab immediately after install and never makes another
+      // in-app request (enhancedAuthenticate.admin would otherwise be the only
+      // starter). Idempotent: startSyncForShop restarts cleanly and the
+      // isShopActive guard in enhancedAuthenticate prevents a double-start.
+      try {
+        if (!syncScheduler.isShopActive(session.shop)) {
+          syncScheduler.startSyncForShop(session.shop, admin);
+          logger.info(`[SHOPIFY.SERVER] afterAuth started background scheduler for ${session.shop}`);
+        }
+      } catch (error) {
+        logger.warn(`[SHOPIFY.SERVER] afterAuth scheduler start failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
+      }
     },
   },
   // Note: customShopDomains removed for multi-tenant SaaS compatibility

@@ -15,6 +15,7 @@ import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
+import { InitialSyncBanner } from "../components/InitialSyncBanner";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
@@ -188,6 +189,7 @@ function AppContent() {
 
   return (
     <AppErrorBoundary>
+      <InitialSyncBanner />
       <Outlet />
     </AppErrorBoundary>
   );

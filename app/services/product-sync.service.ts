@@ -114,7 +114,7 @@ export class ProductSyncService {
 
   /**
    * Bulk-sync all products with translations, images, options, and metafields.
-   * Used by the initial streaming sync to replace inline code in api.sync-all-stream.tsx.
+   * Used by the initial full sync (services/initial-sync.service.ts).
    *
    * Fixes over the previous inline implementation:
    * - Uses metafields(first: 250) instead of first: 50

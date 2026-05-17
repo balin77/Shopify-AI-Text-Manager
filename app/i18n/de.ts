@@ -551,6 +551,7 @@ export const de = {
     webhooksLabel: "Webhooks:",
     webhookEventsReceived: "Webhook-Events empfangen",
     syncingContent: "Inhalte synchronisieren",
+    syncTriggeredHint: "Re-Sync gestartet — der Fortschritt wird oben im Banner angezeigt. Sie können die App normal weiterverwenden, der Sync läuft serverseitig weiter.",
     showWebhookDetails: "Alle Webhook-Details anzeigen",
     webhooksCount: "{count} Webhooks",
     phaseProducts: "Produkte",

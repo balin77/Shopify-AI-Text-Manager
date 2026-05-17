@@ -17,7 +17,16 @@ interface SyncTimer {
   shop: string;
   startedAt: Date;
   isRunning: boolean; // Track if sync is currently running
+  // Aborts an in-flight initial full sync when the shop's timer is stopped
+  // (uninstall / re-auth / graceful shutdown) so it unwinds cleanly instead of
+  // running on a revoked token.
+  abortController: AbortController;
 }
+
+/** 3h wall-clock cap on bypassing the inactivity gate during initial sync. */
+const INITIAL_SYNC_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+/** Min interval between throttled initial-sync progress writes per shop. */
+const PROGRESS_WRITE_THROTTLE_MS = 3000;
 
 class SyncSchedulerService {
   private activeTimers: Map<string, SyncTimer> = new Map();
@@ -39,6 +48,8 @@ class SyncSchedulerService {
   );
   private runningSyncs = 0;
   private slotWaiters: Array<() => void> = [];
+  // Last persisted-progress timestamp per shop (throttles initial-sync writes).
+  private lastProgressWrite: Map<string, number> = new Map();
 
   /**
    * Starts background sync for a shop
@@ -76,6 +87,7 @@ class SyncSchedulerService {
       shop,
       startedAt: new Date(),
       isRunning: false,
+      abortController: new AbortController(),
     };
     this.activeTimers.set(shop, entry);
 
@@ -110,26 +122,121 @@ class SyncSchedulerService {
         syncTimer.isRunning = true;
       }
 
-      // Check if shop is still active
-      const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
+      const { db } = await import("../db.server");
 
-      if (!active) {
-        logger.debug(`[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);
-        this.stopSyncForShop(shop);
+      // Branch on the "initial full sync completed" marker:
+      //  - marker set  → incremental BackgroundSyncService.syncAll() (existing
+      //    behaviour, gated by inactivity)
+      //  - marker null → full initial sync via the shared orchestrator, server
+      //    side, bypassing the inactivity gate until it completes (or 3h cap)
+      const st = await db.shopInstallState.findUnique({
+        where: { shop },
+        select: {
+          initialSyncCompletedAt: true,
+          initialSyncStartedAt: true,
+          initialSyncForceRequested: true,
+        },
+      });
+
+      if (st?.initialSyncCompletedAt) {
+        // ---- Incremental path (unchanged) ----
+        const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
+        if (!active) {
+          logger.debug(`[SyncScheduler] Shop ${shop} inactive for ${this.INACTIVITY_THRESHOLD_MINUTES}+ minutes - stopping sync`);
+          this.stopSyncForShop(shop);
+          return;
+        }
+
+        await this.acquireSyncSlot();
+        try {
+          logger.debug(`[SyncScheduler] Running incremental sync for ${shop} (slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);
+          const syncService = new BackgroundSyncService(admin, shop);
+          const stats = await syncService.syncAll();
+          logger.debug(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+        } finally {
+          this.releaseSyncSlot();
+        }
         return;
       }
 
-      // Shop is active - wait for a global sync slot before doing the heavy work.
-      // (Activity was checked above without holding a slot so idle shops don't
-      // occupy the queue.)
+      // ---- Initial full sync path ----
+      // Anchor the bypass cap. Persist initialSyncStartedAt on first cycle.
+      let startedAt = st?.initialSyncStartedAt ?? null;
+      if (!startedAt) {
+        startedAt = new Date();
+        await db.shopInstallState.upsert({
+          where: { shop },
+          create: { shop, initialSyncStartedAt: startedAt },
+          update: { initialSyncStartedAt: startedAt },
+        });
+      }
+
+      const aged = Date.now() - startedAt.getTime() > INITIAL_SYNC_MAX_AGE_MS;
+      if (aged) {
+        // Safety cap hit — stop bypassing the inactivity gate so a shop whose
+        // catalog genuinely never completes does not occupy a slot forever.
+        logger.warn(`[SyncScheduler] Initial sync for ${shop} exceeded 3h cap - falling back to inactivity gating`);
+        await db.shopInstallState.update({
+          where: { shop },
+          data: { initialSyncError: "timeout" },
+        }).catch(() => {});
+        const active = await isShopActive(shop, this.INACTIVITY_THRESHOLD_MINUTES);
+        if (!active) {
+          this.stopSyncForShop(shop);
+          return;
+        }
+      }
+      // else: within cap → bypass the inactivity gate entirely.
+
+      const signal = syncTimer?.abortController.signal;
+      let lastWrittenPhase = "";
+      const throttledWriter = (p: { phase: string; overallPercent: number; stats: Record<string, number> }) => {
+        const now = Date.now();
+        const last = this.lastProgressWrite.get(shop) ?? 0;
+        const phaseChanged = p.phase !== lastWrittenPhase;
+        if (!phaseChanged && p.overallPercent < 100 && now - last < PROGRESS_WRITE_THROTTLE_MS) {
+          return;
+        }
+        lastWrittenPhase = p.phase;
+        this.lastProgressWrite.set(shop, now);
+        db.shopInstallState.update({
+          where: { shop },
+          data: {
+            initialSyncPhase: p.phase,
+            initialSyncPercent: Math.round(p.overallPercent),
+            initialSyncStats: p.stats,
+          },
+        }).catch(() => { /* progress write is best-effort */ });
+      };
+
       await this.acquireSyncSlot();
       try {
-        logger.debug(`[SyncScheduler] Running sync cycle for ${shop} (slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);
+        logger.info(`[SyncScheduler] Running INITIAL full sync for ${shop} (force=${!!st?.initialSyncForceRequested}, slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);
 
-        const syncService = new BackgroundSyncService(admin, shop);
-        const stats = await syncService.syncAll();
+        // Use a FRESH admin context (not the one captured in the timer closure):
+        // the initial sync can run many minutes, longer than that token's life.
+        const { unauthenticated } = await import("../shopify.server");
+        const { admin: freshAdmin } = await unauthenticated.admin(shop);
 
-        logger.debug(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+        const { runInitialFullSync } = await import("./initial-sync.service");
+        const { stats } = await runInitialFullSync(freshAdmin, shop, {
+          force: !!st?.initialSyncForceRequested,
+          signal,
+          onProgress: throttledWriter,
+        });
+
+        logger.info(`[SyncScheduler] Initial sync complete for ${shop}`, { stats });
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          logger.info(`[SyncScheduler] Initial sync aborted for ${shop} (timer stopped)`);
+        } else {
+          logger.error(`[SyncScheduler] Initial sync failed for ${shop} - will retry next cycle:`, err);
+          await db.shopInstallState.update({
+            where: { shop },
+            data: { initialSyncError: err instanceof Error ? err.message : String(err) },
+          }).catch(() => {});
+        }
+        // Marker stays null → next cycle resumes (idempotent upserts).
       } finally {
         this.releaseSyncSlot();
       }
@@ -152,8 +259,10 @@ class SyncSchedulerService {
     const syncTimer = this.activeTimers.get(shop);
 
     if (syncTimer) {
+      syncTimer.abortController.abort();
       clearInterval(syncTimer.timer);
       this.activeTimers.delete(shop);
+      this.lastProgressWrite.delete(shop);
       logger.debug(`[SyncScheduler] Stopped sync for shop: ${shop}`);
     }
   }
@@ -237,11 +346,13 @@ class SyncSchedulerService {
     logger.debug(`[SyncScheduler] Stopping all sync timers (${this.activeTimers.size} active)`);
 
     for (const [shop, syncTimer] of this.activeTimers.entries()) {
+      syncTimer.abortController.abort();
       clearInterval(syncTimer.timer);
       logger.debug(`[SyncScheduler] Stopped sync for: ${shop}`);
     }
 
     this.activeTimers.clear();
+    this.lastProgressWrite.clear();
 
     // Stop cleanup timer
     if (this.cleanupTimer) {
