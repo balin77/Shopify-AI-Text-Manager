@@ -1175,21 +1175,23 @@ export class BackgroundSyncService {
               }
             }
 
-            // Batch-fetch ALL existing theme translations for this resource (avoids N+1 per group)
+            // Batch-fetch ALL existing theme translations for this resource (avoids N+1 per group).
+            // Include id/value/outdated so the write step below can skip rows that did not
+            // change, instead of blindly re-upserting every row on every 60s sync cycle.
             const allExistingTranslations = await db.themeTranslation.findMany({
               where: {
                 shop: this.shop,
                 resourceId: resource.resourceId,
               },
-              select: { key: true, locale: true, groupId: true }
+              select: { id: true, key: true, locale: true, groupId: true, value: true, outdated: true }
             });
 
-            const existingKeysByGroup = new Map<string, Set<string>>();
+            const existingRowsByGroup = new Map<string, Map<string, { id: string; value: string; outdated: boolean }>>();
             for (const t of allExistingTranslations) {
-              if (!existingKeysByGroup.has(t.groupId)) {
-                existingKeysByGroup.set(t.groupId, new Set());
+              if (!existingRowsByGroup.has(t.groupId)) {
+                existingRowsByGroup.set(t.groupId, new Map());
               }
-              existingKeysByGroup.get(t.groupId)!.add(`${t.key}::${t.locale}`);
+              existingRowsByGroup.get(t.groupId)!.set(`${t.key}::${t.locale}`, { id: t.id, value: t.value, outdated: t.outdated });
             }
 
             // Fetch translations for each group
@@ -1334,37 +1336,59 @@ export class BackgroundSyncService {
                 },
               });
 
-              // Use pre-fetched existing keys for this group (batch-loaded above)
-              const existingKeys = existingKeysByGroup.get(groupId) || new Set<string>();
+              // Use pre-fetched existing rows for this group (batch-loaded above)
+              const existingRows =
+                existingRowsByGroup.get(groupId) ||
+                new Map<string, { id: string; value: string; outdated: boolean }>();
 
-              // Batch upsert all translations in a single transaction
-              if (allTranslations.length > 0) {
+              // Partition into genuine creates/updates and skip rows that did not change.
+              // An unconditional upsert here rewrote *every* row on *every* 60s sync
+              // cycle -> MVCC dead tuples + WAL growth that scales with the total row
+              // count instead of the number of actual changes (this is what filled the
+              // Postgres volume). Mirrors the incremental logic in syncSingleThemeGroup.
+              const toCreate: {
+                shop: string; resourceId: string; groupId: string;
+                key: string; value: string; locale: string; outdated: boolean;
+              }[] = [];
+              const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
+
+              for (const t of allTranslations) {
+                const outdated = t.outdated || false;
+                const prev = existingRows.get(`${t.key}::${t.locale}`);
+                if (!prev) {
+                  toCreate.push({
+                    shop: this.shop,
+                    resourceId: resource.resourceId,
+                    groupId,
+                    key: t.key,
+                    value: t.value,
+                    locale: t.locale,
+                    outdated,
+                  });
+                } else if (prev.value !== t.value || prev.outdated !== outdated) {
+                  toUpdate.push({ id: prev.id, value: t.value, outdated });
+                }
+                // else: identical -> no write, no dead tuple, no WAL
+              }
+
+              // Chunk writes so a large shop generates WAL incrementally instead of
+              // one giant atomic transaction (long locks + single huge WAL burst).
+              const CHUNK = 500;
+
+              for (let i = 0; i < toCreate.length; i += CHUNK) {
+                await db.themeTranslation.createMany({
+                  data: toCreate.slice(i, i + CHUNK),
+                  skipDuplicates: true,
+                });
+              }
+
+              for (let i = 0; i < toUpdate.length; i += CHUNK) {
+                const batch = toUpdate.slice(i, i + CHUNK);
                 await db.$transaction(
-                  allTranslations.map(t =>
-                    db.themeTranslation.upsert({
-                      where: {
-                        shop_resourceId_groupId_key_locale: {
-                          shop: this.shop,
-                          resourceId: resource.resourceId,
-                          groupId,
-                          key: t.key,
-                          locale: t.locale,
-                        },
-                      },
-                      create: {
-                        shop: this.shop,
-                        resourceId: resource.resourceId,
-                        groupId,
-                        key: t.key,
-                        value: t.value,
-                        locale: t.locale,
-                        outdated: t.outdated || false,
-                      },
-                      update: {
-                        value: t.value,
-                        outdated: t.outdated || false,
-                        updatedAt: new Date(),
-                      },
+                  batch.map(u =>
+                    db.themeTranslation.update({
+                      where: { id: u.id },
+                      data: { value: u.value, outdated: u.outdated },
                     })
                   )
                 );
@@ -1375,7 +1399,7 @@ export class BackgroundSyncService {
                 allTranslations.map((t) => `${t.key}::${t.locale}`)
               );
 
-              const keysToDelete = Array.from(existingKeys).filter(
+              const keysToDelete = Array.from(existingRows.keys()).filter(
                 key => !currentKeys.has(key)
               );
 
@@ -1384,14 +1408,17 @@ export class BackgroundSyncService {
                   const [key, locale] = kl.split('::');
                   return { key, locale };
                 });
-                await db.themeTranslation.deleteMany({
-                  where: {
-                    shop: this.shop,
-                    resourceId: resource.resourceId,
-                    groupId,
-                    OR: parsedKeysToDelete.map(({ key, locale }) => ({ key, locale })),
-                  },
-                });
+                for (let i = 0; i < parsedKeysToDelete.length; i += CHUNK) {
+                  const batch = parsedKeysToDelete.slice(i, i + CHUNK);
+                  await db.themeTranslation.deleteMany({
+                    where: {
+                      shop: this.shop,
+                      resourceId: resource.resourceId,
+                      groupId,
+                      OR: batch.map(({ key, locale }) => ({ key, locale })),
+                    },
+                  });
+                }
               }
 
               totalGroups++;
