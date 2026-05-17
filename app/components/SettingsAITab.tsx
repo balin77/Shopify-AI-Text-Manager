@@ -87,12 +87,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highli
   const [selectedModel, setSelectedModel] = useState(settings.selectedModel || '');
   const [availableModels, setAvailableModels] = useState<Array<{ label: string; value: string }>>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState<string | null>(null);
 
   // Fetch available models when provider changes
   const fetchModels = useCallback(async (providerToFetch: string) => {
     setModelsLoading(true);
-    setModelsError(null);
     try {
       const response = await fetch(`/api/ai-models?provider=${providerToFetch}`);
       const data = await response.json();
@@ -108,19 +106,19 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highli
           setSelectedModel(data.defaultModel || '');
         }
       } else {
-        setModelsError(data.error || t.settings.modelFetchError);
-        // Use curated fallback
+        // Couldn't reach the API route (bad provider / auth). Fall back to the
+        // built-in curated model list — no user-facing error: the dropdown
+        // still works and the distinction is an internal detail.
         const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
         setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
       }
     } catch {
-      setModelsError(t.settings.modelFetchError);
       const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
       setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
     } finally {
       setModelsLoading(false);
     }
-  }, [selectedModel, t]);
+  }, [selectedModel]);
 
   // Fetch models on mount and when provider changes
   useEffect(() => {
@@ -330,11 +328,6 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highli
           </div>
         </InlineStack>
 
-        {modelsError && (
-          <Banner tone="warning" onDismiss={() => setModelsError(null)}>
-            <Text as="p" variant="bodySm">{modelsError}</Text>
-          </Banner>
-        )}
 
         <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
           <BlockStack gap="400">
