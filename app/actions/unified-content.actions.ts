@@ -11,7 +11,7 @@ import { AIService, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
 import { sanitizeSlug } from "../utils/slug.utils";
-import { decryptApiKey } from "../utils/encryption.server";
+import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
@@ -84,12 +84,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
   const serviceConfig = {
-    huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,
-    geminiApiKey: decryptApiKey(aiSettings?.geminiApiKey) || undefined,
-    claudeApiKey: decryptApiKey(aiSettings?.claudeApiKey) || undefined,
-    openaiApiKey: decryptApiKey(aiSettings?.openaiApiKey) || undefined,
-    grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
-    deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
+    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
+    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
+    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
+    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
+    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
+    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
     selectedModel: aiSettings?.selectedModel || undefined,
   };
 

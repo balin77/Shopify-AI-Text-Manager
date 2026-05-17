@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
-import { decryptApiKey } from "~/utils/encryption.server";
+import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -40,12 +40,12 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
     const aiService = new AIService(
       toValidProvider(settings?.preferredProvider),
       {
-        huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-        geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-        claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-        openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-        grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-        deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+        huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
+        geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
+        claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
+        openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
+        grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
+        deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
       },
       session.shop,
       task.id

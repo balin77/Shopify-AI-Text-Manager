@@ -6,7 +6,7 @@
  */
 
 import { logger } from "~/utils/logger.server";
-import { decryptApiKey } from "~/utils/encryption.server";
+import { tryDecryptApiKey } from "~/utils/encryption.server";
 import type { Session } from "@shopify/shopify-api";
 import { AIService, type AIProvider, toValidProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
@@ -141,12 +141,12 @@ export async function prepareActionContext(
   const provider = toValidProvider(aiSettings?.preferredProvider || process.env.AI_PROVIDER);
 
   const config: AIConfig = {
-    huggingfaceApiKey: decryptApiKey(aiSettings?.huggingfaceApiKey) || undefined,
-    geminiApiKey: decryptApiKey(aiSettings?.geminiApiKey) || undefined,
-    claudeApiKey: decryptApiKey(aiSettings?.claudeApiKey) || undefined,
-    openaiApiKey: decryptApiKey(aiSettings?.openaiApiKey) || undefined,
-    grokApiKey: decryptApiKey(aiSettings?.grokApiKey) || undefined,
-    deepseekApiKey: decryptApiKey(aiSettings?.deepseekApiKey) || undefined,
+    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
+    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
+    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
+    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
+    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
+    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
     selectedModel: aiSettings?.selectedModel || undefined,
   };
 
