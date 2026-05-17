@@ -9,7 +9,7 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { authenticate } from "../shopify.server";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT, METAOBJECT_UPDATE } from "../graphql/content.mutations";
-import { decryptApiKey } from "../utils/encryption.server";
+import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
@@ -243,12 +243,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const aiService = new AIService(
           toValidProvider(settings?.preferredProvider),
           {
-            huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-            geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-            claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-            openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-            grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-            deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+            huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
+            geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
+            claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
+            openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
+            grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
+            deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
           }
         );
 

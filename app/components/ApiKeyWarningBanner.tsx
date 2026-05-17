@@ -1,7 +1,7 @@
 import { Banner } from "@shopify/polaris";
 import { Link } from "@remix-run/react";
 import { hasPreferredProviderKey, getProviderDisplayName, type AIProvider, type AISettings } from "../utils/api-key-validation";
-import { decryptApiKey } from "../utils/encryption.server";
+import { tryDecryptApiKey } from "../utils/encryption.server";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 
 interface ApiKeyWarningBannerProps {
@@ -28,12 +28,12 @@ export function ApiKeyWarningBanner({ aiSettings, t }: ApiKeyWarningBannerProps)
 
   // Decrypt settings for validation
   const decryptedSettings: AISettings = {
-    huggingfaceApiKey: decryptApiKey(aiSettings.huggingfaceApiKey),
-    geminiApiKey: decryptApiKey(aiSettings.geminiApiKey),
-    claudeApiKey: decryptApiKey(aiSettings.claudeApiKey),
-    openaiApiKey: decryptApiKey(aiSettings.openaiApiKey),
-    grokApiKey: decryptApiKey(aiSettings.grokApiKey),
-    deepseekApiKey: decryptApiKey(aiSettings.deepseekApiKey),
+    huggingfaceApiKey: tryDecryptApiKey(aiSettings.huggingfaceApiKey, "huggingface"),
+    geminiApiKey: tryDecryptApiKey(aiSettings.geminiApiKey, "gemini"),
+    claudeApiKey: tryDecryptApiKey(aiSettings.claudeApiKey, "claude"),
+    openaiApiKey: tryDecryptApiKey(aiSettings.openaiApiKey, "openai"),
+    grokApiKey: tryDecryptApiKey(aiSettings.grokApiKey, "grok"),
+    deepseekApiKey: tryDecryptApiKey(aiSettings.deepseekApiKey, "deepseek"),
     preferredProvider: aiSettings.preferredProvider,
   };
 
