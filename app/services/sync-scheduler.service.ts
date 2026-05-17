@@ -27,6 +27,19 @@ class SyncSchedulerService {
   private readonly CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   private lastCleanup: Date | null = null;
 
+  // Global concurrency gate. Each shop has its own timer, so with many active
+  // shops the per-shop timers eventually align and would run syncAll() for every
+  // shop at once -> server CPU + Shopify rate-limit + DB load spike (this is what
+  // took the server down). Cap the number of syncAll() running concurrently;
+  // excess shops wait in slotWaiters. The per-shop `isRunning` flag guarantees
+  // at most ONE waiter per shop, so the queue is bounded by the active-shop count.
+  private readonly SYNC_MAX_CONCURRENCY = Math.max(
+    1,
+    parseInt(process.env.SYNC_MAX_CONCURRENCY || "2", 10)
+  );
+  private runningSyncs = 0;
+  private slotWaiters: Array<() => void> = [];
+
   /**
    * Starts background sync for a shop
    * If sync is already running, it will be restarted
@@ -40,25 +53,39 @@ class SyncSchedulerService {
       logger.debug(`[SyncScheduler] Starting sync for shop: ${shop}`);
     }
 
-    // Create new timer
-    const timer = setInterval(async () => {
-      await this.runSyncCycle(shop, admin);
-    }, this.SYNC_INTERVAL_MS);
+    // Random phase offset (0..interval) before the recurring timer starts. A
+    // batch of shops that become active in the same tick (server restart, install
+    // burst) would otherwise phase-lock and all sync on the same ticks. The
+    // concurrency gate in runSyncCycle is the hard cap; this just spreads arrivals
+    // so they rarely have to queue at all.
+    let entry: SyncTimer;
+    const phaseOffset = Math.floor(Math.random() * this.SYNC_INTERVAL_MS);
+    const phaseTimer = setTimeout(() => {
+      // Shop may have been stopped (or restarted) during the phase offset.
+      if (this.activeTimers.get(shop) !== entry) return;
+      entry.timer = setInterval(() => {
+        this.runSyncCycle(shop, admin).catch(err => {
+          logger.error(`[SyncScheduler] Sync cycle failed for ${shop}:`, err);
+        });
+      }, this.SYNC_INTERVAL_MS);
+    }, phaseOffset);
 
-    // Store timer
-    this.activeTimers.set(shop, {
-      timer,
+    // Store timer (the phase timer first; swapped to the interval once it fires)
+    entry = {
+      timer: phaseTimer,
       shop,
       startedAt: new Date(),
       isRunning: false,
-    });
+    };
+    this.activeTimers.set(shop, entry);
 
-    // Delay first sync by 5 s so the initial page load can finish before competing for DB
+    // First sync runs after a short jittered delay (independent of the phase
+    // offset) so the initial page load finishes before competing for the DB.
     setTimeout(() => {
       this.runSyncCycle(shop, admin).catch(err => {
         logger.error(`[SyncScheduler] Initial sync failed for ${shop}:`, err);
       });
-    }, 5000);
+    }, this.jitter(5000));
 
     // Start periodic cleanup if not already running
     this.ensureCleanupTimerRunning();
@@ -92,13 +119,20 @@ class SyncSchedulerService {
         return;
       }
 
-      // Shop is active - run sync
-      logger.debug(`[SyncScheduler] Running sync cycle for ${shop}`);
+      // Shop is active - wait for a global sync slot before doing the heavy work.
+      // (Activity was checked above without holding a slot so idle shops don't
+      // occupy the queue.)
+      await this.acquireSyncSlot();
+      try {
+        logger.debug(`[SyncScheduler] Running sync cycle for ${shop} (slots ${this.runningSyncs}/${this.SYNC_MAX_CONCURRENCY})`);
 
-      const syncService = new BackgroundSyncService(admin, shop);
-      const stats = await syncService.syncAll();
+        const syncService = new BackgroundSyncService(admin, shop);
+        const stats = await syncService.syncAll();
 
-      logger.debug(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+        logger.debug(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+      } finally {
+        this.releaseSyncSlot();
+      }
     } catch (error) {
       logger.error(`[SyncScheduler] Sync cycle failed for ${shop}:`, error);
       // Don't stop timer on error - retry next cycle
@@ -122,6 +156,41 @@ class SyncSchedulerService {
       this.activeTimers.delete(shop);
       logger.debug(`[SyncScheduler] Stopped sync for shop: ${shop}`);
     }
+  }
+
+  /**
+   * Acquires a global sync slot. Resolves immediately if under the concurrency
+   * limit, otherwise queues until another sync releases its slot.
+   */
+  private acquireSyncSlot(): Promise<void> {
+    if (this.runningSyncs < this.SYNC_MAX_CONCURRENCY) {
+      this.runningSyncs++;
+      return Promise.resolve();
+    }
+    return new Promise<void>(resolve => {
+      this.slotWaiters.push(resolve);
+    });
+  }
+
+  /**
+   * Releases a global sync slot, handing it directly to the next waiter (if any)
+   * so the running count never exceeds SYNC_MAX_CONCURRENCY.
+   */
+  private releaseSyncSlot(): void {
+    const next = this.slotWaiters.shift();
+    if (next) {
+      next(); // slot stays accounted for, just transferred to the waiter
+    } else {
+      this.runningSyncs = Math.max(0, this.runningSyncs - 1);
+    }
+  }
+
+  /**
+   * Returns `ms` with ±20% random jitter so independent timers don't phase-lock.
+   */
+  private jitter(ms: number): number {
+    const spread = ms * 0.2;
+    return Math.round(ms + (Math.random() * 2 - 1) * spread);
   }
 
   /**
