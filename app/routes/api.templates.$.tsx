@@ -284,7 +284,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         });
 
         const aiService = new AIService(
-          settings?.preferredProvider as any || 'huggingface',
+          settings?.preferredProvider as any || 'claude',
           {
             huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
             geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,

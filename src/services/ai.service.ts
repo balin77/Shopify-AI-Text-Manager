@@ -20,9 +20,9 @@ const LOCALE_NAMES: Record<string, string> = {
 
 const VALID_PROVIDERS: readonly AIProvider[] = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
 
-/** Validate and return a safe AIProvider, falling back to 'huggingface'. */
+/** Validate and return a safe AIProvider, falling back to 'claude' (Anthropic). */
 export function toValidProvider(value: string | null | undefined): AIProvider {
-  return VALID_PROVIDERS.includes(value as AIProvider) ? (value as AIProvider) : 'huggingface';
+  return VALID_PROVIDERS.includes(value as AIProvider) ? (value as AIProvider) : 'claude';
 }
 
 /**
@@ -72,7 +72,7 @@ export class AIService {
   private shop?: string;
   private taskId?: string;
 
-  constructor(provider: AIProvider = 'huggingface', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
+  constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
     this.config = config;
     this.shop = shop;

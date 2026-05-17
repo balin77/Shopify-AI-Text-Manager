@@ -3,7 +3,7 @@ import { AIService, type AIProvider, type AIServiceConfig } from './ai.service';
 export class TranslationService {
   private aiService: AIService;
 
-  constructor(aiProvider: AIProvider = 'huggingface', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
+  constructor(aiProvider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.aiService = new AIService(aiProvider, config, shop, taskId);
   }
 
