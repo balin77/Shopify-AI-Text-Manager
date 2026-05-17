@@ -7,18 +7,25 @@
  * Railway volume at). If usage crosses ALERT_PCT, a message is POSTed to
  * ALERT_WEBHOOK_URL (Slack / Discord incoming-webhook compatible).
  *
+ * Modes:
+ *   (default)   cron mode  - posts ONLY when usage >= ALERT_PCT (no spam),
+ *                            exit 2 when over threshold, else exit 0.
+ *   --test      heartbeat  - ALWAYS posts a ✅ status message with the
+ *                            current breakdown (DB / WAL / total / %),
+ *                            proves the webhook works, exit 0.
+ *
  * Env:
  *   DATABASE_URL        - Postgres connection (injected by Railway)
  *   VOLUME_LIMIT_MB     - provisioned Railway volume size in MB (e.g. 5120 for 5 GB)
  *   ALERT_PCT           - threshold in percent, default 70
- *   ALERT_WEBHOOK_URL   - Slack/Discord webhook; if unset, only logs + exit code
- *
- * Exit code 2 when over threshold (so cron logs/alerts even without a webhook).
+ *   ALERT_WEBHOOK_URL   - Slack/Discord webhook; if unset, only logs
  */
 import { PrismaClient } from '@prisma/client';
 
 const db = new PrismaClient();
 const q = (sql) => db.$queryRawUnsafe(sql);
+
+const isTest = process.argv.includes('--test') || process.env.ALERT_TEST === '1';
 
 const limitMb = Number(process.env.VOLUME_LIMIT_MB);
 if (!Number.isFinite(limitMb) || limitMb <= 0) {
@@ -28,37 +35,55 @@ if (!Number.isFinite(limitMb) || limitMb <= 0) {
 const alertPct = Number(process.env.ALERT_PCT || '70');
 const webhook = process.env.ALERT_WEBHOOK_URL;
 
-const [{ bytes }] = await q(`
-  SELECT pg_database_size(current_database())
-       + COALESCE((SELECT sum(size) FROM pg_ls_waldir()), 0) AS bytes
+const [{ db_bytes, wal_bytes }] = await q(`
+  SELECT pg_database_size(current_database())                       AS db_bytes,
+         COALESCE((SELECT sum(size) FROM pg_ls_waldir()), 0)::bigint AS wal_bytes
 `);
 
-const usedMb = Number(bytes) / (1024 * 1024);
+const MB = 1024 * 1024;
+const dbMb = Number(db_bytes) / MB;
+const walMb = Number(wal_bytes) / MB;
+const usedMb = dbMb + walMb;
 const pct = (usedMb / limitMb) * 100;
-const line =
-  `DB volume: ${usedMb.toFixed(0)} MB / ${limitMb} MB (${pct.toFixed(1)}%)` +
-  ` — threshold ${alertPct}%`;
 
-console.log(line);
+const fmt = (n) => `${n.toFixed(0)} MB`;
+const breakdown =
+  `Daten ${fmt(dbMb)} + WAL ${fmt(walMb)} = ${fmt(usedMb)} / ${limitMb} MB ` +
+  `(${pct.toFixed(1)}%, Schwelle ${alertPct}%)`;
+
+console.log(breakdown);
+
+async function post(text) {
+  if (!webhook) {
+    console.log('(no ALERT_WEBHOOK_URL set — message not sent)');
+    return;
+  }
+  try {
+    // `content` = Discord, `text` = Slack — send both keys for compatibility.
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: text, text }),
+    });
+    console.log('Webhook status:', res.status);
+  } catch (e) {
+    console.error('Webhook failed:', e.message);
+  }
+}
+
+if (isTest) {
+  await post(
+    `✅ ContentPilot DB-Alarm Testlauf — Webhook funktioniert.\n` +
+    `Aktuelle Belegung: ${breakdown}`
+  );
+  process.exit(0);
+}
 
 if (pct >= alertPct) {
-  const text =
-    `🚨 ContentPilot Postgres volume at ${pct.toFixed(1)}% ` +
-    `(${usedMb.toFixed(0)}/${limitMb} MB). Resize the Railway volume soon.`;
-
-  if (webhook) {
-    try {
-      const res = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // `content` works for Discord, `text` for Slack — send both keys.
-        body: JSON.stringify({ content: text, text }),
-      });
-      console.log('Alert webhook status:', res.status);
-    } catch (e) {
-      console.error('Alert webhook failed:', e.message);
-    }
-  }
+  await post(
+    `🚨 ContentPilot Postgres-Volume bei ${pct.toFixed(1)}% — ` +
+    `${breakdown}. Railway-Volume bald vergrößern.`
+  );
   process.exit(2);
 }
 
