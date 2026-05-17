@@ -25,7 +25,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // surfaces on production/master.
   const { isProductionLocked } = await import("../utils/planUtils");
   if (isProductionLocked()) {
-    return redirect("/app/products");
+    // Preserve Shopify session params (shop, host, …) across the redirect.
+    // Dropping them leaves the URL param-less; the next full-page navigation
+    // (useAppNavigation reads window.location.search) then reloads without
+    // shop/host, auth fails in app.tsx, and the user lands on a blank page.
+    const search = new URL(request.url).search;
+    return redirect(`/app/products${search}`);
   }
 
   return json({ shop: session.shop });
