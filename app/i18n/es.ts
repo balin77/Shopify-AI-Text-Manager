@@ -392,6 +392,8 @@ export const es: Translation = {
     confirmDowngrade: "¿Realmente quieres cambiar al plan gratuito? Tu suscripción actual se cancelará.",
     errorOccurred: "Ha ocurrido un error",
     trialInfo: "Todos los planes de pago incluyen una prueba gratuita de 7 días. Solo se te cobrará después de que termine el período de prueba.",
+    devPlanFreeTitle: "Cambiar de plan es gratis",
+    devPlanFreeMessage: "La facturación está desactivada para esta tienda. Puedes cambiar libremente entre cualquiera de los planes siguientes sin coste alguno.",
     // AI Instructions Tab Labels
     tabGeneral: "General",
     tabProducts: "Productos",

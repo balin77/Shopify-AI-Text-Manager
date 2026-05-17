@@ -26,6 +26,12 @@ interface SettingsPlanTabProps {
   inTrial: boolean;
   trialRemainingDays: number;
   isTestStore: boolean;
+  /**
+   * Non-null when Shopify billing is bypassed for this shop (dev/custom-app
+   * build or an allow-listed test-billing shop). Drives the "switching plans
+   * is free" notice above the plan grid.
+   */
+  devPlanMode: "override" | "test-billing" | null;
   productCount: number;
   localeCount: number;
   collectionCount: number;
@@ -40,6 +46,7 @@ export function SettingsPlanTab({
   inTrial,
   trialRemainingDays,
   isTestStore,
+  devPlanMode,
   productCount,
   localeCount,
   collectionCount,
@@ -121,6 +128,12 @@ export function SettingsPlanTab({
           border: 2px solid #eab308 !important;
           border-radius: 12px;
         }
+        /* Equal-height plan cards: the grid stretches each cell to the tallest
+           row, but the Polaris Card inside only takes its content height.
+           Force the Card chrome (root + padding box) to fill the cell so every
+           card matches the largest one. */
+        .plan-card-cell > div { flex: 1 1 auto; display: flex; flex-direction: column; }
+        .plan-card-cell > div > div { flex: 1 1 auto; display: flex; flex-direction: column; }
       `}</style>
 
       {planError && (
@@ -134,6 +147,15 @@ export function SettingsPlanTab({
           <p>
             This is a development/test store. All plan subscriptions are free and will not be
             charged. You can freely switch between plans for testing purposes.
+          </p>
+        </Banner>
+      )}
+
+      {devPlanMode && (
+        <Banner tone="success" title={t.settings?.devPlanFreeTitle || "Switching plans is free"}>
+          <p>
+            {t.settings?.devPlanFreeMessage ||
+              "Billing is disabled for this shop. You can switch between any of the plans below freely, with no charge."}
           </p>
         </Banner>
       )}
@@ -159,7 +181,7 @@ export function SettingsPlanTab({
           return (
             <div
               key={id}
-              className={shouldPulse ? "plan-card-pulse" : ""}
+              className={`plan-card-cell${shouldPulse ? " plan-card-pulse" : ""}`}
               style={{ display: "flex", flexDirection: "column", height: "100%" }}
             >
               <Card>

@@ -393,6 +393,8 @@ export const en: Translation = {
     confirmDowngrade: "Do you really want to switch to the free plan? Your current subscription will be cancelled.",
     errorOccurred: "An error occurred",
     trialInfo: "All paid plans include a 7-day free trial. You will only be charged after the trial period ends.",
+    devPlanFreeTitle: "Switching plans is free",
+    devPlanFreeMessage: "Billing is disabled for this shop. You can switch between any of the plans below freely, with no charge.",
     // AI Instructions Tab Labels
     tabGeneral: "General",
     tabProducts: "Products",
