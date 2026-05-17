@@ -9,7 +9,7 @@ import type { LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
 import { db } from '~/db.server';
-import { decryptApiKey } from '~/utils/encryption.server';
+import { tryDecryptApiKey } from '~/utils/encryption.server';
 import { logger } from '~/utils/logger.server';
 import { CURATED_MODELS, DEFAULT_MODELS, type ModelInfo } from '~/config/ai-models.config';
 import type { AIProvider } from '~/utils/api-key-validation';
@@ -101,7 +101,7 @@ function getApiKeyForProvider(settings: any, provider: AIProvider): string | nul
     deepseek: 'deepseekApiKey',
   };
   const encrypted = settings?.[keyMap[provider]];
-  return encrypted ? decryptApiKey(encrypted) : null;
+  return encrypted ? tryDecryptApiKey(encrypted, provider) : null;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

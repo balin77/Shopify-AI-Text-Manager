@@ -5,8 +5,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { decryptApiKey } from "./encryption.server";
-import { logger } from '~/utils/logger.server';
+import { tryDecryptApiKey } from "./encryption.server";
 
 /**
  * Load AI settings for API key validation in loaders.
@@ -27,30 +26,17 @@ export async function loadAISettingsForValidation(db: PrismaClient, shop: string
     },
   });
 
-  // Decrypt keys server-side and return only boolean flags
-  // This prevents exposing encrypted keys to the client
-  try {
-    return {
-      hasHuggingfaceApiKey: !!decryptApiKey(settings?.huggingfaceApiKey),
-      hasGeminiApiKey: !!decryptApiKey(settings?.geminiApiKey),
-      hasClaudeApiKey: !!decryptApiKey(settings?.claudeApiKey),
-      hasOpenaiApiKey: !!decryptApiKey(settings?.openaiApiKey),
-      hasGrokApiKey: !!decryptApiKey(settings?.grokApiKey),
-      hasDeepseekApiKey: !!decryptApiKey(settings?.deepseekApiKey),
-      preferredProvider: settings?.preferredProvider || null,
-    };
-  } catch (error) {
-    logger.error('[LOADER-HELPERS] Decryption error - returning false for all keys', { error: error instanceof Error ? error.message : 'Unknown error' });
-    // If decryption fails (wrong key, corrupted data), return all false
-    // This allows the app to continue working, user can re-enter keys
-    return {
-      hasHuggingfaceApiKey: false,
-      hasGeminiApiKey: false,
-      hasClaudeApiKey: false,
-      hasOpenaiApiKey: false,
-      hasGrokApiKey: false,
-      hasDeepseekApiKey: false,
-      preferredProvider: settings?.preferredProvider || null,
-    };
-  }
+  // Decrypt keys server-side and return only boolean flags. Done per-key so a
+  // single undecryptable key (e.g. stale AISettings from a previous install,
+  // or an ENCRYPTION_KEY change) only clears that one flag instead of hiding
+  // every key — and never throws, so the app keeps working.
+  return {
+    hasHuggingfaceApiKey: !!tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface"),
+    hasGeminiApiKey: !!tryDecryptApiKey(settings?.geminiApiKey, "gemini"),
+    hasClaudeApiKey: !!tryDecryptApiKey(settings?.claudeApiKey, "claude"),
+    hasOpenaiApiKey: !!tryDecryptApiKey(settings?.openaiApiKey, "openai"),
+    hasGrokApiKey: !!tryDecryptApiKey(settings?.grokApiKey, "grok"),
+    hasDeepseekApiKey: !!tryDecryptApiKey(settings?.deepseekApiKey, "deepseek"),
+    preferredProvider: settings?.preferredProvider || null,
+  };
 }
