@@ -138,7 +138,7 @@ export async function prepareActionContext(
   }
 
   // Prepare provider and config
-  const provider = toValidProvider(aiSettings?.preferredProvider || process.env.AI_PROVIDER);
+  const provider = toValidProvider(aiSettings?.preferredProvider);
 
   const config: AIConfig = {
     huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,

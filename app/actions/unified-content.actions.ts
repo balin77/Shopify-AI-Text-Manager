@@ -80,7 +80,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   }
 
   // Initialize services
-  const provider = toValidProvider(aiSettings?.preferredProvider || process.env.AI_PROVIDER || "claude");
+  const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
   // Cast aiInstructions to indexable type for dynamic field access
   const instructions = aiInstructions as Record<string, string | null> | null;
   const serviceConfig = {
