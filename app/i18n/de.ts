@@ -390,6 +390,8 @@ export const de = {
     confirmDowngrade: "Möchten Sie wirklich zum kostenlosen Plan wechseln? Ihr aktuelles Abo wird gekündigt.",
     errorOccurred: "Ein Fehler ist aufgetreten",
     trialInfo: "Alle kostenpflichtigen Pläne beinhalten eine 7-tägige kostenlose Testphase. Sie werden erst nach Ablauf der Testphase belastet.",
+    devPlanFreeTitle: "Plan-Wechsel ist kostenlos",
+    devPlanFreeMessage: "Für diesen Shop ist die Bezahlung deaktiviert. Sie können beliebig zwischen allen Plänen wechseln, ohne dass Kosten entstehen.",
     // AI Instructions Tab Labels
     tabGeneral: "Allgemein",
     tabProducts: "Produkte",

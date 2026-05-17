@@ -42,6 +42,7 @@ import {
 } from "../constants/aiInstructionsDefaults";
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
+import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
@@ -319,6 +320,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       logger.warn("[SETTINGS] Could not determine shop plan type", { error: e });
     }
 
+    // Whether Shopify billing is bypassed for this shop (dev/custom-app build,
+    // or an allow-listed developer-owned test-billing shop). Drives the
+    // "switching plans is free" notice on the Plan tab.
+    const devPlanMode = resolveDevPlanMode(session.shop);
+
     // Decrypt API keys per-key. A single corrupted key (e.g. encrypted with a
     // previous ENCRYPTION_KEY) must not wipe the others — instead we surface
     // exactly which provider keys are broken so the merchant can re-enter them.
@@ -388,6 +394,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themeTranslationCount,
       localeCount,
       isTestStore,
+      devPlanMode,
       subscriptionPlan,
       inTrial,
       trialRemainingDays,
@@ -684,7 +691,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1156,6 +1163,7 @@ export default function SettingsPage() {
                     inTrial={inTrial}
                     trialRemainingDays={trialRemainingDays}
                     isTestStore={isTestStore}
+                    devPlanMode={devPlanMode}
                     productCount={productCount}
                     localeCount={localeCount}
                     collectionCount={collectionCount}
