@@ -30,7 +30,8 @@ import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
-import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
+import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
+import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import {
   DEFAULT_GENERAL_INSTRUCTIONS,
   DEFAULT_PRODUCT_INSTRUCTIONS,
@@ -83,7 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       settings = await db.aISettings.create({
         data: {
           shop: session.shop,
-          preferredProvider: "huggingface",
+          preferredProvider: "claude",
           appLanguage: autoSelectedLanguage,
         },
       });
@@ -318,28 +319,40 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       logger.warn("[SETTINGS] Could not determine shop plan type", { error: e });
     }
 
-    // Decrypt API keys with error handling
-    let decryptedKeys;
-    try {
-      decryptedKeys = {
-        huggingfaceApiKey: decryptApiKey(settings.huggingfaceApiKey) || "",
-        geminiApiKey: decryptApiKey(settings.geminiApiKey) || "",
-        claudeApiKey: decryptApiKey(settings.claudeApiKey) || "",
-        openaiApiKey: decryptApiKey(settings.openaiApiKey) || "",
-        grokApiKey: decryptApiKey(settings.grokApiKey) || "",
-        deepseekApiKey: decryptApiKey(settings.deepseekApiKey) || "",
-      };
-    } catch (error: unknown) {
-      logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", error: error instanceof Error ? error.message : String(error) });
-      // If decryption fails, return empty keys
-      decryptedKeys = {
-        huggingfaceApiKey: "",
-        geminiApiKey: "",
-        claudeApiKey: "",
-        openaiApiKey: "",
-        grokApiKey: "",
-        deepseekApiKey: "",
-      };
+    // Decrypt API keys per-key. A single corrupted key (e.g. encrypted with a
+    // previous ENCRYPTION_KEY) must not wipe the others — instead we surface
+    // exactly which provider keys are broken so the merchant can re-enter them.
+    type ApiKeyField =
+      | "huggingfaceApiKey"
+      | "geminiApiKey"
+      | "claudeApiKey"
+      | "openaiApiKey"
+      | "grokApiKey"
+      | "deepseekApiKey";
+    const keyFields: { field: ApiKeyField; provider: AIProvider }[] = [
+      { field: "huggingfaceApiKey", provider: "huggingface" },
+      { field: "geminiApiKey", provider: "gemini" },
+      { field: "claudeApiKey", provider: "claude" },
+      { field: "openaiApiKey", provider: "openai" },
+      { field: "grokApiKey", provider: "grok" },
+      { field: "deepseekApiKey", provider: "deepseek" },
+    ];
+    const decryptedKeys: Record<ApiKeyField, string> = {
+      huggingfaceApiKey: "",
+      geminiApiKey: "",
+      claudeApiKey: "",
+      openaiApiKey: "",
+      grokApiKey: "",
+      deepseekApiKey: "",
+    };
+    const corruptedApiKeys: string[] = [];
+    for (const { field, provider } of keyFields) {
+      const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
+      decryptedKeys[field] = value || "";
+      if (corrupted) {
+        corruptedApiKeys.push(getProviderDisplayName(provider));
+        logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
+      }
     }
 
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
@@ -385,6 +398,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       groupedFieldTranslations,
       optionValueMemory,
       primaryShopLocale,
+      corruptedApiKeys,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -670,7 +684,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -758,6 +772,22 @@ export default function SettingsPage() {
       showInfoBox(fetcher.data.error as string, "critical", t.common.error);
     }
   }, [fetcher.data, showInfoBox, t]);
+
+  // Surface which stored API key(s) could not be decrypted (e.g. after an
+  // ENCRYPTION_KEY change). The key was reset to empty — the merchant must
+  // re-enter and save it. Show once when the page loads.
+  useEffect(() => {
+    if (corruptedApiKeys.length === 0) return;
+    const providers = corruptedApiKeys.join(", ");
+    const template =
+      t.settings?.corruptedApiKeyWarning ||
+      "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
+    showInfoBox(
+      template.replace("{provider}", providers),
+      "critical",
+      t.settings?.corruptedApiKeyTitle || "API key error"
+    );
+  }, [corruptedApiKeys, showInfoBox, t]);
 
   // Register settings sections in item selector context (for mobile header dropdown)
   useEffect(() => {

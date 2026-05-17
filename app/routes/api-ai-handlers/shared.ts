@@ -7,7 +7,7 @@ import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
-import { decryptApiKey } from "../../utils/encryption.server";
+import { tryDecryptApiKey } from "../../utils/encryption.server";
 import {
   PRODUCTS_CONFIG, COLLECTIONS_CONFIG, BLOGS_CONFIG, PAGES_CONFIG, POLICIES_CONFIG,
 } from "../../config/content-fields.config";
@@ -117,7 +117,7 @@ export function getMissingPreferredKey(
 ): { provider: AIProvider; displayName: string } | null {
   const provider = toValidProvider(settings?.preferredProvider);
   const encrypted = settings?.[PROVIDER_KEY_FIELD[provider]] as string | null | undefined;
-  const decrypted = decryptApiKey(encrypted);
+  const decrypted = tryDecryptApiKey(encrypted, provider);
   if (decrypted && decrypted.trim().length > 0) {
     return null;
   }
@@ -156,12 +156,12 @@ export function createAIService(settings: AISettings | null, shop: string, taskI
   return new AIService(
     toValidProvider(settings?.preferredProvider),
     {
-      huggingfaceApiKey: decryptApiKey(settings?.huggingfaceApiKey) || undefined,
-      geminiApiKey: decryptApiKey(settings?.geminiApiKey) || undefined,
-      claudeApiKey: decryptApiKey(settings?.claudeApiKey) || undefined,
-      openaiApiKey: decryptApiKey(settings?.openaiApiKey) || undefined,
-      grokApiKey: decryptApiKey(settings?.grokApiKey) || undefined,
-      deepseekApiKey: decryptApiKey(settings?.deepseekApiKey) || undefined,
+      huggingfaceApiKey: tryDecryptApiKey(settings?.huggingfaceApiKey, "huggingface") || undefined,
+      geminiApiKey: tryDecryptApiKey(settings?.geminiApiKey, "gemini") || undefined,
+      claudeApiKey: tryDecryptApiKey(settings?.claudeApiKey, "claude") || undefined,
+      openaiApiKey: tryDecryptApiKey(settings?.openaiApiKey, "openai") || undefined,
+      grokApiKey: tryDecryptApiKey(settings?.grokApiKey, "grok") || undefined,
+      deepseekApiKey: tryDecryptApiKey(settings?.deepseekApiKey, "deepseek") || undefined,
       selectedModel: settings?.selectedModel || undefined,
     },
     shop,

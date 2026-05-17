@@ -288,6 +288,56 @@ export function decryptApiKey(encryptedApiKey: string | null | undefined): strin
   return decrypt(trimmed);
 }
 
+/**
+ * Decrypt an API key without throwing.
+ *
+ * Returns null if the stored value cannot be decrypted (e.g. it was encrypted
+ * with a previous ENCRYPTION_KEY, or the ciphertext is corrupted). Use this at
+ * read sites where a single unrecoverable key must not break the whole request
+ * — the merchant can simply re-enter the affected key in Settings.
+ *
+ * @param encryptedApiKey - The encrypted API key (can be null/undefined)
+ * @param label - Optional label for logging which key failed (no value logged)
+ * @returns {string | null} Decrypted API key, or null if absent/undecryptable
+ */
+export function tryDecryptApiKey(
+  encryptedApiKey: string | null | undefined,
+  label?: string,
+): string | null {
+  try {
+    return decryptApiKey(encryptedApiKey);
+  } catch (error) {
+    logger.error(
+      `[Encryption] Could not decrypt stored API key${label ? ` (${label})` : ''} — treating as not set. Merchant should re-enter it.`,
+      { error: error instanceof Error ? error.message : 'Unknown error' },
+    );
+    return null;
+  }
+}
+
+/**
+ * Decrypt an API key and report whether the stored value is corrupted.
+ *
+ * Distinguishes three cases so the UI can show *which* key is broken:
+ * - absent:    no value stored          → { value: null,  corrupted: false }
+ * - ok:        decrypts cleanly          → { value: <key>, corrupted: false }
+ * - corrupted: stored but undecryptable  → { value: null,  corrupted: true  }
+ *
+ * @param encryptedApiKey - The encrypted API key (can be null/undefined)
+ */
+export function decryptApiKeyChecked(
+  encryptedApiKey: string | null | undefined,
+): { value: string | null; corrupted: boolean } {
+  if (!encryptedApiKey || encryptedApiKey.trim() === '') {
+    return { value: null, corrupted: false };
+  }
+  try {
+    return { value: decryptApiKey(encryptedApiKey), corrupted: false };
+  } catch {
+    return { value: null, corrupted: true };
+  }
+}
+
 // ============================================================================
 // PII (Personally Identifiable Information) Encryption
 // ============================================================================

@@ -475,6 +475,8 @@ export const es: Translation = {
     goToSettings: "Ir a Configuración",
     preferredProviderNoKey: "Sin clave API de {provider}. Por favor, añade la clave en Configuración o cambia el modelo.",
     preferredProviderNoKeyDescription: "Las funciones de IA requieren una clave API para {provider}.",
+    corruptedApiKeyTitle: "Error de clave API",
+    corruptedApiKeyWarning: "La clave API guardada para {provider} no se pudo descifrar y se ha borrado. Vuelve a introducirla y guárdala.",
     aiKeyMissingTitle: "Se requiere una clave API de IA",
     aiKeyMissingBody: "No hay clave API de {provider} configurada. Añade tu propia clave API de IA en Configuración → Códigos de acceso a la API de IA para usar las funciones de IA.",
     privacyPolicyLink: "Política de privacidad",
