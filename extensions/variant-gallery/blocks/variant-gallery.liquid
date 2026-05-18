@@ -31,6 +31,8 @@
               "src_800":  {{ vfi | image_url: width: 800  | json }},
               "src_1200": {{ vfi | image_url: width: 1200 | json }},
               "thumb":    {{ vfi | image_url: width: 160  | json }},
+              "w":        {{ vfi.width  | json }},
+              "h":        {{ vfi.height | json }},
               "alt":      {{ variant.title | json }}
             }
             {%- assign cp_has_any = true -%}
@@ -38,11 +40,15 @@
           {%- if vg != blank and vg.value != blank -%}
             {%- for img in vg.value -%}
               {%- if cp_has_any %},{% endif -%}
+              {%- assign cp_w = img.preview_image.width  | default: img.width -%}
+              {%- assign cp_h = img.preview_image.height | default: img.height -%}
               {
                 "src_400":  {{ img | image_url: width: 400  | json }},
                 "src_800":  {{ img | image_url: width: 800  | json }},
                 "src_1200": {{ img | image_url: width: 1200 | json }},
                 "thumb":    {{ img | image_url: width: 160  | json }},
+                "w":        {{ cp_w | json }},
+                "h":        {{ cp_h | json }},
                 "alt":      {{ variant.title | json }}
               }
               {%- assign cp_has_any = true -%}

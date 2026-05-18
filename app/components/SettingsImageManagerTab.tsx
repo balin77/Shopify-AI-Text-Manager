@@ -113,6 +113,10 @@ export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, hi
                 <Badge tone="success">Recommended</Badge>
               </InlineStack>
               <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionADescription}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.settings as Record<string, string>).themeSetupSelectorHint ??
+                  "If your theme’s product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme’s product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."}
+              </Text>
               <div>
                 <Button url={embedUrl} external variant="primary" size="slim">
                   {t.settings.themeSetupOptionAButton}
@@ -127,8 +131,15 @@ export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, hi
             padding="400"
           >
             <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionBTitle}</Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionBTitle}</Text>
+                <Badge tone="info">Optional</Badge>
+              </InlineStack>
               <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionBDescription}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.settings as Record<string, string>).themeSetupOptionBNote ??
+                  "Adds the gallery as an extra block (it does not replace the native gallery). Most themes render the product gallery as part of the product-information section, so the App embed above is the recommended way to replace it. Use this only if you specifically want an additional gallery block."}
+              </Text>
               <div>
                 <Button url={blockUrl} external variant="secondary" size="slim">
                   {t.settings.themeSetupOptionBButton}

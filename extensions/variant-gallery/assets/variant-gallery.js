@@ -86,6 +86,9 @@ class CpVariantGallery extends HTMLElement {
 
   _activateThumb(thumb) {
     if (!this._mainImg) return;
+    const mainBox = this.querySelector('.cp-gallery__main');
+    const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
+    if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
     this._mainImg.src    = thumb.dataset.srcMd;
     this._mainImg.srcset = [
       thumb.dataset.srcSm + ' 400w',
@@ -113,16 +116,8 @@ class CpVariantGallery extends HTMLElement {
     const first = images[0];
 
     const mainHtml = `
-      <div class="cp-gallery__main">
-        <img
-          class="cp-gallery__main-image"
-          src="${first.src_800}"
-          srcset="${first.src_400} 400w, ${first.src_800} 800w, ${first.src_1200} 1200w"
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="${this._esc(first.alt)}"
-          loading="eager"
-          width="800"
-        >
+      <div class="cp-gallery__main"${this._ratioStyle(first)}>
+        ${this._mainImgHtml(first)}
       </div>`;
 
     let thumbsHtml = '';
@@ -134,6 +129,8 @@ class CpVariantGallery extends HTMLElement {
           data-src-sm="${img.src_400}"
           data-src-md="${img.src_800}"
           data-src-lg="${img.src_1200}"
+          data-w="${img.w || ''}"
+          data-h="${img.h || ''}"
         >
           <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
         </button>`).join('');
@@ -143,6 +140,28 @@ class CpVariantGallery extends HTMLElement {
     inner.innerHTML = mainHtml + thumbsHtml;
     this._mainImg = this.querySelector('.cp-gallery__main-image');
     this._bindThumbs();
+  }
+
+  // Reserve the box BEFORE the image loads so thumbnails never jump.
+  _ratioStyle(img) {
+    const w = Number(img && img.w);
+    const h = Number(img && img.h);
+    if (w > 0 && h > 0) return ` style="aspect-ratio: ${w} / ${h};"`;
+    return '';
+  }
+
+  _mainImgHtml(img) {
+    const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
+    const h = Number(img && img.h) > 0 ? Number(img.h) : '';
+    return `<img
+          class="cp-gallery__main-image"
+          src="${img.src_800}"
+          srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
+          sizes="(min-width: 1024px) 50vw, 100vw"
+          alt="${this._esc(img.alt)}"
+          loading="eager"
+          width="${w}"${h ? ` height="${h}"` : ''}
+        >`;
   }
 
   _esc(str) {
