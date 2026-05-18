@@ -1,30 +1,69 @@
 class CpVariantGallery extends HTMLElement {
   connectedCallback() {
-    this._data     = this._loadData();
-    this._mainImg  = this.querySelector('.cp-gallery__main-image');
-    this._thumbsEl = this.querySelector('.cp-gallery__thumbs');
+    this._data       = this._loadData();
+    this._mainImg    = this.querySelector('.cp-gallery__main-image');
+    this._currentId  = this.dataset.currentVariant ? String(this.dataset.currentVariant) : null;
 
     this._bindThumbs();
-
-    // Dawn Theme: dispatches 'variant:change' on the document
-    document.addEventListener('variant:change', (e) => {
-      const id = e.detail?.variant?.id;
-      if (id) this._switchVariant(id);
-    });
-
-    // Universal fallback: native change on any variant selector
-    document.addEventListener('change', (e) => {
-      if (e.target.matches('[name="id"]')) {
-        this._switchVariant(Number(e.target.value));
-      }
-    });
+    this._watchVariant();
   }
 
   _loadData() {
-    const el = document.getElementById('cp-gallery-data-' + this.dataset.sectionId);
+    const el = document.getElementById('cp-gallery-data-' + this.dataset.blockId);
     if (!el) return {};
     try { return JSON.parse(el.textContent); } catch (_) { return {}; }
   }
+
+  /* ---------- variant detection (theme-agnostic) ---------- */
+
+  _watchVariant() {
+    const handler = () => this._onVariantMaybeChanged();
+
+    // Older themes that fire a DOM event.
+    document.addEventListener('variant:change', (e) => {
+      const id = e.detail && e.detail.variant && e.detail.variant.id;
+      if (id) this._switchVariant(id);
+    });
+    document.addEventListener('variant_change', handler);
+
+    // Universal fallback: native change on a variant selector.
+    document.addEventListener('change', (e) => {
+      if (e.target && e.target.matches && e.target.matches('[name="id"]')) handler();
+    });
+
+    // Modern Dawn sets input[name="id"].value programmatically (no change event)
+    // and updates the URL — observe both.
+    const input = this._variantInput();
+    if (input && 'MutationObserver' in window) {
+      this._mo = new MutationObserver(handler);
+      this._mo.observe(input, { attributes: true, attributeFilter: ['value'] });
+      // <select> changes the selected option, not a value attribute.
+      input.addEventListener('input', handler);
+    }
+    window.addEventListener('popstate', handler);
+  }
+
+  _variantInput() {
+    return document.querySelector('[name="id"]');
+  }
+
+  _resolveVariantId() {
+    const input = this._variantInput();
+    if (input && input.value) return String(input.value);
+    try {
+      const url = new URL(window.location.href);
+      const v = url.searchParams.get('variant');
+      if (v) return String(v);
+    } catch (_) { /* noop */ }
+    return null;
+  }
+
+  _onVariantMaybeChanged() {
+    const id = this._resolveVariantId();
+    if (id && id !== this._currentId) this._switchVariant(id);
+  }
+
+  /* ---------- rendering ---------- */
 
   _bindThumbs() {
     this.querySelectorAll('.cp-gallery__thumb').forEach((thumb) => {
@@ -45,7 +84,9 @@ class CpVariantGallery extends HTMLElement {
   }
 
   _switchVariant(variantId) {
-    const images = this._data[variantId];
+    const id     = String(variantId);
+    this._currentId = id;
+    const images = this._data[id];
     const inner  = this.querySelector('.cp-gallery__inner');
     if (!inner) return;
 
@@ -85,13 +126,12 @@ class CpVariantGallery extends HTMLElement {
     }
 
     inner.innerHTML = mainHtml + thumbsHtml;
-    this._mainImg  = this.querySelector('.cp-gallery__main-image');
-    this._thumbsEl = this.querySelector('.cp-gallery__thumbs');
+    this._mainImg = this.querySelector('.cp-gallery__main-image');
     this._bindThumbs();
   }
 
   _esc(str) {
-    return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
 }
 

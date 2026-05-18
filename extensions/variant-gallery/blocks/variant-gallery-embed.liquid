@@ -11,8 +11,8 @@
   {
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
-      {{ variant.id | json }}: [
-        {%- if vg != blank and vg.value != blank and vg.value.size > 0 -%}
+      "{{ variant.id }}": [
+        {%- if vg != blank and vg.value != blank -%}
           {%- for img in vg.value -%}
             {
               "src_400":  {{ img | image_url: width: 400  | json }},

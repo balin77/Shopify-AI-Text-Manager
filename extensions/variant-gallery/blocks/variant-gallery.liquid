@@ -1,8 +1,10 @@
+{%- if product != blank -%}
+
 {%- liquid
   assign current_variant = product.selected_or_first_available_variant
   assign gallery_mf      = current_variant.metafields.custom.variant_gallery
   assign has_gallery     = false
-  if gallery_mf != blank and gallery_mf.value != blank and gallery_mf.value.size > 0
+  if gallery_mf != blank and gallery_mf.value != blank
     assign has_gallery = true
   endif
 
@@ -18,12 +20,12 @@
   Section Rendering API cannot re-render app blocks, so this is the correct
   approach for theme app extensions.
 {%- endcomment -%}
-<script type="application/json" id="cp-gallery-data-{{ section.id }}">
+<script type="application/json" id="cp-gallery-data-{{ block.id }}">
   {
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
-      {{ variant.id | json }}: [
-        {%- if vg != blank and vg.value != blank and vg.value.size > 0 -%}
+      "{{ variant.id }}": [
+        {%- if vg != blank and vg.value != blank -%}
           {%- for img in vg.value -%}
             {
               "src_400":  {{ img | image_url: width: 400  | json }},
@@ -42,31 +44,28 @@
 <cp-variant-gallery
   class="cp-variant-gallery"
   style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px;"
-  data-section-id="{{ section.id }}"
+  data-block-id="{{ block.id }}"
   data-current-variant="{{ current_variant.id }}"
 >
   <div class="cp-gallery__inner">
     {%- if has_gallery -%}
 
+      {%- assign first_img = gallery_mf.value | first -%}
       <div class="cp-gallery__main">
-        {%- assign first_img = gallery_mf.value | first -%}
-        <img
-          class="cp-gallery__main-image"
-          src="{{ first_img | image_url: width: 800 }}"
-          srcset="
-            {{ first_img | image_url: width: 400 }}  400w,
-            {{ first_img | image_url: width: 800 }}  800w,
-            {{ first_img | image_url: width: 1200 }} 1200w
-          "
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="{{ current_variant.title | escape }}"
-          loading="eager"
-          width="{{ first_img.width }}"
-          height="{{ first_img.height }}"
-        >
+        {{
+          first_img
+          | image_url: width: 800
+          | image_tag:
+            class: 'cp-gallery__main-image',
+            loading: 'eager',
+            sizes: '(min-width: 1024px) 50vw, 100vw',
+            widths: '400, 800, 1200',
+            alt: current_variant.title
+        }}
       </div>
 
-      {%- if gallery_mf.value.size > 1 -%}
+      {%- assign gallery_count = gallery_mf.value | size -%}
+      {%- if gallery_count > 1 -%}
         <div class="cp-gallery__thumbs">
           {%- for img in gallery_mf.value -%}
             <button
@@ -77,13 +76,15 @@
               data-src-1200="{{ img | image_url: width: 1200 }}"
               aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
             >
-              <img
-                src="{{ img | image_url: width: 160 }}"
-                alt="{{ current_variant.title | escape }} {{ forloop.index }}"
-                loading="lazy"
-                width="160"
-                height="160"
-              >
+              {{
+                img
+                | image_url: width: 160
+                | image_tag:
+                  loading: 'lazy',
+                  width: 160,
+                  height: 160,
+                  alt: current_variant.title
+              }}
             </button>
           {%- endfor -%}
         </div>
@@ -92,25 +93,23 @@
     {%- elsif fallback_image -%}
 
       <div class="cp-gallery__main cp-gallery__main--fallback">
-        <img
-          class="cp-gallery__main-image"
-          src="{{ fallback_image | image_url: width: 800 }}"
-          srcset="
-            {{ fallback_image | image_url: width: 400 }}  400w,
-            {{ fallback_image | image_url: width: 800 }}  800w,
-            {{ fallback_image | image_url: width: 1200 }} 1200w
-          "
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="{{ product.title | escape }}"
-          loading="eager"
-          width="{{ fallback_image.width }}"
-          height="{{ fallback_image.height }}"
-        >
+        {{
+          fallback_image
+          | image_url: width: 800
+          | image_tag:
+            class: 'cp-gallery__main-image',
+            loading: 'eager',
+            sizes: '(min-width: 1024px) 50vw, 100vw',
+            widths: '400, 800, 1200',
+            alt: product.title
+        }}
       </div>
 
     {%- endif -%}
   </div>
 </cp-variant-gallery>
+
+{%- endif -%}
 
 {% schema %}
 {

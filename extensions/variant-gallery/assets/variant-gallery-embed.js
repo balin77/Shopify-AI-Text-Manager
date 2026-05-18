@@ -14,6 +14,7 @@ class CpEmbedGallery extends HTMLElement {
     this._data           = this._loadData();
     this._nativeSelector = this.dataset.nativeSelector || 'media-gallery';
     this._nativeGallery  = document.querySelector(this._nativeSelector);
+    this._currentId      = null;
 
     if (!this._nativeGallery || !this._data) return;
 
@@ -21,22 +22,11 @@ class CpEmbedGallery extends HTMLElement {
     // so it occupies the same visual position when the native is hidden.
     this._nativeGallery.parentNode.insertBefore(this, this._nativeGallery);
 
-    // Show correct gallery for the variant that's selected on page load.
-    const initialId = this._getCurrentVariantId();
+    // Show correct gallery for the variant selected on page load.
+    const initialId = this._resolveVariantId();
     if (initialId) this._switchVariant(initialId);
 
-    // Dawn Theme: variant:change custom event
-    document.addEventListener('variant:change', (e) => {
-      const id = e.detail?.variant?.id;
-      if (id) this._switchVariant(id);
-    });
-
-    // Universal fallback: native select / radio [name="id"] change
-    document.addEventListener('change', (e) => {
-      if (e.target.matches('[name="id"]')) {
-        this._switchVariant(Number(e.target.value));
-      }
-    });
+    this._watchVariant();
   }
 
   _loadData() {
@@ -45,23 +35,81 @@ class CpEmbedGallery extends HTMLElement {
     try { return JSON.parse(el.textContent); } catch (_) { return null; }
   }
 
-  _getCurrentVariantId() {
-    const sel = document.querySelector('[name="id"]');
-    return sel ? Number(sel.value) : null;
+  /* ---------- variant detection (theme-agnostic) ---------- */
+
+  _watchVariant() {
+    const handler = () => this._onVariantMaybeChanged();
+
+    document.addEventListener('variant:change', (e) => {
+      const id = e.detail && e.detail.variant && e.detail.variant.id;
+      if (id) this._switchVariant(id);
+    });
+    document.addEventListener('variant_change', handler);
+
+    document.addEventListener('change', (e) => {
+      if (e.target && e.target.matches && e.target.matches('[name="id"]')) handler();
+    });
+
+    // Modern Dawn sets input[name="id"].value programmatically (no change event)
+    // and updates the URL — observe both.
+    const input = this._variantInput();
+    if (input && 'MutationObserver' in window) {
+      this._mo = new MutationObserver(handler);
+      this._mo.observe(input, { attributes: true, attributeFilter: ['value'] });
+      input.addEventListener('input', handler);
+    }
+    window.addEventListener('popstate', handler);
   }
 
+  _variantInput() {
+    return document.querySelector('[name="id"]');
+  }
+
+  _resolveVariantId() {
+    const input = this._variantInput();
+    if (input && input.value) return String(input.value);
+    try {
+      const v = new URL(window.location.href).searchParams.get('variant');
+      if (v) return String(v);
+    } catch (_) { /* noop */ }
+    return null;
+  }
+
+  _onVariantMaybeChanged() {
+    const id = this._resolveVariantId();
+    if (id && id !== this._currentId) this._switchVariant(id);
+  }
+
+  /* ---------- native gallery show / hide ---------- */
+
+  _hideNative() {
+    if (!this._nativeGallery) return;
+    this._nativeGallery.setAttribute('hidden', '');
+    this._nativeGallery.style.display = 'none';
+  }
+
+  _showNative() {
+    if (!this._nativeGallery) return;
+    this._nativeGallery.removeAttribute('hidden');
+    this._nativeGallery.style.display = '';
+  }
+
+  /* ---------- rendering ---------- */
+
   _switchVariant(variantId) {
-    const images = this._data[variantId];
+    const id = String(variantId);
+    this._currentId = id;
+    const images = this._data[id];
 
     if (!images || images.length === 0) {
       // No variant gallery — restore native gallery.
       this.style.display = 'none';
-      if (this._nativeGallery) this._nativeGallery.style.display = '';
+      this._showNative();
       return;
     }
 
     // Has variant gallery — hide native, render ours.
-    if (this._nativeGallery) this._nativeGallery.style.display = 'none';
+    this._hideNative();
     this.style.display = 'block';
     this._render(images);
   }
@@ -118,7 +166,7 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   _esc(str) {
-    return String(str ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
 }
 
