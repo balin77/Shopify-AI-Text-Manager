@@ -99,9 +99,12 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   _resolveVariantId() {
-    if (this._wantId && this._data[this._wantId]) return this._wantId;
+    // Live input wins; _wantId is only a one-shot hint for themes that fire
+    // variant:change before/without updating [name="id"]. It is cleared once
+    // a tick consumes it so it can never pin a stale variant.
     const input = this._scopeRoot().querySelector('[name="id"]');
     if (input && input.value) return String(input.value);
+    if (this._wantId && this._data[this._wantId]) return this._wantId;
     try {
       const v = new URL(window.location.href).searchParams.get('variant');
       if (v) return String(v);
@@ -173,9 +176,12 @@ class CpEmbedGallery extends HTMLElement {
     const native = this._queryNative();
 
     if (!native) {
-      // Gallery not in the DOM yet (deferred) — the observer will call us again.
+      // Gallery not in the DOM yet (deferred) — the observer will call us
+      // again; keep _wantId so the hint survives until we can act on it.
       return;
     }
+    // Consumed: from here on the live input/URL is authoritative again.
+    this._wantId = null;
 
     if (!hasImages) {
       // No metafield images for this variant → make sure native is visible.
