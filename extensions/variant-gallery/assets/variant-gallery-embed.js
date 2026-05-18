@@ -1,7 +1,10 @@
+const CP_LOG = '[cp-embed-gallery]';
+
 class CpEmbedGallery extends HTMLElement {
   connectedCallback() {
     if (this._initialized) return;
     this._initialized = true;
+    console.info(CP_LOG, 'connected. block:', this.dataset.blockId);
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this._init());
@@ -16,7 +19,16 @@ class CpEmbedGallery extends HTMLElement {
     this._nativeGallery  = document.querySelector(this._nativeSelector);
     this._currentId      = null;
 
-    if (!this._nativeGallery || !this._data) return;
+    console.info(CP_LOG, 'init. native selector:', JSON.stringify(this._nativeSelector),
+      '-> found:', !!this._nativeGallery, '| data:', !!this._data,
+      this._data ? 'variant ids: ' + JSON.stringify(Object.keys(this._data)) : '');
+
+    if (!this._nativeGallery) {
+      console.warn(CP_LOG, 'native gallery NOT found with selector', JSON.stringify(this._nativeSelector),
+        '— set the correct selector in the app embed settings (e.g. media-gallery, .product__media-wrapper).');
+      return;
+    }
+    if (!this._data) { console.warn(CP_LOG, 'no/invalid variant data — aborting'); return; }
 
     // Insert our gallery right before the native gallery in the DOM,
     // so it occupies the same visual position when the native is hidden.
@@ -24,6 +36,7 @@ class CpEmbedGallery extends HTMLElement {
 
     // Show correct gallery for the variant selected on page load.
     const initialId = this._resolveVariantId();
+    console.info(CP_LOG, 'initial variant id resolved:', initialId);
     if (initialId) this._switchVariant(initialId);
 
     this._watchVariant();
@@ -31,8 +44,13 @@ class CpEmbedGallery extends HTMLElement {
 
   _loadData() {
     const el = document.getElementById('cp-embed-data-' + this.dataset.blockId);
-    if (!el) return null;
-    try { return JSON.parse(el.textContent); } catch (_) { return null; }
+    if (!el) { console.warn(CP_LOG, 'data <script> not found for block', this.dataset.blockId); return null; }
+    try {
+      return JSON.parse(el.textContent);
+    } catch (err) {
+      console.error(CP_LOG, 'JSON parse failed:', err, '\nraw:', el.textContent);
+      return null;
+    }
   }
 
   /* ---------- variant detection (theme-agnostic) ---------- */
@@ -102,13 +120,15 @@ class CpEmbedGallery extends HTMLElement {
     const images = this._data[id];
 
     if (!images || images.length === 0) {
-      // No variant gallery — restore native gallery.
+      // No variant gallery for this variant — restore native gallery.
+      console.info(CP_LOG, 'variant', id, 'has NO metafield images — restoring native gallery (this is why all images show: the metafield is empty for this variant or the id key does not match).');
       this.style.display = 'none';
       this._showNative();
       return;
     }
 
     // Has variant gallery — hide native, render ours.
+    console.info(CP_LOG, 'variant', id, 'has', images.length, 'metafield image(s) — hiding native, rendering custom gallery.');
     this._hideNative();
     this.style.display = 'block';
     this._render(images);

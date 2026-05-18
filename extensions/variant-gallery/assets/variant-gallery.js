@@ -1,5 +1,8 @@
+const CP_LOG = '[cp-variant-gallery]';
+
 class CpVariantGallery extends HTMLElement {
   connectedCallback() {
+    console.info(CP_LOG, 'connected. block:', this.dataset.blockId, 'initial variant:', this.dataset.currentVariant);
     this._data       = this._loadData();
     this._mainImg    = this.querySelector('.cp-gallery__main-image');
     this._currentId  = this.dataset.currentVariant ? String(this.dataset.currentVariant) : null;
@@ -10,8 +13,15 @@ class CpVariantGallery extends HTMLElement {
 
   _loadData() {
     const el = document.getElementById('cp-gallery-data-' + this.dataset.blockId);
-    if (!el) return {};
-    try { return JSON.parse(el.textContent); } catch (_) { return {}; }
+    if (!el) { console.warn(CP_LOG, 'data <script> not found for block', this.dataset.blockId); return {}; }
+    try {
+      const parsed = JSON.parse(el.textContent);
+      console.info(CP_LOG, 'data parsed. variant ids:', Object.keys(parsed));
+      return parsed;
+    } catch (err) {
+      console.error(CP_LOG, 'JSON parse failed:', err, '\nraw:', el.textContent);
+      return {};
+    }
   }
 
   /* ---------- variant detection (theme-agnostic) ---------- */
@@ -60,7 +70,10 @@ class CpVariantGallery extends HTMLElement {
 
   _onVariantMaybeChanged() {
     const id = this._resolveVariantId();
-    if (id && id !== this._currentId) this._switchVariant(id);
+    if (id && id !== this._currentId) {
+      console.info(CP_LOG, 'variant change detected:', this._currentId, '->', id);
+      this._switchVariant(id);
+    }
   }
 
   /* ---------- rendering ---------- */
@@ -88,12 +101,14 @@ class CpVariantGallery extends HTMLElement {
     this._currentId = id;
     const images = this._data[id];
     const inner  = this.querySelector('.cp-gallery__inner');
-    if (!inner) return;
+    if (!inner) { console.warn(CP_LOG, 'no .cp-gallery__inner'); return; }
 
     if (!images || images.length === 0) {
+      console.info(CP_LOG, 'no images for variant', id, '— clearing custom gallery');
       inner.innerHTML = '';
       return;
     }
+    console.info(CP_LOG, 'rendering', images.length, 'image(s) for variant', id);
 
     const first = images[0];
 
