@@ -80,9 +80,49 @@ interface ShopRow {
   storageMB: number;
 }
 
+interface AuditRow {
+  id: string;
+  shop: string;
+  requestType: string;
+  status: string;
+  customerEmail: string | null;
+  error: string | null;
+  requestedAt: string;
+  completedAt: string;
+}
+
 type LoaderData =
   | { authed: false; configured: boolean }
-  | { authed: true; rows: ShopRow[] };
+  | { authed: true; rows: ShopRow[]; audits: AuditRow[] };
+
+async function loadAuditRows(): Promise<AuditRow[]> {
+  // GdprAuditLog überlebt redactShopData bewusst (3-Jahres-Aufbewahrung).
+  // Hier separat anzeigen, da der Shop sonst nach Löschung nirgends auftaucht.
+  const logs = await db.gdprAuditLog.findMany({
+    orderBy: { requestedAt: 'desc' },
+    take: 200,
+    select: {
+      id: true,
+      shop: true,
+      requestType: true,
+      status: true,
+      customerEmail: true,
+      error: true,
+      requestedAt: true,
+      completedAt: true,
+    },
+  });
+  return logs.map((l) => ({
+    id: l.id,
+    shop: l.shop,
+    requestType: l.requestType,
+    status: l.status,
+    customerEmail: l.customerEmail,
+    error: l.error,
+    requestedAt: l.requestedAt.toISOString(),
+    completedAt: l.completedAt.toISOString(),
+  }));
+}
 
 async function loadShopRows(): Promise<ShopRow[]> {
   // Shop-Liste aus allen Quellen zusammenführen — ein Shop kann existieren
@@ -155,9 +195,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }
-  const rows = await loadShopRows();
+  const [rows, audits] = await Promise.all([loadShopRows(), loadAuditRows()]);
   return json<LoaderData>(
-    { authed: true, rows },
+    { authed: true, rows, audits },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 };
@@ -427,7 +467,7 @@ export default function AdminPage() {
     return <LoginView configured={data.configured} />;
   }
 
-  const { rows } = data;
+  const { rows, audits } = data;
   return (
     <div style={PAGE}>
       <div
@@ -523,6 +563,74 @@ export default function AdminPage() {
               </tr>
             ) : (
               rows.map((r) => <ShopRowView key={r.shop} row={r} />)
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <h2 style={{ fontSize: 18, margin: '28px 0 4px' }}>
+        GDPR-Audit-Log
+      </h2>
+      <p style={{ color: '#5c5f62', marginTop: 0, fontSize: 13 }}>
+        Letzte {audits.length} Einträge. Diese Tabelle überlebt das Löschen
+        bewusst (3-Jahres-Aufbewahrung) — hier siehst du auch bereits
+        vollständig gelöschte Shops.
+      </p>
+      <div
+        style={{
+          overflowX: 'auto',
+          border: '1px solid #e1e3e5',
+          borderRadius: 6,
+        }}
+      >
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={TH}>Shop</th>
+              <th style={TH}>Typ</th>
+              <th style={TH}>Status</th>
+              <th style={TH}>Kunde</th>
+              <th style={TH}>Zeitpunkt</th>
+              <th style={TH}>Fehler</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audits.length === 0 ? (
+              <tr>
+                <td style={TD} colSpan={6}>
+                  Keine Audit-Einträge.
+                </td>
+              </tr>
+            ) : (
+              audits.map((a) => (
+                <tr key={a.id}>
+                  <td style={TD}>
+                    <strong>{a.shop}</strong>
+                  </td>
+                  <td style={TD}>{a.requestType}</td>
+                  <td style={TD}>
+                    <span
+                      style={{
+                        color: a.status === 'completed' ? '#108043' : '#bf0711',
+                      }}
+                    >
+                      {a.status}
+                    </span>
+                  </td>
+                  <td style={TD}>{a.customerEmail ?? '—'}</td>
+                  <td style={TD}>{a.requestedAt.replace('T', ' ').slice(0, 19)}</td>
+                  <td
+                    style={{
+                      ...TD,
+                      whiteSpace: 'normal',
+                      maxWidth: 360,
+                      color: '#bf0711',
+                    }}
+                  >
+                    {a.error ?? ''}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
