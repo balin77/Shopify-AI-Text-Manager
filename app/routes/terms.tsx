@@ -92,10 +92,10 @@ export default function TermsOfService() {
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.1 Plans</h3>
         <p>The App offers multiple subscription plans:</p>
         <ul style={{ marginLeft: '20px' }}>
-          <li><strong>Free Plan:</strong> Limited features (15 products)</li>
-          <li><strong>Basic Plan:</strong> €9.90/month (50 products)</li>
-          <li><strong>Pro Plan:</strong> €19.90/month (150 products)</li>
-          <li><strong>Max Plan:</strong> €49.90/month (unlimited products)</li>
+          <li><strong>Free Plan:</strong> Limited features (50 products, unlimited languages)</li>
+          <li><strong>Basic Plan:</strong> €9.90/month (100 products, unlimited languages)</li>
+          <li><strong>Pro Plan:</strong> €19.90/month (500 products, unlimited languages)</li>
+          <li><strong>Max Plan:</strong> €59.90/month (2,500 products, unlimited languages)</li>
         </ul>
 
         <h3 style={{ fontSize: '1.4rem', marginTop: '20px', marginBottom: '10px' }}>4.2 Billing</h3>
