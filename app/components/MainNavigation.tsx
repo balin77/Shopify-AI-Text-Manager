@@ -521,6 +521,22 @@ export function MainNavigation() {
                         >
                           <span style={{ flex: 1, color: "#202223" }}>
                             {infoBox.message}
+                            {infoBox.link && (
+                              <>
+                                {" "}
+                                <a
+                                  href={infoBox.link.url}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    navigate(infoBox.link!.url);
+                                  }}
+                                  style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600 }}
+                                >
+                                  {infoBox.link.label}
+                                </a>
+                              </>
+                            )}
                           </span>
                           {messageHistory.length > 1 && (
                             <span style={{
@@ -647,6 +663,19 @@ export function MainNavigation() {
                             <Text as="p" variant="bodySm">
                               {entry.message}
                             </Text>
+                            {entry.link && (
+                              <a
+                                href={entry.link.url}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  navigate(entry.link!.url);
+                                  closePopover();
+                                }}
+                                style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600, fontSize: "13px" }}
+                              >
+                                {entry.link.label}
+                              </a>
+                            )}
                           </div>
                           <Text as="span" variant="bodySm" tone="subdued">
                             {formatTime(entry.timestamp)}

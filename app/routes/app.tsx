@@ -174,39 +174,52 @@ function AppContent() {
 
   // Check API key on mount and show warning in InfoBox if missing
   useEffect(() => {
-    if (!aiSettings || !aiSettings.preferredProvider) return;
+    if (!aiSettings) return;
 
-    // Check if preferred provider has an API key using boolean flags
-    const provider = aiSettings.preferredProvider.toLowerCase();
-    let hasApiKey = false;
+    const hasAnyKey =
+      aiSettings.hasHuggingfaceApiKey ||
+      aiSettings.hasGeminiApiKey ||
+      aiSettings.hasClaudeApiKey ||
+      aiSettings.hasOpenaiApiKey ||
+      aiSettings.hasGrokApiKey ||
+      aiSettings.hasDeepseekApiKey;
 
-    switch (provider) {
-      case 'huggingface':
-        hasApiKey = aiSettings.hasHuggingfaceApiKey;
-        break;
-      case 'gemini':
-        hasApiKey = aiSettings.hasGeminiApiKey;
-        break;
-      case 'claude':
-        hasApiKey = aiSettings.hasClaudeApiKey;
-        break;
-      case 'openai':
-        hasApiKey = aiSettings.hasOpenaiApiKey;
-        break;
-      case 'grok':
-        hasApiKey = aiSettings.hasGrokApiKey;
-        break;
-      case 'deepseek':
-        hasApiKey = aiSettings.hasDeepseekApiKey;
-        break;
+    // Does the preferred provider (if one is selected) have a key?
+    let hasPreferredKey = false;
+    switch (aiSettings.preferredProvider?.toLowerCase()) {
+      case 'huggingface': hasPreferredKey = aiSettings.hasHuggingfaceApiKey; break;
+      case 'gemini': hasPreferredKey = aiSettings.hasGeminiApiKey; break;
+      case 'claude': hasPreferredKey = aiSettings.hasClaudeApiKey; break;
+      case 'openai': hasPreferredKey = aiSettings.hasOpenaiApiKey; break;
+      case 'grok': hasPreferredKey = aiSettings.hasGrokApiKey; break;
+      case 'deepseek': hasPreferredKey = aiSettings.hasDeepseekApiKey; break;
     }
 
-    if (!hasApiKey) {
+    // Nothing to warn about: the selected provider has a key. (When no
+    // provider is selected we still warn iff there is no key at all.)
+    if (aiSettings.preferredProvider && hasPreferredKey) return;
+    if (!aiSettings.preferredProvider && hasAnyKey) return;
+
+    const link = {
+      url: "/app/settings?tab=ai",
+      label: t.settings?.manageAiKeys || "Go to Settings",
+    };
+
+    if (!hasAnyKey) {
+      // No key anywhere — the merchant must set one up first.
+      showInfoBox(
+        t.settings?.noApiKeyAtAllDescription ||
+          "To use AI features, you first need to add an API key for an AI provider.",
+        "warning",
+        t.settings?.noApiKeyAtAll || "No AI API key set up yet",
+        link
+      );
+    } else {
+      // Keys exist, just not for the preferred provider.
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
       const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
-
-      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key");
+      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link);
     }
   }, [aiSettings, t, showInfoBox]);
 
