@@ -13,6 +13,12 @@ export interface InfoBoxHistoryEntry extends InfoBoxState {
   timestamp: Date;
 }
 
+export interface SyncProgressState {
+  phase: string | null;
+  percent: number;
+  error: string | null;
+}
+
 interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
   showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
@@ -23,6 +29,10 @@ interface InfoBoxContextType {
   unreadCount: number;
   markAllRead: () => void;
   clearHistory: () => void;
+  // Persistent initial-sync progress, rendered in the nav infobox slot
+  // (takes precedence over toasts, never auto-hides). null = no sync running.
+  syncProgress: SyncProgressState | null;
+  setSyncProgress: (p: SyncProgressState | null) => void;
 }
 
 const InfoBoxContext = createContext<InfoBoxContextType | undefined>(undefined);
@@ -33,6 +43,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const [globalLoadingMessage, setGlobalLoadingMessage] = useState<string | undefined>();
   const [messageHistory, setMessageHistory] = useState<InfoBoxHistoryEntry[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null);
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
   // Ref to access infoBox in hideInfoBox without adding it as a dependency
@@ -141,7 +152,9 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     unreadCount,
     markAllRead,
     clearHistory,
-  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory]);
+    syncProgress,
+    setSyncProgress,
+  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress]);
 
   return (
     <InfoBoxContext.Provider value={value}>

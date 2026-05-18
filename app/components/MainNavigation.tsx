@@ -23,7 +23,7 @@ export function MainNavigation() {
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
-  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory } = useInfoBox();
+  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress } = useInfoBox();
   const [popoverActive, setPopoverActive] = useState(false);
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
@@ -188,7 +188,7 @@ export function MainNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, [infoBox, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
+  }, [infoBox, syncProgress, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox/progress or loading indicator changes
 
   const togglePopover = useCallback(() => {
     setPopoverActive(prev => {
@@ -398,8 +398,62 @@ export function MainNavigation() {
             </div>
           )}
 
+          {/* Initial-sync progress — occupies the infobox slot until done */}
+          {syncProgress && (
+            <div className="nav-infobox-wrapper" style={{ flex: 1, maxWidth: "600px" }}>
+              <div
+                className="info-box"
+                role="status"
+                aria-live="polite"
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  backgroundColor: toneBg(syncProgress.error ? "critical" : "info"),
+                  border: `1px solid ${toneColor(syncProgress.error ? "critical" : "info")}`,
+                  fontSize: "14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.35rem",
+                }}
+              >
+                <span style={{ color: "#202223" }}>
+                  {syncProgress.error
+                    ? `${t.settings?.syncingContent || "Sync"}: ${syncProgress.error}`
+                    : `${t.settings?.syncingContent || "Setting up your store"}${
+                        syncProgress.phase
+                          ? ` — ${
+                              (t.settings as unknown as Record<string, string>)[
+                                `phase${syncProgress.phase.charAt(0).toUpperCase()}${syncProgress.phase.slice(1)}`
+                              ] || syncProgress.phase
+                            }`
+                          : ""
+                      } (${syncProgress.percent}%)`}
+                </span>
+                {!syncProgress.error && (
+                  <div
+                    style={{
+                      height: "4px",
+                      borderRadius: "2px",
+                      backgroundColor: "rgba(0,0,0,0.1)",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: "100%",
+                        width: `${syncProgress.percent}%`,
+                        backgroundColor: toneColor("info"),
+                        transition: "width 0.4s ease",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* InfoBox with Popover History */}
-          {(infoBox || messageHistory.length > 0) && (
+          {!syncProgress && (infoBox || messageHistory.length > 0) && (
             <div className="nav-infobox-wrapper" style={{ flex: 1, maxWidth: "600px" }}>
               <Popover
                 active={popoverActive}
