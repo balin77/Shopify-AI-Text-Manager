@@ -29,6 +29,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   const errors: string[] = [];
+  // Steps that already mutated Shopify, so a partial failure is traceable.
+  // Shopify offers no transaction across productCreateMedia / productReorderMedia /
+  // productVariantsBulkUpdate; on a mid-pipeline failure we abort early, skip the
+  // local DB write, and report what ran so the webhook drift-reconcile / a retry
+  // can resync.
+  //
+  // completedSteps semantics are deliberately ASYMMETRIC and mean "did this
+  // mutation change Shopify state", not "did it fully succeed":
+  //   - productCreateMedia is recorded when createdMedia.length > 0, i.e. even
+  //     on a partial/aborted createMedia (mediaUserErrors or count mismatch
+  //     followed by fail()) — because ≥1 media was already created on Shopify
+  //     and must be considered for resync.
+  //   - productReorderMedia / productVariantsBulkUpdate are recorded only when
+  //     they returned zero userErrors (a failed reorder/bulk-update did not
+  //     reliably mutate state).
+  // Consumers must treat completedSteps as a resync hint, not a success log.
+  //
+  // We intentionally do NOT wait for new media to leave PROCESSING — the
+  // MediaImage GID is permanent and stable from creation and is valid as a
+  // list.file_reference metafield value / mediaId even while still processing.
+  // Residual gap (out of scope, accepted): if Shopify later marks a media as
+  // FAILED, the metafield/mediaId points at an invalid media and this route
+  // does not detect it (no status poll) — left to the webhook drift-reconcile.
+  const completedSteps: string[] = [];
+  const fail = () => {
+    console.error("[update-variant-galleries] aborting with errors", { errors, completedSteps });
+    return json({ success: false, errors, completedSteps }, { status: 422 });
+  };
 
   // 1. Neue Bilder zu Produkt hinzufügen und GID-Mapping aufbauen
   // resourceUrl (staged upload URL) → Shopify MediaImage GID
@@ -54,11 +82,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const d = await r.json();
     console.log("[update-variant-galleries] productCreateMedia response", JSON.stringify(d, null, 2));
     const ue = d.data?.productCreateMedia?.mediaUserErrors ?? [];
-    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
+    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `createMedia: ${e.message}`));
 
-    // Map each resourceUrl to the GID of the newly created media (response order matches input order)
     const createdMedia: { id: string }[] = d.data?.productCreateMedia?.media ?? [];
     console.log("[update-variant-galleries] createdMedia", createdMedia);
+    if (createdMedia.length > 0) completedSteps.push("productCreateMedia");
+
+    // The resourceUrl→GID map below relies on response order matching input order.
+    // If the counts differ we cannot trust positional mapping — bail before any
+    // variant metafield write so we never point a metafield at the wrong image.
+    if (createdMedia.length !== newMedia.length) {
+      errors.push(
+        `createMedia: expected ${newMedia.length} created media, got ${createdMedia.length} — ` +
+        `aborting to avoid mapping variant galleries to the wrong images`
+      );
+    }
+    if (errors.length > 0) return fail();
+
+    // Map each resourceUrl to the GID of the newly created media (response order matches input order)
     newMedia.forEach((m, i) => {
       if (createdMedia[i]?.id) {
         resourceUrlToGid[m.resourceUrl] = createdMedia[i].id;
@@ -96,7 +137,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     const d = await r.json();
     const ue = d.data?.productReorderMedia?.userErrors ?? [];
-    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
+    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `reorder: ${e.message}`));
+    else completedSteps.push("productReorderMedia");
+    if (errors.length > 0) return fail();
   }
 
   console.log("[update-variant-galleries] resolvedVariantGalleries", resolvedVariantGalleries);
@@ -177,7 +220,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const d = await r.json();
     console.log("[update-variant-galleries] productVariantsBulkUpdate response", JSON.stringify(d, null, 2));
     const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
-    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => e.message));
+    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `variantsBulkUpdate: ${e.message}`));
+    else completedSteps.push("productVariantsBulkUpdate");
 
     if (errors.length === 0) {
       await Promise.all(resolvedVariantGalleries.map(vg => {
@@ -194,10 +238,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  if (errors.length > 0) {
-    console.error("[update-variant-galleries] finished with errors", errors);
-    return json({ success: false, errors }, { status: 422 });
-  }
-  console.log("[update-variant-galleries] success");
+  if (errors.length > 0) return fail();
+  console.log("[update-variant-galleries] success", { completedSteps });
   return json({ success: true });
 };

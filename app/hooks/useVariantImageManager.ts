@@ -170,6 +170,12 @@ export function useVariantImageManager() {
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
     setHasAltTextEdits(false);
+    // Clear data derived from the previous product so the bulk panels never match
+    // against stale variants/selection during the load window of the new product.
+    // missingMainImageProductIds is intentionally NOT reset — it is cross-product
+    // sidebar state; clearing it would drop markers for all other products.
+    setVariantsForBulk([]);
+    setSelectedGalleryGids([]);
     setResetCounter(c => c + 1);
   }, []);
 

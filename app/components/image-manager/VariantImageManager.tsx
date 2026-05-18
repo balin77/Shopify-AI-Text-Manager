@@ -145,6 +145,16 @@ export function VariantImageManager({
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+  // Monotonic token guarding against out-of-order /api/product-variants responses:
+  // a fast product switch can leave an earlier request in flight that resolves AFTER
+  // the newer one, overwriting the current product's variants with stale data.
+  // Residual (cosmetic, accepted): `variants` is not synchronously emptied on a
+  // product switch, so the previous product's galleries may flash for one render
+  // until the new fetch resolves. The bulk auto-assign path is NOT affected
+  // (parent-hook variantsForBulk is reset in useVariantImageManager.resetForProduct).
+  // A key={productId} remount was deliberately rejected (redundant reconcile
+  // calls on every product re-visit).
+  const variantsReqIdRef = useRef(0);
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
@@ -222,6 +232,8 @@ export function VariantImageManager({
   // (variants-only refresh, no pending-state reset). The resetState flag controls whether
   // pending galleries / selection / exclusions are cleared before fetching.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean) => {
+    const reqId = ++variantsReqIdRef.current;
+    const isStale = () => variantsReqIdRef.current !== reqId;
     setIsLoadingVariants(true);
     setVariantError(null);
     if (resetState) {
@@ -233,6 +245,9 @@ export function VariantImageManager({
     fetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(({ variants: raw, mediaMap, error }) => {
+        // A newer product was selected while this request was in flight — drop the
+        // result so it can't overwrite the current product's variants/galleries.
+        if (isStale()) return;
         if (error) { setVariantError(error); return; }
         if (mediaMap) setShopifyMediaMap(mediaMap);
         // Build URL→GID reverse map to resolve each variant's main image GID
@@ -287,8 +302,8 @@ export function VariantImageManager({
           }
         }
       })
-      .catch(() => setVariantError(t.imageManager.variantsLoadError))
-      .finally(() => setIsLoadingVariants(false));
+      .catch(() => { if (!isStale()) setVariantError(t.imageManager.variantsLoadError); })
+      .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

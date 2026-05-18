@@ -216,6 +216,30 @@ export function BulkImageUploadPanel({
   useEffect(() => { effectiveVariantsRef.current = effectiveVariants; }, [effectiveVariants]);
   useEffect(() => { matchModeRef.current = matchMode; }, [matchMode]);
 
+  // Re-run auto-assignment for not-yet-assigned items when fresh variants arrive.
+  // After a product switch variantsForBulk is briefly empty (reset in
+  // useVariantImageManager.resetForProduct), so items dropped during that load
+  // window resolve to "unassigned". Once the new product's variants load, retry
+  // those so they land on the correct variant. Manual and already-assigned items
+  // are left untouched. Mirrors the re-assign logic in handleMatchModeChange.
+  useEffect(() => {
+    if (effectiveVariants.length === 0) return;
+    onItemsChange(prev => {
+      let changed = false;
+      const next = prev.map(item => {
+        if (item.assignmentMode === "manual" || item.targetVariantId) return item;
+        const reassigned = autoAssign(item, effectiveVariants, matchMode);
+        if (reassigned.targetVariantId !== item.targetVariantId ||
+            reassigned.assignmentMode !== item.assignmentMode) {
+          changed = true;
+          return reassigned;
+        }
+        return item;
+      });
+      return changed ? next : prev;
+    });
+  }, [effectiveVariants, matchMode, onItemsChange]);
+
   const handleMatchModeChange = useCallback((newMode: MatchMode) => {
     setMatchMode(newMode);
     const next: Record<string, string> = {};
