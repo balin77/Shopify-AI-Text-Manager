@@ -1,25 +1,55 @@
-const CP_LOG = '[cp-variant-gallery]';
-
+/*
+ * App Block controller. The block lives inside the product section, so on
+ * themes that re-render the section via the Section Rendering API a fresh
+ * instance is created on every variant change. Each instance binds its own
+ * listeners/observer and tears them down in disconnectedCallback so the
+ * removed instances don't leak.
+ */
 class CpVariantGallery extends HTMLElement {
   connectedCallback() {
-    console.info(CP_LOG, 'connected. block:', this.dataset.blockId, 'initial variant:', this.dataset.currentVariant);
-    this._data       = this._loadData();
-    this._mainImg    = this.querySelector('.cp-gallery__main-image');
-    this._currentId  = this.dataset.currentVariant ? String(this.dataset.currentVariant) : null;
+    if (this._initialized) return;
+    this._initialized = true;
+    this._debug = this.dataset.debug === '1';
+    this._log('connected. block:', this.dataset.blockId, 'initial variant:', this.dataset.currentVariant);
+
+    this._data      = this._loadData();
+    this._mainImg   = this.querySelector('.cp-gallery__main-image');
+    this._currentId = this.dataset.currentVariant ? String(this.dataset.currentVariant) : null;
+
+    this._onVariantEvent = (e) => {
+      const id = e.detail && e.detail.variant && e.detail.variant.id;
+      if (id) this._switchVariant(id);
+    };
+    this._onMaybeChanged = () => this._onVariantMaybeChanged();
+    this._onChange = (e) => {
+      if (e.target && e.target.matches && e.target.matches('[name="id"]')) this._onVariantMaybeChanged();
+    };
 
     this._bindThumbs();
     this._watchVariant();
   }
 
+  disconnectedCallback() {
+    if (this._mo) { this._mo.disconnect(); this._mo = null; }
+    document.removeEventListener('variant:change', this._onVariantEvent);
+    document.removeEventListener('variant_change', this._onMaybeChanged);
+    document.removeEventListener('change', this._onChange, true);
+    window.removeEventListener('popstate', this._onMaybeChanged);
+    if (this._input) this._input.removeEventListener('input', this._onMaybeChanged);
+  }
+
+  _log(...args) { if (this._debug) console.info('[cp-variant-gallery]', ...args); }
+  _warn(...args) { if (this._debug) console.warn('[cp-variant-gallery]', ...args); }
+
   _loadData() {
     const el = document.getElementById('cp-gallery-data-' + this.dataset.blockId);
-    if (!el) { console.warn(CP_LOG, 'data <script> not found for block', this.dataset.blockId); return {}; }
+    if (!el) { this._warn('data <script> not found for block', this.dataset.blockId); return {}; }
     try {
       const parsed = JSON.parse(el.textContent);
-      console.info(CP_LOG, 'data parsed. variant ids:', Object.keys(parsed));
+      this._log('data parsed. variant ids:', Object.keys(parsed));
       return parsed;
     } catch (err) {
-      console.error(CP_LOG, 'JSON parse failed:', err, '\nraw:', el.textContent);
+      console.error('[cp-variant-gallery] JSON parse failed:', err);
       return {};
     }
   }
@@ -27,30 +57,18 @@ class CpVariantGallery extends HTMLElement {
   /* ---------- variant detection (theme-agnostic) ---------- */
 
   _watchVariant() {
-    const handler = () => this._onVariantMaybeChanged();
+    document.addEventListener('variant:change', this._onVariantEvent);
+    document.addEventListener('variant_change', this._onMaybeChanged);
+    document.addEventListener('change', this._onChange, true);
+    window.addEventListener('popstate', this._onMaybeChanged);
 
-    // Older themes that fire a DOM event.
-    document.addEventListener('variant:change', (e) => {
-      const id = e.detail && e.detail.variant && e.detail.variant.id;
-      if (id) this._switchVariant(id);
-    });
-    document.addEventListener('variant_change', handler);
-
-    // Universal fallback: native change on a variant selector.
-    document.addEventListener('change', (e) => {
-      if (e.target && e.target.matches && e.target.matches('[name="id"]')) handler();
-    });
-
-    // Modern Dawn sets input[name="id"].value programmatically (no change event)
-    // and updates the URL — observe both.
     const input = this._variantInput();
     if (input && 'MutationObserver' in window) {
-      this._mo = new MutationObserver(handler);
+      this._input = input;
+      this._mo = new MutationObserver(this._onMaybeChanged);
       this._mo.observe(input, { attributes: true, attributeFilter: ['value'] });
-      // <select> changes the selected option, not a value attribute.
-      input.addEventListener('input', handler);
+      input.addEventListener('input', this._onMaybeChanged);
     }
-    window.addEventListener('popstate', handler);
   }
 
   _variantInput() {
@@ -61,8 +79,7 @@ class CpVariantGallery extends HTMLElement {
     const input = this._variantInput();
     if (input && input.value) return String(input.value);
     try {
-      const url = new URL(window.location.href);
-      const v = url.searchParams.get('variant');
+      const v = new URL(window.location.href).searchParams.get('variant');
       if (v) return String(v);
     } catch (_) { /* noop */ }
     return null;
@@ -71,7 +88,7 @@ class CpVariantGallery extends HTMLElement {
   _onVariantMaybeChanged() {
     const id = this._resolveVariantId();
     if (id && id !== this._currentId) {
-      console.info(CP_LOG, 'variant change detected:', this._currentId, '->', id);
+      this._log('variant change:', this._currentId, '->', id);
       this._switchVariant(id);
     }
   }
@@ -100,21 +117,20 @@ class CpVariantGallery extends HTMLElement {
   }
 
   _switchVariant(variantId) {
-    const id     = String(variantId);
+    const id = String(variantId);
     this._currentId = id;
     const images = this._data[id];
     const inner  = this.querySelector('.cp-gallery__inner');
-    if (!inner) { console.warn(CP_LOG, 'no .cp-gallery__inner'); return; }
+    if (!inner) { this._warn('no .cp-gallery__inner'); return; }
 
     if (!images || images.length === 0) {
-      console.info(CP_LOG, 'no images for variant', id, '— clearing custom gallery');
+      this._log('no images for variant', id, '— clearing custom gallery');
       inner.innerHTML = '';
       return;
     }
-    console.info(CP_LOG, 'rendering', images.length, 'image(s) for variant', id);
+    this._log('rendering', images.length, 'image(s) for variant', id);
 
     const first = images[0];
-
     const mainHtml = `
       <div class="cp-gallery__main"${this._ratioStyle(first)}>
         ${this._mainImgHtml(first)}
@@ -126,6 +142,7 @@ class CpVariantGallery extends HTMLElement {
         <button
           class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
           type="button"
+          aria-label="Image ${i + 1}"
           data-src-sm="${img.src_400}"
           data-src-md="${img.src_800}"
           data-src-lg="${img.src_1200}"
@@ -144,10 +161,8 @@ class CpVariantGallery extends HTMLElement {
 
   // Reserve the box BEFORE the image loads so thumbnails never jump.
   _ratioStyle(img) {
-    const w = Number(img && img.w);
-    const h = Number(img && img.h);
-    if (w > 0 && h > 0) return ` style="aspect-ratio: ${w} / ${h};"`;
-    return '';
+    const w = Number(img && img.w), h = Number(img && img.h);
+    return (w > 0 && h > 0) ? ` style="aspect-ratio: ${w} / ${h};"` : '';
   }
 
   _mainImgHtml(img) {

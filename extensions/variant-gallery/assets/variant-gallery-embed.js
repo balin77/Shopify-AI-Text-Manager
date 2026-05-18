@@ -1,24 +1,46 @@
-const CP_LOG = '[cp-embed-gallery]';
-
+/*
+ * App Embed controller. The custom element stays where Shopify injects it
+ * (in <body>, outside the product section) so it survives Section Rendering
+ * API re-renders. The visible gallery is a separate "mount" node we keep
+ * placed right before the theme's native gallery. Everything is resolved
+ * fresh on every tick so it stays correct after AJAX variant changes that
+ * replace the product section.
+ */
 class CpEmbedGallery extends HTMLElement {
   connectedCallback() {
     if (this._initialized) return;
     this._initialized = true;
-    console.info(CP_LOG, 'connected. block:', this.dataset.blockId);
+    this._debug = this.dataset.debug === '1';
+    this._log('connected. block:', this.dataset.blockId);
+
+    this._onTick = this._tick.bind(this);
+    this._onTickRaw = () => this._schedule();
 
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => this._init());
+      document.addEventListener('DOMContentLoaded', () => this._init(), { once: true });
     } else {
       this._init();
     }
   }
 
-  _init() {
-    this._data      = this._loadData();
-    this._currentId = null;
+  disconnectedCallback() {
+    // The controller lives in <body> and is normally never removed; clean up
+    // defensively anyway so we never leak observers/listeners.
+    if (this._bodyMo) { this._bodyMo.disconnect(); this._bodyMo = null; }
+    clearTimeout(this._t);
+    document.removeEventListener('change', this._onChange, true);
+    document.removeEventListener('variant:change', this._onVariantEvent);
+    document.removeEventListener('variant_change', this._onTickRaw);
+    window.removeEventListener('popstate', this._onTickRaw);
+  }
 
-    // Build the selector list: the merchant-configured one first, then
-    // robust Dawn-compatible fallbacks.
+  _log(...args) { if (this._debug) console.info('[cp-embed-gallery]', ...args); }
+  _warn(...args) { if (this._debug) console.warn('[cp-embed-gallery]', ...args); }
+
+  _init() {
+    this._data = this._loadData();
+    if (!this._data) { this._warn('no/invalid variant data — aborting'); return; }
+
     const configured = this.dataset.nativeSelector && this.dataset.nativeSelector.trim();
     this._selectors = [
       configured,
@@ -28,112 +50,57 @@ class CpEmbedGallery extends HTMLElement {
       '.product__media-list',
     ].filter(Boolean);
 
-    console.info(CP_LOG, 'init. data:', !!this._data,
-      this._data ? 'variant ids: ' + JSON.stringify(Object.keys(this._data)) : '',
-      '| trying selectors:', JSON.stringify(this._selectors));
+    const scope = this.dataset.scopeSelector && this.dataset.scopeSelector.trim();
+    this._scopeSelector = scope || null;
 
-    if (!this._data) { console.warn(CP_LOG, 'no/invalid variant data — aborting'); return; }
+    this._state = { id: null, mode: null }; // mode: 'custom' | 'native'
 
-    // The native gallery may be deferred-loaded (this theme uses deferred
-    // loading), so it might not be in the DOM yet. Wait for it instead of
-    // giving up after one query.
-    this._whenNativeGallery((gallery) => {
-      this._nativeGallery = gallery;
-      console.info(CP_LOG, 'native gallery found:', gallery.tagName,
-        gallery.id ? '#' + gallery.id : '', gallery.className ? '.' + gallery.className.split(' ')[0] : '');
+    this._log('init. variant ids:', JSON.stringify(Object.keys(this._data)),
+      '| selectors:', JSON.stringify(this._selectors),
+      this._scopeSelector ? '| scope: ' + JSON.stringify(this._scopeSelector) : '');
 
-      gallery.parentNode.insertBefore(this, gallery);
-
-      const initialId = this._resolveVariantId();
-      console.info(CP_LOG, 'initial variant id resolved:', initialId);
-      if (initialId) this._switchVariant(initialId);
-
-      this._watchVariant();
-    });
-  }
-
-  _queryNative() {
-    for (const sel of this._selectors) {
-      let el = null;
-      try { el = document.querySelector(sel); } catch (_) { /* invalid selector */ }
-      if (el) return el;
-    }
-    return null;
-  }
-
-  _whenNativeGallery(cb) {
-    const found = this._queryNative();
-    if (found) { cb(found); return; }
-
-    let settled = false;
-    const finish = (el) => {
-      if (settled) return;
-      settled = true;
-      if (this._mo) { this._mo.disconnect(); this._mo = null; }
-      clearTimeout(this._to);
-      if (el) cb(el);
+    // Variant-change + section-re-render signals (all delegated/global so they
+    // survive section replacement).
+    this._onChange = (e) => {
+      if (e.target && e.target.matches && e.target.matches('[name="id"]')) this._schedule();
     };
+    this._onVariantEvent = (e) => {
+      const id = e.detail && e.detail.variant && e.detail.variant.id;
+      if (id) { this._wantId = String(id); this._schedule(); }
+    };
+    document.addEventListener('change', this._onChange, true);
+    document.addEventListener('variant:change', this._onVariantEvent);
+    document.addEventListener('variant_change', this._onTickRaw);
+    window.addEventListener('popstate', this._onTickRaw);
 
-    // Watch the DOM until the deferred-loaded gallery appears.
-    this._mo = new MutationObserver(() => {
-      const el = this._queryNative();
-      if (el) finish(el);
-    });
-    this._mo.observe(document.documentElement, { childList: true, subtree: true });
+    // Catches deferred-loaded galleries AND section re-renders on variant change.
+    this._bodyMo = new MutationObserver(() => this._schedule());
+    this._bodyMo.observe(document.body, { childList: true, subtree: true });
 
-    // Give up after 10s so we never observe forever.
-    this._to = setTimeout(() => {
-      if (settled) return;
-      console.warn(CP_LOG, 'native gallery NOT found after 10s with selectors',
-        JSON.stringify(this._selectors),
-        '— inspect the product gallery element and set its selector in the app embed settings.');
-      finish(null);
-    }, 10000);
+    this._tick();
   }
 
   _loadData() {
     const el = document.getElementById('cp-embed-data-' + this.dataset.blockId);
-    if (!el) { console.warn(CP_LOG, 'data <script> not found for block', this.dataset.blockId); return null; }
+    if (!el) { this._warn('data <script> not found for block', this.dataset.blockId); return null; }
     try {
       return JSON.parse(el.textContent);
     } catch (err) {
-      console.error(CP_LOG, 'JSON parse failed:', err, '\nraw:', el.textContent);
+      console.error('[cp-embed-gallery] JSON parse failed:', err);
       return null;
     }
   }
 
-  /* ---------- variant detection (theme-agnostic) ---------- */
+  /* ---------- variant id resolution ---------- */
 
-  _watchVariant() {
-    const handler = () => this._onVariantMaybeChanged();
-
-    document.addEventListener('variant:change', (e) => {
-      const id = e.detail && e.detail.variant && e.detail.variant.id;
-      if (id) this._switchVariant(id);
-    });
-    document.addEventListener('variant_change', handler);
-
-    document.addEventListener('change', (e) => {
-      if (e.target && e.target.matches && e.target.matches('[name="id"]')) handler();
-    });
-
-    // Modern Dawn sets input[name="id"].value programmatically (no change event)
-    // and updates the URL — observe both.
-    const input = this._variantInput();
-    if (input && 'MutationObserver' in window) {
-      this._mo = new MutationObserver(handler);
-      this._mo.observe(input, { attributes: true, attributeFilter: ['value'] });
-      input.addEventListener('input', handler);
-    }
-    window.addEventListener('popstate', handler);
-  }
-
-  _variantInput() {
-    return document.querySelector('[name="id"]');
+  _scopeRoot() {
+    if (!this._scopeSelector) return document;
+    try { return document.querySelector(this._scopeSelector) || document; } catch (_) { return document; }
   }
 
   _resolveVariantId() {
-    const input = this._variantInput();
+    if (this._wantId && this._data[this._wantId]) return this._wantId;
+    const input = this._scopeRoot().querySelector('[name="id"]');
     if (input && input.value) return String(input.value);
     try {
       const v = new URL(window.location.href).searchParams.get('variant');
@@ -142,53 +109,127 @@ class CpEmbedGallery extends HTMLElement {
     return null;
   }
 
-  _onVariantMaybeChanged() {
-    const id = this._resolveVariantId();
-    if (id && id !== this._currentId) this._switchVariant(id);
-  }
+  /* ---------- native gallery ---------- */
 
-  /* ---------- native gallery show / hide ---------- */
+  _queryNative() {
+    const root = this._scopeRoot();
+    for (const sel of this._selectors) {
+      let el = null;
+      try { el = root.querySelector(sel); } catch (_) { /* invalid selector */ }
+      if (el && el !== this._mount && !(this._mount && this._mount.contains(el))) return el;
+    }
+    return null;
+  }
 
   _extraEls() {
     const sel = (this.dataset.extraHide || '').trim();
     if (!sel) return [];
-    try { return Array.from(document.querySelectorAll(sel)); } catch (_) { return []; }
+    try { return Array.from(this._scopeRoot().querySelectorAll(sel)); } catch (_) { return []; }
   }
 
-  _hideNative() {
-    if (!this._nativeGallery) return;
-    this._nativeGallery.setAttribute('hidden', '');
-    this._nativeGallery.style.display = 'none';
+  _hideNative(native) {
+    native.setAttribute('hidden', '');
+    native.style.display = 'none';
     this._extraEls().forEach((el) => { el.setAttribute('hidden', ''); el.style.display = 'none'; });
   }
 
-  _showNative() {
-    if (!this._nativeGallery) return;
-    this._nativeGallery.removeAttribute('hidden');
-    this._nativeGallery.style.display = '';
+  _showNative(native) {
+    if (native) { native.removeAttribute('hidden'); native.style.display = ''; }
     this._extraEls().forEach((el) => { el.removeAttribute('hidden'); el.style.display = ''; });
+  }
+
+  _ensureMount(native) {
+    if (!this._mount || !this._mount.isConnected) {
+      this._mount = document.createElement('div');
+      this._mount.className = 'cp-embed-gallery';
+      const size = parseInt(this.dataset.thumbSize, 10);
+      if (size > 0) this._mount.style.setProperty('--cp-thumb-size', size + 'px');
+      this._mount.innerHTML = '<div class="cp-gallery__inner"></div>';
+      this._mountRendered = null;
+    }
+    // Keep it directly before the (possibly re-rendered) native gallery.
+    if (this._mount.nextElementSibling !== native || this._mount.parentNode !== native.parentNode) {
+      native.parentNode.insertBefore(this._mount, native);
+    }
+  }
+
+  _removeMount() {
+    if (this._mount && this._mount.isConnected) this._mount.remove();
+    this._mountRendered = null;
+  }
+
+  /* ---------- tick (idempotent) ---------- */
+
+  _schedule() {
+    clearTimeout(this._t);
+    this._t = setTimeout(this._onTick, 80);
+  }
+
+  _tick() {
+    if (!this._data) return;
+    const id = this._resolveVariantId();
+    const images = id ? this._data[id] : null;
+    const hasImages = Array.isArray(images) && images.length > 0;
+    const native = this._queryNative();
+
+    if (!native) {
+      // Gallery not in the DOM yet (deferred) — the observer will call us again.
+      return;
+    }
+
+    if (!hasImages) {
+      // No metafield images for this variant → make sure native is visible.
+      const alreadyNative =
+        this._state.mode === 'native' &&
+        (!this._mount || !this._mount.isConnected) &&
+        native.style.display !== 'none';
+      if (alreadyNative) return;
+      this._log('variant', id, '— no images, restoring native gallery');
+      this._removeMount();
+      this._showNative(native);
+      this._state = { id, mode: 'native' };
+      return;
+    }
+
+    // Has images → custom gallery in place, native hidden.
+    const upToDate =
+      this._state.id === id &&
+      this._state.mode === 'custom' &&
+      this._mount && this._mount.isConnected &&
+      this._mount.nextElementSibling === native &&
+      native.style.display === 'none' &&
+      this._mountRendered === id;
+    if (upToDate) return;
+
+    this._log('variant', id, '—', images.length, 'image(s); placing custom gallery');
+    this._ensureMount(native);
+    this._hideNative(native);
+    if (this._mountRendered !== id) {
+      this._render(images);
+      this._mountRendered = id;
+    }
+    this._state = { id, mode: 'custom' };
   }
 
   /* ---------- rendering ---------- */
 
-  _switchVariant(variantId) {
-    const id = String(variantId);
-    this._currentId = id;
-    const images = this._data[id];
+  _ratioStyle(img) {
+    const w = Number(img && img.w), h = Number(img && img.h);
+    return (w > 0 && h > 0) ? ` style="aspect-ratio: ${w} / ${h};"` : '';
+  }
 
-    if (!images || images.length === 0) {
-      // No variant gallery for this variant — restore native gallery.
-      console.info(CP_LOG, 'variant', id, 'has NO metafield images — restoring native gallery (this is why all images show: the metafield is empty for this variant or the id key does not match).');
-      this.style.display = 'none';
-      this._showNative();
-      return;
-    }
-
-    // Has variant gallery — hide native, render ours.
-    console.info(CP_LOG, 'variant', id, 'has', images.length, 'metafield image(s) — hiding native, rendering custom gallery.');
-    this._hideNative();
-    this.style.display = 'block';
-    this._render(images);
+  _mainImgHtml(img) {
+    const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
+    const h = Number(img && img.h) > 0 ? Number(img.h) : '';
+    return `<img
+          class="cp-gallery__main-image"
+          src="${img.src_800}"
+          srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
+          sizes="(min-width: 1024px) 50vw, 100vw"
+          alt="${this._esc(img.alt)}"
+          loading="eager"
+          width="${w}"${h ? ` height="${h}"` : ''}
+        >`;
   }
 
   _render(images) {
@@ -204,6 +245,7 @@ class CpEmbedGallery extends HTMLElement {
         <button
           class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
           type="button"
+          aria-label="Image ${i + 1}"
           data-src-sm="${img.src_400}"
           data-src-md="${img.src_800}"
           data-src-lg="${img.src_1200}"
@@ -215,7 +257,7 @@ class CpEmbedGallery extends HTMLElement {
       thumbsHtml = `<div class="cp-gallery__thumbs">${items}</div>`;
     }
 
-    const inner = this.querySelector('.cp-gallery__inner');
+    const inner = this._mount.querySelector('.cp-gallery__inner');
     if (inner) {
       inner.innerHTML = mainHtml + thumbsHtml;
       this._bindThumbs(inner);
@@ -225,9 +267,9 @@ class CpEmbedGallery extends HTMLElement {
   _bindThumbs(container) {
     container.querySelectorAll('.cp-gallery__thumb').forEach((thumb) => {
       thumb.addEventListener('click', () => {
-        const mainImg = this.querySelector('.cp-gallery__main-image');
+        const mainImg = this._mount.querySelector('.cp-gallery__main-image');
         if (!mainImg) return;
-        const mainBox = this.querySelector('.cp-gallery__main');
+        const mainBox = this._mount.querySelector('.cp-gallery__main');
         const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
         if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
         mainImg.src    = thumb.dataset.srcMd;
@@ -236,28 +278,6 @@ class CpEmbedGallery extends HTMLElement {
         thumb.classList.add('is-active');
       });
     });
-  }
-
-  // Reserve the box BEFORE the image loads so thumbnails never jump.
-  _ratioStyle(img) {
-    const w = Number(img && img.w);
-    const h = Number(img && img.h);
-    if (w > 0 && h > 0) return ` style="aspect-ratio: ${w} / ${h};"`;
-    return '';
-  }
-
-  _mainImgHtml(img) {
-    const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
-    const h = Number(img && img.h) > 0 ? Number(img.h) : '';
-    return `<img
-          class="cp-gallery__main-image"
-          src="${img.src_800}"
-          srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="${this._esc(img.alt)}"
-          loading="eager"
-          width="${w}"${h ? ` height="${h}"` : ''}
-        >`;
   }
 
   _esc(str) {

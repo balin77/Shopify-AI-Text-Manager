@@ -5,7 +5,15 @@ import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { useI18n } from "../contexts/I18nContext";
 
-const EXTENSION_UID = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73";
+/*
+ * Theme app extension UUID used for the theme-editor deep links. This is the
+ * `uid` from extensions/variant-gallery/shopify.extension.toml. It is a single
+ * source of truth committed in this repo, so it is identical for the dev and
+ * prod Shopify apps (both deploy the same extension source). If that ever
+ * changes (e.g. the extension is re-registered), pass the correct value via
+ * the optional `extensionUid` prop from a loader/env instead of editing this.
+ */
+const DEFAULT_EXTENSION_UID = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73";
 
 interface ImageManagerSettings {
   enabled: boolean;
@@ -15,13 +23,16 @@ interface ImageManagerSettings {
 interface Props {
   settings: ImageManagerSettings;
   shop: string;
+  /** Override the theme app extension UUID (e.g. wired from a loader/env). */
+  extensionUid?: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
   highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, highlightSaveButton = false }: Props) {
+export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasChangesChange, highlightSaveButton = false }: Props) {
   const { t } = useI18n();
-  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_UID}/variant-gallery-embed`;
+  const uid = extensionUid || DEFAULT_EXTENSION_UID;
+  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${uid}/variant-gallery-embed`;
   // Open the product template in the theme editor so the merchant can add
   // the block manually. We intentionally do NOT use `addAppBlockId` (auto-add):
   // the native gallery is part of the product-information section and the

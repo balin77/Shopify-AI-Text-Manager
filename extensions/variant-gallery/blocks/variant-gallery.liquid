@@ -39,19 +39,22 @@
           {%- endif -%}
           {%- if vg != blank and vg.value != blank -%}
             {%- for img in vg.value -%}
-              {%- if cp_has_any %},{% endif -%}
-              {%- assign cp_w = img.preview_image.width  | default: img.width -%}
-              {%- assign cp_h = img.preview_image.height | default: img.height -%}
-              {
-                "src_400":  {{ img | image_url: width: 400  | json }},
-                "src_800":  {{ img | image_url: width: 800  | json }},
-                "src_1200": {{ img | image_url: width: 1200 | json }},
-                "thumb":    {{ img | image_url: width: 160  | json }},
-                "w":        {{ cp_w | json }},
-                "h":        {{ cp_h | json }},
-                "alt":      {{ variant.title | json }}
-              }
-              {%- assign cp_has_any = true -%}
+              {%- assign cp_src = img | image_url: width: 800 -%}
+              {%- if cp_src != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {%- assign cp_w = img.preview_image.width  | default: img.width -%}
+                {%- assign cp_h = img.preview_image.height | default: img.height -%}
+                {
+                  "src_400":  {{ img | image_url: width: 400  | json }},
+                  "src_800":  {{ cp_src | json }},
+                  "src_1200": {{ img | image_url: width: 1200 | json }},
+                  "thumb":    {{ img | image_url: width: 160  | json }},
+                  "w":        {{ cp_w | json }},
+                  "h":        {{ cp_h | json }},
+                  "alt":      {{ variant.title | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
         ]{% unless forloop.last %},{% endunless %}
@@ -66,6 +69,7 @@
   style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px;"
   data-block-id="{{ block.id }}"
   data-current-variant="{{ current_variant.id }}"
+  data-debug="{% if block.settings.debug_logs %}1{% endif %}"
 >
   <div class="cp-gallery__inner">
     {%- if product == blank -%}
@@ -76,11 +80,15 @@
 
       {%- if current_variant.featured_image != blank -%}
         {%- assign main_img = current_variant.featured_image -%}
+        {%- assign main_w = current_variant.featured_image.width -%}
+        {%- assign main_h = current_variant.featured_image.height -%}
       {%- else -%}
         {%- assign main_img = gallery_mf.value | first -%}
+        {%- assign main_w = main_img.preview_image.width  | default: main_img.width -%}
+        {%- assign main_h = main_img.preview_image.height | default: main_img.height -%}
       {%- endif -%}
 
-      <div class="cp-gallery__main">
+      <div class="cp-gallery__main"{% if main_w and main_h %} style="aspect-ratio: {{ main_w }} / {{ main_h }};"{% endif %}>
         {{
           main_img
           | image_url: width: 800
@@ -102,6 +110,8 @@
             data-src-sm="{{ vfi | image_url: width: 400 | escape }}"
             data-src-md="{{ vfi | image_url: width: 800 | escape }}"
             data-src-lg="{{ vfi | image_url: width: 1200 | escape }}"
+            data-w="{{ vfi.width }}"
+            data-h="{{ vfi.height }}"
             aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: 1 }}"
           >
             {{ vfi | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
@@ -109,16 +119,23 @@
         {%- endif -%}
         {%- if has_gallery -%}
           {%- for img in gallery_mf.value -%}
-            <button
-              class="cp-gallery__thumb{% if forloop.first and current_variant.featured_image == blank %} is-active{% endif %}"
-              type="button"
-              data-src-sm="{{ img | image_url: width: 400 | escape }}"
-              data-src-md="{{ img | image_url: width: 800 | escape }}"
-              data-src-lg="{{ img | image_url: width: 1200 | escape }}"
-              aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
-            >
-              {{ img | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
-            </button>
+            {%- assign cp_src = img | image_url: width: 800 -%}
+            {%- if cp_src != blank -%}
+              {%- assign cp_w = img.preview_image.width  | default: img.width -%}
+              {%- assign cp_h = img.preview_image.height | default: img.height -%}
+              <button
+                class="cp-gallery__thumb{% if forloop.first and current_variant.featured_image == blank %} is-active{% endif %}"
+                type="button"
+                data-src-sm="{{ img | image_url: width: 400 | escape }}"
+                data-src-md="{{ cp_src | escape }}"
+                data-src-lg="{{ img | image_url: width: 1200 | escape }}"
+                data-w="{{ cp_w }}"
+                data-h="{{ cp_h }}"
+                aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
+              >
+                {{ img | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
+              </button>
+            {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
       </div>
@@ -159,6 +176,12 @@
       "max": 160,
       "step": 10,
       "default": 80
+    },
+    {
+      "type": "checkbox",
+      "id": "debug_logs",
+      "label": "Enable debug logging in browser console",
+      "default": false
     },
     {
       "type": "paragraph",
