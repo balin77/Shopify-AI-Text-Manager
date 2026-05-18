@@ -1,8 +1,12 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "@remix-run/react";
 import "@shopify/polaris/build/esm/styles.css";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Sentry } from "~/utils/sentry.client";
+
+export const links: LinksFunction = () => [
+  { rel: "icon", href: "/app-icon.png", type: "image/png" },
+];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const apiKey = process.env.SHOPIFY_API_KEY || "";
