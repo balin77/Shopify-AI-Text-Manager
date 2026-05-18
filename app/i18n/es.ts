@@ -251,6 +251,8 @@ export const es: Translation = {
     paginationOf: "de",
     paginationPrevious: "Anterior",
     paginationNext: "Siguiente",
+    planLimitReached: "Has alcanzado el máximo de {max} {items} para el plan {plan}.",
+    upgradeForMore: "Mejora a {plan} para obtener más {items}.",
     noResults: "No se encontraron elementos",
     selectItem: "Seleccionar elemento",
     // Field labels

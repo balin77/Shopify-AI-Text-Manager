@@ -119,6 +119,8 @@ interface UnifiedItemListProps {
     paginationOf?: string;
     paginationPrevious?: string;
     paginationNext?: string;
+    planLimitReached?: string;
+    upgradeForMore?: string;
   };
 }
 
@@ -554,11 +556,17 @@ export function UnifiedItemList({
               <Banner tone="warning">
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd">
-                    {planLimit.upgradeMessage || `You've reached the maximum of ${planLimit.maxItems} ${resourceName.plural.toLowerCase()} for the ${planLimit.currentPlan} plan.`}
+                    {planLimit.upgradeMessage ||
+                      (t.planLimitReached || "You've reached the maximum of {max} {items} for the {plan} plan.")
+                        .replace("{max}", String(planLimit.maxItems))
+                        .replace("{items}", resourceName.plural.toLowerCase())
+                        .replace("{plan}", planLimit.currentPlan)}
                   </Text>
                   {planLimit.nextPlan && (
                     <Text as="p" variant="bodySm">
-                      Upgrade to {planLimit.nextPlan} for more {resourceName.plural.toLowerCase()}.
+                      {(t.upgradeForMore || "Upgrade to {plan} for more {items}.")
+                        .replace("{plan}", planLimit.nextPlan)
+                        .replace("{items}", resourceName.plural.toLowerCase())}
                     </Text>
                   )}
                 </BlockStack>
