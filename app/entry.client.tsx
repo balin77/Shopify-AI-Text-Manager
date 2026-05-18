@@ -1,9 +1,13 @@
 import { RemixBrowser } from "@remix-run/react";
 import { startTransition } from "react";
 import { hydrateRoot } from "react-dom/client";
+import { initSentryClient } from "~/utils/sentry.client";
 
 // Filter out known third-party library warnings
 if (typeof window !== 'undefined') {
+  // No-op unless window.ENV.SENTRY_DSN is present (real production only).
+  initSentryClient();
+
   const originalWarn = console.warn;
   console.warn = (...args: any[]) => {
     const message = args[0]?.toString() || '';

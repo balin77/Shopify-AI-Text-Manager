@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { Banner, BlockStack, Text, Button, Card } from "@shopify/polaris";
+import { Sentry } from "~/utils/sentry.client";
 
 interface Props {
   children: ReactNode;
@@ -23,6 +24,10 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[AppErrorBoundary]", error, info.componentStack);
+    // No-op unless the client SDK was initialized (real production only).
+    Sentry.captureException(error, {
+      extra: { componentStack: info.componentStack },
+    });
   }
 
   private handleRetry = () => {

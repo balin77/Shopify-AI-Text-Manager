@@ -7,6 +7,10 @@ import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { logger } from "./utils/logger.server";
+import { initSentryServer, captureServerError } from "./utils/sentry.server";
+
+// No-op unless APP_ENV === "production" && SENTRY_DSN set. Initialized once.
+initSentryServer();
 
 const ABORT_DELAY = 5000;
 
@@ -85,6 +89,7 @@ export default async function handleRequest(
         },
         onShellError(error: unknown) {
           logger.error('Shell error', { context: 'EntryServer', error });
+          captureServerError(error, { context: 'EntryServer', phase: 'shell', pathname: url.pathname });
           reject(error);
         },
         onError(error: unknown) {
@@ -93,6 +98,7 @@ export default async function handleRequest(
           if (shellRendered) {
             logger.error('Post-shell render error', { context: 'EntryServer', error });
           }
+          captureServerError(error, { context: 'EntryServer', phase: 'render', pathname: url.pathname });
         },
       }
     );

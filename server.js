@@ -39,6 +39,38 @@ const {
 
 installGlobals();
 
+// Defensive process-level error reporting. Only active in real production
+// (APP_ENV === "production" + SENTRY_DSN); otherwise a complete no-op so the
+// dev/staging environment never sends events. Lazy + try/catch so a Sentry
+// load failure can never prevent the server from starting (mirrors the
+// server-logger fallback pattern above).
+let sentryNode = null;
+if (process.env.APP_ENV === "production" && process.env.SENTRY_DSN) {
+  try {
+    sentryNode = await import("@sentry/node");
+    sentryNode.init({
+      dsn: process.env.SENTRY_DSN,
+      environment:
+        process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || "production",
+      release:
+        process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
+      tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || "0"),
+      sendDefaultPii: false,
+    });
+    process.on("uncaughtException", (err) => {
+      try { sentryNode.captureException(err); } catch {}
+      serverLogger.error("[server.js] uncaughtException: " + (err?.stack || err));
+    });
+    process.on("unhandledRejection", (reason) => {
+      try { sentryNode.captureException(reason); } catch {}
+      serverLogger.error("[server.js] unhandledRejection: " + String(reason));
+    });
+    serverLogger.info("[server.js] Sentry initialized (production)");
+  } catch (e) {
+    serverLogger.error("[server.js] Sentry init skipped: " + e.message);
+  }
+}
+
 const viteDevServer =
   process.env.NODE_ENV === "production"
     ? undefined

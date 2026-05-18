@@ -107,6 +107,17 @@ if (process.env.SHOPIFY_SCOPES) {
   }
 }
 
+// Optional: Sentry status (never an error — purely informational)
+console.log('\n📡 Sentry error tracking:');
+if (!process.env.SENTRY_DSN) {
+  console.log('   deaktiviert (SENTRY_DSN nicht gesetzt)');
+} else if (process.env.APP_ENV !== 'production') {
+  console.log(`   deaktiviert (APP_ENV=${process.env.APP_ENV || 'not set'} ≠ "production") — DSN gesetzt, aber Gate greift. Genau so gewollt für Dev/Staging.`);
+} else {
+  console.log('   ✅ aktiv (APP_ENV=production + SENTRY_DSN gesetzt)');
+  console.log(`   Sourcemap-Upload: ${process.env.SENTRY_AUTH_TOKEN ? '✅ aktiv (SENTRY_AUTH_TOKEN gesetzt)' : 'deaktiviert (SENTRY_AUTH_TOKEN nicht gesetzt — Stacktraces bleiben minifiziert)'}`);
+}
+
 // Print results
 console.log('\n' + '='.repeat(60));
 if (errors.length > 0) {

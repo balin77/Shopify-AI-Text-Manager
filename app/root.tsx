@@ -2,12 +2,29 @@ import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRout
 import "@shopify/polaris/build/esm/styles.css";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
+import { Sentry } from "~/utils/sentry.client";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const apiKey = process.env.SHOPIFY_API_KEY || "";
 
+  // Hard gate: the Sentry DSN reaches the browser ONLY in real production
+  // (APP_ENV === "production" + SENTRY_DSN set). In dev/staging window.ENV
+  // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
+  const sentryActive =
+    process.env.APP_ENV === "production" && !!process.env.SENTRY_DSN;
+  const ENV = {
+    SENTRY_DSN: sentryActive ? process.env.SENTRY_DSN : undefined,
+    SENTRY_CLIENT_SAMPLE_RATE: process.env.SENTRY_CLIENT_SAMPLE_RATE,
+    SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
+    SENTRY_ENVIRONMENT:
+      process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV,
+    SENTRY_RELEASE:
+      process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA,
+  };
+
   return json({
     apiKey,
+    ENV,
   });
 };
 
@@ -15,10 +32,12 @@ function Document({
   children,
   title = "App",
   apiKey,
+  env,
 }: {
   children: React.ReactNode;
   title?: string;
   apiKey?: string;
+  env?: Record<string, string | undefined>;
 }) {
   return (
     <html lang="en">
@@ -41,6 +60,13 @@ function Document({
       <body>
         {children}
         <ScrollRestoration />
+        {env ? (
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `window.ENV=${JSON.stringify(env)}`,
+            }}
+          />
+        ) : null}
         <Scripts />
       </body>
     </html>
@@ -48,10 +74,10 @@ function Document({
 }
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, ENV } = useLoaderData<typeof loader>();
 
   return (
-    <Document apiKey={apiKey}>
+    <Document apiKey={apiKey} env={ENV}>
       <Outlet />
     </Document>
   );
@@ -65,6 +91,7 @@ export function ErrorBoundary() {
   } catch (e) {
     // If useRouteError fails (e.g., called outside router context),
     // render a generic error page
+    Sentry.captureException(e);
     return (
       <Document title="Error">
         <div style={{
@@ -104,6 +131,13 @@ export function ErrorBoundary() {
         </div>
       </Document>
     );
+  }
+
+  // Report real errors only. Expected route responses (404 etc.) are normal
+  // navigation, not bugs, and must not consume the Sentry quota — only 5xx
+  // route responses and genuine thrown errors are captured.
+  if (!isRouteErrorResponse(error) || error.status >= 500) {
+    Sentry.captureException(error);
   }
 
   if (isRouteErrorResponse(error)) {
