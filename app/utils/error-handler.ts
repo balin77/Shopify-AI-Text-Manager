@@ -6,6 +6,7 @@
  */
 
 import { logger } from '~/utils/logger.server';
+import { captureServerError } from '~/utils/sentry.server';
 
 /**
  * Generic error messages for different error types
@@ -69,6 +70,11 @@ export function logError(error: Error | SafeError, context?: Record<string, any>
     }),
     context,
   });
+
+  // Central choke-point for server error reporting. captureServerError is a
+  // no-op unless APP_ENV === "production" + SENTRY_DSN, and it skips expected
+  // 4xx SafeErrors so the free-tier quota is not consumed by normal user input.
+  captureServerError(error, context);
 }
 
 /**
