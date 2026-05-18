@@ -106,11 +106,27 @@
 | **Checkout-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
 
-**Preise der Wettbewerber:**
-- Transcy: Free / $11.90 / $29.90 / $59.90 pro Monat
-- Weglot: Ab $15/Monat
-- LangShop: Free / $9.99+ pro Monat
-- T Lab: Free / $9.99+ pro Monat
+**Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
+
+| App | Free | Einstieg | Mitte | Top | Rating (Reviews) |
+|-----|------|----------|-------|-----|------------------|
+| Transcy | ✅ | $14.90 | $29 | $69 | 4.4 (2.480) |
+| Weglot | ✅ (2k Wörter) | $17 | $32 | $87 | 4.5 (816) |
+| LangShop | ✅ (50 Prod.) | $10 | $40 | $75 | 4.5 (451) |
+| T Lab | ✅ | $11.99 | $29.99 | $59.99 | 4.9 (933) |
+| langify | ✅ (manuell) | $17.50 | $29.95 | $59.95 | 4.7 (712) |
+| GTranslate | ✅ | $9.99 | $19.99 | $29.99 | 4.7 (659) |
+| Hextom | ✅ | $9.99 | ~$19.99 | $49.99 | 4.7 (1.184) |
+| Shopify Translate & Adapt | ✅ vollständig gratis | — | — | — | 4.5 (1.424) |
+| **ContentPilot (wir)** | ✅ (50 Prod., ∞ Spr.) | €9.90 | €19.90 | €59.90 | — |
+
+> Markt: ~150 Apps in *Currency & Translation* (inkl. Währung/Geolocation),
+> davon ~40–60 reine Übersetzungs-Apps. Wettbewerber staffeln nach **Sprachen**
+> bzw. **Wörtern** (Weglot); wir nach **Produkten**. Da unser AI-Token-Kosten
+> beim Merchant liegen (BYO-Key), ist unsere Locale-Großzügigkeit (**unbegrenzt
+> Sprachen ab €0/€9.90** vs. LangShop $40 / Weglot $32 für nur 3) ein echter,
+> bislang unkommunizierter USP. Detaillierte Limit-Kritik → `ROADMAP.md`
+> §Limit-Review.
 
 ### 2.2 SEO-Apps
 
@@ -124,8 +140,8 @@
 | **Rich Snippets** | ❌ | ✅ | ✅ | ✅ |
 | **Google Search Console** | ❌ | ✅ | ❌ | ✅ |
 | **Google Analytics** | ❌ | ❌ | ❌ | ✅ |
-| **Page Speed Optimization** | ❌ | ❌ | ✅ | ❌ |
-| **Image Compression** | ❌ | ❌ | ✅ | ✅ |
+| **Page Speed Optimization** | ⚠️ teilw. | ❌ | ✅ | ❌ |
+| **Image Compression** | ✅ (WebP ab Pro) | ❌ | ✅ | ✅ |
 | **Broken Link Detection** | ❌ | ❌ | ✅ | ❌ |
 | **Auto-Redirect 404** | ❌ | ❌ | ✅ | ❌ |
 | **Sitemap Generation** | ❌ | ❌ | ✅ | ✅ |
@@ -329,7 +345,7 @@ Warum wichtig:
 | # | Feature | Impact | Aufwand | Wettbewerber |
 |---|---------|--------|---------|--------------|
 | 12 | **Page Speed Optimization** | Mittel | Hoch | SEOWILL |
-| 13 | **Image Compression** | Mittel | Mittel | SEOWILL, StoreSEO |
+| ~~13~~ | ~~**Image Compression**~~ ✅ **bereits abgedeckt** via WebP-Konvertierung ab Pro (`webp-processor.service.js`) — kein Gap | — | — | — |
 | 14 | **Auto-Generate bei neuem Produkt** | Mittel | Niedrig | ChatGPT-AI |
 | 15 | **Keyword Research/Tracking** | Niedrig | Mittel | Yoast, SEOWILL, StoreSEO |
 | 16 | **Third-Party-App-Übersetzung** | Niedrig | Hoch | Transcy, Weglot, LangShop |
@@ -349,6 +365,82 @@ Warum wichtig:
 | 23 | AMP Support | Niedrig | Hoch | SEOWILL |
 | 24 | Bild-Übersetzung (OCR) | Niedrig | Hoch | Transcy |
 | 25 | Google Analytics Integration | Niedrig | Mittel | StoreSEO |
+
+---
+
+## 3.5 Gap-Kontext & Priorisierung (Stand 2026-05)
+
+> ⏸️ **Status: NICHT eingeplant.** Erst Bugfixes, dann Feature-Arbeit. Dieser
+> Abschnitt hält nur den Kontext fest, damit nichts verloren geht — keine
+> Umsetzungs-Zusage.
+>
+> **Limit-Befunde 1–4 sind alle erledigt** (Commit `1327432`, 2026-05):
+> Befund 3 = `monthlyImageOperations`-Quota (Free/Basic 0, Pro 2000, Max
+> 10000), erzwungen an `api.staged-upload`/`api.convert-webp`. Befund 4 =
+> Pro/Max kosten-aligned differenziert über Bild-Quota **+ WebP-Parallelität
+> gespreizt (Pro 2 / Max 6)**, zentralisiert in `config/webp-concurrency.js`
+> (Drift-Bug behoben). Details → `ROADMAP.md` §Limit-Review.
+
+### 🔴 Kritisch
+
+**1. Language/Currency-Switcher-Widget (Storefront).** Sichtbare Theme-
+Komponente (Dropdown/Flaggen), mit der der *Endkunde* Sprache/Währung wählt.
+Ohne sie sieht der Besucher die Übersetzung gar nicht (Shopify zeigt sonst nur
+die Primärsprache) → ohne Widget sind alle Übersetzungen für Kunden faktisch
+unsichtbar. Umsetzung = **Theme App Extension** (Pattern existiert bereits:
+`extensions/variant-gallery`). Höchster Aufwand, aber einzige *echte
+Funktionslücke*.
+
+**2. Glossar/Terminologie-Management.** Begriffsdatenbank pro Shop: „nie
+übersetzen" / „immer exakt so übersetzen". Verhindert inkonsistente AI-
+Übersetzung von Marken-/Fachbegriffen. Standard bei allen großen Translation-
+Apps. Umsetzung = Prisma-Tabelle + Settings-UI + Begriffe in den AI-Prompt
+injizieren. Mittlerer Aufwand, hoher Erwartungswert.
+
+**3. JSON-LD Structured Data.** Maschinenlesbares Markup (Product/Breadcrumb/
+Article/Review) → Rich Snippets in Google (Sterne, Preis, Verfügbarkeit) +
+Voraussetzung für Google Shopping. Wir generieren SEO-Titel/Meta schon, aber
+nicht den CTR-wirksamen strukturierten Teil. Umsetzung = Service, der JSON-LD
+aus vorhandenen Daten erzeugt und ins Theme injiziert.
+
+**4. Content-Templates/Vorlagen.** Wiederverwendbare Prompt-Vorlagen mit
+Platzhaltern (`{{product_name}}`, `{{category}}`). AI-Pipeline + Custom-
+Instructions existieren schon; Kern = Prisma-Tabelle + Editor-UI + Variablen-
+Substitution vor dem AI-Call. **Bestes Aufwand/Nutzen** und taugt zugleich als
+*zusätzliches* Pro/Max-Differenzial (Befund 4 ist bereits gelöst — Templates
+optional obendrauf, z. B. erst ab Pro).
+
+### 🟠 Hoch
+
+- **Geolocation Auto-Detect** — IP-basierte Auto-Sprach-/Währungswahl;
+  funktioniert nur sinnvoll *mit* #1 gekoppelt. Mittlerer Aufwand.
+- **Währungsumrechnung** — lokale Preise + Wechselkurse/Rundung. Hoher Aufwand,
+  eher Commodity; verschiebt Positionierung Richtung „Internationalisierungs-
+  Suite" (strategische Entscheidung, nicht nur Feature).
+- **AI Blog-Post-Generator** — ganze Artikel statt nur Beschreibungen. Niedriger
+  Aufwand (AI-Infra steht), guter Marketing-Hebel.
+- **Google Search Console Integration** — Indexierung/Klicks/Impressionen in der
+  App. Mittel; macht aus „Content-Ersteller" einen SEO-Feedback-Loop.
+- **Broken-Link-Detection & Auto-Redirect** — 404-Crawler + Auto-Redirects;
+  404er schaden Ranking. Mittlerer Aufwand.
+
+### 🟡/🟢 Niedrig
+Page-Speed, Auto-Generierung bei `products/create`, Keyword-Research, Third-
+Party-App-/Checkout-Übersetzung; optionale Differenzierer (AI-Bildgenerierung,
+Social/Email-Content, Image-to-Description, OCR). Nice-to-have, kein
+Kaufentscheidungs-Treiber. (Image Compression = ✅ via WebP, kein Gap.)
+
+### Strategisches Big Picture
+Schwächen = „Sichtbarkeit & SEO-Mechanik" (Switcher, Structured Data).
+Stärken = „AI-Qualität & Breite" (6 Provider, BYO-Key = ∞ günstige AI, Custom-
+Instructions, Bild-Tools, viele Content-Typen). → Kritische Lücken schließen,
+damit man nicht an Basis-Erwartungen scheitert; *vermarkten* aber die Stärken,
+die kein Übersetzungs-Konkurrent hat.
+
+**Empfohlene Reihenfolge (wenn Bugs erledigt):** #4 Templates (billig, nutzt
+vorhandene Infra, zusätzliches Pro/Max-Differenzial) → #1 Switcher-Widget
+(einzige echte Funktionslücke, Extension-Pattern existiert) → #2 Glossar +
+#3 JSON-LD parallel.
 
 ---
 
@@ -515,4 +607,6 @@ model ContentTemplate {
 | Datum | Änderung |
 |-------|----------|
 | 2026-01-27 | Initiale Erstellung der Wettbewerbsanalyse |
+| 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |
+| 2026-05-18 | §3.5-Banner nachgezogen: Limit-Befunde 1–4 alle erledigt (Commit 1327432) — Befund 4 via Bild-Quota + WebP-Spreizung Pro 2/Max 6; Template-Verweise auf „zusätzliches Differenzial" entschärft |
 
