@@ -16,7 +16,7 @@
 
 | Stufe | Anzah| Kernpunkte |
 |---|---|---|
-| 🔴 BLOCKER | 0 (✅ alle 4 behoben: B1–B4) | B1 `/api/update-plan` entfernt · B2 `APP_ENV`-Billing-Bypass entfernt · B3 Session-PII at rest verschlüsselt · B4 KI-Datenfluss via erzwungenem BYO-Key gelöst — verifiziert (Code-Review, typecheck, Unit-Tests grün) |
+| 🔴 BLOCKER | 0 (B1/B2/B4 behoben; **B3 als überzogen korrigiert**) | B1 `/api/update-plan` entfernt · B2 `APP_ENV`-Billing-Bypass entfernt · **B3 kein realer Vorfall — App nutzt nur Offline-Sessions, PII-Felder immer `null`; Befund herabgestuft** · B4 KI-Datenfluss via erzwungenem BYO-Key gelöst — verifiziert (Code-Review, typecheck, Unit-Tests grün) |
 | 🟠 RISIKO | 0 offen (✅ R1–R9 behoben) | R1/R2 Lösch-Bug+Vollständigkeit, R3 shop/redact-Retry+30-Tage-Reaper (inkl. Guard-Nachbesserung), R4 GdprAuditLog-3-Jahres-Job, R5 Trial angewandt, R6 hinfällig (nur Dummy-Keys), R7 REST-Client entfernt, R8 Privacy-Disclosure, **R9** Trial-Mehrfachvergabe via persistentem `trialConsumedAt`-Marker geschlossen |
 | 🟡 HINWEIS | 1 bewusst akzeptiert (✅ H1–H4, H6, H7 behoben) | H5 (Cancel-DB-Fehler-Support-Hinweis) bleibt per Entscheidung unverändert — reiner Edge-Case ohne Überberechnung |
 
@@ -109,18 +109,29 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   „Public-client_id ⇒ Modus `null` selbst mit gesetzter Spalte/Allowlist"; jede
   Aktivierung wird per `logger.warn('[DevPlanOverride] …')` protokolliert.
 
-### B3 — Session-PII (Vorname/Nachname/E-Mail) wird unverschlüsselt gespeichert — Doku behauptet das Gegenteil ✅ BEHOBEN
+### B3 — Session-PII unverschlüsselt — ✅ KORRIGIERT: Befund war überzogen, kein realer Vorfall
 
-- **Status:** Behoben (Commit `2a87f17`). `EncryptedPrismaSessionStorage`
-  ver-/entschlüsselt jetzt `associated_user.{first_name,last_name,email}` per
-  `encryptPII`/`decryptPII` in `storeSession`, `loadSession` und
-  `findSessionsByShop`. Idempotenz über `isEncrypted`-Guard (Altbestand/Backfill-
-  sicher); `onlineAccessInfo` wird vor Mutation deep-kopiert, sodass die
-  In-Memory-Session des Aufrufers nicht mit Ciphertext kontaminiert wird;
-  PII-Entschlüsselungsfehler werden nur geloggt und erzwingen **kein** Re-Auth
-  (anders als beim Token). Verifiziert per Code-Review + `npx tsc --noEmit` +
-  `encryption.test.ts` grün. Doku-Status in `docs/SESSION_PII_ENCRYPTION_SETUP.md`
-  ist damit zutreffend (vorher: falsch).
+- **⚠️ Korrektur des ursprünglichen Befunds (gegen Code verifiziert):** Dieser
+  Befund war **faktisch überzogen**. ContentPilot konfiguriert **keine
+  Online-Tokens** (`app/shopify.server.ts`: nur
+  `unstable_newEmbeddedAuthStrategy: true`, **kein** `useOnlineTokens`;
+  `Session.isOnline @default(false)`). `firstName/lastName/email/userId` werden
+  ausschließlich aus `onlineAccessInfo.associated_user` befüllt — das existiert
+  nur bei **Online**-Sessions. Da die App ausnahmslos **Offline**-Sessions
+  nutzt, sind diese Spalten **immer `null`**. Es gab daher **nie** eine reale
+  Klartext-PII-Speicherung; der „Blocker"-Charakter war unzutreffend.
+  (Faktisch ist die App bzgl. Buyer-PII Level 0.)
+- **Status:** Die wirklich relevante At-Rest-Verschlüsselung
+  (`accessToken`/`refreshToken`) war bereits **vor** B3 vorhanden. Die in
+  Commit `2a87f17` ergänzte PII-Ver-/Entschlüsselung in
+  `EncryptedPrismaSessionStorage` (`storeSession`/`loadSession`/
+  `findSessionsByShop`, idempotent via `isEncrypted`, deep-copy von
+  `onlineAccessInfo`, Fehler ⇒ nur Log, kein Re-Auth) bleibt als **harmloser,
+  defensiver No-Op** erhalten — wirkungslos auf `null`, aber sinnvolle
+  Zukunftsabsicherung, falls je Online-Tokens aktiviert werden. typecheck +
+  `encryption.test.ts` grün. `docs/SESSION_PII_ENCRYPTION_SETUP.md` wäre
+  präziser mit dem Zusatz „greift nur bei Online-Tokens; Standardbetrieb ist
+  offline ⇒ Felder null".
 - **Anforderung:** Protected-Customer-Data Level 1 — Verschlüsselung at rest & in
   transit; Datenschutz-Transparenz. (<https://shopify.dev/docs/apps/launch/protected-customer-data>)
 - **Dateien:** [app/utils/encrypted-session-storage.server.ts:24-47](app/utils/encrypted-session-storage.server.ts#L24-L47),
