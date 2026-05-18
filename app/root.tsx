@@ -3,6 +3,7 @@ import "@shopify/polaris/build/esm/styles.css";
 import type { LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Sentry } from "~/utils/sentry.client";
+import { sentryEnabled } from "~/utils/sentry-scrub.cjs";
 
 export const links: LinksFunction = () => [
   { rel: "icon", href: "/app-icon.png", type: "image/png" },
@@ -16,11 +17,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const isEmbedded = !new URL(request.url).pathname.startsWith("/admin");
   const apiKey = isEmbedded ? process.env.SHOPIFY_API_KEY || "" : "";
 
-  // Hard gate: the Sentry DSN reaches the browser ONLY in real production
-  // (APP_ENV === "production" + SENTRY_DSN set). In dev/staging window.ENV
+  // Hard gate: the Sentry DSN reaches the browser ONLY in real production.
+  // Use the SHARED sentryEnabled() (review H2 — no inline duplication left;
+  // single source of truth in sentry-scrub.cjs). In dev/staging window.ENV
   // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
-  const sentryActive =
-    process.env.APP_ENV === "production" && !!process.env.SENTRY_DSN;
+  const sentryActive = sentryEnabled();
   // Review H4: emit the Sentry block ONLY when active. When inactive, ENV is
   // empty so not even the environment name / commit SHA is exposed to the
   // browser, and window.ENV is omitted entirely (see Document).

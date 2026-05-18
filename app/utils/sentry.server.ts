@@ -84,14 +84,21 @@ export function initSentryServer(): void {
     // .env.production.template). Error tracking — our only goal here — does not.
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
     sendDefaultPii: false,
-    // R1: the default OnUncaughtException integration calls the fatal handler
-    // and exits the process even though server.js registers its own
-    // non-exiting handler — that would be a resilience regression vs. pre-
-    // Sentry behaviour. Console breadcrumbs (B2) are pure PII/noise on the
-    // free tier. Drop both.
+    // Drop, in order:
+    //  - OnUncaughtException (R1): its fatal handler would exit the process
+    //    despite server.js's own non-exiting handler.
+    //  - Console (B2): console.* breadcrumbs are pure PII/noise on free tier.
+    //  - LocalVariables/LocalVariablesAsync (RISIKO): attaches local variable
+    //    VALUES (decrypted keys/tokens/PII at crash time) to stack frames.
+    //    Disabling is also payload-shrinking → free-tier friendly. scrubEvent
+    //    additionally scrubs frame.vars as defense-in-depth.
     integrations: (defaults) =>
       defaults.filter(
-        (i) => i.name !== 'OnUncaughtException' && i.name !== 'Console',
+        (i) =>
+          i.name !== 'OnUncaughtException' &&
+          i.name !== 'Console' &&
+          i.name !== 'LocalVariables' &&
+          i.name !== 'LocalVariablesAsync',
       ),
     beforeSend: (event) => scrubEvent(event),
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),

@@ -96,13 +96,38 @@ function scrubEvent(event) {
     if (r.cookies) r.cookies = '[redacted]';
     if (r.headers) r.headers = scrubValue(r.headers);
     if (r.data) r.data = scrubValue(r.data);
+    // event.request.env carries REMOTE_ADDR/IP (the client IP — PII). It has
+    // near-zero debugging value here, and key/value scrubbing wouldn't catch a
+    // bare IP. Blank it entirely — defense-in-depth even with
+    // sendDefaultPii:false (review HINWEIS).
+    if (r.env) r.env = '[redacted]';
   }
 
   if (typeof event.message === 'string') event.message = redactString(event.message);
+  // Some SDK paths populate logentry instead of message.
+  if (event.logentry) {
+    if (typeof event.logentry.message === 'string') {
+      event.logentry.message = redactString(event.logentry.message);
+    }
+    if (event.logentry.params) event.logentry.params = scrubValue(event.logentry.params);
+  }
 
   if (event.exception && Array.isArray(event.exception.values)) {
     for (const ex of event.exception.values) {
-      if (ex && typeof ex.value === 'string') ex.value = redactString(ex.value);
+      if (!ex) continue;
+      if (typeof ex.value === 'string') ex.value = redactString(ex.value);
+      // RISIKO: the v8 LocalVariables(Async) default integration attaches
+      // local variable VALUES to stacktrace frames — a decrypted merchant API
+      // key / access token / PII held at crash time would otherwise be sent
+      // verbatim. We also disable that integration server-side, but scrub here
+      // too so any frame.vars from any source (incl. future SDK changes) is
+      // covered. This is the most likely residual GDPR leak post-fix.
+      const frames = ex.stacktrace && ex.stacktrace.frames;
+      if (Array.isArray(frames)) {
+        for (const f of frames) {
+          if (f && f.vars) f.vars = scrubValue(f.vars);
+        }
+      }
     }
   }
 

@@ -67,22 +67,38 @@ if (sentryScrub && sentryScrub.sentryEnabled()) {
         process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
       tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || "0"),
       sendDefaultPii: false,
-      // R1: prevent the default fatal OnUncaughtException handler from exiting
-      // the process — our own non-exiting handler below preserves the pre-
-      // Sentry "log & keep running" behaviour. Console breadcrumbs (B2) are
-      // PII/noise. Drop both.
+      // Drop OnUncaughtException (R1: would exit despite our handler below),
+      // Console (B2: PII/noise breadcrumbs), and LocalVariables(Async)
+      // (RISIKO: leaks local variable values — keys/tokens/PII — into stack
+      // frames; also shrinks payloads, free-tier friendly).
       integrations: (defaults) =>
         defaults.filter(
-          (i) => i.name !== "OnUncaughtException" && i.name !== "Console",
+          (i) =>
+            i.name !== "OnUncaughtException" &&
+            i.name !== "Console" &&
+            i.name !== "LocalVariables" &&
+            i.name !== "LocalVariablesAsync",
         ),
       // R2/B1/B2: identical redaction to the app's beforeSend.
       beforeSend: (event) => sentryScrub.scrubEvent(event),
       beforeBreadcrumb: (breadcrumb) => sentryScrub.scrubBreadcrumb(breadcrumb),
     });
+    // After an uncaughtException the process is in an undefined state — Node
+    // best practice (and the reviewer) say: capture, flush, then exit so
+    // Railway restarts a clean container. We override Sentry's own fatal
+    // handler (R1) precisely so we control the exit path here.
     process.on("uncaughtException", (err) => {
+      serverLogger.error("[server.js] uncaughtException (exiting): " + (err?.stack || err));
       try { sentryNode.captureException(err); } catch {}
-      serverLogger.error("[server.js] uncaughtException: " + (err?.stack || err));
+      // Flush queued events (2s cap), then exit non-zero regardless.
+      Promise.resolve(sentryNode.flush(2000)).catch(() => {}).finally(() => process.exit(1));
+      // Hard fallback in case flush() hangs past the cap.
+      setTimeout(() => process.exit(1), 2500).unref();
     });
+    // Unhandled rejections are usually less catastrophic; keep logging +
+    // capturing without exiting to avoid restart loops on transient async
+    // errors (the chosen option scoped the controlled exit to
+    // uncaughtException only).
     process.on("unhandledRejection", (reason) => {
       try { sentryNode.captureException(reason); } catch {}
       serverLogger.error("[server.js] unhandledRejection: " + String(reason));
