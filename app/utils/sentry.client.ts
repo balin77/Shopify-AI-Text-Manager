@@ -12,6 +12,7 @@
  */
 
 import * as Sentry from '@sentry/react';
+import { scrubEvent, scrubBreadcrumb } from '~/utils/sentry-scrub.cjs';
 
 let initialized = false;
 
@@ -45,6 +46,11 @@ export function initSentryClient(): void {
     sendDefaultPii: false,
     ignoreErrors: IGNORE_ERRORS,
     denyUrls: [/cdn\.shopify\.com/i, /app-bridge\.js/i],
+    // Review B2: the client previously had NO scrubbing at all. Use the exact
+    // same shared redaction as the server — the embedded-app URL carries
+    // id_token/hmac/shop, and console breadcrumbs leak the same.
+    beforeSend: (event) => scrubEvent(event),
+    beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
   });
 }
 

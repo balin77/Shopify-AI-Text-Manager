@@ -44,8 +44,19 @@ installGlobals();
 // dev/staging environment never sends events. Lazy + try/catch so a Sentry
 // load failure can never prevent the server from starting (mirrors the
 // server-logger fallback pattern above).
+// Shared gate + scrubbing — the SAME module the TS app uses, so events sent
+// from this early window are redacted identically (review R2/H2). Plain .cjs
+// so it loads via require() before the Remix build exists.
+let sentryScrub;
+try {
+  sentryScrub = require("./app/utils/sentry-scrub.cjs");
+} catch (e) {
+  sentryScrub = null;
+  serverLogger.error("[server.js] Failed to load sentry-scrub.cjs: " + e.message);
+}
+
 let sentryNode = null;
-if (process.env.APP_ENV === "production" && process.env.SENTRY_DSN) {
+if (sentryScrub && sentryScrub.sentryEnabled()) {
   try {
     sentryNode = await import("@sentry/node");
     sentryNode.init({
@@ -56,6 +67,17 @@ if (process.env.APP_ENV === "production" && process.env.SENTRY_DSN) {
         process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
       tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || "0"),
       sendDefaultPii: false,
+      // R1: prevent the default fatal OnUncaughtException handler from exiting
+      // the process — our own non-exiting handler below preserves the pre-
+      // Sentry "log & keep running" behaviour. Console breadcrumbs (B2) are
+      // PII/noise. Drop both.
+      integrations: (defaults) =>
+        defaults.filter(
+          (i) => i.name !== "OnUncaughtException" && i.name !== "Console",
+        ),
+      // R2/B1/B2: identical redaction to the app's beforeSend.
+      beforeSend: (event) => sentryScrub.scrubEvent(event),
+      beforeBreadcrumb: (breadcrumb) => sentryScrub.scrubBreadcrumb(breadcrumb),
     });
     process.on("uncaughtException", (err) => {
       try { sentryNode.captureException(err); } catch {}

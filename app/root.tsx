@@ -21,15 +21,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
   const sentryActive =
     process.env.APP_ENV === "production" && !!process.env.SENTRY_DSN;
-  const ENV = {
-    SENTRY_DSN: sentryActive ? process.env.SENTRY_DSN : undefined,
-    SENTRY_CLIENT_SAMPLE_RATE: process.env.SENTRY_CLIENT_SAMPLE_RATE,
-    SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
-    SENTRY_ENVIRONMENT:
-      process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV,
-    SENTRY_RELEASE:
-      process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA,
-  };
+  // Review H4: emit the Sentry block ONLY when active. When inactive, ENV is
+  // empty so not even the environment name / commit SHA is exposed to the
+  // browser, and window.ENV is omitted entirely (see Document).
+  const ENV = sentryActive
+    ? {
+        SENTRY_DSN: process.env.SENTRY_DSN,
+        SENTRY_CLIENT_SAMPLE_RATE: process.env.SENTRY_CLIENT_SAMPLE_RATE,
+        SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
+        SENTRY_ENVIRONMENT:
+          process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV,
+        SENTRY_RELEASE:
+          process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA,
+      }
+    : undefined;
 
   return json({
     apiKey,
