@@ -1,0 +1,199 @@
+{%- comment -%}
+  App Embed Block (target: body) — storefront language & currency switcher.
+
+  Uses Shopify's NATIVE `localization` object + the built-in `localization`
+  form so the customer's choice is applied and persisted by Shopify exactly
+  like the theme's own country/language selector (no admin API, no custom
+  scope). The control works WITHOUT JavaScript (plain <select> + submit
+  button); the accompanying JS only enhances it (auto-submit on change,
+  optional repositioning into the header/footer, localStorage breadcrumb).
+
+  Language and country are TWO SEPARATE `{% form 'localization' %}` forms —
+  that is Shopify's contract (mirrors Dawn). Each submission changes exactly
+  one dimension; currency follows the selected country (Shopify Markets).
+
+  Note: the Liquid `request` object exposes no query string, so `return_to`
+  is `request.path` (same as Shopify's own Dawn theme — query params are not
+  recoverable in Liquid).
+{%- endcomment -%}
+
+{%- liquid
+  assign pos = block.settings.position | default: 'floating-bottom-right'
+  assign style = block.settings.display_style | default: 'dropdown'
+  assign lang_count = localization.available_languages.size
+  assign country_count = localization.available_countries.size
+
+  assign show_lang_block = false
+  if block.settings.show_language and lang_count > 1
+    assign show_lang_block = true
+  endif
+
+  assign show_country_block = false
+  if block.settings.show_country and country_count > 1
+    assign show_country_block = true
+  endif
+
+  assign lang_form_id = 'cp-locale-lang-' | append: block.id
+  assign country_form_id = 'cp-locale-country-' | append: block.id
+-%}
+
+{%- if show_lang_block or show_country_block -%}
+<cp-locale-switcher
+  id="cp-locale-switcher-{{ block.id }}"
+  class="cp-locale-switcher cp-locale-switcher--{{ pos }} cp-locale-switcher--{{ style }}"
+  data-block-id="{{ block.id }}"
+  data-position="{{ pos }}"
+  data-container="{{ block.settings.container_selector | strip | escape }}"
+  data-debug="{% if block.settings.debug_logs %}1{% endif %}"
+  style="--cp-ls-bg: {{ block.settings.bg_color | escape }}; --cp-ls-fg: {{ block.settings.text_color | escape }}; --cp-ls-accent: {{ block.settings.accent_color | escape }};"
+>
+  <div class="cp-locale-switcher__inner">
+    {%- if show_lang_block -%}
+      {%- form 'localization', id: lang_form_id, class: 'cp-locale-switcher__form' -%}
+        <input type="hidden" name="return_to" value="{{ request.path | escape }}">
+        <label class="cp-locale-switcher__group">
+          <span class="cp-locale-switcher__label">{{ 'blocks.locale_switcher.language' | t }}</span>
+          <select
+            name="locale_code"
+            class="cp-locale-switcher__select"
+            data-kind="language"
+            aria-label="{{ 'blocks.locale_switcher.language' | t }}"
+          >
+            {%- for lang in localization.available_languages -%}
+              <option
+                value="{{ lang.iso_code }}"
+                {% if lang.iso_code == localization.language.iso_code %}selected{% endif %}
+              >{{ lang.endonym_name | capitalize }}</option>
+            {%- endfor -%}
+          </select>
+        </label>
+        <noscript>
+          <button type="submit" class="cp-locale-switcher__submit">
+            {{ 'blocks.locale_switcher.update' | t }}
+          </button>
+        </noscript>
+      {%- endform -%}
+    {%- endif -%}
+
+    {%- if show_country_block -%}
+      {%- form 'localization', id: country_form_id, class: 'cp-locale-switcher__form' -%}
+        <input type="hidden" name="return_to" value="{{ request.path | escape }}">
+        <label class="cp-locale-switcher__group">
+          <span class="cp-locale-switcher__label">{{ 'blocks.locale_switcher.country' | t }}</span>
+          <select
+            name="country_code"
+            class="cp-locale-switcher__select"
+            data-kind="country"
+            aria-label="{{ 'blocks.locale_switcher.country' | t }}"
+          >
+            {%- for c in localization.available_countries -%}
+              <option
+                value="{{ c.iso_code }}"
+                {% if c.iso_code == localization.country.iso_code %}selected{% endif %}
+              >{{ c.name }} ({{ c.currency.iso_code }} {{ c.currency.symbol }})</option>
+            {%- endfor -%}
+          </select>
+        </label>
+        <noscript>
+          <button type="submit" class="cp-locale-switcher__submit">
+            {{ 'blocks.locale_switcher.update' | t }}
+          </button>
+        </noscript>
+      {%- endform -%}
+    {%- endif -%}
+  </div>
+</cp-locale-switcher>
+
+{{ 'locale-switcher.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'locale-switcher.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Language & Currency Switcher",
+  "target": "body",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Visibility"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_language",
+      "label": "Show language selector",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_country",
+      "label": "Show country / currency selector",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "Placement"
+    },
+    {
+      "type": "select",
+      "id": "position",
+      "label": "Position",
+      "options": [
+        { "value": "floating-bottom-right", "label": "Floating — bottom right" },
+        { "value": "floating-bottom-left", "label": "Floating — bottom left" },
+        { "value": "floating-top-right", "label": "Floating — top right" },
+        { "value": "header", "label": "Inside header" },
+        { "value": "footer", "label": "Inside footer" }
+      ],
+      "default": "floating-bottom-right"
+    },
+    {
+      "type": "text",
+      "id": "container_selector",
+      "label": "Header/footer container selector (optional)",
+      "info": "CSS selector of the element to mount into when position is 'Inside header/footer'. Leave empty to auto-detect (<header> / <footer>)."
+    },
+    {
+      "type": "select",
+      "id": "display_style",
+      "label": "Style",
+      "options": [
+        { "value": "dropdown", "label": "Dropdowns" },
+        { "value": "compact", "label": "Compact (inline)" }
+      ],
+      "default": "dropdown"
+    },
+    {
+      "type": "header",
+      "content": "Appearance"
+    },
+    {
+      "type": "color",
+      "id": "bg_color",
+      "label": "Background",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Text",
+      "default": "#1a1a1a"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Accent / border",
+      "default": "#008060"
+    },
+    {
+      "type": "checkbox",
+      "id": "debug_logs",
+      "label": "Enable debug logging in browser console",
+      "default": false
+    },
+    {
+      "type": "paragraph",
+      "content": "Lets customers pick their language and country (currency follows the country via Shopify Markets). Enable once — no block placement needed. Translations are produced by ContentPilot AI; this widget makes them selectable on the storefront."
+    }
+  ]
+}
+{% endschema %}

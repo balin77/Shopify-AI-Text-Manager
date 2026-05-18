@@ -1,0 +1,9 @@
+{
+  "blocks": {
+    "locale_switcher": {
+      "language": "Language",
+      "country": "Country / currency",
+      "update": "Update"
+    }
+  }
+}
