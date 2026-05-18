@@ -181,6 +181,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     extraMissingPrimaryIds,
   } = props;
 
+  const { locale } = useI18n();
+
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
@@ -256,6 +258,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     singular: resourceNames[config.contentType === "pages" ? "pageSingular" : config.displayNameSingular.toLowerCase()] || config.displayNameSingular,
     plural: resourceNames[config.contentType] || config.displayName,
   };
+
+  // German always capitalizes nouns; English/Spanish lowercase them mid-sentence.
+  const itemNoun =
+    locale === "de"
+      ? translatedResourceName.plural
+      : translatedResourceName.plural.toLowerCase();
 
   // Transform items to UnifiedItem format (memoized to prevent re-render cascades)
   const unifiedItems: UnifiedItem[] = useMemo(() => {
@@ -473,6 +481,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             paginationNext: t.content?.paginationNext || "Next",
             planLimitReached: t.content?.planLimitReached,
             upgradeForMore: t.content?.upgradeForMore,
+            itemNoun,
           }}
           />
           </div>

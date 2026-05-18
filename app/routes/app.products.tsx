@@ -25,6 +25,7 @@ import { PRODUCTS_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
+import { getPlanDisplayName } from "../utils/planUtils";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
@@ -847,8 +848,8 @@ export default function ProductsPage() {
           planLimit={{
             isAtLimit: products.length >= maxProducts && maxProducts !== Infinity,
             maxItems: maxProducts,
-            currentPlan: plan,
-            nextPlan: getNextPlanUpgrade() || undefined,
+            currentPlan: getPlanDisplayName(plan),
+            nextPlan: (() => { const n = getNextPlanUpgrade(); return n ? getPlanDisplayName(n) : undefined; })(),
           }}
           revalidator={revalidator}
           sortOptions={[
