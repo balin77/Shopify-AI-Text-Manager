@@ -22,7 +22,11 @@ interface Props {
 export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, highlightSaveButton = false }: Props) {
   const { t } = useI18n();
   const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_UID}/variant-gallery-embed`;
-  const blockUrl = `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${EXTENSION_UID}/variant-gallery&target=mainSection`;
+  // Open the product template in the theme editor so the merchant can add
+  // the block manually. We intentionally do NOT use `addAppBlockId` (auto-add):
+  // the native gallery is part of the product-information section and the
+  // auto-add deep link fails ("There is a problem with this app block").
+  const blockUrl = `https://${shop}/admin/themes/current/editor?template=product`;
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });

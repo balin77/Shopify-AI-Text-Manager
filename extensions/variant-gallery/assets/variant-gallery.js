@@ -86,11 +86,11 @@ class CpVariantGallery extends HTMLElement {
 
   _activateThumb(thumb) {
     if (!this._mainImg) return;
-    this._mainImg.src    = thumb.dataset.src800;
+    this._mainImg.src    = thumb.dataset.srcMd;
     this._mainImg.srcset = [
-      thumb.dataset.src400  + ' 400w',
-      thumb.dataset.src800  + ' 800w',
-      thumb.dataset.src1200 + ' 1200w',
+      thumb.dataset.srcSm + ' 400w',
+      thumb.dataset.srcMd + ' 800w',
+      thumb.dataset.srcLg + ' 1200w',
     ].join(', ');
     this.querySelectorAll('.cp-gallery__thumb').forEach((t) => t.classList.remove('is-active'));
     thumb.classList.add('is-active');
@@ -131,9 +131,9 @@ class CpVariantGallery extends HTMLElement {
         <button
           class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
           type="button"
-          data-src-400="${img.src_400}"
-          data-src-800="${img.src_800}"
-          data-src-1200="${img.src_1200}"
+          data-src-sm="${img.src_400}"
+          data-src-md="${img.src_800}"
+          data-src-lg="${img.src_1200}"
         >
           <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
         </button>`).join('');

@@ -93,9 +93,9 @@
           <button
             class="cp-gallery__thumb is-active"
             type="button"
-            data-src-400="{{ vfi | image_url: width: 400 }}"
-            data-src-800="{{ vfi | image_url: width: 800 }}"
-            data-src-1200="{{ vfi | image_url: width: 1200 }}"
+            data-src-sm="{{ vfi | image_url: width: 400 | escape }}"
+            data-src-md="{{ vfi | image_url: width: 800 | escape }}"
+            data-src-lg="{{ vfi | image_url: width: 1200 | escape }}"
             aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: 1 }}"
           >
             {{ vfi | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
@@ -106,9 +106,9 @@
             <button
               class="cp-gallery__thumb{% if forloop.first and current_variant.featured_image == blank %} is-active{% endif %}"
               type="button"
-              data-src-400="{{ img | image_url: width: 400 }}"
-              data-src-800="{{ img | image_url: width: 800 }}"
-              data-src-1200="{{ img | image_url: width: 1200 }}"
+              data-src-sm="{{ img | image_url: width: 400 | escape }}"
+              data-src-md="{{ img | image_url: width: 800 | escape }}"
+              data-src-lg="{{ img | image_url: width: 1200 | escape }}"
               aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
             >
               {{ img | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
