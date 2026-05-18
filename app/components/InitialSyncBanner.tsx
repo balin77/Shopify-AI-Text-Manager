@@ -2,21 +2,23 @@
  * InitialSyncWatcher
  *
  * Headless poller (renders nothing). Mounted once in the app shell
- * (app.tsx → AppContent, inside InfoBoxProvider) so it survives in-app
- * navigation without resetting its poll state.
+ * (app.tsx → AppContent, inside InfoBoxProvider).
  *
- * It polls /api/sync-status and feeds progress into InfoBoxContext, which
- * renders it in the navigation's infobox slot (in place of toasts) until the
- * sync finishes. When the sync completes it triggers ONE loader revalidation
- * so freshly synced rows appear — no per-tick revalidation (that caused a
- * revalidation storm / "app unavailable" in the embedded app).
+ * Robustness:
+ *  - Seeds progress from the shell loader (app.tsx → initialSync) so the
+ *    banner shows immediately on any full document load / app reopen,
+ *    without waiting for the first poll.
+ *  - Runs ONE stable poll loop for the lifetime of the persistent shell
+ *    (deps []), so in-app navigation never tears it down / hides the banner.
+ *  - On completion it triggers ONE loader revalidation (no per-tick
+ *    revalidation — that caused a refetch storm / "app unavailable").
  *
  * Fast poll while syncing, slow heartbeat otherwise so a Settings "force
  * re-sync" (which re-sets needsSetup) is still picked up.
  */
 
 import { useEffect, useRef } from "react";
-import { useLocation, useRevalidator } from "@remix-run/react";
+import { useLocation, useRevalidator, useRouteLoaderData } from "@remix-run/react";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 
 interface SyncStatus {
@@ -35,26 +37,51 @@ export function InitialSyncBanner() {
   const location = useLocation();
   const revalidator = useRevalidator();
   const { setSyncProgress } = useInfoBox();
+  const rootData = useRouteLoaderData("routes/app") as
+    | { initialSync?: SyncStatus | null }
+    | undefined;
+
+  // Always fetch with the freshest Shopify params without re-subscribing.
+  const searchRef = useRef("");
+  searchRef.current = new URLSearchParams(location.search).toString();
+
   const inflightRef = useRef(false);
-  const intervalRef = useRef(IDLE_MS);
+  const intervalRef = useRef(FAST_MS);
   const wasSyncingRef = useRef(false);
 
+  // Seed once from the shell loader (instant render after reload/reopen).
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search).toString();
+    const s = rootData?.initialSync;
+    if (s && s.needsSetup) {
+      setSyncProgress({
+        phase: s.phase,
+        percent: Math.max(0, Math.min(100, s.percent || 0)),
+        error: s.error,
+        stats: s.stats ?? null,
+      });
+      wasSyncingRef.current = true;
+    }
+    // Mount-only seed; polling below keeps it fresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Single stable poll loop for the persistent shell's lifetime.
+  useEffect(() => {
+    let stopped = false;
     let timeoutId: ReturnType<typeof setTimeout>;
-    let cancelled = false;
 
     const poll = async () => {
-      if (cancelled || inflightRef.current) {
-        if (!cancelled) timeoutId = setTimeout(poll, intervalRef.current);
+      if (stopped) return;
+      if (inflightRef.current) {
+        timeoutId = setTimeout(poll, intervalRef.current);
         return;
       }
       inflightRef.current = true;
       try {
-        const res = await fetch(`/api/sync-status?${searchParams}`);
+        const res = await fetch(`/api/sync-status?${searchRef.current}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as SyncStatus;
-        if (cancelled) return;
+        if (stopped) return;
 
         if (data.needsSetup) {
           setSyncProgress({
@@ -79,18 +106,19 @@ export function InitialSyncBanner() {
         intervalRef.current = Math.min(intervalRef.current * 2, MAX_MS);
       } finally {
         inflightRef.current = false;
-        if (!cancelled) timeoutId = setTimeout(poll, intervalRef.current);
+        if (!stopped) timeoutId = setTimeout(poll, intervalRef.current);
       }
     };
 
     poll();
     return () => {
-      cancelled = true;
+      stopped = true;
       clearTimeout(timeoutId);
     };
-    // Re-arm only on shop/host change; revalidator/setSyncProgress are stable.
+    // Mount-once: do NOT depend on location — navigation must not tear this
+    // down (that hid the banner on every nav). searchRef stays current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search]);
+  }, []);
 
   return null;
 }

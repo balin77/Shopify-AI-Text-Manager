@@ -110,12 +110,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ? settings.seoTitleSuffix
       : "";
 
+    // Seed the initial-sync banner from the DB so it renders immediately on
+    // any full document load (reopen / hard reload) without waiting for the
+    // first client poll — the poll then keeps it fresh.
+    const installState = await db.shopInstallState.findUnique({
+      where: { shop: session.shop },
+      select: {
+        initialSyncCompletedAt: true,
+        initialSyncPhase: true,
+        initialSyncPercent: true,
+        initialSyncStats: true,
+        initialSyncError: true,
+      },
+    });
+    const initialSync = {
+      needsSetup: !installState?.initialSyncCompletedAt,
+      phase: installState?.initialSyncPhase ?? null,
+      percent: installState?.initialSyncPercent ?? 0,
+      stats: (installState?.initialSyncStats ?? null) as Record<string, number> | null,
+      error: installState?.initialSyncError ?? null,
+    };
+
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
       newFeaturesEnabled: !isProductionLocked(),
+      initialSync,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -139,6 +161,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings: null,
       seoTitleSuffix: "",
       newFeaturesEnabled: !isProductionLocked(),
+      initialSync: null,
       loaderError: true,
     });
   }
