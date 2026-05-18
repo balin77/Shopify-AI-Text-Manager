@@ -14,32 +14,81 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   _init() {
-    this._data           = this._loadData();
-    this._nativeSelector = this.dataset.nativeSelector || 'media-gallery';
-    this._nativeGallery  = document.querySelector(this._nativeSelector);
-    this._currentId      = null;
+    this._data      = this._loadData();
+    this._currentId = null;
 
-    console.info(CP_LOG, 'init. native selector:', JSON.stringify(this._nativeSelector),
-      '-> found:', !!this._nativeGallery, '| data:', !!this._data,
-      this._data ? 'variant ids: ' + JSON.stringify(Object.keys(this._data)) : '');
+    // Build the selector list: the merchant-configured one first, then
+    // robust Dawn-compatible fallbacks.
+    const configured = this.dataset.nativeSelector && this.dataset.nativeSelector.trim();
+    this._selectors = [
+      configured,
+      'media-gallery',
+      '[id^="MediaGallery"]',
+      '.product__media-wrapper',
+      '.product__media-list',
+    ].filter(Boolean);
 
-    if (!this._nativeGallery) {
-      console.warn(CP_LOG, 'native gallery NOT found with selector', JSON.stringify(this._nativeSelector),
-        '— set the correct selector in the app embed settings (e.g. media-gallery, .product__media-wrapper).');
-      return;
-    }
+    console.info(CP_LOG, 'init. data:', !!this._data,
+      this._data ? 'variant ids: ' + JSON.stringify(Object.keys(this._data)) : '',
+      '| trying selectors:', JSON.stringify(this._selectors));
+
     if (!this._data) { console.warn(CP_LOG, 'no/invalid variant data — aborting'); return; }
 
-    // Insert our gallery right before the native gallery in the DOM,
-    // so it occupies the same visual position when the native is hidden.
-    this._nativeGallery.parentNode.insertBefore(this, this._nativeGallery);
+    // The native gallery may be deferred-loaded (this theme uses deferred
+    // loading), so it might not be in the DOM yet. Wait for it instead of
+    // giving up after one query.
+    this._whenNativeGallery((gallery) => {
+      this._nativeGallery = gallery;
+      console.info(CP_LOG, 'native gallery found:', gallery.tagName,
+        gallery.id ? '#' + gallery.id : '', gallery.className ? '.' + gallery.className.split(' ')[0] : '');
 
-    // Show correct gallery for the variant selected on page load.
-    const initialId = this._resolveVariantId();
-    console.info(CP_LOG, 'initial variant id resolved:', initialId);
-    if (initialId) this._switchVariant(initialId);
+      gallery.parentNode.insertBefore(this, gallery);
 
-    this._watchVariant();
+      const initialId = this._resolveVariantId();
+      console.info(CP_LOG, 'initial variant id resolved:', initialId);
+      if (initialId) this._switchVariant(initialId);
+
+      this._watchVariant();
+    });
+  }
+
+  _queryNative() {
+    for (const sel of this._selectors) {
+      let el = null;
+      try { el = document.querySelector(sel); } catch (_) { /* invalid selector */ }
+      if (el) return el;
+    }
+    return null;
+  }
+
+  _whenNativeGallery(cb) {
+    const found = this._queryNative();
+    if (found) { cb(found); return; }
+
+    let settled = false;
+    const finish = (el) => {
+      if (settled) return;
+      settled = true;
+      if (this._mo) { this._mo.disconnect(); this._mo = null; }
+      clearTimeout(this._to);
+      if (el) cb(el);
+    };
+
+    // Watch the DOM until the deferred-loaded gallery appears.
+    this._mo = new MutationObserver(() => {
+      const el = this._queryNative();
+      if (el) finish(el);
+    });
+    this._mo.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Give up after 10s so we never observe forever.
+    this._to = setTimeout(() => {
+      if (settled) return;
+      console.warn(CP_LOG, 'native gallery NOT found after 10s with selectors',
+        JSON.stringify(this._selectors),
+        '— inspect the product gallery element and set its selector in the app embed settings.');
+      finish(null);
+    }, 10000);
   }
 
   _loadData() {

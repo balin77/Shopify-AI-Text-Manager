@@ -12,15 +12,29 @@
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
       "{{ variant.id }}": [
+        {%- assign cp_has_any = false -%}
+        {%- if variant.featured_image != blank -%}
+          {%- assign vfi = variant.featured_image -%}
+          {
+            "src_400":  {{ vfi | image_url: width: 400  | json }},
+            "src_800":  {{ vfi | image_url: width: 800  | json }},
+            "src_1200": {{ vfi | image_url: width: 1200 | json }},
+            "thumb":    {{ vfi | image_url: width: 160  | json }},
+            "alt":      {{ variant.title | json }}
+          }
+          {%- assign cp_has_any = true -%}
+        {%- endif -%}
         {%- if vg != blank and vg.value != blank -%}
           {%- for img in vg.value -%}
+            {%- if cp_has_any %},{% endif -%}
             {
               "src_400":  {{ img | image_url: width: 400  | json }},
               "src_800":  {{ img | image_url: width: 800  | json }},
               "src_1200": {{ img | image_url: width: 1200 | json }},
               "thumb":    {{ img | image_url: width: 160  | json }},
               "alt":      {{ variant.title | json }}
-            }{% unless forloop.last %},{% endunless %}
+            }
+            {%- assign cp_has_any = true -%}
           {%- endfor -%}
         {%- endif -%}
       ]{% unless forloop.last %},{% endunless %}
