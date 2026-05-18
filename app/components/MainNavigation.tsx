@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, useMatches, useNavigation } from "@remix-run/react";
+import { useLocation, useMatches, useNavigation } from "@remix-run/react";
 import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
@@ -18,7 +18,6 @@ import type { InfoBoxTone } from "../contexts/InfoBoxContext";
 
 export function MainNavigation() {
   const location = useLocation();
-  const navigate = useNavigate();
   const navigation = useNavigation();
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
@@ -227,6 +226,15 @@ export function MainNavigation() {
   const handleClick = (path: string, tabId: string) => {
     if (!checkGuard()) return;
     handleNavigate(path);
+  };
+
+  // Navigate from an InfoBox link. Must go through handleNavigate so Shopify
+  // session params (host/shop/embedded) are preserved — a raw client-side
+  // navigate() drops them and breaks the *next* navigation (blank page).
+  const handleInfoBoxLink = (url: string) => {
+    const [path, query] = url.split("?");
+    const options = query ? { searchParams: new URLSearchParams(query) } : {};
+    handleNavigate(path, options);
   };
 
   // Navigate to settings/plan page when any plan button is clicked
@@ -529,7 +537,7 @@ export function MainNavigation() {
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    navigate(infoBox.link!.url);
+                                    handleInfoBoxLink(infoBox.link!.url);
                                   }}
                                   style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600 }}
                                 >
@@ -668,8 +676,8 @@ export function MainNavigation() {
                                 href={entry.link.url}
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  navigate(entry.link!.url);
                                   closePopover();
+                                  handleInfoBoxLink(entry.link!.url);
                                 }}
                                 style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600, fontSize: "13px" }}
                               >
