@@ -110,7 +110,7 @@ describe('planGrantsMore', () => {
     expect(planGrantsMore(plan, plan)).toBe(false);
   });
 
-  it('a pure cap increase on a still-enabled phase counts as "more" (basic → pro maxProducts 75 → 150)', () => {
+  it('a pure cap increase on a still-enabled phase counts as "more" (basic → pro maxProducts 100 → 500)', () => {
     // Sanity-check the precondition so this test stays honest if config changes.
     expect(PLAN_CONFIG.pro.maxProducts).toBeGreaterThan(PLAN_CONFIG.basic.maxProducts);
     expect(getSyncScope('basic').products.enabled).toBe(true);
