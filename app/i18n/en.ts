@@ -252,6 +252,8 @@ export const en: Translation = {
     paginationOf: "of",
     paginationPrevious: "Previous",
     paginationNext: "Next",
+    planLimitReached: "You've reached the maximum of {max} {items} for the {plan} plan.",
+    upgradeForMore: "Upgrade to {plan} for more {items}.",
     noResults: "No items found",
     selectItem: "Select item",
     // Field labels

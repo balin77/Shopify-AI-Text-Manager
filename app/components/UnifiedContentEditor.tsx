@@ -471,6 +471,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             paginationOf: t.content?.paginationOf || "of",
             paginationPrevious: t.content?.paginationPrevious || "Previous",
             paginationNext: t.content?.paginationNext || "Next",
+            planLimitReached: t.content?.planLimitReached,
+            upgradeForMore: t.content?.upgradeForMore,
           }}
           />
           </div>

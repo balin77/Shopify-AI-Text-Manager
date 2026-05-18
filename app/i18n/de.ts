@@ -249,6 +249,8 @@ export const de = {
     paginationOf: "von",
     paginationPrevious: "Zurück",
     paginationNext: "Weiter",
+    planLimitReached: "Sie haben das Maximum von {max} {items} für den Tarif {plan} erreicht.",
+    upgradeForMore: "Führen Sie ein Upgrade auf {plan} durch, um mehr {items} hinzuzufügen.",
     noResults: "Keine Einträge gefunden",
     selectItem: "Eintrag auswählen",
     // Field labels
