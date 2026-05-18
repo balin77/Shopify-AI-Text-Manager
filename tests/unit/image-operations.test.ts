@@ -32,6 +32,16 @@ const { store, db } = vi.hoisted(() => {
       row.count += data.count.increment;
       return { ...row };
     }),
+    // Mirrors the atomic conditional write in consumeImageOperations:
+    // only increments when `count <= where.count.lte`, returns affected rows.
+    updateMany: vi.fn(async ({ where, data }: any) => {
+      const row = store.get(key(where.shop, where.period));
+      if (!row) return { count: 0 };
+      const lte = where.count?.lte;
+      if (lte !== undefined && !(row.count <= lte)) return { count: 0 };
+      row.count += data.count.increment;
+      return { count: 1 };
+    }),
     findUnique: vi.fn(async ({ where }: any) => {
       const { shop, period } = where.shop_period;
       return store.get(key(shop, period)) ?? null;

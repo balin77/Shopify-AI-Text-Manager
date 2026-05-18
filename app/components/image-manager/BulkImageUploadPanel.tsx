@@ -346,6 +346,7 @@ export function BulkImageUploadPanel({
   }, [variants, localKeys, baseName, matchMode, labelMode, memoryMap, onItemsChange]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
+    setQuotaError(null); // clear any stale quota banner from a previous drop
     const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
     if (validFiles.length === 0) return;
 
@@ -426,7 +427,7 @@ export function BulkImageUploadPanel({
         onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
     }));
-  }, [onItemsChange]);
+  }, [onItemsChange]); // eslint-disable-line react-hooks/exhaustive-deps -- t/setQuotaError are stable enough; matches sibling callbacks
 
   const selectedItems = items.filter(i => selectedUniqueIds.has(i.uniqueId));
   const hasSelected = selectedItems.length > 0;
@@ -723,8 +724,11 @@ export function BulkImageUploadPanel({
       </Card>
 
       {quotaError && (
-        <div style={{ padding: "8px 12px", background: "#fff5f5", borderRadius: 6, border: "1px solid #d72c0d" }}>
+        <div style={{ padding: "8px 12px", background: "#fff5f5", borderRadius: 6, border: "1px solid #d72c0d", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <Text as="p" variant="bodySm" tone="critical">{quotaError}</Text>
+          <Button variant="plain" size="slim" onClick={() => setQuotaError(null)} accessibilityLabel={t.common?.close ?? "Dismiss"}>
+            {t.common?.close ?? "×"}
+          </Button>
         </div>
       )}
 

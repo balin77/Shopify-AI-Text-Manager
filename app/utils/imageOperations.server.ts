@@ -26,9 +26,12 @@ export interface ConsumeResult {
 /**
  * Atomically reserve `n` image operations for the current (UTC) month.
  *
- * Whole-batch semantics: the batch is consumed only if it fits entirely. A
- * partial batch is never charged — callers reject the whole request so the
- * merchant sees a single clear quota error instead of a half-applied upload.
+ * Whole-request semantics: this single call's `n` ops are consumed only if
+ * they all fit; a partial `n` is never charged. NOTE this is per request, not
+ * per UI drop: /api/convert-webp sends one request with n = images.length (so
+ * a WebP batch is all-or-nothing), but the bulk uploader fires one
+ * /api/staged-upload request per file (n = 1 each), so a 5-file drop with 3
+ * ops left commits 3 and rejects 2 — that is acceptable and intended.
  */
 export async function consumeImageOperations(
   shop: string,
@@ -43,31 +46,36 @@ export async function consumeImageOperations(
   }
 
   return db.$transaction(async (tx) => {
-    const row = await tx.imageOperationCounter.upsert({
+    // Ensure the period row exists.
+    await tx.imageOperationCounter.upsert({
       where: { shop_period: { shop, period } },
       create: { shop, period, count: 0 },
       update: {},
     });
 
-    const used = row.count;
-    if (used + n > limit) {
+    // Atomic conditional increment: the `count <= limit - n` predicate is
+    // re-evaluated against the row at write time, so two concurrent requests
+    // for the same shop cannot both pass the cap (closes the check-then-act
+    // race; a plain read-then-write under READ COMMITTED could overbook).
+    const res = await tx.imageOperationCounter.updateMany({
+      where: { shop, period, count: { lte: limit - n } },
+      data: { count: { increment: n } },
+    });
+
+    const row = await tx.imageOperationCounter.findUnique({
+      where: { shop_period: { shop, period } },
+      select: { count: true },
+    });
+    const used = row?.count ?? 0;
+
+    if (res.count === 0) {
       logger.info(
         `[ImageOps] Quota blocked for ${shop} (${plan}): used ${used}, +${n} > ${limit}`
       );
       return { allowed: false, used, limit, remaining: Math.max(0, limit - used) };
     }
 
-    const updated = await tx.imageOperationCounter.update({
-      where: { shop_period: { shop, period } },
-      data: { count: { increment: n } },
-    });
-
-    return {
-      allowed: true,
-      used: updated.count,
-      limit,
-      remaining: Math.max(0, limit - updated.count),
-    };
+    return { allowed: true, used, limit, remaining: Math.max(0, limit - used) };
   });
 }
 

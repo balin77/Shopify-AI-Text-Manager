@@ -1215,6 +1215,7 @@ export function VariantImageManager({
   }, [productId, productTitle, startWebPPolling, pendingProductImageOrder, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
+    setWebpError(null); // clear any stale error before a fresh upload
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -1259,6 +1260,7 @@ export function VariantImageManager({
   }, [variants, urlToGid, locallyExcludedMainGids]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
+    setWebpError(null); // clear any stale error before a fresh upload
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {

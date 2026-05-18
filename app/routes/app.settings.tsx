@@ -283,8 +283,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
-    // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only.
-    const { count: imageOperationCount } = await getImageOperationUsage(session.shop);
+    // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only and
+    // fail-safe: a transient error or a code-before-migration deploy window
+    // must NOT take down the whole Settings page (other usage counts are
+    // defensively wrapped the same way).
+    let imageOperationCount = 0;
+    try {
+      ({ count: imageOperationCount } = await getImageOperationUsage(session.shop));
+    } catch (e) {
+      logger.warn("[ImageOps] usage read failed, defaulting to 0", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
 
     // Count active locales from shop locales
     const localeCount = localesData.data.shopLocales?.length || 1;
