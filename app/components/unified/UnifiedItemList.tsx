@@ -121,6 +121,8 @@ interface UnifiedItemListProps {
     paginationNext?: string;
     planLimitReached?: string;
     upgradeForMore?: string;
+    /** Locale-cased resource noun for plan-limit banner ({items} placeholder) */
+    itemNoun?: string;
   };
 }
 
@@ -559,14 +561,14 @@ export function UnifiedItemList({
                     {planLimit.upgradeMessage ||
                       (t.planLimitReached || "You've reached the maximum of {max} {items} for the {plan} plan.")
                         .replace("{max}", String(planLimit.maxItems))
-                        .replace("{items}", resourceName.plural.toLowerCase())
+                        .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())
                         .replace("{plan}", planLimit.currentPlan)}
                   </Text>
                   {planLimit.nextPlan && (
                     <Text as="p" variant="bodySm">
                       {(t.upgradeForMore || "Upgrade to {plan} for more {items}.")
                         .replace("{plan}", planLimit.nextPlan)
-                        .replace("{items}", resourceName.plural.toLowerCase())}
+                        .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())}
                     </Text>
                   )}
                 </BlockStack>
