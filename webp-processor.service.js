@@ -9,6 +9,7 @@
 import { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
 import crypto from "crypto";
+import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 
 function isEncryptedToken(data) {
   if (!data) return false;
@@ -135,10 +136,9 @@ const db = new PrismaClient();
 
 const POLL_INTERVAL_MS = 10000; // 10 seconds
 const GLOBAL_MAX_CONCURRENT = 8;
-// Mirror of PLAN_CONFIG[*].maxConcurrentWebpConversions in app/config/plans.ts.
-// Keep in sync — plans.ts is the source of truth for the UI/billing side.
-const PLAN_WEBP_CONCURRENCY = { free: 2, basic: 2, pro: 2, max: 4 };
-const DEFAULT_WEBP_CONCURRENCY = 2;
+// Per-plan concurrency comes from app/config/webp-concurrency.js — the single
+// source of truth shared with app/config/plans.ts (PlanLimits
+// .maxConcurrentWebpConversions). No more hardcoded mirror to keep in sync.
 
 export class WebPProcessorService {
   static instance = null;

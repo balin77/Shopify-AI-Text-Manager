@@ -14,6 +14,8 @@ interface SettingsUsageLimitsTabProps {
   articleCount: number;
   pageCount: number;
   themeTranslationCount: number;
+  /** Rolling monthly billable image operations (Bulk-Upload + WebP). */
+  imageOperationCount: number;
   t: I18nTranslation;
   hideUpgradeCard?: boolean;
 }
@@ -110,6 +112,7 @@ export function SettingsUsageLimitsTab({
   articleCount,
   pageCount,
   themeTranslationCount,
+  imageOperationCount,
   t,
   hideUpgradeCard = false,
 }: SettingsUsageLimitsTabProps) {
@@ -220,6 +223,21 @@ export function SettingsUsageLimitsTab({
     themeTranslations: "usageThemeTranslations",
   };
 
+  // Monthly image-operation quota is not a ResourceType (monthly, sourced from
+  // a counter table, not getCacheStats), so it gets its own UsageRow rather
+  // than going through the generic resource map.
+  const imageOpsMax = limits.monthlyImageOperations;
+  const imageOpsData = {
+    label: t.settings?.usageImageOperations || "Bild-Operationen / Monat",
+    current: imageOperationCount,
+    max: imageOpsMax,
+    percentage: imageOpsMax > 0 ? Math.min(100, Math.round((imageOperationCount / imageOpsMax) * 100)) : 0,
+    isApproaching: imageOpsMax > 0 && imageOperationCount >= imageOpsMax * 0.8,
+    isAtLimit: imageOpsMax > 0 && imageOperationCount >= imageOpsMax,
+    disabled: imageOpsMax === 0,
+    helpKey: "usageImageOperations",
+  };
+
   const getResourceData = (resource: ResourceType) => ({
     label: resourceLabels[resource],
     current: counts[resource],
@@ -284,6 +302,14 @@ export function SettingsUsageLimitsTab({
 
             <UsageRow {...getResourceData("locales")} t={t} />
             <UsageRow {...getResourceData("themeTranslations")} t={t} />
+          </BlockStack>
+
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingSm">
+              {t.settings?.usageImageOperations || "Bild-Operationen / Monat"}
+            </Text>
+
+            <UsageRow {...imageOpsData} t={t} />
           </BlockStack>
         </BlockStack>
       </Card>

@@ -38,6 +38,7 @@ interface SettingsPlanTabProps {
   articleCount: number;
   pageCount: number;
   themeTranslationCount: number;
+  imageOperationCount: number;
   t: any;
 }
 
@@ -53,6 +54,7 @@ export function SettingsPlanTab({
   articleCount,
   pageCount,
   themeTranslationCount,
+  imageOperationCount,
   t,
 }: SettingsPlanTabProps) {
   const revalidator = useRevalidator();
@@ -205,7 +207,9 @@ export function SettingsPlanTab({
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings?.usageLocales || "Sprachen"}:</strong>{" "}
-                        {planDetails.maxLocales}
+                        {planDetails.maxLocales === Infinity
+                          ? t.settings.unlimited
+                          : planDetails.maxLocales}
                       </Text>
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.images}:</strong>{" "}
@@ -230,6 +234,12 @@ export function SettingsPlanTab({
                           )
                         )}
                       </Text>
+                      {planDetails.monthlyImageOperations > 0 && (
+                        <Text as="p" variant="bodyMd">
+                          <strong>{t.settings.monthlyImageOperations}:</strong>{" "}
+                          {planDetails.monthlyImageOperations.toLocaleString()}
+                        </Text>
+                      )}
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.contentTypes}:</strong>
                       </Text>
@@ -269,6 +279,27 @@ export function SettingsPlanTab({
                           );
                         })}
                       </BlockStack>
+
+                      {planDetails.variantImageManager && (
+                        <>
+                          <Text as="p" variant="bodyMd">
+                            <strong>{t.settings.imageFeaturesTitle}:</strong>
+                          </Text>
+                          <BlockStack gap="100">
+                            {[
+                              t.settings.featureImageManager,
+                              t.settings.featureVariantGallery,
+                              t.settings.featureSkuGenerator,
+                              t.settings.featureBulkAltText,
+                              t.settings.featureBulkImageUpload,
+                            ].map((label) => (
+                              <Text key={label} as="p" variant="bodySm" tone="success">
+                                ✓ {label}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        </>
+                      )}
                     </BlockStack>
                   </BlockStack>
 
@@ -328,6 +359,7 @@ export function SettingsPlanTab({
         articleCount={articleCount}
         pageCount={pageCount}
         themeTranslationCount={themeTranslationCount}
+        imageOperationCount={imageOperationCount}
         t={t}
         hideUpgradeCard
       />

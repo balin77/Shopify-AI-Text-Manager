@@ -43,6 +43,7 @@ import {
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
+import { getImageOperationUsage } from "~/utils/imageOperations.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
@@ -282,6 +283,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
+    // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only.
+    const { count: imageOperationCount } = await getImageOperationUsage(session.shop);
+
     // Count active locales from shop locales
     const localeCount = localesData.data.shopLocales?.length || 1;
 
@@ -392,6 +396,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       articleCount,
       pageCount,
       themeTranslationCount,
+      imageOperationCount,
       localeCount,
       isTestStore,
       devPlanMode,
@@ -691,7 +696,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1170,6 +1175,7 @@ export default function SettingsPage() {
                     articleCount={articleCount}
                     pageCount={pageCount}
                     themeTranslationCount={themeTranslationCount}
+                    imageOperationCount={imageOperationCount}
                     t={t}
                   />
                 </>

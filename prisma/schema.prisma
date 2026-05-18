@@ -666,3 +666,19 @@ model ShopInstallState {
 
   @@index([uninstalledAt])
 }
+
+// Rolling monthly counter for billable image operations (Bulk-Upload + WebP
+// conversion). One row per (shop, period). Usage data only — NOT entitlement
+// data, so it is intentionally absent from getSyncScope / planCacheCleanup;
+// the quota is enforced lazily at the upload/convert routes. See
+// docs/ROADMAP.md §Limit-Review Befund 3.
+model ImageOperationCounter {
+  id        String   @id @default(cuid())
+  shop      String
+  period    String // "YYYY-MM" (UTC)
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, period])
+  @@index([shop])
+}

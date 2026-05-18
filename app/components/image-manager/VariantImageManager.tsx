@@ -1196,7 +1196,16 @@ export function VariantImageManager({
           })),
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(
+            t.imageManager.imageQuotaExceeded.replace("{limit}", String(body.limit ?? ""))
+          );
+          return;
+        }
+        throw new Error();
+      }
       localStorage.setItem(`webp_${productId}`, "1");
       setIsConvertingWebP(true);
       startWebPPolling(productId);
@@ -1213,7 +1222,11 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error } = await res.json();
+        const { url, resourceUrl, error, code, limit } = await res.json();
+        if (code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
+          break;
+        }
         if (error || !url) continue;
 
         await new Promise<void>((resolve, reject) => {
@@ -1253,7 +1266,11 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error } = await res.json();
+        const { url, resourceUrl, error, code, limit } = await res.json();
+        if (code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
+          break;
+        }
         if (error || !url) continue;
 
         await new Promise<void>((resolve, reject) => {

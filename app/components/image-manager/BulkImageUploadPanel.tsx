@@ -159,6 +159,7 @@ export function BulkImageUploadPanel({
 }: BulkImageUploadPanelProps) {
   const { t } = useI18n();
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
   const [docsOpen, setDocsOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [generatorDocsOpen, setGeneratorDocsOpen] = useState(false);
@@ -375,6 +376,13 @@ export function BulkImageUploadPanel({
         });
         const stagedJson = await res.json();
         const { url, resourceUrl, error } = stagedJson;
+        if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
+          setQuotaError(
+            t.imageManager.imageQuotaExceeded.replace("{limit}", String(stagedJson.limit ?? ""))
+          );
+          onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+          return;
+        }
         console.log("[BulkUpload] staged-upload response", { httpStatus: res.status, url, resourceUrl, error });
         if (error || !url) {
           console.error("[BulkUpload] staged-upload failed", { error, url });
@@ -713,6 +721,12 @@ export function BulkImageUploadPanel({
           </Collapsible>
         </BlockStack>
       </Card>
+
+      {quotaError && (
+        <div style={{ padding: "8px 12px", background: "#fff5f5", borderRadius: 6, border: "1px solid #d72c0d" }}>
+          <Text as="p" variant="bodySm" tone="critical">{quotaError}</Text>
+        </div>
+      )}
 
       {/* Drop Zone */}
       <DropZone onDrop={handleDrop} accept={ALLOWED_MIME.join(",")} allowMultiple>

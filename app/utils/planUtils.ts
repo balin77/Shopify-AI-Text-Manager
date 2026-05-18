@@ -190,6 +190,50 @@ export function canAccessVariantImageManager(plan: Plan): boolean {
   return getPlanLimits(plan).variantImageManager;
 }
 
+// ---------------------------------------------------------------------------
+// Monthly image-operation quota — pure helpers (single source of truth)
+// ---------------------------------------------------------------------------
+//
+// Billable image operations = Bulk-Upload + WebP conversion (real compute/
+// bandwidth cost; AI is merchant-funded BYO). The quota is rolling per calendar
+// month and enforced LAZILY at the upload/convert routes (mirrors how
+// maxProducts is enforced lazily, not via cleanup). It is usage data, not
+// entitlement data, so it is deliberately NOT a sync phase — getSyncScope and
+// planCacheCleanup stay untouched. See docs/ROADMAP.md §Limit-Review Befund 3.
+
+/**
+ * Monthly billable-image-operation cap for a plan. 0 = feature unavailable
+ * (Free/Basic have no image manager anyway).
+ */
+export function getMonthlyImageOperationsLimit(plan: Plan): number {
+  return getPlanLimits(plan).monthlyImageOperations;
+}
+
+/**
+ * Current quota period key in UTC, format "YYYY-MM". The counter table keys
+ * rows by (shop, period); a new month starts a fresh row (lazy reset, no cron).
+ */
+export function currentImageOpPeriod(date: Date = new Date()): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/**
+ * True if `n` more image operations fit within the plan's monthly quota given
+ * the current count. limit === 0 ⇒ always false (feature disabled), matching
+ * the isAtLimit convention. No Infinity case — image ops are always capped.
+ */
+export function isWithinImageOperationQuota(
+  plan: Plan,
+  currentCount: number,
+  n: number = 1
+): boolean {
+  const limit = getMonthlyImageOperationsLimit(plan);
+  if (limit === 0) return false;
+  return currentCount + n <= limit;
+}
+
 // ============================================================================
 // Production lock — temporary gating while the app is under Shopify review.
 // Hides features that were added on `develop` after the version submitted for

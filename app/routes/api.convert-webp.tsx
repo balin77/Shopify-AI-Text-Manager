@@ -1,6 +1,8 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { type Plan } from "../config/plans";
+import { consumeImageOperations } from "../utils/imageOperations.server";
 
 interface ConvertWebpBody {
   productId: string;
@@ -15,6 +17,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!images?.length) {
     return json({ error: "No images provided" }, { status: 400 });
+  }
+
+  // Each image conversion = one billable image operation (real compute/
+  // bandwidth; AI is merchant-funded BYO). Whole-batch semantics: reject the
+  // entire batch if it doesn't fit, so no tasks are created on overage.
+  const settings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const quota = await consumeImageOperations(session.shop, plan, images.length);
+  if (!quota.allowed) {
+    return json(
+      { error: "Monthly image-operation limit reached", code: "IMAGE_QUOTA_EXCEEDED", limit: quota.limit },
+      { status: 422 }
+    );
   }
 
   const tasks = await Promise.all(images.map(img =>
