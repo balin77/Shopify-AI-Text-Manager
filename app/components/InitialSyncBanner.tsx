@@ -24,6 +24,7 @@ interface SyncStatus {
   phase: string | null;
   percent: number;
   error: string | null;
+  stats: Record<string, number> | null;
 }
 
 const FAST_MS = 4000;   // actively syncing
@@ -60,6 +61,7 @@ export function InitialSyncBanner() {
             phase: data.phase,
             percent: Math.max(0, Math.min(100, data.percent || 0)),
             error: data.error,
+            stats: data.stats ?? null,
           });
           wasSyncingRef.current = true;
           intervalRef.current = FAST_MS;

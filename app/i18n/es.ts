@@ -556,6 +556,7 @@ export const es: Translation = {
     webhookEventsReceived: "Eventos de webhook recibidos",
     syncingContent: "Sincronizando contenido",
     syncTriggeredHint: "Re-sincronización iniciada — el progreso se muestra en el banner de arriba. Puede seguir usando la app; la sincronización continúa en el servidor.",
+    syncTotalLabel: "Total",
     showWebhookDetails: "Mostrar todos los detalles de webhooks",
     webhooksCount: "{count} webhooks",
     phaseProducts: "Productos",

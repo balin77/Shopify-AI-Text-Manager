@@ -557,6 +557,7 @@ export const en: Translation = {
     webhookEventsReceived: "Webhook events received",
     syncingContent: "Syncing Content",
     syncTriggeredHint: "Re-sync started — progress is shown in the banner above. You can keep using the app; the sync continues server-side.",
+    syncTotalLabel: "Total",
     showWebhookDetails: "Show all webhook details",
     webhooksCount: "{count} webhooks",
     phaseProducts: "Products",

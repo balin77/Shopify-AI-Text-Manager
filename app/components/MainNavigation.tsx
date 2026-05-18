@@ -429,25 +429,60 @@ export function MainNavigation() {
                           : ""
                       } (${syncProgress.percent}%)`}
                 </span>
-                {!syncProgress.error && (
-                  <div
-                    style={{
-                      height: "4px",
-                      borderRadius: "2px",
-                      backgroundColor: "rgba(0,0,0,0.1)",
-                      overflow: "hidden",
-                    }}
-                  >
+                {!syncProgress.error && (() => {
+                  const order = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
+                  const idx = syncProgress.phase ? order.indexOf(syncProgress.phase) : -1;
+                  const overall = syncProgress.phase === "done"
+                    ? 100
+                    : Math.max(0, Math.min(100, idx >= 0
+                        ? Math.round((idx / order.length) * 100 + syncProgress.percent / order.length)
+                        : syncProgress.percent));
+                  const Bar = ({ value }: { value: number }) => (
                     <div
                       style={{
-                        height: "100%",
-                        width: `${syncProgress.percent}%`,
-                        backgroundColor: toneColor("info"),
-                        transition: "width 0.4s ease",
+                        height: "4px",
+                        borderRadius: "2px",
+                        backgroundColor: "rgba(0,0,0,0.1)",
+                        overflow: "hidden",
                       }}
-                    />
-                  </div>
-                )}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${value}%`,
+                          backgroundColor: toneColor("info"),
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+                  );
+                  const phaseLabel = (p: string) =>
+                    (t.settings as unknown as Record<string, string>)[
+                      `phase${p.charAt(0).toUpperCase()}${p.slice(1)}`
+                    ] || p;
+                  const synced = order
+                    .filter((p) => (syncProgress.stats?.[p] ?? 0) > 0)
+                    .map((p) => `${phaseLabel(p)}: ${syncProgress.stats![p]}`);
+                  return (
+                    <>
+                      <Bar value={syncProgress.percent} />
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.15rem" }}>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {t.settings?.syncTotalLabel || "Total"}
+                        </Text>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {overall}%
+                        </Text>
+                      </div>
+                      <Bar value={overall} />
+                      {synced.length > 0 && (
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {synced.join(" · ")}
+                        </Text>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}

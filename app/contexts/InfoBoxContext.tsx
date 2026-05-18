@@ -17,6 +17,8 @@ export interface SyncProgressState {
   phase: string | null;
   percent: number;
   error: string | null;
+  /** Running per-phase counts of what has been synced so far. */
+  stats: Record<string, number> | null;
 }
 
 interface InfoBoxContextType {
