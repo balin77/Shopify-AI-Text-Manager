@@ -1002,6 +1002,8 @@ export const en: Translation = {
     syncEmptyResponseCollections: "Collections sync skipped: Shopify returned no data (possible API outage). Your local collections were preserved.",
     syncEmptyResponseArticles: "Articles sync skipped: Shopify returned no data (possible API outage). Your local articles were preserved.",
     syncEmptyResponseThemes: "Themes sync skipped: Shopify returned no data (possible API outage). Your local themes were preserved.",
+    syncEmptyResponseMetaobjects: "Metaobjects sync skipped: Shopify returned no data (possible API outage). Your local metaobjects were preserved.",
+    syncEmptyResponseMenus: "Menus sync skipped: Shopify returned no data (possible API outage). Your local menus were preserved.",
     syncFailed: "{phase} sync failed: {details}",
   },
 

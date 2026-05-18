@@ -219,13 +219,18 @@ class SyncSchedulerService {
         const { admin: freshAdmin } = await unauthenticated.admin(shop);
 
         const { runInitialFullSync } = await import("./initial-sync.service");
-        const { stats } = await runInitialFullSync(freshAdmin, shop, {
+        const { stats, completed } = await runInitialFullSync(freshAdmin, shop, {
           force: !!st?.initialSyncForceRequested,
           signal,
           onProgress: throttledWriter,
         });
 
-        logger.info(`[SyncScheduler] Initial sync complete for ${shop}`, { stats });
+        if (completed) {
+          logger.info(`[SyncScheduler] Initial sync complete for ${shop}`, { stats });
+        } else {
+          // A phase failed: marker left unset on purpose → retry next cycle.
+          logger.warn(`[SyncScheduler] Initial sync incomplete for ${shop} (phase failed) - will retry next cycle`, { stats });
+        }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           logger.info(`[SyncScheduler] Initial sync aborted for ${shop} (timer stopped)`);
@@ -244,10 +249,13 @@ class SyncSchedulerService {
       logger.error(`[SyncScheduler] Sync cycle failed for ${shop}:`, error);
       // Don't stop timer on error - retry next cycle
     } finally {
-      // Mark as not running
-      const timer = this.activeTimers.get(shop);
-      if (timer) {
-        timer.isRunning = false;
+      // Mark as not running — but ONLY on the timer entry this cycle started
+      // with. If startSyncForShop replaced the entry mid-run (upgrade trigger /
+      // force re-sync / multi-tab), this.activeTimers.get(shop) is the NEW
+      // entry whose own first cycle may already be running; clearing its flag
+      // would allow two concurrent syncs for the same shop.
+      if (syncTimer && this.activeTimers.get(shop) === syncTimer) {
+        syncTimer.isRunning = false;
       }
     }
   }

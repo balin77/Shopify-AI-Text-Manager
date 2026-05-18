@@ -225,3 +225,87 @@ export function canAccessImageProcessingTab(newFeaturesEnabled: boolean): boolea
 export function canAccessImageManagerSettingsTab(plan: Plan, newFeaturesEnabled: boolean): boolean {
   return newFeaturesEnabled && (plan === "pro" || plan === "max");
 }
+
+// ---------------------------------------------------------------------------
+// Sync scope — single source of truth for "what may a plan sync"
+// ---------------------------------------------------------------------------
+//
+// Both sync paths (services/initial-sync.service.ts and the recurring
+// BackgroundSyncService.syncAll) consult ONLY getSyncScope, so the sync stays
+// automatically correct whenever the central plan config (config/plans.ts)
+// changes. A disabled phase means "do not fetch" — pruning already-cached but
+// no-longer-entitled data stays the responsibility of planCacheCleanup.ts
+// (the downgrade path), never the sync. The derivation deliberately mirrors
+// planCacheCleanup so scope and cleanup can never disagree.
+
+export type SyncPhase =
+  | "products"
+  | "collections"
+  | "articles"
+  | "pages"
+  | "policies"
+  | "themes"
+  | "metaobjects"
+  | "menus";
+
+export interface PhaseScope {
+  enabled: boolean;
+  /** Numeric cap where the sync service supports one; undefined = no cap param. */
+  max?: number;
+}
+
+export type SyncScope = Record<SyncPhase, PhaseScope>;
+
+/**
+ * Derives the per-phase sync scope for a plan, purely from getPlanLimits().
+ * `enabled` combines contentTypes + cacheEnabled + numeric caps so the scope
+ * auto-corrects on any central-config change.
+ *
+ * Note: "themes" is not part of the ContentType union — its entitlement is
+ * derived from cacheEnabled.themes && maxThemeTranslations > 0, mirroring
+ * planCacheCleanup.ts exactly (a plan whose themes get pruned on downgrade is
+ * exactly a plan where themes.enabled is false).
+ */
+export function getSyncScope(plan: Plan): SyncScope {
+  const l = getPlanLimits(plan);
+  const has = (t: ContentType) => l.contentTypes.includes(t);
+  return {
+    products: { enabled: l.cacheEnabled.products && l.maxProducts > 0, max: l.maxProducts },
+    collections: { enabled: has("collections") && l.cacheEnabled.collections, max: l.maxCollections },
+    articles: { enabled: has("articles") && l.cacheEnabled.articles && l.maxArticles > 0, max: l.maxArticles },
+    pages: { enabled: has("pages") && l.cacheEnabled.pages && l.maxPages > 0, max: l.maxPages },
+    policies: { enabled: has("policies") && l.cacheEnabled.policies },
+    themes: { enabled: l.cacheEnabled.themes && l.maxThemeTranslations > 0 },
+    metaobjects: { enabled: has("metaobjects") },
+    menus: { enabled: has("menus") },
+  };
+}
+
+const ALL_SYNC_PHASES: SyncPhase[] = [
+  "products", "collections", "articles", "pages",
+  "policies", "themes", "metaobjects", "menus",
+];
+
+/**
+ * True if moving from `prev` to `next` grants MORE of any content type — a
+ * phase becomes newly entitled, or a capped phase's cap increases. Pure
+ * function of the central config (future-proof if limits/order change).
+ * Returns false for lateral/downgrade moves.
+ */
+export function planGrantsMore(prev: Plan, next: Plan): boolean {
+  const a = getSyncScope(prev);
+  const b = getSyncScope(next);
+  for (const phase of ALL_SYNC_PHASES) {
+    const pa = a[phase];
+    const pb = b[phase];
+    if (pb.enabled && !pa.enabled) return true; // newly entitled
+    if (
+      pb.enabled && pa.enabled &&
+      pb.max !== undefined && pa.max !== undefined &&
+      pb.max > pa.max
+    ) {
+      return true; // higher cap
+    }
+  }
+  return false;
+}

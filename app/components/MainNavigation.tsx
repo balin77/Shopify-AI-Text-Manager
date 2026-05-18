@@ -430,7 +430,7 @@ export function MainNavigation() {
                       } (${syncProgress.percent}%)`}
                 </span>
                 {!syncProgress.error && (() => {
-                  const order = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
+                  const order = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects", "menus"];
                   const idx = syncProgress.phase ? order.indexOf(syncProgress.phase) : -1;
                   const overall = syncProgress.phase === "done"
                     ? 100

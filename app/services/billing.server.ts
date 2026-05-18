@@ -11,6 +11,7 @@ import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
 import { resolveDevPlanMode, getDevForcedPlan } from '~/services/dev-plan-override.server';
+import type { Plan } from '~/utils/planUtils';
 
 interface ShopifyAdminClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -389,6 +390,43 @@ async function reconcileCacheForVerifiedPlan(shop: string, previousPlan: Billing
 }
 
 /**
+ * On a verified plan UPGRADE (more of any content type entitled — higher cap
+ * or a newly-unlocked type), trigger a non-destructive server-side re-sync so
+ * the newly-allowed content (e.g. products beyond the old cap, or articles on
+ * pro) is fetched without merchant interaction. Mirrors the downgrade-side
+ * cleanupCacheForPlan. Fire-and-forget safety: never throws into billing.
+ *
+ * force:false — cleanupCacheForPlan already ran (pruning); we only need to
+ * FILL the new gap (products upsert, newly-enabled phases), no destructive
+ * delete. Downgrade/lateral moves return early via planGrantsMore.
+ */
+async function maybeTriggerUpgradeResync(
+  admin: ShopifyAdminClient,
+  shop: string,
+  previousPlan: BillingPlan,
+  newPlan: BillingPlan,
+): Promise<void> {
+  if (newPlan === previousPlan) return;
+  try {
+    const { planGrantsMore } = await import('~/utils/planUtils');
+    if (!planGrantsMore(previousPlan as unknown as Plan, newPlan as unknown as Plan)) return;
+
+    const { requestInitialResync } = await import('~/services/initial-sync.service');
+    await requestInitialResync(shop, { force: false });
+
+    const { syncScheduler } = await import('~/services/sync-scheduler.service');
+    syncScheduler.startSyncForShop(shop, admin as never);
+
+    logger.info('[Billing] Upgrade resync requested', { shop, from: previousPlan, to: newPlan });
+  } catch (e) {
+    logger.warn('[Billing] Upgrade resync trigger failed (plan sync still successful)', {
+      shop, from: previousPlan, to: newPlan,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
  * Checks subscription status and updates database accordingly.
  *
  * The plan is derived exclusively from the Shopify-verified active
@@ -409,6 +447,7 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   if (forced) {
     await syncSubscriptionToDatabase(shop, forced);
     await reconcileCacheForVerifiedPlan(shop, previousPlan, forced);
+    await maybeTriggerUpgradeResync(admin, shop, previousPlan, forced);
     return forced;
   }
 
@@ -435,6 +474,7 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     }
 
     await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
+    await maybeTriggerUpgradeResync(admin, shop, previousPlan, plan);
     return plan;
   } catch (error) {
     logger.error('Error checking subscription', { error });

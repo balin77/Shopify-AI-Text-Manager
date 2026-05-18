@@ -1001,6 +1001,8 @@ export const es: Translation = {
     syncEmptyResponseCollections: "Sincronización de colecciones omitida: Shopify no devolvió datos (posible caída de la API). Sus colecciones locales se conservaron.",
     syncEmptyResponseArticles: "Sincronización de artículos omitida: Shopify no devolvió datos (posible caída de la API). Sus artículos locales se conservaron.",
     syncEmptyResponseThemes: "Sincronización de temas omitida: Shopify no devolvió datos (posible caída de la API). Sus temas locales se conservaron.",
+    syncEmptyResponseMetaobjects: "Sincronización de metaobjetos omitida: Shopify no devolvió datos (posible caída de la API). Sus metaobjetos locales se conservaron.",
+    syncEmptyResponseMenus: "Sincronización de menús omitida: Shopify no devolvió datos (posible caída de la API). Sus menús locales se conservaron.",
     syncFailed: "Sincronización de {phase} fallida: {details}",
   },
 

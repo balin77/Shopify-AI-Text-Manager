@@ -999,6 +999,8 @@ export const de = {
     syncEmptyResponseCollections: "Kollektionen-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Kollektionen wurden beibehalten.",
     syncEmptyResponseArticles: "Artikel-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Artikel wurden beibehalten.",
     syncEmptyResponseThemes: "Theme-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Themes wurden beibehalten.",
+    syncEmptyResponseMetaobjects: "Metaobjekt-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Metaobjekte wurden beibehalten.",
+    syncEmptyResponseMenus: "Menü-Sync übersprungen: Shopify lieferte keine Daten (möglicher API-Ausfall). Ihre lokalen Menüs wurden beibehalten.",
     syncFailed: "{phase}-Synchronisation fehlgeschlagen: {details}",
   },
 

@@ -14,8 +14,9 @@
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import { Prisma } from "@prisma/client";
 import { db } from "../db.server";
-import { getPlanLimits, type Plan } from "../utils/planUtils";
+import { getPlanLimits, getSyncScope, type Plan } from "../utils/planUtils";
 import { ProductSyncService } from "./product-sync.service";
 import { ContentSyncService } from "./content-sync.service";
 import { BackgroundSyncService } from "./background-sync.service";
@@ -69,6 +70,22 @@ export async function runInitialFullSync(
     policies: 0,
     themes: 0,
     metaobjects: 0,
+    menus: 0,
+  };
+
+  // Track per-phase failures. A swallowed (non-abort) phase error must NOT
+  // count as a successful onboarding: if any ENABLED phase failed we leave
+  // initialSyncCompletedAt unset so the scheduler retries on the next cycle
+  // (otherwise e.g. a transient collections error would mark setup "done" and
+  // pre-existing collections — which have no create/update webhook — would
+  // stay permanently uncached).
+  let phaseFailed = false;
+  let firstPhaseError: string | null = null;
+  const recordPhaseFailure = (phase: string, err: unknown): string => {
+    const msg = getSyncErrorMessage(phase, err);
+    phaseFailed = true;
+    if (!firstPhaseError) firstPhaseError = msg;
+    return msg;
   };
 
   const emit = (
@@ -92,6 +109,10 @@ export async function runInitialFullSync(
   const settings = await db.aISettings.findUnique({ where: { shop } });
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   const planLimits = getPlanLimits(plan);
+  // Single source of truth for which phases this plan may sync. A disabled
+  // phase is skipped (not fetched) — pruning already-cached, now-disallowed
+  // data stays the job of planCacheCleanup (downgrade path), never this sync.
+  const scope = getSyncScope(plan);
   const appLocale = (settings?.appLanguage || DEFAULT_LOCALE) as Locale;
   const t = getTranslation(appLocale);
 
@@ -102,7 +123,8 @@ export async function runInitialFullSync(
     pages: 'syncEmptyResponsePages',
     policies: 'syncEmptyResponsePolicies',
     themes: 'syncEmptyResponseThemes',
-    metaobjects: 'syncEmptyResponseMetaobjects' as any,
+    metaobjects: 'syncEmptyResponseMetaobjects',
+    menus: 'syncEmptyResponseMenus',
   };
 
   function getSyncErrorMessage(phase: string, err: unknown): string {
@@ -139,7 +161,7 @@ export async function runInitialFullSync(
     } else {
       const productSyncService = new ProductSyncService(admin, shop);
       stats.products = await productSyncService.syncAllProducts({
-        maxProducts: planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts,
+        maxProducts: scope.products.max ?? planLimits.maxProducts,
         cacheProductImages: planLimits.cacheEnabled.productImages,
         signal,
         onProgress: (info) => {
@@ -203,124 +225,193 @@ export async function runInitialFullSync(
   // PHASE 2: Sync Collections
   // ==========================================
   assertNotAborted();
-  emit('collections', 0, 'Syncing collections...');
-  try {
-    const syncService = new ContentSyncService(admin, shop);
-    stats.collections = await syncService.syncAllCollections(planLimits.maxCollections, (current, total, message) => {
-      assertNotAborted();
-      emit('collections', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing collections...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.collections.enabled) {
+    emit('collections', 100, 'Collections not included in this plan, skipping...');
+  } else {
+    emit('collections', 0, 'Syncing collections...');
+    try {
+      const syncService = new ContentSyncService(admin, shop);
+      stats.collections = await syncService.syncAllCollections(scope.collections.max, (current, total, message) => {
+        assertNotAborted();
+        emit('collections', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing collections...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    emit('collections', 100, `Synced ${stats.collections} collections`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('collections', 100, getSyncErrorMessage('collections', err));
+      emit('collections', 100, `Synced ${stats.collections} collections`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('collections', 100, recordPhaseFailure('collections', err));
+    }
   }
 
   // ==========================================
   // PHASE 3: Sync Articles
   // ==========================================
   assertNotAborted();
-  emit('articles', 0, 'Syncing articles...');
-  try {
-    const syncService = new ContentSyncService(admin, shop);
-    stats.articles = await syncService.syncAllArticles(planLimits.maxArticles, (current, total, message) => {
-      assertNotAborted();
-      emit('articles', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing articles...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.articles.enabled) {
+    emit('articles', 100, 'Articles not included in this plan, skipping...');
+  } else {
+    emit('articles', 0, 'Syncing articles...');
+    try {
+      const syncService = new ContentSyncService(admin, shop);
+      stats.articles = await syncService.syncAllArticles(scope.articles.max, (current, total, message) => {
+        assertNotAborted();
+        emit('articles', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing articles...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    emit('articles', 100, `Synced ${stats.articles} articles`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('articles', 100, getSyncErrorMessage('articles', err));
+      emit('articles', 100, `Synced ${stats.articles} articles`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('articles', 100, recordPhaseFailure('articles', err));
+    }
   }
 
   // ==========================================
   // PHASE 4: Sync Pages
   // ==========================================
   assertNotAborted();
-  emit('pages', 0, 'Syncing pages...');
-  try {
-    const bgSyncService = new BackgroundSyncService(admin, shop);
-    stats.pages = await bgSyncService.syncAllPages(planLimits.maxPages, (current, total, message) => {
-      assertNotAborted();
-      emit('pages', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing pages...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.pages.enabled) {
+    emit('pages', 100, 'Pages not included in this plan, skipping...');
+  } else {
+    emit('pages', 0, 'Syncing pages...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.pages = await bgSyncService.syncAllPages(scope.pages.max, (current, total, message) => {
+        assertNotAborted();
+        emit('pages', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing pages...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    emit('pages', 100, `Synced ${stats.pages} pages`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('pages', 100, getSyncErrorMessage('pages', err));
+      emit('pages', 100, `Synced ${stats.pages} pages`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('pages', 100, recordPhaseFailure('pages', err));
+    }
   }
 
   // ==========================================
   // PHASE 5: Sync Policies
   // ==========================================
   assertNotAborted();
-  emit('policies', 0, 'Syncing policies...');
-  try {
-    const bgSyncService = new BackgroundSyncService(admin, shop);
-    stats.policies = await bgSyncService.syncAllPolicies((current, total, message) => {
-      assertNotAborted();
-      emit('policies', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing policies...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.policies.enabled) {
+    emit('policies', 100, 'Policies not included in this plan, skipping...');
+  } else {
+    emit('policies', 0, 'Syncing policies...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.policies = await bgSyncService.syncAllPolicies((current, total, message) => {
+        assertNotAborted();
+        emit('policies', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing policies...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    emit('policies', 100, `Synced ${stats.policies} policies`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('policies', 100, getSyncErrorMessage('policies', err));
+      emit('policies', 100, `Synced ${stats.policies} policies`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('policies', 100, recordPhaseFailure('policies', err));
+    }
   }
 
   // ==========================================
   // PHASE 6: Sync Themes
   // ==========================================
   assertNotAborted();
-  emit('themes', 0, 'Syncing themes...');
-  try {
-    const bgSyncService = new BackgroundSyncService(admin, shop);
-    stats.themes = await bgSyncService.syncAllThemes((current, total, message) => {
-      assertNotAborted();
-      emit('themes', current, 'Syncing themes...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.themes.enabled) {
+    emit('themes', 100, 'Themes not included in this plan, skipping...');
+  } else {
+    emit('themes', 0, 'Syncing themes...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.themes = await bgSyncService.syncAllThemes((current, total, message) => {
+        assertNotAborted();
+        emit('themes', current, 'Syncing themes...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    emit('themes', 100, `Synced ${stats.themes} themes`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('themes', 100, getSyncErrorMessage('themes', err));
+      emit('themes', 100, `Synced ${stats.themes} themes`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('themes', 100, recordPhaseFailure('themes', err));
+    }
   }
 
   // ==========================================
   // PHASE 7: Sync Metaobjects
   // ==========================================
   assertNotAborted();
-  emit('metaobjects', 0, 'Syncing metaobjects...');
-  try {
-    const { MetaobjectSyncService } = await import("./metaobject-sync.service");
-    const metaobjectSync = new MetaobjectSyncService(admin, shop);
-    const metaResult = await metaobjectSync.syncAll((current, total, message) => {
-      assertNotAborted();
-      emit('metaobjects', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing metaobjects...', {
-        detailCurrent: current, detailTotal: total, detailMessage: message,
+  if (!scope.metaobjects.enabled) {
+    emit('metaobjects', 100, 'Metaobjects not included in this plan, skipping...');
+  } else {
+    emit('metaobjects', 0, 'Syncing metaobjects...');
+    try {
+      const { MetaobjectSyncService } = await import("./metaobject-sync.service");
+      const metaobjectSync = new MetaobjectSyncService(admin, shop);
+      const metaResult = await metaobjectSync.syncAll((current, total, message) => {
+        assertNotAborted();
+        emit('metaobjects', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing metaobjects...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
       });
-    });
-    stats.metaobjects = metaResult.metaobjects;
-    emit('metaobjects', 100, `Synced ${metaResult.definitions} definitions, ${metaResult.metaobjects} metaobjects`);
-  } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") throw err;
-    emit('metaobjects', 100, getSyncErrorMessage('metaobjects', err));
+      stats.metaobjects = metaResult.metaobjects;
+      emit('metaobjects', 100, `Synced ${metaResult.definitions} definitions, ${metaResult.metaobjects} metaobjects`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('metaobjects', 100, recordPhaseFailure('metaobjects', err));
+    }
   }
 
   // ==========================================
-  // COMPLETE — set the marker, clear progress + force-request.
+  // PHASE 8: Sync Menus
   // ==========================================
-  // Set ONLY here, after a fully successful run. An abort throws AbortError
-  // before reaching this point, leaving the marker unset (the safe state →
-  // scheduler finishes it next cycle).
+  // Menus have no Shopify webhook and were previously not synced at all — only
+  // entitled on pro/max via contentTypes. syncAllMenus has no cap/progress.
+  assertNotAborted();
+  if (!scope.menus.enabled) {
+    emit('menus', 100, 'Menus not included in this plan, skipping...');
+  } else {
+    emit('menus', 0, 'Syncing menus...');
+    try {
+      const syncService = new ContentSyncService(admin, shop);
+      stats.menus = await syncService.syncAllMenus();
+      emit('menus', 100, `Synced ${stats.menus} menus`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('menus', 100, recordPhaseFailure('menus', err));
+    }
+  }
+
+  // Catch an abort that landed during the last (callback-less) menus phase
+  // before we persist the success marker.
+  assertNotAborted();
+
+  // ==========================================
+  // COMPLETE
+  // ==========================================
+  // If any ENABLED phase failed (swallowed, non-abort), do NOT set the
+  // completion marker — record the error and return completed:false so the
+  // scheduler retries next cycle. Otherwise a single transient phase error
+  // would mark setup "done" and leave that content type permanently uncached
+  // (collections/articles/menus have no create/update webhook).
+  if (phaseFailed) {
+    try {
+      await db.shopInstallState.upsert({
+        where: { shop },
+        create: { shop, initialSyncError: firstPhaseError ?? "Sync failed" },
+        update: { initialSyncError: firstPhaseError ?? "Sync failed" },
+      });
+    } catch (e) {
+      logger.warn("[INITIAL-SYNC] Failed to persist initialSyncError", {
+        shop, error: e instanceof Error ? e.message : String(e),
+      });
+    }
+    emit('error', 100, firstPhaseError ?? 'Sync failed');
+    return { stats, completed: false };
+  }
+
+  // Set the success marker ONLY here, after a fully successful run. An abort
+  // throws AbortError before this point, leaving the marker unset (the safe
+  // state → scheduler finishes it next cycle).
   try {
     await db.shopInstallState.upsert({
       where: { shop },
@@ -341,4 +432,46 @@ export async function runInitialFullSync(
 
   emit('done', 100, 'Sync complete!');
   return { stats, completed: true };
+}
+
+/**
+ * Requests a fresh initial sync by resetting the ShopInstallState markers.
+ * The scheduler's initial-sync branch picks this up on its next cycle and runs
+ * runInitialFullSync (force = whether to delete+re-pull products first).
+ *
+ * Shared by the Settings force re-sync (force:true) and the plan-upgrade auto
+ * re-sync (force:false, non-destructive fill — cleanup already pruned). The
+ * caller is responsible for ensuring the scheduler is running
+ * (syncScheduler.startSyncForShop) — kept out of here to avoid an import cycle
+ * with sync-scheduler.service.
+ */
+export async function requestInitialResync(
+  shop: string,
+  opts: { force: boolean },
+): Promise<void> {
+  await db.shopInstallState.upsert({
+    where: { shop },
+    create: {
+      shop,
+      initialSyncCompletedAt: null,
+      initialSyncStartedAt: new Date(),
+      initialSyncForceRequested: opts.force,
+      initialSyncPhase: null,
+      initialSyncPercent: 0,
+      // Prisma.JsonNull writes a real SQL NULL; `undefined` would leave the
+      // previous run's stats in place (Prisma treats undefined as "no change"),
+      // making /api/sync-status briefly report stale counts at 0%.
+      initialSyncStats: Prisma.JsonNull,
+      initialSyncError: null,
+    },
+    update: {
+      initialSyncCompletedAt: null,
+      initialSyncStartedAt: new Date(),
+      initialSyncForceRequested: opts.force,
+      initialSyncPhase: null,
+      initialSyncPercent: 0,
+      initialSyncStats: Prisma.JsonNull,
+      initialSyncError: null,
+    },
+  });
 }

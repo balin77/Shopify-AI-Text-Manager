@@ -9,6 +9,9 @@ import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
+import { db } from '../db.server';
+import { getSyncScope, type Plan } from '../utils/planUtils';
+import { ContentSyncService } from './content-sync.service';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -106,6 +109,8 @@ export interface SyncStats {
   policies: number;
   themes: number;
   metaobjects: number;
+  articles: number;
+  menus: number;
   total: number;
   duration: number;
 }
@@ -1512,7 +1517,17 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
-   * Sync all content types (Pages, Policies, Themes)
+   * Recurring incremental sync for webhook-less content types.
+   *
+   * Plan-aware via the central getSyncScope (same source of truth as the
+   * initial sync) so it only fetches what the plan entitles and stays correct
+   * if the plan config changes. Covers the webhook-less types: pages, policies,
+   * themes, metaobjects, and — added because Shopify offers no article/menu
+   * webhooks and they would otherwise go permanently stale after the initial
+   * sync — articles and menus. Products/collections are intentionally NOT here
+   * (kept fresh by their Shopify webhooks). Disabled phases are skipped (not
+   * fetched); pruning no-longer-entitled data stays planCacheCleanup's job.
+   *
    * @returns Statistics about the sync operation
    */
   async syncAll(): Promise<SyncStats> {
@@ -1521,24 +1536,54 @@ export class BackgroundSyncService {
     logger.debug(`[BackgroundSync] Starting full sync for shop: ${this.shop}`);
 
     try {
-      // Run all syncs in parallel with aggressive cleanup
-      const [pages, policies, themes, metaobjects] = await Promise.all([
-        this.syncAllPages().catch(err => {
-          logger.error('[BackgroundSync] Pages sync failed:', err);
-          return 0;
-        }),
-        this.syncAllPolicies().catch(err => {
-          logger.error('[BackgroundSync] Policies sync failed:', err);
-          return 0;
-        }),
-        this.syncAllThemes().catch(err => {
-          logger.error('[BackgroundSync] Themes sync failed:', err);
-          return 0;
-        }),
-        this.syncAllMetaobjects().catch(err => {
-          logger.error('[BackgroundSync] Metaobjects sync failed:', err);
-          return 0;
-        }),
+      // Resolve the plan scope (BackgroundSyncService otherwise reads no plan).
+      const settings = await db.aISettings.findUnique({
+        where: { shop: this.shop },
+        select: { subscriptionPlan: true },
+      });
+      const plan = (settings?.subscriptionPlan || 'free') as Plan;
+      const scope = getSyncScope(plan);
+
+      const contentSync = new ContentSyncService(this.gateway, this.shop);
+
+      // Run all entitled syncs in parallel; disabled phases resolve to 0.
+      const [pages, policies, themes, metaobjects, articles, menus] = await Promise.all([
+        scope.pages.enabled
+          ? this.syncAllPages(scope.pages.max).catch(err => {
+              logger.error('[BackgroundSync] Pages sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        scope.policies.enabled
+          ? this.syncAllPolicies().catch(err => {
+              logger.error('[BackgroundSync] Policies sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        scope.themes.enabled
+          ? this.syncAllThemes().catch(err => {
+              logger.error('[BackgroundSync] Themes sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        scope.metaobjects.enabled
+          ? this.syncAllMetaobjects().catch(err => {
+              logger.error('[BackgroundSync] Metaobjects sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        scope.articles.enabled
+          ? contentSync.syncAllArticles(scope.articles.max).catch(err => {
+              logger.error('[BackgroundSync] Articles sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        scope.menus.enabled
+          ? contentSync.syncAllMenus().catch(err => {
+              logger.error('[BackgroundSync] Menus sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
       ]);
 
       const duration = Date.now() - startTime;
@@ -1547,12 +1592,14 @@ export class BackgroundSyncService {
         policies,
         themes,
         metaobjects,
-        total: pages + policies + themes + metaobjects,
+        articles,
+        menus,
+        total: pages + policies + themes + metaobjects + articles + menus,
         duration,
       };
 
-      logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}`);
+      logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (plan=${plan})`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}`);
 
       return stats;
     } catch (error: unknown) {

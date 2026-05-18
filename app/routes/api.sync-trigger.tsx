@@ -1,6 +1,6 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { db } from "../db.server";
+import { requestInitialResync } from "../services/initial-sync.service";
 import { syncScheduler } from "../services/sync-scheduler.service";
 import { logger } from "~/utils/logger.server";
 
@@ -34,28 +34,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
-  await db.shopInstallState.upsert({
-    where: { shop },
-    create: {
-      shop,
-      initialSyncCompletedAt: null,
-      initialSyncStartedAt: new Date(),
-      initialSyncForceRequested: true,
-      initialSyncPhase: null,
-      initialSyncPercent: 0,
-      initialSyncStats: undefined,
-      initialSyncError: null,
-    },
-    update: {
-      initialSyncCompletedAt: null,
-      initialSyncStartedAt: new Date(),
-      initialSyncForceRequested: true,
-      initialSyncPhase: null,
-      initialSyncPercent: 0,
-      initialSyncStats: undefined,
-      initialSyncError: null,
-    },
-  });
+  // Force re-sync = delete + full re-pull (manual Settings action).
+  await requestInitialResync(shop, { force: true });
 
   // Ensure the scheduler is running so it picks up the initial-sync branch.
   // startSyncForShop restarts cleanly if already active (idempotent).
