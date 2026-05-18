@@ -68,6 +68,43 @@ export class MetaobjectSyncService {
       count: definitions.length
     });
 
+    // 1b. Definition-level stale-delete: a whole type removed in Shopify means
+    // syncMetaobjectsForType never runs for it again, so its metaobjects +
+    // translations would never be cleaned up. Delete removed definitions and
+    // cascade their metaobjects/translations. (syncDefinitions throws on
+    // data.errors, so an outage is already handled there; the 0-guard covers
+    // an empty-but-error-free response.)
+    if (definitions.length >= 100) {
+      logger.warn(`[MetaobjectSync] Skipping definition stale-delete: result possibly truncated (>=100)`);
+    } else {
+      const liveDefIds = definitions.map((d) => d.id);
+      const liveTypes = definitions.map((d) => d.type);
+      if (definitions.length === 0) {
+        const localDefs = await db.metaobjectDefinition.count({ where: { shop: this.shop } });
+        if (localDefs > 0) {
+          logger.warn(`[MetaobjectSync] Skipping definition stale-delete: Shopify returned 0 definitions but ${localDefs} exist locally (possible outage)`);
+        }
+      } else {
+        const removed = await db.$transaction(async (tx) => {
+          const delDefs = await tx.metaobjectDefinition.deleteMany({
+            where: { shop: this.shop, id: { notIn: liveDefIds } },
+          });
+          // Metaobjects/translations of removed types (the per-type loop will
+          // not visit these types anymore).
+          await tx.metaobjectTranslation.deleteMany({
+            where: { shop: this.shop, type: { notIn: liveTypes } },
+          });
+          await tx.metaobject.deleteMany({
+            where: { shop: this.shop, type: { notIn: liveTypes } },
+          });
+          return delDefs.count;
+        });
+        if (removed > 0) {
+          logger.debug(`[MetaobjectSync] 🗑️ Deleted ${removed} stale metaobject definitions (+ their metaobjects/translations)`);
+        }
+      }
+    }
+
     // 2. Sync metaobjects for each definition
     let totalMetaobjects = 0;
     let totalTranslations = 0;
@@ -175,6 +212,41 @@ export class MetaobjectSyncService {
 
     // 1. Fetch metaobjects
     const metaobjects = await this.fetchMetaobjects(type);
+
+    // 1b. Stale-delete: metaobjects deleted in Shopify have no webhook, so
+    // without this they linger forever. Mirrors the article stale-delete.
+    if (metaobjects.length >= 250) {
+      // Un-paginated (first:250) — can't tell which are truly gone.
+      logger.warn(`[MetaobjectSync] Skipping stale-delete for type ${type}: result possibly truncated (>=250)`);
+    } else if (metaobjects.length === 0) {
+      // fetchMetaobjects swallows GraphQL errors and returns [] — 0 is
+      // ambiguous (genuinely empty vs API error). Never mass-delete on empty.
+      const localCount = await db.metaobject.count({ where: { shop: this.shop, type } });
+      if (localCount > 0) {
+        logger.warn(`[MetaobjectSync] Skipping stale-delete for type ${type}: Shopify returned 0 but ${localCount} exist locally (possible outage)`);
+      }
+    } else {
+      const shopifyIds = metaobjects.map((m) => m.id);
+      const deleted = await db.$transaction(async (tx) => {
+        const stale = await tx.metaobject.findMany({
+          where: { shop: this.shop, type, id: { notIn: shopifyIds } },
+          select: { id: true },
+        });
+        const staleIds = stale.map((s) => s.id);
+        const del = await tx.metaobject.deleteMany({
+          where: { shop: this.shop, type, id: { notIn: shopifyIds } },
+        });
+        if (staleIds.length > 0) {
+          await tx.metaobjectTranslation.deleteMany({
+            where: { shop: this.shop, metaobjectId: { in: staleIds } },
+          });
+        }
+        return del.count;
+      });
+      if (deleted > 0) {
+        logger.debug(`[MetaobjectSync] 🗑️ Deleted ${deleted} stale metaobjects of type ${type}`);
+      }
+    }
 
     // 2. Upsert metaobjects to DB
     for (const metaobj of metaobjects) {

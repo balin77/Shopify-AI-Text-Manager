@@ -21,10 +21,18 @@ interface SyncTimer {
   // (uninstall / re-auth / graceful shutdown) so it unwinds cleanly instead of
   // running on a revoked token.
   abortController: AbortController;
+  // Incremental-cycle counter, used to run the low-frequency webhook-backed
+  // drift reconcile (products/collections) only every Nth cycle.
+  cycleCount: number;
 }
 
 /** 3h wall-clock cap on bypassing the inactivity gate during initial sync. */
 const INITIAL_SYNC_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+/** Run the products/collections drift reconcile every N incremental cycles. */
+const RECONCILE_EVERY_N_CYCLES = Math.max(
+  1,
+  parseInt(process.env.RECONCILE_EVERY_N_CYCLES || "30", 10),
+);
 /** Min interval between throttled initial-sync progress writes per shop. */
 const PROGRESS_WRITE_THROTTLE_MS = 3000;
 
@@ -88,6 +96,7 @@ class SyncSchedulerService {
       startedAt: new Date(),
       isRunning: false,
       abortController: new AbortController(),
+      cycleCount: 0,
     };
     this.activeTimers.set(shop, entry);
 
@@ -153,6 +162,24 @@ class SyncSchedulerService {
           const syncService = new BackgroundSyncService(admin, shop);
           const stats = await syncService.syncAll();
           logger.debug(`[SyncScheduler] Sync complete for ${shop}: ${stats.total} items in ${stats.duration}ms`);
+
+          // Low-frequency safety net for the webhook-backed types
+          // (products/collections): repair missed-webhook drift every N
+          // cycles. Runs inside the held slot, only for active shops, never
+          // during the initial-sync path. Failures must not break the cycle.
+          if (syncTimer) {
+            syncTimer.cycleCount++;
+            if (syncTimer.cycleCount % RECONCILE_EVERY_N_CYCLES === 0) {
+              try {
+                const { reconcileWebhookBackedTypes } = await import("./webhook-reconcile.service");
+                await reconcileWebhookBackedTypes(admin, shop);
+              } catch (err) {
+                logger.warn(`[SyncScheduler] Webhook-backed reconcile failed for ${shop}`, {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
+          }
         } finally {
           this.releaseSyncSlot();
         }
