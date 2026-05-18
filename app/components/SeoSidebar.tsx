@@ -2,6 +2,11 @@ import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar } from 
 import { useState, useMemo } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
+import {
+  validateJsonLd,
+  renderJsonLdScript,
+  type JsonLd,
+} from "../services/structured-data.service";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -27,6 +32,12 @@ interface SeoSidebarProps {
   excludeDescription?: boolean;
   /** Skip image alt text from SEO evaluation (e.g. blog containers have no images) */
   excludeImages?: boolean;
+  /**
+   * Optional JSON-LD for the current resource. When provided, a collapsible
+   * "Structured data" section with a copyable code block + schema validation
+   * feedback is shown. Omit it and the sidebar behaves exactly as before.
+   */
+  structuredData?: JsonLd | null;
 }
 
 export function SeoSidebar({
@@ -39,8 +50,19 @@ export function SeoSidebar({
   totalImages = 0,
   excludeDescription = false,
   excludeImages = false,
+  structuredData = null,
 }: SeoSidebarProps) {
   const { t } = useI18n();
+  const [showJsonLd, setShowJsonLd] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const jsonLdString = useMemo(
+    () => (structuredData ? renderJsonLdScript(structuredData) : ""),
+    [structuredData],
+  );
+  const jsonLdWarnings = useMemo(
+    () => (structuredData ? validateJsonLd(structuredData) : []),
+    [structuredData],
+  );
   const { seoTitleSuffix } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -379,6 +401,79 @@ export function SeoSidebar({
         <Button onClick={() => setShowDetails(!showDetails)} variant="plain" size="slim">
           {showDetails ? t.seo.hideDetails : t.seo.showDetails}
         </Button>
+
+        {/* Structured data (JSON-LD) — only when the caller supplies it */}
+        {structuredData && (
+          <BlockStack gap="200">
+            <Button
+              onClick={() => setShowJsonLd((v) => !v)}
+              variant="plain"
+              size="slim"
+            >
+              {showJsonLd
+                ? t.seo?.hideStructuredData || "Hide structured data"
+                : t.seo?.showStructuredData || "Show structured data (JSON-LD)"}
+            </Button>
+            {showJsonLd && (
+              <BlockStack gap="200">
+                {jsonLdWarnings.length === 0 ? (
+                  <Badge tone="success">
+                    {t.seo?.structuredDataValid || "Schema looks valid"}
+                  </Badge>
+                ) : (
+                  <BlockStack gap="100">
+                    {jsonLdWarnings.map((w, i) => (
+                      <InlineStack key={i} gap="100" blockAlign="center">
+                        <Badge
+                          tone={w.severity === "error" ? "critical" : "warning"}
+                        >
+                          {w.severity}
+                        </Badge>
+                        <Text as="span" variant="bodySm">
+                          {w.message}
+                        </Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                )}
+                <pre
+                  style={{
+                    maxHeight: "260px",
+                    overflow: "auto",
+                    background: "#f6f6f7",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    fontSize: "11px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {jsonLdString}
+                </pre>
+                <Button
+                  size="slim"
+                  onClick={() => {
+                    navigator.clipboard
+                      ?.writeText(
+                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
+                      )
+                      .then(
+                        () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        },
+                        () => setCopied(false),
+                      );
+                  }}
+                >
+                  {copied
+                    ? t.seo?.copied || "Copied!"
+                    : t.seo?.copyJsonLd || "Copy <script> tag"}
+                </Button>
+              </BlockStack>
+            )}
+          </BlockStack>
+        )}
       </BlockStack>
     </Card>
   );

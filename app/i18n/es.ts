@@ -927,6 +927,11 @@ export const es: Translation = {
     points: "ptos.",
     showDetails: "Mostrar detalles",
     hideDetails: "Ocultar detalles",
+    showStructuredData: "Mostrar datos estructurados (JSON-LD)",
+    hideStructuredData: "Ocultar datos estructurados",
+    structuredDataValid: "El esquema parece válido",
+    copyJsonLd: "Copiar etiqueta <script>",
+    copied: "¡Copiado!",
     suffixPreviewLabel: "Vista previa (título completo en resultados de búsqueda):",
     suffixEffectiveLimit: "Límite efectivo: {limit} de 60 caracteres",
     scoreLabels: {

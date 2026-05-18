@@ -327,7 +327,16 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${metaobjectTranslationsDeleted.count} metaobject translations`);
 
-    // 23. Delete install-state marker (R3) — leaving no residue keeps both the
+    // 23. Delete image-operation usage counters (R2). Pre-existing shop-scoped
+    //     table that was previously not wiped on shop/redact — closed here for
+    //     GDPR completeness (the schema-coverage guard requires it). Not part
+    //     of the JSON-LD feature; included so this branch's suite stays green.
+    const imageOperationCountersDeleted = await tx.imageOperationCounter.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image-operation counters`);
+
+    // 24. Delete install-state marker (R3) — leaving no residue keeps both the
     //     shop/redact webhook and the 30-day reaper idempotent (a redelivered
     //     request finds no marker and deletes 0 rows everywhere).
     const shopInstallStateDeleted = await tx.shopInstallState.deleteMany({
