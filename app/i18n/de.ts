@@ -485,6 +485,8 @@ export const de = {
     goToSettings: "Zu den Einstellungen",
     preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
     preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
+    noApiKeyAtAll: "Noch kein KI-API-Schlüssel hinterlegt",
+    noApiKeyAtAllDescription: "Um die KI-Funktionen nutzen zu können, müssen Sie zuerst einen API-Schlüssel eines KI-Anbieters hinterlegen.",
     corruptedApiKeyTitle: "API-Schlüssel Fehler",
     corruptedApiKeyWarning: "Der gespeicherte API-Schlüssel für {provider} konnte nicht entschlüsselt werden und wurde zurückgesetzt. Bitte erneut eingeben und speichern.",
     aiKeyMissingTitle: "AI-API-Schlüssel erforderlich",

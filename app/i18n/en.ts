@@ -488,6 +488,8 @@ export const en: Translation = {
     goToSettings: "Go to Settings",
     preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
     preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
+    noApiKeyAtAll: "No AI API key set up yet",
+    noApiKeyAtAllDescription: "To use AI features, you first need to add an API key for an AI provider.",
     corruptedApiKeyTitle: "API key error",
     corruptedApiKeyWarning: "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.",
     aiKeyMissingTitle: "AI API key required",
