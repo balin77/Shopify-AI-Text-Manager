@@ -369,6 +369,107 @@ Rules:
   }
 
   /**
+   * Translate many alt-text TEMPLATES into many locales in ONE AI request.
+   *
+   * Replaces the old N-positions × M-locales nested loop (16 round-trips for
+   * 4 positions × 4 languages) with a single call. Keeps translateTemplate's
+   * {Variable} → opaque-token protection so placeholders survive, and
+   * restores / repairs them per cell.
+   *
+   * Returns { [locale]: { [position]: translatedTemplate } }. Any cell the AI
+   * omits or returns unusable is simply absent — the caller decides the
+   * fallback (re-translate just that cell, or keep the source).
+   */
+  async translateTemplatesBatch(
+    templates: Array<{ position: number; template: string }>,
+    fromLang: string,
+    toLocales: string[]
+  ): Promise<Record<string, Record<number, string>>> {
+    // Tokenize each template independently; remember its variable names so we
+    // can restore them after the model returns. Tokens are made globally
+    // unique (position + index) so one big JSON blob can't cross-contaminate.
+    const prepared = templates
+      .filter((t) => t.template && t.template.trim().length > 0)
+      .map((t) => {
+        const sanitized = sanitizePromptInput(t.template, { maxLength: 500, allowNewlines: false });
+        const varNames: string[] = [];
+        const tokenized = sanitized.replace(/\{([^}]+)\}/g, (_, name: string) => {
+          const idx = varNames.length;
+          varNames.push(name);
+          return `TPLVAR${t.position}_${idx}`;
+        });
+        return { position: t.position, tokenized, varNames };
+      });
+
+    if (prepared.length === 0) return {};
+
+    const fromName = LOCALE_NAMES[fromLang] || fromLang;
+    const targetLanguages = toLocales
+      .map((loc) => `${LOCALE_NAMES[loc] || loc} (${loc})`)
+      .join(', ');
+
+    const templatesBlock = prepared
+      .map((p) => `Position ${p.position}: ${p.tokenized}`)
+      .join('\n');
+
+    const allTokens = prepared.flatMap((p) => p.varNames.map((_, i) => `TPLVAR${p.position}_${i}`));
+
+    const jsonStructure: Record<string, Record<string, string>> = {};
+    for (const p of prepared) {
+      jsonStructure[String(p.position)] = {};
+      for (const loc of toLocales) jsonStructure[String(p.position)][loc] = '...';
+    }
+
+    const prompt = `Translate these product image alt-text templates from ${fromName} to: ${targetLanguages}.
+
+${templatesBlock}
+
+Rules:
+- Tokens like ${allTokens.slice(0, 6).join(', ')}${allTokens.length > 6 ? ', …' : ''} are placeholders for product attributes. In EVERY translation you MUST keep ALL tokens that appear in that position's template exactly as written — do not translate, omit, reorder, or alter them.
+- Keep translations concise and descriptive, similar length to the source.
+- Return ONLY JSON, no explanations.
+
+Respond in exactly this JSON shape (keys = position numbers, inner keys = locale codes):
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const parsed = this.parseJSONResponse(await this.askAI(prompt)) as Record<string, Record<string, string>>;
+
+    const out: Record<string, Record<number, string>> = {};
+    for (const p of prepared) {
+      const cell = parsed?.[String(p.position)];
+      if (!cell || typeof cell !== 'object') continue;
+      for (const loc of toLocales) {
+        const raw = cell[loc];
+        if (typeof raw !== 'string' || raw.trim().length === 0) continue;
+
+        const text = AIService.stripXmlWrapper(raw);
+        const dropped = p.varNames
+          .map((name, i) => ({ name, token: `TPLVAR${p.position}_${i}` }))
+          .filter(({ token }) => !text.includes(token));
+
+        let restored = text.replace(
+          /TPLVAR(\d+)_(\d+)/g,
+          (_, pos: string, idx: string) =>
+            Number(pos) === p.position && p.varNames[Number(idx)] !== undefined
+              ? `{${p.varNames[Number(idx)]}}`
+              : _
+        );
+        if (dropped.length > 0) {
+          loggers.ai('warn', '[AI-SERVICE] translateTemplatesBatch: AI dropped TPLVAR tokens, appending them', {
+            dropped: dropped.map((d) => d.name),
+            position: p.position,
+            toLang: loc,
+          });
+          restored = restored.trimEnd() + ' ' + dropped.map((d) => `{${d.name}}`).join(' ');
+        }
+
+        (out[loc] ??= {})[p.position] = restored;
+      }
+    }
+    return out;
+  }
+
+  /**
    * Translate multiple alt-texts to multiple locales in a single AI request.
    * Much more efficient than calling translateContent() per image per locale.
    */
