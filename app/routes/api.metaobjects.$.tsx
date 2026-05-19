@@ -9,6 +9,7 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { authenticate } from "../shopify.server";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT, METAOBJECT_UPDATE } from "../graphql/content.mutations";
+import { GET_TRANSLATABLE_CONTENT } from "../graphql/content.queries";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
@@ -378,7 +379,34 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
           return json({ success: true });
         } else {
-          // Update translation: Use translationsRegister
+          // Update translation: Use translationsRegister.
+          // Shopify rejects a translation whose `translatableContentDigest`
+          // does not match the current source content, so the digest MUST be
+          // fetched first — sending "" makes Shopify discard the call while
+          // the DB upsert below would still mark it "translated" (silent
+          // divergence). Mirrors the pattern in translation.action.ts.
+          const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+            variables: { resourceId: metaobjectId }
+          });
+          const digestData = (await digestResponse.json()) as any;
+          if (digestData.errors) {
+            logger.error("[API-METAOBJECTS] GraphQL error loading digest", {
+              context: "Metaobjects", metaobjectId, locale, errors: digestData.errors
+            });
+            return json({ success: false, error: "GraphQL error loading translation digest" }, { status: 502 });
+          }
+          const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
+          const digestEntry = translatableContent.find((c: any) => c.key === labelField.key);
+          if (!digestEntry?.digest) {
+            logger.error("[API-METAOBJECTS] Missing translatableContentDigest", {
+              context: "Metaobjects", metaobjectId, locale, key: labelField.key
+            });
+            return json({
+              success: false,
+              error: "Could not resolve translation digest for this field"
+            }, { status: 502 });
+          }
+
           const translationResponse = await admin.graphql(TRANSLATE_CONTENT, {
             variables: {
               resourceId: metaobjectId,
@@ -387,7 +415,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   key: labelField.key,
                   value: updatedValue,
                   locale: locale,
-                  translatableContentDigest: ""
+                  translatableContentDigest: digestEntry.digest
                 }
               ]
             }
