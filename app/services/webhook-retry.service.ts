@@ -179,8 +179,43 @@ class WebhookRetryService {
   /**
    * Process a single retry attempt
    */
+  /**
+   * Built-in dispatch for the webhook topics the app emits. Without this,
+   * scheduled retries were always dropped (no handler was ever registered via
+   * registerHandler), so the products retry path was effectively dead and
+   * collections had no retry path at all (N-H7). Resyncing the resource is
+   * idempotent, which is exactly what a retry needs.
+   */
+  private defaultHandler(topic: string): WebhookHandler | undefined {
+    if (topic === 'PRODUCTS_CREATE' || topic === 'PRODUCTS_UPDATE' || topic === 'PRODUCTS_DELETE') {
+      return async (payload, shop) => {
+        const productId = String(payload.productId);
+        if (!productId) throw new Error('Retry payload missing productId');
+        const { createAdminClientFromShop } = await import('../utils/admin-client.server');
+        const { ProductSyncService } = await import('../services/product-sync.service');
+        const admin = await createAdminClientFromShop(shop);
+        const sync = new ProductSyncService(admin, shop);
+        if (topic === 'PRODUCTS_DELETE') await sync.deleteProduct(productId);
+        else await sync.syncProduct(productId);
+      };
+    }
+    if (topic === 'COLLECTIONS_CREATE' || topic === 'COLLECTIONS_UPDATE' || topic === 'COLLECTIONS_DELETE') {
+      return async (payload, shop) => {
+        const collectionId = String(payload.collectionId);
+        if (!collectionId) throw new Error('Retry payload missing collectionId');
+        const { createAdminClientFromShop } = await import('../utils/admin-client.server');
+        const { ContentSyncService } = await import('../services/content-sync.service');
+        const admin = await createAdminClientFromShop(shop);
+        const sync = new ContentSyncService(admin, shop);
+        if (topic === 'COLLECTIONS_DELETE') await sync.deleteCollection(collectionId);
+        else await sync.syncCollection(collectionId);
+      };
+    }
+    return undefined;
+  }
+
   private async processRetry(retry: WebhookRetry): Promise<void> {
-    const handler = this.handlers.get(retry.topic);
+    const handler = this.handlers.get(retry.topic) ?? this.defaultHandler(retry.topic);
 
     if (!handler) {
       logger.warn('No handler found for webhook topic', {

@@ -80,6 +80,40 @@ export async function consumeImageOperations(
 }
 
 /**
+ * Refund `n` previously-consumed image operations for the current period.
+ *
+ * Image ops are reserved up-front (at batch creation) but the actual compute
+ * happens asynchronously and can fail. Without a refund path the merchant is
+ * billed monotonically for results that were never produced. Clamped at 0 so
+ * a late refund (e.g. after a month rollover) can never drive the counter
+ * negative.
+ */
+export async function refundImageOperations(
+  shop: string,
+  n: number
+): Promise<void> {
+  if (n <= 0) return;
+  const period = currentImageOpPeriod();
+  try {
+    const row = await db.imageOperationCounter.findUnique({
+      where: { shop_period: { shop, period } },
+      select: { count: true },
+    });
+    if (!row) return;
+    const next = Math.max(0, row.count - n);
+    await db.imageOperationCounter.update({
+      where: { shop_period: { shop, period } },
+      data: { count: next },
+    });
+    logger.info(`[ImageOps] Refunded ${n} op(s) for ${shop}: ${row.count} → ${next}`);
+  } catch (err) {
+    logger.error(
+      `[ImageOps] Refund of ${n} op(s) failed for ${shop}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+/**
  * Read-only current usage for the Settings → Usage display (no increment).
  */
 export async function getImageOperationUsage(

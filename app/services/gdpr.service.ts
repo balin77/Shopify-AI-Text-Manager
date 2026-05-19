@@ -154,15 +154,15 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 29 models in prisma/schema.prisma:
+ * Coverage of all 30 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
  *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
- *      Metaobject, MetaobjectTranslation, ShopInstallState
- *                                                (all scoped by `shop`)
+ *      Metaobject, MetaobjectTranslation, ShopInstallState,
+ *      ImageOperationCounter                     (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via Product `onDelete: Cascade` — do NOT delete
@@ -334,6 +334,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${shopInstallStateDeleted.count} install-state rows`);
+
+    // 24. Delete image-operation usage counters — shop-identifying usage data
+    //     (Art. 17). Without this, monthly counters keyed by `shop` survive
+    //     redaction indefinitely.
+    const imageOperationCountersDeleted = await tx.imageOperationCounter.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image operation counters`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

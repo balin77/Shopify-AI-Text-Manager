@@ -279,7 +279,17 @@ export function decryptApiKey(encryptedApiKey: string | null | undefined): strin
   const trimmed = encryptedApiKey.trim();
 
   // If it's not encrypted, return as-is (for backwards compatibility during migration)
-  // NOTE: Never log the actual key value here
+  // NOTE: Never log the actual key value here.
+  //
+  // Review LOW ("ENCRYPTION_KEY only fatal in production; dev/staging stores
+  // plaintext"): this passthrough is the intended behavior and is accepted by
+  // design. ENCRYPTION_KEY is enforced as required ONLY in production (see
+  // scripts/validate-env.js); locally it is optional so contributors can run
+  // the app without provisioning a key. The data at risk (BYO AI keys / dev
+  // shop tokens) is non-production and disposable, and the production
+  // enforcement guarantees ciphertext-at-rest where it matters. Returning the
+  // value as-is here also preserves forward compatibility for rows written
+  // before encryption was introduced.
   if (!isEncrypted(trimmed)) {
     logger.debug('[Encryption] Unencrypted value detected (API key). Consider running migration.');
     return trimmed;

@@ -188,7 +188,14 @@ ${languageInstruction}`;
     fromLang: string,
     toLang: string
   ): Promise<string> {
-    // Sanitize content before translation
+    // Sanitize content before translation.
+    // NOTE (review MEDIUM "5000-char truncation"): this is intentionally NOT a
+    // bug. `maxLength` is a no-op in sanitizePromptInput by design — see the
+    // explicit "No character limits are enforced here" contract in
+    // app/utils/prompt-sanitizer.ts. Long content (legal pages, T&Cs) must be
+    // sent untruncated; if it exceeds the model context the provider errors
+    // and that surfaces to the user instead of silently writing a partial
+    // translation. The option is left in place only to document intended size.
     const sanitizedContent = sanitizePromptInput(content, {
       maxLength: 5000,
       allowNewlines: true
@@ -527,13 +534,24 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
 
     // Handle both array and object responses
     if (Array.isArray(parsed)) {
+      // The numbered prompt maps 1:1 to the input order. A different length
+      // means the model dropped or merged items — returning it would silently
+      // misalign every translation after the gap and still be reported as
+      // "success". Fail loudly so the task is retried/failed instead.
+      if (parsed.length !== values.length) {
+        loggers.ai('error', `[AI-SERVICE] Batch translation length mismatch: expected ${values.length}, got ${parsed.length}`, { response: responseText.substring(0, 500) });
+        throw new Error(`AI batch translation returned ${parsed.length} values, expected ${values.length}`);
+      }
       loggers.ai('info', `[AI-SERVICE] Batch translation successful: ${parsed.length} values translated`);
       return parsed.map(String);
     }
 
-    // Fallback: return original values if parsing fails
-    loggers.ai('warn', '[AI-SERVICE] Batch translation response was not an array, returning original values');
-    return values;
+    // Never fall back to the untranslated source: returning `values` here
+    // caused source-language text to be written to Shopify/DB as if it were a
+    // translation (silent, hard-to-detect corruption). Fail loudly so the
+    // caller marks the task failed and writes nothing (N-H3).
+    loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { response: responseText.substring(0, 500) });
+    throw new Error('AI batch translation did not return a JSON array');
   }
 
   async translateSEO(
@@ -610,7 +628,11 @@ Respond in JSON format:
 
     const localeNames = LOCALE_NAMES;
 
-    const language = localeNames[sanitizedContext.locale] || 'German';
+    // Fall back to the locale code itself (e.g. "nl", "pt-BR") rather than a
+    // hardcoded 'German': an unknown locale defaulting to German produced
+    // confidently wrong-language content. The model understands BCP-47 codes,
+    // and this matches the fallback used by translateContent.
+    const language = localeNames[sanitizedContext.locale] || sanitizedContext.locale || 'English';
     const isTitle = fieldType === 'title';
     const fieldLabel = isTitle ? 'Title' : 'Description';
 
@@ -1193,34 +1215,60 @@ Return only the alt text, without additional explanations. Output the result in 
     return await this.askAI(prompt, sendImageToAI ? imageUrl : undefined);
   }
 
+  /**
+   * Scan `text` from `start` (which must be '{' or '[') and return the index
+   * just past the matching close bracket, honoring nesting and JSON string
+   * literals (so brackets inside strings don't count). Returns -1 if no
+   * balanced span exists. This replaces the previous lazy/greedy regexes,
+   * which truncated nested arrays/objects (`[{"a":[1]}]` → `[{"a":[1]`) or
+   * over-captured trailing prose, spuriously failing valid responses.
+   */
+  private static matchBalancedJSON(text: string, start: number): number {
+    const open = text[start];
+    const close = open === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === open) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return -1;
+  }
+
   private parseJSONResponse(text: string): any {
-    // Try to extract JSON from markdown code blocks (supports both objects and arrays)
-    const jsonBlockMatch = text.match(/```(?:json)?\s*([\[\{][\s\S]*?[\]\}])\s*```/);
-    if (jsonBlockMatch) {
-      try {
-        return JSON.parse(jsonBlockMatch[1]);
-      } catch (error) {
-        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON from code block', { error: error instanceof Error ? error.message : String(error) });
-      }
+    // 1. Strip a single surrounding markdown code fence, if present.
+    const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const candidate = (fenced ? fenced[1] : text).trim();
+
+    // 2. Fast path: the whole candidate is already valid JSON.
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // fall through to bracket extraction
     }
 
-    // Try to find JSON array in text
-    const arrayMatch = text.match(/\[[\s\S]*?\]/);
-    if (arrayMatch) {
+    // 3. Extract the first balanced JSON object/array embedded in prose.
+    for (let i = 0; i < candidate.length; i++) {
+      const ch = candidate[i];
+      if (ch !== '{' && ch !== '[') continue;
+      const end = AIService.matchBalancedJSON(candidate, i);
+      if (end === -1) break;
       try {
-        return JSON.parse(arrayMatch[0]);
-      } catch (error) {
-        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON array', { error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-
-    // Try to find JSON object in text
-    const objectMatch = text.match(/\{[\s\S]*\}/);
-    if (objectMatch) {
-      try {
-        return JSON.parse(objectMatch[0]);
-      } catch (error) {
-        loggers.ai('warn', '[AI-SERVICE] Failed to parse JSON object', { error: error instanceof Error ? error.message : String(error) });
+        return JSON.parse(candidate.slice(i, end));
+      } catch {
+        // Not valid JSON starting here; keep scanning for the next opener.
       }
     }
 

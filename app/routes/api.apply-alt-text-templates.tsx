@@ -32,7 +32,13 @@ async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Prom
 // productImageAltTranslation upserts silently no-op when the gallery image was
 // never synced into the local DB (common for variant_gallery metafield images).
 async function getOrCreateProductImage(productId: string, gid: string, shop: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
-  const existing = await db.productImage.findFirst({ where: { mediaId: gid, product: { shop } }, select: { id: true } });
+  // Scope the lookup by the owning product's shop: Shopify media GIDs are only
+  // unique per shop, so an unscoped `mediaId` match could resolve to another
+  // tenant's ProductImage row and leak writes across shops.
+  const existing = await db.productImage.findFirst({
+    where: { mediaId: gid, product: { shop } },
+    select: { id: true },
+  });
   if (existing) return existing;
   const url = await resolveImageUrl(admin, gid);
   return db.productImage.create({
@@ -63,15 +69,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "productId, locale, and variants are required" }, { status: 400 });
   }
 
-  // Shop-isolation: reject if the product belongs to a different tenant. Without
-  // this, an enumerable productId could attach ProductImage rows to a foreign
-  // shop's product (FK is productId-only, ProductImage has no shop column).
-  const ownerCheck = await db.product.findUnique({
-    where: { id: productId },
-    select: { shop: true },
+  // Fail-closed ownership guard, aligned with the strong `shop_id` compound
+  // pattern (see alt-text.handler). The only persistent work this route does
+  // is creating ProductImage rows, whose required FK to Product means a
+  // not-synced product would FK-fail anyway — so requiring an owned, synced
+  // Product here rejects cross-tenant productIds without breaking any
+  // legitimate flow.
+  const ownedProduct = await db.product.findUnique({
+    where: { shop_id: { shop: session.shop, id: productId } },
+    select: { title: true },
   });
-  if (ownerCheck && ownerCheck.shop !== session.shop) {
-    return json({ success: false, error: "Product not found" }, { status: 404 });
+  if (!ownedProduct) {
+    return json({ success: false, error: "Product not found for this shop" }, { status: 404 });
   }
 
   // Load templates for this product
@@ -98,12 +107,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const isPrimary = !locale || locale === primaryLocale;
 
   // Resolve a display title for the navigation InfoBox.
-  // Falls back to productId if the product isn't synced yet.
-  const productRecord = await db.product.findUnique({
-    where: { shop_id: { shop: session.shop, id: productId } },
-    select: { title: true },
-  });
-  const taskTitle = productRecord?.title || productId;
+  const taskTitle = ownedProduct.title || productId;
 
   // Create the task up-front with status "running" so the navigation badge
   // counts it while we work — otherwise it only appeared after completion.

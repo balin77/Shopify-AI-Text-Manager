@@ -21,13 +21,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Bound the fan-out: an unbounded images[] array would create an unbounded
   // number of db.task rows in a single request. Cheap check first, before the
-  // quota DB round-trip below.
+  // quota / ownership DB round-trips below.
   const MAX_IMAGES_PER_REQUEST = 250;
   if (images.length > MAX_IMAGES_PER_REQUEST) {
     return json(
       { error: `Too many images in one request (max ${MAX_IMAGES_PER_REQUEST}, got ${images.length})` },
       { status: 413 },
     );
+  }
+
+  // Fail-closed ownership guard (strong `shop_id` compound): never create
+  // imageWebpConversion task rows for a productId owned by another shop
+  // (N-H6). Also prevents charging quota for a foreign product.
+  const owned = await db.product.findUnique({
+    where: { shop_id: { shop: session.shop, id: productId } },
+    select: { id: true },
+  });
+  if (!owned) {
+    return json({ error: "Product not found for this shop" }, { status: 404 });
   }
 
   // Each image conversion = one billable image operation (real compute/

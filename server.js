@@ -357,7 +357,16 @@ const server = app.listen(port, host, async () => {
 });
 
 // Graceful shutdown handler
+let shutdownInProgress = false;
 async function gracefulShutdown(signal) {
+  // Reentrancy guard: SIGTERM quickly followed by SIGINT (or a repeated
+  // signal) would otherwise stack a second server.close() and a second
+  // force-exit timer, racing $disconnect() against the first run's work.
+  if (shutdownInProgress) {
+    serverLogger.info(`${signal} received but shutdown already in progress — ignoring`);
+    return;
+  }
+  shutdownInProgress = true;
   serverLogger.info(`${signal} received. Starting graceful shutdown...`);
 
   // Stop accepting new connections

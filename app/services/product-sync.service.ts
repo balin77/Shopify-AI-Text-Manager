@@ -255,6 +255,14 @@ export class ProductSyncService {
       checkAborted();
       try {
         await db.$transaction(async (tx: Prisma.TransactionClient) => {
+          // NOTE (review MEDIUM "webhook ordering"): we deliberately do NOT
+          // compare the stored shopifyUpdatedAt against the incoming value to
+          // reject out-of-order writes. Webhook handlers never apply the
+          // webhook payload directly — they call syncProduct(), which fetches
+          // the CURRENT live product state from Shopify. So regardless of
+          // webhook delivery order the last write always reflects the freshest
+          // Shopify state. A timestamp guard would add complexity and could
+          // wrongly skip a legitimate live resync; it is intentionally omitted.
           // Upsert product
           await tx.product.upsert({
             where: {

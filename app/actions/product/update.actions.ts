@@ -45,6 +45,13 @@ export async function handleUpdateProduct(
   // enumerable. If a Product row with this id exists under a different shop,
   // reject — otherwise the DB writes below (productImage, contentTranslation,
   // productImageAltTranslation) would corrupt another tenant's data.
+  // NOTE: this top-level check stays fail-OPEN on the not-yet-synced case
+  // (ownerCheck === null) on purpose — editing a product that isn't in the
+  // local Product table yet is a legitimate flow. The hard fail-CLOSED
+  // guarantee for N-C2 is provided by the `shop_id` compound scoping on every
+  // internal lookup/write below (see updateImageAltTexts /
+  // updateTranslatedProduct / updatePrimaryProduct), so a foreign or
+  // not-synced productId resolves to null and writes safely no-op.
   const ownerCheck = await db.product.findUnique({
     where: { id: productId },
     select: { shop: true },
@@ -116,14 +123,14 @@ export async function handleUpdateProduct(
     // Update alt-texts first (works for both primary and translated locales)
     let failedAltTextIndices: number[] = [];
     if (params.imageAltTexts && Object.keys(params.imageAltTexts).length > 0) {
-      const altTextResult = await updateImageAltTexts(gateway, db, productId, params);
+      const altTextResult = await updateImageAltTexts(gateway, db, productId, params, context.session.shop);
       failedAltTextIndices = altTextResult.failedAltTextIndices;
     }
 
     // Check if this is a translation update or primary locale update
     let response: Response;
     if (params.locale !== params.primaryLocale) {
-      response = await updateTranslatedProduct(gateway, db, productId, params);
+      response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
       response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
     }
@@ -159,7 +166,8 @@ async function updateImageAltTexts(
   gateway: ShopifyApiGateway,
   db: PrismaClient,
   productId: string,
-  params: UpdateProductParams
+  params: UpdateProductParams,
+  shop: string
 ): Promise<{ failedAltTextIndices: number[] }> {
   loggers.product("info", "Updating image alt-texts", {
     productId,
@@ -196,9 +204,11 @@ async function updateImageAltTexts(
   const mediaEdges = (productData.data?.product?.media?.edges || [])
     .filter((edge: { node?: { id?: string } }) => edge.node?.id); // Only keep nodes with an id (MediaImage type)
 
-  // Get DB product images (sorted by position to match UI order)
+  // Get DB product images (sorted by position to match UI order).
+  // Scoped by the strong `shop_id` compound key so a productId owned by
+  // another shop can never resolve here (fail-closed cross-tenant guard).
   const dbProduct = await db.product.findUnique({
-    where: { id: productId },
+    where: { shop_id: { shop, id: productId } },
     include: {
       images: {
         orderBy: { position: 'asc' },
@@ -472,7 +482,8 @@ async function updateTranslatedProduct(
   gateway: ShopifyApiGateway,
   db: PrismaClient,
   productId: string,
-  params: UpdateProductParams
+  params: UpdateProductParams,
+  shop: string
 ): Promise<Response> {
   loggers.product("info", "Updating translated product", {
     productId,
@@ -736,9 +747,11 @@ async function updateTranslatedProduct(
     });
   }
 
-  // Update local database using ContentTranslation table (unified pattern)
-  const product = await db.product.findFirst({
-    where: { id: productId },
+  // Update local database using ContentTranslation table (unified pattern).
+  // Scoped by the strong `shop_id` compound key: a productId belonging to
+  // another shop resolves to null here, so no cross-tenant rows are written.
+  const product = await db.product.findUnique({
+    where: { shop_id: { shop, id: productId } },
     select: { shop: true },
   });
 
@@ -909,7 +922,7 @@ async function updatePrimaryProduct(
     updateData.lastSyncedAt = new Date();
 
     await db.product.update({
-      where: { id: productId },
+      where: { shop_id: { shop, id: productId } },
       data: updateData,
     });
 
@@ -1068,7 +1081,7 @@ async function updatePrimaryProduct(
       if (foreignLocales.length > 0) {
         // Get product images from DB to find mediaIds
         const dbProduct = await db.product.findUnique({
-          where: { id: productId },
+          where: { shop_id: { shop, id: productId } },
           include: {
             images: {
               orderBy: { position: 'asc' },
