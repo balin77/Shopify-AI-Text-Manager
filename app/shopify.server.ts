@@ -93,6 +93,14 @@ const shopify = shopifyApp({
   future: {
     unstable_newEmbeddedAuthStrategy: true,
   },
+  // NOTE (review LOW "no scopes_update handling"): we intentionally do not
+  // subscribe to the SCOPES_UPDATE webhook. With unstable_newEmbeddedAuthStrategy
+  // (token-exchange/managed install), Shopify re-runs OAuth and fires afterAuth
+  // on any scope change, and access scopes are declared in shopify.app.toml
+  // (managed installation) rather than tracked per-shop in our DB. afterAuth
+  // already re-establishes the session with the current granted scopes, so a
+  // separate scopes_update subscription would be redundant bookkeeping. If we
+  // ever gate features on specific granted scopes at runtime, revisit this.
   hooks: {
     afterAuth: async ({ session, admin }) => {
       logger.info(`[SHOPIFY.SERVER] afterAuth hook triggered`);

@@ -34,7 +34,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   } catch (error) {
     logger.error("Error processing subscription webhook", { context: "Webhook", topic, error: error instanceof Error ? error.message : String(error) });
-    // Still return 200 to prevent Shopify from retrying
+    // Review LOW ("returns 200 on internal error"): intentional. A non-2xx
+    // makes Shopify retry and, after repeated failures, DISABLE the webhook
+    // subscription entirely — far worse than one missed event. Subscription
+    // state is not authoritative here anyway: it is reconciled on every
+    // afterAuth and by the background scheduler's checkAndSyncSubscription,
+    // so a dropped event is self-healing. We log loudly and ack 200.
   }
 
   return new Response('Webhook processed', { status: 200 });

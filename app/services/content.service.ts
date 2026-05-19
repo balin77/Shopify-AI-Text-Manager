@@ -759,6 +759,17 @@ export class ContentService {
             }
           }
         } catch (error) {
+          // NOTE (review MEDIUM "sync bypasses gateway throttling"): a THROTTLED
+          // error here is logged and this resource type is skipped (partial
+          // data), because content discovery uses this.admin.graphql directly
+          // rather than ShopifyApiGateway's throttle-aware retry queue. This is
+          // a KNOWN, ACCEPTED tradeoff for now: theme/content discovery is a
+          // read-only, fully re-runnable operation (the user can re-open the
+          // section / re-trigger sync, and the next pass picks up what was
+          // skipped), so a transient skip is self-healing and never corrupts
+          // stored data. Routing every sync path through the gateway is a
+          // cross-cutting refactor with real regression risk and is
+          // intentionally deferred rather than done piecemeal here.
           logger.error('Exception loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error });
         }
       }
