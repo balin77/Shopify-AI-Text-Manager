@@ -55,18 +55,35 @@ try {
 
     // Check if it's a P3005 error (non-empty database)
     if (errorOutput.includes('P3005') || errorOutput.includes('database schema is not empty')) {
-      console.log('⚠️ Database is not empty (P3005). Using db push to sync schema...');
-
-      // For existing databases without migration history, use db push
+      // P3005 = the DB already has a schema but no _prisma_migrations history.
+      // The correct, history-PRESERVING remediation is to baseline: record
+      // every existing migration as applied (without re-running its SQL) via
+      // `migrate resolve --applied`, then run `migrate deploy` which becomes a
+      // clean no-op / only applies genuinely new migrations. The old `db push`
+      // fallback discarded migration history entirely and left the project on
+      // an ad-hoc push workflow.
+      console.log(`⚠️ Database is not empty (P3005). Baselining ${migrations.length} migration(s) into history...`);
       try {
-        console.log('🔄 Running prisma db push to sync schema...');
-        execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
-        console.log('✅ Database schema synced successfully!');
-        console.log('ℹ️  Note: Migration history was not preserved. Future schema changes will use db push.');
+        for (const name of migrations) {
+          try {
+            execSync(`npx prisma migrate resolve --applied ${name}`, { stdio: 'pipe' });
+            console.log(`  ↳ Baselined: ${name}`);
+          } catch (resolveErr) {
+            // Already-recorded migrations make resolve fail — that's fine,
+            // it just means this row already exists in history.
+            const out = resolveErr.stderr?.toString() || resolveErr.message || '';
+            console.log(`  ↳ Skipped ${name} (already recorded or not applicable)`);
+            if (process.env.DEBUG_MIGRATIONS) console.log(`     ${out.substring(0, 200)}`);
+          }
+        }
+        // History now exists — deploy is a no-op or applies only new ones.
+        console.log('🔄 Running prisma migrate deploy after baseline...');
+        execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+        console.log('✅ Database baselined and migrations applied — history preserved!');
         process.exit(0);
-      } catch (pushError) {
-        console.error('❌ DB push failed:', pushError.message);
-        throw pushError;
+      } catch (baselineError) {
+        console.error('❌ Baseline failed:', baselineError.message);
+        throw baselineError;
       }
     } else {
       // Log the actual error for debugging

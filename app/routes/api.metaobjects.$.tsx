@@ -11,7 +11,7 @@ import { AIService, type AIProvider, toValidProvider } from "../../src/services/
 import { TRANSLATE_CONTENT, METAOBJECT_UPDATE } from "../graphql/content.mutations";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { isMetaobjectLabelField, findMetaobjectLabelField } from "~/constants/shopifyFields";
 
@@ -163,6 +163,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
         }
 
+        if (!isValidLocale(locale)) {
+          return json({ success: false, error: `Invalid locale: ${locale}` }, { status: 400 });
+        }
+
         logger.debug("[API-METAOBJECTS-ACTION] Loading translations", {
           context: "Metaobjects",
           shop: session.shop,
@@ -236,6 +240,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }, { status: 400 });
         }
 
+        if (!isValidLocale(targetLocale) || !isValidLocale(primaryLocale)) {
+          return json({ success: false, error: "Invalid locale" }, { status: 400 });
+        }
+
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
@@ -273,6 +281,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
         if (!metaobjectId) {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
+        }
+
+        if (!isValidLocale(locale)) {
+          return json({ success: false, error: `Invalid locale: ${locale}` }, { status: 400 });
         }
 
         logger.debug("[API-METAOBJECTS-ACTION] Updating content", {

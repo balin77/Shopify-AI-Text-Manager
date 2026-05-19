@@ -35,8 +35,17 @@ interface AISettings {
   deepseekApiKey?: string | null;
 }
 
-// Timeout for stuck tasks (10 minutes)
+// Timeout for stuck tasks (10 minutes). Applies to actively-progressing
+// states only (running/pending) — a task that hasn't progressed in 10 min
+// is genuinely stuck.
 const STUCK_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+
+// `queued` tasks are waiting for an AI-queue slot BY DESIGN. Under load (or a
+// provider-wide rate-limit backoff) they can legitimately sit for far longer
+// than 10 min, so the short threshold above must NOT fail them — that was
+// killing valid work. They still get a much longer hard safety cap so a truly
+// abandoned/orphaned queued task is eventually cleaned up.
+const QUEUED_TASK_HARD_CAP_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // Check for stuck tasks every 2 minutes
 const STUCK_CHECK_INTERVAL_MS = 2 * 60 * 1000;
@@ -155,11 +164,14 @@ export class TaskRecoveryService {
   async markStuckTasksAsFailed(): Promise<number> {
     const { db } = await import('../../app/db.server');
 
-    const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);
+    const now = Date.now();
+    const stuckThreshold = new Date(now - STUCK_TASK_TIMEOUT_MS);
+    const queuedHardCap = new Date(now - QUEUED_TASK_HARD_CAP_MS);
 
-    const result = await db.task.updateMany({
+    // running/pending: short stuck threshold (no progress = genuinely stuck).
+    const stuckResult = await db.task.updateMany({
       where: {
-        status: { in: ['running', 'pending', 'queued'] },
+        status: { in: ['running', 'pending'] },
         updatedAt: { lt: stuckThreshold },
       },
       data: {
@@ -169,11 +181,25 @@ export class TaskRecoveryService {
       },
     });
 
-    if (result.count > 0) {
-      loggers.queue('info', `Marked ${result.count} stuck task(s) as failed`);
+    // queued: only the long hard cap — legitimate waits are NOT failed.
+    const queuedResult = await db.task.updateMany({
+      where: {
+        status: 'queued',
+        updatedAt: { lt: queuedHardCap },
+      },
+      data: {
+        status: 'failed',
+        error: 'Task abandoned - queued for more than 6 hours',
+        completedAt: new Date(),
+      },
+    });
+
+    const total = stuckResult.count + queuedResult.count;
+    if (total > 0) {
+      loggers.queue('info', `Marked ${total} stuck task(s) as failed (running/pending: ${stuckResult.count}, queued>6h: ${queuedResult.count})`);
     }
 
-    return result.count;
+    return total;
   }
 
   /**

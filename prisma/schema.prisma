@@ -478,8 +478,17 @@ model Menu {
 model ContentTranslation {
   id String @id @default(cuid())
 
-  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy)
-  // NOTE: No foreign key constraints - we handle this polymorphically in code
+  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy).
+  // NO foreign key / ON DELETE CASCADE is possible: `resourceId` points at one
+  // of several different parent tables depending on `resourceType`, which a
+  // single SQL FK cannot express. Lifecycle is therefore enforced in app code:
+  //   - GDPR/uninstall purge: redactShopData() in app/services/gdpr.service.ts
+  //     deletes every row by `shop` (covered by a schema-drift guard test that
+  //     fails if a shop-scoped model is added without a deleteMany there).
+  //   - Per-resource deletes: callers must delete matching ContentTranslation
+  //     rows by (shop, resourceId) — there is no DB safety net.
+  // The explicit `shop` column below exists precisely to make these bulk
+  // tenant-scoped deletes safe and indexable.
   resourceId   String // The GID of the parent resource
   resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
   shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
@@ -493,11 +502,13 @@ model ContentTranslation {
   updatedAt DateTime @updatedAt
 
   @@unique([shop, resourceId, key, locale])
-  @@index([resourceId, locale])
+  // shop-prefixed so lookups stay within one tenant's index range instead of
+  // scanning across all shops' rows for a (resourceId, locale) pair.
+  @@index([shop, resourceId, locale])
   @@index([resourceType])
   @@index([locale])
   @@index([shop, resourceType])
-  @@index([resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
+  @@index([shop, resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
 }
 
 // ============================================

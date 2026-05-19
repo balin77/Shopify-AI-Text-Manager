@@ -42,6 +42,11 @@ const DOWNLOAD_BASE_DELAY_MS = 1000;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
+// Hard cap for an entire task (download + convert + several Shopify calls).
+// Each fetch already has its own 30s timeout, but a wedged sequence (or a
+// hung sharp conversion) could otherwise keep a task "running" indefinitely
+// and never trip the recovery threshold reliably.
+const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -242,12 +247,33 @@ export class WebPProcessorService {
       return;
     }
 
-    const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
+    const { sourceUrl, productId } = taskData;
     if (!sourceUrl || !productId) {
       await this.failTask(task.id, "Missing sourceUrl or productId");
       return;
     }
 
+    let timeoutTimer;
+    try {
+      await Promise.race([
+        this._runWebpSteps(task, taskData),
+        new Promise((_, reject) => {
+          timeoutTimer = setTimeout(
+            () => reject(new Error(`WebP task timed out after ${WEBP_TASK_TIMEOUT_MS}ms`)),
+            WEBP_TASK_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (err) {
+      console.error(`[WebPProcessor] Task ${task.id} timed out / failed:`, err);
+      await this.failTask(task.id, String(err));
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
+  }
+
+  async _runWebpSteps(task, taskData) {
+    const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
     try {
       // Mark as running
       await db.task.update({
@@ -415,6 +441,20 @@ export class WebPProcessorService {
         }
       }
 
+      // 6.6. COMPENSATION ORDERING: point the DB row at the new MediaImage
+      // BEFORE we destructively delete the old media from Shopify. If the
+      // process crashes anywhere between the delete and the old step-9 DB
+      // write, the DB would otherwise still reference a now-deleted mediaId
+      // (broken image, not reliably caught by recovery). Worst case after
+      // this reorder is a surviving duplicate old media — visible and
+      // self-healing on the next sync, far preferable to a dangling pointer.
+      if (mediaId && newMediaId) {
+        await db.productImage.updateMany({
+          where: { mediaId: mediaId },
+          data: { mediaId: newMediaId },
+        }).catch(() => {});
+      }
+
       // 7. Delete old media from Shopify (if mediaId available)
       if (mediaId) {
         await fetchWithTimeout(shopifyApiUrl, {
@@ -540,21 +580,21 @@ export class WebPProcessorService {
 
       await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
 
-      // 9. Update DB: swap mediaId to new GID + set CDN URL.
-      //    target.resourceUrl is the staged-upload storage URL and must NEVER be
-      //    persisted. We query Shopify once for the real CDN URL; if Shopify is
-      //    still PROCESSING the new MediaImage, we update mediaId but keep the
-      //    existing url (column is non-nullable). A subsequent /api/product-images
-      //    upsert reconciles the URL once Shopify finishes processing.
+      // 9. Reconcile the CDN URL. The mediaId pointer was already swapped in
+      //    step 6.6, so here we only resolve and persist the real URL, keyed
+      //    by the NEW mediaId. target.resourceUrl is the staged-upload storage
+      //    URL and must NEVER be persisted. If Shopify is still PROCESSING the
+      //    new MediaImage, url stays as-is (column is non-nullable) and a
+      //    later /api/product-images upsert reconciles it.
       let resolvedUrl = null;
       if (mediaId && newMediaId) {
         resolvedUrl = await fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId);
-        await db.productImage.updateMany({
-          where: { mediaId: mediaId },
-          data: resolvedUrl
-            ? { mediaId: newMediaId, url: resolvedUrl }
-            : { mediaId: newMediaId },
-        }).catch(() => {});
+        if (resolvedUrl) {
+          await db.productImage.updateMany({
+            where: { mediaId: newMediaId },
+            data: { url: resolvedUrl },
+          }).catch(() => {});
+        }
       }
 
       // 10. Mark task as completed

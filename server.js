@@ -105,8 +105,26 @@ if (sentryScrub && sentryScrub.sentryEnabled()) {
     });
     serverLogger.info("[server.js] Sentry initialized (production)");
   } catch (e) {
+    sentryNode = null;
     serverLogger.error("[server.js] Sentry init skipped: " + e.message);
   }
+}
+
+// Process-level safety net — FALLBACK only. When Sentry is active the richer
+// scrubbing + controlled-exit handlers above are already registered; this
+// block exists so dev/staging (Sentry disabled) is not left with NO handler
+// at all (Node would otherwise terminate on unhandledRejection with no log).
+// Guarded on !sentryNode so handlers are never double-registered.
+if (!sentryNode) {
+  process.on("uncaughtException", (err) => {
+    serverLogger.error("[server.js] uncaughtException (exiting): " + (err?.stack || err));
+    // Undefined state after an uncaughtException — exit so the supervisor
+    // restarts a clean process (mirrors the Sentry-path philosophy).
+    setTimeout(() => process.exit(1), 100).unref();
+  });
+  process.on("unhandledRejection", (reason) => {
+    serverLogger.error("[server.js] unhandledRejection: " + String(reason?.stack || reason));
+  });
 }
 
 const viteDevServer =

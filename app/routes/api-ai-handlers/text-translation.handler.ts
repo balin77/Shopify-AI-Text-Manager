@@ -2,7 +2,7 @@ import { json } from "@remix-run/node";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
 import { errorMessage, errorStack, createAIService } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -25,6 +25,10 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
 
   if (!sourceText) {
     return json({ success: false, error: "No source text available" }, { status: 400 });
+  }
+
+  if (!isValidLocale(targetLocale)) {
+    return json({ success: false, error: `Invalid target locale: ${targetLocale}` }, { status: 400 });
   }
 
   // Check if this is a URL slug/handle field
@@ -177,6 +181,22 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
   if (targetLocales.length === 0) {
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
+  }
+
+  const MAX_TARGET_LOCALES = 50;
+  if (targetLocales.length > MAX_TARGET_LOCALES) {
+    return json(
+      { success: false, error: `Too many target locales (max ${MAX_TARGET_LOCALES}, got ${targetLocales.length})` },
+      { status: 413 },
+    );
+  }
+
+  const invalidLocales = targetLocales.filter((l) => !isValidLocale(l));
+  if (invalidLocales.length > 0) {
+    return json(
+      { success: false, error: `Invalid target locale(s): ${invalidLocales.join(", ")}` },
+      { status: 400 },
+    );
   }
 
   // Check if this is a URL slug/handle field

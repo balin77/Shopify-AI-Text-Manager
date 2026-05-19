@@ -1,5 +1,6 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { isValidShopifyGID } from "../utils/validation";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
@@ -8,6 +9,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!productId || !Array.isArray(mediaIds) || mediaIds.length === 0) {
     return json({ success: false, error: "Missing required fields" }, { status: 400 });
+  }
+
+  // Reject malformed GIDs before they reach the Shopify mutation.
+  if (!isValidShopifyGID(productId) || !mediaIds.every((id) => typeof id === "string" && isValidShopifyGID(id))) {
+    return json({ success: false, error: "Invalid Shopify GID format" }, { status: 400 });
   }
 
   const r = await admin.graphql(`
