@@ -531,9 +531,12 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
       return parsed.map(String);
     }
 
-    // Fallback: return original values if parsing fails
-    loggers.ai('warn', '[AI-SERVICE] Batch translation response was not an array, returning original values');
-    return values;
+    // Never fall back to the untranslated source: returning `values` here
+    // caused source-language text to be written to Shopify/DB as if it were a
+    // translation (silent, hard-to-detect corruption). Fail loudly so the
+    // caller marks the task failed and writes nothing (N-H3).
+    loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { response: responseText.substring(0, 500) });
+    throw new Error('AI batch translation did not return a JSON array');
   }
 
   async translateSEO(

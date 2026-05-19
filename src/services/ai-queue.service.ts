@@ -70,6 +70,15 @@ export class AIQueueService {
     return parsed;
   }
 
+  // Hard per-shop queue depth cap (env-configurable). MAX_GLOBAL_CONCURRENCY
+  // only bounds how many requests EXECUTE at once, not how many a tenant can
+  // stack up waiting — without this cap one shop can grow memory unboundedly
+  // (N-H2). Default 1000.
+  private readonly maxQueuePerShop: number = (() => {
+    const raw = Number(process.env.AI_QUEUE_MAX_PER_SHOP);
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1000;
+  })();
+
   // Re-entrancy guard for the scheduler tick only (not the executions).
   private scheduling = false;
 
@@ -237,6 +246,14 @@ export class AIQueueService {
       };
 
       const shopQueue = this.getShopQueue(shop);
+
+      // Bounded queue (N-H2): reject instead of growing memory without limit.
+      if (shopQueue.length >= this.maxQueuePerShop) {
+        loggers.queue('warn', `Queue full for shop ${shop} (${shopQueue.length}/${this.maxQueuePerShop}) — rejecting request for task ${taskId}`);
+        reject(new Error(`AI queue is full for this shop (max ${this.maxQueuePerShop} pending requests). Please retry later.`));
+        return;
+      }
+
       shopQueue.push(request);
       loggers.queue('debug', `Enqueued request ${request.id} for shop ${shop}, task ${taskId}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
@@ -366,35 +383,51 @@ export class AIQueueService {
     const tick = () => {
       if (this.shuttingDown) return;
 
-      // Re-entrancy guard: only the dispatch loop is guarded, NOT the
-      // executions themselves (those run concurrently up to the cap).
-      if (!this.scheduling) {
-        this.scheduling = true;
-        try {
-          while (
-            this.inFlight < AIQueueService.MAX_GLOBAL_CONCURRENCY &&
-            this.getTotalQueueLength() > 0
-          ) {
-            const next = this.getNextExecutableRequest();
-            if (!next) break; // nothing executable right now (rate limited)
+      // The ENTIRE body is guarded so a synchronous throw from
+      // getNextExecutableRequest()/getTotalQueueLength() can never propagate
+      // past the re-arm line and kill the poller, leaving every enqueue()
+      // promise hanging forever (N-H1). The timer is re-armed exactly once,
+      // on every exit path except shutdown.
+      try {
+        // Re-entrancy guard: only the dispatch loop is guarded, NOT the
+        // executions themselves (those run concurrently up to the cap).
+        if (!this.scheduling) {
+          this.scheduling = true;
+          try {
+            while (
+              this.inFlight < AIQueueService.MAX_GLOBAL_CONCURRENCY &&
+              this.getTotalQueueLength() > 0
+            ) {
+              const next = this.getNextExecutableRequest();
+              if (!next) break; // nothing executable right now (rate limited)
 
-            const { shop, request, index } = next;
-            const shopQueue = this.queues.get(shop)!;
-            shopQueue.splice(index, 1);
-            if (shopQueue.length === 0) this.queues.delete(shop);
+              const { shop, request, index } = next;
+              const shopQueue = this.queues.get(shop)!;
+              shopQueue.splice(index, 1);
+              if (shopQueue.length === 0) this.queues.delete(shop);
 
-            this.inFlight++;
-            // Fire-and-forget: do NOT await here, so multiple requests run
-            // concurrently. inFlight is decremented in runRequest's finally.
-            void this.runRequest(shop, request);
+              this.inFlight++;
+              // Fire-and-forget: do NOT await here, so multiple requests run
+              // concurrently. inFlight is decremented in runRequest's finally.
+              void this.runRequest(shop, request);
+            }
+          } finally {
+            this.scheduling = false;
           }
-        } finally {
-          this.scheduling = false;
+        }
+      } catch (error) {
+        loggers.queue('error', 'Queue scheduler tick crashed — recovering', { error: error instanceof Error ? error.message : String(error) });
+      } finally {
+        if (!this.shuttingDown) {
+          let interval = 1000;
+          try {
+            interval = this.getTotalQueueLength() === 0 ? 1000 : 100;
+          } catch {
+            // Never let interval computation prevent re-arming the poller.
+          }
+          this.pollTimer = setTimeout(tick, interval);
         }
       }
-
-      const interval = this.getTotalQueueLength() === 0 ? 1000 : 100;
-      this.pollTimer = setTimeout(tick, interval);
     };
 
     tick();
@@ -413,7 +446,6 @@ export class AIQueueService {
 
       try {
         const result = await request.execute();
-        this.recordUsage(request.provider, request.estimatedTokens);
         request.resolve(result);
         loggers.queue('debug', `Successfully executed request ${request.id}`);
       } catch (error: any) {
@@ -453,6 +485,12 @@ export class AIQueueService {
         } else {
           request.reject(error);
         }
+      } finally {
+        // Record provider usage for EVERY attempt that reached the provider,
+        // success or failure. Counting only successes under-reports the
+        // sliding window and triggers 429 storms precisely when the provider
+        // is already failing/timing out (N-H8).
+        this.recordUsage(request.provider, request.estimatedTokens);
       }
 
       await this.updateQueuePositions(shop);

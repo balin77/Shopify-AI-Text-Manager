@@ -48,6 +48,7 @@ async function processWebhookAsync(
   topic: string
 ) {
   const { db } = await import("../db.server");
+  const { webhookRetryService } = await import("../services/webhook-retry.service");
 
   try {
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
@@ -80,6 +81,15 @@ async function processWebhookAsync(
         error: msg,
       },
     });
+
+    // Schedule retry for failed webhook — parity with webhooks.products so a
+    // transient error no longer permanently loses the collection update (N-H7).
+    await webhookRetryService.scheduleRetry(
+      shop,
+      topic,
+      { collectionId, logId },
+      error instanceof Error ? error : undefined
+    );
 
     throw error;
   }

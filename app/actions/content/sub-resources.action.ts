@@ -363,9 +363,13 @@ export async function handleTranslateSubResources(
       );
 
       for (let i = 0; i < keys.length; i++) {
+        const translated = translatedValues[i];
+        // Skip fields the model didn't return — never write the untranslated
+        // source value back as a "translation" (N-H3).
+        if (!translated) continue;
         const [resourceId, key] = keys[i].split("::");
         if (!translations[resourceId]) translations[resourceId] = {};
-        translations[resourceId][key] = translatedValues[i] || values[i];
+        translations[resourceId][key] = translated;
       }
     }
 
@@ -551,9 +555,13 @@ export async function handleTranslateSubResourceToAllLocales(
 
           const translations: Record<string, Record<string, string>> = {};
           for (let i = 0; i < keys.length; i++) {
+            const translated = translatedValues[i];
+            // Skip fields the model didn't return — never write the
+            // untranslated source value back as a "translation" (N-H3).
+            if (!translated) continue;
             const [resourceId, key] = keys[i].split("::");
             if (!translations[resourceId]) translations[resourceId] = {};
-            translations[resourceId][key] = translatedValues[i] || values[i];
+            translations[resourceId][key] = translated;
           }
 
           allTranslations[targetLocale] = translations;

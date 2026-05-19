@@ -619,9 +619,48 @@ export class WebPProcessorService {
   }
 
   async failTask(taskId, error) {
-    await db.task.update({
-      where: { id: taskId },
-      data: { status: "failed", completedAt: new Date(), error },
-    }).catch(() => {});
+    // Only the FIRST transition into "failed" should refund: updateMany with a
+    // non-terminal status guard makes the refund idempotent even if failTask
+    // runs twice for the same task.
+    let shop = null;
+    try {
+      const before = await db.task.findUnique({
+        where: { id: taskId },
+        select: { shop: true, status: true },
+      });
+      const res = await db.task.updateMany({
+        where: { id: taskId, status: { notIn: ["failed", "completed"] } },
+        data: { status: "failed", completedAt: new Date(), error },
+      });
+      if (res.count > 0 && before?.shop) shop = before.shop;
+    } catch {
+      // Fall back to a best-effort status write without the guard.
+      await db.task
+        .update({ where: { id: taskId }, data: { status: "failed", completedAt: new Date(), error } })
+        .catch(() => {});
+    }
+
+    // Each imageWebpConversion task consumed exactly one image operation at
+    // batch-creation time; a failed conversion produced no result, so give the
+    // op back (N-H4). Period key mirrors currentImageOpPeriod() (UTC YYYY-MM).
+    if (shop) {
+      try {
+        const now = new Date();
+        const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+        const row = await db.imageOperationCounter.findUnique({
+          where: { shop_period: { shop, period } },
+          select: { count: true },
+        });
+        if (row) {
+          await db.imageOperationCounter.update({
+            where: { shop_period: { shop, period } },
+            data: { count: Math.max(0, row.count - 1) },
+          });
+          console.log(`[WebPProcessor] Refunded 1 image op for ${shop} (task ${taskId} failed)`);
+        }
+      } catch (err) {
+        console.error(`[WebPProcessor] Image-op refund failed for ${shop}:`, err);
+      }
+    }
   }
 }
