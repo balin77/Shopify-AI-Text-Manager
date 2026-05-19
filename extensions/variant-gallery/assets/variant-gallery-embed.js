@@ -14,7 +14,10 @@ class CpEmbedGallery extends HTMLElement {
     this._log('connected. block:', this.dataset.blockId);
 
     this._onTick = this._tick.bind(this);
-    this._onTickRaw = () => { this._preCover(); this._schedule(); };
+    // NOTE-2: gate _preCover via _needsCover() like the other paths, so a
+    // popstate / variant_change that does not actually change our product
+    // does not blink the gallery.
+    this._onTickRaw = () => { if (this._needsCover()) this._preCover(); this._schedule(); };
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this._init(), { once: true });
@@ -28,6 +31,12 @@ class CpEmbedGallery extends HTMLElement {
     // defensively anyway so we never leak observers/listeners.
     if (this._bodyMo) { this._bodyMo.disconnect(); this._bodyMo = null; }
     clearTimeout(this._t);
+    // NOTE-3: also drop any pending fail-safe timers we registered on the
+    // shared registry so a disconnect can never leave one to fire later.
+    if (window.__cpVgFouc) {
+      clearTimeout(window.__cpVgFouc.timer);
+      clearTimeout(window.__cpVgFouc.prehideTimer);
+    }
     document.removeEventListener('change', this._onChange, true);
     document.removeEventListener('variant:change', this._onVariantEvent);
     document.removeEventListener('variant_change', this._onTickRaw);
@@ -100,8 +109,18 @@ class CpEmbedGallery extends HTMLElement {
     // hidden before it can flash, on ANY theme regardless of which events
     // it fires. _mutationTouchesNative excludes our own mount to avoid a
     // render→observe→cover→render self-trigger loop.
+    //
+    // RISK-A/RISK-B: _mutationTouchesNative is product-agnostic (any
+    // gallery node added/removed anywhere — e.g. a foreign quick-view —
+    // would otherwise blink the main gallery and silently defeat the
+    // RISK-1 gating). _needsCover() runs FIRST: it is true only when the
+    // resolved variant differs from the settled state (a genuine main
+    // switch). A foreign quick-view does not change our scoped [name=id],
+    // so it is false → no blink, and the cheaper check short-circuits the
+    // O(records·nodes·selectors) scan on the common unrelated-mutation
+    // path (RISK-B mitigation).
     this._bodyMo = new MutationObserver((muts) => {
-      if (this._mutationTouchesNative(muts)) this._preCover();
+      if (this._needsCover() && this._mutationTouchesNative(muts)) this._preCover();
       this._schedule();
     });
     this._bodyMo.observe(document.body, { childList: true, subtree: true });
@@ -205,6 +224,19 @@ class CpEmbedGallery extends HTMLElement {
 
   /* ---------- tick (idempotent) ---------- */
 
+  // True only when the resolved variant differs from the settled state —
+  // i.e. a genuine switch of the product this controller manages. A
+  // foreign quick-view / unrelated mutation does not change our scoped
+  // [name="id"] (resolved === state.id) → false → no blanket blink. When
+  // the id cannot be resolved we deliberately do NOT cover (avoids a
+  // global hide on every unrelated mutation in themes without [name=id];
+  // initial-load FOUC is already owned by the head block + bootstrap).
+  _needsCover() {
+    if (!this._data || !Object.keys(this._data).length) return false;
+    const id = this._resolveVariantId();
+    return id != null && (!this._state || id !== this._state.id);
+  }
+
   // True only when a mutation actually adds/removes a native-gallery
   // element (the theme's section replacement), NOT for our own mount /
   // custom-gallery churn (excluded, else render→observe→cover→render
@@ -256,12 +288,16 @@ class CpEmbedGallery extends HTMLElement {
   //    not exist yet, so the head block MUST key on <html>. The CSS is
   //    shared, so this stays <html>-level. Net effect: a genuine
   //    main-product switch briefly (~80ms+) visibility:hides such other
-  //    galleries too; layout is reserved, self-healing, no shift.
-  //  • A theme that re-renders the section WITHOUT firing change /
-  //    variant:change / variant_change / popstate is not pre-covered
-  //    (the broad MutationObserver path intentionally does not cover, to
-  //    avoid blinking on every unrelated mutation). Dawn and common
-  //    themes fire change on [name="id"], so the common case is covered.
+  //    galleries too; layout is reserved, self-healing, no shift. A
+  //    FOREIGN quick-view does NOT blink them: the observer cover is
+  //    gated by _needsCover() (RISK-A), which is false when our scoped
+  //    variant did not change.
+  //  • A theme that replaces the gallery WITHOUT first updating
+  //    [name="id"]/?variant= (so _needsCover() stays false) and without
+  //    firing change/variant:change/variant_change/popstate is not
+  //    pre-covered (the observer must stay selective to avoid blinking on
+  //    unrelated mutations). Dawn and common themes update [name="id"]
+  //    before the async media replace, so the common case is covered.
   _preCover() {
     if (!this._data || !Object.keys(this._data).length) return;
     document.documentElement.classList.add('cp-vg-prehide');
