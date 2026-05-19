@@ -1619,14 +1619,20 @@ export class ProductSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.product.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: productId,
-        },
-      },
-    });
+    // Atomically remove the product AND its polymorphic ContentTranslation
+    // rows. ContentTranslation has no FK/ON DELETE CASCADE (resourceId is
+    // polymorphic), so without this the translations orphan forever on every
+    // product delete (Shopify products/delete webhook, sync reconcile).
+    // deleteMany (not delete) keeps this idempotent — a missing product is a
+    // successful no-op and still clears any pre-existing orphaned rows.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
+      db.product.deleteMany({
+        where: { shop: this.shop, id: productId },
+      }),
+    ]);
 
     logger.debug(`[ProductSync] Successfully deleted product: ${productId}`);
   }

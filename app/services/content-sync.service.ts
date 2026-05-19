@@ -142,14 +142,16 @@ export class ContentSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.collection.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: collectionId,
-        },
-      },
-    });
+    // Also remove polymorphic ContentTranslation rows (no FK/cascade —
+    // resourceId is polymorphic). Atomic + idempotent: see deleteProduct.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
+      db.collection.deleteMany({
+        where: { shop: this.shop, id: collectionId },
+      }),
+    ]);
 
     logger.debug(`[ContentSync] Successfully deleted collection: ${collectionId}`);
   }
@@ -225,14 +227,16 @@ export class ContentSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.article.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: articleId,
-        },
-      },
-    });
+    // Also remove polymorphic ContentTranslation rows (no FK/cascade —
+    // resourceId is polymorphic). Atomic + idempotent: see deleteProduct.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
+      db.article.deleteMany({
+        where: { shop: this.shop, id: articleId },
+      }),
+    ]);
 
     logger.debug(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
