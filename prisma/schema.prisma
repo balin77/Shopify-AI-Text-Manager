@@ -664,14 +664,18 @@ model GdprAuditLog {
   customerId      BigInt?
   customerEmail   String?
   status          String   // "completed" | "failed"
-  dataExported    String?  @db.Text // JSON summary, truncated to 500 chars
+  dataExported    String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
   error           String?  @db.Text
+  // R5-G4: Shopify X-Shopify-Webhook-Id — correlates redelivered (non-2xx
+  // retried, up to ~48h) compliance attempts in this append-only trail.
+  webhookId       String?
   requestedAt     DateTime @default(now())
   completedAt     DateTime @default(now())
 
   @@index([shop])
   @@index([shop, requestType])
   @@index([requestedAt])
+  @@index([webhookId])
 }
 
 /// Tracks per-shop install lifecycle so the 30-day reaper has a reliable

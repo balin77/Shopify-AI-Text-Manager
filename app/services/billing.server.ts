@@ -283,8 +283,19 @@ export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise
   const result = await response.json() as { data?: { currentAppInstallation?: { activeSubscriptions?: AppSubscription[] } } };
   const subscriptions = result.data?.currentAppInstallation?.activeSubscriptions || [];
 
-  // Return the first active subscription
-  return subscriptions.length > 0 ? subscriptions[0] : null;
+  // R5-G3: in PRODUCTION, ignore `test: true` subscriptions. A test-billing
+  // ACTIVE subscription is created while a shop is in DEV_PLAN_OVERRIDE_SHOPS
+  // (test billing). After the shop is removed from that allowlist the stale
+  // test subscription would otherwise keep granting the paid plan with no
+  // payment — a self-grant residual. A real paid customer always has a
+  // non-test subscription, so preferring/limiting to test===false closes the
+  // leak. Non-production keeps all subs so dev/test stores still resolve
+  // their plan.
+  const isProd = process.env.APP_ENV === 'production';
+  const eligible = isProd ? subscriptions.filter((s) => s.test === false) : subscriptions;
+
+  // Return the first eligible active subscription
+  return eligible.length > 0 ? eligible[0] : null;
 }
 
 /**

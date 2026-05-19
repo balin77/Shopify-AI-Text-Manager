@@ -27,7 +27,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Throws 401 Response if signature is invalid.
   const { topic, shop, payload } = await authenticate.webhook(request);
 
-  logger.debug(`[GDPR] Received compliance webhook: ${topic}`, { context: "GDPR", shop });
+  // R5-G4: correlation id for the append-only audit trail so a redelivered
+  // (non-2xx → retried up to ~48h) compliance webhook is linkable to its
+  // earlier attempt(s) instead of producing unrelated contradictory rows.
+  const webhookId = request.headers.get("x-shopify-webhook-id");
+
+  logger.debug(`[GDPR] Received compliance webhook: ${topic}`, { context: "GDPR", shop, webhookId });
 
   try {
     switch (topic) {
@@ -40,6 +45,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           typedPayload.customer.id,
           typedPayload.customer.email,
           exportedData,
+          undefined,
+          webhookId,
         );
         break;
       }
@@ -51,6 +58,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           "customer_redact",
           typedPayload.customer.id,
           typedPayload.customer.email,
+          undefined,
+          undefined,
+          webhookId,
         );
         break;
       }
@@ -61,7 +71,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shopDomain: shop,
         });
         await redactShopData(typedPayload);
-        await logGDPRRequest(shop, "shop_redact");
+        await logGDPRRequest(shop, "shop_redact", undefined, undefined, undefined, undefined, webhookId);
         break;
       }
       default:
@@ -90,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             : null;
     if (auditType) {
       try {
-        await logGDPRRequest(shop, auditType, undefined, undefined, undefined, message);
+        await logGDPRRequest(shop, auditType, undefined, undefined, undefined, message, webhookId);
       } catch (auditError) {
         logger.error("[GDPR] Failed to persist failed-request audit entry", {
           context: "GDPR",

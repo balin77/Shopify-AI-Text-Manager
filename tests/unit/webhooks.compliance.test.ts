@@ -76,7 +76,9 @@ describe('webhooks.compliance action', () => {
     const res = await invoke();
 
     expect(res.status).toBe(500);
-    // A failed audit row is written for the trail.
+    // A failed audit row is written for the trail. R5-G4: logGDPRRequest now
+    // takes a 7th arg, the X-Shopify-Webhook-Id correlation id; the test
+    // request carries no such header so it is null.
     expect(mockLogGDPRRequest).toHaveBeenCalledWith(
       'shop.myshopify.com',
       'shop_redact',
@@ -84,6 +86,7 @@ describe('webhooks.compliance action', () => {
       undefined,
       undefined,
       'transient DB error',
+      null,
     );
   });
 
