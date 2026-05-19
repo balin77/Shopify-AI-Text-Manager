@@ -607,7 +607,15 @@ export class AIQueueService {
 
   /**
    * Re-enqueue a task from the database (for recovery after server restart)
-   * Uses the stored prompt directly without creating a new AIService instance
+   * Uses the stored prompt directly without creating a new AIService instance.
+   *
+   * NOTE: currently UNREFERENCED. Its only caller was
+   * src/services/task-recovery.service.ts, which was obsolete (never wired
+   * into server.js — server.js loads the standalone task-recovery.service.js,
+   * which deliberately does NOT background-auto-requeue AI tasks) and has
+   * been deleted. Kept as a hardened (see R3-H11 bounded-queue guard),
+   * self-contained API in case background AI recovery is reintroduced
+   * intentionally; safe to remove if that's ruled out.
    */
   async enqueueFromTask(
     task: {
