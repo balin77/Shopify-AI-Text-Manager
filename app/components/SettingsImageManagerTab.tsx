@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, BlockStack, Text, InlineStack, Divider, Button, Badge, Box } from "@shopify/polaris";
+import { Card, BlockStack, Text, InlineStack, Divider, Button, Box } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
@@ -33,11 +33,6 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
   const { t } = useI18n();
   const uid = extensionUid || DEFAULT_EXTENSION_UID;
   const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${uid}/variant-gallery-embed`;
-  // Open the product template in the theme editor so the merchant can add
-  // the block manually. We intentionally do NOT use `addAppBlockId` (auto-add):
-  // the native gallery is part of the product-information section and the
-  // auto-add deep link fails ("There is a problem with this app block").
-  const blockUrl = `https://${shop}/admin/themes/current/editor?template=product`;
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });
@@ -119,10 +114,7 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
             padding="400"
           >
             <BlockStack gap="200">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionATitle}</Text>
-                <Badge tone="success">Recommended</Badge>
-              </InlineStack>
+              <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionATitle}</Text>
               <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionADescription}</Text>
               <Text as="p" variant="bodySm" tone="subdued">
                 {(t.settings as unknown as Record<string, string>).themeSetupSelectorHint ??
@@ -131,29 +123,6 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
               <div>
                 <Button url={embedUrl} external variant="primary" size="slim">
                   {t.settings.themeSetupOptionAButton}
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
-
-          <Box
-            background="bg-surface-secondary"
-            borderRadius="200"
-            padding="400"
-          >
-            <BlockStack gap="200">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionBTitle}</Text>
-                <Badge tone="info">Optional</Badge>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionBDescription}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {(t.settings as unknown as Record<string, string>).themeSetupOptionBNote ??
-                  "Adds the gallery as an extra block (it does not replace the native gallery). Most themes render the product gallery as part of the product-information section, so the App embed above is the recommended way to replace it. Use this only if you specifically want an additional gallery block."}
-              </Text>
-              <div>
-                <Button url={blockUrl} external variant="secondary" size="slim">
-                  {t.settings.themeSetupOptionBButton}
                 </Button>
               </div>
             </BlockStack>

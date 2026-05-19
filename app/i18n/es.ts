@@ -639,12 +639,9 @@ export const es: Translation = {
     // Theme Extension Setup
     themeSetupTitle: "Configurar extensión del tema",
     themeSetupDescription: "Para mostrar galerías de imágenes de variantes en las páginas de productos, activa la extensión de tema ContentPilot en el editor de temas.",
-    themeSetupOptionATitle: "Opción A: App Embed (Recomendado)",
+    themeSetupOptionATitle: "App Embed",
     themeSetupOptionADescription: "Reemplaza automáticamente la galería nativa con imágenes de variantes. Actívalo una vez — no se necesita colocar bloques manualmente.",
     themeSetupOptionAButton: "Activar App Embed",
-    themeSetupOptionBTitle: "Opción B: App Block",
-    themeSetupOptionBDescription: "Añade manualmente el bloque de galería a una sección en la plantilla de página de producto.",
-    themeSetupOptionBButton: "Añadir App Block",
     themeSetupNote: "Después de activar, guarda tu tema. La galería mostrará automáticamente las imágenes de variantes asignadas en el Image Manager.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
     extensionSetupHintTitle: "Configura la extensión del tema",

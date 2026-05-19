@@ -637,12 +637,9 @@ export const de = {
     // Theme Extension Setup
     themeSetupTitle: "Theme-Extension einrichten",
     themeSetupDescription: "Um variantenspezifische Bildergalerien auf Produktseiten anzuzeigen, aktiviere die ContentPilot Theme-Extension im Theme-Editor.",
-    themeSetupOptionATitle: "Option A: App-Embed (Empfohlen)",
+    themeSetupOptionATitle: "App-Embed",
     themeSetupOptionADescription: "Ersetzt automatisch die native Produktgalerie durch Variantenbilder. Einmal aktivieren — keine manuelle Blockplatzierung nötig.",
     themeSetupOptionAButton: "App-Embed aktivieren",
-    themeSetupOptionBTitle: "Option B: App-Block",
-    themeSetupOptionBDescription: "Füge den Galerie-Block manuell zu einem Abschnitt in der Produktseitenvorlage hinzu.",
-    themeSetupOptionBButton: "App-Block hinzufügen",
     themeSetupNote: "Nach der Aktivierung das Theme speichern. Die Galerie zeigt automatisch die im Image Manager zugewiesenen Variantenbilder an.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
     extensionSetupHintTitle: "Theme-Extension noch einrichten",
