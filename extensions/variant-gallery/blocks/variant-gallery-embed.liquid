@@ -8,61 +8,29 @@
 {%- if product != blank -%}
 
 {%- comment -%}
-  Native-gallery FOUC prevention (always on; single strategy).
+  Native-gallery FOUC prevention — split across two app embeds:
 
-  The native product gallery is otherwise only hidden later by the
-  deferred controller, so the full native gallery flashes on load before
-  the variant-specific gallery replaces it. Two layers run here, as early
-  as this block is parsed:
+  • PRE-PAINT setter: the separate `target: head` block
+    (blocks/variant-gallery-prehead.liquid) emits the blanket
+    `html.cp-vg-prehide … { visibility:hidden }` <style> AND adds the
+    `cp-vg-prehide` class during <head> parsing — before the <body> /
+    native gallery is painted. That is the only true pre-paint hook
+    (this body embed renders at end of <body>, too late). It also
+    registers window.__cpVgFouc.prehideTimer (3s fail-safe).
 
-  1. Blanket: the inline <style> + `cp-vg-prehide` class on <html> hide
-     the default-selector native galleries the instant this block is
-     parsed — before the per-element bootstrap has resolved the element.
-     `visibility:hidden` (not display:none) reserves layout so revealing
-     the native gallery for a no-images variant causes no layout shift.
+  • RELEASER (here): the per-element bootstrap below resolves the exact
+    native element (mirroring the controller), hides only it via
+    `.cp-vg-native-hidden` (display:none), then releases the blanket
+    `cp-vg-prehide` class in a `finally` so quick-view / no-image
+    variants are not left hidden. The controller additionally releases
+    it defensively and cancels BOTH timers once authoritative.
 
-  2. Per-element bootstrap (further below): resolves the exact native
-     element (mirroring the controller) and hides only it via
-     `.cp-vg-native-hidden` (display:none), then releases the blanket
-     class in a `finally` so quick-view / no-image variants are not left
-     hidden. An independent 3s timer and a controller-side release are
-     backstops; the controller cancels both timers once authoritative.
-
-  Architecture limit: app embeds CANNOT inject render-blocking <head>
-  CSS (Shopify forbids the stylesheet tag in app blocks) and render at
-  the end of <body>, so this reduces but cannot fully guarantee a
-  flash-free first paint on slow rendering. Verified good enough in
-  practice; the merchant-facing strategy toggle was removed.
-
-  FUTURE OPTION (not implemented) — 100% flash-free first paint:
-  add a SEPARATE app embed block with `"target": "head"` whose Liquid
-  only emits the blanket <style> plus
-  `document.documentElement.classList.add('cp-vg-prehide')`. A
-  head-targeted embed renders during <head> parsing, BEFORE the native
-  gallery in <body> is painted, closing the remaining gap. Constraints:
-  it must be a distinct block (this one stays target:body so the
-  controller + JSON data survive Section-Rendering API re-renders), it
-  must emit a plain inline <style> (the bundled Shopify stylesheet tag
-  is forbidden in app blocks), and the per-element bootstrap here would
-  still own releasing `cp-vg-prehide`.
+  The head block is conditional (only pre-hides variants that actually
+  have gallery images) and degrades safely (3s timer) if this body embed
+  is disabled/blocked. If the head block is disabled there is simply no
+  pre-paint hiding (the original flash returns) but everything else still
+  works. Both embeds should be enabled together.
 {%- endcomment -%}
-<style>
-  html.cp-vg-prehide media-gallery,
-  html.cp-vg-prehide [id^="MediaGallery"],
-  html.cp-vg-prehide .product__media-wrapper,
-  html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
-</style>
-<script>
-  document.documentElement.classList.add('cp-vg-prehide');
-  // Merge (never overwrite) the shared fail-safe registry so the bootstrap
-  // IIFE below and the controller can both find this handle. Exposing it
-  // lets the controller cancel this blanket timer symmetrically to the
-  // per-element one instead of letting it fire spuriously.
-  window.__cpVgFouc = window.__cpVgFouc || {};
-  window.__cpVgFouc.prehideTimer = window.setTimeout(function () {
-    document.documentElement.classList.remove('cp-vg-prehide');
-  }, 3000);
-</script>
 
 {%- comment -%}
   R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
