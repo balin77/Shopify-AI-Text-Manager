@@ -71,7 +71,8 @@ const appUrl = (process.env.SHOPIFY_APP_URL || "https://localhost:3000").trim();
 
 // Log Shopify configuration on startup
 logger.info(`[SHOPIFY.SERVER] Initializing Shopify App...`);
-logger.info(`[SHOPIFY.SERVER] Env diagnostics: SHOPIFY_API_KEY=${apiKey ? `${apiKey.substring(0, 8)}... (len=${apiKey.length})` : "MISSING"} | SHOPIFY_API_SECRET=${apiSecretKey ? `SET (len=${apiSecretKey.length}, rawLen=${process.env.SHOPIFY_API_SECRET?.length})` : "MISSING"} | SHOPIFY_APP_URL=${appUrl}`);
+// Presence/length only — never log any portion of the API key or secret.
+logger.info(`[SHOPIFY.SERVER] Env diagnostics: SHOPIFY_API_KEY=${apiKey ? `SET (len=${apiKey.length})` : "MISSING"} | SHOPIFY_API_SECRET=${apiSecretKey ? `SET (len=${apiSecretKey.length})` : "MISSING"} | SHOPIFY_APP_URL=${appUrl}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_SCOPES: ${process.env.SHOPIFY_SCOPES || "❌ MISSING"}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_API_VERSION: ${process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)"}`);
 logger.debug(`[SHOPIFY.SERVER]  - NODE_ENV: ${process.env.NODE_ENV || "development"}`);

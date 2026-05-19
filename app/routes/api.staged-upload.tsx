@@ -24,8 +24,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  console.log("[staged-upload] request", { filename, mimeType, fileSize });
-
   const response = await admin.graphql(`
     mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
       stagedUploadsCreate(input: $input) {
@@ -50,8 +48,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   const data = await response.json();
-  console.log("[staged-upload] Shopify response", JSON.stringify(data, null, 2));
 
+  // Do NOT log the full Shopify response or the signed upload URLs — they
+  // contain short-lived credentialed CDN URLs. Log only non-sensitive status.
   const userErrors = data.data?.stagedUploadsCreate?.userErrors ?? [];
   if (userErrors.length > 0) {
     console.error("[staged-upload] userErrors", userErrors);
@@ -60,11 +59,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const target = data.data?.stagedUploadsCreate?.stagedTargets?.[0];
   if (!target) {
-    console.error("[staged-upload] no stagedTargets in response", data);
+    console.error("[staged-upload] no stagedTargets returned");
     return json({ error: "Staged upload creation failed" }, { status: 500 });
   }
 
-  console.log("[staged-upload] returning target", { url: target.url, resourceUrl: target.resourceUrl });
   return json({
     url: target.url,
     resourceUrl: target.resourceUrl,

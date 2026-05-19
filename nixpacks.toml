@@ -1,5 +1,8 @@
+# Node 22 to match the Dockerfile (node:22-alpine) and package.json engines —
+# previously Node 20 here vs 22 in Docker was a runtime drift between the two
+# possible build paths.
 [phases.setup]
-nixPkgs = ["nodejs-20_x"]
+nixPkgs = ["nodejs_22"]
 
 [phases.install]
 cmds = ["npm ci"]
