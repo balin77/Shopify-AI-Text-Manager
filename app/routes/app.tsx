@@ -13,6 +13,7 @@ import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
+import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
@@ -244,7 +245,9 @@ export default function App() {
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
-                <AppContent />
+                <AltTextOpsProvider>
+                  <AppContent />
+                </AltTextOpsProvider>
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>

@@ -28,22 +28,68 @@ async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Prom
   return gid;
 }
 
-// Get-or-create the local ProductImage row for a given media GID. Without this,
-// productImageAltTranslation upserts silently no-op when the gallery image was
-// never synced into the local DB (common for variant_gallery metafield images).
-async function getOrCreateProductImage(productId: string, gid: string, shop: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
-  // Scope the lookup by the owning product's shop: Shopify media GIDs are only
-  // unique per shop, so an unscoped `mediaId` match could resolve to another
-  // tenant's ProductImage row and leak writes across shops.
-  const existing = await db.productImage.findFirst({
-    where: { mediaId: gid, product: { shop } },
-    select: { id: true },
-  });
-  if (existing) return existing;
-  const url = await resolveImageUrl(admin, gid);
-  return db.productImage.create({
-    data: { productId, mediaId: gid, url },
-    select: { id: true },
+// Saving an alt-text to Shopify fires a `products/update` webhook whose
+// product-sync handler wipes and recreates this product's ProductImage rows
+// inside a transaction. If that commits between our image lookup and the
+// translation write, the imageId we hold is gone → FK violation
+// (ProductImageAltTranslation_imageId_fkey). Retry the whole DB unit so the
+// second attempt re-resolves the (now fresh) ProductImage row.
+const RACE_CODES = new Set(["P2002", "P2003", "P2025"]);
+async function withDbRaceRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (i >= attempts - 1 || !RACE_CODES.has(e?.code)) throw e;
+      await new Promise((r) => setTimeout(r, 60 * (i + 1)));
+    }
+  }
+}
+
+// Persist the alt-text (primary) or translation (foreign locale) for one media
+// GID, atomically and idempotently. The ProductImage row is upserted on the
+// (productId, mediaId) unique key so concurrent applies collapse instead of
+// creating duplicates; both writes share one transaction so a racing sync
+// either sees both or neither, and the retry above heals an interleaved wipe.
+async function persistAltText(
+  productId: string,
+  gid: string,
+  shop: string,
+  locale: string,
+  isPrimary: boolean,
+  altText: string,
+  admin: { graphql: (q: string, opts?: any) => Promise<Response> }
+): Promise<void> {
+  await withDbRaceRetry(async () => {
+    // Resolve a URL only when the row is missing — avoids a Shopify call per
+    // image on the common update path. Scoped by shop: media GIDs are unique
+    // per shop, so an unscoped match could touch another tenant's row.
+    const existing = await db.productImage.findFirst({
+      where: { mediaId: gid, product: { shop } },
+      select: { id: true },
+    });
+    const createUrl = existing ? gid : await resolveImageUrl(admin, gid);
+
+    await db.$transaction(async (tx) => {
+      const img = await tx.productImage.upsert({
+        where: { productId_mediaId: { productId, mediaId: gid } },
+        create: {
+          productId,
+          mediaId: gid,
+          url: createUrl,
+          ...(isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {}),
+        },
+        update: isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {},
+        select: { id: true },
+      });
+      if (!isPrimary) {
+        await tx.productImageAltTranslation.upsert({
+          where: { imageId_locale: { imageId: img.id, locale } },
+          create: { imageId: img.id, locale, altText },
+          update: { altText },
+        });
+      }
+    });
   });
 }
 
@@ -184,11 +230,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, session.shop, admin);
-              await db.productImage.update({
-                where: { id: dbImage.id },
-                data: { altText: altText || null, altTextModifiedAt: new Date() },
-              });
+              await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {
               // Don't roll back the Shopify save; surface the DB failure so the user
               // knows the local cache is out of sync and can retry / re-sync.
@@ -236,12 +278,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, session.shop, admin);
-              await db.productImageAltTranslation.upsert({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
-                create: { imageId: dbImage.id, locale, altText },
-                update: { altText },
-              });
+              await persistAltText(productId, gid, session.shop, locale, false, altText, admin);
             } catch (dbErr: unknown) {
               errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }

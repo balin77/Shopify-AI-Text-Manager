@@ -240,6 +240,10 @@ model ProductImage {
   altTextModifiedAt  DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
   altTextTranslations ProductImageAltTranslation[]
 
+  // Atomic get-or-create keyed on (productId, mediaId) — prevents duplicate
+  // ProductImage rows from concurrent alt-text applies. Postgres treats NULL
+  // mediaId as distinct, so legacy rows without a Shopify media GID are unaffected.
+  @@unique([productId, mediaId])
   @@index([productId])
 }
 
