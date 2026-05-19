@@ -238,6 +238,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // locale — the primary path never calls it, which is exactly why foreign
   // tasks were the ones left stuck "running") still finalizes the task
   // instead of leaking it forever.
+  // Progress heartbeat. The apply loop is the slow part; without periodic
+  // task updates the bar sat at 0 until the final 100, AND the stuck-task
+  // recovery (which keys off updatedAt and explicitly requires handlers to
+  // heartbeat) could not tell a slow-but-alive apply from a dead one.
+  let lastHeartbeatPct = 0;
+  const heartbeat = async () => {
+    if (!taskId) return;
+    const pct = Math.min(99, Math.round((attempted / Math.max(estimatedTotal, 1)) * 100));
+    if (pct === lastHeartbeatPct) return; // ≤100 writes/request, no churn
+    lastHeartbeatPct = pct;
+    try {
+      await db.task.update({
+        where: { id: taskId },
+        data: { progress: pct, processed: applied },
+      });
+    } catch {
+      // best-effort — a missed heartbeat must not break the apply
+    }
+  };
+
   try {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
@@ -342,6 +362,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (err: unknown) {
         errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${String(err)}`);
       }
+      await heartbeat();
     }
   }
 
