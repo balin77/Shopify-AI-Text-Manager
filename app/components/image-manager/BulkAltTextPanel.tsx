@@ -404,6 +404,14 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   );
 
   const handleApplyToAll = useCallback(async () => {
+    // TEMP DIAGNOSTIC (alt-text foreign-locale regression): this button applies
+    // ONLY the active locale chip. If the user expects all languages but lands
+    // here, that explains a single (primary) task.
+    console.log("[alt-text-apply-single] enter", {
+      activeLocale,
+      primaryLocale,
+      reentrancyBlocked: ops.applying,
+    });
     if (ops.applying) return; // reentrancy guard (double-click / keyboard)
     patchOps({ applying: true });
     try {
@@ -454,6 +462,14 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     );
 
   const handleApplyToAllLocales = useCallback(async () => {
+    // TEMP DIAGNOSTIC (alt-text foreign-locale regression)
+    console.log("[alt-text-apply-all] enter", {
+      reentrancyBlocked: ops.applyingAll,
+      shopLocales,
+      primaryLocale,
+      excludedLocales: [...excludedLocales],
+      targetLocales,
+    });
     if (ops.applyingAll) return; // reentrancy guard (double-click / keyboard)
     if (targetLocales.length === 0) return;
     const total = targetLocales.length;
@@ -470,6 +486,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       // "simultaneous enough" to be fast without tripping the rate limit.
       let done = 0;
       const runLocale = async (loc: string) => {
+        console.log("[alt-text-apply-all] runLocale →", loc);
         try {
           const res = await fetch("/api/apply-alt-text-templates", {
             method: "POST",
@@ -493,6 +510,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
       const primaryFirst = targetLocales.includes(primaryLocale) ? [primaryLocale] : [];
       const rest = targetLocales.filter((l) => l !== primaryLocale);
+      console.log("[alt-text-apply-all] plan", { primaryFirst, rest });
       for (const loc of primaryFirst) {
         await runLocale(loc);
       }
@@ -500,6 +518,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       for (let i = 0; i < rest.length; i += CONCURRENCY) {
         await Promise.all(rest.slice(i, i + CONCURRENCY).map(runLocale));
       }
+      console.log("[alt-text-apply-all] done", { totalApplied, errors: allErrors });
       if (allErrors.length === 0) {
         const langWord = targetLocales.length === 1 ? "language" : "languages";
         showInfoBox(

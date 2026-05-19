@@ -4,6 +4,7 @@ import { db } from "../db.server";
 import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-template";
 import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
+import { logger } from "~/utils/logger.server";
 import type { VariantWithGallery } from "../components/image-manager/types";
 
 // Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
@@ -146,7 +147,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     orderBy: { position: "asc" },
   });
 
+  // TEMP DIAGNOSTIC (alt-text foreign-locale regression): record exactly what
+  // locale this request carries and whether any templates matched. Remove once
+  // the root cause is confirmed.
+  logger.info("[alt-text-apply] request", {
+    context: "AltTextApply",
+    shop: session.shop,
+    productId,
+    locale,
+    primaryLocale,
+    isPrimary: !locale || locale === primaryLocale,
+    templatesFound: templates.length,
+    templateLocales: [...new Set(
+      (await db.altTextTemplate.findMany({
+        where: { shop: session.shop, productId },
+        select: { locale: true },
+      })).map((t) => t.locale)
+    )],
+  });
+
   if (templates.length === 0) {
+    logger.warn("[alt-text-apply] no templates for locale → early return, NO task", {
+      context: "AltTextApply",
+      productId,
+      locale,
+    });
     return json({ success: true, applied: 0, message: "No templates found for this locale" });
   }
 
