@@ -404,14 +404,6 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   );
 
   const handleApplyToAll = useCallback(async () => {
-    // TEMP DIAGNOSTIC (alt-text foreign-locale regression): this button applies
-    // ONLY the active locale chip. If the user expects all languages but lands
-    // here, that explains a single (primary) task.
-    console.log("[alt-text-apply-single] enter", {
-      activeLocale,
-      primaryLocale,
-      reentrancyBlocked: ops.applying,
-    });
     if (ops.applying) return; // reentrancy guard (double-click / keyboard)
     patchOps({ applying: true });
     try {
@@ -462,14 +454,6 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     );
 
   const handleApplyToAllLocales = useCallback(async () => {
-    // TEMP DIAGNOSTIC (alt-text foreign-locale regression)
-    console.log("[alt-text-apply-all] enter", {
-      reentrancyBlocked: ops.applyingAll,
-      shopLocales,
-      primaryLocale,
-      excludedLocales: [...excludedLocales],
-      targetLocales,
-    });
     if (ops.applyingAll) return; // reentrancy guard (double-click / keyboard)
     if (targetLocales.length === 0) return;
     const total = targetLocales.length;
@@ -477,16 +461,16 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     let totalApplied = 0;
     const allErrors: string[] = [];
     try {
-      // Run the primary locale first and alone: its fileUpdate is what fires
-      // the products/update webhook → product-sync. Letting that settle before
-      // the foreign locales start shrinks the window where the sync's
-      // deleteMany+recreate collides with the translation writes, and avoids
-      // spending the Shopify cost-bucket on N locales at the same instant.
-      // Foreign locales then run with a small concurrency cap so they are
-      // "simultaneous enough" to be fast without tripping the rate limit.
+      // Send every locale to Shopify simultaneously. An earlier revision ran
+      // the primary locale first and BLOCKED on it before starting the
+      // foreign ones — but the primary apply can be slow (it triggers the
+      // products/update webhook → product-sync), so the foreign locales (and
+      // their tasks) only appeared minutes later, looking like "only the main
+      // language was applied". Concurrency is what the feature is supposed to
+      // do; the server-side DB-race retry already makes the parallel
+      // sync-collision safe.
       let done = 0;
       const runLocale = async (loc: string) => {
-        console.log("[alt-text-apply-all] runLocale →", loc);
         try {
           const res = await fetch("/api/apply-alt-text-templates", {
             method: "POST",
@@ -508,17 +492,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
         }
       };
 
-      const primaryFirst = targetLocales.includes(primaryLocale) ? [primaryLocale] : [];
-      const rest = targetLocales.filter((l) => l !== primaryLocale);
-      console.log("[alt-text-apply-all] plan", { primaryFirst, rest });
-      for (const loc of primaryFirst) {
-        await runLocale(loc);
-      }
-      const CONCURRENCY = 3;
-      for (let i = 0; i < rest.length; i += CONCURRENCY) {
-        await Promise.all(rest.slice(i, i + CONCURRENCY).map(runLocale));
-      }
-      console.log("[alt-text-apply-all] done", { totalApplied, errors: allErrors });
+      await Promise.allSettled(targetLocales.map(runLocale));
       if (allErrors.length === 0) {
         const langWord = targetLocales.length === 1 ? "language" : "languages";
         showInfoBox(
