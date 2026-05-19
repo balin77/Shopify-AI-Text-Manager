@@ -387,6 +387,35 @@ async function gracefulShutdown(signal) {
     }
 
     try {
+      // Stop the WebP conversion processor (no new polls; in-flight finishes)
+      const { WebPProcessorService } = await import("./webp-processor.service.js");
+      WebPProcessorService.getInstance().stop();
+      serverLogger.info("WebP processor stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping WebP processor", { error: String(error) });
+    }
+
+    try {
+      // Stop AI queue dispatch + cancel retry timers, then drain in-flight
+      // provider calls BEFORE closing the DB. Otherwise running AI jobs keep
+      // writing to a $disconnect()-ed Prisma client and tasks stay "running".
+      // The singleton lives inside the Remix bundle, so it's reached via the
+      // process-wide globalThis bridge (set in AIQueueService.getInstance()),
+      // not a module import. If no AI request ran yet, __aiQueue is undefined
+      // and there is nothing to drain.
+      const aiQueue = globalThis.__aiQueue;
+      if (aiQueue) {
+        aiQueue.stop();
+        await aiQueue.drain(8000);
+        serverLogger.info("AI queue drained");
+      } else {
+        serverLogger.info("AI queue not initialized — nothing to drain");
+      }
+    } catch (error) {
+      serverLogger.error("Error draining AI queue", { error: String(error) });
+    }
+
+    try {
       // Close the shared PrismaClient (used by Remix app + background services)
       if (globalThis.__db) {
         await globalThis.__db.$disconnect();

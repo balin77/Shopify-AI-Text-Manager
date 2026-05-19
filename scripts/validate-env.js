@@ -107,6 +107,25 @@ if (process.env.SHOPIFY_SCOPES) {
   }
 }
 
+// ENCRYPTION_KEY: hard-required in production. Without it, encryption.server.ts
+// throws at write time and merchant API keys / Shopify tokens / session PII
+// would otherwise be at risk of being persisted in plaintext (schema columns
+// are nullable String?). Must be exactly 64 hex chars (32 bytes).
+const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
+const encKey = process.env.ENCRYPTION_KEY?.trim();
+if (!encKey) {
+  const msg = '❌ ENCRYPTION_KEY is not set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"';
+  if (isProd) {
+    errors.push(msg + ' (REQUIRED in production — API keys/tokens/PII must not be stored in plaintext)');
+  } else {
+    warnings.push('⚠️  ENCRYPTION_KEY is not set (tolerated in non-production only)');
+  }
+} else if (!/^[0-9a-fA-F]{64}$/.test(encKey)) {
+  errors.push(`❌ ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes). Current length: ${encKey.length}`);
+} else {
+  console.log('✅ ENCRYPTION_KEY: valid (64 hex chars)');
+}
+
 // Optional: Sentry status (never an error — purely informational)
 console.log('\n📡 Sentry error tracking:');
 if (!process.env.SENTRY_DSN) {

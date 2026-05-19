@@ -138,6 +138,15 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
     return json({ success: false, error: "No images to process" }, { status: 400 });
   }
 
+  // Bound the per-request AI fan-out (one queued AI call per image).
+  const MAX_IMAGES_PER_REQUEST = 250;
+  if (totalImages > MAX_IMAGES_PER_REQUEST) {
+    return json(
+      { success: false, error: `Too many images in one request (max ${MAX_IMAGES_PER_REQUEST}, got ${totalImages})` },
+      { status: 413 },
+    );
+  }
+
   const altTextInstructions = await db.aIInstructions.findUnique({
     where: { shop: session.shop },
   });
@@ -373,6 +382,17 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
   if (targetLocales.length === 0) {
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
+  }
+
+  // Hard upper bound on locales: one AI translation call is queued per locale,
+  // so an unbounded client-supplied array is an unbounded AI fan-out that also
+  // sidesteps plan-level language limits.
+  const MAX_TARGET_LOCALES = 50;
+  if (targetLocales.length > MAX_TARGET_LOCALES) {
+    return json(
+      { success: false, error: `Too many target locales (max ${MAX_TARGET_LOCALES}, got ${targetLocales.length})` },
+      { status: 413 },
+    );
   }
 
   // Create task entry (prompts will be saved by AI service via savePromptToTask)

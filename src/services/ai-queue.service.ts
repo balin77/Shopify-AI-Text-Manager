@@ -45,7 +45,22 @@ export class AIQueueService {
 
   // Shop-specific queues: Map<shopDomain, QueuedRequest[]>
   private queues: Map<string, QueuedRequest[]> = new Map();
-  private processing = false;
+
+  // Number of provider calls currently executing. Previously a single
+  // `processing` boolean serialized the ENTIRE service to 1 in-flight request
+  // globally, so one slow shop blocked every other shop.
+  private inFlight = 0;
+  private static readonly MAX_GLOBAL_CONCURRENCY = 4;
+
+  // Re-entrancy guard for the scheduler tick only (not the executions).
+  private scheduling = false;
+
+  // Shutdown coordination (H2): stop dispatching, drain in-flight work, and
+  // cancel pending retry timers so SIGTERM doesn't strand running tasks or
+  // write to a disconnected Prisma client.
+  private shuttingDown = false;
+  private pollTimer?: NodeJS.Timeout;
+  private readonly retryTimers: Set<NodeJS.Timeout> = new Set();
 
   // Round-robin tracking: which shop to process next
   private lastProcessedShopIndex = 0;
@@ -76,6 +91,10 @@ export class AIQueueService {
   static getInstance(): AIQueueService {
     if (!AIQueueService.instance) {
       AIQueueService.instance = new AIQueueService();
+      // Expose the live singleton process-wide so the custom server's
+      // graceful-shutdown handler (server.js, outside the Remix bundle's
+      // module graph) can stop/drain THIS instance. Mirrors globalThis.__db.
+      (globalThis as { __aiQueue?: AIQueueService }).__aiQueue = AIQueueService.instance;
     }
     return AIQueueService.instance;
   }
@@ -326,111 +345,137 @@ export class AIQueueService {
    * Uses adaptive polling: 100ms when queue has items, 1000ms when empty
    */
   private async startProcessing() {
-    let pollingInterval = 1000; // Start with 1 second (empty queue)
+    const tick = () => {
+      if (this.shuttingDown) return;
 
-    const processNext = async () => {
-      if (this.processing) return;
-
-      const totalLength = this.getTotalQueueLength();
-
-      // Adaptive polling based on queue size
-      if (totalLength === 0) {
-        pollingInterval = 1000; // 1 second when queue is empty (save CPU)
-      } else {
-        pollingInterval = 100; // 100ms when queue has items (responsive)
-      }
-
-      // Skip if queue is empty
-      if (totalLength === 0) {
-        setTimeout(processNext, pollingInterval);
-        return;
-      }
-
-      this.processing = true;
-
-      try {
-        // Find next executable request using round-robin
-        const next = this.getNextExecutableRequest();
-
-        if (!next) {
-          // No request can be executed right now (rate limited)
-          const waitTime = this.calculateWaitTime();
-          if (waitTime > 0 && this.queues.size > 0) {
-            setTimeout(processNext, waitTime);
-          }
-          return;
-        }
-
-        const { shop, request, index } = next;
-        const shopQueue = this.queues.get(shop)!;
-
-        // Remove request from queue
-        shopQueue.splice(index, 1);
-
-        // Clean up empty queues
-        if (shopQueue.length === 0) {
-          this.queues.delete(shop);
-        }
-
-        loggers.queue('debug', `Executing request ${request.id} for shop ${shop}, task ${request.taskId}`, { shopQueueRemaining: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
-
-        // Update task status to running
-        await this.updateTaskStatus(shop, request.taskId, 'running');
-
+      // Re-entrancy guard: only the dispatch loop is guarded, NOT the
+      // executions themselves (those run concurrently up to the cap).
+      if (!this.scheduling) {
+        this.scheduling = true;
         try {
-          // Execute the request
-          const result = await request.execute();
+          while (
+            this.inFlight < AIQueueService.MAX_GLOBAL_CONCURRENCY &&
+            this.getTotalQueueLength() > 0
+          ) {
+            const next = this.getNextExecutableRequest();
+            if (!next) break; // nothing executable right now (rate limited)
 
-          // Record usage
-          this.recordUsage(request.provider, request.estimatedTokens);
+            const { shop, request, index } = next;
+            const shopQueue = this.queues.get(shop)!;
+            shopQueue.splice(index, 1);
+            if (shopQueue.length === 0) this.queues.delete(shop);
 
-          // Resolve the promise
-          request.resolve(result);
-
-          loggers.queue('debug', `Successfully executed request ${request.id}`);
-        } catch (error: any) {
-          loggers.queue('error', `Error executing request ${request.id}`, { error: error?.message || String(error) });
-
-          // Check if it's a rate limit error
-          const isRateLimitError =
-            error.message?.includes('rate limit') ||
-            error.message?.includes('quota') ||
-            error.message?.includes('429') ||
-            error.status === 429;
-
-          if (isRateLimitError && request.retryCount < 3) {
-            // Retry with exponential backoff
-            request.retryCount++;
-            const backoffTime = Math.pow(2, request.retryCount) * 1000;
-
-            loggers.queue('warn', `Rate limit hit. Retrying request ${request.id}`, { attempt: request.retryCount, maxAttempts: 3, backoffMs: backoffTime });
-
-            // Update retry count in database
-            await this.updateTaskRetryCount(shop, request.taskId, request.retryCount);
-
-            // Re-queue the request to the front of the shop's queue
-            setTimeout(() => {
-              const queue = this.getShopQueue(shop);
-              queue.unshift(request);
-            }, backoffTime);
-          } else {
-            // Reject the promise
-            request.reject(error);
+            this.inFlight++;
+            // Fire-and-forget: do NOT await here, so multiple requests run
+            // concurrently. inFlight is decremented in runRequest's finally.
+            void this.runRequest(shop, request);
           }
+        } finally {
+          this.scheduling = false;
         }
-
-        // Update queue positions for the affected shop
-        await this.updateQueuePositions(shop);
-      } finally {
-        this.processing = false;
-        // Schedule next iteration with adaptive interval
-        setTimeout(processNext, pollingInterval);
       }
+
+      const interval = this.getTotalQueueLength() === 0 ? 1000 : 100;
+      this.pollTimer = setTimeout(tick, interval);
     };
 
-    // Start processing
-    processNext();
-    loggers.queue('info', 'Started adaptive queue processing (100ms when active, 1s when idle)');
+    tick();
+    loggers.queue('info', `Started adaptive queue processing (concurrency ${AIQueueService.MAX_GLOBAL_CONCURRENCY}, 100ms active / 1s idle)`);
+  }
+
+  /**
+   * Execute a single dequeued request. Runs concurrently with other requests
+   * (bounded by MAX_GLOBAL_CONCURRENCY). Always decrements inFlight.
+   */
+  private async runRequest(shop: string, request: QueuedRequest): Promise<void> {
+    try {
+      loggers.queue('debug', `Executing request ${request.id} for shop ${shop}, task ${request.taskId}`, { inFlight: this.inFlight, totalQueueSize: this.getTotalQueueLength() });
+
+      await this.updateTaskStatus(shop, request.taskId, 'running');
+
+      try {
+        const result = await request.execute();
+        this.recordUsage(request.provider, request.estimatedTokens);
+        request.resolve(result);
+        loggers.queue('debug', `Successfully executed request ${request.id}`);
+      } catch (error: any) {
+        loggers.queue('error', `Error executing request ${request.id}`, { error: error?.message || String(error) });
+
+        const isRateLimitError =
+          error.message?.includes('rate limit') ||
+          error.message?.includes('quota') ||
+          error.message?.includes('429') ||
+          error.status === 429;
+
+        // Don't re-enqueue during shutdown — reject so the caller settles and
+        // the task is not left dangling against a closing DB client.
+        if (isRateLimitError && request.retryCount < 3 && !this.shuttingDown) {
+          request.retryCount++;
+          // Exponential backoff WITH jitter (H7): without jitter, a
+          // provider-wide 429 makes every shop retry in lock-step and
+          // stampede the provider again at the same instant.
+          const base = Math.pow(2, request.retryCount) * 1000;
+          const jitter = Math.floor(Math.random() * 1000);
+          const backoffTime = base + jitter;
+
+          loggers.queue('warn', `Rate limit hit. Retrying request ${request.id}`, { attempt: request.retryCount, maxAttempts: 3, backoffMs: backoffTime });
+
+          await this.updateTaskRetryCount(shop, request.taskId, request.retryCount);
+
+          const retryTimer = setTimeout(() => {
+            this.retryTimers.delete(retryTimer);
+            if (this.shuttingDown) {
+              request.reject(error);
+              return;
+            }
+            const queue = this.getShopQueue(shop);
+            queue.unshift(request);
+          }, backoffTime);
+          this.retryTimers.add(retryTimer);
+        } else {
+          request.reject(error);
+        }
+      }
+
+      await this.updateQueuePositions(shop);
+    } finally {
+      this.inFlight--;
+    }
+  }
+
+  /**
+   * Stop dispatching and cancel timers. Idempotent. Call before drain().
+   */
+  public stop(): void {
+    this.shuttingDown = true;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    for (const t of this.retryTimers) clearTimeout(t);
+    this.retryTimers.clear();
+    this.stopCleanup();
+    loggers.queue('info', 'AI queue stopped (no new dispatch; pending retries cancelled)');
+  }
+
+  /**
+   * Wait until all in-flight provider calls settle, or until timeoutMs.
+   * Queued-but-not-started requests are rejected so their callers settle.
+   */
+  public async drain(timeoutMs = 8000): Promise<void> {
+    // Reject everything still waiting in the queues — it never started.
+    for (const [shop, queue] of this.queues.entries()) {
+      for (const req of queue.splice(0)) {
+        req.reject(new Error('Server shutting down — request not processed'));
+      }
+      this.queues.delete(shop);
+    }
+
+    const start = Date.now();
+    while (this.inFlight > 0 && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    loggers.queue('info', `AI queue drained (inFlight=${this.inFlight} after ${Date.now() - start}ms)`);
   }
 
   /**

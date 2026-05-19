@@ -132,7 +132,12 @@ async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
   return { buffer, filename };
 }
 
-const db = new PrismaClient();
+// Reuse the global PrismaClient shared with the Remix app (db.server.ts) and
+// the other standalone services. Creating a separate client here leaked a
+// connection pool on every restart (it was never $disconnect()-ed); the
+// shared instance is closed exactly once by server.js gracefulShutdown.
+const db = globalThis.__db ?? new PrismaClient();
+if (!globalThis.__db) globalThis.__db = db;
 
 const POLL_INTERVAL_MS = 10000; // 10 seconds
 const GLOBAL_MAX_CONCURRENT = 8;

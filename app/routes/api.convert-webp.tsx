@@ -19,6 +19,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "No images provided" }, { status: 400 });
   }
 
+  // Bound the fan-out: an unbounded images[] array would create an unbounded
+  // number of db.task rows in a single request. Cheap check first, before the
+  // quota DB round-trip below.
+  const MAX_IMAGES_PER_REQUEST = 250;
+  if (images.length > MAX_IMAGES_PER_REQUEST) {
+    return json(
+      { error: `Too many images in one request (max ${MAX_IMAGES_PER_REQUEST}, got ${images.length})` },
+      { status: 413 },
+    );
+  }
+
   // Each image conversion = one billable image operation (real compute/
   // bandwidth; AI is merchant-funded BYO). Whole-batch semantics: reject the
   // entire batch if it doesn't fit, so no tasks are created on overage.

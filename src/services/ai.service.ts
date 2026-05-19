@@ -18,6 +18,19 @@ const LOCALE_NAMES: Record<string, string> = {
   vi: 'Vietnamese', id: 'Indonesian', ms: 'Malay', hi: 'Hindi',
 };
 
+// Hard ceiling for a single AI provider call. Without this, a hung provider
+// socket blocks the shared AI queue indefinitely for ALL shops. Generous
+// enough for long-content generation, but bounded.
+const AI_REQUEST_TIMEOUT_MS = 120_000;
+const AI_SDK_MAX_RETRIES = 2;
+
+class AIRequestTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`AI request timed out after ${ms}ms`);
+    this.name = 'AIRequestTimeoutError';
+  }
+}
+
 const VALID_PROVIDERS: readonly AIProvider[] = ['huggingface', 'gemini', 'claude', 'openai', 'grok', 'deepseek'];
 
 /** Validate and return a safe AIProvider, falling back to 'claude' (Anthropic). */
@@ -103,12 +116,12 @@ export class AIService {
     } else if (this.provider === 'claude') {
       const apiKey = this.config.claudeApiKey || '';
       if (!apiKey) throw new MissingAIKeyError('claude');
-      this.anthropic = new Anthropic({ apiKey });
+      this.anthropic = new Anthropic({ apiKey, timeout: AI_REQUEST_TIMEOUT_MS, maxRetries: AI_SDK_MAX_RETRIES });
       loggers.ai('info', 'AI Provider: Claude');
     } else if (this.provider === 'openai') {
       const apiKey = this.config.openaiApiKey || '';
       if (!apiKey) throw new MissingAIKeyError('openai');
-      this.openai = new OpenAI({ apiKey });
+      this.openai = new OpenAI({ apiKey, timeout: AI_REQUEST_TIMEOUT_MS, maxRetries: AI_SDK_MAX_RETRIES });
       loggers.ai('info', 'AI Provider: OpenAI');
     } else if (this.provider === 'grok') {
       const apiKey = this.config.grokApiKey || '';
@@ -116,6 +129,8 @@ export class AIService {
       this.grok = new OpenAI({
         apiKey,
         baseURL: 'https://api.x.ai/v1',
+        timeout: AI_REQUEST_TIMEOUT_MS,
+        maxRetries: AI_SDK_MAX_RETRIES,
       });
       loggers.ai('info', 'AI Provider: Grok (X.AI)');
     } else if (this.provider === 'deepseek') {
@@ -124,6 +139,8 @@ export class AIService {
       this.deepseek = new OpenAI({
         apiKey,
         baseURL: 'https://api.deepseek.com',
+        timeout: AI_REQUEST_TIMEOUT_MS,
+        maxRetries: AI_SDK_MAX_RETRIES,
       });
       loggers.ai('info', 'AI Provider: DeepSeek');
     }
@@ -887,13 +904,28 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     'The text is too long for the AI model to process. Please shorten the content and try again.';
 
   private async executeAIRequest(prompt: string, imageUrl?: string): Promise<string> {
+    let timer: NodeJS.Timeout | undefined;
     try {
-      return await this._executeAIRequestInner(prompt, imageUrl);
+      // Backstop timeout: even if a provider SDK ignores its own timeout
+      // (e.g. Gemini/HF have no constructor timeout), this guarantees the
+      // shared queue slot is released so other shops are not blocked.
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new AIRequestTimeoutError(AI_REQUEST_TIMEOUT_MS)),
+          AI_REQUEST_TIMEOUT_MS,
+        );
+      });
+      return await Promise.race([
+        this._executeAIRequestInner(prompt, imageUrl),
+        timeoutPromise,
+      ]);
     } catch (error) {
       if (AIService.isInputTooLongError(error)) {
         throw new Error(AIService.INPUT_TOO_LONG_MESSAGE);
       }
       throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
