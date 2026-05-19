@@ -17,6 +17,15 @@
   (never empty) and always carries block.shopify_attributes so the theme
   editor can register/position the app block.
 {%- endcomment -%}
+{%- comment -%}
+  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  variant.title containing `</script><script>…` would break out of this
+  JSON island and inject script regardless of the JS-side _esc(). Every
+  free-text value interpolated below MUST additionally neutralise `<`/`>`
+  by replacing them with their \uXXXX JSON escapes (JSON.parse restores
+  them, so data is unchanged). Image URLs are Shopify CDN and
+  IDs/dimensions are numeric, so only variant.title needs this.
+{%- endcomment -%}
 <script type="application/json" id="cp-gallery-data-{{ block.id }}">
   {
     {%- if product != blank -%}
@@ -33,7 +42,7 @@
               "thumb":    {{ vfi | image_url: width: 160  | json }},
               "w":        {{ vfi.width  | json }},
               "h":        {{ vfi.height | json }},
-              "alt":      {{ variant.title | json }}
+              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
             }
             {%- assign cp_has_any = true -%}
           {%- endif -%}
@@ -51,7 +60,7 @@
                   "thumb":    {{ img | image_url: width: 160  | json }},
                   "w":        {{ cp_w | json }},
                   "h":        {{ cp_h | json }},
-                  "alt":      {{ variant.title | json }}
+                  "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}

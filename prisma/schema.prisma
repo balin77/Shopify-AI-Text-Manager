@@ -196,6 +196,11 @@ model Task {
   @@index([shop, createdAt])
   @@index([shop, queuePosition])
   @@index([expiresAt])
+  // R3-H5: /api/recently-completed-tasks polls every ~2s per open admin tab
+  // with WHERE shop=? AND status IN(..) AND completedAt>=? ORDER BY
+  // completedAt DESC. [shop,status] doesn't cover the completedAt range/sort,
+  // forcing a range scan that does not scale to thousands of shops.
+  @@index([shop, status, completedAt])
 }
 
 model Product {

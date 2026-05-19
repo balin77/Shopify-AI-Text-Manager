@@ -21,7 +21,10 @@ describe('AIQueueService', () => {
   });
 
   afterEach(() => {
-    queueService.stopCleanup();
+    // stop() also clears the cleanup interval; it additionally tears down the
+    // poll/retry timers so a finished test can't leak setTimeouts into the
+    // next one (important now that tests drive the real dispatcher).
+    queueService.stop();
     vi.clearAllMocks();
   });
 
@@ -321,49 +324,92 @@ describe('AIQueueService', () => {
     });
   });
 
-  describe('Retry Logic', () => {
-    it('should retry on rate limit errors', async () => {
-      // Test the retry count increment on a shop-specific queue
-      const shopQueue = (queueService as any).getShopQueue('test-shop');
+  describe('Execution, Retry & Drain (real queue behaviour)', () => {
+    // These drive the REAL dispatcher/runRequest path. The previous tests
+    // here only incremented a plain object's `retryCount` and asserted on
+    // it — they exercised JS arithmetic, not the queue (R3-H6). 'openai' is
+    // used because its default limits (500 req/min) are generous enough that
+    // the rate limiter never interferes with these concurrency assertions.
 
-      const mockRequest = {
-        id: 'test-1',
-        shop: 'test-shop',
-        taskId: 'task-1',
-        provider: 'claude' as AIProvider,
-        estimatedTokens: 1000,
-        execute: vi.fn(),
-        resolve: vi.fn(),
-        reject: vi.fn(),
-        retryCount: 0,
-        createdAt: new Date(),
-      };
-
-      shopQueue.push(mockRequest);
-
-      // Simulate retry increment
-      mockRequest.retryCount++;
-      expect(mockRequest.retryCount).toBe(1);
-      expect(mockRequest.retryCount).toBeLessThan(3);
+    it('resolves the enqueue promise with the execute() result', async () => {
+      const execute = vi.fn().mockResolvedValue('OK');
+      const result = await queueService.enqueue('shopA', 'task-ok', 'openai', 10, execute);
+      expect(result).toBe('OK');
+      expect(execute).toHaveBeenCalledTimes(1);
     });
 
-    it('should not retry more than 3 times', () => {
-      const mockRequest = {
-        id: 'test-1',
-        shop: 'test-shop',
-        taskId: 'task-1',
-        provider: 'openai' as AIProvider,
-        estimatedTokens: 1000,
-        execute: vi.fn(),
-        resolve: vi.fn(),
-        reject: vi.fn(),
-        retryCount: 3,
-        createdAt: new Date(),
-      };
-
-      // Should not retry if already at max
-      expect(mockRequest.retryCount).toBeGreaterThanOrEqual(3);
+    it('rejects (without retry) on a non-rate-limit error', async () => {
+      const execute = vi.fn().mockRejectedValue(new Error('boom'));
+      await expect(
+        queueService.enqueue('shopA', 'task-fail', 'openai', 10, execute),
+      ).rejects.toThrow('boom');
+      expect(execute).toHaveBeenCalledTimes(1);
     });
+
+    it('retries a 429 rate-limit error and then succeeds', async () => {
+      const execute = vi
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('429 Too Many Requests'), { status: 429 }))
+        .mockResolvedValue('RECOVERED');
+      const result = await queueService.enqueue('shopA', 'task-retry', 'openai', 10, execute);
+      expect(result).toBe('RECOVERED');
+      expect(execute).toHaveBeenCalledTimes(2); // failed once → re-queued → succeeded
+    }, 15000);
+
+    it('drain() rejects requests that never started', async () => {
+      queueService.stop(); // halt the dispatcher so the request stays queued
+      const execute = vi.fn().mockResolvedValue('SHOULD-NOT-RUN');
+      const pending = queueService.enqueue('shopDrain', 'task-drain', 'openai', 10, execute);
+      const rejection = expect(pending).rejects.toThrow(/shutting down/i);
+      await queueService.drain(1000);
+      await rejection;
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('never runs more than MAX_GLOBAL_CONCURRENCY executes at once', async () => {
+      const max = (AIQueueService as unknown as { MAX_GLOBAL_CONCURRENCY: number }).MAX_GLOBAL_CONCURRENCY;
+      let active = 0;
+      let peak = 0;
+      const releases: Array<() => void> = [];
+      const makeExecute = () =>
+        vi.fn().mockImplementation(
+          () =>
+            new Promise<string>((resolve) => {
+              active++;
+              peak = Math.max(peak, active);
+              releases.push(() => {
+                active--;
+                resolve('done');
+              });
+            }),
+        );
+
+      const N = max + 3;
+      const promises: Array<Promise<unknown>> = [];
+      for (let i = 0; i < N; i++) {
+        promises.push(queueService.enqueue('shopC', `c-${i}`, 'openai', 10, makeExecute()));
+      }
+
+      // Wait until the dispatcher has started as many as it is allowed to.
+      const start = Date.now();
+      while (releases.length < max && Date.now() - start < 5000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      // Give it extra time to (wrongly) over-dispatch, if the cap were broken.
+      await new Promise((r) => setTimeout(r, 300));
+
+      expect(releases.length).toBe(max);
+      expect(peak).toBe(max);
+
+      // Drain: releasing started ones frees slots for the rest, repeatedly.
+      while (promises.length && releases.length) {
+        const settle = releases.splice(0, releases.length);
+        settle.forEach((fn) => fn());
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      await Promise.allSettled(promises);
+      expect(peak).toBeLessThanOrEqual(max);
+    }, 20000);
   });
 
   describe('Sliding Window', () => {
