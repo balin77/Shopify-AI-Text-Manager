@@ -112,9 +112,16 @@ export class TaskRecoveryService {
     // Mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
 
-    // Reset queued/pending tasks so they can be retried
-    // Note: We don't auto-requeue them because that requires AI settings
-    // which should be loaded in the context of a user request
+    // Reset queued/pending tasks so they can be retried.
+    // DELIBERATE: we do NOT auto-re-enqueue AI tasks here. Re-enqueueing
+    // needs per-shop AI settings + provider keys + queue rate limits, which
+    // must be resolved in a user/request context, not blindly from a
+    // background restart hook. This standalone service SUPERSEDES the old
+    // src/services/task-recovery.service.ts (deleted), whose recoverTask()/
+    // queue.enqueueFromTask() did exactly that background auto-requeue — it
+    // was never wired into server.js (server.js only loads THIS .js) and was
+    // intentionally dropped. Tasks left "queued" are re-driven on the next
+    // user interaction instead.
     const resetCount = await this.resetPendingTasks();
 
     console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
