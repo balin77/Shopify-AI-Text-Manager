@@ -16,7 +16,38 @@ const LOCALE_NAMES: Record<string, string> = {
   sv: 'Swedish', da: 'Danish', no: 'Norwegian', fi: 'Finnish',
   pl: 'Polish', cs: 'Czech', tr: 'Turkish', th: 'Thai',
   vi: 'Vietnamese', id: 'Indonesian', ms: 'Malay', hi: 'Hindi',
+  he: 'Hebrew', el: 'Greek', uk: 'Ukrainian', ro: 'Romanian',
+  hu: 'Hungarian', sk: 'Slovak', bg: 'Bulgarian', hr: 'Croatian',
+  // R5-H2(a): Shopify ships region/script-qualified BCP-47 codes (the market
+  // selector emits these). Without precise names the prompt would send an
+  // opaque raw code and the model would guess the wrong regional variant.
+  'pt-BR': 'Brazilian Portuguese', 'pt-PT': 'European Portuguese',
+  'zh-Hans': 'Simplified Chinese', 'zh-CN': 'Simplified Chinese',
+  'zh-Hant': 'Traditional Chinese', 'zh-TW': 'Traditional Chinese',
+  'zh-HK': 'Traditional Chinese (Hong Kong)',
+  'en-GB': 'British English', 'en-AU': 'Australian English',
+  'en-US': 'American English', 'en-CA': 'Canadian English',
+  'fr-CA': 'Canadian French', 'fr-FR': 'European French',
+  'es-419': 'Latin American Spanish', 'es-ES': 'European Spanish',
+  'es-MX': 'Mexican Spanish', 'de-AT': 'Austrian German',
+  'de-CH': 'Swiss German', 'nl-BE': 'Flemish',
 };
+
+/**
+ * Resolve a BCP-47 locale code to a precise human language name for prompts.
+ *
+ * R5-H2(a): tolerant lookup — an exact match (e.g. `pt-BR`) wins, but for an
+ * unmapped region/script variant (e.g. `pt-AO`) we fall back to the BASE
+ * language name (`pt` -> "Portuguese") BEFORE falling back to the raw code, so
+ * a prompt never ships an opaque code like "pt-AO" when a usable name exists.
+ * English is the conceptual default fallback locale; we never default to German.
+ */
+function localeName(code: string): string {
+  if (!code) return code;
+  if (LOCALE_NAMES[code]) return LOCALE_NAMES[code];
+  const base = code.split('-')[0];
+  return LOCALE_NAMES[base] || code;
+}
 
 // Hard ceiling for a single AI provider call. Without this, a hung provider
 // socket blocks the shared AI queue indefinitely for ALL shops. Generous
@@ -208,14 +239,69 @@ Text: ${sanitizedContent}
 Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
     const response = await this.askAI(prompt);
-    return AIService.stripXmlWrapper(response);
+    const result = AIService.stripXmlWrapper(response);
+
+    // R5-H2(b): post-response echo guard. N-H3 only covered the *error* case
+    // (parse/format failure) — it never caught the model echoing the SOURCE
+    // verbatim on apparent success, which silently persists untranslated text
+    // as a "translation". Per the codebase fail-loud convention, throw so the
+    // caller marks the task failed and writes nothing. Conservative to avoid
+    // false positives: only trips for a non-trivial input (> 8 chars), when
+    // the trimmed output equals the trimmed sanitized input, and the source
+    // and target languages actually differ.
+    const trimmedIn = sanitizedContent.trim();
+    const trimmedOut = result.trim();
+    if (
+      fromLang !== toLang &&
+      trimmedIn.length > 8 &&
+      trimmedOut === trimmedIn
+    ) {
+      throw new Error(
+        `translateContent: model returned the source unchanged (${fromLang} -> ${toLang}); ` +
+        `treating as a failed translation rather than persisting untranslated source`
+      );
+    }
+
+    return result;
   }
 
-  /** Strips single-root XML wrapper tags that some models add (e.g. <translation>…</translation>). */
+  /**
+   * Non-content wrapper tag names that some models emit around their answer
+   * (e.g. `<translation>…</translation>`). These are NEVER legitimate HTML
+   * content elements, so stripping them is safe.
+   */
+  private static readonly XML_WRAPPER_TAGS = new Set([
+    'translation', 'translated', 'output', 'result', 'text', 'response', 'xml',
+  ]);
+
+  /**
+   * Strips a single-root XML *wrapper* tag that some models add around their
+   * answer (e.g. `<translation>…</translation>`).
+   *
+   * R5-H4: the previous regex stripped ANY single outer tag. A legitimate
+   * single-paragraph `translateContent` result like `<p>…</p>` was therefore
+   * silently unwrapped, producing unstyled run-on text on the storefront on
+   * SUCCESS. We now use an allow-list of known non-content wrapper tag names
+   * (case-insensitive) and refuse to strip semantic HTML (`p`, `div`, `span`,
+   * `ul`, `li`, `strong`, `a`, `h1`-`h6`, `table`, …). We also refuse to strip
+   * when a nested same-name tag exists, because then the outer tag is real
+   * structural content, not a wrapper artifact.
+   */
   private static stripXmlWrapper(text: string): string {
     const trimmed = text.trim();
     const match = trimmed.match(/^<([a-zA-Z][a-zA-Z0-9-]*)>([\s\S]*)<\/\1>$/);
-    return match ? match[2].trim() : trimmed;
+    if (!match) return trimmed;
+
+    const tagName = match[1].toLowerCase();
+    if (!AIService.XML_WRAPPER_TAGS.has(tagName)) return trimmed;
+
+    // A nested same-name tag means the outer tag is genuine structure (the
+    // model returned real `<text>` markup), not a one-off wrapper artifact.
+    const inner = match[2];
+    const nested = new RegExp(`<${tagName}[\\s>]`, 'i');
+    if (nested.test(inner)) return trimmed;
+
+    return inner.trim();
   }
 
   /**
@@ -246,8 +332,8 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
       return this.translateContent(sanitized, fromLang, toLang);
     }
 
-    const fromName = LOCALE_NAMES[fromLang] || fromLang;
-    const toName = LOCALE_NAMES[toLang] || toLang;
+    const fromName = localeName(fromLang);
+    const toName = localeName(toLang);
     const tokenList = varNames.map((n, i) => `TPLVAR${i} = {${n}}`).join(', ');
 
     // Dedicated prompt that explicitly requires all TPLVAR tokens to be preserved.
@@ -306,10 +392,8 @@ Rules:
       return {};
     }
 
-    const localeNames = LOCALE_NAMES;
-
     const targetLanguages = targetLocales
-      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .map((loc) => `${localeName(loc)} (${loc})`)
       .join(', ');
 
     const altTextsText = Object.entries(sanitizedAltTexts)
@@ -325,7 +409,7 @@ Rules:
       }
     }
 
-    const prompt = `Translate these ${contentType} image alt-texts from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+    const prompt = `Translate these ${contentType} image alt-texts from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${altTextsText}
 
@@ -338,7 +422,15 @@ Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    return this.parseJSONResponse(responseText);
+    const parsed = this.parseJSONResponse(responseText);
+    // R5-H1: outer = image keys, inner = requested target locales.
+    AIService.assertNestedComplete(
+      'translateAltTextsBatch',
+      parsed,
+      Object.keys(sanitizedAltTexts),
+      targetLocales,
+    );
+    return parsed;
   }
 
   async translateSlug(
@@ -352,20 +444,34 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       allowNewlines: false
     });
 
-    const prompt = `Translate the following URL slug/handle from ${fromLang} to ${toLang}.
+    const prompt = `Translate the following URL slug/handle from ${localeName(fromLang)} to ${localeName(toLang)}.
 
-IMPORTANT: The result MUST be a valid URL slug:
-- Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
+IMPORTANT: The result MUST be a valid ASCII URL slug:
+- Output ONLY lowercase ASCII letters (a-z), digits (0-9), and hyphens (-)
+- Transliterate / romanize any non-Latin script (Chinese, Japanese, Korean, Cyrillic, Arabic, Greek, Thai, Hebrew, etc.) into Latin letters — do NOT output the original script
 - Replace spaces with hyphens
-- No special characters, no umlauts, no accents
-- No spaces, no underscores
-- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt"
+- No umlauts, accents, diacritics, special characters, spaces, or underscores
+- Examples: "storage-boxes", "wooden-chair", "blue-t-shirt", "beijing-fan-dian"
 
 Source slug: ${sanitizedSlug}
 
-Return only the translated URL slug, nothing else.`;
+Return only the translated ASCII URL slug, nothing else.`;
 
-    return await this.askAI(prompt);
+    const result = await this.askAI(prompt);
+
+    // R5-H3: guarantee the slug is usable. For non-Latin titles the model can
+    // still return CJK/Cyrillic/Arabic text which `sanitizeSlug` (elsewhere)
+    // later strips to '' — silently producing an empty handle. If there is not
+    // a single ASCII alphanumeric to build a slug from, fail loudly here
+    // instead of returning something that sanitizes to nothing.
+    if (!/[a-z0-9]/i.test(result)) {
+      throw new Error(
+        `translateSlug: model returned no ASCII alphanumerics (${fromLang} -> ${toLang}); ` +
+        `result would sanitize to an empty slug`
+      );
+    }
+
+    return result;
   }
 
   /**
@@ -382,10 +488,8 @@ Return only the translated URL slug, nothing else.`;
       allowNewlines: false
     });
 
-    const localeNames = LOCALE_NAMES;
-
     const targetLanguages = targetLocales
-      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .map((loc) => `${localeName(loc)} (${loc})`)
       .join(', ');
 
     // Build expected JSON structure
@@ -394,7 +498,7 @@ Return only the translated URL slug, nothing else.`;
       jsonStructure[locale] = 'translated-slug';
     }
 
-    const prompt = `Translate the following URL slug/handle from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+    const prompt = `Translate the following URL slug/handle from ${localeName(fromLang)} to: ${targetLanguages}.
 
 IMPORTANT: Each result MUST be a valid URL slug:
 - Use only lowercase letters (a-z), numbers (0-9), and hyphens (-)
@@ -409,7 +513,10 @@ Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    return this.parseJSONResponse(responseText);
+    const parsed = this.parseJSONResponse(responseText);
+    // R5-H1: every requested target locale must map to a non-empty slug.
+    AIService.assertFlatComplete('translateSlugBatch', parsed, targetLocales);
+    return parsed;
   }
 
   /**
@@ -450,7 +557,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     };
 
     const targetLanguages = targetLocales
-      .map((loc) => `${localeNames[loc] || loc} (${loc})`)
+      .map((loc) => `${localeName(loc)} (${loc})`)
       .join(', ');
 
     // Build the fields section for the prompt
@@ -472,7 +579,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? `\n- URL slugs (handle) must be valid: only lowercase a-z, 0-9, hyphens. No special characters, umlauts, or accents.`
       : '';
 
-    const prompt = `Translate these ${contentType} fields from ${localeNames[fromLang] || fromLang} to: ${targetLanguages}.
+    const prompt = `Translate these ${contentType} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${fieldsText}
 
@@ -484,7 +591,15 @@ Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    return this.parseJSONResponse(responseText);
+    const parsed = this.parseJSONResponse(responseText);
+    // R5-H1: outer = requested locales, inner = the filtered field keys.
+    AIService.assertNestedComplete(
+      'translateShortFieldsBatch',
+      parsed,
+      targetLocales,
+      Object.keys(filteredFields),
+    );
+    return parsed;
   }
 
   /**
@@ -499,9 +614,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   ): Promise<string[]> {
     if (values.length === 0) return [];
 
-    const localeNames = LOCALE_NAMES;
-    const fromName = localeNames[fromLang] || fromLang;
-    const toName = localeNames[toLang] || toLang;
+    const fromName = localeName(fromLang);
+    const toName = localeName(toLang);
 
     loggers.ai('info', `[AI-SERVICE] Translating batch of ${values.length} values`, {
       fromLang,
@@ -571,9 +685,14 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
     const sanitizedTitle = sanitizePromptInput(seoTitle, { fieldType: 'seoTitle' });
     const sanitizedDescription = sanitizePromptInput(metaDescription, { fieldType: 'metaDescription' });
 
-    const localeNames = LOCALE_NAMES;
+    const targetLanguages = targetLocales.map((loc) => `${localeName(loc)} (${loc})`).join(', ');
 
-    const targetLanguages = targetLocales.map((loc) => localeNames[loc] || loc).join(', ');
+    // Build the expected JSON structure from the actual requested locales (the
+    // old hardcoded en/fr/es/it example did not reflect targetLocales).
+    const jsonStructure: Record<string, { seoTitle: string; metaDescription: string }> = {};
+    for (const locale of targetLocales) {
+      jsonStructure[locale] = { seoTitle: '...', metaDescription: '...' };
+    }
 
     const prompt = `Translate these SEO texts from the source language to ${targetLanguages}.
 
@@ -583,27 +702,18 @@ Meta Description: ${sanitizedDescription}
 Make sure that the character lengths remain similar and the translations sound natural.
 
 Respond in JSON format:
-{
-  "en": {
-    "seoTitle": "...",
-    "metaDescription": "..."
-  },
-  "fr": {
-    "seoTitle": "...",
-    "metaDescription": "..."
-  },
-  "es": {
-    "seoTitle": "...",
-    "metaDescription": "..."
-  },
-  "it": {
-    "seoTitle": "...",
-    "metaDescription": "..."
-  }
-}`;
+${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    return this.parseJSONResponse(responseText);
+    const parsed = this.parseJSONResponse(responseText);
+    // R5-H1: every requested locale must carry both SEO sub-fields.
+    AIService.assertNestedComplete(
+      'translateSEO',
+      parsed,
+      targetLocales,
+      ['seoTitle', 'metaDescription'],
+    );
+    return parsed;
   }
 
   async generateContent(
@@ -634,13 +744,11 @@ Respond in JSON format:
         })
       : '';
 
-    const localeNames = LOCALE_NAMES;
-
-    // Fall back to the locale code itself (e.g. "nl", "pt-BR") rather than a
-    // hardcoded 'German': an unknown locale defaulting to German produced
-    // confidently wrong-language content. The model understands BCP-47 codes,
-    // and this matches the fallback used by translateContent.
-    const language = localeNames[sanitizedContext.locale] || sanitizedContext.locale || 'English';
+    // Resolve via the tolerant localeName() (exact -> base language -> raw
+    // code) rather than a hardcoded 'German': an unknown locale defaulting to
+    // German produced confidently wrong-language content. English is the
+    // conceptual default when no code at all is supplied.
+    const language = localeName(sanitizedContext.locale) || 'English';
     const isTitle = fieldType === 'title';
     const fieldLabel = isTitle ? 'Title' : 'Description';
 
@@ -739,7 +847,7 @@ Output the result in ${language}.`;
       body_html: 'Description',
     };
 
-    const targetLanguages = targetLocales.map((loc) => localeNames[loc] || loc).join(', ');
+    const targetLanguages = targetLocales.map((loc) => localeName(loc)).join(', ');
 
     // Build the fields section for the prompt
     const fieldsText = Object.entries(sanitizedFields)
@@ -775,7 +883,18 @@ Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
     const responseText = await this.askAI(prompt);
-    return this.parseJSONResponse(responseText);
+    const parsed = this.parseJSONResponse(responseText);
+    // R5-H1: a description value containing `}` or `"seoTitle":` could
+    // truncate matchBalancedJSON, silently dropping later fields/locales while
+    // the task reported success. Assert outer = every requested locale, inner
+    // = every requested field key, each a non-empty string; else throw.
+    AIService.assertNestedComplete(
+      'translateFields',
+      parsed,
+      targetLocales,
+      Object.keys(fields),
+    );
+    return parsed;
   }
 
   private estimateTokens(prompt: string): number {
@@ -1253,6 +1372,63 @@ Return only the alt text, without additional explanations. Output the result in 
       }
     }
     return -1;
+  }
+
+  /**
+   * R5-H1: assert that a parsed `{ outerKey: { innerKey: string } }` response
+   * contains every requested outer key, every requested inner key per outer
+   * key, and that each leaf is a non-empty string.
+   *
+   * `matchBalancedJSON` can terminate early when a long description value
+   * contains a stray `}` or `"someKey":` — leaving later fields/locales
+   * silently missing while the task still reports success. Mirroring
+   * `translateBatchValues`'s strictness, we throw on any missing/non-string
+   * key so the task is marked failed and nothing partial is persisted.
+   */
+  private static assertNestedComplete(
+    method: string,
+    parsed: unknown,
+    outerKeys: string[],
+    innerKeys: string[],
+  ): void {
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${method}: AI response was not a JSON object`);
+    }
+    const obj = parsed as Record<string, unknown>;
+    for (const outer of outerKeys) {
+      const bucket = obj[outer];
+      if (bucket === null || typeof bucket !== 'object' || Array.isArray(bucket)) {
+        throw new Error(`${method}: AI response missing or invalid entry for "${outer}"`);
+      }
+      const inner = bucket as Record<string, unknown>;
+      for (const key of innerKeys) {
+        const value = inner[key];
+        if (typeof value !== 'string' || value.trim().length === 0) {
+          throw new Error(`${method}: AI response missing or non-string "${key}" for "${outer}"`);
+        }
+      }
+    }
+  }
+
+  /**
+   * R5-H1: flat-map variant of {@link assertNestedComplete} for responses
+   * shaped `{ key: string }` (e.g. translateSlugBatch).
+   */
+  private static assertFlatComplete(
+    method: string,
+    parsed: unknown,
+    keys: string[],
+  ): void {
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`${method}: AI response was not a JSON object`);
+    }
+    const obj = parsed as Record<string, unknown>;
+    for (const key of keys) {
+      const value = obj[key];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(`${method}: AI response missing or non-string value for "${key}"`);
+      }
+    }
   }
 
   private parseJSONResponse(text: string): any {

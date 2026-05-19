@@ -80,7 +80,19 @@ export function sanitizePromptInput(
   }
 
   // 3. Normalize whitespace
-  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  // NOTE: `\s` matches `\n`/`\t`, so a blanket /\s+/g -> ' ' would destroy every
+  // newline even when allowNewlines is true, silently flattening multi-line
+  // descriptions/policies/T&C into one run-on line. To honor the allowNewlines
+  // contract we must only collapse horizontal whitespace in that branch.
+  if (options.allowNewlines) {
+    sanitized = sanitized
+      .replace(/[^\S\r\n]+/g, ' ') // collapse spaces/tabs only, keep newlines
+      .replace(/ *\n */g, '\n')    // trim spaces around line breaks
+      .replace(/\n{3,}/g, '\n\n')  // re-cap blank lines after collapsing
+      .trim();
+  } else {
+    sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  }
 
   // 4. Escape backticks and special characters that could break JSON
   sanitized = sanitized
