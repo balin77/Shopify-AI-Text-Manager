@@ -13,7 +13,6 @@
 
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
-import { upsertProductMetafields } from "../db.server";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -58,226 +57,30 @@ export const loader = createContentLoader({
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    // Paginated fetch from Shopify (capped to plan limit)
-    const maxToFetch = planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts;
-    const shopifyProducts: any[] = [];
-    let hasNextPage = true;
-    let cursor: string | null = null;
-
-    while (hasNextPage && shopifyProducts.length < maxToFetch) {
-      const batchSize = Math.min(250, maxToFetch - shopifyProducts.length);
-      const shopifyResponse = await ctx.admin.graphql(
-        `#graphql
-          query getProductIds($first: Int!, $after: String) {
-            products(first: $first, after: $after) {
-              pageInfo { hasNextPage endCursor }
-              edges {
-                node {
-                  id
-                  title
-                  descriptionHtml
-                  handle
-                  status
-                  productType
-                  updatedAt
-                  seo { title description }
-                  featuredImage { url altText }
-                  media(first: 250) {
-                    edges {
-                      node {
-                        ... on MediaImage {
-                          id
-                          alt
-                          image { url }
-                        }
-                      }
-                    }
-                  }
-                  options {
-                    id
-                    name
-                    position
-                    linkedMetafield {
-                      namespace
-                      key
-                    }
-                    optionValues {
-                      id
-                      name
-                      linkedMetafieldValue
-                    }
-                  }
-                  metafields(first: 50) {
-                    edges {
-                      node {
-                        id
-                        namespace
-                        key
-                        value
-                        type
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-        { variables: { first: batchSize, after: cursor } },
-      );
-      const shopifyData: any = await shopifyResponse.json();
-
-      if (shopifyData.errors) {
-        logger.error("[PRODUCTS-LOADER] GraphQL error fetching products", {
-          context: "PRODUCTS",
-          errors: shopifyData.errors,
-        });
-        throw new Error(
-          `GraphQL error: ${shopifyData.errors.map((e: any) => e.message).join(", ")}`,
-        );
+    // R3-C3: do NOT resync the entire Shopify catalog on every page load.
+    // This loader runs on every navigation/revalidation (incl. Remix
+    // prefetch). The previous inline implementation paginated the WHOLE
+    // catalog and ran per-product upsert + deleteMany/createMany for images
+    // and options on every load (~10k upserts + ~30k delete/create + dozens
+    // of Shopify GraphQL calls for a 10k-product shop, even when nothing
+    // changed). Catalog -> DB synchronization is the dedicated job of
+    // ProductSyncService, driven by the background SyncScheduler (initial
+    // full sync + periodic reconcile, started at afterAuth). The loader now
+    // only READS from the DB; we just ensure the scheduler is running for
+    // this shop (idempotent + non-blocking — never restarts an active one).
+    try {
+      const { syncScheduler } = await import("../services/sync-scheduler.service");
+      if (!syncScheduler.isShopActive(ctx.session.shop)) {
+        syncScheduler.startSyncForShop(ctx.session.shop, ctx.admin as never);
       }
-
-      const page: any = shopifyData.data?.products;
-      const nodes = page?.edges?.map((e: any) => e.node) || [];
-      shopifyProducts.push(...nodes);
-      hasNextPage = page?.pageInfo?.hasNextPage ?? false;
-      cursor = page?.pageInfo?.endCursor ?? null;
-    }
-
-    // Track whether we fetched ALL products from Shopify (loop ended naturally)
-    // vs. stopped early due to plan cap
-    const fetchedAllFromShopify = !hasNextPage;
-
-    const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
-
-    const localProducts = await ctx.db.product.findMany({
-      where: { shop: ctx.session.shop },
-      select: { id: true },
-    });
-    const localProductIds = new Set(localProducts.map((p: any) => p.id));
-
-    // Upsert ALL products (create new + update existing)
-    const newProductIds = new Set(
-      shopifyProducts.filter((p: any) => !localProductIds.has(p.id)).map((p: any) => p.id),
-    );
-
-    if (newProductIds.size > 0) {
-      logger.info(`[PRODUCTS-LOADER] Creating ${newProductIds.size} new product(s) from Shopify`);
-    }
-
-    for (const product of shopifyProducts) {
-      await ctx.db.product.upsert({
-        where: { shop_id: { shop: ctx.session.shop, id: product.id } },
-        create: {
-          id: product.id, shop: ctx.session.shop, title: product.title,
-          descriptionHtml: product.descriptionHtml || "", handle: product.handle,
-          status: product.status, productType: product.productType || null,
-          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-          featuredImageUrl: product.featuredImage?.url || null,
-          featuredImageAlt: product.featuredImage?.altText || null,
-          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-        },
-        update: {
-          title: product.title, descriptionHtml: product.descriptionHtml || "",
-          handle: product.handle, status: product.status,
-          productType: product.productType || null,
-          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-          featuredImageUrl: product.featuredImage?.url || null,
-          featuredImageAlt: product.featuredImage?.altText || null,
-          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-        },
+    } catch (err) {
+      logger.error("[PRODUCTS-LOADER] Could not ensure background sync scheduler", {
+        context: "PRODUCTS",
+        shop: ctx.session.shop,
+        error: err instanceof Error ? err.message : String(err),
       });
-
-      // Sync images for ALL products (not only new ones): Shopify caps a product
-      // at 250 media total, so media(first: 250) above fetches everything in one
-      // page. Re-syncing on every load also self-heals products whose images
-      // were still PROCESSING (image.url null → filtered) during an earlier sync.
-      // The `mediaImages.length > 0` guard below still protects cached images
-      // from being wiped by a transient empty Shopify response.
-      if (planLimits.cacheEnabled.productImages) {
-        const mediaImages = product.media?.edges
-          ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
-          .map((edge: any) => edge.node) || [];
-        if (mediaImages.length > 0) {
-          await ctx.db.productImage.deleteMany({ where: { productId: product.id } });
-          await ctx.db.productImage.createMany({
-            data: mediaImages.map((media: any, index: number) => ({
-              productId: product.id, url: media.image.url,
-              altText: media.alt || null, mediaId: media.id, position: index,
-            })),
-          });
-        }
-      }
-
-      // Sync options (always update to keep optionValues GIDs fresh)
-      // Filter out Shopify's internal "Default Title" placeholder (products with no real variants)
-      const realOptions = (product.options || []).filter((opt: any) => !isDefaultTitleOption(opt));
-      if (realOptions.length > 0) {
-        // Log what Shopify API returns for the first product's options
-        if (product === shopifyProducts[0]) {
-          for (const opt of realOptions) {
-            logger.info(`[PRODUCTS-LOADER] Option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues=${opt.optionValues?.length ?? 'none'}`);
-          }
-        }
-        try {
-          await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
-          const createData = realOptions.map((opt: any) => ({
-            id: opt.id,
-            productId: product.id,
-            name: opt.name,
-            position: opt.position,
-            values: opt.optionValues
-              ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
-              : JSON.stringify(opt.values),
-            linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
-          }));
-          if (product === shopifyProducts[0]) {
-            logger.info(`[PRODUCTS-LOADER] createMany data sample: linkedMetafieldKey=${createData[0]?.linkedMetafieldKey}, valuesFormat=${createData[0]?.values?.substring(0, 60)}`);
-          }
-          await ctx.db.productOption.createMany({ data: createData });
-          if (product === shopifyProducts[0]) {
-            logger.info(`[PRODUCTS-LOADER] Options saved OK for ${product.id}`);
-          }
-        } catch (optErr: unknown) {
-          logger.error(`[PRODUCTS-LOADER] OPTIONS SAVE FAILED for ${product.id}: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
-          // If the column doesn't exist, createMany fails — try without linkedMetafieldKey
-          try {
-            await ctx.db.productOption.createMany({
-              data: realOptions.map((opt: any) => ({
-                id: opt.id,
-                productId: product.id,
-                name: opt.name,
-                position: opt.position,
-                values: opt.optionValues
-                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
-                  : JSON.stringify(opt.values),
-              })),
-            });
-            logger.info(`[PRODUCTS-LOADER] Options saved (without linkedMetafieldKey) for ${product.id}`);
-          } catch (fallbackErr: unknown) {
-            logger.error(`[PRODUCTS-LOADER] OPTIONS FALLBACK ALSO FAILED for ${product.id}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
-          }
-        }
-      }
-
-      // Sync metafields (idempotent upsert — safe under concurrent execution)
-      const metafields = product.metafields?.edges?.map((e: any) => e.node) || [];
-      await upsertProductMetafields(ctx.db, product.id, metafields);
     }
 
-    // Remove deleted products — only when we fetched ALL from Shopify.
-    // When the fetch was capped by plan limits, we can't distinguish
-    // "deleted from Shopify" vs "not fetched due to plan cap".
-    if (fetchedAllFromShopify) {
-      const removedIds = [...localProductIds].filter((id) => !shopifyProductIds.has(id));
-      if (removedIds.length > 0) {
-        logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
-        await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
-        await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
-        await ctx.db.contentTranslation.deleteMany({
-          where: { shop: ctx.session.shop, resourceType: "Product", resourceId: { in: removedIds } },
-        });
-      }
-    }
 
     // Fetch products from DATABASE (capped to plan limit)
     const dbProducts = await ctx.db.product.findMany({

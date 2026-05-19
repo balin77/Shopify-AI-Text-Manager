@@ -180,7 +180,17 @@ class CpVariantGallery extends HTMLElement {
   }
 
   _esc(str) {
-    return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    // Escape for both HTML attribute and element context. `&` MUST be first.
+    // Escaping only & and " left `<`/`>` open: a variant title like
+    // `</img><img src=x onerror=...>` (merchant/CSV/personalization-app
+    // influenced) executed in every shopper's browser on variant re-render
+    // (stored XSS). Inject only via this for any untrusted string.
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }
 
