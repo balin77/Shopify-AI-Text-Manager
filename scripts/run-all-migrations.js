@@ -137,15 +137,13 @@ async function main() {
       log('❌ Both migrate deploy and db push failed!', 'red');
       process.exit(1);
     }
-  } else {
-    // Sync schema-only changes not captured in migration files (e.g. models
-    // historically added via db push). Without --accept-data-loss this is
-    // additive-only — destructive drift aborts loudly rather than wiping data.
-    runCommand(
-      'npx prisma db push --skip-generate',
-      'Prisma DB Push (schema sync)'
-    );
   }
+  // No post-success `db push`: the migration history is now complete. The
+  // tables historically created only via db push (ImageManagerSettings,
+  // ProductVariant, AltTextTemplate) now have idempotent CREATE TABLE
+  // migrations dated before their dependent ALTERs, so `migrate deploy` alone
+  // reproduces the full schema on a fresh database. Running an unconditional
+  // db push here previously masked incomplete migration history.
 
   // 3. Run API Key encryption migration (if ENCRYPTION_KEY is set)
   if (process.env.ENCRYPTION_KEY) {
