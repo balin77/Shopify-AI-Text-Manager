@@ -370,7 +370,14 @@ describe('checkAndSyncSubscription() – trialConsumedAt marking', () => {
 
     await checkAndSyncSubscription(admin, shop);
 
-    expect(mockAISettingsUpdateMany).not.toHaveBeenCalled();
+    // R4-DI4: updateMany is now also used for the atomic plan-transition CAS,
+    // so assert specifically that the TRIAL-marking updateMany never ran
+    // (rather than "updateMany never called at all").
+    expect(mockAISettingsUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ trialConsumedAt: expect.any(Date) }),
+      })
+    );
   });
 
   it('does NOT touch the marker on cancel/downgrade (no active subscription)', async () => {

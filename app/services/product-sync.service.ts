@@ -8,6 +8,7 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
+import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-delete-lock.server';
 import { withDbRaceRetry } from '~/utils/db-retry.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
@@ -357,9 +358,17 @@ export class ProductSyncService {
       checkAborted();
       const chunk = allProducts.slice(i, i + PRODUCT_BATCH_SIZE);
       try {
-        await db.$transaction(async (tx: Prisma.TransactionClient) => {
+        // R4-DI2: the PRIMARY batch transaction must also be race-retried
+        // (not just the per-product fallback below). A single image colliding
+        // with a concurrent alt-text apply (P2002/P2034/…) otherwise aborts
+        // the whole 100-product batch on the first try; retrying the batch
+        // heals transient contention before paying for the slow per-product
+        // path, and avoids silently skipping a product under sustained
+        // contention. (The earlier "wraps BOTH" claim was only true for the
+        // fallback — this closes that gap.)
+        await withDbRaceRetry(() => db.$transaction(async (tx: Prisma.TransactionClient) => {
           for (const product of chunk) await writeProduct(tx, product);
-        }, TX_OPTS);
+        }, TX_OPTS));
         synced += chunk.length;
       } catch (batchErr: unknown) {
         if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
@@ -750,6 +759,15 @@ export class ProductSyncService {
           // Product might not exist in database either - this is OK
           logger.debug(`[ProductSync] Product not found in database (already deleted): ${productId}`);
         }
+        return;
+      }
+
+      // R4-DI5: if this product was deleted while we were fetching it from
+      // Shopify, don't continue the (expensive) translation fetch + write —
+      // it would just resurrect a deleted product. saveToDatabase re-checks
+      // too, but bailing here also saves the work.
+      if (isProductRecentlyDeleted(productId)) {
+        logger.warn(`[ProductSync] Product deleted during sync — aborting: ${productId}`);
         return;
       }
 
@@ -1357,6 +1375,15 @@ export class ProductSyncService {
   ) {
     const { db } = await import("../db.server");
 
+    // R4-DI5: do not resurrect a product that was deleted while this sync was
+    // in flight (we fetched it from Shopify before a products/delete webhook
+    // committed deleteProduct()). Re-checked again inside the transaction to
+    // close the check→commit window.
+    if (isProductRecentlyDeleted(productData.id)) {
+      logger.warn(`[ProductSync] Skipping save — product was deleted during this sync: ${productData.id}`);
+      return;
+    }
+
     logger.debug(`[ProductSync] Saving product to database: ${productData.id}`);
 
     // Before starting transaction, preserve alt-texts that were recently modified by user
@@ -1404,6 +1431,14 @@ export class ProductSyncService {
     // ProductImage rows and can collide on (productId, mediaId) with a
     // parallel alt-text apply now that a unique constraint exists.
     await withDbRaceRetry(() => db.$transaction(async (tx) => {
+      // R4-DI5: re-check inside the transaction. deleteProduct() may have
+      // committed (and tombstoned) between the top-of-method guard and here;
+      // returning early commits an empty transaction so nothing is written
+      // and the deleted product stays deleted.
+      if (isProductRecentlyDeleted(productData.id)) {
+        logger.warn(`[ProductSync] Aborting write — product deleted mid-transaction: ${productData.id}`);
+        return;
+      }
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1688,6 +1723,13 @@ export class ProductSyncService {
         where: { shop: this.shop, id: productId },
       }),
     ]);
+
+    // R4-DI5: tombstone the id so an in-flight sync that already fetched this
+    // product from Shopify cannot upsert it back AFTER this delete commits
+    // (Shopify never redelivers products/delete, so a resurrected row would
+    // never self-heal). Marked AFTER a successful delete so a failed delete
+    // doesn't wrongly suppress a legitimate sync.
+    markProductDeleted(productId);
 
     logger.debug(`[ProductSync] Successfully deleted product: ${productId}`);
   }
