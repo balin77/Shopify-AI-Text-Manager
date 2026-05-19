@@ -19,6 +19,10 @@ const mockDb = {
     findUnique: vi.fn().mockResolvedValue(null),
   },
   contentTranslation: {
+    // No pre-existing rows → digest-skip (R3-H4) can't prove "unchanged",
+    // so syncProduct falls through to the delete+recreate path the
+    // assertions below expect.
+    findMany: vi.fn().mockResolvedValue([]),
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },

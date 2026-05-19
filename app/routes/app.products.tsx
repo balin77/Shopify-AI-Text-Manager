@@ -82,7 +82,35 @@ export const loader = createContentLoader({
     }
 
 
-    // Fetch products from DATABASE (capped to plan limit)
+    // R3-H2: this loader serialises the WHOLE result (deep includes:
+    // images→altTranslations, options, metafields) into ONE JSON payload,
+    // and the factory then runs contentTranslation.findMany({ resourceId:
+    // { in: ids } }) over every id. On unlimited (Pro/Max) plans there was
+    // NO `take`, so a 10k-product shop produced a multi-MB payload + huge
+    // IN() query → OOM/timeout. There is no server-side pagination yet (the
+    // UI filters client-side), so until that exists we apply a hard upper
+    // bound even for unlimited plans. A bounded list degrades gracefully;
+    // an unbounded query takes the page down entirely. Configurable via
+    // PRODUCTS_MAX_LOADED. extraData still returns the true productCount so
+    // the UI can show "X of Y".
+    const HARD_CAP = (() => {
+      const raw = Number(process.env.PRODUCTS_MAX_LOADED);
+      return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2000;
+    })();
+    const effectiveTake =
+      planLimits.maxProducts === Infinity
+        ? HARD_CAP
+        : Math.min(planLimits.maxProducts, HARD_CAP);
+
+    const totalForShop = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
+    if (totalForShop > effectiveTake) {
+      logger.warn(
+        `[PRODUCTS-LOADER] Catalog (${totalForShop}) exceeds load cap (${effectiveTake}) — returning a bounded slice. Server-side pagination is required for this shop.`,
+        { context: "PRODUCTS", shop: ctx.session.shop, totalForShop, effectiveTake },
+      );
+    }
+
+    // Fetch products from DATABASE (bounded — see R3-H2 note above)
     const dbProducts = await ctx.db.product.findMany({
       where: { shop: ctx.session.shop },
       include: {
@@ -93,7 +121,7 @@ export const loader = createContentLoader({
         metafields: true,
       },
       orderBy: { title: "asc" },
-      ...(planLimits.maxProducts !== Infinity ? { take: planLimits.maxProducts } : {}),
+      take: effectiveTake,
     });
 
     // Load sub-resource translations (options, option values, metafields) from DB
