@@ -320,11 +320,21 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
 
     // Replace every {VarName} with a unique opaque token before sending to the AI.
     // This prevents the AI from "absorbing" the variable into the surrounding translation.
+    //
+    // R5-M1: the token base used to be the fixed string `TPLVAR`. If a
+    // merchant's template literally contained `TPLVAR0` (outside a {…}
+    // placeholder) the restore regex below would rewrite that literal text to
+    // `{<someVar>}` — or `{undefined}` when the index was out of range —
+    // corrupting the alt text. Use a per-call random base so it cannot
+    // collide with anything the merchant actually typed (kept uppercase
+    // alnum so models preserve it verbatim).
+    const TOK = `CPVAR${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+    const tokRe = new RegExp(`${TOK}(\\d+)`, 'g');
     const varNames: string[] = [];
     const tokenized = sanitized.replace(/\{([^}]+)\}/g, (_, name: string) => {
       const idx = varNames.length;
       varNames.push(name);
-      return `TPLVAR${idx}`;
+      return `${TOK}${idx}`;
     });
 
     // If there are no variables, fall back to generic translateContent.
@@ -334,26 +344,31 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
 
     const fromName = localeName(fromLang);
     const toName = localeName(toLang);
-    const tokenList = varNames.map((n, i) => `TPLVAR${i} = {${n}}`).join(', ');
+    const tokenList = varNames.map((n, i) => `${TOK}${i} = {${n}}`).join(', ');
 
-    // Dedicated prompt that explicitly requires all TPLVAR tokens to be preserved.
+    // Dedicated prompt that explicitly requires all placeholder tokens to be preserved.
     const prompt = `Translate the following product image alt-text template from ${fromName} to ${toName}.
 
 Template: ${tokenized}
 
 Rules:
-- The tokens ${varNames.map((_, i) => `TPLVAR${i}`).join(', ')} are placeholders for product attributes (${tokenList}). You MUST keep ALL of them exactly as written — do not translate, omit, or reorder them.
+- The tokens ${varNames.map((_, i) => `${TOK}${i}`).join(', ')} are placeholders for product attributes (${tokenList}). You MUST keep ALL of them exactly as written — do not translate, omit, or reorder them.
 - Return ONLY the translated template. No XML tags, no quotes, no explanations.`;
 
     const response = AIService.stripXmlWrapper(await this.askAI(prompt));
 
-    // Find which TPLVAR tokens the AI dropped (before restoring, so regex is still intact).
+    // Find which placeholder tokens the AI dropped (before restoring, so regex is still intact).
     const dropped = varNames
-      .map((name, i) => ({ name, token: `TPLVAR${i}` }))
+      .map((name, i) => ({ name, token: `${TOK}${i}` }))
       .filter(({ token }) => !response.includes(token));
 
-    // Restore surviving tokens.
-    let restored = response.replace(/TPLVAR(\d+)/g, (_, idx) => `{${varNames[parseInt(idx, 10)]}}`);
+    // Restore surviving tokens. R5-M1: guard the index — an out-of-range
+    // token (model invented one) must NOT become `{undefined}`; leave the
+    // raw token text untouched in that case.
+    let restored = response.replace(tokRe, (m, idx) => {
+      const name = varNames[parseInt(idx, 10)];
+      return name === undefined ? m : `{${name}}`;
+    });
 
     // Append any dropped variables so they are never silently lost.
     if (dropped.length > 0) {
@@ -447,6 +462,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           .map((name, i) => ({ name, token: `TPLVAR${p.position}_${i}` }))
           .filter(({ token }) => !text.includes(token));
 
+        // R5-M1 (assessed — already safe here): unlike the singular
+        // translateTemplate(), this batch restore is BOTH position- and
+        // index-guarded and falls back to the original matched text, so a
+        // merchant literal like `TPLVAR12_3` can never become `{undefined}`
+        // or a wrong variable (it would have to exactly match an in-range
+        // position_idx of THIS batch). No per-call nonce needed; left as-is
+        // to avoid churning the freshly-refactored batch path.
         let restored = text.replace(
           /TPLVAR(\d+)_(\d+)/g,
           (_, pos: string, idx: string) =>
@@ -1549,7 +1571,12 @@ Return only the alt text, without additional explanations. Output the result in 
       const ch = candidate[i];
       if (ch !== '{' && ch !== '[') continue;
       const end = AIService.matchBalancedJSON(candidate, i);
-      if (end === -1) break;
+      // R5-M3: a stray/unbalanced `{` or `[` in prose before the real JSON
+      // (placeholder text, an example, a `{note}` token) used to `break` the
+      // whole scan → a perfectly valid JSON object later in the response was
+      // discarded as unparseable (false failure + wasted API cost). Skip this
+      // opener and keep scanning for the next balanced span instead.
+      if (end === -1) continue;
       try {
         return JSON.parse(candidate.slice(i, end));
       } catch {
