@@ -5,6 +5,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { refundImageOperations } from "./image-op-refund.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
@@ -104,7 +105,7 @@ export class TaskRecoveryService {
   async recoverRunningWebpTasks() {
     const tasks = await prisma.task.findMany({
       where: { type: 'imageWebpConversion', status: 'running' },
-      select: { id: true, progress: true, retryCount: true },
+      select: { id: true, progress: true, retryCount: true, shop: true },
     });
 
     let retried = 0;
@@ -131,6 +132,12 @@ export class TaskRecoveryService {
           },
         });
         failed++;
+        // R3-C4: this task consumed an image op at batch creation but
+        // produced no result. Refund it (the status:'running' query filter
+        // means a re-run won't re-select/double-refund this now-'failed'
+        // task). The retry branch above intentionally does NOT refund — it
+        // will run again.
+        await refundImageOperations(prisma, t.shop, 1);
       }
     }
 
@@ -148,6 +155,20 @@ export class TaskRecoveryService {
   async markStuckTasksAsFailed() {
     const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);
 
+    // R3-C4: the blanket updateMany below also fails stuck
+    // imageWebpConversion tasks, each of which consumed an image op at batch
+    // creation. Capture them FIRST (still non-terminal) so we can refund;
+    // after the updateMany they're 'failed' and no longer match this filter,
+    // so a later recovery pass cannot re-select and double-refund them.
+    const stuckWebp = await prisma.task.findMany({
+      where: {
+        type: 'imageWebpConversion',
+        status: { in: ['running', 'pending', 'queued'] },
+        updatedAt: { lt: stuckThreshold },
+      },
+      select: { shop: true },
+    });
+
     const result = await prisma.task.updateMany({
       where: {
         status: { in: ['running', 'pending', 'queued'] },
@@ -162,6 +183,14 @@ export class TaskRecoveryService {
 
     if (result.count > 0) {
       console.log(`[TaskRecovery] Marked ${result.count} stuck task(s) as failed`);
+    }
+
+    if (stuckWebp.length > 0) {
+      const byShop = new Map();
+      for (const t of stuckWebp) byShop.set(t.shop, (byShop.get(t.shop) ?? 0) + 1);
+      for (const [shop, n] of byShop) {
+        await refundImageOperations(prisma, shop, n);
+      }
     }
 
     return result.count;
