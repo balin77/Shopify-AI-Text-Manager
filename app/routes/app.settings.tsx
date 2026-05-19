@@ -724,14 +724,17 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
     if (tabParam === "sku" && !showSkuTab) return "setup";
     if (tabParam === "translations" && !showTranslationsTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback";
+    // imagemanager is the deep-link target of the first-run theme-extension
+    // hint; same prod/plan gate as the tab itself so it never renders blank.
+    if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };

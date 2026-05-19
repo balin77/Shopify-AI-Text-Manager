@@ -644,6 +644,10 @@ export const de = {
     themeSetupOptionBDescription: "Füge den Galerie-Block manuell zu einem Abschnitt in der Produktseitenvorlage hinzu.",
     themeSetupOptionBButton: "App-Block hinzufügen",
     themeSetupNote: "Nach der Aktivierung das Theme speichern. Die Galerie zeigt automatisch die im Image Manager zugewiesenen Variantenbilder an.",
+    // First-run hint (infobox) when a shop first reaches Pro/Max
+    extensionSetupHintTitle: "Theme-Extension noch einrichten",
+    extensionSetupHintMessage: "Du nutzt jetzt Pro/Max. Damit variantenspezifische Bildergalerien im Shop angezeigt werden, muss die ContentPilot Theme-Extension noch im Theme-Editor aktiviert werden. Das ist optional.",
+    extensionSetupHintAction: "Jetzt einrichten",
     billingSuccessTitle: "Plan aktiviert",
     billingSuccessMessage: "Dein Abonnement ist jetzt aktiv.",
     billingDeclinedTitle: "Zahlung nicht abgeschlossen",

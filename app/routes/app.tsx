@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import { Outlet, useLoaderData, useRouteError, useFetcher } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
@@ -14,7 +14,7 @@ import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
 import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -94,6 +94,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         preferredProvider: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
+        extensionSetupHintShownAt: true,
       },
     });
 
@@ -117,6 +118,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const seoTitleSuffix = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
       ? settings.seoTitleSuffix
       : "";
+
+    // First-run hint: a shop that just reached Pro/Max still has to enable the
+    // ContentPilot theme app extension in their theme editor for the variant
+    // gallery to render on the storefront. We surface this once (one-shot
+    // marker below), and only while the feature is actually unlocked — same
+    // gate as `showImageManagerTab` in app.settings.tsx.
+    const extensionSetupHint =
+      !isProductionLocked() &&
+      (subscriptionPlan === "pro" || subscriptionPlan === "max") &&
+      !settings?.extensionSetupHintShownAt;
 
     // Seed the initial-sync banner from the DB so it renders immediately on
     // any full document load (reopen / hard reload) without waiting for the
@@ -146,6 +157,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitleSuffix,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
+      extensionSetupHint,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -170,15 +182,62 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitleSuffix: "",
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
+      extensionSetupHint: false,
       loaderError: true,
     });
   }
 };
 
 function AppContent() {
-  const { aiSettings } = useLoaderData<typeof loader>();
+  const { aiSettings, extensionSetupHint } = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const { showInfoBox } = useInfoBox();
+  const { showInfoBox, infoBox } = useInfoBox();
+  const hintFetcher = useFetcher();
+  const extensionHintRequested = useRef(false);
+  const extensionHintPersisted = useRef(false);
+
+  // First-run nudge: a shop that just reached Pro/Max still has to enable the
+  // ContentPilot theme app extension for the variant gallery to appear on the
+  // storefront. Surface it once, non-blocking, with a deep-link into the
+  // Image-Manager settings tab where the actual theme-editor buttons live.
+  // Merchants who don't want it can just dismiss. Message string is computed
+  // here so the persist effect below can match it against the active infobox.
+  const extensionHintMessage =
+    t.settings?.extensionSetupHintMessage ||
+    "You're on Pro/Max — to show variant image galleries on your storefront, the ContentPilot theme extension still needs to be enabled in your theme editor. This is optional.";
+
+  useEffect(() => {
+    if (!extensionSetupHint || extensionHintRequested.current) return;
+    extensionHintRequested.current = true;
+
+    showInfoBox(
+      extensionHintMessage,
+      // 'warning' (not 'info') so the hint persists until dismissed instead of
+      // auto-hiding after 5s — it carries an actionable deep-link.
+      "warning",
+      t.settings?.extensionSetupHintTitle || "Set up the theme extension",
+      {
+        url: "/app/settings?tab=imagemanager",
+        label: t.settings?.extensionSetupHintAction || "Set it up",
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extensionSetupHint]);
+
+  // Persist the one-shot marker only once the hint is ACTUALLY the active
+  // infobox — showInfoBox queues it behind any message already showing, so
+  // persisting on the request alone would mean "attempted once", not "shown
+  // once": a merchant leaving before a queued hint surfaces would burn it
+  // unseen. Watching infoBox keeps the real guarantee. (Residual: two tabs /
+  // a hard reload before this POST commits can show it 2×; accepted for an
+  // optional nudge — it is self-limiting once the marker lands.)
+  useEffect(() => {
+    if (!extensionSetupHint || extensionHintPersisted.current) return;
+    if (infoBox?.message !== extensionHintMessage) return;
+    extensionHintPersisted.current = true;
+    hintFetcher.submit(null, { method: "post", action: "/api/extension-setup-hint" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infoBox, extensionSetupHint]);
 
   // Check API key on mount and show warning in InfoBox if missing
   useEffect(() => {

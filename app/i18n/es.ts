@@ -646,6 +646,10 @@ export const es: Translation = {
     themeSetupOptionBDescription: "Añade manualmente el bloque de galería a una sección en la plantilla de página de producto.",
     themeSetupOptionBButton: "Añadir App Block",
     themeSetupNote: "Después de activar, guarda tu tema. La galería mostrará automáticamente las imágenes de variantes asignadas en el Image Manager.",
+    // First-run hint (infobox) when a shop first reaches Pro/Max
+    extensionSetupHintTitle: "Configura la extensión del tema",
+    extensionSetupHintMessage: "Ahora tienes Pro/Max. Para mostrar galerías de imágenes por variante en tu tienda, todavía hay que activar la extensión de tema de ContentPilot en el editor de temas. Es opcional.",
+    extensionSetupHintAction: "Configurar ahora",
     billingSuccessTitle: "Plan activado",
     billingSuccessMessage: "Tu suscripción ahora está activa.",
     billingDeclinedTitle: "Pago no completado",

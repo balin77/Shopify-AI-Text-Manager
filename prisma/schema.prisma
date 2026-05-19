@@ -61,6 +61,14 @@ model AISettings {
   // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
   trialConsumedAt   DateTime?
 
+  // One-shot marker: set the first time a Pro/Max shop is shown the
+  // theme-extension setup hint (infobox on app start). Without it the hint
+  // would re-appear on every load. Like trialConsumedAt this lives on the
+  // shop-scoped AISettings row, so it is cleared on shop/redact — a freshly
+  // reinstalled Pro/Max shop may legitimately see the hint again.
+  // null = hint not yet shown.
+  extensionSetupHintShownAt DateTime?
+
   // Rate Limiting - Hugging Face
   hfMaxTokensPerMinute   Int? @default(1000000)
   hfMaxRequestsPerMinute Int? @default(100)
