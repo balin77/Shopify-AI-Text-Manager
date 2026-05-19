@@ -10,9 +10,17 @@
  * - Replaces spaces and underscores with hyphens
  * - Removes consecutive hyphens
  * - Trims hyphens from start and end
+ *
+ * IMPORTANT: This is a strict ASCII safe-charset sanitizer, NOT a transliterator.
+ * Non-Latin input (CJK / Cyrillic / Arabic / etc.) is stripped by the
+ * `[^a-z0-9-]` filter and can collapse to an EMPTY string. A return value of
+ * '' (or a hyphen-only string that trims to '') therefore means "unusable
+ * handle — the caller MUST NOT persist this to Shopify or the DB". Producing
+ * a real ASCII slug from non-Latin source is the upstream translateSlug's job.
  */
 export function sanitizeSlug(input: string): string {
   if (!input || typeof input !== 'string') {
+    // Unusable: caller must not write this. See doc note above.
     return '';
   }
 

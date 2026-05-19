@@ -133,6 +133,37 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
         original: originalValue,
         sanitized: translatedValue
       });
+
+      // R5-H3: sanitizeSlug strips non-Latin chars; a CJK/Cyrillic/Arabic
+      // handle can collapse to '' (or hyphens-only -> ''). Writing an empty
+      // handle to Shopify produces a broken/404 URL + SEO loss. Fail loudly:
+      // never persist an unusable handle (mirrors the !batchValue guard,
+      // moved to AFTER sanitization).
+      if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+        logger.warn("[API-AI] Slug collapsed to empty after sanitization — rejecting (not writing broken handle)", {
+          context: "AI",
+          fieldType,
+          targetLocale,
+          original: originalValue,
+        });
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: `Slug for locale ${targetLocale} collapsed to an empty/unusable handle after sanitization`,
+          },
+        });
+        return json(
+          {
+            success: false,
+            error: `Translated handle is empty/unusable after sanitization for locale ${targetLocale}`,
+            fieldType,
+            targetLocale,
+          },
+          { status: 422 },
+        );
+      }
     }
 
     // Update task to completed with full AI response
@@ -435,6 +466,22 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               original: originalValue,
               sanitized: translatedValue
             });
+
+            // R5-H3: an empty (or hyphens-only) sanitized handle is unusable
+            // and would produce a broken/404 storefront URL. Reject this
+            // locale and skip — same fail-loudly contract as the !batchValue
+            // guard above, but applied AFTER sanitization.
+            if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+              logger.warn("[API-AI] Batch: slug collapsed to empty after sanitization — skipping (not writing broken handle)", {
+                context: "AI",
+                locale,
+                fieldType,
+                original: originalValue,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              continue;
+            }
           }
 
           translations[locale] = translatedValue;
@@ -580,6 +627,34 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
             try {
               const digest = await getCachedDigest(itemId, shopifyKey);
+
+              // R5-C2: getCachedDigest returns "" on a cache miss / key-name
+              // mismatch (metaDescription↔meta_description etc.) / transient
+              // empty GraphQL response. Shopify's translationsRegister
+              // SILENTLY no-ops on an empty digest, but the local
+              // contentTranslation upsert below would still run — making the
+              // UI claim "translated" while the storefront stays in the
+              // source language (stale-digest divergence). Fail loudly:
+              // skip Shopify + skip the local upsert, mark rejected. Mirrors
+              // the templates branch `if (!digest)` guard for uniformity.
+              if (!digest) {
+                logger.warn("[API-AI] Batch: No digest for content field — skipping Shopify save AND local upsert", {
+                  context: "AI",
+                  fieldType,
+                  shopifyKey,
+                  locale,
+                  resourceId: itemId,
+                });
+                if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                rejectedFields[locale].push(fieldType);
+                // Update progress and move on, consistent with other skips.
+                const skipProgress = Math.round(10 + ((i + 1) / targetLocales.length) * 80);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress: skipProgress },
+                });
+                continue;
+              }
 
               const translationInput = [{
                 key: shopifyKey,
@@ -828,6 +903,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               original: originalValue,
               sanitized: translatedValue
             });
+
+            // R5-H3: empty/hyphens-only sanitized handle is unusable (broken
+            // 404 URL + SEO loss). Reject this locale and skip rather than
+            // persisting a broken handle — fail loudly, same contract as the
+            // batch path and the !batchValue guard.
+            if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+              logger.warn("[API-AI] Slug collapsed to empty after sanitization — skipping locale (not writing broken handle)", {
+                context: "AI",
+                locale,
+                fieldType,
+                original: originalValue,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              aiResponses.push({ locale, response: `REJECTED: handle empty after sanitization` });
+              continue;
+            }
           }
 
           translations[locale] = translatedValue;
@@ -980,6 +1072,30 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
             try {
               const digest = await getCachedDigest(itemId, shopifyKey);
+
+              // R5-C2: empty digest -> Shopify translationsRegister silently
+              // no-ops while the local contentTranslation upsert below would
+              // still mark the field "translated" (stale-digest divergence:
+              // UI says done, storefront still source language). Fail loudly:
+              // skip Shopify + skip the local upsert and mark rejected.
+              // Mirrors the templates branch `if (!digest)` guard.
+              if (!digest) {
+                logger.warn("[API-AI] No digest for content field — skipping Shopify save AND local upsert", {
+                  context: "AI",
+                  fieldType,
+                  shopifyKey,
+                  locale,
+                  resourceId: itemId,
+                });
+                if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                rejectedFields[locale].push(fieldType);
+                const skipProgress = Math.round(10 + ((i + 1) / totalLocales) * 80);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress: skipProgress },
+                });
+                continue;
+              }
 
               const translationInput = [{
                 key: shopifyKey,
