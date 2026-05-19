@@ -524,6 +524,10 @@ Requirements:
 
 Respond in JSON format: ["translated1", "translated2", ...]`;
 
+    // R3-M10 scope note: these two are DEBUG level (not error). The winston
+    // logger level is 'info' in production, so debug breadcrumbs with raw
+    // content are never emitted/persisted there; they exist only for local
+    // troubleshooting. Intentionally kept (the finding was error-level logs).
     loggers.ai('debug', '[AI-SERVICE] Batch translation prompt', { prompt: prompt.substring(0, 500) });
 
     const responseText = await this.askAI(prompt);
@@ -539,7 +543,11 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
       // misalign every translation after the gap and still be reported as
       // "success". Fail loudly so the task is retried/failed instead.
       if (parsed.length !== values.length) {
-        loggers.ai('error', `[AI-SERVICE] Batch translation length mismatch: expected ${values.length}, got ${parsed.length}`, { response: responseText.substring(0, 500) });
+        // R3-M10: never log raw model output at error level — it is BYO
+        // merchant content / possible PII, winston persists error logs to
+        // file + console, and there is no server-side scrub. Length is
+        // enough to diagnose a truncation/format problem.
+        loggers.ai('error', `[AI-SERVICE] Batch translation length mismatch: expected ${values.length}, got ${parsed.length}`, { responseLength: responseText.length });
         throw new Error(`AI batch translation returned ${parsed.length} values, expected ${values.length}`);
       }
       loggers.ai('info', `[AI-SERVICE] Batch translation successful: ${parsed.length} values translated`);
@@ -550,7 +558,7 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
     // caused source-language text to be written to Shopify/DB as if it were a
     // translation (silent, hard-to-detect corruption). Fail loudly so the
     // caller marks the task failed and writes nothing (N-H3).
-    loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { response: responseText.substring(0, 500) });
+    loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { responseLength: responseText.length });
     throw new Error('AI batch translation did not return a JSON array');
   }
 
@@ -1272,7 +1280,10 @@ Return only the alt text, without additional explanations. Output the result in 
       }
     }
 
-    loggers.ai('error', '[AI-SERVICE] Could not parse JSON from AI response', { response: text.substring(0, 500) });
+    // R3-M10: log only the length, not raw model output (BYO merchant
+    // content / possible PII; winston error logs hit file + console with no
+    // server-side scrub).
+    loggers.ai('error', '[AI-SERVICE] Could not parse JSON from AI response', { responseLength: text.length });
     throw new Error('Could not parse JSON from AI response');
   }
 }

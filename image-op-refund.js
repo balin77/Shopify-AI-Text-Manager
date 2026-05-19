@@ -46,6 +46,13 @@ export async function refundImageOperations(db, shop, n) {
     });
     console.log(`[ImageOps] Refunded ${n} op(s) for ${shop}: ${row.count} -> ${next}`);
   } catch (err) {
-    console.error(`[ImageOps] Refund of ${n} op(s) failed for ${shop}:`, err);
+    // R3-M9: console.* (not the winston `loggers`) is deliberate here — this
+    // module is loaded by the standalone node services (webp-processor,
+    // task-recovery) started directly from server.js, which cannot import
+    // the TS app logger; there is also no server-side Sentry transport, so
+    // there are no breadcrumbs to scrub. We still avoid dumping the raw error
+    // object (→ "[object Object]" / lost stack): log message + stack only.
+    const detail = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+    console.error(`[ImageOps] Refund of ${n} op(s) failed for ${shop}: ${detail}`);
   }
 }

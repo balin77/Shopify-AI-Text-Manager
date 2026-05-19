@@ -51,6 +51,23 @@ const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// R3-M9: String(err) on a thrown object yields "[object Object]" and drops
+// the message + stack, so the task `error` column (the only post-mortem we
+// have for a failed conversion) became useless. Preserve message + stack for
+// real Errors; JSON-stringify anything else. Bounded so a pathological error
+// can't bloat the row.
+function describeError(err) {
+  if (err instanceof Error) {
+    return `${err.message}${err.stack ? `\n${err.stack}` : ""}`.slice(0, 2000);
+  }
+  if (typeof err === "string") return err.slice(0, 2000);
+  try {
+    return JSON.stringify(err).slice(0, 2000);
+  } catch {
+    return String(err).slice(0, 2000);
+  }
+}
+
 // Single-shot fetch with abort timeout — used for all Shopify GraphQL/CDN calls
 // so a hanging request can't keep a running task alive past the stuck-task threshold.
 async function fetchWithTimeout(url, options, label) {
@@ -267,7 +284,7 @@ export class WebPProcessorService {
       ]);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} timed out / failed:`, err);
-      await this.failTask(task.id, String(err));
+      await this.failTask(task.id, describeError(err));
     } finally {
       clearTimeout(timeoutTimer);
     }
@@ -615,7 +632,7 @@ export class WebPProcessorService {
       console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
-      await this.failTask(task.id, String(err));
+      await this.failTask(task.id, describeError(err));
     }
   }
 
