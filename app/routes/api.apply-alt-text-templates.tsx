@@ -140,14 +140,52 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "Product not found for this shop" }, { status: 404 });
   }
 
-  // Load templates for this product
-  const templates = await db.altTextTemplate.findMany({
-    where: { shop: session.shop, productId, locale },
+  // Load templates for this product.
+  //
+  // R5-M2 (verified live regression): alt-text templates are authored ONCE,
+  // stored under the PRIMARY locale. A foreign-locale apply sends
+  // locale=<foreign>, so `where:{ …, locale:<foreign> }` matched 0 rows and
+  // the request silently early-returned (success:true, applied:0, no task) —
+  // "apply to all languages" did nothing for every non-primary language. The
+  // write-back already switches the locale for translationsRegister /
+  // persistAltText (isPrimary=false), so we just need to LOAD the templates
+  // from where they actually live: the primary locale for a foreign apply.
+  const isPrimaryApply = !locale || locale === primaryLocale;
+  let templates = await db.altTextTemplate.findMany({
+    where: {
+      shop: session.shop,
+      productId,
+      ...(isPrimaryApply
+        ? { locale }
+        : primaryLocale
+          ? { locale: primaryLocale }
+          : {}), // no primaryLocale given → no locale filter (deduped below)
+    },
     orderBy: { position: "asc" },
   });
 
+  // When the no-locale-filter fallback ran, the same position can appear once
+  // per stored locale — keep a single template per position (deterministic:
+  // first after the position/locale ordering) so each image isn't written
+  // multiple times.
+  if (!isPrimaryApply && !primaryLocale && templates.length > 0) {
+    const byPosition = new Map<number, (typeof templates)[number]>();
+    for (const t of [...templates].sort(
+      (a, b) => a.position - b.position || a.locale.localeCompare(b.locale),
+    )) {
+      if (!byPosition.has(t.position)) byPosition.set(t.position, t);
+    }
+    templates = [...byPosition.values()].sort((a, b) => a.position - b.position);
+  }
+
   if (templates.length === 0) {
-    return json({ success: true, applied: 0, message: "No templates found for this locale" });
+    return json({
+      success: true,
+      applied: 0,
+      message: isPrimaryApply
+        ? "No templates found for this locale"
+        : "No alt-text templates authored for this product (none under the primary locale)",
+    });
   }
 
   // Legacy templates were stored 0-based (0 = main image, 1 = first gallery, …).
