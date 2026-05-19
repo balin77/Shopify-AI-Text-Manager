@@ -641,8 +641,12 @@ export async function handleGenerateAltTextFromSku(
   `, { variables: { files: results.map(r => ({ id: r.mediaId, alt: r.altText })) } });
 
   // 3. DB updaten
+  // R4-DI7: scope by the owning product's shop. Shopify media GIDs are only
+  // unique per shop, so an unscoped { mediaId } updateMany can overwrite a
+  // different tenant's ProductImage on a GID collision (cross-tenant write).
+  // Mirrors the deliberately-scoped persistAltText().
   await Promise.all(results.map(r =>
-    ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId }, data: { altText: r.altText } })
+    ctx.db.productImage.updateMany({ where: { mediaId: r.mediaId, product: { shop: ctx.session.shop } }, data: { altText: r.altText } })
   ));
 
   return json({ success: true, updated: results.length });
@@ -656,7 +660,7 @@ export async function handleSaveImageAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<Response> {
-  const { admin, db } = ctx;
+  const { admin, db, session } = ctx;
   const mediaId = getFormString(formData, "mediaId");
   const altText = getFormString(formData, "altText") ?? "";
   const locale = getFormString(formData, "locale") || null;
@@ -686,10 +690,16 @@ export async function handleSaveImageAltText(
     }
 
     if (shopifySaved) {
+      // R4-DI7: shop-scoped (see note above) so a cross-shop media-GID
+      // collision can't overwrite another tenant's row.
       await db.productImage.updateMany({
-        where: { mediaId },
+        where: { mediaId, product: { shop: session.shop } },
         data: { altText: altText || null, altTextModifiedAt: new Date() },
-      }).catch(() => {});
+      }).catch((e) => {
+        // Best-effort cache write (Shopify is source of truth) — but log
+        // instead of fully swallowing, so a real failure is observable.
+        logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
+      });
     }
   } else {
     // Foreign locale: use translationsRegister (needs digest from Shopify)
@@ -739,7 +749,10 @@ export async function handleSaveImageAltText(
 
     if (shopifySaved) {
       try {
-        const dbImage = await db.productImage.findFirst({ where: { mediaId }, select: { id: true } });
+        // R4-DI7: shop-scoped — an unscoped mediaId findFirst could resolve
+        // another tenant's ProductImage (per-shop-unique GIDs can collide)
+        // and we'd then write this shop's translation onto their row.
+        const dbImage = await db.productImage.findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { id: true } });
         if (dbImage) {
           if (altText.trim() === "") {
             await db.productImageAltTranslation.deleteMany({ where: { imageId: dbImage.id, locale } });
