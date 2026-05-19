@@ -10,8 +10,13 @@
     • emit the blanket <style> (visibility:hidden, layout reserved)
     • add `cp-vg-prehide` to <html> — but ONLY if the *current* variant
       actually has gallery images, so products/variants the app does
-      not manage are never hidden (mirrors the body data island +
-      controller decision: featured_image OR custom.variant_gallery).
+      not manage are never hidden. This APPROXIMATES the body data
+      island decision (featured_image OR custom.variant_gallery present)
+      but does not re-check per-image image_url resolvability: a variant
+      whose variant_gallery is set but whose every image URL is empty
+      (and no featured_image) is pre-hidden here yet yields an empty
+      body array → the body releaser shows native after a brief,
+      self-healing blank for that one unmanaged variant. Rare, bounded.
     • register window.__cpVgFouc.prehideTimer — a 3s fail-safe that
       reveals the native gallery if the body embed is disabled/blocked,
       so the page is never stranded.
@@ -32,6 +37,9 @@
   so there is no JSON/script injection surface here.
 {%- endcomment -%}
 {%- if product != blank -%}
+{%- comment -%} CANONICAL native-selector list. Kept in sync with the
+  dormant copy in variant-gallery-embed.liquid and the _selectors arrays
+  in that block's bootstrap + assets/variant-gallery-embed.js. {%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,
   html.cp-vg-prehide [id^="MediaGallery"],

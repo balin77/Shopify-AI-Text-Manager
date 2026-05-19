@@ -129,6 +129,10 @@
   parsed, i.e. always by the time a shopper can switch variants) makes
   that cover actually hide the incoming native gallery. Dormant unless
   the class is set, so it is inert on initial load / no-op when unused.
+
+  Selector list MUST stay in sync with the canonical copy in
+  variant-gallery-prehead.liquid and the _selectors array in
+  assets/variant-gallery-embed.js — change all three together.
 {%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,

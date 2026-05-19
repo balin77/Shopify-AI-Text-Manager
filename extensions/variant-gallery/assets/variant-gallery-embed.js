@@ -42,6 +42,9 @@ class CpEmbedGallery extends HTMLElement {
     if (!this._data) { this._warn('no/invalid variant data — aborting'); return; }
 
     const configured = this.dataset.nativeSelector && this.dataset.nativeSelector.trim();
+    // Default list kept in sync with the blanket <style> in
+    // variant-gallery-prehead.liquid (canonical) and the dormant copy in
+    // variant-gallery-embed.liquid. Change all three together.
     this._selectors = [
       configured,
       'media-gallery',
@@ -61,22 +64,46 @@ class CpEmbedGallery extends HTMLElement {
 
     // Variant-change + section-re-render signals (all delegated/global so they
     // survive section replacement).
+    // RISK-1: change/variant:change are document-wide. A foreign product
+    // form (quick-view, "recommended products" with a variant selector)
+    // must NOT trigger the global blanket and blink the main gallery.
+    // Gate _preCover on data membership: a variant id that belongs to a
+    // DIFFERENT product is not in this._data, so the cover only fires for
+    // a genuine switch of the product this controller manages. _schedule()
+    // stays unconditional (a foreign change just resolves to an upToDate
+    // no-op tick — harmless, preserves prior behaviour).
     this._onChange = (e) => {
       if (e.target && e.target.matches && e.target.matches('[name="id"]')) {
-        this._preCover(); this._schedule();
+        if (this._data && this._data[String(e.target.value)]) this._preCover();
+        this._schedule();
       }
     };
     this._onVariantEvent = (e) => {
       const id = e.detail && e.detail.variant && e.detail.variant.id;
-      if (id) { this._wantId = String(id); this._preCover(); this._schedule(); }
+      if (id) {
+        this._wantId = String(id);
+        if (this._data && this._data[String(id)]) this._preCover();
+        this._schedule();
+      }
     };
     document.addEventListener('change', this._onChange, true);
     document.addEventListener('variant:change', this._onVariantEvent);
     document.addEventListener('variant_change', this._onTickRaw);
     window.addEventListener('popstate', this._onTickRaw);
 
-    // Catches deferred-loaded galleries AND section re-renders on variant change.
-    this._bodyMo = new MutationObserver(() => this._schedule());
+    // Catches deferred-loaded galleries AND section re-renders on variant
+    // change. When a native gallery node is actually (re)inserted/removed
+    // — the theme's async Section-Rendering replacement, which fires LONG
+    // after the variant-change event and after _tick already released the
+    // blanket — re-cover synchronously. This observer callback runs as a
+    // microtask BEFORE paint, so the freshly injected native gallery is
+    // hidden before it can flash, on ANY theme regardless of which events
+    // it fires. _mutationTouchesNative excludes our own mount to avoid a
+    // render→observe→cover→render self-trigger loop.
+    this._bodyMo = new MutationObserver((muts) => {
+      if (this._mutationTouchesNative(muts)) this._preCover();
+      this._schedule();
+    });
     this._bodyMo.observe(document.body, { childList: true, subtree: true });
 
     this._tick();
@@ -178,6 +205,36 @@ class CpEmbedGallery extends HTMLElement {
 
   /* ---------- tick (idempotent) ---------- */
 
+  // True only when a mutation actually adds/removes a native-gallery
+  // element (the theme's section replacement), NOT for our own mount /
+  // custom-gallery churn (excluded, else render→observe→cover→render
+  // loops) nor for unrelated DOM noise (so the blanket is not toggled on
+  // every mutation — that was the reason the observer path must be
+  // selective rather than always pre-covering).
+  _mutationTouchesNative(mutations) {
+    for (const m of mutations) {
+      const nodes = [];
+      if (m.addedNodes) m.addedNodes.forEach((n) => nodes.push(n));
+      if (m.removedNodes) m.removedNodes.forEach((n) => nodes.push(n));
+      for (const n of nodes) {
+        if (!n || n.nodeType !== 1) continue; // elements only
+        if (this._mount &&
+            (n === this._mount || this._mount.contains(n) || n.contains(this._mount))) {
+          continue; // our own mount/render churn
+        }
+        for (const sel of this._selectors) {
+          try {
+            if ((n.matches && n.matches(sel)) ||
+                (n.querySelector && n.querySelector(sel))) {
+              return true;
+            }
+          } catch (_) { /* invalid selector */ }
+        }
+      }
+    }
+    return false;
+  }
+
   // Cover the section-re-render gap on a variant change. The theme
   // replaces the product section with a fresh, VISIBLE native gallery
   // ~80ms before the debounced _tick can hide it per-element — that gap
@@ -190,6 +247,21 @@ class CpEmbedGallery extends HTMLElement {
   // quick-view / other galleries are only covered for that brief gap.
   // A re-armed 3s fail-safe drops the blanket if a tick never resolves
   // (e.g. the re-rendered native never appears) so nothing gets stuck.
+  //
+  // Known residuals (accepted; inherent to a <html>-level global blanket):
+  //  • Container-scoping the blanket instead of <html> would avoid
+  //    collateral on other default-selector galleries (related /
+  //    recently-viewed), but is incompatible with the target:head
+  //    pre-paint path — at <head> parse time the product container does
+  //    not exist yet, so the head block MUST key on <html>. The CSS is
+  //    shared, so this stays <html>-level. Net effect: a genuine
+  //    main-product switch briefly (~80ms+) visibility:hides such other
+  //    galleries too; layout is reserved, self-healing, no shift.
+  //  • A theme that re-renders the section WITHOUT firing change /
+  //    variant:change / variant_change / popstate is not pre-covered
+  //    (the broad MutationObserver path intentionally does not cover, to
+  //    avoid blinking on every unrelated mutation). Dawn and common
+  //    themes fire change on [name="id"], so the common case is covered.
   _preCover() {
     if (!this._data || !Object.keys(this._data).length) return;
     document.documentElement.classList.add('cp-vg-prehide');
