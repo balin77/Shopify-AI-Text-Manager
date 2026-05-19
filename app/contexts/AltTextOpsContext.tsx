@@ -10,8 +10,9 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
  * route so it is not torn down when the panel re-keys on productId.
  */
 export interface AltTextOpState {
-  /** Single active-locale "Apply to images in X" is running. */
-  applying: boolean;
+  /** Locale codes whose single-locale "Apply to images in X" is running.
+   *  Per-locale so applying DE doesn't block the FR/EN apply button. */
+  applyingLocales: string[];
   /** "Apply to images in all languages" is running. */
   applyingAll: boolean;
   /** Progress of the multi-locale apply, or null when not running. */
@@ -23,7 +24,7 @@ export interface AltTextOpState {
 }
 
 const EMPTY: AltTextOpState = {
-  applying: false,
+  applyingLocales: [],
   applyingAll: false,
   applyAllProgress: null,
   translatingAll: false,
@@ -34,7 +35,7 @@ const EMPTY: AltTextOpState = {
 // be dropped (keeps the store from growing one row per visited product).
 function isIdle(s: AltTextOpState): boolean {
   return (
-    !s.applying &&
+    s.applyingLocales.length === 0 &&
     !s.applyingAll &&
     s.applyAllProgress === null &&
     !s.translatingAll &&
@@ -45,6 +46,7 @@ function isIdle(s: AltTextOpState): boolean {
 interface AltTextOpsMutators {
   patchOps: (productId: string, patch: Partial<AltTextOpState>) => void;
   setPositionTranslating: (productId: string, position: number, on: boolean) => void;
+  setApplyingLocale: (productId: string, locale: string, on: boolean) => void;
 }
 
 const AltTextOpsMutatorContext = createContext<AltTextOpsMutators | null>(null);
@@ -87,9 +89,28 @@ export function AltTextOpsProvider({ children }: { children: React.ReactNode }) 
     []
   );
 
+  const setApplyingLocale = useCallback(
+    (productId: string, locale: string, on: boolean) => {
+      setOps((prev) => {
+        const current = prev[productId] ?? EMPTY;
+        const set = new Set(current.applyingLocales);
+        if (on) set.add(locale);
+        else set.delete(locale);
+        const next = { ...current, applyingLocales: [...set] };
+        if (isIdle(next)) {
+          if (!(productId in prev)) return prev;
+          const { [productId]: _drop, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [productId]: next };
+      });
+    },
+    []
+  );
+
   const mutators = useMemo(
-    () => ({ patchOps, setPositionTranslating }),
-    [patchOps, setPositionTranslating]
+    () => ({ patchOps, setPositionTranslating, setApplyingLocale }),
+    [patchOps, setPositionTranslating, setApplyingLocale]
   );
 
   return (
@@ -114,6 +135,11 @@ export function useAltTextOps(productId: string) {
     setPositionTranslating: useCallback(
       (position: number, on: boolean) =>
         mutators.setPositionTranslating(productId, position, on),
+      [mutators, productId]
+    ),
+    setApplyingLocale: useCallback(
+      (locale: string, on: boolean) =>
+        mutators.setApplyingLocale(productId, locale, on),
       [mutators, productId]
     ),
   };

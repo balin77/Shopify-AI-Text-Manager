@@ -91,8 +91,11 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   // even after the user switches to another product and back. `productId` is
   // captured by these callbacks at invocation time, so completions always
   // settle the product they were started on, never whichever is on screen.
-  const { ops, patch: patchOps, setPositionTranslating } = useAltTextOps(productId);
-  const isApplying = ops.applying;
+  const { ops, patch: patchOps, setPositionTranslating, setApplyingLocale } = useAltTextOps(productId);
+  // Per-locale: only the locale actually being applied shows loading/blocked,
+  // so switching to another language frees its button immediately.
+  const isApplyingActiveLocale = ops.applyingLocales.includes(activeLocale);
+  const anyApplying = ops.applyingLocales.length > 0;
   const isApplyingAll = ops.applyingAll;
   const applyAllProgress = ops.applyAllProgress;
   const isTranslatingAll = ops.translatingAll;
@@ -404,15 +407,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   );
 
   const handleApplyToAll = useCallback(async () => {
-    if (ops.applying) return; // reentrancy guard (double-click / keyboard)
-    patchOps({ applying: true });
+    // Bind to the locale at click time: activeLocale can change while the
+    // request is in flight, but this apply (and its button) belong to `loc`.
+    const loc = activeLocale;
+    if (ops.applyingLocales.includes(loc)) return; // reentrancy guard
+    setApplyingLocale(loc, true);
     try {
       const res = await fetch("/api/apply-alt-text-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId,
-          locale: activeLocale,
+          locale: loc,
           primaryLocale,
           scope: "all",
           variants,
@@ -440,9 +446,9 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       const detail = e.message ?? "Unknown error";
       showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
     } finally {
-      patchOps({ applying: false });
+      setApplyingLocale(loc, false);
     }
-  }, [ops.applying, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps, scopedMsg, isStillActive]);
+  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, setApplyingLocale, scopedMsg, isStillActive]);
 
   // Locales that "Apply to all languages" will write to. Primary is always included;
   // foreign locales can be Ctrl-clicked off via excludedLocales.
@@ -730,10 +736,10 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
               variant="primary"
               fullWidth
               onClick={handleApplyToAll}
-              loading={isApplying}
-              disabled={variants.length === 0 || isApplyingAll}
+              loading={isApplyingActiveLocale}
+              disabled={variants.length === 0 || isApplyingAll || isApplyingActiveLocale}
             >
-              {isApplying
+              {isApplyingActiveLocale
                 ? (im?.altTextTemplateApplying ?? "Applying…")
                 : hasMultipleLocales
                   ? (im?.altTextTemplateApplyToActiveLocale ?? "Apply to images in {locale}")
@@ -742,7 +748,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             </Button>
 
             {hasMultipleLocales && (() => {
-              const disabled = !allLocalesComplete || variants.length === 0 || isApplying || isApplyingAll;
+              const disabled = !allLocalesComplete || variants.length === 0 || anyApplying || isApplyingAll;
               const button = (
                 <Button
                   variant="primary"
