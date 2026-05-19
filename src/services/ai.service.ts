@@ -403,9 +403,9 @@ Rules:
 
     if (prepared.length === 0) return {};
 
-    const fromName = LOCALE_NAMES[fromLang] || fromLang;
+    const fromName = localeName(fromLang);
     const targetLanguages = toLocales
-      .map((loc) => `${LOCALE_NAMES[loc] || loc} (${loc})`)
+      .map((loc) => `${localeName(loc)} (${loc})`)
       .join(', ');
 
     const templatesBlock = prepared
