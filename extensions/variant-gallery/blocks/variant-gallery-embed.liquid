@@ -42,8 +42,9 @@
   gallery in <body> is painted, closing the remaining gap. Constraints:
   it must be a distinct block (this one stays target:body so the
   controller + JSON data survive Section-Rendering API re-renders), it
-  cannot use Liquid-conditional CSS, and the per-element bootstrap here
-  would still own releasing `cp-vg-prehide`.
+  must emit a plain inline <style> (the bundled Shopify stylesheet tag
+  is forbidden in app blocks), and the per-element bootstrap here would
+  still own releasing `cp-vg-prehide`.
 {%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,
