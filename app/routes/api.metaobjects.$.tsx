@@ -16,6 +16,18 @@ import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { isMetaobjectLabelField, findMetaobjectLabelField } from "~/constants/shopifyFields";
 
+// R3-M8: shape of GET_TRANSLATABLE_CONTENT so the digest hot-path is typed
+// instead of `as any` + `(c: any) => …` (an undefined `key`/`digest` would
+// otherwise pass the compiler and only fail at runtime under load).
+interface TranslatableContentEntry {
+  key: string;
+  digest: string | null;
+}
+interface GetTranslatableContentResponse {
+  data?: { translatableResource?: { translatableContent?: TranslatableContentEntry[] } };
+  errors?: unknown;
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const typeId = params["*"];
@@ -388,15 +400,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
             variables: { resourceId: metaobjectId }
           });
-          const digestData = (await digestResponse.json()) as any;
+          const digestData = (await digestResponse.json()) as GetTranslatableContentResponse;
           if (digestData.errors) {
             logger.error("[API-METAOBJECTS] GraphQL error loading digest", {
               context: "Metaobjects", metaobjectId, locale, errors: digestData.errors
             });
             return json({ success: false, error: "GraphQL error loading translation digest" }, { status: 502 });
           }
-          const translatableContent = digestData.data?.translatableResource?.translatableContent || [];
-          const digestEntry = translatableContent.find((c: any) => c.key === labelField.key);
+          const translatableContent = digestData.data?.translatableResource?.translatableContent ?? [];
+          const digestEntry = translatableContent.find((c) => c.key === labelField.key);
           if (!digestEntry?.digest) {
             logger.error("[API-METAOBJECTS] Missing translatableContentDigest", {
               context: "Metaobjects", metaobjectId, locale, key: labelField.key

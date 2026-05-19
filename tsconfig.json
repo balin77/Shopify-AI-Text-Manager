@@ -18,6 +18,18 @@
     "resolveJsonModule": true,
     "target": "ES2022",
     "strict": true,
+    // R3-M7: noUncheckedIndexedAccess is intentionally NOT enabled here.
+    // Flipping it is a repo-wide breaking change — every array/record index
+    // access across the whole codebase becomes `T | undefined` and would
+    // need hundreds of call sites audited at once. That is a dedicated,
+    // separately-reviewed migration, not a rider on a security pass (a
+    // rushed mass `!`/`?` sprinkle would hide bugs, not surface them).
+    // The specific code the review flagged is already runtime-safe:
+    // parseJSONResponse scans `text[i]` only inside `i < text.length`;
+    // translateBatchValues guards `parsed.length === values.length` before
+    // indexing and callers `continue` on a falsy entry; the product batch
+    // loop only ever uses `Array.prototype.slice`, which is always in range.
+    // "noUncheckedIndexedAccess": true,  // tracked for a future migration
     "allowJs": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
