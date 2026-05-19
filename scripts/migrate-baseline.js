@@ -18,7 +18,7 @@ try {
   // Check if migrations directory exists
   if (!existsSync(migrationsDir)) {
     console.log('⚠️ No migrations directory found. Running db push instead...');
-    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+    execSync('npx prisma db push', { stdio: 'inherit' });
     console.log('✅ Database schema updated successfully!');
     process.exit(0);
   }
@@ -34,7 +34,7 @@ try {
 
   if (migrations.length === 0) {
     console.log('⚠️ No migrations found. Running db push instead...');
-    execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' });
+    execSync('npx prisma db push', { stdio: 'inherit' });
     console.log('✅ Database schema updated successfully!');
     process.exit(0);
   }
@@ -46,7 +46,7 @@ try {
     console.log('✅ Migrations applied successfully!');
     // Also run db push to sync schema-only changes not captured in migration files
     console.log('🔄 Running db push to sync any additional schema changes...');
-    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
+    execSync('npx prisma db push --skip-generate', { stdio: 'inherit' });
     console.log('✅ Schema sync complete!');
     process.exit(0);
   } catch (migrateError) {

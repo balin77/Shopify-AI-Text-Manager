@@ -41,6 +41,18 @@ export async function handleUpdateProduct(
 ): Promise<Response> {
   const { db } = await import("~/db.server");
 
+  // Shop-isolation: productId comes straight from the route params and GIDs are
+  // enumerable. If a Product row with this id exists under a different shop,
+  // reject — otherwise the DB writes below (productImage, contentTranslation,
+  // productImageAltTranslation) would corrupt another tenant's data.
+  const ownerCheck = await db.product.findUnique({
+    where: { id: productId },
+    select: { shop: true },
+  });
+  if (ownerCheck && ownerCheck.shop !== context.session.shop) {
+    return json({ success: false, error: "Product not found" }, { status: 404 });
+  }
+
   // Parse changedFields if present (for translation deletion when primary locale changes)
   const changedFieldsStr = getFormString(formData, "changedFields");
   const changedFields: string[] = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];

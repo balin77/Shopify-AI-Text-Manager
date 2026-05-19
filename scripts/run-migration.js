@@ -77,25 +77,28 @@ async function fixFailedMigrations() {
     }
   }
 
-  // Direct SQL fallback: fix any remaining "failed" rows in _prisma_migrations
-  // This handles edge cases where prisma migrate resolve doesn't work
+  // Diagnostic only: report (do NOT mutate) failed/rolled-back migration rows.
+  // The previous blanket UPDATE set rolled_back_at=NULL and finished_at=NOW()
+  // for every unfinished/rolled-back row — that revives intentionally
+  // rolled-back migrations and masks genuine failures, letting a broken deploy
+  // proceed silently. Known legacy rows are handled via `migrate resolve` above.
   try {
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
-    const fixed = await prisma.$executeRawUnsafe(`
-      UPDATE "_prisma_migrations"
-      SET "finished_at" = NOW(),
-          "rolled_back_at" = NULL,
-          "logs" = 'Resolved by migration runner'
+    const stuck = await prisma.$queryRawUnsafe(`
+      SELECT "migration_name", "rolled_back_at"
+      FROM "_prisma_migrations"
       WHERE "finished_at" IS NULL
         OR "rolled_back_at" IS NOT NULL
     `);
-    if (fixed > 0) {
-      log(`  ↳ Fixed ${fixed} migration rows via direct SQL`, 'green');
+    if (Array.isArray(stuck) && stuck.length > 0) {
+      log(`  ↳ ${stuck.length} migration row(s) failed or rolled back — NOT auto-resolving:`, 'yellow');
+      for (const row of stuck) log(`     • ${row.migration_name}`, 'yellow');
+      log('     Resolve explicitly with `prisma migrate resolve` if these are known-applied.', 'yellow');
     }
     await prisma.$disconnect();
   } catch (e) {
-    log(`  ↳ Direct SQL fix skipped: ${e.message?.substring(0, 80)}`, 'yellow');
+    log(`  ↳ Migration-state check skipped: ${e.message?.substring(0, 80)}`, 'yellow');
   }
 
   log('✅ Migration status resolved', 'green');
@@ -128,8 +131,10 @@ async function main() {
   if (!migrateSuccess) {
     log('⚠️  migrate deploy failed, trying db push as fallback...', 'yellow');
 
+    // No --accept-data-loss: additive changes still apply, but destructive
+    // drift aborts loudly instead of silently dropping production columns/tables.
     const pushSuccess = runCommand(
-      'npx prisma db push --skip-generate --accept-data-loss',
+      'npx prisma db push --skip-generate',
       'Prisma db push (fallback)'
     );
 

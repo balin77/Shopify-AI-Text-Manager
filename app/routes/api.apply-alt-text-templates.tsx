@@ -31,8 +31,8 @@ async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Prom
 // Get-or-create the local ProductImage row for a given media GID. Without this,
 // productImageAltTranslation upserts silently no-op when the gallery image was
 // never synced into the local DB (common for variant_gallery metafield images).
-async function getOrCreateProductImage(productId: string, gid: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
-  const existing = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
+async function getOrCreateProductImage(productId: string, gid: string, shop: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
+  const existing = await db.productImage.findFirst({ where: { mediaId: gid, product: { shop } }, select: { id: true } });
   if (existing) return existing;
   const url = await resolveImageUrl(admin, gid);
   return db.productImage.create({
@@ -63,6 +63,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "productId, locale, and variants are required" }, { status: 400 });
   }
 
+  // Shop-isolation: reject if the product belongs to a different tenant. Without
+  // this, an enumerable productId could attach ProductImage rows to a foreign
+  // shop's product (FK is productId-only, ProductImage has no shop column).
+  const ownerCheck = await db.product.findUnique({
+    where: { id: productId },
+    select: { shop: true },
+  });
+  if (ownerCheck && ownerCheck.shop !== session.shop) {
+    return json({ success: false, error: "Product not found" }, { status: 404 });
+  }
+
   // Load templates for this product
   const templates = await db.altTextTemplate.findMany({
     where: { shop: session.shop, productId, locale },
@@ -89,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Resolve a display title for the navigation InfoBox.
   // Falls back to productId if the product isn't synced yet.
   const productRecord = await db.product.findUnique({
-    where: { id: productId },
+    where: { shop_id: { shop: session.shop, id: productId } },
     select: { title: true },
   });
   const taskTitle = productRecord?.title || productId;
@@ -169,7 +180,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, admin);
+              const dbImage = await getOrCreateProductImage(productId, gid, session.shop, admin);
               await db.productImage.update({
                 where: { id: dbImage.id },
                 data: { altText: altText || null, altTextModifiedAt: new Date() },
@@ -221,7 +232,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, admin);
+              const dbImage = await getOrCreateProductImage(productId, gid, session.shop, admin);
               await db.productImageAltTranslation.upsert({
                 where: { imageId_locale: { imageId: dbImage.id, locale } },
                 create: { imageId: dbImage.id, locale, altText },

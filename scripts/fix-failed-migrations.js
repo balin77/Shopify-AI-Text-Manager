@@ -84,8 +84,10 @@ async function main() {
   log('\n⚠️  Migration deploy still failing, using db push to sync schema...', 'yellow');
   log('ℹ️  This will apply all schema changes without migration history', 'blue');
 
+  // No --accept-data-loss: additive schema changes still apply, but destructive
+  // drift aborts loudly instead of silently dropping production columns/tables.
   const pushResult = runCommand(
-    'npx prisma db push --skip-generate --accept-data-loss',
+    'npx prisma db push --skip-generate',
     'Push schema to database'
   );
 

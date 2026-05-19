@@ -480,7 +480,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },
@@ -730,7 +730,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },
@@ -991,7 +991,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },
