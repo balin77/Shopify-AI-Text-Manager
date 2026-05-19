@@ -7,41 +7,43 @@
 
 {%- if product != blank -%}
 
-{%- assign cp_strategy = block.settings.fouc_strategy | default: 'inline' -%}
-
 {%- comment -%}
-  Flicker-prevention strategy toggle (merchant setting `fouc_strategy`):
+  Native-gallery FOUC prevention (always on; single strategy).
 
-  - 'inline'  : only the synchronous per-element bootstrap below. The
-                native gallery is hidden the moment that script runs.
-                The 'prehide' <style>+class are not emitted at all, so
-                there is zero behaviour change for this mode.
+  The native product gallery is otherwise only hidden later by the
+  deferred controller, so the full native gallery flashes on load before
+  the variant-specific gallery replaces it. Two layers run here, as early
+  as this block is parsed:
 
-  - 'prehide' : additionally emits an inline blanket <style> + class
-                (just inside the `if` below) as early as the block
-                renders, so the native gallery is hidden as soon as the
-                block is parsed — slightly earlier than the per-element
-                bootstrap (which still has to resolve the element first).
-                The per-element bootstrap then takes over and releases
-                the blanket class in a `finally` (so quick-view / no-image
-                variants are not left hidden); an independent 3s fail-safe
-                and a controller-side release are backstops.
+  1. Blanket: the inline <style> + `cp-vg-prehide` class on <html> hide
+     the default-selector native galleries the instant this block is
+     parsed — before the per-element bootstrap has resolved the element.
+     `visibility:hidden` (not display:none) reserves layout so revealing
+     the native gallery for a no-images variant causes no layout shift.
+
+  2. Per-element bootstrap (further below): resolves the exact native
+     element (mirroring the controller) and hides only it via
+     `.cp-vg-native-hidden` (display:none), then releases the blanket
+     class in a `finally` so quick-view / no-image variants are not left
+     hidden. An independent 3s timer and a controller-side release are
+     backstops; the controller cancels both timers once authoritative.
 
   Architecture limit: app embeds CANNOT inject render-blocking <head>
   CSS (Shopify forbids the stylesheet tag in app blocks) and render at
-  end of <body>, so 'prehide' reduces but cannot guarantee a flash-free
-  first paint. True pre-paint hiding needs a separate target:"head" embed
-  block — a deliberate follow-up, not done here. The blanket uses the
-  fixed default selectors only; a custom native selector still works via
-  the synchronous per-element path.
-{%- endcomment -%}
-{%- if cp_strategy == 'prehide' -%}
-{%- comment -%}
-  App embeds cannot inject render-blocking <head> CSS (Shopify forbids the
-  stylesheet tag in app blocks), so this rule is a normal inline <style>
-  emitted as early as the block renders, immediately followed by the class
-  that activates it. `visibility:hidden` (not display:none) reserves layout
-  so revealing the native gallery for a no-images variant causes no shift.
+  the end of <body>, so this reduces but cannot fully guarantee a
+  flash-free first paint on slow rendering. Verified good enough in
+  practice; the merchant-facing strategy toggle was removed.
+
+  FUTURE OPTION (not implemented) — 100% flash-free first paint:
+  add a SEPARATE app embed block with `"target": "head"` whose Liquid
+  only emits the blanket <style> plus
+  `document.documentElement.classList.add('cp-vg-prehide')`. A
+  head-targeted embed renders during <head> parsing, BEFORE the native
+  gallery in <body> is painted, closing the remaining gap. Constraints:
+  it must be a distinct block (this one stays target:body so the
+  controller + JSON data survive Section-Rendering API re-renders), it
+  cannot use Liquid-conditional CSS, and the per-element bootstrap here
+  would still own releasing `cp-vg-prehide`.
 {%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,
@@ -54,13 +56,12 @@
   // Merge (never overwrite) the shared fail-safe registry so the bootstrap
   // IIFE below and the controller can both find this handle. Exposing it
   // lets the controller cancel this blanket timer symmetrically to the
-  // per-element one (RISK-1) instead of letting it fire spuriously.
+  // per-element one instead of letting it fire spuriously.
   window.__cpVgFouc = window.__cpVgFouc || {};
   window.__cpVgFouc.prehideTimer = window.setTimeout(function () {
     document.documentElement.classList.remove('cp-vg-prehide');
   }, 3000);
 </script>
-{%- endif -%}
 
 {%- comment -%}
   R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
@@ -188,8 +189,8 @@
       native.classList.add('cp-vg-native-hidden');
       extra.forEach(function (x) { x.classList.add('cp-vg-native-hidden'); });
 
-      // Merge, don't overwrite: the 'prehide' early script may have already
-      // registered window.__cpVgFouc.prehideTimer (RISK-1).
+      // Merge, don't overwrite: the prehide early script above already
+      // registered window.__cpVgFouc.prehideTimer.
       window.__cpVgFouc = window.__cpVgFouc || {};
       window.__cpVgFouc.timer = window.setTimeout(function () {
         if (!document.querySelector('.cp-embed-gallery .cp-gallery__main-image')) {
@@ -204,8 +205,8 @@
       // so drop the pre-paint blanket: the specific native element is kept
       // hidden by `.cp-vg-native-hidden` (display:none), while any other
       // matched gallery (quick-view) and no-images variants become visible.
-      // No-op in 'inline' mode (class never set). Pairs set+release in
-      // adjacent units so a blocked controller can never strand the page.
+      // Pairs set+release in adjacent units so a blocked controller can
+      // never strand the page with the gallery globally hidden.
       document.documentElement.classList.remove('cp-vg-prehide');
     }
   })();
@@ -253,17 +254,6 @@
       "id": "extra_hide_selector",
       "label": "Extra elements to hide (optional)",
       "info": "Comma-separated CSS selectors for separate native thumbnail / zoom elements some themes render outside the gallery. Leave empty unless leftover native thumbnails appear."
-    },
-    {
-      "type": "select",
-      "id": "fouc_strategy",
-      "label": "Flicker prevention strategy",
-      "default": "inline",
-      "options": [
-        { "value": "inline", "label": "Synchronous (default)" },
-        { "value": "prehide", "label": "Early blanket pre-hide (experimental)" }
-      ],
-      "info": "Synchronous: hides the native gallery the moment the page script runs — safe, but a brief flash is possible on slow first paint. Early pre-hide: additionally hides the gallery via an inline rule as soon as the block is parsed (slightly earlier, reduces but does not eliminate the flash), at the cost of a brief image-less moment on variants without images and a hard JS dependency (3s fail-safe restores it). Uses the default theme selectors only; custom selectors fall back to Synchronous behaviour."
     },
     {
       "type": "checkbox",

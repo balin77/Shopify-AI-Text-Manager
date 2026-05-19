@@ -203,21 +203,20 @@ class CpEmbedGallery extends HTMLElement {
       clearTimeout(window.__cpVgFouc.timer);
       window.__cpVgFouc.timer = null;
     }
-    // Symmetrically cancel the 'prehide' blanket timer (RISK-1): the
-    // controller releases the blanket itself just below, so the standalone
-    // 3s timer is now redundant and must not fire spuriously later.
+    // Symmetrically cancel the prehide blanket timer: the controller
+    // releases the blanket itself just below, so the standalone 3s timer
+    // is now redundant and must not fire spuriously later.
     if (window.__cpVgFouc && window.__cpVgFouc.prehideTimer) {
       clearTimeout(window.__cpVgFouc.prehideTimer);
       window.__cpVgFouc.prehideTimer = null;
     }
 
-    // Defensive release of the 'prehide' <head> blanket: normally the inline
-    // bootstrap's finally already dropped it, but if that script was blocked
-    // and only the controller loaded, this guarantees the page is never left
-    // with the native gallery globally hidden. Synchronous: for an image
-    // variant _hideNative runs later in this same tick, so the specific
-    // element never repaints visible between here and there. No-op in
-    // 'inline' mode (class is never set).
+    // Defensive release of the prehide blanket: normally the per-element
+    // bootstrap's finally already dropped it, but if that script was
+    // blocked and only the controller loaded, this guarantees the page is
+    // never left with the native gallery globally hidden. Synchronous: for
+    // an image variant _hideNative runs later in this same tick, so the
+    // specific element never repaints visible between here and there.
     document.documentElement.classList.remove('cp-vg-prehide');
 
     if (!hasImages) {
