@@ -24,6 +24,30 @@ const STUCK_TASK_TIMEOUT_MS = parseInt(process.env.STUCK_TASK_TIMEOUT_MS || Stri
 // Check for stuck tasks on this interval (env-configurable; default 5 min).
 const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
+// R4-H2 (core): a SINGLE global 10-min threshold mis-classifies legitimately
+// long bulk AI work (translating a large catalog across many locales, bulk
+// generation, alt-text-template apply) as "stuck" and kills it mid-run.
+// These task types get a much larger threshold; everything else (incl.
+// imageWebpConversion, which has its own 4-min internal timeout + dedicated
+// recovery) keeps the default. Env-overridable.
+const LONG_TASK_TIMEOUT_MS = parseInt(process.env.LONG_TASK_TIMEOUT_MS || String(45 * 60 * 1000), 10);
+const LONG_RUNNING_TASK_TYPES = [
+  'bulkTranslation',
+  'bulkAIGeneration',
+  'altTextTemplateApply',
+  'translation',
+  'aiGeneration',
+  'aiFormatting',
+  'templates',
+  'metaobjects',
+  'menus',
+];
+
+// R4-H2 (core): cap how many rows a single reaper pass flips per statement
+// (the old blanket updateMany had no bound). Loop until drained.
+const STUCK_REAP_BATCH = Math.max(1, parseInt(process.env.STUCK_REAP_BATCH || '500', 10));
+const NON_TERMINAL = ['running', 'pending', 'queued'];
+
 export class TaskRecoveryService {
   static instance = null;
   stuckCheckInterval = null;
@@ -174,47 +198,70 @@ export class TaskRecoveryService {
    * see the matching note in src/services/task-recovery.service.ts.
    */
   async markStuckTasksAsFailed() {
-    const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);
+    const now = Date.now();
+    const defaultCutoff = new Date(now - STUCK_TASK_TIMEOUT_MS);
+    const longCutoff = new Date(now - LONG_TASK_TIMEOUT_MS);
 
-    // R3-C4: the blanket updateMany below also fails stuck
-    // imageWebpConversion tasks, each of which consumed an image op at batch
-    // creation. Capture them FIRST (still non-terminal) so we can refund;
-    // after the updateMany they're 'failed' and no longer match this filter,
-    // so a later recovery pass cannot re-select and double-refund them.
-    const stuckWebp = await prisma.task.findMany({
-      where: {
-        type: 'imageWebpConversion',
-        status: { in: ['running', 'pending', 'queued'] },
-        updatedAt: { lt: stuckThreshold },
-      },
-      select: { shop: true },
-    });
+    // R3-C4: each stuck imageWebpConversion task consumed an image op at
+    // batch creation, so we must refund it when WE flip it to 'failed'.
+    // We select rows (incl. type+shop), then updateMany ONLY those ids that
+    // are still non-terminal, and refund webp rows. Once 'failed' a row no
+    // longer matches the selector, so a later pass cannot re-select /
+    // double-refund (idempotent across runs, same guarantee as before).
+    const refundByShop = new Map();
+    let total = 0;
 
-    const result = await prisma.task.updateMany({
-      where: {
-        status: { in: ['running', 'pending', 'queued'] },
-        updatedAt: { lt: stuckThreshold },
-      },
-      data: {
-        status: 'failed',
-        error: 'Task timed out - no progress for more than 10 minutes',
-        completedAt: new Date(),
-      },
-    });
-
-    if (result.count > 0) {
-      console.log(`[TaskRecovery] Marked ${result.count} stuck task(s) as failed`);
-    }
-
-    if (stuckWebp.length > 0) {
-      const byShop = new Map();
-      for (const t of stuckWebp) byShop.set(t.shop, (byShop.get(t.shop) ?? 0) + 1);
-      for (const [shop, n] of byShop) {
-        await refundImageOperations(prisma, shop, n);
+    // Reap one selector in bounded batches so a single statement can never
+    // flip an unbounded number of rows (R4-H2 batch cap).
+    const reapBatched = async (where) => {
+      for (;;) {
+        const rows = await prisma.task.findMany({
+          where,
+          select: { id: true, shop: true, type: true },
+          take: STUCK_REAP_BATCH,
+        });
+        if (rows.length === 0) break;
+        const res = await prisma.task.updateMany({
+          where: { id: { in: rows.map((r) => r.id) }, status: { in: NON_TERMINAL } },
+          data: {
+            status: 'failed',
+            error: 'Task timed out - no progress within the stuck threshold',
+            completedAt: new Date(),
+          },
+        });
+        total += res.count;
+        for (const r of rows) {
+          if (r.type === 'imageWebpConversion') {
+            refundByShop.set(r.shop, (refundByShop.get(r.shop) ?? 0) + 1);
+          }
+        }
+        if (rows.length < STUCK_REAP_BATCH) break;
       }
+    };
+
+    // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
+    await reapBatched({
+      type: { in: LONG_RUNNING_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: longCutoff },
+    });
+
+    // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
+    await reapBatched({
+      type: { notIn: LONG_RUNNING_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: defaultCutoff },
+    });
+
+    if (total > 0) {
+      console.log(`[TaskRecovery] Marked ${total} stuck task(s) as failed`);
     }
 
-    return result.count;
+    for (const [shop, n] of refundByShop) {
+      await refundImageOperations(prisma, shop, n);
+    }
+
+    return total;
   }
 
   /**
