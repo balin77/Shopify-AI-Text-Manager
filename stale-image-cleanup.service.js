@@ -98,6 +98,11 @@ export class StaleImageCleanupService {
   static instance = null;
   intervalId = null;
   isRunning = false;
+  // R4-H1: `isRunning` only guards double start(); it does NOT prevent a
+  // periodic tick (or a manual runOnce()) from overlapping a still-in-flight
+  // sweep → two concurrent passes racing the same deletes. Real in-flight
+  // reentrancy guard:
+  sweepInProgress = false;
 
   static getInstance() {
     if (!StaleImageCleanupService.instance) {
@@ -135,6 +140,12 @@ export class StaleImageCleanupService {
    * Run one full cleanup pass. Safe to call manually.
    */
   async runOnce() {
+    if (this.sweepInProgress) {
+      console.log("[StaleImageCleanup] Sweep already in progress — skipping this tick");
+      return { stagedRemoved: 0, reconciled: 0, removed: 0, skipped: 0 };
+    }
+    this.sweepInProgress = true;
+    try {
     const startedAt = Date.now();
 
     // Phase 1: blanket-delete known-bad staged-upload-URL rows. URL is dead either way.
@@ -224,5 +235,8 @@ export class StaleImageCleanupService {
     console.log(`[StaleImageCleanup] Pass complete in ${elapsed}s: ${stagedResult.count} staged removed, ${reconciled} products reconciled (${removed} rows removed), ${skipped} skipped`);
 
     return { stagedRemoved: stagedResult.count, reconciled, removed, skipped };
+    } finally {
+      this.sweepInProgress = false;
+    }
   }
 }
