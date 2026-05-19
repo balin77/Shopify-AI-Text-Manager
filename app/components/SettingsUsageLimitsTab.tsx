@@ -6,6 +6,8 @@ import type { ResourceType } from "../utils/planUtils";
 import { useNavigate, useFetcher } from "@remix-run/react";
 import { StoragePieChart, type StorageData } from "./StoragePieChart";
 import { HelpTooltip } from "./HelpTooltip";
+import { useI18n } from "../contexts/I18nContext";
+import { formatNumber } from "../utils/format";
 
 interface SettingsUsageLimitsTabProps {
   productCount: number;
@@ -33,6 +35,7 @@ interface UsageRowProps {
 }
 
 function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, disabled, helpKey, t }: UsageRowProps) {
+  const { locale } = useI18n(); // R4-UX6: locale-aware number grouping
   const getProgressTone = (): "highlight" | "primary" | "success" | "critical" => {
     if (isAtLimit) return "critical";
     if (isApproaching) return "highlight";
@@ -49,7 +52,7 @@ function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, d
 
   const formatMax = (max: number) => {
     if (max === Infinity) return t.settings?.usageUnlimited || "Unbegrenzt";
-    return max.toLocaleString();
+    return formatNumber(max, locale);
   };
 
   return (
@@ -66,7 +69,7 @@ function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, d
             {helpKey && <HelpTooltip helpKey={helpKey} />}
           </InlineStack>
           <Text as="span" tone={disabled ? "subdued" : undefined}>
-            {disabled ? "0 / 0" : `${current.toLocaleString()} / ${formatMax(max)}`}
+            {disabled ? "0 / 0" : `${formatNumber(current, locale)} / ${formatMax(max)}`}
           </Text>
         </InlineStack>
 
