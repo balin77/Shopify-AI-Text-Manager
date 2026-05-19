@@ -10,6 +10,7 @@ import { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
 import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
+import { refundImageOperations } from "./image-op-refund.js";
 
 function isEncryptedToken(data) {
   if (!data) return false;
@@ -641,26 +642,11 @@ export class WebPProcessorService {
     }
 
     // Each imageWebpConversion task consumed exactly one image operation at
-    // batch-creation time; a failed conversion produced no result, so give the
-    // op back (N-H4). Period key mirrors currentImageOpPeriod() (UTC YYYY-MM).
+    // batch-creation time; a failed conversion produced no result, so give
+    // the op back (N-H4). The `shop` guard above (set only when this call
+    // performed the first failed-transition) keeps the refund idempotent.
     if (shop) {
-      try {
-        const now = new Date();
-        const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-        const row = await db.imageOperationCounter.findUnique({
-          where: { shop_period: { shop, period } },
-          select: { count: true },
-        });
-        if (row) {
-          await db.imageOperationCounter.update({
-            where: { shop_period: { shop, period } },
-            data: { count: Math.max(0, row.count - 1) },
-          });
-          console.log(`[WebPProcessor] Refunded 1 image op for ${shop} (task ${taskId} failed)`);
-        }
-      } catch (err) {
-        console.error(`[WebPProcessor] Image-op refund failed for ${shop}:`, err);
-      }
+      await refundImageOperations(db, shop, 1);
     }
   }
 }
