@@ -26,6 +26,18 @@ export function currentImageOpPeriod(date = new Date()) {
  * so a late refund can never drive the counter negative. Never throws —
  * refund failure must not break task recovery.
  *
+ * R3-H9 — accepted cross-period edge case (deliberately NOT fixed):
+ * the refund targets the CURRENT period, not the period the op was consumed
+ * in. If a WebP task is created late on the last day of a month and
+ * fails/recovers after the UTC month rollover, the refund hits the new
+ * month's row (or no-ops if that row doesn't exist yet, thanks to the
+ * `if (!row) return`). Worst case is a ±1-op skew at a month boundary for a
+ * task that both spans midnight UTC *and* fails. Properly fixing it would
+ * require persisting the consume-period on every Task row and threading it
+ * through all failure paths — disproportionate for a rare, ±1, self-bounded
+ * (clamped, no-op-if-absent) discrepancy. Mitigation accepted; documented
+ * so a future reader doesn't "fix" it without weighing that cost.
+ *
  * @param {{ imageOperationCounter: any }} db Prisma client (app or standalone)
  * @param {string} shop
  * @param {number} n

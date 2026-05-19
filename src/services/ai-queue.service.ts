@@ -658,6 +658,19 @@ export class AIQueueService {
       };
 
       const shopQueue = this.getShopQueue(task.shop);
+
+      // Bounded queue (N-H2 / R3-H11): the recovery path must honour the same
+      // per-shop cap as enqueue(). A restart with many orphan tasks would
+      // otherwise re-enqueue them all and grow the queue unbounded. Routing
+      // through request.reject() marks the task failed (failRecoveredTask) so
+      // it lands in a terminal state instead of being re-picked forever — the
+      // merchant can retry, and the queue stays bounded.
+      if (shopQueue.length >= this.maxQueuePerShop) {
+        loggers.queue('warn', `Queue full for shop ${task.shop} (${shopQueue.length}/${this.maxQueuePerShop}) — failing recovered task ${task.id}`);
+        request.reject(new Error(`AI queue is full for this shop (max ${this.maxQueuePerShop} pending requests). Recovered task not re-enqueued.`));
+        return;
+      }
+
       shopQueue.push(request);
       loggers.queue('info', `Re-enqueued recovered task ${task.id} for shop ${task.shop}`, { shopQueueSize: shopQueue.length, totalQueueSize: this.getTotalQueueLength() });
 
