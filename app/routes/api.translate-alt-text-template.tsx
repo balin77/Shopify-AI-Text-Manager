@@ -98,6 +98,45 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    // Persist server-side so a navigation/reload before the client's own
+    // saveTemplate calls can no longer lose the translation. The unique key
+    // matches the save route; update only touches `template` so an existing
+    // per-position label is preserved.
+    if (productId && productId !== "unknown") {
+      await Promise.all(
+        Object.entries(result).flatMap(([locale, items]) =>
+          items
+            .filter((it) => it.template && it.template.trim().length > 0)
+            .map((it) =>
+              db.altTextTemplate
+                .upsert({
+                  where: {
+                    shop_productId_position_locale: {
+                      shop: session.shop,
+                      productId,
+                      position: it.position,
+                      locale,
+                    },
+                  },
+                  create: {
+                    shop: session.shop,
+                    productId,
+                    position: it.position,
+                    positionLabel: null,
+                    locale,
+                    template: it.template,
+                  },
+                  update: { template: it.template },
+                })
+                .catch(() => {
+                  // Best-effort: the client also saves; a single failed row
+                  // must not fail the whole translation response.
+                })
+            )
+        )
+      );
+    }
+
     await db.task.update({
       where: { id: task.id },
       data: {
