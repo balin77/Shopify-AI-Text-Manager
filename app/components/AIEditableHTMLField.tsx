@@ -237,6 +237,7 @@ export function AIEditableHTMLField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={readOnly}
+          aria-label={label}
           style={{
             width: "100%",
             minHeight: "200px",
@@ -255,6 +256,14 @@ export function AIEditableHTMLField({
           contentEditable={!readOnly}
           onInput={handleInput}
           suppressContentEditableWarning
+          // R4-UX3: this is the primary body-content editor. Without these a
+          // screen reader announces a generic group, not an editable text
+          // field, and the readOnly state was only conveyed by opacity.
+          role="textbox"
+          aria-multiline="true"
+          aria-label={label}
+          aria-readonly={readOnly}
+          tabIndex={0}
           style={{
             width: "100%",
             minHeight: "200px",
@@ -277,10 +286,10 @@ export function AIEditableHTMLField({
           onAccept={onAcceptSuggestion}
           onDecline={onRejectSuggestion}
           onAcceptAndTranslate={onAcceptAndTranslate}
-          acceptLabel={t.products?.accept || "Übernehmen"}
-          declineLabel={t.products?.decline || "Ablehnen"}
-          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
-          titleLabel={t.products?.aiSuggestion || "KI-Vorschlag"}
+          acceptLabel={t.products?.accept || "Accept"}
+          declineLabel={t.products?.decline || "Decline"}
+          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Accept & Translate") : undefined}
+          titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
         />
       )}
 
@@ -308,7 +317,7 @@ export function AIEditableHTMLField({
                 loading={isLoading}
                 disabled={!value || isLoading}
               >
-                🎨 {t.products?.formatWithAI || "Formatieren"}
+                🎨 {t.products?.formatWithAI || "Format"}
               </Button>
             </div>
           )}
@@ -320,7 +329,7 @@ export function AIEditableHTMLField({
                 loading={isLoading}
                 disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading}
               >
-                🌍 {isPrimaryLocale ? (t.products?.translate || "Übersetzen") : t.products?.translateFromPrimary}
+                🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
               </Button>
             </div>
           )}

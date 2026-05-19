@@ -1,7 +1,7 @@
 import { useRef } from "react";
-import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { useSortable, SortableContext, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
@@ -148,10 +148,20 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         {...listeners}
         style={{ cursor: "grab" }}
         onClick={(e) => { e.stopPropagation(); onSelect(!isSelected); }}
+        // R4-UX5: this is a selectable/deletable/draggable item whose
+        // selected & "main image" state was conveyed by border colour only.
+        // Expose it as a toggle with a textual name + state so the image
+        // manager / bulk-delete is usable without sight.
+        role="button"
+        aria-pressed={isSelected}
+        aria-label={
+          (currentLocaleAltText || t.imageManager.imageThumbLabel) +
+          (isMain ? `, ${t.imageManager.mainImage}` : "")
+        }
       >
         <img
           src={url}
-          alt=""
+          alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
           draggable={false}
           style={{
             width: thumbSize,
@@ -292,6 +302,9 @@ export function SortableImageGrid({
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    // R4-UX4: keyboard/screen-reader users could not reorder gallery images
+    // at all (only Mouse+Touch sensors). Matches BulkSortableList's setup.
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const showPlaceholder = onDropToPlaceholder !== undefined || onUploadToGallery !== undefined;

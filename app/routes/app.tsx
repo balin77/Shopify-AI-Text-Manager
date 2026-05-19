@@ -21,6 +21,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import type { Locale } from "../i18n";
+import { resolveMerchantLocale } from "../utils/locale.server";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
@@ -96,7 +97,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     });
 
-    const appLanguage = (settings?.appLanguage || "en") as Locale;
+    // R4-UX1: respect an explicit stored choice; otherwise fall back to the
+    // merchant's Shopify admin locale instead of forcing English. (A row is
+    // only created once the merchant visits Settings, so the common
+    // fresh-install path used to be permanently English here.)
+    const appLanguage: Locale = settings?.appLanguage
+      ? (settings.appLanguage as Locale)
+      : resolveMerchantLocale(request);
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
 
     // Build API-key presence flags from the single query result
@@ -157,7 +164,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid
     return json({
-      appLanguage: "en" as Locale,
+      appLanguage: resolveMerchantLocale(request),
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
       seoTitleSuffix: "",
