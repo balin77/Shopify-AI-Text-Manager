@@ -151,6 +151,21 @@ export class TaskRecoveryService {
   /**
    * Mark tasks stuck in "running" or "pending" status as failed
    * A task is considered stuck if it's been running/pending for more than 10 minutes without update
+   *
+   * R4-DI9 — known, ACCEPTED reaper↔finalizer interaction (LOW, not fixed):
+   * task finalizers across the app call `task.update({ where: { id } })`
+   * WITHOUT a status precondition. If a genuinely-slow task is reaped here
+   * (running → failed) and then finishes, its finalizer can overwrite that
+   * back to completed/failed (a "lost transition"). This is intentionally
+   * left as-is: it is observability-only — the task's actual side effects
+   * (Shopify writes / DB upserts) are independent of the row's status and
+   * are themselves idempotent, so no data is lost or duplicated; only the
+   * final status label can thrash for one >10-min task. The proportionate
+   * fix is NOT a status precondition sprinkled over ~100 update sites (risky,
+   * for a cosmetic edge); if a STRICTER reaper is ever added (one whose
+   * decision must be authoritative), make finalizers monotonic via
+   * `updateMany({ where: { id, status: { notIn: TERMINAL } } })` instead —
+   * see the matching note in src/services/task-recovery.service.ts.
    */
   async markStuckTasksAsFailed() {
     const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);

@@ -160,6 +160,18 @@ export class TaskRecoveryService {
   /**
    * Mark tasks stuck in "running" or "pending" status as failed
    * A task is considered stuck if it's been running/pending for more than 10 minutes without update
+   *
+   * R4-DI9 — known, ACCEPTED reaper↔finalizer interaction (LOW, not fixed):
+   * app-wide task finalizers use `task.update({ where: { id } })` with no
+   * status precondition, so a slow task reaped here can later be flipped
+   * back by its own finalizer ("lost transition"). Left as-is: it is
+   * observability-only — task side effects are status-independent and
+   * idempotent, so nothing is lost/duplicated; only the final status label
+   * can thrash for one >10-min task. A status-precondition sweep over ~100
+   * update sites is disproportionate/risky for a cosmetic edge. If a
+   * stricter, authoritative reaper is ever introduced, make finalizers
+   * monotonic via `updateMany({ where:{ id, status:{ notIn: TERMINAL } } })`
+   * (mirror note in task-recovery.service.js).
    */
   async markStuckTasksAsFailed(): Promise<number> {
     const { db } = await import('../../app/db.server');
