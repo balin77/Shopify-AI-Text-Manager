@@ -14,24 +14,41 @@
 
   - 'inline'  : only the synchronous per-element bootstrap below. The
                 native gallery is hidden the moment that script runs.
-                `cp-vg-prehide` is never set, so the <head> rule below
-                stays fully dormant — zero behaviour change for this mode.
+                The 'prehide' <style>+class are not emitted at all, so
+                there is zero behaviour change for this mode.
 
-  - 'prehide' : additionally a render-blocking rule shipped via the
-                theme-app-extension stylesheet bundle (Shopify injects
-                it into <head>, parsed before the body paints).
-                The tiny script right below adds `cp-vg-prehide` to <html>
-                as early as the block renders, so the native gallery is
-                hidden before/at first paint. The per-element bootstrap
-                then takes over and releases the blanket class in a
-                `finally` (so quick-view / no-image variants are not left
-                hidden); an independent 3s fail-safe is the last resort.
+  - 'prehide' : additionally emits an inline blanket <style> + class
+                (just inside the `if` below) as early as the block
+                renders, so the native gallery is hidden as soon as the
+                block is parsed — slightly earlier than the per-element
+                bootstrap (which still has to resolve the element first).
+                The per-element bootstrap then takes over and releases
+                the blanket class in a `finally` (so quick-view / no-image
+                variants are not left hidden); an independent 3s fail-safe
+                and a controller-side release are backstops.
 
-  Note: the bundled stylesheet is static CSS (no Liquid), so only the
-  fixed default selectors get the <head> pre-hide; a custom native
-  selector still works but via the synchronous path only.
+  Architecture limit: app embeds CANNOT inject render-blocking <head>
+  CSS (Shopify forbids the stylesheet tag in app blocks) and render at
+  end of <body>, so 'prehide' reduces but cannot guarantee a flash-free
+  first paint. True pre-paint hiding needs a separate target:"head" embed
+  block — a deliberate follow-up, not done here. The blanket uses the
+  fixed default selectors only; a custom native selector still works via
+  the synchronous per-element path.
 {%- endcomment -%}
 {%- if cp_strategy == 'prehide' -%}
+{%- comment -%}
+  App embeds cannot inject render-blocking <head> CSS (Shopify forbids the
+  stylesheet tag in app blocks), so this rule is a normal inline <style>
+  emitted as early as the block renders, immediately followed by the class
+  that activates it. `visibility:hidden` (not display:none) reserves layout
+  so revealing the native gallery for a no-images variant causes no shift.
+{%- endcomment -%}
+<style>
+  html.cp-vg-prehide media-gallery,
+  html.cp-vg-prehide [id^="MediaGallery"],
+  html.cp-vg-prehide .product__media-wrapper,
+  html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
+</style>
 <script>
   document.documentElement.classList.add('cp-vg-prehide');
   // Merge (never overwrite) the shared fail-safe registry so the bootstrap
@@ -131,20 +148,6 @@
 {%- assign cp_scope_sel   = block.settings.scope_selector          | json | replace: "<", "" -%}
 {%- assign cp_extra_sel   = block.settings.extra_hide_selector     | json | replace: "<", "" -%}
 <style>.cp-vg-native-hidden{display:none !important;}</style>
-
-{%- comment -%}
-  Shipped via the theme-app-extension bundle → Shopify injects it into
-  <head> render-blocking, so it applies before the body paints. Dormant
-  unless <html> has `cp-vg-prehide` (only the 'prehide' strategy sets it).
-  `visibility:hidden` (not display:none) reserves layout so revealing the
-  native gallery for a no-images variant causes no layout shift.
-{%- endcomment -%}
-{% stylesheet %}
-html.cp-vg-prehide media-gallery,
-html.cp-vg-prehide [id^="MediaGallery"],
-html.cp-vg-prehide .product__media-wrapper,
-html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
-{% endstylesheet %}
 
 <script>
   (function () {
@@ -258,9 +261,9 @@ html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
       "default": "inline",
       "options": [
         { "value": "inline", "label": "Synchronous (default)" },
-        { "value": "prehide", "label": "Pre-hide via <head> (experimental)" }
+        { "value": "prehide", "label": "Early blanket pre-hide (experimental)" }
       ],
-      "info": "Synchronous: hides the native gallery the moment the page script runs — safe, but a brief flash is possible on slow first paint. Pre-hide: also injects a render-blocking <head> rule that hides the native gallery before first paint (no flash on image variants), at the cost of a brief image-less moment on variants without images and a hard JS dependency (3s fail-safe restores it). Only the default theme selectors get the <head> pre-hide; custom selectors fall back to Synchronous behaviour."
+      "info": "Synchronous: hides the native gallery the moment the page script runs — safe, but a brief flash is possible on slow first paint. Early pre-hide: additionally hides the gallery via an inline rule as soon as the block is parsed (slightly earlier, reduces but does not eliminate the flash), at the cost of a brief image-less moment on variants without images and a hard JS dependency (3s fail-safe restores it). Uses the default theme selectors only; custom selectors fall back to Synchronous behaviour."
     },
     {
       "type": "checkbox",
