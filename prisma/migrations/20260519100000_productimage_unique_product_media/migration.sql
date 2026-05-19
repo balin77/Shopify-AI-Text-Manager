@@ -10,6 +10,20 @@
 -- Deterministic keeper per (productId, mediaId): the row whose alt-text was
 -- modified most recently, breaking ties by id. ProductImage is a re-syncable
 -- cache, so the exact keeper only matters for not losing a fresh local edit.
+--
+-- CAVEAT 1 (acceptable, by design): step 2a drops a duplicate's translations
+-- when the keeper already has the same locale. The keeper is chosen by
+-- ProductImage.altTextModifiedAt, NOT by the translation's own recency
+-- (ProductImageAltTranslation has no comparable trust signal), so a discarded
+-- foreign-locale translation could in theory be newer than the kept one.
+-- Tolerated because Shopify is the source of truth and the next product sync
+-- repopulates ProductImageAltTranslation from it.
+--
+-- CAVEAT 2 (operational): the unique index is built non-CONCURRENTLY inside
+-- Prisma's migration transaction. If a parallel "apply alt text" commits a new
+-- duplicate between the dedup steps and the index build, the build fails and
+-- the migration aborts. Run this during a short maintenance pause (or expect
+-- to re-run it) — it is otherwise safe to re-run from a clean state.
 
 -- 1. Map every duplicate row to its surviving keeper.
 CREATE TEMP TABLE _pi_dedup ON COMMIT DROP AS

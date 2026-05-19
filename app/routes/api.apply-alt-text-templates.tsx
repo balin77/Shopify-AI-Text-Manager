@@ -2,6 +2,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-template";
+import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 
@@ -28,21 +29,31 @@ async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Prom
   return gid;
 }
 
-// Saving an alt-text to Shopify fires a `products/update` webhook whose
-// product-sync handler wipes and recreates this product's ProductImage rows
-// inside a transaction. If that commits between our image lookup and the
-// translation write, the imageId we hold is gone → FK violation
-// (ProductImageAltTranslation_imageId_fkey). Retry the whole DB unit so the
-// second attempt re-resolves the (now fresh) ProductImage row.
-const RACE_CODES = new Set(["P2002", "P2003", "P2025"]);
-async function withDbRaceRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+// Shopify's Admin GraphQL API is cost-throttled per shop. Applying every
+// locale in parallel (and the webhook syncs each apply triggers) can exhaust
+// the bucket → HTTP 429 or a top-level THROTTLED error. Without this the
+// previously-sequential path's work would just fail outright. Back off and
+// retry so "apply to all languages" stays correct on large catalogs.
+async function gqlWithThrottleRetry(
+  admin: { graphql: (q: string, opts?: any) => Promise<Response> },
+  query: string,
+  variables: Record<string, unknown>,
+  attempts = 4
+): Promise<any> {
+  const backoffMs = [800, 1600, 3200];
   for (let i = 0; ; i++) {
-    try {
-      return await fn();
-    } catch (e: any) {
-      if (i >= attempts - 1 || !RACE_CODES.has(e?.code)) throw e;
-      await new Promise((r) => setTimeout(r, 60 * (i + 1)));
-    }
+    const r = await admin.graphql(query, { variables });
+    const status = r.status;
+    const d = (await r.json()) as any;
+    const throttled =
+      status === 429 ||
+      (Array.isArray(d?.errors) &&
+        d.errors.some(
+          (e: any) =>
+            e?.extensions?.code === "THROTTLED" || /throttl/i.test(e?.message ?? "")
+        ));
+    if (!throttled || i >= attempts - 1) return d;
+    await new Promise((res) => setTimeout(res, backoffMs[Math.min(i, backoffMs.length - 1)]));
   }
 }
 
@@ -184,6 +195,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Task tracking is best-effort — failure here must not block the apply.
   }
 
+  // Everything past task creation runs inside this guard so a thrown error
+  // (notably resolveVariableValues hitting a Shopify THROTTLE on a foreign
+  // locale — the primary path never calls it, which is exactly why foreign
+  // tasks were the ones left stuck "running") still finalizes the task
+  // instead of leaking it forever.
+  try {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
     // Position 0 = main featured image, positions 1+ = gallery images
@@ -215,7 +232,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       try {
         if (isPrimary) {
           // Primary locale: fileUpdate mutation
-          const r = await admin.graphql(
+          const d = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               mutation fileUpdate($files: [FileUpdateInput!]!) {
                 fileUpdate(files: $files) {
@@ -223,9 +241,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   files { id }
                 }
               }`,
-            { variables: { files: [{ id: gid, alt: altText }] } }
+            { files: [{ id: gid, alt: altText }] }
           );
-          const d = await r.json() as any;
           const errs = d.data?.fileUpdate?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
@@ -241,16 +258,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }
         } else {
           // Foreign locale: get digest first
-          const tr = await admin.graphql(
+          const td = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               query translatableContent($id: ID!) {
                 translatableResource(resourceId: $id) {
                   translatableContent { key digest }
                 }
               }`,
-            { variables: { id: gid } }
+            { id: gid }
           );
-          const td = await tr.json() as any;
           const altDigest = (td.data?.translatableResource?.translatableContent ?? [])
             .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
 
@@ -259,7 +276,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             continue;
           }
 
-          const r = await admin.graphql(
+          const d = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               mutation translateMedia($resourceId: ID!, $translations: [TranslationInput!]!) {
                 translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -267,13 +285,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 }
               }`,
             {
-              variables: {
-                resourceId: gid,
-                translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
-              },
+              resourceId: gid,
+              translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
             }
           );
-          const d = await r.json() as any;
           const errs = d.data?.translationsRegister?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
@@ -349,4 +364,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });
+  } catch (fatal: unknown) {
+    // An unexpected throw (Shopify throttle/network during variable resolution,
+    // etc.) reached here. Close out the task as failed so the navigation badge
+    // stops showing it as perpetually running, then surface the error.
+    const msg = fatal instanceof Error ? fatal.message : String(fatal);
+    if (taskId) {
+      try {
+        await db.task.update({
+          where: { id: taskId },
+          data: {
+            status: "failed",
+            progress: 100,
+            total: attempted,
+            processed: applied,
+            error: `${msg}`.substring(0, 1000),
+            completedAt: new Date(),
+          },
+        });
+      } catch {
+        // best-effort — never mask the original failure
+      }
+    }
+    return json(
+      { success: false, applied, attempted, error: msg },
+      { status: 500 }
+    );
+  }
 };

@@ -97,6 +97,28 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const applyAllProgress = ops.applyAllProgress;
   const isTranslatingAll = ops.translatingAll;
   const translatingPositions = ops.translatingPositions;
+
+  // Tracks the product currently on screen (updated every render, unlike the
+  // productId captured in each callback's closure). Lets a completion that
+  // started on product A skip the gallery refresh / scope its toast when the
+  // user has since navigated to product B.
+  const currentProductIdRef = useRef(productId);
+  currentProductIdRef.current = productId;
+  const isStillActive = useCallback(
+    (startedProductId: string) => currentProductIdRef.current === startedProductId,
+    []
+  );
+  // Prefix the toast with the *started* product's title when the user has
+  // since navigated away, so a background completion isn't mistaken for the
+  // product now on screen. `startedTitle` comes from the handler's closure
+  // (bound to the product the op started on), never the current prop.
+  const scopedMsg = useCallback(
+    (msg: string, startedProductId: string, startedTitle: string) =>
+      currentProductIdRef.current === startedProductId
+        ? msg
+        : `${startedTitle ? `${startedTitle}: ` : ""}${msg}`,
+    []
+  );
   // Tracks which locale chip received a Ctrl+pointerdown so the subsequent click
   // doesn't also switch the active locale.
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
@@ -319,12 +341,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
       if (templates.length === 0) return;
 
+      // Key the per-position spinner by the stable pos.position, not the array
+      // index: removing/adding a position mid-translation shifts every later
+      // index, which would strand the spinner on the wrong row.
+      const posKey =
+        positionIndex === null ? null : positions[positionIndex]?.position ?? null;
+
       // Set loading state (product-scoped). Per-position translations are
       // independent: starting one must not block the others.
       if (positionIndex === null) {
         patchOps({ translatingAll: true });
-      } else {
-        setPositionTranslating(positionIndex, true);
+      } else if (posKey !== null) {
+        setPositionTranslating(posKey, true);
       }
 
       try {
@@ -368,14 +396,15 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
       if (positionIndex === null) {
         patchOps({ translatingAll: false });
-      } else {
-        setPositionTranslating(positionIndex, false);
+      } else if (posKey !== null) {
+        setPositionTranslating(posKey, false);
       }
     },
     [hasMultipleLocales, isPrimaryLocale, foreignLocales, activeLocale, positions, primaryLocale, productId, productTitle, saveTemplate, patchOps, setPositionTranslating]
   );
 
   const handleApplyToAll = useCallback(async () => {
+    if (ops.applying) return; // reentrancy guard (double-click / keyboard)
     patchOps({ applying: true });
     try {
       const res = await fetch("/api/apply-alt-text-templates", {
@@ -392,24 +421,28 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       const data = await res.json();
       if (data.success) {
         showInfoBox(
-          (im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully") +
-            (data.applied != null ? ` (${data.applied})` : ""),
+          scopedMsg(
+            (im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully") +
+              (data.applied != null ? ` (${data.applied})` : ""),
+            productId,
+            productTitle
+          ),
           "success"
         );
-        onApplySuccess?.();
+        if (isStillActive(productId)) onApplySuccess?.();
       } else {
         const detail = Array.isArray(data.errors) && data.errors.length > 0
           ? data.errors.join("\n")
           : (data.error ?? "Unknown error");
-        showInfoBox(detail, "critical");
+        showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
       }
     } catch (e: any) {
       const detail = e.message ?? "Unknown error";
-      showInfoBox(detail, "critical");
+      showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
     } finally {
       patchOps({ applying: false });
     }
-  }, [productId, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps]);
+  }, [ops.applying, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps, scopedMsg, isStillActive]);
 
   // Locales that "Apply to all languages" will write to. Primary is always included;
   // foreign locales can be Ctrl-clicked off via excludedLocales.
@@ -421,56 +454,73 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     );
 
   const handleApplyToAllLocales = useCallback(async () => {
+    if (ops.applyingAll) return; // reentrancy guard (double-click / keyboard)
     if (targetLocales.length === 0) return;
     const total = targetLocales.length;
     patchOps({ applyingAll: true, applyAllProgress: { done: 0, total } });
     let totalApplied = 0;
     const allErrors: string[] = [];
     try {
-      // Fire every locale at Shopify simultaneously instead of waiting for one
-      // language to finish before starting the next — the previous sequential
-      // loop made "apply to all languages" take N× as long. Progress ticks up
-      // as each locale settles. Server-side the FK-race retry + atomic upsert
-      // keep the concurrent webhook-driven product-syncs from corrupting rows.
+      // Run the primary locale first and alone: its fileUpdate is what fires
+      // the products/update webhook → product-sync. Letting that settle before
+      // the foreign locales start shrinks the window where the sync's
+      // deleteMany+recreate collides with the translation writes, and avoids
+      // spending the Shopify cost-bucket on N locales at the same instant.
+      // Foreign locales then run with a small concurrency cap so they are
+      // "simultaneous enough" to be fast without tripping the rate limit.
       let done = 0;
-      await Promise.all(
-        targetLocales.map(async (loc) => {
-          try {
-            const res = await fetch("/api/apply-alt-text-templates", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ productId, locale: loc, primaryLocale, scope: "all", variants }),
-            });
-            const data = await res.json();
-            if (typeof data.applied === "number") totalApplied += data.applied;
-            if (Array.isArray(data.errors)) {
-              allErrors.push(...data.errors.map((e: string) => `[${loc.toUpperCase()}] ${e}`));
-            } else if (!data.success && data.error) {
-              allErrors.push(`[${loc.toUpperCase()}] ${data.error}`);
-            }
-          } catch (e: any) {
-            allErrors.push(`[${loc.toUpperCase()}] ${e?.message ?? "Unknown error"}`);
-          } finally {
-            done += 1;
-            patchOps({ applyAllProgress: { done, total } });
+      const runLocale = async (loc: string) => {
+        try {
+          const res = await fetch("/api/apply-alt-text-templates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ productId, locale: loc, primaryLocale, scope: "all", variants }),
+          });
+          const data = await res.json();
+          if (typeof data.applied === "number") totalApplied += data.applied;
+          if (Array.isArray(data.errors)) {
+            allErrors.push(...data.errors.map((e: string) => `[${loc.toUpperCase()}] ${e}`));
+          } else if (!data.success && data.error) {
+            allErrors.push(`[${loc.toUpperCase()}] ${data.error}`);
           }
-        })
-      );
+        } catch (e: any) {
+          allErrors.push(`[${loc.toUpperCase()}] ${e?.message ?? "Unknown error"}`);
+        } finally {
+          done += 1;
+          patchOps({ applyAllProgress: { done, total } });
+        }
+      };
+
+      const primaryFirst = targetLocales.includes(primaryLocale) ? [primaryLocale] : [];
+      const rest = targetLocales.filter((l) => l !== primaryLocale);
+      for (const loc of primaryFirst) {
+        await runLocale(loc);
+      }
+      const CONCURRENCY = 3;
+      for (let i = 0; i < rest.length; i += CONCURRENCY) {
+        await Promise.all(rest.slice(i, i + CONCURRENCY).map(runLocale));
+      }
       if (allErrors.length === 0) {
         const langWord = targetLocales.length === 1 ? "language" : "languages";
         showInfoBox(
-          `${im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully"} (${totalApplied}, ${targetLocales.length} ${langWord})`,
+          scopedMsg(
+            `${im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully"} (${totalApplied}, ${targetLocales.length} ${langWord})`,
+            productId,
+            productTitle
+          ),
           "success"
         );
       } else {
-        showInfoBox(allErrors.join("\n"), "critical");
+        showInfoBox(scopedMsg(allErrors.join("\n"), productId, productTitle), "critical");
       }
-      // Refresh the gallery either way so any partial saves become visible.
-      onApplySuccess?.();
+      // Refresh the gallery only if this product is still on screen — a
+      // background completion must not yank the gallery the user is now
+      // looking at on another product.
+      if (isStillActive(productId)) onApplySuccess?.();
     } finally {
       patchOps({ applyingAll: false, applyAllProgress: null });
     }
-  }, [targetLocales, productId, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps]);
+  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps, scopedMsg, isStillActive]);
 
   const previewVariants = variants.slice(0, 3);
 
@@ -551,7 +601,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           {/* Positions */}
           {positions.map((pos, idx) => {
             const templateValue = pos.templates[activeLocale] ?? "";
-            const isThisTranslating = translatingPositions.includes(idx);
+            const isThisTranslating = translatingPositions.includes(pos.position);
             return (
               <BlockStack key={pos.position} gap="200">
                 <InlineStack align="space-between" blockAlign="center">

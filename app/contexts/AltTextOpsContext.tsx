@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 /**
  * Tracks in-flight Alt-Text Manager operations **per product** so they survive
@@ -18,7 +18,7 @@ export interface AltTextOpState {
   applyAllProgress: { done: number; total: number } | null;
   /** "Translate all positions" is running. */
   translatingAll: boolean;
-  /** Position indices whose individual "Translate" is running. */
+  /** Stable pos.position values whose individual "Translate" is running. */
   translatingPositions: number[];
 }
 
@@ -30,77 +30,91 @@ const EMPTY: AltTextOpState = {
   translatingPositions: [],
 };
 
-interface AltTextOpsContextType {
-  getOps: (productId: string) => AltTextOpState;
-  patchOps: (productId: string, patch: Partial<AltTextOpState>) => void;
-  setPositionTranslating: (productId: string, positionIndex: number, on: boolean) => void;
+// True when a product's state carries no in-flight work, so its map entry can
+// be dropped (keeps the store from growing one row per visited product).
+function isIdle(s: AltTextOpState): boolean {
+  return (
+    !s.applying &&
+    !s.applyingAll &&
+    s.applyAllProgress === null &&
+    !s.translatingAll &&
+    s.translatingPositions.length === 0
+  );
 }
 
-const AltTextOpsContext = createContext<AltTextOpsContextType | null>(null);
+interface AltTextOpsMutators {
+  patchOps: (productId: string, patch: Partial<AltTextOpState>) => void;
+  setPositionTranslating: (productId: string, position: number, on: boolean) => void;
+}
+
+const AltTextOpsMutatorContext = createContext<AltTextOpsMutators | null>(null);
+const AltTextOpsStateContext = createContext<Record<string, AltTextOpState>>({});
 
 export function AltTextOpsProvider({ children }: { children: React.ReactNode }) {
   const [ops, setOps] = useState<Record<string, AltTextOpState>>({});
-  // A ref mirror lets mutators compose without stale-closure reads when several
-  // updates land in the same tick (e.g. parallel per-locale progress bumps).
-  const opsRef = useRef(ops);
-  opsRef.current = ops;
 
-  const patchOps = useCallback((productId: string, patch: Partial<AltTextOpState>) => {
-    setOps((prev) => {
-      const current = prev[productId] ?? EMPTY;
-      return { ...prev, [productId]: { ...current, ...patch } };
-    });
-  }, []);
-
-  const setPositionTranslating = useCallback(
-    (productId: string, positionIndex: number, on: boolean) => {
+  const patchOps = useCallback(
+    (productId: string, patch: Partial<AltTextOpState>) => {
       setOps((prev) => {
-        const current = prev[productId] ?? EMPTY;
-        const set = new Set(current.translatingPositions);
-        if (on) set.add(positionIndex);
-        else set.delete(positionIndex);
-        return { ...prev, [productId]: { ...current, translatingPositions: [...set] } };
+        const next = { ...(prev[productId] ?? EMPTY), ...patch };
+        if (isIdle(next)) {
+          if (!(productId in prev)) return prev;
+          const { [productId]: _drop, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [productId]: next };
       });
     },
     []
   );
 
-  const getOps = useCallback((productId: string): AltTextOpState => {
-    return opsRef.current[productId] ?? EMPTY;
-  }, []);
-
-  const value = useMemo(
-    () => ({ getOps, patchOps, setPositionTranslating }),
-    [getOps, patchOps, setPositionTranslating]
+  const setPositionTranslating = useCallback(
+    (productId: string, position: number, on: boolean) => {
+      setOps((prev) => {
+        const current = prev[productId] ?? EMPTY;
+        const set = new Set(current.translatingPositions);
+        if (on) set.add(position);
+        else set.delete(position);
+        const next = { ...current, translatingPositions: [...set] };
+        if (isIdle(next)) {
+          if (!(productId in prev)) return prev;
+          const { [productId]: _drop, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [productId]: next };
+      });
+    },
+    []
   );
 
-  // Re-render consumers when the store changes by threading `ops` through a
-  // second context value the hook subscribes to.
+  const mutators = useMemo(
+    () => ({ patchOps, setPositionTranslating }),
+    [patchOps, setPositionTranslating]
+  );
+
   return (
-    <AltTextOpsContext.Provider value={value}>
+    <AltTextOpsMutatorContext.Provider value={mutators}>
       <AltTextOpsStateContext.Provider value={ops}>{children}</AltTextOpsStateContext.Provider>
-    </AltTextOpsContext.Provider>
+    </AltTextOpsMutatorContext.Provider>
   );
 }
 
-const AltTextOpsStateContext = createContext<Record<string, AltTextOpState>>({});
-
 /** Subscribe to one product's operation state plus the mutators. */
 export function useAltTextOps(productId: string) {
-  const ctx = useContext(AltTextOpsContext);
+  const mutators = useContext(AltTextOpsMutatorContext);
   const state = useContext(AltTextOpsStateContext);
-  if (!ctx) throw new Error("useAltTextOps must be used within AltTextOpsProvider");
-  const opState = state[productId] ?? EMPTY;
+  if (!mutators) throw new Error("useAltTextOps must be used within AltTextOpsProvider");
+  const ops = state[productId] ?? EMPTY;
   return {
-    ops: opState,
+    ops,
     patch: useCallback(
-      (patch: Partial<AltTextOpState>) => ctx.patchOps(productId, patch),
-      [ctx, productId]
+      (patch: Partial<AltTextOpState>) => mutators.patchOps(productId, patch),
+      [mutators, productId]
     ),
     setPositionTranslating: useCallback(
-      (positionIndex: number, on: boolean) =>
-        ctx.setPositionTranslating(productId, positionIndex, on),
-      [ctx, productId]
+      (position: number, on: boolean) =>
+        mutators.setPositionTranslating(productId, position, on),
+      [mutators, productId]
     ),
   };
 }

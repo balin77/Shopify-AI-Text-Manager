@@ -8,6 +8,7 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
+import { withDbRaceRetry } from '~/utils/db-retry.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
@@ -366,9 +367,14 @@ export class ProductSyncService {
         for (const product of chunk) {
           checkAborted();
           try {
-            await db.$transaction(async (tx: Prisma.TransactionClient) => {
+            // writeProduct does deleteMany+createMany on ProductImage, so the
+            // per-product retry path can lose the (productId, mediaId) race
+            // against a concurrent alt-text apply (P2002, or P2003/P2025/P2034/
+            // P2028 under contention). Heal it here, symmetric to the apply
+            // route — the batch path above already falls back to this.
+            await withDbRaceRetry(() => db.$transaction(async (tx: Prisma.TransactionClient) => {
               await writeProduct(tx, product);
-            }, TX_OPTS);
+            }, TX_OPTS));
             synced++;
           } catch (err: unknown) {
             if (err instanceof DOMException && err.name === "AbortError") throw err;
@@ -1393,8 +1399,11 @@ export class ProductSyncService {
       ?.filter((edge) => edge.node.id && edge.node.image?.url)
       .map((edge) => edge.node) || [];
 
-    // Use transaction to ensure all-or-nothing data consistency
-    await db.$transaction(async (tx) => {
+    // Use transaction to ensure all-or-nothing data consistency. Wrapped in
+    // the race-retry: this is the webhook-driven sync that wipes+recreates
+    // ProductImage rows and can collide on (productId, mediaId) with a
+    // parallel alt-text apply now that a unique constraint exists.
+    await withDbRaceRetry(() => db.$transaction(async (tx) => {
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1652,7 +1661,7 @@ export class ProductSyncService {
       if (metafields.length > 0) {
         logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }
-    });
+    }));
 
     logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
   }
