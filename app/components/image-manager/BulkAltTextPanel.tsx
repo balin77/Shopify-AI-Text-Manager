@@ -629,7 +629,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                         tone="critical"
                         variant="plain"
                         onClick={() => handleRemovePosition(idx)}
-                        accessibilityLabel="Remove position"
+                        accessibilityLabel={im?.altTextTemplateRemovePosition ?? "Remove position"}
                       />
                     )}
                   </InlineStack>

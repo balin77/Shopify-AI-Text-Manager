@@ -850,6 +850,21 @@ const handleTranslateAll = () => {
   }
 };
 
+// R4-UX8 — KNOWN LIMITATION (intentionally deferred, not a half-fix):
+// accepting a suggestion overwrites editableValues[fieldKey] in place with
+// no diff preview and no PER-FIELD undo. The only recovery today is the
+// page-level handleDiscard(), which reverts EVERY unsaved field, so undoing
+// one accidental accept also throws away every other in-progress edit.
+//
+// A correct fix is a real UI feature, not a one-liner: snapshot the
+// pre-accept value (e.g. acceptedSuggestionUndo: Record<fieldKey,string>),
+// expose handleUndoAcceptedSuggestion via the FieldHandlers contract, and
+// add a transient per-field "Undo" affordance with a defined lifecycle
+// (clear on save / item switch / reject). That spans this hook, the
+// FieldHandlers type, the provider wiring and AISuggestionBanner, and needs
+// a UX decision on where/how long the affordance shows. Shipping only the
+// state half here would be dead code; a rushed UI risks regressing the
+// accept flow. Tracked for a dedicated, design-aligned change.
 const handleAcceptSuggestion = (fieldKey: string) => {
   const suggestion = aiSuggestions[fieldKey];
   if (!suggestion) return;

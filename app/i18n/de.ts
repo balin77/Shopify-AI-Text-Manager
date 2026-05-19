@@ -222,10 +222,10 @@ export const de = {
     upgradeRequired: "Upgrade erforderlich",
     upgradeToAccessFeature: "Upgrade auf {plan}, um auf dieses Feature zuzugreifen",
     // Editor buttons
-    translateAll: "🌍 Alles übersetzen",
+    translateAll: "Alles übersetzen",
     translating: "Übersetze...",
     clearAll: "Alles löschen",
-    sendImageToAI: "📷 Bild an KI senden",
+    sendImageToAI: "Bild an KI senden",
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
     // Clear all modal
@@ -398,6 +398,7 @@ export const de = {
     testSubscription: "Dies ist ein Test-Abonnement. Sie werden nicht belastet.",
     trialPeriod: "Sie befinden sich in der {days}-tägigen Testphase.",
     confirmDowngrade: "Möchten Sie wirklich zum kostenlosen Plan wechseln? Ihr aktuelles Abo wird gekündigt.",
+    confirmDowngradeTitle: "Zum kostenlosen Plan wechseln?",
     errorOccurred: "Ein Fehler ist aufgetreten",
     trialInfo: "Alle kostenpflichtigen Pläne beinhalten eine 7-tägige kostenlose Testphase. Sie werden erst nach Ablauf der Testphase belastet.",
     devPlanFreeTitle: "Plan-Wechsel ist kostenlos",
@@ -763,6 +764,7 @@ export const de = {
     altTextTemplatePosition: "Position {n}",
     altTextTemplatePositionLabel: "Positions-Bezeichnung (z.B. Hauptbild)",
     altTextTemplateAddPosition: "Position hinzufügen",
+    altTextTemplateRemovePosition: "Position entfernen",
     altTextTemplatePlaceholder: "z.B. Eleganter {Farbe} Keramik-Blumentopf",
     altTextTemplateApplyOnUpload: "Nach Upload anwenden",
     altTextTemplateApplyToAll: "Auf alle Bilder anwenden",

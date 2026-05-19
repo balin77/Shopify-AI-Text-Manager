@@ -224,10 +224,10 @@ export const es: Translation = {
     upgradeRequired: "Actualización requerida",
     upgradeToAccessFeature: "Actualiza a {plan} para acceder a esta función",
     // Editor buttons
-    translateAll: "🌍 Traducir todo",
+    translateAll: "Traducir todo",
     translating: "Traduciendo...",
     clearAll: "Limpiar todo",
-    sendImageToAI: "📷 Enviar imagen a IA",
+    sendImageToAI: "Enviar imagen a IA",
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",
     // Clear all modal
@@ -400,6 +400,7 @@ export const es: Translation = {
     testSubscription: "Esta es una suscripción de prueba. No se te cobrará.",
     trialPeriod: "Estás en el período de prueba de {days} días.",
     confirmDowngrade: "¿Realmente quieres cambiar al plan gratuito? Tu suscripción actual se cancelará.",
+    confirmDowngradeTitle: "¿Cambiar al plan gratuito?",
     errorOccurred: "Ha ocurrido un error",
     trialInfo: "Todos los planes de pago incluyen una prueba gratuita de 7 días. Solo se te cobrará después de que termine el período de prueba.",
     devPlanFreeTitle: "Cambiar de plan es gratis",
@@ -765,6 +766,7 @@ export const es: Translation = {
     altTextTemplatePosition: "Posición {n}",
     altTextTemplatePositionLabel: "Etiqueta de posición (p. ej. Imagen principal)",
     altTextTemplateAddPosition: "Añadir posición",
+    altTextTemplateRemovePosition: "Eliminar posición",
     altTextTemplatePlaceholder: "p. ej. Elegante maceta de cerámica {Color}",
     altTextTemplateApplyOnUpload: "Aplicar tras subida",
     altTextTemplateApplyToAll: "Aplicar a todas las imágenes",
