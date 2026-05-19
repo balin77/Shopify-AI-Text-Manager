@@ -60,6 +60,88 @@
   }
 </script>
 
+{%- comment -%}
+  FOUC fix: the native gallery is otherwise hidden only later by the deferred
+  controller (after DOMContentLoaded), so it flashes fully visible on every
+  page load. This synchronous inline script runs the moment the parser
+  reaches it (the native gallery is earlier in <body>, so it is already in
+  the DOM): if the *current* variant has metafield images it resolves the
+  exact native gallery element — mirroring the controller's scope + selector
+  resolution — and adds the fixed class `cp-vg-native-hidden` directly to it,
+  so it is hidden before/at first paint instead of after the controller boots.
+
+  Security: NO merchant-controlled value is ever interpolated into CSS or
+  HTML here. The CSS rule is a fixed class. Merchant selector settings are
+  passed only as `| json` JS strings, additionally `<`-stripped (same
+  hardening posture as the JSON island above) so a `</script>` in a setting
+  cannot break out. Element-scoped (respects scope_selector) so quick-view /
+  recommended-product galleries elsewhere on the page are not hidden.
+
+  Variants WITHOUT images never get the class → native shows normally (no
+  reverse flash). A 3s fail-safe reveals the native gallery again if the
+  controller never mounts; the controller cancels it once it takes over.
+{%- endcomment -%}
+{%- comment -%}
+  `| json` handles quotes/backslashes for the JS string context. We
+  additionally strip `<` only: a CSS selector never legitimately contains
+  `<`, and every script-context breakout (`</script>`, `<!--`) requires it,
+  so this removes the breakout vector losslessly (defence-in-depth on top
+  of `| json`). `>` is NOT stripped — it is the legitimate CSS child
+  combinator (`.a > .b`) and carries no breakout risk inside a JS string.
+{%- endcomment -%}
+{%- assign cp_native_sel  = block.settings.native_gallery_selector | json | replace: "<", "" -%}
+{%- assign cp_scope_sel   = block.settings.scope_selector          | json | replace: "<", "" -%}
+{%- assign cp_extra_sel   = block.settings.extra_hide_selector     | json | replace: "<", "" -%}
+<style>.cp-vg-native-hidden{display:none !important;}</style>
+<script>
+  (function () {
+    try {
+      var el = document.getElementById('cp-embed-data-{{ block.id }}');
+      if (!el) return;
+      var data = JSON.parse(el.textContent);
+
+      var scopeSel  = {{ cp_scope_sel }};
+      var configured = {{ cp_native_sel }};
+      var extraSel  = {{ cp_extra_sel }};
+      var defaultId = {{ product.selected_or_first_available_variant.id | json }};
+
+      var root = document;
+      if (scopeSel) { try { root = document.querySelector(scopeSel) || document; } catch (e) {} }
+
+      // Mirror the controller's _resolveVariantId order: live [name="id"]
+      // (also covers sold-out variants) → ?variant= → first/selected.
+      var id = null;
+      try { var inp = root.querySelector('[name="id"]'); if (inp && inp.value) id = String(inp.value); } catch (e) {}
+      if (!id) { try { id = new URL(window.location.href).searchParams.get('variant'); } catch (e) {} }
+      if (!id && defaultId != null) id = String(defaultId);
+
+      var imgs = (id && data) ? data[id] : null;
+      if (!(imgs && imgs.length)) return;
+
+      // Mirror the controller's _selectors fallback list.
+      var sels = [configured, 'media-gallery', '[id^="MediaGallery"]', '.product__media-wrapper', '.product__media-list'];
+      var native = null;
+      for (var i = 0; i < sels.length; i++) {
+        var s = sels[i]; if (!s) continue;
+        try { var c = root.querySelector(s); if (c) { native = c; break; } } catch (e) {}
+      }
+      if (!native) return;
+
+      var extra = [];
+      if (extraSel) { try { extra = Array.prototype.slice.call(root.querySelectorAll(extraSel)); } catch (e) {} }
+      native.classList.add('cp-vg-native-hidden');
+      extra.forEach(function (x) { x.classList.add('cp-vg-native-hidden'); });
+
+      window.__cpVgFouc = { timer: window.setTimeout(function () {
+        if (!document.querySelector('.cp-embed-gallery .cp-gallery__main-image')) {
+          native.classList.remove('cp-vg-native-hidden');
+          extra.forEach(function (x) { x.classList.remove('cp-vg-native-hidden'); });
+        }
+      }, 3000) };
+    } catch (e) { /* never block page render */ }
+  })();
+</script>
+
 <cp-embed-gallery
   id="cp-embed-gallery-{{ block.id }}"
   class="cp-embed-gallery"

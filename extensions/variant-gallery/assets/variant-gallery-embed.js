@@ -131,14 +131,27 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   _hideNative(native) {
+    // `.cp-vg-native-hidden` is the same class the synchronous inline
+    // bootstrap (FOUC fix) sets pre-paint; keep it in sync here so the
+    // element-scoped CSS rule and the inline style agree.
     native.setAttribute('hidden', '');
     native.style.display = 'none';
-    this._extraEls().forEach((el) => { el.setAttribute('hidden', ''); el.style.display = 'none'; });
+    native.classList.add('cp-vg-native-hidden');
+    this._extraEls().forEach((el) => {
+      el.setAttribute('hidden', ''); el.style.display = 'none';
+      el.classList.add('cp-vg-native-hidden');
+    });
   }
 
   _showNative(native) {
-    if (native) { native.removeAttribute('hidden'); native.style.display = ''; }
-    this._extraEls().forEach((el) => { el.removeAttribute('hidden'); el.style.display = ''; });
+    if (native) {
+      native.removeAttribute('hidden'); native.style.display = '';
+      native.classList.remove('cp-vg-native-hidden');
+    }
+    this._extraEls().forEach((el) => {
+      el.removeAttribute('hidden'); el.style.display = '';
+      el.classList.remove('cp-vg-native-hidden');
+    });
   }
 
   _ensureMount(native) {
@@ -183,6 +196,14 @@ class CpEmbedGallery extends HTMLElement {
     // Consumed: from here on the live input/URL is authoritative again.
     this._wantId = null;
 
+    // The controller is now authoritative for native visibility, so cancel
+    // the inline bootstrap's fail-safe (it would otherwise strip the
+    // FOUC-hide class on a slow/deferred mount and flash the native gallery).
+    if (window.__cpVgFouc && window.__cpVgFouc.timer) {
+      clearTimeout(window.__cpVgFouc.timer);
+      window.__cpVgFouc.timer = null;
+    }
+
     if (!hasImages) {
       // No metafield images for this variant → make sure native is visible.
       const alreadyNative =
@@ -193,9 +214,24 @@ class CpEmbedGallery extends HTMLElement {
       this._log('variant', id, '— no images, restoring native gallery');
       this._removeMount();
       this._showNative(native);
+      // Safety net for R-c: if the inline bootstrap resolved a *different*
+      // native element than this controller (theme re-render between parse
+      // and boot), that element would stay stuck-hidden. On a no-images
+      // variant nothing of ours may be hidden, so sweep the whole document.
+      document.querySelectorAll('.cp-vg-native-hidden')
+        .forEach((e) => e.classList.remove('cp-vg-native-hidden'));
+      this._renderFailedId = null;
       this._state = { id, mode: 'native' };
       return;
     }
+
+    // R-b': a persistently throwing render must degrade ONCE, not every
+    // tick. Without this the post-catch state (mode 'native') never
+    // satisfies the 'custom' upToDate guard below, so each MutationObserver
+    // tick re-enters the try, throws, and its own DOM writes re-arm the
+    // observer → ~80ms busy-loop + console spam. Cleared on success and on
+    // any no-images tick so a later variant change retries normally.
+    if (this._renderFailedId === id) return;
 
     // Has images → custom gallery in place, native hidden.
     const upToDate =
@@ -208,13 +244,28 @@ class CpEmbedGallery extends HTMLElement {
     if (upToDate) return;
 
     this._log('variant', id, '—', images.length, 'image(s); placing custom gallery');
-    this._ensureMount(native);
-    this._hideNative(native);
-    if (this._mountRendered !== id) {
-      this._render(images);
-      this._mountRendered = id;
+    // R-b: the fail-safe is already cancelled above, so a throw in
+    // _ensureMount/_hideNative/_render would otherwise leave the native
+    // gallery hidden with an empty mount — permanent content loss, worse
+    // than the original flash. Degrade to the (visible) native gallery.
+    try {
+      this._ensureMount(native);
+      this._hideNative(native);
+      if (this._mountRendered !== id) {
+        this._render(images);
+        this._mountRendered = id;
+      }
+      this._renderFailedId = null;
+      this._state = { id, mode: 'custom' };
+    } catch (err) {
+      console.error('[cp-embed-gallery] custom gallery render failed, restoring native:', err);
+      this._removeMount();
+      this._showNative(native);
+      document.querySelectorAll('.cp-vg-native-hidden')
+        .forEach((e) => e.classList.remove('cp-vg-native-hidden'));
+      this._renderFailedId = id;
+      this._state = { id, mode: 'native' };
     }
-    this._state = { id, mode: 'custom' };
   }
 
   /* ---------- rendering ---------- */
