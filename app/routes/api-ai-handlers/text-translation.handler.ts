@@ -404,7 +404,26 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
         // Process batch results and save to Shopify
         for (let i = 0; i < targetLocales.length; i++) {
           const locale = targetLocales[i];
-          let translatedValue = batchResults[locale] || sourceText;
+
+          // R3-H10 / N-H3: a missing/empty batch result means this locale was
+          // NOT translated (model dropped it, parse failure, etc.).
+          // Substituting `sourceText` here would write the untranslated
+          // source to Shopify + DB as if it were a real translation — the
+          // exact silent-corruption class as N-H3. Skip the locale and
+          // surface it as rejected, consistent with the digest/userError
+          // failure branches below; never persist source-as-translation.
+          const batchValue = batchResults[locale];
+          if (!batchValue || !batchValue.trim()) {
+            logger.warn("[API-AI] Batch: no translation returned for locale — skipping (not writing source)", {
+              context: "AI",
+              locale,
+              fieldType,
+            });
+            if (!rejectedFields[locale]) rejectedFields[locale] = [];
+            rejectedFields[locale].push(fieldType);
+            continue;
+          }
+          let translatedValue = batchValue;
 
           // For URL slugs: ensure the result is a valid slug (post-process as safety net)
           if (isSlugField) {
@@ -1188,7 +1207,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             locale,
             error: errorMessage(error)
           });
-          translations[locale] = sourceText; // Fallback to original
+          // R3-H10 / N-H3 audited-safe: this sourceText assignment is
+          // RESPONSE-MAP ONLY. The Shopify translationsRegister + DB upsert
+          // for this locale live inside the try above, BEFORE this catch, so
+          // a translation failure writes NOTHING to Shopify/DB for it. The
+          // persisted artifact (task.result = aiResponses) records an
+          // explicit `ERROR:` for the locale, never the source. Do NOT start
+          // persisting `translations` without re-introducing an N-H3 guard.
+          translations[locale] = sourceText; // response map only — see note
           aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
         }
       }
