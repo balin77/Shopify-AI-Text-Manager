@@ -248,6 +248,23 @@ model ProductImage {
   // Atomic get-or-create keyed on (productId, mediaId) — prevents duplicate
   // ProductImage rows from concurrent alt-text applies. Postgres treats NULL
   // mediaId as distinct, so legacy rows without a Shopify media GID are unaffected.
+  //
+  // R4-H6 (assessed; intentionally NOT changed):
+  //  • NULL-mediaId gap: NULL-distinctness is SQL-standard. It is acceptable
+  //    here because every current write path (product sync, WebP, alt-text
+  //    apply) always sets mediaId from a Shopify MediaImage GID — no path
+  //    creates NULL-mediaId rows at volume; the only NULL rows are intentional
+  //    legacy data. Closing the gap would require Postgres-15
+  //    `NULLS NOT DISTINCT`, which could fail the migration on pre-existing
+  //    duplicate-NULL rows and change semantics — disproportionate/uncertain.
+  //  • non-CONCURRENT build: the backing migration
+  //    (20260519100000_…) uses CREATE UNIQUE INDEX, which takes ACCESS
+  //    EXCLUSIVE during the build. Prisma runs migrations in a transaction so
+  //    CREATE INDEX CONCURRENTLY is not usable there. That migration is
+  //    already applied (immutable history — must not be rewritten); on fresh
+  //    DBs it builds on an empty table. FORWARD RULE: any future index on a
+  //    large hot table must be added out-of-band CONCURRENTLY, not via an
+  //    in-transaction Prisma migration, to avoid blocking boot/deploy.
   @@unique([productId, mediaId])
   @@index([productId])
 }

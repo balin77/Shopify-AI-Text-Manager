@@ -23,11 +23,15 @@
  * ```
  */
 
-import { PrismaClient, type WebhookRetry } from "@prisma/client";
+import type { WebhookRetry } from "@prisma/client";
+import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 import { WEBHOOK_CONFIG } from "../config/constants";
 
-const db = new PrismaClient();
+// R4-H3: was `new PrismaClient()` — a SECOND client with its own connection
+// pool that was never $disconnect()-ed (pool leak; doubled DB connections,
+// and the pool stayed open through shutdown). Reuse the single shared client
+// (also $disconnect()-ed exactly once by server.js gracefulShutdown).
 
 export interface WebhookRetryJob {
   id: string;
@@ -48,6 +52,11 @@ class WebhookRetryService {
   private readonly PROCESSING_INTERVAL_MS = 5000; // Check every 5 seconds
 
   constructor() {
+    // R4-H3: start-on-construct is intentional — the singleton must process
+    // retries wherever this module is imported (e.g. webhooks.products needs
+    // it live to actually drain scheduled retries). startProcessing() is
+    // idempotent (guarded by this.processingInterval) and the loop is torn
+    // down on SIGTERM/SIGINT, so this is not a leak.
     this.startProcessing();
   }
 

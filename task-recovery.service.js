@@ -12,10 +12,16 @@ import { refundImageOperations } from "./image-op-refund.js";
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
 
-// Timeout for stuck tasks (10 minutes)
-const STUCK_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+// R4-H2: a task is "stuck" only if its updatedAt has not advanced for this
+// long. ANY running/pending/queued task older than this is blanket-failed,
+// so a LEGITIMATELY long task is killed unless it heartbeats. Contract:
+// long-running task handlers MUST bump updatedAt periodically (a progress
+// write does this; webp-processor heartbeats explicitly and is also
+// recovered before this reaper runs). Env-overridable so an operator can
+// raise it for shops with legitimately long bulk jobs without a redeploy.
+const STUCK_TASK_TIMEOUT_MS = parseInt(process.env.STUCK_TASK_TIMEOUT_MS || String(10 * 60 * 1000), 10);
 
-// Check for stuck tasks every 5 minutes (configurable via env)
+// Check for stuck tasks on this interval (env-configurable; default 5 min).
 const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || String(5 * 60 * 1000), 10);
 
 export class TaskRecoveryService {
@@ -41,7 +47,7 @@ export class TaskRecoveryService {
       return;
     }
 
-    console.log('[TaskRecovery] Starting stuck task monitoring (every 2 minutes)');
+    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min)`);
 
     this.stuckCheckInterval = setInterval(async () => {
       try {

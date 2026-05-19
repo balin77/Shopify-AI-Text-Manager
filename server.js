@@ -290,6 +290,37 @@ const host = process.env.HOST || '0.0.0.0';
 const server = app.listen(port, host, async () => {
   serverLogger.info(`Express server listening at http://${host}:${port}`);
 
+  // ───────────────────────────────────────────────────────────────────────
+  // R4-C2 — KNOWN multi-instance limitation (assessed; deliberately NOT
+  // patched here, documented instead).
+  //
+  // Every replica that boots starts ALL of the singleton background jobs
+  // below (task cleanup, GDPR-audit cleanup, task-recovery / stuck-task
+  // reaper, stale-image cleanup, WebP processor) and the in-bundle
+  // sync-scheduler cleanup. With >1 replica they run concurrently:
+  //   • two reapers can both select the same stuck WebP tasks before either
+  //     flips them → double image-op REFUND (interacts with R4-DI3: the
+  //     refund is atomic per statement but two reapers each issue one);
+  //   • the R4-DI5 product-delete tombstone is an in-process Map → it only
+  //     guards resurrect/refund WITHIN one instance, not across replicas;
+  //   • duplicated cleanup churn / racing deletes.
+  //
+  // This is currently LATENT: the app is deployed as a single `web` process
+  // (Procfile: `web: npm run start:production`; no replica/scale config).
+  //
+  // A correct fix needs cluster-wide mutual exclusion, but every safe option
+  // is a dedicated piece of infra work, NOT a rider here:
+  //   • a held session advisory lock needs a dedicated connection — Prisma's
+  //     pool can recycle the lock-owning connection, silently releasing it;
+  //   • wrapping each whole job in one tx + pg_try_advisory_xact_lock pins a
+  //     connection for minutes and is outright wrong for stale-image (it
+  //     sleeps between products → idle-in-transaction);
+  //   • a leader-election/lease table needs a migration + TTL renewal.
+  // RECOMMENDED when multi-instance is actually enabled: a dedicated
+  // `pg`-client session advisory lock acquired once at boot (one well-known
+  // key); only the lock holder starts the jobs below; release on shutdown.
+  // ───────────────────────────────────────────────────────────────────────
+
   // Start task cleanup service
   try {
     const { TaskCleanupService } = await import("./task-cleanup.service.js");

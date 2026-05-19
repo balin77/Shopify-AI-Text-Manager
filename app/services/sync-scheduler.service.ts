@@ -59,6 +59,17 @@ class SyncSchedulerService {
   // Last persisted-progress timestamp per shop (throttles initial-sync writes).
   private lastProgressWrite: Map<string, number> = new Map();
 
+  constructor() {
+    // R4-H4: the periodic GLOBAL database cleanup (expired tasks, old webhook
+    // logs, free-plan excess images, orphan alt-translations) used to start
+    // ONLY from startSyncForShop(). With no active shop (quiet period, or a
+    // fresh deploy before any request) it never ran and the DB grew
+    // unbounded. The cleanup is shop-independent, so start it at construction
+    // (the singleton is created at server boot via entry.server importing
+    // this module). ensureCleanupTimerRunning() is idempotent.
+    this.ensureCleanupTimerRunning();
+  }
+
   /**
    * Starts background sync for a shop
    * If sync is already running, it will be restarted
@@ -471,16 +482,22 @@ class SyncSchedulerService {
       });
       const freeShopNames = freeShops.map(s => s.shop);
 
+      // R4-H4: batch the free-plan excess-image purge. A single deleteMany
+      // with `product: { shop: { in: <all free shops> } }` is an unbatched
+      // anti-join: one huge IN() list + a join-driven delete that can lock a
+      // large slice of ProductImage for a long time on a multi-tenant DB.
+      // Chunk the shop list so each statement is bounded.
       let excessImages = { count: 0 };
-      if (freeShopNames.length > 0) {
-        excessImages = await db.productImage.deleteMany({
+      const SHOP_BATCH = 50;
+      for (let i = 0; i < freeShopNames.length; i += SHOP_BATCH) {
+        const batch = freeShopNames.slice(i, i + SHOP_BATCH);
+        const res = await db.productImage.deleteMany({
           where: {
             position: { gt: 0 },
-            product: {
-              shop: { in: freeShopNames }
-            }
-          }
+            product: { shop: { in: batch } },
+          },
         });
+        excessImages.count += res.count;
       }
 
       // 4. Delete orphaned image alt-text translations (images that no longer exist).
@@ -491,7 +508,24 @@ class SyncSchedulerService {
         WHERE "imageId" NOT IN (SELECT id FROM "ProductImage")
       `;
 
-      logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images (free-plan only)`);
+      // 5. R4-H5: ContentTranslation has a POLYMORPHIC resourceId (no FK /
+      // ON DELETE CASCADE), so rows orphan whenever the underlying resource
+      // disappears without going through a path that scrubs them, and there
+      // was no periodic purge → unbounded growth. We only purge the
+      // UNAMBIGUOUS, dominant case here — resourceType='Product' whose
+      // resourceId no longer exists in Product — as one atomic anti-join
+      // (same pattern as #4). Scoped strictly by resourceType so it can
+      // never touch Collection/Article/Page/ShopPolicy/Metaobject or the
+      // sub-resource (ProductOption/…/Metafield) rows, whose id spaces are
+      // not the Product table; a correct purge for those needs per-type
+      // mapping and is deliberately left for a dedicated change.
+      const orphanCT = await db.$executeRaw`
+        DELETE FROM "ContentTranslation"
+        WHERE "resourceType" = 'Product'
+          AND "resourceId" NOT IN (SELECT id FROM "Product")
+      `;
+
+      logger.debug(`[SyncScheduler] Cleanup complete: ${expiredTasks.count} tasks, ${webhookLogs.count} logs, ${excessImages.count} excess images (free-plan only), ${orphanCT} orphan product translations`);
       logger.debug(`[SyncScheduler] Note: Theme data cleanup is now handled by aggressive sync (every 40s)`);
     } catch (error) {
       logger.error(`[SyncScheduler] Cleanup error:`, error);

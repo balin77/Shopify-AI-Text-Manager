@@ -14,21 +14,24 @@ initSentryServer();
 
 const ABORT_DELAY = 5000;
 
-// Graceful shutdown handlers for sync scheduler
+// R4-C1: stop the producers we own (sync scheduler + shop reaper) on
+// shutdown, but DO NOT call process.exit() here. server.js's
+// gracefulShutdown() is the single shutdown coordinator: it closes the HTTP
+// server, stops the cleanup services, DRAINS the AI queue (~8s) and
+// $disconnect()s Prisma, then exits (with a 10s force-exit safety net).
+// A process.exit(0) in this listener fired in the same signal tick and
+// killed the process before that drain/disconnect could finish, silently
+// voiding the queue-drain / refund / recovery guarantees.
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM received - stopping all sync schedulers', { context: 'EntryServer' });
+  logger.info('SIGTERM received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
-  logger.info('All sync schedulers stopped', { context: 'EntryServer' });
-  process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  logger.info('SIGINT received - stopping all sync schedulers', { context: 'EntryServer' });
+  logger.info('SIGINT received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
-  logger.info('All sync schedulers stopped', { context: 'EntryServer' });
-  process.exit(0);
 });
 
 export default async function handleRequest(
