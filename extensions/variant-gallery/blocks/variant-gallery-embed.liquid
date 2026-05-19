@@ -119,6 +119,24 @@
 {%- assign cp_extra_sel   = block.settings.extra_hide_selector     | json | replace: "<", "" -%}
 <style>.cp-vg-native-hidden{display:none !important;}</style>
 
+{%- comment -%}
+  Dormant blanket rule, duplicated from the target:head pre-hide block.
+  The head block only runs at initial <head> parse — it does NOT cover an
+  AJAX variant change, where the theme replaces the product section with
+  a fresh, visible native gallery ~80ms before the controller hides it
+  per-element. The controller re-adds `cp-vg-prehide` synchronously on
+  variant-change signals; this rule (present once the body embed is
+  parsed, i.e. always by the time a shopper can switch variants) makes
+  that cover actually hide the incoming native gallery. Dormant unless
+  the class is set, so it is inert on initial load / no-op when unused.
+{%- endcomment -%}
+<style>
+  html.cp-vg-prehide media-gallery,
+  html.cp-vg-prehide [id^="MediaGallery"],
+  html.cp-vg-prehide .product__media-wrapper,
+  html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
+</style>
+
 <script>
   (function () {
     try {

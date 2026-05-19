@@ -14,7 +14,7 @@ class CpEmbedGallery extends HTMLElement {
     this._log('connected. block:', this.dataset.blockId);
 
     this._onTick = this._tick.bind(this);
-    this._onTickRaw = () => this._schedule();
+    this._onTickRaw = () => { this._preCover(); this._schedule(); };
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this._init(), { once: true });
@@ -62,11 +62,13 @@ class CpEmbedGallery extends HTMLElement {
     // Variant-change + section-re-render signals (all delegated/global so they
     // survive section replacement).
     this._onChange = (e) => {
-      if (e.target && e.target.matches && e.target.matches('[name="id"]')) this._schedule();
+      if (e.target && e.target.matches && e.target.matches('[name="id"]')) {
+        this._preCover(); this._schedule();
+      }
     };
     this._onVariantEvent = (e) => {
       const id = e.detail && e.detail.variant && e.detail.variant.id;
-      if (id) { this._wantId = String(id); this._schedule(); }
+      if (id) { this._wantId = String(id); this._preCover(); this._schedule(); }
     };
     document.addEventListener('change', this._onChange, true);
     document.addEventListener('variant:change', this._onVariantEvent);
@@ -175,6 +177,28 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   /* ---------- tick (idempotent) ---------- */
+
+  // Cover the section-re-render gap on a variant change. The theme
+  // replaces the product section with a fresh, VISIBLE native gallery
+  // ~80ms before the debounced _tick can hide it per-element — that gap
+  // is the variant-switch flash. Re-applying the global blanket class
+  // synchronously here (the blanket <style> is shipped dormant by the
+  // body embed, so it works even if the target:head block is disabled)
+  // hides the incoming native gallery the instant it is injected. _tick
+  // releases the blanket again right after it has applied the precise
+  // per-element hide (same synchronous tick, no repaint in between), so
+  // quick-view / other galleries are only covered for that brief gap.
+  // A re-armed 3s fail-safe drops the blanket if a tick never resolves
+  // (e.g. the re-rendered native never appears) so nothing gets stuck.
+  _preCover() {
+    if (!this._data || !Object.keys(this._data).length) return;
+    document.documentElement.classList.add('cp-vg-prehide');
+    window.__cpVgFouc = window.__cpVgFouc || {};
+    clearTimeout(window.__cpVgFouc.prehideTimer);
+    window.__cpVgFouc.prehideTimer = setTimeout(() => {
+      document.documentElement.classList.remove('cp-vg-prehide');
+    }, 3000);
+  }
 
   _schedule() {
     clearTimeout(this._t);
