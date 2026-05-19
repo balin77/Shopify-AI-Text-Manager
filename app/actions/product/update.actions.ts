@@ -45,6 +45,13 @@ export async function handleUpdateProduct(
   // enumerable. If a Product row with this id exists under a different shop,
   // reject — otherwise the DB writes below (productImage, contentTranslation,
   // productImageAltTranslation) would corrupt another tenant's data.
+  // NOTE: this top-level check stays fail-OPEN on the not-yet-synced case
+  // (ownerCheck === null) on purpose — editing a product that isn't in the
+  // local Product table yet is a legitimate flow. The hard fail-CLOSED
+  // guarantee for N-C2 is provided by the `shop_id` compound scoping on every
+  // internal lookup/write below (see updateImageAltTexts /
+  // updateTranslatedProduct / updatePrimaryProduct), so a foreign or
+  // not-synced productId resolves to null and writes safely no-op.
   const ownerCheck = await db.product.findUnique({
     where: { id: productId },
     select: { shop: true },
