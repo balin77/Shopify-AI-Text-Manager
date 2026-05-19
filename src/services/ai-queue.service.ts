@@ -50,7 +50,25 @@ export class AIQueueService {
   // `processing` boolean serialized the ENTIRE service to 1 in-flight request
   // globally, so one slow shop blocked every other shop.
   private inFlight = 0;
-  private static readonly MAX_GLOBAL_CONCURRENCY = 4;
+  // Max provider calls in flight at once, prozessweit über alle Shops.
+  // Configurable via the AI_QUEUE_CONCURRENCY env var (Railway etc.);
+  // defaults to 4 and is clamped to a sane 1..32 range. Invalid/missing
+  // values fall back to the default.
+  private static readonly MAX_GLOBAL_CONCURRENCY = AIQueueService.resolveConcurrency();
+
+  private static resolveConcurrency(): number {
+    const DEFAULT = 4;
+    const MIN = 1;
+    const MAX = 32;
+    const raw = process.env.AI_QUEUE_CONCURRENCY;
+    if (!raw) return DEFAULT;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < MIN || parsed > MAX) {
+      loggers.queue('warn', `Invalid AI_QUEUE_CONCURRENCY="${raw}" — falling back to ${DEFAULT} (allowed: integer ${MIN}–${MAX})`);
+      return DEFAULT;
+    }
+    return parsed;
+  }
 
   // Re-entrancy guard for the scheduler tick only (not the executions).
   private scheduling = false;
