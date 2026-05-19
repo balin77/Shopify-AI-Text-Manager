@@ -20,6 +20,12 @@ import { ReloadButton } from "./ReloadButton";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import {
+  buildProductJsonLd,
+  buildCollectionJsonLd,
+  buildArticleJsonLd,
+  type JsonLd,
+} from "../services/structured-data.service";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
@@ -371,6 +377,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
     }
 
+    // JSON-LD preview for the SEO sidebar. The shop's storefront domain is
+    // not available in this translation editor, so URLs are intentionally
+    // omitted by the service (still valid schema.org); the storefront theme
+    // extension emits the absolute-URL version automatically. This makes the
+    // copyable block + schema validation reachable for the SEO-relevant types.
+    const title = editableValues.title || "";
+    const desc = editableValues.description || editableValues.body || "";
+    const handle = editableValues.handle || "";
+    const metaDescription = editableValues.metaDescription || "";
+    const sdShop = { domain: "", name: "" };
+    let structuredData: JsonLd | null = null;
+    if (!isBlogContainer && title) {
+      if (config.contentType === "products") {
+        structuredData = buildProductJsonLd(
+          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          sdShop,
+        );
+      } else if (config.contentType === "collections") {
+        structuredData = buildCollectionJsonLd(
+          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          sdShop,
+        );
+      } else if (config.contentType === "blogs") {
+        structuredData = buildArticleJsonLd(
+          { title, body: desc, handle, blogHandle: handle },
+          sdShop,
+        );
+      }
+    }
+
     return (
       <SeoSidebar
         title={editableValues.title || ""}
@@ -382,6 +418,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         imagesWithAlt={imagesWithAlt}
         excludeDescription={isBlogContainer}
         excludeImages={isBlogContainer}
+        structuredData={structuredData}
       />
     );
   };

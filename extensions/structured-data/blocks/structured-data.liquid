@@ -80,7 +80,7 @@
   , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
   , "offers": {
       "@type": "Offer",
-      "price": {{ p_price | divided_by: 100.0 | json }},
+      "price": {{ p_price | times: 0.01 | json }},
       "priceCurrency": {{ p_currency | json }},
       "availability": {% if product.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
       "url": {{ p_url | json }}
@@ -88,9 +88,9 @@
   {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}
   , "aggregateRating": {
       "@type": "AggregateRating",
-      "ratingValue": {{ r_obj.rating | json }},
-      "bestRating": {{ r_obj.scale_max | default: 5 | json }},
-      "reviewCount": {{ r_count | json }}
+      "ratingValue": {{ r_obj.rating | plus: 0 }},
+      "bestRating": {{ r_obj.scale_max | default: 5 | plus: 0 }},
+      "reviewCount": {{ r_count | plus: 0 }}
     }
   {%- endif -%}
 }

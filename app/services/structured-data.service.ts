@@ -171,9 +171,10 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
     image: p.featuredImageUrl || undefined,
     sku: p.sku || undefined,
     url: url || undefined,
-    brand: p.vendor
-      ? { "@type": "Brand", name: p.vendor }
-      : { "@type": "Brand", name: shop.name },
+    brand:
+      p.vendor || shop.name
+        ? { "@type": "Brand", name: p.vendor || shop.name }
+        : undefined,
     offers,
     aggregateRating,
   });
