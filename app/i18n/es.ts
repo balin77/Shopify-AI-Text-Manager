@@ -701,6 +701,8 @@ export const es: Translation = {
     missingMainImageTooltip: "Sin imagen principal: {variants}",
     altBadge: "ALT",
     noAltBadge: "SIN ALT",
+    imageThumbLabel: "Imagen de producto",
+    mainImage: "Imagen principal",
     upload: "Subir",
     seoScoreTab: "SEO Score",
     imagesTab: "Procesamiento de imágenes",

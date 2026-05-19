@@ -10,6 +10,7 @@ import {
   Button,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { resolveMerchantLocale } from "../utils/locale.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
@@ -80,8 +81,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
 
     if (!settings) {
-      // Auto-select app language based on shop's primary locale
-      const autoSelectedLanguage = primaryShopLocale.startsWith("en") ? "en" : "de";
+      // R4-UX1: was a crude binary (en vs. de) on the shop's *storefront*
+      // primary locale — a Spanish merchant wrongly got German. Use the
+      // shared resolver: merchant admin locale (?locale / Accept-Language)
+      // first, shop primary locale only as a weak last resort.
+      const autoSelectedLanguage = resolveMerchantLocale(request, primaryShopLocale);
 
       settings = await db.aISettings.create({
         data: {

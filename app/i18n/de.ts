@@ -699,6 +699,8 @@ export const de = {
     missingMainImageTooltip: "Kein Hauptbild: {variants}",
     altBadge: "ALT",
     noAltBadge: "KEIN ALT",
+    imageThumbLabel: "Produktbild",
+    mainImage: "Hauptbild",
     upload: "Upload",
     seoScoreTab: "SEO Score",
     imagesTab: "Bildverarbeitung",
