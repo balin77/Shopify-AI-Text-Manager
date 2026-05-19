@@ -462,6 +462,23 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     }
 
     const plan = getPlanFromSubscription(subscription);
+
+    // R4-DI4: ~6 callers (afterAuth, app.tsx loader on every navigation,
+    // settings, billing.callback, webhooks.subscription + redelivery,
+    // scheduler) can run this concurrently. The old flow let two racers both
+    // observe previousPlan='free', both write 'pro' and BOTH fire a full
+    // upgrade resync for the same shop. Gate the expensive resync behind an
+    // atomic compare-and-set executed BEFORE the (idempotent) write: exactly
+    // one caller's updateMany moves the row off its old plan (count === 1);
+    // concurrent callers then match 0 rows and skip the resync. The
+    // syncSubscriptionToDatabase upsert below still runs unconditionally so
+    // the durable plan write (and the no-row reinstall case) is unchanged.
+    const claim = await prisma.aISettings.updateMany({
+      where: { shop, subscriptionPlan: { not: plan } },
+      data: { subscriptionPlan: plan },
+    });
+    const transitioned = claim.count === 1;
+
     await syncSubscriptionToDatabase(shop, plan);
 
     // Trial-consumption is recorded HERE — at the Shopify-verified point, not
@@ -473,8 +490,13 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
       await markTrialConsumed(shop);
     }
 
-    await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
-    await maybeTriggerUpgradeResync(admin, shop, previousPlan, plan);
+    // Only the CAS winner (the single caller that actually performed the
+    // plan transition) reconciles the cache and triggers the one-time
+    // upgrade resync — racing losers skip both, so no duplicate full sync.
+    if (transitioned) {
+      await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
+      await maybeTriggerUpgradeResync(admin, shop, previousPlan, plan);
+    }
     return plan;
   } catch (error) {
     logger.error('Error checking subscription', { error });

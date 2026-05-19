@@ -95,17 +95,21 @@ export async function refundImageOperations(
   if (n <= 0) return;
   const period = currentImageOpPeriod();
   try {
-    const row = await db.imageOperationCounter.findUnique({
-      where: { shop_period: { shop, period } },
-      select: { count: true },
-    });
-    if (!row) return;
-    const next = Math.max(0, row.count - n);
-    await db.imageOperationCounter.update({
-      where: { shop_period: { shop, period } },
-      data: { count: next },
-    });
-    logger.info(`[ImageOps] Refunded ${n} op(s) for ${shop}: ${row.count} → ${next}`);
+    // R4-DI3: ONE atomic, clamped statement. consumeImageOperations()
+    // increments atomically; the old findUnique → Math.max(0,count-n) →
+    // blind update here was a read-modify-write that overwrote (lost) any
+    // consume-increment that landed in between → undercount → monthly cap
+    // bypassable (revenue leak); two concurrent refunds also clobbered each
+    // other. GREATEST clamps at 0 within the same UPDATE so it can never go
+    // negative either.
+    const affected = await db.$executeRaw`
+      UPDATE "ImageOperationCounter"
+      SET "count" = GREATEST("count" - ${n}, 0), "updatedAt" = NOW()
+      WHERE "shop" = ${shop} AND "period" = ${period}
+    `;
+    if (affected > 0) {
+      logger.info(`[ImageOps] Refunded ${n} op(s) for ${shop} (period ${period})`);
+    }
   } catch (err) {
     logger.error(
       `[ImageOps] Refund of ${n} op(s) failed for ${shop}: ${err instanceof Error ? err.message : String(err)}`

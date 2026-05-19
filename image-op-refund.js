@@ -46,17 +46,19 @@ export async function refundImageOperations(db, shop, n) {
   if (!shop || !n || n <= 0) return;
   const period = currentImageOpPeriod();
   try {
-    const row = await db.imageOperationCounter.findUnique({
-      where: { shop_period: { shop, period } },
-      select: { count: true },
-    });
-    if (!row) return;
-    const next = Math.max(0, row.count - n);
-    await db.imageOperationCounter.update({
-      where: { shop_period: { shop, period } },
-      data: { count: next },
-    });
-    console.log(`[ImageOps] Refunded ${n} op(s) for ${shop}: ${row.count} -> ${next}`);
+    // R4-DI3: ONE atomic, clamped statement. The old
+    // findUnique → Math.max(0,count-n) → blind update was a read-modify-write
+    // that discarded any concurrent consume-increment (lost update →
+    // undercount → monthly cap bypass / revenue leak; two parallel refunds
+    // also lost each other). GREATEST clamps at 0 in the same statement.
+    const affected = await db.$executeRaw`
+      UPDATE "ImageOperationCounter"
+      SET "count" = GREATEST("count" - ${n}, 0), "updatedAt" = NOW()
+      WHERE "shop" = ${shop} AND "period" = ${period}
+    `;
+    if (affected > 0) {
+      console.log(`[ImageOps] Refunded ${n} op(s) for ${shop} (period ${period})`);
+    }
   } catch (err) {
     // R3-M9: console.* (not the winston `loggers`) is deliberate here — this
     // module is loaded by the standalone node services (webp-processor,
