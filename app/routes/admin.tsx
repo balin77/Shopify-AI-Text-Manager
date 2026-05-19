@@ -87,6 +87,11 @@ interface AuditRow {
   status: string;
   customerEmail: string | null;
   error: string | null;
+  // R5-G1: the customers/data_request export must be retrievable by the
+  // shop owner (Shopify obligation). It is persisted in full on the audit
+  // row and surfaced here so the request can actually be fulfilled.
+  dataExported: string | null;
+  webhookId: string | null;
   requestedAt: string;
   completedAt: string;
 }
@@ -108,6 +113,8 @@ async function loadAuditRows(): Promise<AuditRow[]> {
       status: true,
       customerEmail: true,
       error: true,
+      dataExported: true,
+      webhookId: true,
       requestedAt: true,
       completedAt: true,
     },
@@ -119,6 +126,8 @@ async function loadAuditRows(): Promise<AuditRow[]> {
     status: l.status,
     customerEmail: l.customerEmail,
     error: l.error,
+    dataExported: l.dataExported,
+    webhookId: l.webhookId,
     requestedAt: l.requestedAt.toISOString(),
     completedAt: l.completedAt.toISOString(),
   }));
@@ -592,12 +601,13 @@ export default function AdminPage() {
               <th style={TH}>Kunde</th>
               <th style={TH}>Zeitpunkt</th>
               <th style={TH}>Fehler</th>
+              <th style={TH}>Exportierte Daten</th>
             </tr>
           </thead>
           <tbody>
             {audits.length === 0 ? (
               <tr>
-                <td style={TD} colSpan={6}>
+                <td style={TD} colSpan={7}>
                   Keine Audit-Einträge.
                 </td>
               </tr>
@@ -628,6 +638,39 @@ export default function AdminPage() {
                     }}
                   >
                     {a.error ?? ''}
+                  </td>
+                  <td style={{ ...TD, whiteSpace: 'normal', maxWidth: 360 }}>
+                    {a.dataExported ? (
+                      <details>
+                        <summary style={{ cursor: 'pointer' }}>
+                          View / download
+                          {a.webhookId ? ` (id ${a.webhookId.slice(0, 8)}…)` : ''}
+                        </summary>
+                        <a
+                          href={`data:application/json;charset=utf-8,${encodeURIComponent(
+                            a.dataExported,
+                          )}`}
+                          download={`gdpr-data-request-${a.shop}-${a.id}.json`}
+                        >
+                          Download JSON
+                        </a>
+                        <pre
+                          style={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-all',
+                            maxHeight: 240,
+                            overflow: 'auto',
+                            background: '#f6f6f7',
+                            padding: 8,
+                            marginTop: 6,
+                          }}
+                        >
+                          {a.dataExported}
+                        </pre>
+                      </details>
+                    ) : (
+                      '—'
+                    )}
                   </td>
                 </tr>
               ))
