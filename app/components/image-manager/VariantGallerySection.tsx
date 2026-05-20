@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from "react";
-import { Text, Button, InlineStack, Collapsible, Badge, TextField, Banner } from "@shopify/polaris";
+import { Text, Button, InlineStack, Collapsible, Badge, TextField } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -73,7 +73,11 @@ export function VariantGallerySection({
   primaryLocale,
   externalVideoUrls,
   onAddExternalVideoUrl,
-  onRemoveExternalVideoUrl,
+  // onRemoveExternalVideoUrl is intentionally not destructured: with voll-mix
+  // the URL tiles live inside the sortable grid and removal goes through
+  // handleRemoveFromGallery (which already routes URL entries back into
+  // pendingExternalVideos). The prop is kept on the interface for backward
+  // compatibility with callers that may still pass it.
   onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
@@ -93,9 +97,79 @@ export function VariantGallerySection({
     .map(gid => fileUrlMap[gid])
     .filter(Boolean) as string[];
 
-  const displayUrls = urls.length > 0 ? urls : variant.galleryFileGids
+  // Voll-mix: external video URLs render as additional tiles inside the same
+  // sortable grid as file-backed items, so the merchant can drag-reorder
+  // across both kinds. variant_gallery_order (json) holds the persisted
+  // sequence; the parent reorder handler splits the dropped result back into
+  // the per-kind pending state slots. URLs always sort after files on first
+  // paint — the order metafield can move them anywhere except position 0.
+  const fileUrlList = urls.length > 0 ? urls : variant.galleryFileGids
     .filter(gid => gid.startsWith("http"))
     .slice(0, 10);
+  const orderedUrls = useMemo(() => {
+    // If the variant has a saved order, honour it: emit items in the saved
+    // sequence, skipping any references that no longer resolve (file deleted
+    // / URL removed). Falls back to "files first, then URLs" when missing.
+    const knownFileSet = new Set(fileUrlList);
+    const knownUrlSet = new Set(effectiveExternalVideoUrls);
+    const raw = variant.galleryOrderJson;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Array<{ kind: string; value: string }>;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const out: string[] = [];
+          const seenFiles = new Set<string>();
+          const seenUrls = new Set<string>();
+          for (const entry of parsed) {
+            if (entry?.kind === "file") {
+              const fileUrl = fileUrlMap[entry.value];
+              if (fileUrl && knownFileSet.has(fileUrl) && !seenFiles.has(fileUrl)) {
+                out.push(fileUrl);
+                seenFiles.add(fileUrl);
+              }
+            } else if (entry?.kind === "url") {
+              if (knownUrlSet.has(entry.value) && !seenUrls.has(entry.value)) {
+                out.push(entry.value);
+                seenUrls.add(entry.value);
+              }
+            }
+          }
+          // Append anything the order JSON didn't cover (new uploads / URLs
+          // added since the last save) so they're still visible.
+          for (const u of fileUrlList) if (!seenFiles.has(u)) out.push(u);
+          for (const u of effectiveExternalVideoUrls) if (!seenUrls.has(u)) out.push(u);
+          return out;
+        }
+      } catch { /* fall through to default */ }
+    }
+    return [...fileUrlList, ...effectiveExternalVideoUrls];
+    // effectiveExternalVideoUrls is referenced via closure; we recompute when
+    // any of these inputs change so the merchant sees the latest mix.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), fileUrlMap]);
+
+  const displayUrls = orderedUrls;
+
+  // Augment the parent's imageMetas with synthetic entries for external
+  // video URLs — the parent only populates entries for product images, so
+  // without this the SortableThumbnail dispatch would fall back to <img>
+  // and try to load a YouTube watch-page URL as an image (broken icon).
+  const enrichedImageMetas = useMemo(() => {
+    if (effectiveExternalVideoUrls.length === 0) return imageMetas;
+    const out: Record<string, ImageMeta> = { ...imageMetas };
+    for (const u of effectiveExternalVideoUrls) {
+      if (out[u]?.kind === "external_video") continue;
+      const parsed = parseExternalVideoUrl(u);
+      out[u] = {
+        ...(out[u] ?? {}),
+        kind: "external_video",
+        externalHost: parsed?.host === "youtube" ? "YouTube" : parsed?.host === "vimeo" ? "Vimeo" : undefined,
+        altText: (out[u]?.altText ?? variant.title),
+      };
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageMetas, effectiveExternalVideoUrls.join("|"), variant.title]);
 
   const urlToGid = Object.fromEntries(
     Object.entries(fileUrlMap).map(([gid, url]) => [url, gid])
@@ -175,7 +249,7 @@ export function VariantGallerySection({
           <SortableImageGrid
             containerId={variant.id}
             imageUrls={displayUrls}
-            imageMetas={imageMetas}
+            imageMetas={enrichedImageMetas}
             onReorder={(newUrls) => {
               const newGids = newUrls.map(u => urlToGid[u] ?? u).filter(Boolean);
               onReorder(variant.id, newGids);
@@ -261,27 +335,11 @@ export function VariantGallerySection({
                   {t.imageManager.addExternalVideoButton ?? "Add"}
                 </Button>
               </InlineStack>
-              {effectiveExternalVideoUrls.length > 0 && (
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                  {effectiveExternalVideoUrls.map((url) => {
-                    const parsed = parseExternalVideoUrl(url);
-                    const hostLabel = parsed?.host === "youtube" ? "YouTube" : parsed?.host === "vimeo" ? "Vimeo" : "Link";
-                    return (
-                      <div key={url} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px", background: "white", borderRadius: 4, border: "1px solid #e1e3e5", fontSize: 12 }}>
-                        <Badge tone="info">{hostLabel}</Badge>
-                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1f2937" }} title={url}>
-                          {url}
-                        </span>
-                        {onRemoveExternalVideoUrl && (
-                          <Button size="slim" variant="plain" tone="critical" onClick={() => onRemoveExternalVideoUrl(variant.id, url)}>
-                            ×
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {/* Voll-Mix: external URLs now render as draggable tiles in
+                  the gallery grid above, so no list-below is needed. The
+                  Remove button below the grid handles deletion of any
+                  selected URL tile via handleRemoveFromGallery (which
+                  routes URL removals to pendingExternalVideos). */}
             </div>
           )}
 

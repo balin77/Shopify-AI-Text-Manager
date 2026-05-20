@@ -197,6 +197,53 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           >
             3D
           </div>
+        ) : kind === "external_video" ? (
+          // YouTube / Vimeo URL: the merchant's URL is not an image, so we
+          // either fetch the host's thumbnail (img.youtube.com for YT) when
+          // available via meta.previewUrl, or render a flat tile with the
+          // host name. The play overlay sits on top either way.
+          meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
+            <img
+              src={(() => {
+                const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/) || url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) || url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
+                return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : "";
+              })()}
+              alt={currentLocaleAltText || t.imageManager.externalVideoLabel || "External video"}
+              draggable={false}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#0b0b0b",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              aria-label={currentLocaleAltText || (t.imageManager.externalVideoLabel ?? "External video")}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "linear-gradient(135deg, #1ab7ea 0%, #007ea8 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "white",
+                fontWeight: 700,
+                fontSize: Math.max(11, Math.round(thumbSize * 0.16)),
+                letterSpacing: 0.5,
+              }}
+            >
+              {meta?.externalHost ?? "VIDEO"}
+            </div>
+          )
         ) : (
           <img
             src={url}

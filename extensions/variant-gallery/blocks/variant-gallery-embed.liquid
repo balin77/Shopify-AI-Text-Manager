@@ -56,10 +56,243 @@
   {
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
+      {%- assign cp_order_mf = variant.metafields.custom.variant_gallery_order -%}
       "{{ variant.id }}": [
         {%- assign cp_has_any = false -%}
-        {%- comment -%} Step 1: if variant has variant_gallery metafield, prefer those images (restricted to this variant). featured_image as primary. {%- endcomment -%}
-        {%- if vg != blank and vg.value != blank -%}
+        {%- assign cp_seen_file_ids = ',' -%}
+        {%- assign cp_seen_urls = ',' -%}
+        {%- comment -%}
+          Voll-mix path: variant_gallery_order (json) is a unified array of
+          { kind: 'file' | 'url', value } entries that mirrors how the
+          merchant drag-arranged files + external URLs in the admin. When
+          present we iterate it as the primary source of order, then append
+          unreferenced items (new uploads / URLs added since the last save).
+        {%- endcomment -%}
+        {%- if cp_order_mf != blank and cp_order_mf.value != blank -%}
+          {%- if variant.featured_image != blank -%}
+            {%- assign vfi = variant.featured_image -%}
+            {%- assign vfi_id_str = vfi.id | append: '' -%}
+            {%- assign cp_seen_file_ids = cp_seen_file_ids | append: vfi_id_str | append: ',' -%}
+            {
+              "type":     "image",
+              "src_400":  {{ vfi | image_url: width: 400  | json }},
+              "src_800":  {{ vfi | image_url: width: 800  | json }},
+              "src_1200": {{ vfi | image_url: width: 1200 | json }},
+              "thumb":    {{ vfi | image_url: width: 160  | json }},
+              "w":        {{ vfi.width  | json }},
+              "h":        {{ vfi.height | json }},
+              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+            }
+            {%- assign cp_has_any = true -%}
+          {%- endif -%}
+          {%- for entry in cp_order_mf.value -%}
+            {%- if entry.kind == 'file' -%}
+              {%- assign entry_val = entry.value | append: '' -%}
+              {%- assign needle = ',' | append: entry_val | append: ',' -%}
+              {%- if cp_seen_file_ids contains needle -%}{%- continue -%}{%- endif -%}
+              {%- for item in vg.value -%}
+                {%- assign item_id_str = item.id | append: '' -%}
+                {%- if item_id_str == entry_val -%}
+                  {%- assign cp_seen_file_ids = cp_seen_file_ids | append: entry_val | append: ',' -%}
+                  {%- if item.media_type == 'image' -%}
+                    {%- assign cp_src = item | image_url: width: 800 -%}
+                    {%- if cp_src != blank -%}
+                      {%- if cp_has_any %},{% endif -%}
+                      {%- assign cp_w = item.preview_image.width  | default: item.width -%}
+                      {%- assign cp_h = item.preview_image.height | default: item.height -%}
+                      {
+                        "type":     "image",
+                        "src_400":  {{ item | image_url: width: 400  | json }},
+                        "src_800":  {{ cp_src | json }},
+                        "src_1200": {{ item | image_url: width: 1200 | json }},
+                        "thumb":    {{ item | image_url: width: 160  | json }},
+                        "w":        {{ cp_w | json }},
+                        "h":        {{ cp_h | json }},
+                        "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                      }
+                      {%- assign cp_has_any = true -%}
+                    {%- endif -%}
+                  {%- elsif item.media_type == 'video' -%}
+                    {%- if item.preview_image != blank and item.sources.size > 0 -%}
+                      {%- if cp_has_any %},{% endif -%}
+                      {%- assign cp_pi = item.preview_image -%}
+                      {
+                        "type":   "video",
+                        "thumb":  {{ cp_pi | image_url: width: 160  | json }},
+                        "poster": {{ cp_pi | image_url: width: 1200 | json }},
+                        "w":      {{ cp_pi.width  | json }},
+                        "h":      {{ cp_pi.height | json }},
+                        "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                        "sources": [
+                          {%- for src in item.sources -%}
+                            {%- unless forloop.first %},{% endunless -%}
+                            {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
+                          {%- endfor -%}
+                        ]
+                      }
+                      {%- assign cp_has_any = true -%}
+                    {%- endif -%}
+                  {%- endif -%}
+                  {%- break -%}
+                {%- endif -%}
+              {%- endfor -%}
+            {%- elsif entry.kind == 'url' -%}
+              {%- assign entry_val = entry.value | append: '' -%}
+              {%- assign url_needle = ',' | append: entry_val | append: ',' -%}
+              {%- if cp_seen_urls contains url_needle -%}{%- continue -%}{%- endif -%}
+              {%- assign cp_seen_urls = cp_seen_urls | append: entry_val | append: ',' -%}
+              {%- assign cp_url = entry_val | strip -%}
+              {%- assign cp_ev_host = blank -%}
+              {%- assign cp_ev_id = blank -%}
+              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtu.be/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtube.com/embed/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/embed/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtube.com/shorts/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/shorts/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'vimeo.com/' -%}
+                {%- assign cp_ev_host = 'vimeo' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
+                {%- if cp_ev_tail contains 'video/' -%}
+                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
+                {%- endif -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- endif -%}
+              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
+                {%- if cp_ev_host == 'youtube' -%}
+                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
+                {%- else -%}
+                  {%- assign cp_ev_thumb = '' -%}
+                {%- endif -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":        "external_video",
+                  "thumb":       {{ cp_ev_thumb | json }},
+                  "poster":      {{ cp_ev_thumb | json }},
+                  "w":           {{ 0 | json }},
+                  "h":           {{ 0 | json }},
+                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "host":        {{ cp_ev_host | json }},
+                  "external_id": {{ cp_ev_id | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- comment -%}
+            Tail-emit: any vg.value items whose id is missing from the order
+            metafield (e.g. files added after the last reorder save) are
+            appended in their natural vg.value order, so they're still
+            visible on the storefront.
+          {%- endcomment -%}
+          {%- if vg != blank and vg.value != blank -%}
+            {%- for item in vg.value -%}
+              {%- assign item_id_str = item.id | append: '' -%}
+              {%- assign tail_needle = ',' | append: item_id_str | append: ',' -%}
+              {%- if cp_seen_file_ids contains tail_needle -%}{%- continue -%}{%- endif -%}
+              {%- assign cp_seen_file_ids = cp_seen_file_ids | append: item_id_str | append: ',' -%}
+              {%- if item.media_type == 'image' -%}
+                {%- assign cp_src = item | image_url: width: 800 -%}
+                {%- if cp_src != blank -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_w = item.preview_image.width  | default: item.width -%}
+                  {%- assign cp_h = item.preview_image.height | default: item.height -%}
+                  {
+                    "type":     "image",
+                    "src_400":  {{ item | image_url: width: 400  | json }},
+                    "src_800":  {{ cp_src | json }},
+                    "src_1200": {{ item | image_url: width: 1200 | json }},
+                    "thumb":    {{ item | image_url: width: 160  | json }},
+                    "w":        {{ cp_w | json }},
+                    "h":        {{ cp_h | json }},
+                    "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- elsif item.media_type == 'video' -%}
+                {%- if item.preview_image != blank and item.sources.size > 0 -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_pi = item.preview_image -%}
+                  {
+                    "type":   "video",
+                    "thumb":  {{ cp_pi | image_url: width: 160  | json }},
+                    "poster": {{ cp_pi | image_url: width: 1200 | json }},
+                    "w":      {{ cp_pi.width  | json }},
+                    "h":      {{ cp_pi.height | json }},
+                    "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                    "sources": [
+                      {%- for src in item.sources -%}
+                        {%- unless forloop.first %},{% endunless -%}
+                        {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
+                      {%- endfor -%}
+                    ]
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- assign cp_tail_extvids = variant.metafields.custom.variant_external_videos -%}
+          {%- if cp_tail_extvids != blank and cp_tail_extvids.value != blank -%}
+            {%- for cp_url_raw in cp_tail_extvids.value -%}
+              {%- assign cp_url = cp_url_raw | strip -%}
+              {%- assign url_tail_needle = ',' | append: cp_url | append: ',' -%}
+              {%- if cp_seen_urls contains url_tail_needle -%}{%- continue -%}{%- endif -%}
+              {%- assign cp_seen_urls = cp_seen_urls | append: cp_url | append: ',' -%}
+              {%- assign cp_ev_host = blank -%}
+              {%- assign cp_ev_id = blank -%}
+              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtu.be/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'vimeo.com/' -%}
+                {%- assign cp_ev_host = 'vimeo' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
+                {%- if cp_ev_tail contains 'video/' -%}
+                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
+                {%- endif -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- endif -%}
+              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
+                {%- if cp_ev_host == 'youtube' -%}
+                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
+                {%- else -%}
+                  {%- assign cp_ev_thumb = '' -%}
+                {%- endif -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":        "external_video",
+                  "thumb":       {{ cp_ev_thumb | json }},
+                  "poster":      {{ cp_ev_thumb | json }},
+                  "w":           {{ 0 | json }},
+                  "h":           {{ 0 | json }},
+                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "host":        {{ cp_ev_host | json }},
+                  "external_id": {{ cp_ev_id | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        {%- comment -%}
+          Default path (no variant_gallery_order yet): existing behaviour —
+          featured_image, then vg.value items, then external URLs.
+        {%- endcomment -%}
+        {%- elsif vg != blank and vg.value != blank -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {

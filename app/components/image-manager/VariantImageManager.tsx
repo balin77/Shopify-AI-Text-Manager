@@ -49,6 +49,11 @@ interface VariantImageManagerProps {
    *  any variant. The shape mirrors the /api/update-variant-galleries body
    *  field so the hook can pass it straight through. */
   onExternalVideosChange?: (variantExternalVideos: Record<string, string[]>) => void;
+  /** Notified whenever the combined file+URL order changes on any variant
+   *  (drag-reorder of a mixed gallery). The value is variantId → stringified
+   *  JSON array of { kind: "file" | "url", value }, ready to be persisted
+   *  to custom.variant_gallery_order. */
+  onGalleryOrderChange?: (variantGalleryOrder: Record<string, string>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
   variantReloadKey?: number;
@@ -102,6 +107,7 @@ export function VariantImageManager({
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
   onExternalVideosChange,
+  onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
@@ -109,6 +115,9 @@ export function VariantImageManager({
   // (they mean "merchant explicitly cleared this variant's videos") so
   // resetting an array to [] still gets persisted on save.
   const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
+  const pendingGalleryOrderRef = useRef<Record<string, string>>({});
+  useEffect(() => { pendingGalleryOrderRef.current = pendingGalleryOrder; }, [pendingGalleryOrder]);
   // Files-browser modal state. `pickerTargetVariantId` is the variant whose
   // gallery the picked files should land in — null while closed.
   const [pickerTargetVariantId, setPickerTargetVariantId] = useState<string | null>(null);
@@ -848,8 +857,24 @@ export function VariantImageManager({
       });
     }, []);
 
-  const handleVariantReorder = useCallback((variantId: string, newGids: string[]) => {
-    setPendingVariantGalleries(p => ({ ...p, [variantId]: newGids }));
+  const handleVariantReorder = useCallback((variantId: string, newItems: string[]) => {
+    // `newItems` is the unified post-reorder sequence — each entry is either
+    // a file GID / staged resourceUrl OR an external-video URL (starts with
+    // "http"). Split the two so each lands in the correct pending slot,
+    // then build the combined order JSON for variant_gallery_order.
+    const fileEntries: string[] = [];
+    const orderEntries: Array<{ kind: "file" | "url"; value: string }> = [];
+    for (const it of newItems) {
+      if (it.startsWith("http")) {
+        orderEntries.push({ kind: "url", value: it });
+      } else {
+        fileEntries.push(it);
+        orderEntries.push({ kind: "file", value: it });
+      }
+    }
+    setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
+    setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
+    onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
   }, []);
 
   const handleProductReorder = useCallback((newUrls: string[]) => {
@@ -1173,6 +1198,18 @@ export function VariantImageManager({
       setLocallyExcludedMainGids(prev => new Set([...prev, variantId]));
     }
 
+    // External-video URLs live in pendingExternalVideos, not pendingVariantGalleries.
+    // Split the removal so each URL ends up clearing the right slot.
+    const externalToRemove = urls.filter(u => u.startsWith("http"));
+    if (externalToRemove.length > 0) {
+      setPendingExternalVideos(prev => {
+        const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
+        onExternalVideosChange?.(next);
+        return next;
+      });
+    }
+
     setPendingVariantGalleries(p => {
       const current = p[variantId] ?? variant?.galleryFileGids ?? [];
       return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
@@ -1182,7 +1219,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap]);
+  }, [variants, fileUrlMap, onExternalVideosChange]);
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];
