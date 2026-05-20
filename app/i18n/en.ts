@@ -731,6 +731,7 @@ export const en: Translation = {
     browseFilesScopeCurrent: "Only files used in this product",
     browseFilesScopeOther: "Pick another product…",
     browseFilesScopeClear: "Clear product filter",
+    browseFilesScopeAll: "All products",
     addMediaToVariantTitle: "Add media to variant: {title}",
     addMediaToProductTitle: "Add media to product",
     bulkDocsToggleShow: "Auto-assignment – Help",

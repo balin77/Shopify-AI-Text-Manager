@@ -10,7 +10,6 @@ import {
   InlineStack,
   BlockStack,
   Divider,
-  Checkbox,
   Select,
 } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
@@ -32,11 +31,15 @@ import type { MediaKind } from "./types";
 export type AddedItem =
   | {
       /** Already in the merchant's Shopify Files library — committed as
-       *  a list.file_reference GID. */
+       *  a list.file_reference GID in variant mode, or re-uploaded via
+       *  productCreateMedia with assetUrl in product mode. */
       source: "library";
       gid: string;
       kind: MediaKind;
       previewUrl: string;
+      /** Full media URL (image / video / GLB), needed by product-mode
+       *  callers that pass it to productCreateMedia.originalSource. */
+      assetUrl: string;
       alt: string | null;
     }
   | {
@@ -49,12 +52,20 @@ export type AddedItem =
       previewUrl: string;
       fileName: string;
       mimeType: string;
+    }
+  | {
+      /** External YouTube/Vimeo URL — variant mode persists it to the
+       *  per-variant metafield; product mode hands it to
+       *  productCreateMedia with mediaContentType: EXTERNAL_VIDEO. */
+      source: "external_url";
+      url: string;
     };
 
 interface ApiFile {
   kind: MediaKind;
   id: string;
   previewUrl: string;
+  assetUrl: string;
   reference: string;
   alt: string | null;
 }
@@ -125,12 +136,12 @@ export function FilePickerModal({
 
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>(initialKind);
-  // Product filter: "all" = library-wide, "current" = currentProductId,
-  // "other:<gid>" = a specific other product selected via the dropdown.
+  // Product filter: "all" = library-wide; any other value = the product GID
+  // to scope to. Includes the current product as just another option in the
+  // dropdown — no special-cased toggle.
   const [productScope, setProductScope] = useState<string>("all");
-  const [otherProductSearch, setOtherProductSearch] = useState("");
-  const [otherProducts, setOtherProducts] = useState<ProductListItem[]>([]);
-  const [otherProductsLoading, setOtherProductsLoading] = useState(false);
+  const [productList, setProductList] = useState<ProductListItem[]>([]);
+  const [productListLoading, setProductListLoading] = useState(false);
 
   const [files, setFiles] = useState<ApiFile[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
@@ -153,8 +164,7 @@ export function FilePickerModal({
       setQuery("");
       setKind(initialKind);
       setProductScope("all");
-      setOtherProductSearch("");
-      setOtherProducts([]);
+      setProductList([]);
       setSelected(new Set());
       setError(null);
       setEndCursor(null);
@@ -170,11 +180,8 @@ export function FilePickerModal({
   // File-list fetching
   // ------------------------------------------------------------------------
   const usedByProductId = useMemo(() => {
-    if (productScope === "all") return null;
-    if (productScope === "current") return currentProductId ?? null;
-    if (productScope.startsWith("other:")) return productScope.slice("other:".length);
-    return null;
-  }, [productScope, currentProductId]);
+    return productScope === "all" ? null : productScope;
+  }, [productScope]);
 
   const fetchFiles = useCallback(async (opts: { append: boolean }) => {
     setIsLoading(true);
@@ -212,32 +219,27 @@ export function FilePickerModal({
   }, [open, query, kind, productScope]);
 
   // ------------------------------------------------------------------------
-  // Other-product dropdown population (lazy on first interaction)
+  // Product dropdown population. Loaded once when the modal opens; the list
+  // includes the current product as just another row so the merchant can
+  // pick it like any other (matching the user's "default = all products,
+  // dropdown lists everything" spec).
   // ------------------------------------------------------------------------
-  const loadOtherProducts = useCallback(async (q: string) => {
-    setOtherProductsLoading(true);
+  const loadProducts = useCallback(async () => {
+    setProductListLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      params.set("first", "100");
-      const res = await fetch(`/api/products-list?${params.toString()}`);
+      const res = await fetch(`/api/products-list?first=200`);
       const data = await res.json();
-      const list: ProductListItem[] = data.products ?? [];
-      // Filter out the current product — that's what the "current" toggle
-      // covers; showing it twice would be confusing.
-      const filtered = currentProductId ? list.filter(p => p.id !== currentProductId) : list;
-      setOtherProducts(filtered);
+      setProductList(data.products ?? []);
     } catch {
-      // Silent: dropdown stays empty, merchant can still use Search + toggle.
+      // Silent: dropdown falls back to ["All products"] only.
     } finally {
-      setOtherProductsLoading(false);
+      setProductListLoading(false);
     }
-  }, [currentProductId]);
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
-    loadOtherProducts(otherProductSearch);
-  }, [open, otherProductSearch, loadOtherProducts]);
+    if (open) loadProducts();
+  }, [open, loadProducts]);
 
   // ------------------------------------------------------------------------
   // Upload pipeline (mirrors BulkImageUploadPanel's flow, inlined here so the
@@ -360,6 +362,7 @@ export function FilePickerModal({
     onAddExternalUrl(parsed.canonicalUrl);
     setUrlInput("");
     setUrlError(null);
+    // Intentionally don't close — merchants often add several links in a row.
   }, [urlInput, onAddExternalUrl, t]);
 
   // ------------------------------------------------------------------------
@@ -378,7 +381,7 @@ export function FilePickerModal({
     const picked: AddedItem[] = [];
     for (const f of files) {
       if (selected.has(f.id)) {
-        picked.push({ source: "library", gid: f.reference, kind: f.kind, previewUrl: f.previewUrl, alt: f.alt });
+        picked.push({ source: "library", gid: f.reference, kind: f.kind, previewUrl: f.previewUrl, assetUrl: f.assetUrl, alt: f.alt });
       }
     }
     for (const u of pendingUploads) {
@@ -447,16 +450,19 @@ export function FilePickerModal({
   };
 
   const productOptions = useMemo(() => {
+    // Default option keeps the picker library-wide; everything else is a
+    // single product (current one included, sorted naturally by title from
+    // the API). Putting it all in one Select avoids the two-control layout
+    // that turned out to confuse the merchant in the previous iteration.
     const opts: Array<{ label: string; value: string }> = [
-      { label: t.imageManager.browseFilesScopeOther ?? "Pick another product…", value: "other:" },
+      { label: t.imageManager.browseFilesScopeAll ?? "All products", value: "all" },
     ];
-    for (const p of otherProducts) {
-      opts.push({ label: p.title, value: `other:${p.id}` });
+    for (const p of productList) {
+      opts.push({ label: p.title, value: p.id });
     }
     return opts;
-  }, [otherProducts, t]);
+  }, [productList, t]);
 
-  const isQueueMode = uploadCommitMode === "queue";
   const queuedSelectionCount = selected.size;
 
   return (
@@ -464,15 +470,16 @@ export function FilePickerModal({
       open={open}
       onClose={onClose}
       title={title ?? t.imageManager.browseFilesTitle ?? "Add media"}
-      primaryAction={isQueueMode ? {
+      // Add button is always primary so library picks always have a clear
+      // commit affordance, in both queue and immediate modes. In immediate
+      // mode uploads commit on-the-fly (without contributing to the count)
+      // — only library picks accumulate in the selection.
+      primaryAction={{
         content: `${t.imageManager.browseFilesAddSelected ?? "Add selected"}${queuedSelectionCount > 0 ? ` (${queuedSelectionCount})` : ""}`,
         disabled: queuedSelectionCount === 0,
         onAction: handleCommitSelected,
-      } : {
-        content: t.common?.close ?? "Close",
-        onAction: onClose,
       }}
-      secondaryActions={isQueueMode ? [{ content: t.common?.cancel ?? "Cancel", onAction: onClose }] : undefined}
+      secondaryActions={[{ content: t.common?.close ?? "Close", onAction: onClose }]}
     >
       <Modal.Section>
         <BlockStack gap="300">
@@ -492,34 +499,18 @@ export function FilePickerModal({
             {filterButton("model", t.imageManager.browseFilesFilterModels ?? "3D models")}
           </ButtonGroup>
 
-          {/* Product filter — toggle + dropdown sit on one row so the modal
-              header doesn't stack into a tall block on small viewports. */}
-          <InlineStack gap="300" blockAlign="center" wrap>
-            <Checkbox
-              label={t.imageManager.browseFilesScopeCurrent ?? "Only files used in this product"}
-              checked={productScope === "current"}
-              disabled={!currentProductId}
-              onChange={(checked) => setProductScope(checked ? "current" : "all")}
-            />
-            <div style={{ minWidth: 220, flex: "1 1 220px" }}>
-              <Select
-                label=""
-                labelHidden
-                value={productScope.startsWith("other:") ? productScope : "other:"}
-                options={productOptions}
-                onChange={(v) => {
-                  if (v === "other:") return;
-                  setProductScope(v);
-                }}
-                disabled={otherProductsLoading}
-              />
-            </div>
-            {productScope.startsWith("other:") && (
-              <Button variant="plain" onClick={() => setProductScope("all")}>
-                {t.imageManager.browseFilesScopeClear ?? "Clear product filter"}
-              </Button>
-            )}
-          </InlineStack>
+          {/* Product filter — one dropdown, default "All products", every
+              product (including the currently focused one) is just another
+              entry so the merchant doesn't have to learn a separate concept
+              for "this" vs "other". */}
+          <Select
+            label=""
+            labelHidden
+            value={productScope}
+            options={productOptions}
+            onChange={setProductScope}
+            disabled={productListLoading && productList.length === 0}
+          />
 
           {error && <Banner tone="critical"><p>{error}</p></Banner>}
 
@@ -566,6 +557,35 @@ export function FilePickerModal({
 
           <Divider />
 
+          {/* External-video URL row — sits ABOVE the upload button per the
+              merchant's spec ("alles an einem Ort"). Rendered in both
+              product and variant modes; the parent's onAddExternalUrl
+              handler routes it to either the per-variant metafield or to
+              product.media via productCreateMedia EXTERNAL_VIDEO. */}
+          {onAddExternalUrl && (
+            <BlockStack gap="100">
+              <Text as="span" variant="bodySm" tone="subdued">
+                {t.imageManager.addExternalVideoTitle ?? "Add YouTube or Vimeo URL"}
+              </Text>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <div style={{ flex: "1 1 240px", minWidth: 200 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    autoComplete="off"
+                    value={urlInput}
+                    onChange={(v) => { setUrlInput(v); if (urlError) setUrlError(null); }}
+                    placeholder={t.imageManager.addExternalVideoPlaceholder ?? "https://youtube.com/watch?v=…"}
+                    error={urlError ?? undefined}
+                  />
+                </div>
+                <Button onClick={handleAddUrl} disabled={!urlInput.trim()}>
+                  {t.imageManager.addExternalVideoButton ?? "Add link"}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          )}
+
           {/* Upload row — central button, kept on its own line so the file
               picker affordance is unmistakable. The hidden <input> accepts
               every mime classifyFile() recognizes; the route re-validates. */}
@@ -588,36 +608,6 @@ export function FilePickerModal({
               }}
             />
           </InlineStack>
-
-          {/* External-video URL row — only shown when the parent wired
-              onAddExternalUrl, which it only does for variant-targeted
-              opens (product gallery has no per-variant URL slot). */}
-          {onAddExternalUrl && (
-            <>
-              <Divider />
-              <BlockStack gap="100">
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {t.imageManager.addExternalVideoTitle ?? "Add YouTube or Vimeo URL"}
-                </Text>
-                <InlineStack gap="200" blockAlign="center" wrap={false}>
-                  <div style={{ flex: "1 1 240px", minWidth: 200 }}>
-                    <TextField
-                      label=""
-                      labelHidden
-                      autoComplete="off"
-                      value={urlInput}
-                      onChange={(v) => { setUrlInput(v); if (urlError) setUrlError(null); }}
-                      placeholder={t.imageManager.addExternalVideoPlaceholder ?? "https://youtube.com/watch?v=…"}
-                      error={urlError ?? undefined}
-                    />
-                  </div>
-                  <Button onClick={handleAddUrl} disabled={!urlInput.trim()}>
-                    {t.imageManager.addExternalVideoButton ?? "Add link"}
-                  </Button>
-                </InlineStack>
-              </BlockStack>
-            </>
-          )}
         </BlockStack>
       </Modal.Section>
     </Modal>

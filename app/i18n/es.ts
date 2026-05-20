@@ -730,6 +730,7 @@ export const es: Translation = {
     browseFilesScopeCurrent: "Solo archivos usados en este producto",
     browseFilesScopeOther: "Elige otro producto…",
     browseFilesScopeClear: "Quitar filtro de producto",
+    browseFilesScopeAll: "Todos los productos",
     addMediaToVariantTitle: "Añadir medios a la variante: {title}",
     addMediaToProductTitle: "Añadir medios al producto",
     bulkDocsToggleShow: "Asignación automática – Ayuda",

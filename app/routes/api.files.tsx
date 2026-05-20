@@ -79,15 +79,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }
         if (tn === "MediaImage") {
           if (kindAllow && kindAllow !== "image") return null;
-          return { kind: "image" as const, id: n.id, previewUrl: n?.image?.url ?? "", reference: n.id, alt: altText };
+          const assetUrl = n?.image?.url ?? "";
+          return { kind: "image" as const, id: n.id, previewUrl: assetUrl, assetUrl, reference: n.id, alt: altText };
         }
         if (tn === "Video") {
           if (kindAllow && kindAllow !== "video") return null;
-          return { kind: "video" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", reference: n.id, alt: altText };
+          return { kind: "video" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", assetUrl: n?.sources?.[0]?.url ?? "", reference: n.id, alt: altText };
         }
         if (tn === "Model3d") {
           if (kindAllow && kindAllow !== "model") return null;
-          return { kind: "model" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", reference: n.id, alt: altText };
+          return { kind: "model" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", assetUrl: n?.sources?.[0]?.url ?? "", reference: n.id, alt: altText };
         }
         // ExternalVideo deliberately excluded from the picker — URLs are
         // managed via the modal's link input, not as selectable file tiles.
@@ -156,15 +157,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // type rather than Model3d, but we hide it unless the merchant explicitly
   // searches with kind=model (otherwise picker results would be polluted by
   // arbitrary downloads like PDFs).
+  // `assetUrl` is the actual media file URL (not the poster). Needed so the
+  // product-mode "add this library file to the product gallery" path can
+  // pass it to productCreateMedia.originalSource — without it videos/3D
+  // would get re-uploaded as the poster image.
   const files = edges
     .map((e: any) => {
       const n = e.node;
       const tn = n.__typename;
       if (tn === "MediaImage") {
+        const assetUrl = n?.image?.url ?? "";
         return {
           kind: "image" as const,
           id: n.id,
-          previewUrl: n?.image?.url ?? "",
+          previewUrl: assetUrl,
+          assetUrl,
           reference: n.id,
           alt: n.alt ?? null,
         };
@@ -174,6 +181,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           kind: "video" as const,
           id: n.id,
           previewUrl: n?.preview?.image?.url ?? "",
+          assetUrl: n?.sources?.[0]?.url ?? "",
           reference: n.id,
           alt: n.alt ?? null,
         };
@@ -183,6 +191,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           kind: "model" as const,
           id: n.id,
           previewUrl: n?.preview?.image?.url ?? "",
+          assetUrl: n?.sources?.[0]?.url ?? "",
           reference: n.id,
           alt: n.alt ?? null,
         };
@@ -192,6 +201,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           kind: "model" as const,
           id: n.id,
           previewUrl: "",
+          assetUrl: n?.url ?? "",
           reference: n.id,
           alt: n.alt ?? null,
         };

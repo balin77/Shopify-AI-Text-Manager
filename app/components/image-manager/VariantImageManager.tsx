@@ -44,7 +44,7 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind }>, clearVariantMainImages?: string[]) => void;
+  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, clearVariantMainImages?: string[]) => void;
   /** Notified whenever the merchant adds / removes a YouTube or Vimeo URL on
    *  any variant. The shape mirrors the /api/update-variant-galleries body
    *  field so the hook can pass it straight through. */
@@ -74,6 +74,19 @@ function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
     id: img.mediaId ?? img.url ?? "",
     altText: img.altText ?? null,
   }));
+}
+
+/** Quick optimistic-preview helper for YouTube URLs — used for the tile
+ *  that flashes into the gallery the moment a merchant pastes a link.
+ *  Vimeo has no public thumbnail-from-id endpoint without an oEmbed call
+ *  we don't want to make from the admin; returns empty so the tile falls
+ *  back to the host-name placeholder. */
+function youtubeThumbForUrl(url: string): string | undefined {
+  const m =
+    url.match(/[?&]v=([A-Za-z0-9_-]{11})/) ||
+    url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) ||
+    url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : undefined;
 }
 
 function insertGidAtPosition(gids: string[], gid: string, overUrl: string | null, fileUrlMap: Record<string, string>): string[] {
@@ -141,7 +154,7 @@ export function VariantImageManager({
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   // Variant IDs whose injected main image was dragged to the product gallery this session
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
-  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind }>>([]);
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
@@ -783,8 +796,18 @@ export function VariantImageManager({
       const freshUrl = img.mediaId ? shopifyMediaMap[img.mediaId] : undefined;
       if (freshUrl && freshUrl !== img.url) map[freshUrl] = entry;
     }
+    // Optimistic-display entries for items the merchant just added through
+    // the picker modal — the file isn't on Shopify yet (productCreateMedia
+    // runs at save time), but we want the tile to appear immediately so the
+    // "click Add → nothing happens" UX gap goes away. Keyed by previewUrl
+    // because that's what we shove into displayedProductUrls below.
+    for (const pending of pendingProductNewMedia) {
+      const previewUrl = pending.previewUrl;
+      if (!previewUrl || map[previewUrl]) continue;
+      map[previewUrl] = { kind: pending.kind };
+    }
     return map;
-  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
@@ -803,15 +826,26 @@ export function VariantImageManager({
     return gids;
   }, [variants, pendingVariantGalleries, urlToGid, locallyExcludedMainGids]);
 
-  // Product image URLs to display (all or only unassigned)
+  // Product image URLs to display (all or only unassigned). Pending uploads
+  // / library re-uploads / external URLs that the merchant just queued via
+  // the picker modal land at the END of the list as ghost tiles — they
+  // disappear and get re-rendered with the real Shopify GID once the save
+  // pipeline runs productCreateMedia and /api/product-variants refetches.
   const displayedProductUrls = useMemo(() => {
     const order = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
-    if (showAll || variants.length === 0) return order;
-    return order.filter(url => {
-      const gid = urlToGid[url];
-      return !gid || !assignedGids.has(gid);
-    });
-  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length]);
+    const baseUrls = (showAll || variants.length === 0)
+      ? order
+      : order.filter(url => {
+          const gid = urlToGid[url];
+          return !gid || !assignedGids.has(gid);
+        });
+    // Pending entries are de-duped by previewUrl; an entry with no preview
+    // (rare: a GLB without a poster) is skipped because the grid is URL-keyed.
+    const pendingPreviews = pendingProductNewMedia
+      .map(p => p.previewUrl)
+      .filter((u): u is string => typeof u === "string" && u.length > 0 && !baseUrls.includes(u));
+    return [...baseUrls, ...pendingPreviews];
+  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia]);
 
   // Detect whether the product gallery overflows the single-row collapsed height
   useEffect(() => {
@@ -1144,83 +1178,119 @@ export function VariantImageManager({
     // Copy: keep action mode + selection active so user can copy to multiple variants
   }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, locallyExcludedMainGids, onRemoveBulk, onSetAction]);
 
-  // Unified add-media commit. Handles both library picks (already-uploaded
-  // Shopify file GIDs) and fresh uploads (staged resourceUrls that need a
-  // productCreateMedia round-trip on save). Routes the items into either
-  // a variant's pending state or the product-level pending state based on
-  // the modal's current target. Used by the new central picker modal.
+  // Unified add-media commit. Routes the modal's three item shapes (library
+  // pick, fresh upload, external URL) into the right pending state slot
+  // depending on whether the modal was opened from a variant section or the
+  // product gallery. Closes the modal afterwards — except for URL adds,
+  // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((items: AddedItem[]) => {
     if (!pickerTarget || items.length === 0) return;
 
-    // Library items contribute their final GID directly; upload items
-    // contribute their resourceUrl as a placeholder — the backend's
-    // resolveGid maps it to the real MediaImage / Video GID once
-    // productCreateMedia returns. Both shapes co-exist in the same list
-    // so the merchant's drag order survives the save round-trip.
-    const allRefs: string[] = items.map(it => it.source === "library" ? it.gid : it.resourceUrl);
-
-    // Uploads need to be appended to pendingProductNewMedia so the save
-    // pipeline knows to materialize them via productCreateMedia. We carry
-    // the kind so video / GLB uploads get the right mediaContentType.
-    const uploadEntries = items
-      .filter((it): it is Extract<AddedItem, { source: "upload" }> => it.source === "upload")
-      .map(it => ({ resourceUrl: it.resourceUrl, kind: it.kind }));
-    if (uploadEntries.length > 0) {
-      setPendingProductNewMedia(prev => {
-        // De-dupe by resourceUrl in case the merchant accidentally added
-        // the same upload twice (modal close + reopen in queue mode).
-        const seen = new Set(prev.map(e => e.resourceUrl));
-        return [...prev, ...uploadEntries.filter(e => !seen.has(e.resourceUrl))];
-      });
-    }
-
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants
-    // refetch. Uploads aren't keyed by GID yet, but their resourceUrl is
-    // the same key SortableImageGrid uses post-mount.
+    // refetch. Uploads + library items both go here.
     setMediaMetaMap(prev => {
       const next = { ...prev };
       for (const it of items) {
-        const key = it.source === "library" ? it.gid : it.resourceUrl;
-        if (!next[key]) next[key] = { kind: it.kind, previewUrl: it.previewUrl };
+        if (it.source === "library") {
+          if (!next[it.gid]) next[it.gid] = { kind: it.kind, previewUrl: it.previewUrl };
+        } else if (it.source === "upload") {
+          if (!next[it.resourceUrl]) next[it.resourceUrl] = { kind: it.kind, previewUrl: it.previewUrl };
+        }
       }
       return next;
     });
 
     if (pickerTarget.mode === "variant") {
-      // Variant mode: append to that variant's gallery. The first non-image
-      // would be blocked by the position-0 guard server-side anyway, but
-      // here we just preserve insertion order — append never lands at index
-      // 0 of a non-empty gallery, so no extra guard needed.
+      // ──────────────────────────────────────────────────────────────────
+      // VARIANT MODE
+      //   library  → append GID to pendingVariantGalleries
+      //   upload   → append resourceUrl to pendingVariantGalleries (resolved
+      //              to a real GID at save time via resourceUrlToGid) AND
+      //              register the upload in pendingProductNewMedia so the
+      //              backend actually runs productCreateMedia for it
+      //   external → handle via the URL path (variantExternalVideos)
+      // ──────────────────────────────────────────────────────────────────
       const variantId = pickerTarget.variantId;
-      setPendingVariantGalleries(prev => {
-        const variant = variants.find(v => v.id === variantId);
-        const current = prev[variantId] ?? variant?.galleryFileGids ?? [];
-        const seen = new Set(current);
-        const additions = allRefs.filter(r => !seen.has(r));
-        if (additions.length === 0) return prev;
-        return { ...prev, [variantId]: [...current, ...additions] };
-      });
+      const refsForGallery: string[] = [];
+      const uploadEntries: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }> = [];
+      for (const it of items) {
+        if (it.source === "library") {
+          refsForGallery.push(it.gid);
+        } else if (it.source === "upload") {
+          refsForGallery.push(it.resourceUrl);
+          uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+        } else if (it.source === "external_url") {
+          handleAddExternalVideoUrl(variantId, it.url);
+        }
+      }
+      if (uploadEntries.length > 0) {
+        setPendingProductNewMedia(prev => {
+          const seen = new Set(prev.map(e => e.resourceUrl));
+          return [...prev, ...uploadEntries.filter(e => !seen.has(e.resourceUrl))];
+        });
+      }
+      if (refsForGallery.length > 0) {
+        setPendingVariantGalleries(prev => {
+          const variant = variants.find(v => v.id === variantId);
+          const current = prev[variantId] ?? variant?.galleryFileGids ?? [];
+          const seen = new Set(current);
+          const additions = refsForGallery.filter(r => !seen.has(r));
+          if (additions.length === 0) return prev;
+          return { ...prev, [variantId]: [...current, ...additions] };
+        });
+      }
     } else {
-      // Product mode: library picks already exist in product.media, so
-      // there's nothing to add to pendingProductNewMedia for them — they
-      // appear in the product gallery once the page refetches. Fresh
-      // uploads are already queued above. We close the modal either way.
+      // ──────────────────────────────────────────────────────────────────
+      // PRODUCT MODE — every item ends up as a new product.media via the
+      // pendingProductNewMedia queue. The library branch reuses the file's
+      // assetUrl as the originalSource (Shopify deduplicates the underlying
+      // asset, even if a new media node is created). The external_url
+      // branch uses the canonical YouTube/Vimeo URL with kind=external_video
+      // so productCreateMedia gets mediaContentType: EXTERNAL_VIDEO.
+      // ──────────────────────────────────────────────────────────────────
+      const additions: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }> = [];
+      for (const it of items) {
+        if (it.source === "library") {
+          if (!it.assetUrl) continue; // library entries without an asset URL can't be re-uploaded
+          additions.push({ resourceUrl: it.assetUrl, kind: it.kind, previewUrl: it.previewUrl });
+        } else if (it.source === "upload") {
+          additions.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+        } else if (it.source === "external_url") {
+          additions.push({ resourceUrl: it.url, kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) });
+        }
+      }
+      if (additions.length > 0) {
+        setPendingProductNewMedia(prev => {
+          const seen = new Set(prev.map(e => e.resourceUrl));
+          return [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
+        });
+      }
     }
 
-    setPickerTarget(null);
+    // Library + upload commits close the modal; URL commits go through the
+    // dedicated handler below and leave the modal open. handleModalAdd is
+    // only called for the former two (the modal's URL flow calls
+    // onAddExternalUrl directly).
+    const hasNonUrlCommit = items.some(it => it.source !== "external_url");
+    if (hasNonUrlCommit) setPickerTarget(null);
   }, [pickerTarget, variants]);
 
-  // Called the moment the merchant hits "Add link" inside the modal. Variant
-  // mode only — the modal hides the URL row in product mode because there's
-  // no product-global YouTube/Vimeo slot.
+  // Called the moment the merchant hits "Add link" inside the modal. Wired
+  // in both modes — product-mode URLs ride through the same handleModalAdd
+  // by being represented as an AddedItem with source "external_url", so
+  // variant- and product-routing stay in one place.
   const handleModalAddExternalUrl = useCallback((url: string) => {
-    if (!pickerTarget || pickerTarget.mode !== "variant") return;
-    handleAddExternalVideoUrl(pickerTarget.variantId, url);
-    // Intentionally do NOT close the modal — merchants typically add several
-    // links in a row.
+    if (!pickerTarget) return;
+    if (pickerTarget.mode === "variant") {
+      handleAddExternalVideoUrl(pickerTarget.variantId, url);
+    } else {
+      // Product mode: bounce through handleModalAdd so the same dedup +
+      // mediaMetaMap seeding logic applies.
+      handleModalAdd([{ source: "external_url", url }]);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickerTarget]);
+  }, [pickerTarget, handleModalAdd]);
 
   // External-video URL handlers. The "effective" URL list for a variant is
   // pendingExternalVideos[id] if the merchant has touched the row this session,
@@ -2128,10 +2198,10 @@ export function VariantImageManager({
       open={pickerTarget !== null}
       onClose={() => setPickerTarget(null)}
       onAdd={handleModalAdd}
-      // External-video URLs only make sense for variant-scoped opens;
-      // product galleries have no per-variant URL slot, so the modal
-      // hides the row when this prop is undefined.
-      onAddExternalUrl={pickerTarget?.mode === "variant" ? handleModalAddExternalUrl : undefined}
+      // External-video URLs work in both modes: variant scope persists to
+      // the per-variant metafield, product scope adds an ExternalVideo node
+      // to product.media via productCreateMedia EXTERNAL_VIDEO.
+      onAddExternalUrl={handleModalAddExternalUrl}
       uploadCommitMode={pickerTarget?.mode === "variant" ? "immediate" : "queue"}
       currentProductId={productId}
       title={

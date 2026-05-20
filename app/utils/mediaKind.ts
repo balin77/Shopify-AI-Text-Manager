@@ -53,7 +53,9 @@ export function classifyFile(mimeType: string, fileName?: string): MediaKind | n
   return null;
 }
 
-/** Map our MediaKind to StagedUploadInput.resource. */
+/** Map our MediaKind to StagedUploadInput.resource. External video never
+ *  hits stagedUploadsCreate (it's a URL, not a file upload) — the fallback
+ *  is image-y just so an accidental call doesn't throw. */
 export function kindToStagedResource(kind: MediaKind): "IMAGE" | "VIDEO" | "MODEL_3D" {
   switch (kind) {
     case "video": return "VIDEO";
@@ -64,12 +66,16 @@ export function kindToStagedResource(kind: MediaKind): "IMAGE" | "VIDEO" | "MODE
   }
 }
 
-/** Map our MediaKind to productCreateMedia.mediaContentType. */
-export function kindToMediaContentType(kind: MediaKind): "IMAGE" | "VIDEO" | "MODEL_3D" {
+/** Map our MediaKind to productCreateMedia.mediaContentType. EXTERNAL_VIDEO
+ *  is a first-class Shopify content type — it lets us hand productCreateMedia
+ *  a YouTube/Vimeo URL as originalSource and Shopify produces an
+ *  ExternalVideo node on product.media (which the storefront Liquid already
+ *  knows how to render). */
+export function kindToMediaContentType(kind: MediaKind): "IMAGE" | "VIDEO" | "MODEL_3D" | "EXTERNAL_VIDEO" {
   switch (kind) {
     case "video": return "VIDEO";
     case "model": return "MODEL_3D";
-    case "external_video":
+    case "external_video": return "EXTERNAL_VIDEO";
     case "image":
     default: return "IMAGE";
   }

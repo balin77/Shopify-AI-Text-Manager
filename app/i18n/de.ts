@@ -728,6 +728,7 @@ export const de = {
     browseFilesScopeCurrent: "Nur Dateien aus diesem Produkt",
     browseFilesScopeOther: "Anderes Produkt wählen…",
     browseFilesScopeClear: "Produktfilter zurücksetzen",
+    browseFilesScopeAll: "Alle Produkte",
     addMediaToVariantTitle: "Medien zu Variante hinzufügen: {title}",
     addMediaToProductTitle: "Medien zum Produkt hinzufügen",
     bulkDocsToggleShow: "Automatische Zuordnung – Hilfe",

@@ -3,10 +3,14 @@ import type { StagedItem, VariantWithGallery, MediaKind } from "../components/im
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
  *  time so productCreateMedia.mediaContentType maps correctly — without it
- *  every video / 3D file would be created as IMAGE and reject. */
+ *  every video / 3D file would be created as IMAGE and reject. previewUrl
+ *  drives the optimistic gallery tile that appears the moment a merchant
+ *  hits "Add" in the picker modal, so the change feels instant instead of
+ *  having to wait for a server roundtrip. */
 export interface PendingProductNewMedia {
   resourceUrl: string;
   kind: MediaKind;
+  previewUrl?: string;
 }
 
 export interface VariantGalleryUpdate {
