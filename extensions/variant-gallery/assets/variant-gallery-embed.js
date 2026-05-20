@@ -36,6 +36,7 @@ class CpEmbedGallery extends HTMLElement {
     // The controller lives in <body> and is normally never removed; clean up
     // defensively anyway so we never leak observers/listeners.
     if (this._bodyMo) { this._bodyMo.disconnect(); this._bodyMo = null; }
+    if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
     clearTimeout(this._t);
     // NOTE-3: also drop any pending fail-safe timers we registered on the
     // shared registry so a disconnect can never leave one to fire later.
@@ -428,22 +429,29 @@ class CpEmbedGallery extends HTMLElement {
     return (w > 0 && h > 0) ? ` style="aspect-ratio: ${w} / ${h};"` : '';
   }
 
-  // Render ALL images as <img> in the DOM up front. The first is loaded
-  // eagerly with high priority, the rest with loading=lazy + decoding=
-  // async so they trickle in without blocking. Thumb-mode swaps purely
-  // toggle .is-active (CSS opacity) — no src reassignment, so the
-  // earlier "blank-frame between two image loads" flicker is gone.
-  _mainImgHtml(img, active, index) {
+  // Render every image as an <img> in the DOM up front. Loading strategy
+  // depends on layout (RISK-2):
+  //  • Thumb mode: all <img>s overlap absolutely at the same viewport
+  //    position, so any of them can become active at any time. They are
+  //    loaded eagerly (first with fetchpriority=high) so a click on a
+  //    yet-unloaded thumb never reveals a blank during the opacity
+  //    transition. The "blank between two image loads" flicker is gone.
+  //  • Stacked mode: images flow vertically, so the off-screen ones are
+  //    safely deferred via loading=lazy.
+  _mainImgHtml(img, active, index, thumbMode) {
     const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
     const h = Number(img && img.h) > 0 ? Number(img.h) : '';
     const isFirst = index === 0;
+    const loadAttrs = thumbMode
+      ? (isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="eager" fetchpriority="auto"')
+      : (isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="auto"');
     return `<img
           class="cp-gallery__main-image${active ? ' is-active' : ''}"
           src="${img.src_800}"
           srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="${this._esc(img.alt)}"
-          ${isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="auto"'}
+          ${loadAttrs}
           decoding="async"
           data-index="${index}"
           width="${w}"${h ? ` height="${h}"` : ''}
@@ -463,6 +471,11 @@ class CpEmbedGallery extends HTMLElement {
     const { show, pos } = this._resolveThumbMode();
     const thumbMode = show && images.length > 1;
 
+    // RISK-3: tear down any prior ResizeObserver on the thumb strip so
+    // re-renders (e.g. variant switch) do not leak observers holding
+    // refs to the now-detached old strip element.
+    if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
+
     // Reset wrapper state — class + data-attr drive all layout/CSS.
     inner.className = 'cp-gallery__inner' + (thumbMode ? '' : ' cp-gallery__inner--stacked');
     if (thumbMode) inner.setAttribute('data-thumb-pos', pos);
@@ -474,7 +487,7 @@ class CpEmbedGallery extends HTMLElement {
       // native theme gallery but scoped to the variant's images.
       inner.innerHTML = images.map((img, i) => `
         <div class="cp-gallery__main"${this._ratioStyle(img)}>
-          ${this._mainImgHtml(img, true, i)}
+          ${this._mainImgHtml(img, true, i, false)}
         </div>`).join('');
       return;
     }
@@ -482,7 +495,7 @@ class CpEmbedGallery extends HTMLElement {
     // Thumb mode: one .cp-gallery__main with ALL images stacked
     // absolutely (only one .is-active at a time) so toggling between
     // them never reloads and never flashes.
-    const mainImgs = images.map((img, i) => this._mainImgHtml(img, i === 0, i)).join('');
+    const mainImgs = images.map((img, i) => this._mainImgHtml(img, i === 0, i, true)).join('');
     const mainHtml = `
       <div class="cp-gallery__main"${this._ratioStyle(images[0])}>
         ${mainImgs}
@@ -553,6 +566,13 @@ class CpEmbedGallery extends HTMLElement {
       next.toggleAttribute('disabled', !overflow || cur >= max - 1);
     };
     strip.addEventListener('scroll', updateState, { passive: true });
+    // RISK-3: react to viewport resize / mobile rotation / theme CSS
+    // changes that flip overflow ON or OFF, so the arrow-visibility and
+    // disabled state stay correct without a re-render.
+    if (typeof ResizeObserver === 'function') {
+      this._thumbsRO = new ResizeObserver(updateState);
+      this._thumbsRO.observe(strip);
+    }
     // Defer to next frame so layout (esp. vertical heights) is final.
     requestAnimationFrame(updateState);
   }

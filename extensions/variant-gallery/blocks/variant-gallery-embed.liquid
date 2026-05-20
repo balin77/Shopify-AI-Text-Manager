@@ -58,8 +58,8 @@
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
       "{{ variant.id }}": [
         {%- assign cp_has_any = false -%}
+        {%- comment -%} Step 1: if variant has variant_gallery metafield, prefer those images (restricted to this variant). featured_image as primary. {%- endcomment -%}
         {%- if vg != blank and vg.value != blank -%}
-          {%- comment -%} Variant has variant_gallery metafield: use ONLY those images (restricted to this variant), with featured_image as primary if present. {%- endcomment -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {
@@ -91,29 +91,51 @@
               {%- assign cp_has_any = true -%}
             {%- endif -%}
           {%- endfor -%}
-        {%- else -%}
-          {%- comment -%} No variant_gallery metafield: fall back to product.media so the custom gallery serves ALL products. Images only (videos / 3D skipped). {%- endcomment -%}
-          {%- for media in product.media -%}
-            {%- if media.media_type == 'image' -%}
-              {%- assign cp_src = media | image_url: width: 800 -%}
-              {%- if cp_src != blank -%}
-                {%- if cp_has_any %},{% endif -%}
-                {%- assign cp_w = media.preview_image.width  | default: media.width -%}
-                {%- assign cp_h = media.preview_image.height | default: media.height -%}
-                {
-                  "src_400":  {{ media | image_url: width: 400  | json }},
-                  "src_800":  {{ cp_src | json }},
-                  "src_1200": {{ media | image_url: width: 1200 | json }},
-                  "thumb":    {{ media | image_url: width: 160  | json }},
-                  "w":        {{ cp_w | json }},
-                  "h":        {{ cp_h | json }},
-                  "alt":      {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-                }
-                {%- assign cp_has_any = true -%}
-              {%- endif -%}
-            {%- endif -%}
-          {%- endfor -%}
         {%- endif -%}
+        {%- comment -%} Step 2 (RISK-1/4/5): if no images so far (no metafield OR metafield URLs all blank), fall back to product.media so the custom gallery serves ALL products. RISK-1: leave products with ANY non-image media (video/3D) untouched so the merchant-uploaded video stays visible in the native gallery (no silent content loss). RISK-4: emit variant.featured_image first as primary, deduped from the product.media loop so visible Image #1 always matches the selected variant. {%- endcomment -%}
+        {%- unless cp_has_any -%}
+          {%- assign cp_has_non_image = false -%}
+          {%- for media in product.media -%}
+            {%- unless media.media_type == 'image' -%}{%- assign cp_has_non_image = true -%}{%- endunless -%}
+          {%- endfor -%}
+          {%- unless cp_has_non_image -%}
+            {%- assign cp_vfi_id = blank -%}
+            {%- if variant.featured_image != blank -%}
+              {%- assign vfi = variant.featured_image -%}
+              {
+                "src_400":  {{ vfi | image_url: width: 400  | json }},
+                "src_800":  {{ vfi | image_url: width: 800  | json }},
+                "src_1200": {{ vfi | image_url: width: 1200 | json }},
+                "thumb":    {{ vfi | image_url: width: 160  | json }},
+                "w":        {{ vfi.width  | json }},
+                "h":        {{ vfi.height | json }},
+                "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+              }
+              {%- assign cp_has_any = true -%}
+              {%- assign cp_vfi_id = vfi.id -%}
+            {%- endif -%}
+            {%- for media in product.media -%}
+              {%- if media.media_type == 'image' and media.id != cp_vfi_id -%}
+                {%- assign cp_src = media | image_url: width: 800 -%}
+                {%- if cp_src != blank -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_w = media.preview_image.width  | default: media.width -%}
+                  {%- assign cp_h = media.preview_image.height | default: media.height -%}
+                  {
+                    "src_400":  {{ media | image_url: width: 400  | json }},
+                    "src_800":  {{ cp_src | json }},
+                    "src_1200": {{ media | image_url: width: 1200 | json }},
+                    "thumb":    {{ media | image_url: width: 160  | json }},
+                    "w":        {{ cp_w | json }},
+                    "h":        {{ cp_h | json }},
+                    "alt":      {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endunless -%}
+        {%- endunless -%}
       ]{% unless forloop.last %},{% endunless %}
     {%- endfor -%}
   }
