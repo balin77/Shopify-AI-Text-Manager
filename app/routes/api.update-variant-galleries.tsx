@@ -142,6 +142,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     fileGids: vg.fileGids.map(resolveGid),
   }));
 
+  // Position-0 of a variant gallery becomes the variant's mediaId, which
+  // Shopify only accepts as a MediaImage GID. If the merchant accidentally
+  // drags a freshly uploaded video / 3D model into position 0 we reject up
+  // front with a clearer error than Shopify's "must be an Image" userError.
+  // Only known-non-image kinds (from newMedia) are blocked here — existing
+  // gid://shopify/Video/* and gid://shopify/Model3d/* are caught further
+  // down via the GID prefix check.
+  const newMediaKindByResourceUrl: Record<string, MediaKind> = {};
+  for (const m of newMedia) {
+    if (m.kind) newMediaKindByResourceUrl[m.resourceUrl] = m.kind;
+  }
+  const clearSetEarly = new Set(clearVariantMainImages);
+  for (const vg of variantGalleries) {
+    if (vg.galleryOnly || clearSetEarly.has(vg.variantId)) continue;
+    const headRaw = vg.fileGids[0];
+    if (!headRaw) continue;
+    const headKind = newMediaKindByResourceUrl[headRaw];
+    const isKnownNonImage =
+      (headKind && headKind !== "image") ||
+      headRaw.startsWith("gid://shopify/Video/") ||
+      headRaw.startsWith("gid://shopify/Model3d/");
+    if (isKnownNonImage) {
+      errors.push(
+        `position-0: variant ${vg.variantId} would receive a non-image as featured media — ` +
+        `Shopify only accepts MediaImage for variant.image. Place an image at position 0.`
+      );
+    }
+  }
+  if (errors.length > 0) return fail();
+
   // 2. Bilder neu sortieren
   if (mediaOrder.length > 0) {
     const r = await admin.graphql(`
