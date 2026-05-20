@@ -45,6 +45,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   await ensureVariantMetafieldDefinition(admin, "variant_gallery", "Variant Gallery", "list.file_reference");
   await ensureVariantMetafieldDefinition(admin, "image_key", "Image Key", "single_line_text_field");
+  // YouTube/Vimeo URLs cannot be stored in list.file_reference, so they live
+  // in a parallel list.url metafield. Order across files + URLs is held by
+  // variant_gallery_order (json) — kept idempotent: defining it twice is a
+  // no-op thanks to ensureVariantMetafieldDefinition's lookup.
+  await ensureVariantMetafieldDefinition(admin, "variant_external_videos", "Variant External Videos", "list.url");
+  await ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json");
 
   // Fetch product media + variants in one query.
   // media(first:250) gives us a definitive GID→URL map for ALL product images,
@@ -55,9 +61,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         media(first: 250) {
           edges {
             node {
+              __typename
               ... on MediaImage {
                 id
                 image { url }
+              }
+              ... on Video {
+                id
+                preview { image { url } }
+                sources { url mimeType format height width }
+              }
+              ... on Model3d {
+                id
+                preview { image { url } }
+                sources { url mimeType format filesize }
+              }
+              ... on ExternalVideo {
+                id
+                host
+                originUrl
+                embeddedUrl
+                preview { image { url } }
               }
             }
           }
@@ -75,6 +99,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 value
               }
               imageKeyMetafield: metafield(namespace: "custom", key: "image_key") {
+                value
+              }
+              externalVideosMetafield: metafield(namespace: "custom", key: "variant_external_videos") {
+                value
+              }
+              galleryOrderMetafield: metafield(namespace: "custom", key: "variant_gallery_order") {
                 value
               }
             }
@@ -165,11 +195,35 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return { ...node, selectedOptions };
   }) ?? []);
 
-  // Build a GID→URL map from ALL current product media (authoritative, not DB-cached).
+  // Build a GID→{kind,previewUrl} map from ALL current product media. For
+  // backwards compatibility, mediaMap[gid] is still a plain URL string (used
+  // by older callers that only render images), and mediaMetaMap[gid] carries
+  // the richer descriptor so the Image Manager can pick the right thumbnail
+  // overlay (play / 3D badge).
   const mediaMap: Record<string, string> = {};
+  const mediaMetaMap: Record<string, { kind: "image" | "video" | "model" | "external_video"; previewUrl: string }> = {};
   for (const edge of (productData?.media?.edges ?? [])) {
-    const node = edge.node;
-    if (node?.id && node?.image?.url) mediaMap[node.id] = node.image.url;
+    const node: any = edge.node;
+    if (!node?.id) continue;
+    const tn = node.__typename;
+    let kind: "image" | "video" | "model" | "external_video" | null = null;
+    let previewUrl = "";
+    if (tn === "MediaImage" && node?.image?.url) {
+      kind = "image";
+      previewUrl = node.image.url;
+    } else if (tn === "Video") {
+      kind = "video";
+      previewUrl = node?.preview?.image?.url ?? "";
+    } else if (tn === "Model3d") {
+      kind = "model";
+      previewUrl = node?.preview?.image?.url ?? "";
+    } else if (tn === "ExternalVideo") {
+      kind = "external_video";
+      previewUrl = node?.preview?.image?.url ?? "";
+    }
+    if (!kind) continue;
+    if (previewUrl) mediaMap[node.id] = previewUrl;
+    mediaMetaMap[node.id] = { kind, previewUrl };
   }
 
   // In DB cachen (upsert)
@@ -202,8 +256,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopifyGid: v.id,
     galleryJson: v.metafield?.value ?? null,
     imageKey: v.imageKeyMetafield?.value ?? null,
+    externalVideosJson: v.externalVideosMetafield?.value ?? null,
+    galleryOrderJson: v.galleryOrderMetafield?.value ?? null,
     // selectedOptions already enriched with handles above
   }));
 
-  return json({ variants: mappedVariants, mediaMap });
+  return json({ variants: mappedVariants, mediaMap, mediaMetaMap });
 };

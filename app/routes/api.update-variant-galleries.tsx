@@ -1,22 +1,43 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { isValidExternalVideoUrl, kindToMediaContentType } from "../utils/mediaKind";
+import type { MediaKind } from "../components/image-manager/types";
 
 interface UpdateVariantGalleriesBody {
   productId: string;
-  newMedia?: Array<{ resourceUrl: string }>;
+  /** New uploads to materialize into Shopify media. `kind` is the media type
+   *  used for productCreateMedia.mediaContentType — defaults to "image" if
+   *  unset, for backwards compatibility with older clients. */
+  newMedia?: Array<{ resourceUrl: string; kind?: MediaKind }>;
   variantGalleries?: Array<{ variantId: string; fileGids: string[]; galleryOnly?: boolean }>;
   mediaOrder?: Array<{ mediaId: string; position: number }>;
   // Variant IDs whose Shopify image (mediaId) should be explicitly set to null.
   // fileGids for these variants (if present) are gallery-only — no main GID at position 0.
   clearVariantMainImages?: string[];
+  /** YouTube/Vimeo URLs per variant — persisted to custom.variant_external_videos
+   *  (list.url). Server re-validates every URL with isValidExternalVideoUrl and
+   *  drops anything we can't safely embed. */
+  variantExternalVideos?: Array<{ variantId: string; urls: string[] }>;
+  /** Combined order across files + external URLs per variant. JSON array of
+   *  { kind: "file" | "url", value: gid|url }. Position 0 must be a file
+   *  reference (image) — enforced client-side. Stored in
+   *  custom.variant_gallery_order (json). */
+  variantGalleryOrder?: Array<{ variantId: string; orderJson: string }>;
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { admin } = await authenticate.admin(request);
   const body: UpdateVariantGalleriesBody = await request.json();
-  const { productId, newMedia = [], variantGalleries = [], mediaOrder = [], clearVariantMainImages = [] } = body;
+  const {
+    productId,
+    newMedia = [],
+    variantGalleries = [],
+    mediaOrder = [],
+    clearVariantMainImages = [],
+    variantExternalVideos = [],
+    variantGalleryOrder = [],
+  } = body;
 
   console.log("[update-variant-galleries] incoming", {
     productId,
@@ -75,7 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         productId,
         media: newMedia.map(m => ({
           originalSource: m.resourceUrl,
-          mediaContentType: "IMAGE",
+          mediaContentType: kindToMediaContentType(m.kind ?? "image"),
         })),
       },
     });
@@ -236,6 +257,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
       }));
     }
+  }
+
+  // 4. External videos (YouTube/Vimeo URLs) + combined gallery order.
+  // These live on separate metafields because list.file_reference cannot hold
+  // URLs. We use metafieldsSet (idempotent upsert by namespace+key+ownerId) so
+  // we don't need to know the prior metafield id.
+  const metafieldOps: Array<{ ownerId: string; namespace: string; key: string; type: string; value: string }> = [];
+
+  for (const ev of variantExternalVideos) {
+    const sanitized = ev.urls.filter(isValidExternalVideoUrl);
+    metafieldOps.push({
+      ownerId: ev.variantId,
+      namespace: "custom",
+      key: "variant_external_videos",
+      type: "list.url",
+      value: JSON.stringify(sanitized),
+    });
+  }
+
+  for (const vo of variantGalleryOrder) {
+    // The client always sends a JSON-stringified array; we don't re-validate
+    // shape here because the storefront / loader is tolerant of malformed
+    // order data (falls back to "files first, then URLs").
+    metafieldOps.push({
+      ownerId: vo.variantId,
+      namespace: "custom",
+      key: "variant_gallery_order",
+      type: "json",
+      value: vo.orderJson,
+    });
+  }
+
+  if (metafieldOps.length > 0) {
+    const r = await admin.graphql(`
+      mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { id key namespace }
+          userErrors { field message }
+        }
+      }
+    `, { variables: { metafields: metafieldOps } });
+    const d = await r.json();
+    const ue = d.data?.metafieldsSet?.userErrors ?? [];
+    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `metafieldsSet: ${e.message}`));
+    else completedSteps.push("metafieldsSet");
   }
 
   if (errors.length > 0) return fail();
