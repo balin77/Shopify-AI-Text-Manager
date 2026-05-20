@@ -26,6 +26,16 @@ export function useVariantImageManager() {
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
   const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
+  // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
+  // input inside each VariantGallerySection. variantId → canonical URLs.
+  // Empty array is meaningful: it means "the merchant cleared this variant's
+  // external videos" and the metafield value should be persisted as `[]`.
+  const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  // Combined order (file GIDs + external URLs) per variant. Stringified JSON
+  // array of { kind: "file" | "url", value }. Updated whenever the merchant
+  // reorders a gallery that mixes both kinds; only emitted to the backend
+  // when non-empty so legacy save flows stay byte-identical.
+  const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
@@ -134,6 +144,18 @@ export function useVariantImageManager() {
         }
       }
 
+      // External-video URLs and combined gallery order live on their own
+      // metafields, so the backend route can persist them in a single
+      // metafieldsSet without crowding the productVariantsBulkUpdate payload.
+      const variantExternalVideos = Object.entries(pendingExternalVideos).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
+      const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
+        variantId,
+        orderJson,
+      }));
+
       const res = await fetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -143,6 +165,8 @@ export function useVariantImageManager() {
           variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
           clearVariantMainImages: pendingClearVariantMainImages,
+          variantExternalVideos,
+          variantGalleryOrder,
         }),
       });
       const data = await res.json();
@@ -155,13 +179,15 @@ export function useVariantImageManager() {
       setPendingMediaOrder([]);
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
+      setPendingExternalVideos({});
+      setPendingGalleryOrder({});
       setHasAltTextEdits(false);
       setResetCounter(c => c + 1);
       return null;
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingGalleryOrder]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -172,6 +198,8 @@ export function useVariantImageManager() {
     setPendingMediaOrder([]);
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
+    setPendingExternalVideos({});
+    setPendingGalleryOrder({});
     setHasAltTextEdits(false);
     // Clear data derived from the previous product so the bulk panels never match
     // against stale variants/selection during the load window of the new product.
@@ -203,6 +231,10 @@ export function useVariantImageManager() {
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,
+    pendingExternalVideos,
+    setPendingExternalVideos,
+    pendingGalleryOrder,
+    setPendingGalleryOrder,
     handleVariantsLoaded,
     handleGallerySelectionGidsChange,
     handleMissingMainImageChange,

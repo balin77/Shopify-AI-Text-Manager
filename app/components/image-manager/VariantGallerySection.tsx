@@ -1,10 +1,11 @@
 import { useState, useRef, useMemo } from "react";
-import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
+import { Text, Button, InlineStack, Collapsible, Badge, TextField, Banner } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
+import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
 
 interface VariantGallerySectionProps {
@@ -33,6 +34,11 @@ interface VariantGallerySectionProps {
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
+  /** Effective YouTube/Vimeo URLs for this variant (server-loaded + local
+   *  pending edits). Undefined falls back to `variant.externalVideoUrls`. */
+  externalVideoUrls?: string[];
+  onAddExternalVideoUrl?: (variantId: string, url: string) => void;
+  onRemoveExternalVideoUrl?: (variantId: string, url: string) => void;
 }
 
 export function VariantGallerySection({
@@ -61,11 +67,21 @@ export function VariantGallerySection({
   enabledLanguages = [],
   currentLanguage,
   primaryLocale,
+  externalVideoUrls,
+  onAddExternalVideoUrl,
+  onRemoveExternalVideoUrl,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
+  // Local input state for the YouTube / Vimeo URL row. We validate on
+  // submit (parseExternalVideoUrl returns null for anything we can't safely
+  // embed) so a paste of a tracking-laden URL still works as long as it
+  // contains a parseable id.
+  const [urlInput, setUrlInput] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
@@ -184,6 +200,76 @@ export function VariantGallerySection({
               </Button>
             )}
           </div>
+
+          {/* YouTube / Vimeo URL row — only rendered when wired by the parent
+              (i.e. when onAddExternalVideoUrl is provided). These items are
+              persisted to a separate metafield (variant_external_videos)
+              because list.file_reference can't hold URLs; the storefront
+              Liquid appends them after the file-backed items per variant. */}
+          {onAddExternalVideoUrl && (
+            <div style={{ marginTop: 10, padding: "10px 12px", background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
+              <div style={{ marginBottom: 6 }}>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {t.imageManager.addExternalVideoTitle ?? "Add YouTube or Vimeo URL"}
+                </Text>
+              </div>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <div style={{ flex: "1 1 240px", minWidth: 200 }}>
+                  <TextField
+                    label=""
+                    labelHidden
+                    autoComplete="off"
+                    value={urlInput}
+                    onChange={(v) => { setUrlInput(v); if (urlError) setUrlError(null); }}
+                    placeholder={t.imageManager.addExternalVideoPlaceholder ?? "https://youtube.com/watch?v=…"}
+                    error={urlError ?? undefined}
+                  />
+                </div>
+                <Button
+                  size="slim"
+                  onClick={() => {
+                    const parsed = parseExternalVideoUrl(urlInput);
+                    if (!parsed) {
+                      setUrlError(t.imageManager.externalVideoInvalid ?? "Not a recognised YouTube or Vimeo URL.");
+                      return;
+                    }
+                    if (effectiveExternalVideoUrls.includes(parsed.canonicalUrl)) {
+                      // Silent no-op for duplicates — re-adding the same URL
+                      // would otherwise produce a noisy banner for nothing.
+                      setUrlInput("");
+                      return;
+                    }
+                    onAddExternalVideoUrl(variant.id, parsed.canonicalUrl);
+                    setUrlInput("");
+                    setUrlError(null);
+                  }}
+                >
+                  {t.imageManager.addExternalVideoButton ?? "Add"}
+                </Button>
+              </InlineStack>
+              {effectiveExternalVideoUrls.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {effectiveExternalVideoUrls.map((url) => {
+                    const parsed = parseExternalVideoUrl(url);
+                    const hostLabel = parsed?.host === "youtube" ? "YouTube" : parsed?.host === "vimeo" ? "Vimeo" : "Link";
+                    return (
+                      <div key={url} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 6px", background: "white", borderRadius: 4, border: "1px solid #e1e3e5", fontSize: 12 }}>
+                        <Badge tone="info">{hostLabel}</Badge>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#1f2937" }} title={url}>
+                          {url}
+                        </span>
+                        {onRemoveExternalVideoUrl && (
+                          <Button size="slim" variant="plain" tone="critical" onClick={() => onRemoveExternalVideoUrl(variant.id, url)}>
+                            ×
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Alt text editor — only when exactly 1 image is selected */}
           {singleSelectedUrl && onSaveAltText && (

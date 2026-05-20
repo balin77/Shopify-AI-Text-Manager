@@ -745,6 +745,7 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
