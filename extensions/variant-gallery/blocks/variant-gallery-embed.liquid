@@ -1,36 +1,47 @@
 {%- comment -%}
-  App Embed Block (target: body) — runs on every product page automatically.
-  Finds the native gallery in the DOM, hides it when variant-specific images
-  exist in custom.variant_gallery, and injects the custom gallery in its place.
-  On variants without metafield images the native gallery is restored.
+  App Embed Block — target: head. ONE block that owns the whole feature:
+  pre-paint FOUC prevention, JSON data island, controller script and the
+  custom-element placeholder. Shopify injects this just before </head>,
+  so the inline <style>/<script>/<link>/JSON-island parts are parsed
+  during <head> parsing — before the <body> / native gallery is painted,
+  which is the only true pre-paint hook.
+
+  How the HTML parser places things:
+    Everything except <cp-embed-gallery> is head-valid (<style>, <script>,
+    <link>) and stays in <head>. The <cp-embed-gallery> placeholder is
+    NOT head-valid, so when the parser encounters it the head insertion
+    mode ends implicitly (per HTML5 spec) and the element is placed as
+    the FIRST <body> child. The deferred controller script (registered
+    in head) then upgrades that placeholder and `connectedCallback`
+    fires → _init resolves the native gallery, hides it per-element,
+    releases the blanket class and mounts the custom gallery.
+
+  FOUC flow:
+    1. Setter script (synchronous, head-parse) reads the JSON data island
+       above it and, ONLY if the current variant actually has images
+       (resolved from ?variant= or product.selected_or_first_available_
+       variant — [name="id"] does not exist yet at head-parse), adds
+       `cp-vg-prehide` to <html>. The blanket <style> hides all default-
+       selector native galleries pre-paint via visibility:hidden (layout
+       reserved → no shift when revealed).
+    2. window.__cpVgFouc.prehideTimer (3s) is the only fail-safe to drop
+       the class if the controller never mounts.
+    3. The deferred controller runs at DOMContentLoaded, _tick releases
+       the blanket synchronously THEN applies the precise per-element
+       .cp-vg-native-hidden hide in the same tick → no flash. On AJAX
+       variant switch the controller re-adds the blanket synchronously
+       (observer + event handlers gated by _needsCover) and releases on
+       the next tick.
+
+  Constraints (Shopify): app embed blocks have only Global Liquid scope
+  (`product` is available on product pages). The bundled Shopify
+  stylesheet tag is forbidden in app blocks — plain <style>/<script>
+  only. Custom elements as direct head children are not head-valid, so
+  the placeholder MUST be last in this block (or the parser closes head
+  early and metadata after it ends up in body).
 {%- endcomment -%}
 
 {%- if product != blank -%}
-
-{%- comment -%}
-  Native-gallery FOUC prevention — split across two app embeds:
-
-  • PRE-PAINT setter: the separate `target: head` block
-    (blocks/variant-gallery-prehead.liquid) emits the blanket
-    `html.cp-vg-prehide … { visibility:hidden }` <style> AND adds the
-    `cp-vg-prehide` class during <head> parsing — before the <body> /
-    native gallery is painted. That is the only true pre-paint hook
-    (this body embed renders at end of <body>, too late). It also
-    registers window.__cpVgFouc.prehideTimer (3s fail-safe).
-
-  • RELEASER (here): the per-element bootstrap below resolves the exact
-    native element (mirroring the controller), hides only it via
-    `.cp-vg-native-hidden` (display:none), then releases the blanket
-    `cp-vg-prehide` class in a `finally` so quick-view / no-image
-    variants are not left hidden. The controller additionally releases
-    it defensively and cancels BOTH timers once authoritative.
-
-  The head block is conditional (only pre-hides variants that actually
-  have gallery images) and degrades safely (3s timer) if this body embed
-  is disabled/blocked. If the head block is disabled there is simply no
-  pre-paint hiding (the original flash returns) but everything else still
-  works. Both embeds should be enabled together.
-{%- endcomment -%}
 
 {%- comment -%}
   R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
@@ -86,53 +97,44 @@
 </script>
 
 {%- comment -%}
-  FOUC fix: the native gallery is otherwise hidden only later by the deferred
-  controller (after DOMContentLoaded), so it flashes fully visible on every
-  page load. This synchronous inline script runs the moment the parser
-  reaches it (the native gallery is earlier in <body>, so it is already in
-  the DOM): if the *current* variant has metafield images it resolves the
-  exact native gallery element — mirroring the controller's scope + selector
-  resolution — and adds the fixed class `cp-vg-native-hidden` directly to it,
-  so it is hidden before/at first paint instead of after the controller boots.
+  Pre-paint setter. Reads the JSON island above (single source of truth,
+  no duplicated has-images logic), resolves the current variant from
+  ?variant= or selected_or_first_available_variant (no [name="id"] in
+  the DOM yet at head-parse time — the controller handles late
+  corrections), and adds `cp-vg-prehide` to <html> ONLY if data[id] is
+  non-empty. This is now perfectly aligned with the controller decision
+  (a variant whose variant_gallery is set but whose every image_url is
+  empty yields an empty data[id] and is NOT pre-hidden).
 
-  Security: NO merchant-controlled value is ever interpolated into CSS or
-  HTML here. The CSS rule is a fixed class. Merchant selector settings are
-  passed only as `| json` JS strings, additionally `<`-stripped (same
-  hardening posture as the JSON island above) so a `</script>` in a setting
-  cannot break out. Element-scoped (respects scope_selector) so quick-view /
-  recommended-product galleries elsewhere on the page are not hidden.
-
-  Variants WITHOUT images never get the class → native shows normally (no
-  reverse flash). A 3s fail-safe reveals the native gallery again if the
-  controller never mounts; the controller cancels it once it takes over.
+  Security: only numeric IDs and the canonical class literal are used —
+  no merchant-controlled value is interpolated into JS strings here.
 {%- endcomment -%}
-{%- comment -%}
-  `| json` handles quotes/backslashes for the JS string context. We
-  additionally strip `<` only: a CSS selector never legitimately contains
-  `<`, and every script-context breakout (`</script>`, `<!--`) requires it,
-  so this removes the breakout vector losslessly (defence-in-depth on top
-  of `| json`). `>` is NOT stripped — it is the legitimate CSS child
-  combinator (`.a > .b`) and carries no breakout risk inside a JS string.
-{%- endcomment -%}
-{%- assign cp_native_sel  = block.settings.native_gallery_selector | json | replace: "<", "" -%}
-{%- assign cp_scope_sel   = block.settings.scope_selector          | json | replace: "<", "" -%}
-{%- assign cp_extra_sel   = block.settings.extra_hide_selector     | json | replace: "<", "" -%}
-<style>.cp-vg-native-hidden{display:none !important;}</style>
+<script>
+  (function () {
+    try {
+      var el = document.getElementById('cp-embed-data-{{ block.id }}');
+      if (!el) return;
+      var data = JSON.parse(el.textContent);
+      var id = null;
+      try { id = new URL(window.location.href).searchParams.get('variant'); } catch (e) {}
+      if (!id) id = {{ product.selected_or_first_available_variant.id | json }};
+      if (id == null) return;
+      var imgs = data[String(id)];
+      if (!(imgs && imgs.length)) return;
+      document.documentElement.classList.add('cp-vg-prehide');
+      window.__cpVgFouc = window.__cpVgFouc || {};
+      window.__cpVgFouc.prehideTimer = window.setTimeout(function () {
+        document.documentElement.classList.remove('cp-vg-prehide');
+      }, 3000);
+    } catch (e) { /* never block page render */ }
+  })();
+</script>
 
 {%- comment -%}
-  Dormant blanket rule, duplicated from the target:head pre-hide block.
-  The head block only runs at initial <head> parse — it does NOT cover an
-  AJAX variant change, where the theme replaces the product section with
-  a fresh, visible native gallery ~80ms before the controller hides it
-  per-element. The controller re-adds `cp-vg-prehide` synchronously on
-  variant-change signals; this rule (present once the body embed is
-  parsed, i.e. always by the time a shopper can switch variants) makes
-  that cover actually hide the incoming native gallery. Dormant unless
-  the class is set, so it is inert on initial load / no-op when unused.
-
-  Selector list MUST stay in sync with the canonical copy in
-  variant-gallery-prehead.liquid and the _selectors array in
-  assets/variant-gallery-embed.js — change all three together.
+  CANONICAL native-selector list. Kept in sync with the _selectors array
+  in assets/variant-gallery-embed.js — change both together.
+  visibility:hidden reserves layout (no shift when the blanket is
+  released and the controller's per-element display:none takes over).
 {%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,
@@ -141,68 +143,18 @@
   html.cp-vg-prehide .product__media-list { visibility: hidden !important; }
 </style>
 
-<script>
-  (function () {
-    try {
-      var el = document.getElementById('cp-embed-data-{{ block.id }}');
-      if (!el) return;
-      var data = JSON.parse(el.textContent);
+<style>.cp-vg-native-hidden{display:none !important;}</style>
 
-      var scopeSel  = {{ cp_scope_sel }};
-      var configured = {{ cp_native_sel }};
-      var extraSel  = {{ cp_extra_sel }};
-      var defaultId = {{ product.selected_or_first_available_variant.id | json }};
+{{ 'variant-gallery-embed.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'variant-gallery-embed.js' | asset_url }}" defer></script>
 
-      var root = document;
-      if (scopeSel) { try { root = document.querySelector(scopeSel) || document; } catch (e) {} }
-
-      // Mirror the controller's _resolveVariantId order: live [name="id"]
-      // (also covers sold-out variants) → ?variant= → first/selected.
-      var id = null;
-      try { var inp = root.querySelector('[name="id"]'); if (inp && inp.value) id = String(inp.value); } catch (e) {}
-      if (!id) { try { id = new URL(window.location.href).searchParams.get('variant'); } catch (e) {} }
-      if (!id && defaultId != null) id = String(defaultId);
-
-      var imgs = (id && data) ? data[id] : null;
-      if (!(imgs && imgs.length)) return;
-
-      // Mirror the controller's _selectors fallback list.
-      var sels = [configured, 'media-gallery', '[id^="MediaGallery"]', '.product__media-wrapper', '.product__media-list'];
-      var native = null;
-      for (var i = 0; i < sels.length; i++) {
-        var s = sels[i]; if (!s) continue;
-        try { var c = root.querySelector(s); if (c) { native = c; break; } } catch (e) {}
-      }
-      if (!native) return;
-
-      var extra = [];
-      if (extraSel) { try { extra = Array.prototype.slice.call(root.querySelectorAll(extraSel)); } catch (e) {} }
-      native.classList.add('cp-vg-native-hidden');
-      extra.forEach(function (x) { x.classList.add('cp-vg-native-hidden'); });
-
-      // Merge, don't overwrite: the prehide early script above already
-      // registered window.__cpVgFouc.prehideTimer.
-      window.__cpVgFouc = window.__cpVgFouc || {};
-      window.__cpVgFouc.timer = window.setTimeout(function () {
-        if (!document.querySelector('.cp-embed-gallery .cp-gallery__main-image')) {
-          native.classList.remove('cp-vg-native-hidden');
-          extra.forEach(function (x) { x.classList.remove('cp-vg-native-hidden'); });
-        }
-      }, 3000);
-    } catch (e) {
-      /* never block page render */
-    } finally {
-      // The per-element hide (or no-images/no-native decision) has now run,
-      // so drop the pre-paint blanket: the specific native element is kept
-      // hidden by `.cp-vg-native-hidden` (display:none), while any other
-      // matched gallery (quick-view) and no-images variants become visible.
-      // Pairs set+release in adjacent units so a blocked controller can
-      // never strand the page with the gallery globally hidden.
-      document.documentElement.classList.remove('cp-vg-prehide');
-    }
-  })();
-</script>
-
+{%- comment -%}
+  Placeholder element. NOT head-valid per HTML5, so the parser closes
+  <head> implicitly when it reaches this tag and places the element as
+  the first <body> child. Everything above (head-valid) therefore stays
+  in <head> and is parsed pre-paint. Keep this LAST inside the if-block
+  for that invariant to hold.
+{%- endcomment -%}
 <cp-embed-gallery
   id="cp-embed-gallery-{{ block.id }}"
   class="cp-embed-gallery"
@@ -212,21 +164,26 @@
   data-scope-selector="{{ block.settings.scope_selector }}"
   data-extra-hide="{{ block.settings.extra_hide_selector }}"
   data-thumb-size="{{ block.settings.thumbnail_size }}"
-  data-debug="{% if block.settings.debug_logs %}1{% endif %}"
 >
   <div class="cp-gallery__inner"></div>
 </cp-embed-gallery>
-
-{{ 'variant-gallery-embed.css' | asset_url | stylesheet_tag }}
-<script src="{{ 'variant-gallery-embed.js' | asset_url }}" defer></script>
 
 {%- endif -%}
 
 {% schema %}
 {
   "name": "Variant Image Gallery",
-  "target": "body",
+  "target": "head",
   "settings": [
+    {
+      "type": "range",
+      "id": "thumbnail_size",
+      "label": "Thumbnail size (px)",
+      "min": 60,
+      "max": 200,
+      "step": 10,
+      "default": 80
+    },
     {
       "type": "text",
       "id": "native_gallery_selector",
@@ -245,21 +202,6 @@
       "id": "extra_hide_selector",
       "label": "Extra elements to hide (optional)",
       "info": "Comma-separated CSS selectors for separate native thumbnail / zoom elements some themes render outside the gallery. Leave empty unless leftover native thumbnails appear."
-    },
-    {
-      "type": "checkbox",
-      "id": "debug_logs",
-      "label": "Enable debug logging in browser console",
-      "default": false
-    },
-    {
-      "type": "range",
-      "id": "thumbnail_size",
-      "label": "Thumbnail size (px)",
-      "min": 60,
-      "max": 160,
-      "step": 10,
-      "default": 80
     },
     {
       "type": "paragraph",

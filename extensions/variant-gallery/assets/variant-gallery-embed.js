@@ -10,7 +10,13 @@ class CpEmbedGallery extends HTMLElement {
   connectedCallback() {
     if (this._initialized) return;
     this._initialized = true;
-    this._debug = this.dataset.debug === '1';
+    // Debug switch is intentionally NOT a merchant-facing schema setting
+    // (would be exposed to every store owner in production). Devs enable
+    // it ad-hoc by appending ?cp_debug=1 to the product URL.
+    this._debug = (() => {
+      try { return new URL(location.href).searchParams.has('cp_debug'); }
+      catch (_) { return false; }
+    })();
     this._log('connected. block:', this.dataset.blockId);
 
     this._onTick = this._tick.bind(this);
