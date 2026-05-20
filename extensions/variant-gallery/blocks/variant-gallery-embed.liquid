@@ -95,7 +95,7 @@
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
             {%- elsif item.media_type == 'video' -%}
-              {%- if item.preview_image != blank -%}
+              {%- if item.preview_image != blank and item.sources.size > 0 -%}
                 {%- if cp_has_any %},{% endif -%}
                 {%- assign cp_pi = item.preview_image -%}
                 {
@@ -114,29 +114,68 @@
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
-            {%- elsif item.media_type == 'model' -%}
-              {%- if item.preview_image != blank -%}
-                {%- assign cp_glb = blank -%}
-                {%- for src in item.sources -%}
-                  {%- if src.format == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
-                {%- endfor -%}
-                {%- if cp_glb != blank -%}
-                  {%- if cp_has_any %},{% endif -%}
-                  {%- assign cp_pi = item.preview_image -%}
-                  {
-                    "type":      "model",
-                    "thumb":     {{ cp_pi | image_url: width: 160  | json }},
-                    "poster":    {{ cp_pi | image_url: width: 1200 | json }},
-                    "w":         {{ cp_pi.width  | json }},
-                    "h":         {{ cp_pi.height | json }},
-                    "alt":       {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
-                    "model_src": {{ cp_glb | json }}
-                  }
-                  {%- assign cp_has_any = true -%}
-                {%- endif -%}
-              {%- endif -%}
+            {%- comment -%} No vg-model branch: Shopify `list.file_reference` returns MediaImage / Video / GenericFile only. 3D models live on product.media or — once the Image Manager v2 ships — in a dedicated URL metafield. {%- endcomment -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- comment -%}
+            YouTube/Vimeo URLs from custom.variant_external_videos (list.url).
+            `list.file_reference` can't hold URLs, so they live on a parallel
+            metafield and are appended after the file-backed items. URL parsing
+            uses split-pipes (no regex in Liquid). The controller's existing
+            `external_video` dispatch handles these unchanged — only host +
+            external_id are required at runtime.
+          {%- endcomment -%}
+          {%- assign cp_extvids = variant.metafields.custom.variant_external_videos -%}
+          {%- if cp_extvids != blank and cp_extvids.value != blank -%}
+            {%- for cp_url_raw in cp_extvids.value -%}
+              {%- assign cp_url = cp_url_raw | strip -%}
+              {%- assign cp_ev_host = blank -%}
+              {%- assign cp_ev_id = blank -%}
+              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtu.be/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtube.com/embed/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/embed/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'youtube.com/shorts/' -%}
+                {%- assign cp_ev_host = 'youtube' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/shorts/' | last -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- elsif cp_url contains 'vimeo.com/' -%}
+                {%- assign cp_ev_host = 'vimeo' -%}
+                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
+                {%- if cp_ev_tail contains 'video/' -%}
+                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
+                {%- endif -%}
+                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
+              {%- endif -%}
+              {%- if cp_ev_host != blank and cp_ev_id != blank -%}
+                {%- if cp_ev_host == 'youtube' -%}
+                  {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
+                {%- else -%}
+                  {%- assign cp_ev_thumb = '' -%}
+                {%- endif -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":        "external_video",
+                  "thumb":       {{ cp_ev_thumb | json }},
+                  "poster":      {{ cp_ev_thumb | json }},
+                  "w":           {{ 0 | json }},
+                  "h":           {{ 0 | json }},
+                  "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "host":        {{ cp_ev_host | json }},
+                  "external_id": {{ cp_ev_id | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
         {%- endif -%}
         {%- comment -%} Step 2: if no images from metafield, fall back to product.media. Handles ALL media types so a merchant-uploaded video / 3D model is no longer silently dropped (Bilder + Video-Player). featured_image emitted first as primary (RISK-4) and deduped from the loop. {%- endcomment -%}
         {%- unless cp_has_any -%}
@@ -177,7 +216,7 @@
                   {%- assign cp_has_any = true -%}
                 {%- endif -%}
               {%- elsif media.media_type == 'video' -%}
-                {%- if media.preview_image != blank -%}
+                {%- if media.preview_image != blank and media.sources.size > 0 -%}
                   {%- if cp_has_any %},{% endif -%}
                   {%- assign cp_pi = media.preview_image -%}
                   {
@@ -216,7 +255,8 @@
                 {%- if media.preview_image != blank -%}
                   {%- assign cp_glb = blank -%}
                   {%- for src in media.sources -%}
-                    {%- if src.format == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
+                    {%- assign cp_fmt = src.format | downcase -%}
+                    {%- if cp_fmt == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
                   {%- endfor -%}
                   {%- if cp_glb != blank -%}
                     {%- if cp_has_any %},{% endif -%}
@@ -312,6 +352,7 @@
   data-thumb-size="{{ block.settings.thumbnail_size }}"
   data-show-thumbs="{% if block.settings.enable_thumbnails %}1{% endif %}"
   data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' }}"
+  data-model-viewer-src="{{ 'model-viewer.min.js' | asset_url }}"
 >
   <div class="cp-gallery__inner"></div>
 </cp-embed-gallery>

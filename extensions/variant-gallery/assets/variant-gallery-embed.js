@@ -455,8 +455,17 @@ class CpEmbedGallery extends HTMLElement {
     const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
     const h = Number(img && img.h) > 0 ? Number(img.h) : '';
     const isFirst = index === 0;
+    // RISK-6: eager-all in thumb mode does not scale on 30+ image
+    // products (LCP + bandwidth on mobile). Preload the first few
+    // greedily (the user is most likely to click them next) and lazy
+    // the rest; _bindThumbs awaits img.decode() before the .is-active
+    // swap so a click on a yet-unloaded lazy image still never reveals
+    // a blank during the opacity transition.
+    const EAGER_THUMB_PRELOAD = 4;
     const loadAttrs = thumbMode
-      ? (isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="eager" fetchpriority="auto"')
+      ? (isFirst ? 'loading="eager" fetchpriority="high"'
+                 : (index < EAGER_THUMB_PRELOAD ? 'loading="eager" fetchpriority="auto"'
+                                               : 'loading="lazy" fetchpriority="auto"'))
       : (isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="auto"');
     return `<img
           class="cp-gallery__main-image${active ? ' is-active' : ''}"
@@ -542,15 +551,24 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   // Lazy-load Google's model-viewer Web Component on first 3D render.
-  // Cached per page session by the global flag; the browser caches the
-  // script itself across navigations, so the cost is paid at most once
-  // per shopper visit and only when a product page actually has 3D.
+  // RISK-1: served from the extension's own assets (Shopify CDN) rather
+  // than a third-party CDN, so App Store reviewers see no external script
+  // and GDPR has no extra cross-border data flow. URL is passed via the
+  // data-model-viewer-src attribute (Liquid `asset_url` filter).
+  // RISK-4: onerror resets the loading flag so a transient failure does
+  // not permanently disable 3D for the rest of the session — the next
+  // render attempt can retry.
   _ensureModelViewerLib() {
-    if (window.__cpVgModelViewerLoading) return;
+    if (window.__cpVgModelViewerLoaded || window.__cpVgModelViewerLoading) return;
+    const src = this.dataset.modelViewerSrc;
+    if (!src) return;
     window.__cpVgModelViewerLoading = true;
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = 'https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.0/dist/model-viewer.min.js';
+    s.crossOrigin = 'anonymous';
+    s.src = src;
+    s.onload  = () => { window.__cpVgModelViewerLoaded = true; };
+    s.onerror = () => { window.__cpVgModelViewerLoading = false; };
     document.head.appendChild(s);
   }
 
@@ -648,10 +666,13 @@ class CpEmbedGallery extends HTMLElement {
         const win = el.contentWindow;
         if (!win) return;
         const src = el.getAttribute('src') || '';
+        // RISK-2: explicit target origin — never use '*'. Both player
+        // origins are fixed (we built the embed URL ourselves), so we
+        // can be precise. App-Store-scanners flag '*' as anti-pattern.
         if (src.indexOf('youtube.com') >= 0) {
-          win.postMessage('{"event":"command","func":"pauseVideo","args":""}', '*');
+          win.postMessage('{"event":"command","func":"pauseVideo","args":""}', 'https://www.youtube.com');
         } else if (src.indexOf('vimeo.com') >= 0) {
-          win.postMessage('{"method":"pause"}', '*');
+          win.postMessage('{"method":"pause"}', 'https://player.vimeo.com');
         }
       } catch (_) { /* cross-origin, ignore */ }
     }
@@ -661,15 +682,28 @@ class CpEmbedGallery extends HTMLElement {
     const mains = Array.from(container.querySelectorAll('.cp-gallery__main-image'));
     const thumbs = Array.from(container.querySelectorAll('.cp-gallery__thumb'));
     const mainBox = container.querySelector('.cp-gallery__main');
+    // RISK-6: a click sequence guards against the race where the user
+    // taps multiple thumbs quickly. Only the most recent click is
+    // allowed to commit its .is-active swap after its image decode.
+    let clickSeq = 0;
     thumbs.forEach((thumb) => {
-      thumb.addEventListener('click', () => {
+      thumb.addEventListener('click', async () => {
+        const seq = ++clickSeq;
         const i = Number(thumb.dataset.index);
         const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
         if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
-        // Pause the outgoing item (video / external embed) BEFORE the
-        // class swap so the user does not briefly hear audio over a
-        // newly visible image.
+        // Pause the outgoing item BEFORE awaiting decode so audio does
+        // not keep playing while the next image is being decoded.
         this._pauseMedia(container.querySelector('.cp-gallery__main-image.is-active'));
+        // RISK-6: preload the target image fully before the opacity
+        // swap so a not-yet-loaded lazy image never reveals a blank
+        // during the .is-active transition. <video> / <iframe> /
+        // <model-viewer> don't implement decode() — skip silently.
+        const target = mains[i];
+        if (target && typeof target.decode === 'function') {
+          try { await target.decode(); } catch (_) { /* loaded enough */ }
+        }
+        if (seq !== clickSeq) return; // a newer click superseded this one
         mains.forEach((m, j) => m.classList.toggle('is-active', j === i));
         thumbs.forEach((t, j) => t.classList.toggle('is-active', j === i));
         // Keep the active thumb visible in the carousel.
