@@ -473,22 +473,15 @@ export function SortableImageGrid({
       const newIndex = imageUrls.indexOf(overUrl);
       if (oldIndex !== -1 && newIndex !== -1) {
         // Variant galleries (showPlaceholder=true && hasMainImage) reserve
-        // index 0 for the featured image. Refuse a move that would either
-        // (a) drop a non-image into index 0, or
-        // (b) push the existing image-at-0 out by moving it backwards.
-        // Product galleries (showPlaceholder=false) have no such constraint.
+        // index 0 for the featured image (Shopify only accepts MediaImage
+        // there). Compute the post-move order and refuse the drop iff the
+        // new head would be a non-image — that's the only state we actually
+        // care about, so a same-kind swap or a move that leaves an image at
+        // 0 is fine. Product galleries have no such constraint.
         const enforcePositionZero = showPlaceholder && hasMainImage;
-        if (enforcePositionZero && newIndex === 0 && isNonImageItem(activeUrl)) {
-          return;
-        }
-        if (enforcePositionZero && oldIndex === 0 && imageUrls[0] && !isNonImageItem(imageUrls[0])) {
-          // The featured image is at 0 — dragging it away would replace it
-          // with whatever follows. Only allow if the new head would also be
-          // an image; otherwise refuse.
-          const candidateHead = newIndex === 0 ? imageUrls[1] : imageUrls[0];
-          if (candidateHead && isNonImageItem(candidateHead)) {
-            return;
-          }
+        if (enforcePositionZero) {
+          const newOrder = arrayMove(imageUrls, oldIndex, newIndex);
+          if (newOrder[0] && isNonImageItem(newOrder[0])) return;
         }
         onReorder(arrayMove(imageUrls, oldIndex, newIndex));
       }

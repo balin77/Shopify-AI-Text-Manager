@@ -138,9 +138,11 @@
               {%- endfor -%}
             {%- elsif entry.kind == 'url' -%}
               {%- assign entry_val = entry.value | append: '' -%}
-              {%- assign url_needle = ',' | append: entry_val | append: ',' -%}
+              {%- comment -%} url_encode removes the comma (and other special chars), so the comma-joined cp_seen_urls set's `,VALUE,` substring check stays safe for URLs that legitimately contain commas (e.g. Vimeo privacy hash, ?list=a,b,c). {%- endcomment -%}
+              {%- assign url_token = entry_val | url_encode -%}
+              {%- assign url_needle = ',' | append: url_token | append: ',' -%}
               {%- if cp_seen_urls contains url_needle -%}{%- continue -%}{%- endif -%}
-              {%- assign cp_seen_urls = cp_seen_urls | append: entry_val | append: ',' -%}
+              {%- assign cp_seen_urls = cp_seen_urls | append: url_token | append: ',' -%}
               {%- assign cp_url = entry_val | strip -%}
               {%- assign cp_ev_host = blank -%}
               {%- assign cp_ev_id = blank -%}
@@ -246,9 +248,10 @@
           {%- if cp_tail_extvids != blank and cp_tail_extvids.value != blank -%}
             {%- for cp_url_raw in cp_tail_extvids.value -%}
               {%- assign cp_url = cp_url_raw | strip -%}
-              {%- assign url_tail_needle = ',' | append: cp_url | append: ',' -%}
+              {%- assign url_tail_token = cp_url | url_encode -%}
+              {%- assign url_tail_needle = ',' | append: url_tail_token | append: ',' -%}
               {%- if cp_seen_urls contains url_tail_needle -%}{%- continue -%}{%- endif -%}
-              {%- assign cp_seen_urls = cp_seen_urls | append: cp_url | append: ',' -%}
+              {%- assign cp_seen_urls = cp_seen_urls | append: url_tail_token | append: ',' -%}
               {%- assign cp_ev_host = blank -%}
               {%- assign cp_ev_id = blank -%}
               {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}

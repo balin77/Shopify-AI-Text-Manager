@@ -173,6 +173,13 @@ export function useVariantImageManager() {
       if (!data.success) {
         return (data.errors as string[]).join(", ");
       }
+      // Server may have rejected a subset of external-video URLs (client and
+      // server validation can drift on edge cases — whitespace, trailing
+      // slashes, browser-corrected URLs). Loud-log them so a divergence
+      // surfaces during QA instead of silently dropping the merchant's input.
+      if (Array.isArray(data.droppedExternalUrls) && data.droppedExternalUrls.length > 0) {
+        console.warn("[useVariantImageManager] server dropped external video URLs", data.droppedExternalUrls);
+      }
       setBulkItems([]);
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);

@@ -295,8 +295,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // we don't need to know the prior metafield id.
   const metafieldOps: Array<{ ownerId: string; namespace: string; key: string; type: string; value: string }> = [];
 
+  // Track URLs the client sent that we had to drop so we can surface a
+  // partial-failure to the caller. Silent filtering would let a merchant see
+  // "save succeeded" while their URL never made it into the metafield.
+  const droppedExternalUrls: Array<{ variantId: string; url: string }> = [];
   for (const ev of variantExternalVideos) {
-    const sanitized = ev.urls.filter(isValidExternalVideoUrl);
+    const sanitized: string[] = [];
+    for (const u of ev.urls) {
+      if (isValidExternalVideoUrl(u)) sanitized.push(u);
+      else droppedExternalUrls.push({ variantId: ev.variantId, url: u });
+    }
     metafieldOps.push({
       ownerId: ev.variantId,
       namespace: "custom",
@@ -307,9 +315,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   for (const vo of variantGalleryOrder) {
-    // The client always sends a JSON-stringified array; we don't re-validate
-    // shape here because the storefront / loader is tolerant of malformed
-    // order data (falls back to "files first, then URLs").
+    // The order metafield is the source of truth for the voll-mix gallery
+    // sequence. Validate the shape here — relying purely on client-side
+    // checks would let a DevTools-savvy merchant persist e.g. a URL at
+    // position 0, which would desync variant.featured_image (still
+    // MediaImage from vg.fileGids[0]) from the storefront's first tile.
+    // Shape contract: array of { kind: "file" | "url", value: string }
+    // with the first entry's kind === "file".
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(vo.orderJson);
+    } catch {
+      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson is not valid JSON.`);
+      continue;
+    }
+    if (!Array.isArray(parsed)) {
+      errors.push(`variantGalleryOrder: variant ${vo.variantId} — orderJson must be an array.`);
+      continue;
+    }
+    let invalidEntry = false;
+    for (let i = 0; i < parsed.length; i++) {
+      const entry = parsed[i] as { kind?: unknown; value?: unknown };
+      if (!entry || typeof entry !== "object" || (entry.kind !== "file" && entry.kind !== "url") || typeof entry.value !== "string") {
+        errors.push(`variantGalleryOrder: variant ${vo.variantId} — entry ${i} is malformed.`);
+        invalidEntry = true;
+        break;
+      }
+    }
+    if (invalidEntry) continue;
+    if (parsed.length > 0 && (parsed[0] as { kind: string }).kind !== "file") {
+      errors.push(
+        `variantGalleryOrder: variant ${vo.variantId} — position 0 must be a file ` +
+        `reference (image). Move an image to the first position before saving.`
+      );
+      continue;
+    }
     metafieldOps.push({
       ownerId: vo.variantId,
       namespace: "custom",
@@ -318,6 +358,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       value: vo.orderJson,
     });
   }
+  if (errors.length > 0) return fail();
 
   if (metafieldOps.length > 0) {
     const r = await admin.graphql(`
@@ -335,6 +376,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (errors.length > 0) return fail();
-  console.log("[update-variant-galleries] success", { completedSteps });
-  return json({ success: true });
+  console.log("[update-variant-galleries] success", { completedSteps, droppedExternalUrlCount: droppedExternalUrls.length });
+  return json({ success: true, droppedExternalUrls });
 };

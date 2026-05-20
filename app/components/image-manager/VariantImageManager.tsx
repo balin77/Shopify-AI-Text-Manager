@@ -220,6 +220,13 @@ export function VariantImageManager({
     setPendingProductImageOrder(null);
     setSelectedGalleryItems(new Map());
     setLocallyExcludedMainGids(new Set());
+    // Critical: the per-variant external-video URLs and the combined
+    // gallery-order JSON also have to be cleared on Cancel / product switch,
+    // otherwise a URL the merchant typed for product A but never saved would
+    // ride along to product B's save payload and end up on the wrong variant.
+    setPendingExternalVideos({});
+    setPendingGalleryOrder({});
+    pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
@@ -954,17 +961,19 @@ export function VariantImageManager({
         const newIndex = variantUrls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
           // Variant gallery position 0 maps to mediaId (MediaImage only).
-          // Refuse a drop that would leave a non-image at index 0 — server
-          // would reject too but the snap-back here is immediate feedback.
+          // Compute the post-move order and refuse the drop iff the new
+          // head would be a non-image — same logic as SortableImageGrid's
+          // standalone handler so swaps and away-moves stay legal when
+          // they leave an image at 0.
           const isNonImage = (u: string) => {
             const k = imageMetas[u]?.kind;
             return k === "video" || k === "model" || k === "external_video";
           };
-          if (newIndex === 0 && isNonImage(url)) return;
-          if (oldIndex === 0 && variantUrls[1] && isNonImage(variantUrls[1]) && newIndex !== 0) return;
+          const moved = arrayMove(variantUrls, oldIndex, newIndex);
+          if (moved[0] && isNonImage(moved[0])) return;
           handleVariantReorder(
             sourceContainerId,
-            arrayMove(variantUrls, oldIndex, newIndex).map(u => urlToGid[u] ?? u),
+            moved.map(u => urlToGid[u] ?? u),
           );
         }
       }
