@@ -928,6 +928,15 @@ export function VariantImageManager({
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          // Variant gallery position 0 maps to mediaId (MediaImage only).
+          // Refuse a drop that would leave a non-image at index 0 — server
+          // would reject too but the snap-back here is immediate feedback.
+          const isNonImage = (u: string) => {
+            const k = imageMetas[u]?.kind;
+            return k === "video" || k === "model" || k === "external_video";
+          };
+          if (newIndex === 0 && isNonImage(url)) return;
+          if (oldIndex === 0 && variantUrls[1] && isNonImage(variantUrls[1]) && newIndex !== 0) return;
           handleVariantReorder(
             sourceContainerId,
             arrayMove(variantUrls, oldIndex, newIndex).map(u => urlToGid[u] ?? u),

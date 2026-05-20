@@ -408,6 +408,15 @@ export function SortableImageGrid({
   const showPlaceholder = onDropToPlaceholder !== undefined || onUploadToGallery !== undefined;
   const sortableIds = imageUrls.map(url => `${containerId}::${url}`);
 
+  // Position 0 of a variant gallery becomes the variant's mediaId — Shopify
+  // only accepts MediaImage there. Block a reorder that would land a video /
+  // model / external_video at index 0; the server has the same guard but
+  // feedback is friendlier when the UI refuses the drop outright.
+  const isNonImageItem = (url: string): boolean => {
+    const k = imageMetas[url]?.kind;
+    return k === "video" || k === "model" || k === "external_video";
+  };
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -416,6 +425,24 @@ export function SortableImageGrid({
       const oldIndex = imageUrls.indexOf(activeUrl);
       const newIndex = imageUrls.indexOf(overUrl);
       if (oldIndex !== -1 && newIndex !== -1) {
+        // Variant galleries (showPlaceholder=true && hasMainImage) reserve
+        // index 0 for the featured image. Refuse a move that would either
+        // (a) drop a non-image into index 0, or
+        // (b) push the existing image-at-0 out by moving it backwards.
+        // Product galleries (showPlaceholder=false) have no such constraint.
+        const enforcePositionZero = showPlaceholder && hasMainImage;
+        if (enforcePositionZero && newIndex === 0 && isNonImageItem(activeUrl)) {
+          return;
+        }
+        if (enforcePositionZero && oldIndex === 0 && imageUrls[0] && !isNonImageItem(imageUrls[0])) {
+          // The featured image is at 0 — dragging it away would replace it
+          // with whatever follows. Only allow if the new head would also be
+          // an image; otherwise refuse.
+          const candidateHead = newIndex === 0 ? imageUrls[1] : imageUrls[0];
+          if (candidateHead && isNonImageItem(candidateHead)) {
+            return;
+          }
+        }
         onReorder(arrayMove(imageUrls, oldIndex, newIndex));
       }
     }
