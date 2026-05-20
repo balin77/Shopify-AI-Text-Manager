@@ -64,6 +64,16 @@
         {%- assign cp_seen_urls = ',' -%}
         {%- assign cp_seen_models = ',' -%}
         {%- comment -%}
+          Precomputed booleans for the if/elsif chain below. Liquid does
+          not support parenthesised boolean expressions like
+          `(a and b) or (c and d)`, so the sub-conditions are flattened
+          here into named flags that the chain can OR together.
+        {%- endcomment -%}
+        {%- assign cp_has_vg     = false -%}
+        {%- assign cp_has_models = false -%}
+        {%- if vg != blank and vg.value != blank -%}{%- assign cp_has_vg = true -%}{%- endif -%}
+        {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}{%- assign cp_has_models = true -%}{%- endif -%}
+        {%- comment -%}
           Voll-mix path: variant_gallery_order (json) is a unified array of
           { kind: 'file' | 'url' | 'model', value } entries that mirrors how
           the merchant drag-arranged files + external URLs + 3D models in
@@ -355,7 +365,7 @@
           variant with just a .glb is not silently dropped into the
           product.media fallback.
         {%- endcomment -%}
-        {%- elsif (vg != blank and vg.value != blank) or (cp_models_mf != blank and cp_models_mf.value != blank) -%}
+        {%- elsif cp_has_vg or cp_has_models -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {

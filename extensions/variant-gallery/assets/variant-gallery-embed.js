@@ -676,10 +676,10 @@ class CpEmbedGallery extends HTMLElement {
     // order). We pick up either Dawn's lightbox path (<product-modal> /
     // .product__modal-opener), Dawn's hover path (image-magnify wrapper),
     // or the modified-Dawn inline-cursor signal.
-    const root = gallery || product || document;
+    const zoomRoot = gallery || product || document;
     const hasLightbox = !!document.querySelector('product-modal')
-                     || !!root.querySelector('.product__modal-opener');
-    const hasHover    = !!root.querySelector('image-magnify, [class*="image-magnify"]');
+                     || !!zoomRoot.querySelector('.product__modal-opener');
+    const hasHover    = !!zoomRoot.querySelector('image-magnify, [class*="image-magnify"]');
     // Known limitation (R1): on a modified Dawn fork whose ONLY zoom
     // signal is an inline cursor:zoom-in style applied by its own
     // media-gallery.js, this read is false-negative — defer scripts run
