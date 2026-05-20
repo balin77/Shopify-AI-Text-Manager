@@ -142,38 +142,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Load templates for this product.
   //
-  // R5-M2 (verified live regression): alt-text templates are authored ONCE,
-  // stored under the PRIMARY locale. A foreign-locale apply sends
-  // locale=<foreign>, so `where:{ …, locale:<foreign> }` matched 0 rows and
-  // the request silently early-returned (success:true, applied:0, no task) —
-  // "apply to all languages" did nothing for every non-primary language. The
-  // write-back already switches the locale for translationsRegister /
-  // persistAltText (isPrimary=false), so we just need to LOAD the templates
-  // from where they actually live: the primary locale for a foreign apply.
+  // Per-position merge: foreign-locale templates (authored via
+  // api.translate-alt-text-template — full sentence translated by AI) win.
+  // For positions where no foreign-locale row exists, fall back to the
+  // primary-locale template so variable substitution still produces *some*
+  // alt text. The earlier R5-M2 fix loaded *only* the primary template for
+  // foreign applies, which meant the full German sentence was written into
+  // the French translation with just the {color} variable swapped — that's
+  // the bug this merge restores.
   const isPrimaryApply = !locale || locale === primaryLocale;
-  let templates = await db.altTextTemplate.findMany({
-    where: {
-      shop: session.shop,
-      productId,
-      ...(isPrimaryApply
-        ? { locale }
-        : primaryLocale
-          ? { locale: primaryLocale }
-          : {}), // no primaryLocale given → no locale filter (deduped below)
-    },
-    orderBy: { position: "asc" },
-  });
-
-  // When the no-locale-filter fallback ran, the same position can appear once
-  // per stored locale — keep a single template per position (deterministic:
-  // first after the position/locale ordering) so each image isn't written
-  // multiple times.
-  if (!isPrimaryApply && !primaryLocale && templates.length > 0) {
-    const byPosition = new Map<number, (typeof templates)[number]>();
-    for (const t of [...templates].sort(
-      (a, b) => a.position - b.position || a.locale.localeCompare(b.locale),
-    )) {
-      if (!byPosition.has(t.position)) byPosition.set(t.position, t);
+  let templates: Awaited<ReturnType<typeof db.altTextTemplate.findMany>>;
+  if (isPrimaryApply) {
+    templates = await db.altTextTemplate.findMany({
+      where: { shop: session.shop, productId, locale },
+      orderBy: { position: "asc" },
+    });
+  } else {
+    const foreignRows = await db.altTextTemplate.findMany({
+      where: { shop: session.shop, productId, locale },
+      orderBy: { position: "asc" },
+    });
+    const primaryRows = primaryLocale
+      ? await db.altTextTemplate.findMany({
+          where: { shop: session.shop, productId, locale: primaryLocale },
+          orderBy: { position: "asc" },
+        })
+      : [];
+    const byPosition = new Map<number, (typeof foreignRows)[number]>();
+    for (const t of primaryRows) byPosition.set(t.position, t);
+    // Foreign wins — but only when it has actual content. An empty foreign
+    // row (e.g. saved by a blur before translation completed) must not
+    // overwrite the primary fallback with "".
+    for (const t of foreignRows) {
+      if (t.template && t.template.trim().length > 0) byPosition.set(t.position, t);
     }
     templates = [...byPosition.values()].sort((a, b) => a.position - b.position);
   }
