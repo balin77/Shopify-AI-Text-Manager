@@ -4,7 +4,6 @@ import { isValidShopifyGID } from "../utils/validation";
 import { db } from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { admin, session } = await authenticate.admin(request);
   const { productId, mediaIds } = await request.json();
 

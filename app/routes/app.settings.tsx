@@ -382,13 +382,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
-    const { isProductionLocked } = await import("../utils/planUtils");
-    const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
-    // Future-options Settings tabs (SKU match keys, productType Translations
-    // mapping). Develop-only — hidden in production until ready to ship,
-    // same prod-gate as showImageManagerTab.
-    const showSkuTab = !isProductionLocked();
-    const showTranslationsTab = !isProductionLocked();
+    const showImageManagerTab = true;
+    const showSkuTab = true;
+    const showTranslationsTab = true;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },

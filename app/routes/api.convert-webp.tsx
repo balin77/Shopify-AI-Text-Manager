@@ -11,7 +11,6 @@ interface ConvertWebpBody {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { session } = await authenticate.admin(request);
   const { productId, productTitle, images }: ConvertWebpBody = await request.json();
 

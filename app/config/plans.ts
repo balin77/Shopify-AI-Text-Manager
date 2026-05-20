@@ -70,7 +70,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
-    variantImageManager: false,
+    variantImageManager: true,
     cacheEnabled: {
       products: true, // limited to 50
       productImages: false, // only featured image
@@ -95,7 +95,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
-    variantImageManager: false,
+    variantImageManager: true,
     cacheEnabled: {
       products: true,
       productImages: true,

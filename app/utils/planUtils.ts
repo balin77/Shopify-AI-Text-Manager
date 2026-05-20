@@ -235,39 +235,27 @@ export function isWithinImageOperationQuota(
 }
 
 // ============================================================================
-// Production lock — temporary gating while the app is under Shopify review.
-// Hides features that were added on `develop` after the version submitted for
-// review. Remove these once the new feature set is approved and ready to ship.
+// Feature gates — fully unlocked.
+// The Image Manager, Bulk Video Upload, Bulk Alt Text, SKU modification and
+// related Settings tabs are available on every plan in every environment.
+// The functions below stay as no-op shims so existing call sites keep
+// compiling without a sweeping refactor; they always return permissive values.
 // ============================================================================
 
-/**
- * Server-only: true when running with APP_ENV=production (Railway prod).
- * Do NOT call from client code — use `newFeaturesEnabled` from PlanContext.
- */
 export function isProductionLocked(): boolean {
-  return process.env.APP_ENV === "production";
+  return false;
 }
 
-/**
- * Variant Image Manager visibility, combining plan tier + production lock.
- */
-export function canAccessVariantImageManagerInEnv(plan: Plan, newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled && canAccessVariantImageManager(plan);
+export function canAccessVariantImageManagerInEnv(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return true;
 }
 
-/**
- * Image Processing tab (new sub-tabs: Bulk Alt Text Templates, new Bulk Upload flow).
- * No plan check — the tab exists for all paying plans on develop.
- */
-export function canAccessImageProcessingTab(newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled;
+export function canAccessImageProcessingTab(_newFeaturesEnabled: boolean): boolean {
+  return true;
 }
 
-/**
- * Settings → Image Manager card (theme editor deeplinks, enabled toggle, etc.).
- */
-export function canAccessImageManagerSettingsTab(plan: Plan, newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled && (plan === "pro" || plan === "max");
+export function canAccessImageManagerSettingsTab(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return true;
 }
 
 // ---------------------------------------------------------------------------
