@@ -4,6 +4,11 @@ export interface StagedItemParsedMeta {
   identifier: string;
 }
 
+/** Coarse-grained media type as understood by both Shopify's productCreateMedia
+ *  contentType enum and our admin/storefront UI. "external_video" never reaches
+ *  productCreateMedia — it's persisted in a separate URL metafield. */
+export type MediaKind = "image" | "video" | "model" | "external_video";
+
 export interface StagedItem {
   uniqueId: string;
   previewUrl: string;
@@ -17,6 +22,8 @@ export interface StagedItem {
   parsedMeta?: StagedItemParsedMeta;
   /** "unassigned" = no SKU match, "assigned" = auto-matched, "manual" = user-placed */
   assignmentMode?: "unassigned" | "assigned" | "manual";
+  /** Drives upload route (stagedUploadsCreate.resource) + productCreateMedia.mediaContentType. */
+  kind?: MediaKind;
 }
 
 export interface VariantSelectedOption {
@@ -37,6 +44,25 @@ export interface VariantWithGallery {
   mainImageGid?: string;      // GID of the variant's native featured image (mediaId)
   defaultImageUrl?: string;
   selectedOptions: VariantSelectedOption[];
+  /** YouTube/Vimeo URLs from custom.variant_external_videos (list.url). */
+  externalVideoUrls?: string[];
+  /** Optional total order across galleryFileGids ∪ externalVideoUrls as JSON
+   *  array of { kind: "file" | "url", value: gid|url }. Position 0 is always
+   *  the variant's featured image — must remain image-only. */
+  galleryOrderJson?: string | null;
+}
+
+/** Resolved media descriptor displayed in the Image Manager.
+ *  GID-backed (image/video/model) or URL-backed (external_video). */
+export interface ResolvedMediaItem {
+  kind: MediaKind;
+  /** GID for file-backed items, "ext:youtube:<id>"/"ext:vimeo:<id>" for URLs. */
+  id: string;
+  /** Best-effort thumbnail URL. May be empty for GLB without preview or for
+   *  external videos before metadata fetch — UI must fall back to a placeholder. */
+  previewUrl: string;
+  /** Original GID for file items, full URL for external_video items. */
+  reference: string;
 }
 
 export interface ImageMeta {

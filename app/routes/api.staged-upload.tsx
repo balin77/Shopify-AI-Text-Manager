@@ -3,11 +3,23 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { type Plan } from "../config/plans";
 import { consumeImageOperations } from "../utils/imageOperations.server";
+import { classifyFile, kindToStagedResource } from "../utils/mediaKind";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
   const { admin, session } = await authenticate.admin(request);
   const { filename, mimeType, fileSize } = await request.json();
+
+  // Detect upload kind from the client-supplied mime-type. We never trust the
+  // mimeType blindly for security, but stagedUploadsCreate.resource is just a
+  // routing hint to Shopify — they re-validate on PUT.
+  const kind = classifyFile(mimeType, filename);
+  if (!kind) {
+    return json(
+      { error: `Unsupported media type: ${mimeType}` },
+      { status: 400 }
+    );
+  }
+  const resource = kindToStagedResource(kind);
 
   // Each staged upload = one billable image operation (real compute/bandwidth;
   // AI is merchant-funded BYO). Reserve quota before asking Shopify for a target.
@@ -41,7 +53,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         filename,
         mimeType,
         fileSize: String(fileSize),
-        resource: "IMAGE",
+        resource,
         httpMethod: "PUT",
       }],
     },
@@ -67,5 +79,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     url: target.url,
     resourceUrl: target.resourceUrl,
     parameters: target.parameters,
+    kind,
   });
 };

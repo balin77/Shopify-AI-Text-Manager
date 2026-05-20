@@ -18,10 +18,15 @@ import { QuestionCircleIcon } from "@shopify/polaris-icons";
 import "../../styles/HelpTooltip.css";
 import { useI18n } from "../../contexts/I18nContext";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
+import { ALL_UPLOADABLE_MIME_TYPES, classifyFile } from "../../utils/mediaKind";
 import { BulkSortableList } from "./BulkSortableList";
 import type { StagedItem, VariantWithGallery, VariantSelectedOption } from "./types";
 
-const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
+// Accept everything Shopify will accept on the staged-upload route. The route
+// re-runs classifyFile() server-side and rejects unsupported types — the
+// client-side filter is just for nicer UX, not a security boundary.
+const ALLOWED_MIME = [...ALL_UPLOADABLE_MIME_TYPES] as string[];
+const DROPZONE_ACCEPT_HINT = "JPG, PNG, GIF, WebP, SVG, MP4, MOV, WebM, GLB";
 
 type SortMode = "identifier" | "sku" | "filename" | "custom";
 type MatchMode = "sku" | "imageKey";
@@ -347,19 +352,30 @@ export function BulkImageUploadPanel({
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
     setQuotaError(null); // clear any stale quota banner from a previous drop
-    const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
+    // We accept anything classifyFile recognizes (.glb often reports as
+    // application/octet-stream, so we pass the filename through too).
+    const validFiles = acceptedFiles.filter(f => classifyFile(f.type, f.name) !== null);
     if (validFiles.length === 0) return;
 
-    const newItems: StagedItem[] = validFiles.map(file => ({
-      uniqueId: crypto.randomUUID(),
-      previewUrl: URL.createObjectURL(file),
-      resourceUrl: "",
-      fileName: file.name,
-      mimeType: file.type,
-      progress: 0,
-      status: "uploading" as const,
-      assignmentMode: "unassigned" as const,
-    }));
+    const newItems: StagedItem[] = validFiles.map(file => {
+      const kind = classifyFile(file.type, file.name) ?? "image";
+      // Browsers can't synthesize a preview for GLB; show a neutral placeholder.
+      // Video previewUrls via URL.createObjectURL are fine — <video> works with them.
+      const previewUrl = kind === "model"
+        ? ""
+        : URL.createObjectURL(file);
+      return {
+        uniqueId: crypto.randomUUID(),
+        previewUrl,
+        resourceUrl: "",
+        fileName: file.name,
+        mimeType: file.type,
+        progress: 0,
+        status: "uploading" as const,
+        assignmentMode: "unassigned" as const,
+        kind,
+      };
+    });
 
     const assignedItems = newItems.map(item =>
       autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
@@ -734,7 +750,10 @@ export function BulkImageUploadPanel({
 
       {/* Drop Zone */}
       <DropZone onDrop={handleDrop} accept={ALLOWED_MIME.join(",")} allowMultiple>
-        <DropZone.FileUpload actionTitle={t.imageManager.uploadTitle} actionHint="JPG, PNG, GIF, WebP, SVG" />
+        <DropZone.FileUpload
+          actionTitle={t.imageManager.uploadMediaTitle ?? t.imageManager.uploadTitle}
+          actionHint={DROPZONE_ACCEPT_HINT}
+        />
       </DropZone>
 
       {items.length > 0 && (
@@ -781,7 +800,20 @@ export function BulkImageUploadPanel({
                     onClick={() => onSelect(item.uniqueId, !selectedUniqueIds.has(item.uniqueId))}
                     title={variantTitle ? `→ ${variantTitle}` : item.fileName}
                   >
-                    <img src={item.previewUrl} alt={item.fileName} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, display: "block" }} />
+                    {item.kind === "model" ? (
+                      <div style={{ width: 72, height: 72, borderRadius: 6, background: "#f1f2f4", display: "flex", alignItems: "center", justifyContent: "center", color: "#616161", fontWeight: 700, fontSize: 12, letterSpacing: 0.5 }} aria-label={item.fileName}>
+                        3D
+                      </div>
+                    ) : item.kind === "video" ? (
+                      <div style={{ position: "relative", width: 72, height: 72, borderRadius: 6, overflow: "hidden", background: "#000" }} aria-label={item.fileName}>
+                        <video src={item.previewUrl} preload="metadata" muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.32)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="white" aria-hidden><path d="M8 5v14l11-7z" /></svg>
+                        </div>
+                      </div>
+                    ) : (
+                      <img src={item.previewUrl} alt={item.fileName} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, display: "block" }} />
+                    )}
                     {item.status === "uploading" && (
                       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
                         <div style={{ height: 4, background: "#e1e3e5", borderRadius: "0 0 6px 6px", overflow: "hidden" }}>

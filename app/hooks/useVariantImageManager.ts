@@ -86,8 +86,11 @@ export function useVariantImageManager() {
     try {
       const readyItems = bulkItems.filter(i => i.status === "ready");
       const allNewMedia = [
-        ...readyItems.map(i => ({ resourceUrl: i.resourceUrl })),
-        ...pendingProductNewMedia.map(r => ({ resourceUrl: r })),
+        // Forward each item's media kind to the backend so productCreateMedia
+        // gets the right mediaContentType (IMAGE / VIDEO / MODEL_3D). Older
+        // items without `kind` fall back to "image" server-side.
+        ...readyItems.map(i => ({ resourceUrl: i.resourceUrl, kind: i.kind ?? "image" as const })),
+        ...pendingProductNewMedia.map(r => ({ resourceUrl: r, kind: "image" as const })),
       ];
 
       // Merge auto-assigned bulk items into pendingVariantGalleries.
