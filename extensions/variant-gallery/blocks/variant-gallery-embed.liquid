@@ -588,7 +588,7 @@
   data-thumb-size="{{ block.settings.thumbnail_size }}"
   data-show-thumbs="{% if block.settings.enable_thumbnails %}1{% endif %}"
   data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' }}"
-  data-inherit-theme="{% if block.settings.inherit_theme_settings %}1{% endif %}"
+  data-inherit-theme="{% if block.settings.inherit_theme_settings == false %}0{% else %}1{% endif %}"
   data-model-viewer-src="{{ 'model-viewer.min.js' | asset_url }}"
 >
   <div class="cp-gallery__inner"></div>

@@ -598,10 +598,29 @@ class CpEmbedGallery extends HTMLElement {
   // Non-Dawn themes that don't publish these will simply produce a null
   // result and we fall back to our own App-Embed settings — no harm.
   _detectThemeSettings() {
-    if (this.dataset.inheritTheme !== '1') return null;
-    const gallery = document.querySelector('media-gallery');
-    const product = document.querySelector('.product');
-    if (!gallery && !product) return null;
+    // Treat anything except explicit '0' as opt-in. Existing merchants
+    // who had our App-Embed before this setting existed have an empty
+    // attribute (Shopify only applies `default: true` to fresh installs),
+    // and we want them to get inheritance by default — only opt-out
+    // disables it.
+    if (this.dataset.inheritTheme === '0') {
+      this._log('theme-inherit: disabled by setting');
+      return null;
+    }
+    // R2 fix: respect the merchant-configured scope_selector so a hidden
+    // quick-view / recently-viewed wrapper with its own .product class
+    // does not poison our detection (it would land first in a document-
+    // wide querySelector). Fall back to document when nothing is found
+    // within scope so misconfigured scope_selector degrades to the old
+    // behaviour rather than silently disabling inheritance.
+    const root = this._scopeRoot();
+    const gallery = root.querySelector('media-gallery') || document.querySelector('media-gallery');
+    const product = root.querySelector('.product')      || document.querySelector('.product');
+    this._log('theme-inherit: gallery=', !!gallery, 'product=', !!product);
+    if (!gallery && !product) {
+      this._log('theme-inherit: no theme markers found, falling back to embed defaults');
+      return null;
+    }
     const out = {};
     const allowed = ['bottom', 'top', 'left', 'right'];
 
@@ -611,6 +630,8 @@ class CpEmbedGallery extends HTMLElement {
       if (m) tp = m[1];
     }
     if (allowed.indexOf(tp) >= 0) out.thumbPos = tp;
+    this._log('theme-inherit: thumbPos=', tp || '(none)',
+      '| .product classes=', product ? product.className : '(no .product)');
 
     let dl = gallery && gallery.dataset && gallery.dataset.desktopLayout;
     if (!dl && product) {
@@ -620,13 +641,17 @@ class CpEmbedGallery extends HTMLElement {
       }
     }
     if (dl) out.showThumbs = (dl === 'thumbnail' || dl === 'thumbnail_slider');
+    this._log('theme-inherit: gallery_layout=', dl || '(none)',
+      '→ showThumbs=', out.showThumbs);
 
     if (product) {
       const m = product.className.match(/product--mobile-(columns|show|hide)/);
       if (m) out.mobileThumbs = m[1];
     }
+    this._log('theme-inherit: mobileThumbs=', out.mobileThumbs || '(none)');
 
     out.videoLoop = !!document.querySelector('video[loop]');
+    this._log('theme-inherit: videoLoop=', out.videoLoop);
 
     // media_fit: read object-fit from a native gallery image. The native
     // gallery is in the DOM (possibly visibility:hidden via cp-vg-prehide,
@@ -640,7 +665,10 @@ class CpEmbedGallery extends HTMLElement {
       try {
         const fit = getComputedStyle(sampleImg).objectFit;
         if (fit === 'cover' || fit === 'contain') out.mediaFit = fit;
+        this._log('theme-inherit: sample img object-fit=', fit, '→ mediaFit=', out.mediaFit || '(default)');
       } catch (_) { /* hidden / not paintable */ }
+    } else {
+      this._log('theme-inherit: no sample img found for media_fit detection');
     }
 
     // image_zoom: detect via DOM markers, independent of Dawn's media-
@@ -652,11 +680,22 @@ class CpEmbedGallery extends HTMLElement {
     const hasLightbox = !!document.querySelector('product-modal')
                      || !!root.querySelector('.product__modal-opener');
     const hasHover    = !!root.querySelector('image-magnify, [class*="image-magnify"]');
+    // Known limitation (R1): on a modified Dawn fork whose ONLY zoom
+    // signal is an inline cursor:zoom-in style applied by its own
+    // media-gallery.js, this read is false-negative — defer scripts run
+    // in source-order, our App-Embed is in <head> so we execute BEFORE
+    // the section script. Stock Dawn is fine (lightbox + hover use
+    // Liquid-rendered markers, see above). Merchants on such forks can
+    // turn `inherit_theme_settings` off and use the explicit App-Embed
+    // settings. A second detection pass post-load was considered and
+    // rejected to avoid race + flash risk; documented here instead.
     let inlineCursor = false;
     if (sampleImg) {
       try { inlineCursor = (sampleImg.style.cursor === 'zoom-in'); } catch (_) {}
     }
     if (hasLightbox || hasHover || inlineCursor) out.zoom = true;
+    this._log('theme-inherit: zoom markers — lightbox=', hasLightbox,
+      'hover=', hasHover, 'inlineCursor=', inlineCursor, '→ zoom=', !!out.zoom);
 
     return out;
   }
