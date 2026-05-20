@@ -1,26 +1,40 @@
 /*
  * Storefront Language & Currency switcher controller.
  *
- * Progressive enhancement only — the underlying control is one or two native
- * Shopify `localization` forms with real <select>s and a <noscript> submit
- * button, so it already works with JS disabled. This controller:
- *   1. auto-submits the relevant form when its <select> changes,
- *   2. optionally relocates the widget into the theme header/footer,
- *   3. drops a localStorage breadcrumb of the last manual choice (Shopify
- *      itself persists the real preference via its localization cookie).
+ * Progressive enhancement:
+ *   - The server renders one or two native Shopify `{% form 'localization' %}`
+ *     forms, each with a real <select> + <noscript> submit button. That is
+ *     the no-JS experience: plain dropdowns, text only (a <select> cannot
+ *     render images inside its <option>s — a browser limitation, not ours).
+ *   - When JS is available, this controller upgrades each <select> into a
+ *     custom listbox UI that DOES show flag icons in every option (current
+ *     selection + all open-list options). The native <select> remains in
+ *     the DOM (hidden but interactive via JS) so form submission still goes
+ *     through Shopify's own localization endpoint — we never bypass it.
  *
- * The `change` listener is bound to the custom element itself (event
- * delegation), so it survives the element being moved into the header/footer
- * — a DOM move keeps a node's own listeners, and disconnectedCallback is
- * deliberately a no-op so the relocation move cannot tear the handler down.
+ * Flag rendering:
+ *   - The Liquid template emits per-option data attributes:
+ *       data-flag-country  ISO-2 code of the country whose flag to use
+ *       data-flag-image    optional URL to a merchant-uploaded image
+ *                          (image_picker — takes precedence over country)
+ *   - The sprite is fetched once (data-sprite-url) and injected into the
+ *     document so <use href="#xx"> references resolve same-document. This
+ *     dodges any cross-origin <use> quirks (Shopify CDN ≠ shop origin).
+ *
+ * Relocation:
+ *   - For position=header/footer, the custom element is appended into the
+ *     theme's container after init. Delegated listeners on `this` survive
+ *     the move; disconnectedCallback is intentionally a no-op.
  */
 class CpLocaleSwitcher extends HTMLElement {
   connectedCallback() {
-    // Relocation (appendChild) re-fires connectedCallback; the guard makes
-    // that re-entry a no-op so we never double-init.
     if (this._initialized) return;
     this._initialized = true;
+
     this._debug = this.dataset.debug === '1';
+    this._showFlag = this.dataset.showFlag === '1';
+    this._labelFormat = this.dataset.labelFormat || 'endonym';
+    this._spriteUrl = this.dataset.spriteUrl || '';
 
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => this._init(), { once: true });
@@ -31,49 +45,339 @@ class CpLocaleSwitcher extends HTMLElement {
 
   disconnectedCallback() {
     // Intentionally empty: the element is moved (header/footer relocation)
-    // rather than destroyed, and a delegated listener on `this` travels with
-    // the node. Tearing down here would kill auto-submit after relocation.
+    // rather than destroyed, and a delegated listener on `this` travels
+    // with the node. Tearing down here would kill the dropdown handlers.
   }
 
   _log(...a) { if (this._debug) console.info('[cp-locale-switcher]', ...a); }
   _warn(...a) { if (this._debug) console.warn('[cp-locale-switcher]', ...a); }
 
   _init() {
-    if (!this.querySelector('form.cp-locale-switcher__form')) {
-      this._warn('no localization form found — aborting');
+    const selects = this.querySelectorAll('select.cp-locale-switcher__select');
+    if (!selects.length) {
+      this._warn('no localization <select> found — aborting');
       return;
     }
 
     this._relocate();
-
-    // Delegated on the element itself so it keeps working after relocation.
-    this._onChange = (e) => {
-      const sel = e.target;
-      if (!sel || sel.tagName !== 'SELECT' || !sel.form) return;
-      this._remember(sel);
-      this._log('submitting', sel.dataset.kind, '=', sel.value);
-      // Submit the SELECT'S OWN form (language and country are separate
-      // Shopify localization forms). Shopify applies the change and sets its
-      // own persistence cookie on the redirect.
-      const form = sel.form;
-      if (typeof form.requestSubmit === 'function') {
-        form.requestSubmit();
-      } else {
-        form.submit();
-      }
-    };
-    this.addEventListener('change', this._onChange);
+    if (this._showFlag) {
+      this._ensureSprite().then(() => this._upgradeAll(selects)).catch((err) => {
+        this._warn('sprite fetch failed; flags disabled', err);
+        this._showFlag = false;
+        this._upgradeAll(selects);
+      });
+    } else {
+      this._upgradeAll(selects);
+    }
   }
 
-  /* Persist a non-authoritative breadcrumb (analytics / debugging only —
-     Shopify's cookie is the source of truth). Best-effort. */
-  _remember(sel) {
+  _upgradeAll(selects) {
+    this.classList.add('cp-locale-switcher--js');
+    selects.forEach((sel) => this._upgrade(sel));
+  }
+
+  /* ---------------------------------------------------------------- sprite */
+
+  _ensureSprite() {
+    if (!this._spriteUrl) return Promise.resolve();
+    // One inject per page no matter how many switcher instances exist.
+    if (document.getElementById('cp-locale-flag-sprite')) return Promise.resolve();
+    if (window.__cpLocaleSpritePromise) return window.__cpLocaleSpritePromise;
+    window.__cpLocaleSpritePromise = fetch(this._spriteUrl, { credentials: 'omit' })
+      .then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      })
+      .then((svg) => {
+        const div = document.createElement('div');
+        div.id = 'cp-locale-flag-sprite';
+        div.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+        div.setAttribute('aria-hidden', 'true');
+        div.innerHTML = svg;
+        document.body.appendChild(div);
+        this._log('sprite injected');
+      });
+    return window.__cpLocaleSpritePromise;
+  }
+
+  _hasFlag(country) {
+    if (!country) return false;
+    const sprite = document.getElementById('cp-locale-flag-sprite');
+    if (!sprite) return false;
+    return !!sprite.querySelector('#' + CSS.escape(country));
+  }
+
+  /* ------------------------------------------------------------ upgrading */
+
+  _upgrade(select) {
+    const kind = select.dataset.kind || 'language';
+    const options = Array.from(select.options).map((o) => ({
+      value: o.value,
+      country: (o.dataset.flagCountry || '').toLowerCase(),
+      image: o.dataset.flagImage || '',
+      endonym: o.dataset.endonym || o.textContent.trim(),
+      iso: o.dataset.iso || o.value.toUpperCase(),
+      selected: o.selected,
+    }));
+    if (!options.length) return;
+
+    const baseId = `cp-ls-${kind}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Hide the native <select> from sight but keep it focusable for form
+    // submission and screen-reader resilience if the JS UI breaks at runtime.
+    select.classList.add('cp-locale-switcher__select--hidden');
+    select.setAttribute('tabindex', '-1');
+    select.setAttribute('aria-hidden', 'true');
+
+    // Build the custom listbox UI as a sibling of the native select.
+    const root = document.createElement('div');
+    root.className = 'cp-locale-field';
+    root.dataset.kind = kind;
+
+    // role=combobox per WAI-ARIA APG "Select-Only Combobox" pattern: the
+    // trigger element IS the combobox, and aria-activedescendant on it
+    // points into the sibling listbox while focus stays here. With role
+    // explicitly set, screen readers expect the activedescendant pattern
+    // (review R1). The <button> tag is kept so it remains keyboard- and
+    // pointer-activatable without extra script.
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cp-locale-field__button';
+    button.id = `${baseId}-button`;
+    button.setAttribute('role', 'combobox');
+    button.setAttribute('aria-haspopup', 'listbox');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', `${baseId}-list`);
+    button.setAttribute('aria-label', select.getAttribute('aria-label') || kind);
+
+    const list = document.createElement('ul');
+    list.className = 'cp-locale-field__list';
+    list.id = `${baseId}-list`;
+    list.setAttribute('role', 'listbox');
+    list.hidden = true;
+
+    options.forEach((opt, i) => {
+      const li = document.createElement('li');
+      li.className = 'cp-locale-field__option';
+      li.id = `${baseId}-opt-${i}`;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', opt.selected ? 'true' : 'false');
+      li.dataset.value = opt.value;
+      li.dataset.index = String(i);
+      li.appendChild(this._renderFlag(opt));
+      li.appendChild(this._renderLabel(opt));
+      list.appendChild(li);
+    });
+
+    const selected = options.find((o) => o.selected) || options[0];
+    this._fillButton(button, selected);
+
+    select.parentNode.insertBefore(root, select);
+    root.appendChild(button);
+    root.appendChild(list);
+    root.appendChild(select); // keep <select> inside the field for form ctx
+
+    this._bindField({ root, button, list, select, options });
+  }
+
+  _renderFlag(opt) {
+    const wrap = document.createElement('span');
+    wrap.className = 'cp-locale-field__flag';
+    wrap.setAttribute('aria-hidden', 'true');
+    if (!this._showFlag) {
+      wrap.classList.add('cp-locale-field__flag--off');
+      return wrap;
+    }
+    if (opt.image) {
+      const img = document.createElement('img');
+      img.src = opt.image;
+      img.alt = '';
+      img.loading = 'lazy';
+      wrap.appendChild(img);
+      return wrap;
+    }
+    if (this._hasFlag(opt.country)) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 640 480');
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#' + opt.country);
+      svg.appendChild(use);
+      wrap.appendChild(svg);
+      return wrap;
+    }
+    // No flag available — render a small ISO badge so the row never looks
+    // half-broken.
+    wrap.classList.add('cp-locale-field__flag--placeholder');
+    wrap.textContent = (opt.iso || '').slice(0, 2);
+    return wrap;
+  }
+
+  _renderLabel(opt) {
+    const span = document.createElement('span');
+    span.className = 'cp-locale-field__text';
+    if (this._labelFormat === 'none') {
+      span.classList.add('cp-locale-field__text--sr');
+      span.textContent = opt.endonym;
+    } else if (this._labelFormat === 'iso') {
+      span.textContent = opt.iso;
+    } else {
+      span.textContent = opt.endonym;
+    }
+    return span;
+  }
+
+  _fillButton(button, opt) {
+    button.textContent = '';
+    button.appendChild(this._renderFlag(opt));
+    button.appendChild(this._renderLabel(opt));
+    const caret = document.createElement('span');
+    caret.className = 'cp-locale-field__caret';
+    caret.setAttribute('aria-hidden', 'true');
+    caret.textContent = '▾';
+    button.appendChild(caret);
+  }
+
+  /* ------------------------------------------------------------ behaviour */
+
+  _bindField(ctx) {
+    const { root, button, list, select, options } = ctx;
+    let openIndex = options.findIndex((o) => o.selected);
+    if (openIndex < 0) openIndex = 0;
+
+    const open = () => {
+      list.hidden = false;
+      button.setAttribute('aria-expanded', 'true');
+      const active = list.children[openIndex];
+      if (active) {
+        button.setAttribute('aria-activedescendant', active.id);
+        active.scrollIntoView({ block: 'nearest' });
+        active.classList.add('cp-locale-field__option--focus');
+      }
+    };
+    const close = () => {
+      list.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      button.removeAttribute('aria-activedescendant');
+      list.querySelectorAll('.cp-locale-field__option--focus').forEach((el) =>
+        el.classList.remove('cp-locale-field__option--focus')
+      );
+    };
+    const toggle = () => (list.hidden ? open() : close());
+
+    const moveFocus = (delta) => {
+      const next = (openIndex + delta + options.length) % options.length;
+      list.children[openIndex]?.classList.remove('cp-locale-field__option--focus');
+      openIndex = next;
+      const el = list.children[openIndex];
+      if (el) {
+        el.classList.add('cp-locale-field__option--focus');
+        el.scrollIntoView({ block: 'nearest' });
+        button.setAttribute('aria-activedescendant', el.id);
+      }
+    };
+
+    const choose = (index) => {
+      const opt = options[index];
+      if (!opt) return;
+      // Update visual button
+      this._fillButton(button, opt);
+      // Update aria-selected on all options
+      Array.from(list.children).forEach((el, i) => {
+        el.setAttribute('aria-selected', i === index ? 'true' : 'false');
+      });
+      // Update native select and submit its form (Shopify applies the change)
+      if (select.value !== opt.value) {
+        select.value = opt.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      this._remember(select.dataset.kind, opt.value);
+      this._log('submitting', select.dataset.kind, '=', opt.value);
+      const form = select.form;
+      if (form) {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+      }
+    };
+
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      toggle();
+    });
+
+    button.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case 'ArrowDown':
+        case 'ArrowUp':
+          e.preventDefault();
+          if (list.hidden) open();
+          else moveFocus(e.key === 'ArrowDown' ? 1 : -1);
+          break;
+        case 'Enter':
+        case ' ':
+          e.preventDefault();
+          if (list.hidden) open();
+          else choose(openIndex);
+          break;
+        case 'Escape':
+          if (!list.hidden) {
+            e.preventDefault();
+            close();
+          }
+          break;
+        case 'Home':
+          if (!list.hidden) { e.preventDefault(); openIndex = 0; moveFocus(0); }
+          break;
+        case 'End':
+          if (!list.hidden) { e.preventDefault(); openIndex = options.length - 1; moveFocus(0); }
+          break;
+      }
+    });
+
+    list.addEventListener('click', (e) => {
+      const li = e.target.closest('.cp-locale-field__option');
+      if (!li) return;
+      choose(Number(li.dataset.index));
+    });
+
+    list.addEventListener('mousemove', (e) => {
+      const li = e.target.closest('.cp-locale-field__option');
+      if (!li) return;
+      const idx = Number(li.dataset.index);
+      if (idx === openIndex) return;
+      list.children[openIndex]?.classList.remove('cp-locale-field__option--focus');
+      openIndex = idx;
+      li.classList.add('cp-locale-field__option--focus');
+    });
+
+    // Outside-click close is handled by a SINGLE document-level listener
+    // installed in _ensureOutsideClick (review R2 — avoids one extra
+    // document listener per field). Track this field so the global
+    // handler can close it.
+    CpLocaleSwitcher._fields.push({ root, close });
+    CpLocaleSwitcher._ensureOutsideClick();
+  }
+
+  /* One document click listener for the whole page, no matter how many
+     switcher instances or fields exist. Each field registers itself in
+     CpLocaleSwitcher._fields and is closed when a click lands outside. */
+  static _ensureOutsideClick() {
+    if (CpLocaleSwitcher._outsideClickBound) return;
+    CpLocaleSwitcher._outsideClickBound = true;
+    document.addEventListener('click', (e) => {
+      for (const f of CpLocaleSwitcher._fields) {
+        if (!f.root.contains(e.target)) f.close();
+      }
+    });
+  }
+
+  /* Persist a non-authoritative breadcrumb (analytics only — Shopify's
+     cookie is the source of truth). Best-effort. */
+  _remember(kind, value) {
     try {
-      const key = sel.dataset.kind === 'language'
-        ? 'cp_ls_language'
-        : 'cp_ls_country';
-      window.localStorage.setItem(key, sel.value);
-    } catch (_) { /* storage may be unavailable (private mode, etc.) */ }
+      const key = kind === 'language' ? 'cp_ls_language' : 'cp_ls_country';
+      window.localStorage.setItem(key, value);
+    } catch (_) { /* storage may be unavailable */ }
   }
 
   /* For header/footer placement, move the widget into the theme's container.
@@ -91,21 +395,20 @@ class CpLocaleSwitcher extends HTMLElement {
       target = document.querySelector(pos === 'header' ? 'header' : 'footer');
     }
     if (!target) {
-      // No container — fall back to a floating position so the control is
-      // never lost off-screen.
       this._warn(pos, 'container not found; falling back to floating');
       this.classList.remove('cp-locale-switcher--header', 'cp-locale-switcher--footer');
       this.classList.add('cp-locale-switcher--floating-bottom-right');
       return;
     }
     if (this.parentNode !== target) {
-      // Moving the node preserves its own listeners; connectedCallback
-      // re-entry is guarded by _initialized.
       target.appendChild(this);
       this._log('relocated into', pos, 'container');
     }
   }
 }
+
+CpLocaleSwitcher._fields = [];
+CpLocaleSwitcher._outsideClickBound = false;
 
 if (!customElements.get('cp-locale-switcher')) {
   customElements.define('cp-locale-switcher', CpLocaleSwitcher);

@@ -29,7 +29,8 @@
     "deploy": "shopify app deploy",
     "web:old": "tsx web-app/server.ts",
     "oauth:old": "tsx src/oauth-setup.ts",
-    "validate:env": "node scripts/validate-env.js"
+    "validate:env": "node scripts/validate-env.js",
+    "build:flags": "node scripts/build-locale-switcher-flags.mjs"
   },
   "keywords": [],
   "author": "",
@@ -89,6 +90,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.18",
     "esbuild": "^0.27.2",
+    "flag-icons": "^7.5.0",
     "happy-dom": "^20.3.1",
     "jsdom": "^27.4.0",
     "msw": "^2.12.7",

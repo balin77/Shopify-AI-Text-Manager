@@ -5,12 +5,24 @@
   form so the customer's choice is applied and persisted by Shopify exactly
   like the theme's own country/language selector (no admin API, no custom
   scope). The control works WITHOUT JavaScript (plain <select> + submit
-  button); the accompanying JS only enhances it (auto-submit on change,
-  optional repositioning into the header/footer, localStorage breadcrumb).
+  button); the accompanying JS upgrades it to a custom dropdown that shows
+  flag icons inside the option list (a native <select> cannot render <img>
+  or <svg> inside <option> — that is a browser limitation, not ours).
 
   Language and country are TWO SEPARATE `{% form 'localization' %}` forms —
   that is Shopify's contract (mirrors Dawn). Each submission changes exactly
   one dimension; currency follows the selected country (Shopify Markets).
+
+  Flag icon resolution per language, in priority order:
+    1. Per-language image_picker upload (image_X_*)        → custom <img>
+    2. Per-language ISO country override (country_overrides textarea, e.g.
+       `de=ch` to use the Swiss flag for German)            → bundled sprite
+    3. Region in the language code itself (e.g. "de-CH")    → bundled sprite
+    4. Default language→country mapping (e.g. en→us, ja→jp) → bundled sprite
+    5. Language ISO used as-is (last resort, may not exist) → bundled sprite
+
+  Country selector flags always use the country's own ISO code — no override
+  needed (each country IS its own flag).
 
   Note: the Liquid `request` object exposes no query string, so `return_to`
   is `request.path` (same as Shopify's own Dawn theme — query params are not
@@ -20,6 +32,9 @@
 {%- liquid
   assign pos = block.settings.position | default: 'floating-bottom-right'
   assign style = block.settings.display_style | default: 'dropdown'
+  assign show_flag = block.settings.show_flag
+  assign label_format = block.settings.label_format | default: 'endonym'
+  assign flag_size = block.settings.flag_size | default: 18
   assign lang_count = localization.available_languages.size
   assign country_count = localization.available_countries.size
 
@@ -35,6 +50,8 @@
 
   assign lang_form_id = 'cp-locale-lang-' | append: block.id
   assign country_form_id = 'cp-locale-country-' | append: block.id
+
+  assign sprite_url = 'flags.svg' | asset_url
 -%}
 
 {%- if show_lang_block or show_country_block -%}
@@ -44,8 +61,12 @@
   data-block-id="{{ block.id }}"
   data-position="{{ pos }}"
   data-container="{{ block.settings.container_selector | strip | escape }}"
+  data-sprite-url="{{ sprite_url | escape }}"
+  data-show-flag="{% if show_flag %}1{% else %}0{% endif %}"
+  data-label-format="{{ label_format | escape }}"
+  data-flag-size="{{ flag_size }}"
   data-debug="{% if block.settings.debug_logs %}1{% endif %}"
-  style="--cp-ls-bg: {{ block.settings.bg_color | escape }}; --cp-ls-fg: {{ block.settings.text_color | escape }}; --cp-ls-accent: {{ block.settings.accent_color | escape }};"
+  style="--cp-ls-bg: {{ block.settings.bg_color | escape }}; --cp-ls-fg: {{ block.settings.text_color | escape }}; --cp-ls-accent: {{ block.settings.accent_color | escape }}; --cp-ls-flag-size: {{ flag_size }}px;"
 >
   <div class="cp-locale-switcher__inner">
     {%- if show_lang_block -%}
@@ -60,10 +81,109 @@
             aria-label="{{ 'blocks.locale_switcher.language' | t }}"
           >
             {%- for lang in localization.available_languages -%}
+              {%- liquid
+                assign iso_lower = lang.iso_code | downcase
+
+                # 1) image_picker overrides
+                assign override_img = ''
+                if block.settings.image_1 != blank and block.settings.lang_1 != blank
+                  assign t = block.settings.lang_1 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_1 | image_url: width: 60
+                  endif
+                endif
+                if override_img == '' and block.settings.image_2 != blank and block.settings.lang_2 != blank
+                  assign t = block.settings.lang_2 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_2 | image_url: width: 60
+                  endif
+                endif
+                if override_img == '' and block.settings.image_3 != blank and block.settings.lang_3 != blank
+                  assign t = block.settings.lang_3 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_3 | image_url: width: 60
+                  endif
+                endif
+
+                # 2) country_overrides textarea (de=ch, fr=ca, ...)
+                assign flag_country = ''
+                assign overrides_raw = block.settings.country_overrides | default: ''
+                assign overrides_norm = overrides_raw | replace: ',', '|' | replace: ';', '|' | newline_to_br | replace: '<br />', '|' | replace: '<br/>', '|' | replace: '<br>', '|'
+                assign override_lines = overrides_norm | split: '|'
+                for line in override_lines
+                  assign pair = line | strip | split: '='
+                  if pair.size == 2
+                    assign p_lang = pair[0] | strip | downcase
+                    assign p_country = pair[1] | strip | downcase
+                    if p_lang == iso_lower
+                      assign flag_country = p_country
+                    endif
+                  endif
+                endfor
+
+                # 3) region embedded in the language code (e.g. de-CH)
+                if flag_country == ''
+                  assign code_parts = iso_lower | split: '-'
+                  if code_parts.size > 1
+                    assign flag_country = code_parts | last
+                  endif
+                endif
+
+                # 4) default language → country mapping
+                if flag_country == ''
+                  case iso_lower
+                    when 'en'
+                      assign flag_country = 'us'
+                    when 'sv'
+                      assign flag_country = 'se'
+                    when 'da'
+                      assign flag_country = 'dk'
+                    when 'el'
+                      assign flag_country = 'gr'
+                    when 'cs'
+                      assign flag_country = 'cz'
+                    when 'ja'
+                      assign flag_country = 'jp'
+                    when 'ko'
+                      assign flag_country = 'kr'
+                    when 'zh'
+                      assign flag_country = 'cn'
+                    when 'ar'
+                      assign flag_country = 'ae'
+                    when 'he'
+                      assign flag_country = 'il'
+                    when 'hi'
+                      assign flag_country = 'in'
+                    when 'vi'
+                      assign flag_country = 'vn'
+                    when 'uk'
+                      assign flag_country = 'ua'
+                    when 'ms'
+                      assign flag_country = 'my'
+                    when 'fil'
+                      assign flag_country = 'ph'
+                    when 'tl'
+                      assign flag_country = 'ph'
+                    when 'nb'
+                      assign flag_country = 'no'
+                    when 'nn'
+                      assign flag_country = 'no'
+                    else
+                      assign flag_country = iso_lower
+                  endcase
+                endif
+
+                assign endonym = lang.endonym_name | capitalize
+                assign iso_upper = lang.iso_code | upcase
+              -%}
               <option
                 value="{{ lang.iso_code }}"
+                data-flag-country="{{ flag_country | escape }}"
+                data-flag-image="{{ override_img | escape }}"
+                data-endonym="{{ endonym | escape }}"
+                data-iso="{{ iso_upper | escape }}"
                 {% if lang.iso_code == localization.language.iso_code %}selected{% endif %}
-              >{{ lang.endonym_name | capitalize }}</option>
+              >{{ endonym }}</option>
             {%- endfor -%}
           </select>
         </label>
@@ -87,10 +207,23 @@
             aria-label="{{ 'blocks.locale_switcher.country' | t }}"
           >
             {%- for c in localization.available_countries -%}
+              {%- liquid
+                assign c_iso = c.iso_code | downcase
+                assign c_name = c.name
+                assign c_iso_upper = c.iso_code | upcase
+                assign c_currency = c.currency.iso_code
+                assign c_symbol = c.currency.symbol
+                assign c_label_full = c_name | append: ' (' | append: c_currency | append: ' ' | append: c_symbol | append: ')'
+                assign c_label_iso = c_iso_upper | append: ' (' | append: c_currency | append: ' ' | append: c_symbol | append: ')'
+              -%}
               <option
                 value="{{ c.iso_code }}"
+                data-flag-country="{{ c_iso | escape }}"
+                data-flag-image=""
+                data-endonym="{{ c_label_full | escape }}"
+                data-iso="{{ c_label_iso | escape }}"
                 {% if c.iso_code == localization.country.iso_code %}selected{% endif %}
-              >{{ c.name }} ({{ c.currency.iso_code }} {{ c.currency.symbol }})</option>
+              >{{ c_label_full }}</option>
             {%- endfor -%}
           </select>
         </label>
@@ -113,26 +246,11 @@
   "name": "Language & Currency Switcher",
   "target": "body",
   "settings": [
-    {
-      "type": "header",
-      "content": "Visibility"
-    },
-    {
-      "type": "checkbox",
-      "id": "show_language",
-      "label": "Show language selector",
-      "default": true
-    },
-    {
-      "type": "checkbox",
-      "id": "show_country",
-      "label": "Show country / currency selector",
-      "default": true
-    },
-    {
-      "type": "header",
-      "content": "Placement"
-    },
+    { "type": "header", "content": "Visibility" },
+    { "type": "checkbox", "id": "show_language", "label": "Show language selector", "default": true },
+    { "type": "checkbox", "id": "show_country", "label": "Show country / currency selector", "default": true },
+
+    { "type": "header", "content": "Placement" },
     {
       "type": "select",
       "id": "position",
@@ -162,38 +280,50 @@
       ],
       "default": "dropdown"
     },
+
+    { "type": "header", "content": "Icons" },
+    { "type": "checkbox", "id": "show_flag", "label": "Show flag icons", "default": true },
     {
-      "type": "header",
-      "content": "Appearance"
+      "type": "select",
+      "id": "label_format",
+      "label": "Label next to flag",
+      "options": [
+        { "value": "endonym", "label": "Native name (Deutsch, English, ...)" },
+        { "value": "iso", "label": "ISO code (DE, EN, ...)" },
+        { "value": "none", "label": "Hide label (icon only)" }
+      ],
+      "default": "endonym"
     },
     {
-      "type": "color",
-      "id": "bg_color",
-      "label": "Background",
-      "default": "#ffffff"
+      "type": "range",
+      "id": "flag_size",
+      "label": "Flag size",
+      "min": 14,
+      "max": 28,
+      "step": 1,
+      "unit": "px",
+      "default": 18
     },
     {
-      "type": "color",
-      "id": "text_color",
-      "label": "Text",
-      "default": "#1a1a1a"
+      "type": "textarea",
+      "id": "country_overrides",
+      "label": "Flag overrides (per language)",
+      "info": "One per line in the form lang=country (lowercase ISO codes). Example: de=ch shows the Swiss flag for German. Browse available codes at flagicons.lipis.dev."
     },
-    {
-      "type": "color",
-      "id": "accent_color",
-      "label": "Accent / border",
-      "default": "#008060"
-    },
-    {
-      "type": "checkbox",
-      "id": "debug_logs",
-      "label": "Enable debug logging in browser console",
-      "default": false
-    },
-    {
-      "type": "paragraph",
-      "content": "Lets customers pick their language and country (currency follows the country via Shopify Markets). Enable once — no block placement needed. Translations are produced by ContentPilot AI; this widget makes them selectable on the storefront."
-    }
+
+    { "type": "header", "content": "Custom uploaded flags" },
+    { "type": "text", "id": "lang_1", "label": "Slot 1 — language code", "info": "e.g. de, fr, en-US" },
+    { "type": "image_picker", "id": "image_1", "label": "Slot 1 — image" },
+    { "type": "text", "id": "lang_2", "label": "Slot 2 — language code" },
+    { "type": "image_picker", "id": "image_2", "label": "Slot 2 — image" },
+    { "type": "text", "id": "lang_3", "label": "Slot 3 — language code" },
+    { "type": "image_picker", "id": "image_3", "label": "Slot 3 — image" },
+
+    { "type": "header", "content": "Appearance" },
+    { "type": "color", "id": "bg_color", "label": "Background", "default": "#ffffff" },
+    { "type": "color", "id": "text_color", "label": "Text", "default": "#1a1a1a" },
+    { "type": "color", "id": "accent_color", "label": "Accent / border", "default": "#008060" },
+    { "type": "checkbox", "id": "debug_logs", "label": "Enable debug logging in browser console", "default": false }
   ]
 }
 {% endschema %}
