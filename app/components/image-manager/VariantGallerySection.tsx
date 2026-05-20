@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from "react";
-import { Text, Button, InlineStack, Collapsible, Badge, TextField } from "@shopify/polaris";
+import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
@@ -72,24 +72,18 @@ export function VariantGallerySection({
   currentLanguage,
   primaryLocale,
   externalVideoUrls,
-  onAddExternalVideoUrl,
-  // onRemoveExternalVideoUrl is intentionally not destructured: with voll-mix
-  // the URL tiles live inside the sortable grid and removal goes through
-  // handleRemoveFromGallery (which already routes URL entries back into
-  // pendingExternalVideos). The prop is kept on the interface for backward
-  // compatibility with callers that may still pass it.
+  // onAddExternalVideoUrl / onRemoveExternalVideoUrl are kept on the
+  // interface for backward compatibility but no longer used inside this
+  // component: the URL row was moved into the central add-media modal,
+  // which routes additions/removals through the parent's pending state
+  // via its own callbacks. They survive in the props so any consumer that
+  // still passes them compiles unchanged.
   onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
-  // Local input state for the YouTube / Vimeo URL row. We validate on
-  // submit (parseExternalVideoUrl returns null for anything we can't safely
-  // embed) so a paste of a tracking-laden URL still works as long as it
-  // contains a parseable id.
-  const [urlInput, setUrlInput] = useState("");
-  const [urlError, setUrlError] = useState<string | null>(null);
   const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
   const skipNextBlurRef = useRef(false);
 
@@ -260,6 +254,7 @@ export function VariantGallerySection({
             activeAction={activeAction}
             onDropToPlaceholder={() => onDrop(variant.id, true)}
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
+            onOpenPicker={onBrowseLibrary}
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
             hasMainImage={hasMainImage}
@@ -278,70 +273,12 @@ export function VariantGallerySection({
                 {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
               </Button>
             )}
-            {onBrowseLibrary && (
-              <Button
-                size="slim"
-                variant="secondary"
-                onClick={onBrowseLibrary}
-              >
-                {t.imageManager.browseFilesButton ?? "Browse existing files"}
-              </Button>
-            )}
+            {/* The standalone "Browse existing files" button and the
+                YouTube/Vimeo URL row used to live here. Both have moved
+                into the central add-media modal — opened by clicking the
+                placeholder tile in the gallery grid above (onOpenPicker on
+                the SortableImageGrid). One entry point, one mental model. */}
           </div>
-
-          {/* YouTube / Vimeo URL row — only rendered when wired by the parent
-              (i.e. when onAddExternalVideoUrl is provided). These items are
-              persisted to a separate metafield (variant_external_videos)
-              because list.file_reference can't hold URLs; the storefront
-              Liquid appends them after the file-backed items per variant. */}
-          {onAddExternalVideoUrl && (
-            <div style={{ marginTop: 10, padding: "10px 12px", background: "#f6f6f7", borderRadius: 6, border: "1px solid #e1e3e5" }}>
-              <div style={{ marginBottom: 6 }}>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {t.imageManager.addExternalVideoTitle ?? "Add YouTube or Vimeo URL"}
-                </Text>
-              </div>
-              <InlineStack gap="200" blockAlign="center" wrap={false}>
-                <div style={{ flex: "1 1 240px", minWidth: 200 }}>
-                  <TextField
-                    label=""
-                    labelHidden
-                    autoComplete="off"
-                    value={urlInput}
-                    onChange={(v) => { setUrlInput(v); if (urlError) setUrlError(null); }}
-                    placeholder={t.imageManager.addExternalVideoPlaceholder ?? "https://youtube.com/watch?v=…"}
-                    error={urlError ?? undefined}
-                  />
-                </div>
-                <Button
-                  size="slim"
-                  onClick={() => {
-                    const parsed = parseExternalVideoUrl(urlInput);
-                    if (!parsed) {
-                      setUrlError(t.imageManager.externalVideoInvalid ?? "Not a recognised YouTube or Vimeo URL.");
-                      return;
-                    }
-                    if (effectiveExternalVideoUrls.includes(parsed.canonicalUrl)) {
-                      // Silent no-op for duplicates — re-adding the same URL
-                      // would otherwise produce a noisy banner for nothing.
-                      setUrlInput("");
-                      return;
-                    }
-                    onAddExternalVideoUrl(variant.id, parsed.canonicalUrl);
-                    setUrlInput("");
-                    setUrlError(null);
-                  }}
-                >
-                  {t.imageManager.addExternalVideoButton ?? "Add"}
-                </Button>
-              </InlineStack>
-              {/* Voll-Mix: external URLs now render as draggable tiles in
-                  the gallery grid above, so no list-below is needed. The
-                  Remove button below the grid handles deletion of any
-                  selected URL tile via handleRemoveFromGallery (which
-                  routes URL removals to pendingExternalVideos). */}
-            </div>
-          )}
 
           {/* Alt text editor — only when exactly 1 image is selected */}
           {singleSelectedUrl && onSaveAltText && (

@@ -1,5 +1,13 @@
 import { useState, useCallback } from "react";
-import type { StagedItem, VariantWithGallery } from "../components/image-manager/types";
+import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
+
+/** Resource URL + the kind it was uploaded as. The kind is needed at save
+ *  time so productCreateMedia.mediaContentType maps correctly — without it
+ *  every video / 3D file would be created as IMAGE and reject. */
+export interface PendingProductNewMedia {
+  resourceUrl: string;
+  kind: MediaKind;
+}
 
 export interface VariantGalleryUpdate {
   variantId: string;
@@ -24,7 +32,7 @@ export function useVariantImageManager() {
   const reloadVariants = useCallback(() => setVariantReloadCounter(c => c + 1), []);
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
-  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<PendingProductNewMedia[]>([]);
   const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
   // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
   // input inside each VariantGallerySection. variantId → canonical URLs.
@@ -82,7 +90,7 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: string[], clearVariantMainImages?: string[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: string[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
@@ -100,7 +108,7 @@ export function useVariantImageManager() {
         // gets the right mediaContentType (IMAGE / VIDEO / MODEL_3D). Older
         // items without `kind` fall back to "image" server-side.
         ...readyItems.map(i => ({ resourceUrl: i.resourceUrl, kind: i.kind ?? "image" as const })),
-        ...pendingProductNewMedia.map(r => ({ resourceUrl: r, kind: "image" as const })),
+        ...pendingProductNewMedia.map(m => ({ resourceUrl: m.resourceUrl, kind: m.kind })),
       ];
 
       // Merge auto-assigned bulk items into pendingVariantGalleries.

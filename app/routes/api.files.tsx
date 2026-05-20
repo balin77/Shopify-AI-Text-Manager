@@ -9,13 +9,20 @@ import { authenticate } from "../shopify.server";
  * a variant gallery — without having to leave the app and re-upload.
  *
  * Query params:
- *   q?      — free-text search (Shopify treats it as a filename substring
- *             plus tag/alt match).
- *   kind?   — "image" | "video" | "model" — narrows the result by media
- *             type using Shopify's `media_type:` query operator.
- *   first?  — page size (default 50, capped at 100).
- *   after?  — pagination cursor from the previous response's
- *             `pageInfo.endCursor`.
+ *   q?               — free-text search (Shopify treats it as a filename
+ *                      substring plus tag/alt match).
+ *   kind?            — "image" | "video" | "model" — narrows the result by
+ *                      media type using Shopify's `media_type:` operator.
+ *   first?           — page size (default 50, capped at 100).
+ *   after?           — pagination cursor from the previous response's
+ *                      `pageInfo.endCursor`.
+ *   usedByProductId? — full Shopify product GID. When set the loader
+ *                      switches branches and returns the product's media
+ *                      (via product(id).media) instead of the library-wide
+ *                      files() query. q / kind still apply as in-memory
+ *                      filters. pageInfo is reported as a single page
+ *                      because product.media(first:250) is already capped
+ *                      well above any realistic product gallery size.
  *
  * Response: `{ files: ResolvedMediaItem[], pageInfo: { endCursor, hasNextPage } }`.
  * Each file is normalised to the same `ResolvedMediaItem` shape the rest of
@@ -30,6 +37,69 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const firstRaw = parseInt(url.searchParams.get("first") ?? "50", 10);
   const first = Number.isFinite(firstRaw) ? Math.min(Math.max(firstRaw, 1), 100) : 50;
   const after = url.searchParams.get("after") || null;
+  const usedByProductId = url.searchParams.get("usedByProductId");
+
+  // Branch B: scoped to a single product. We use product(id).media because
+  // Shopify's files() query has no "used in product" facet. The media field
+  // returns the same FileReference union as files() so the normalization
+  // below stays uniform.
+  if (usedByProductId) {
+    const r = await admin.graphql(`
+      query productFiles($id: ID!) {
+        product(id: $id) {
+          media(first: 250) {
+            edges {
+              node {
+                __typename
+                ... on MediaImage { id alt image { url width height } mimeType }
+                ... on Video      { id alt preview { image { url } } sources { url mimeType } }
+                ... on Model3d    { id alt preview { image { url } } sources { url mimeType } }
+                ... on ExternalVideo { id alt host originUrl embeddedUrl preview { image { url } } }
+              }
+            }
+          }
+        }
+      }
+    `, { variables: { id: usedByProductId } });
+    const data = await r.json();
+    const productEdges = data?.data?.product?.media?.edges ?? [];
+
+    // In-memory q + kind filter so the client UI behaves identically to the
+    // library-wide branch. Lowercased substring match on alt + filename.
+    const qLower = q.toLowerCase();
+    const kindAllow = kindParam || null;
+    const files = productEdges
+      .map((e: any) => {
+        const n = e.node;
+        const tn = n.__typename;
+        const altText = n.alt ?? null;
+        const filename = String(n?.image?.url ?? n?.preview?.image?.url ?? "").split("/").pop()?.split("?")[0] ?? "";
+        if (qLower && !altText?.toLowerCase().includes(qLower) && !filename.toLowerCase().includes(qLower)) {
+          return null;
+        }
+        if (tn === "MediaImage") {
+          if (kindAllow && kindAllow !== "image") return null;
+          return { kind: "image" as const, id: n.id, previewUrl: n?.image?.url ?? "", reference: n.id, alt: altText };
+        }
+        if (tn === "Video") {
+          if (kindAllow && kindAllow !== "video") return null;
+          return { kind: "video" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", reference: n.id, alt: altText };
+        }
+        if (tn === "Model3d") {
+          if (kindAllow && kindAllow !== "model") return null;
+          return { kind: "model" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", reference: n.id, alt: altText };
+        }
+        // ExternalVideo deliberately excluded from the picker — URLs are
+        // managed via the modal's link input, not as selectable file tiles.
+        return null;
+      })
+      .filter(Boolean);
+
+    return json({
+      files,
+      pageInfo: { hasNextPage: false, endCursor: null },
+    });
+  }
 
   const queryParts: string[] = [];
   if (q) {

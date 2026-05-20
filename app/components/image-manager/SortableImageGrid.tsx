@@ -31,9 +31,15 @@ interface PlaceholderThumbnailProps {
   onDrop: () => void;
   onUpload: (files: File[]) => void;
   thumbSize: number;
+  /** When set, a plain click on the placeholder opens the parent's media
+   *  picker modal instead of launching the OS file dialog directly. The
+   *  modal is the new central entry point for browse-library + upload +
+   *  external-video URL — having the placeholder bypass it would split the
+   *  add-media UX into two diverging flows. */
+  onOpenPicker?: () => void;
 }
 
-function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: PlaceholderThumbnailProps) {
+function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpenPicker }: PlaceholderThumbnailProps) {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isActionMode = activeAction !== null;
@@ -66,17 +72,24 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
         gap: 4,
       }}
       onClick={() => {
-        if (isActionMode) onDrop();
+        if (isActionMode) {
+          onDrop();
+          return;
+        }
+        // When the parent gave us a picker handler the modal is the canonical
+        // way to add media (browse / upload / URL all in one place). The
+        // hidden <input> only fires as a last-resort fallback if no handler
+        // is wired — keeps the component usable in isolation / older callers.
+        if (onOpenPicker) onOpenPicker();
         else fileInputRef.current?.click();
       }}
     >
       <input
         ref={fileInputRef}
         type="file"
-        // Mirror the BulkImageUploadPanel whitelist so merchants can pick a
-        // video or GLB directly from the placeholder tile too. The /api/staged-
-        // upload route revalidates via classifyFile() — this attribute is just
-        // OS picker UX.
+        // Fallback when no onOpenPicker is wired — same whitelist as the
+        // modal so behaviour stays consistent across both entry points.
+        // /api/staged-upload revalidates via classifyFile() server-side.
         accept="image/*,video/mp4,video/quicktime,video/webm,model/gltf-binary,model/gltf+json,.glb,.gltf"
         multiple
         style={{ display: "none" }}
@@ -418,6 +431,11 @@ interface SortableImageGridProps {
   activeAction?: "copy" | "move" | null;
   onDropToPlaceholder?: () => void;
   onUploadToGallery?: (files: File[]) => void;
+  /** When set, the placeholder thumbnail's click handler opens the parent's
+   *  media picker modal instead of the OS file dialog. The picker modal
+   *  unifies browse-library + upload + external-video URL into one place,
+   *  so this should be wired wherever the modal is available. */
+  onOpenPicker?: () => void;
   // When true, no internal DndContext — parent provides one
   skipDndContext?: boolean;
   // When false, no image gets the "main" gold border (variant has no featured image)
@@ -438,6 +456,7 @@ export function SortableImageGrid({
   activeAction,
   onDropToPlaceholder,
   onUploadToGallery,
+  onOpenPicker,
   skipDndContext = false,
   hasMainImage = true,
   localAltTexts,
@@ -531,6 +550,7 @@ export function SortableImageGrid({
           onDrop={() => onDropToPlaceholder?.()}
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
+          onOpenPicker={onOpenPicker}
         />
       )}
 
@@ -564,6 +584,7 @@ export function SortableImageGrid({
           onDrop={() => onDropToPlaceholder?.()}
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
+          onOpenPicker={onOpenPicker}
         />
       )}
     </>
