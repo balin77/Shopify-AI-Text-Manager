@@ -39,6 +39,11 @@ interface VariantGallerySectionProps {
   externalVideoUrls?: string[];
   onAddExternalVideoUrl?: (variantId: string, url: string) => void;
   onRemoveExternalVideoUrl?: (variantId: string, url: string) => void;
+  /** Effective 3D model URLs (.glb) for this variant — same contract as
+   *  externalVideoUrls. Models are rendered inside the sortable grid with a
+   *  3D badge; the SortableImageGrid resolves the right thumbnail variant. */
+  threeDModelUrls?: string[];
+  onRemoveThreeDModelUrl?: (variantId: string, url: string) => void;
   /** Opens the parent's Browse-Files modal targeted at this variant. The
    *  parent owns the modal so its selection callback can update pending
    *  gallery state without re-mounting on every variant. */
@@ -78,6 +83,11 @@ export function VariantGallerySection({
   // which routes additions/removals through the parent's pending state
   // via its own callbacks. They survive in the props so any consumer that
   // still passes them compiles unchanged.
+  threeDModelUrls,
+  // onRemoveThreeDModelUrl is kept on the interface but unused here —
+  // removal flows through onRemoveFromGallery, same as files and external
+  // videos. Parent inspects the URL pattern (.glb) to route to the right
+  // metafield.
   onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
@@ -85,6 +95,7 @@ export function VariantGallerySection({
   const isOpen = open || forceOpen;
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
   const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
+  const effectiveThreeDModelUrls = threeDModelUrls ?? variant.threeDModelUrls ?? [];
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
@@ -103,9 +114,11 @@ export function VariantGallerySection({
   const orderedUrls = useMemo(() => {
     // If the variant has a saved order, honour it: emit items in the saved
     // sequence, skipping any references that no longer resolve (file deleted
-    // / URL removed). Falls back to "files first, then URLs" when missing.
+    // / URL removed). Falls back to "files first, then URLs, then models"
+    // when missing.
     const knownFileSet = new Set(fileUrlList);
     const knownUrlSet = new Set(effectiveExternalVideoUrls);
+    const knownModelSet = new Set(effectiveThreeDModelUrls);
     const raw = variant.galleryOrderJson;
     if (raw) {
       try {
@@ -114,6 +127,7 @@ export function VariantGallerySection({
           const out: string[] = [];
           const seenFiles = new Set<string>();
           const seenUrls = new Set<string>();
+          const seenModels = new Set<string>();
           for (const entry of parsed) {
             if (entry?.kind === "file") {
               const fileUrl = fileUrlMap[entry.value];
@@ -126,30 +140,37 @@ export function VariantGallerySection({
                 out.push(entry.value);
                 seenUrls.add(entry.value);
               }
+            } else if (entry?.kind === "model") {
+              if (knownModelSet.has(entry.value) && !seenModels.has(entry.value)) {
+                out.push(entry.value);
+                seenModels.add(entry.value);
+              }
             }
           }
-          // Append anything the order JSON didn't cover (new uploads / URLs
-          // added since the last save) so they're still visible.
+          // Append anything the order JSON didn't cover (new uploads / URLs /
+          // models added since the last save) so they're still visible.
           for (const u of fileUrlList) if (!seenFiles.has(u)) out.push(u);
           for (const u of effectiveExternalVideoUrls) if (!seenUrls.has(u)) out.push(u);
+          for (const u of effectiveThreeDModelUrls) if (!seenModels.has(u)) out.push(u);
           return out;
         }
       } catch { /* fall through to default */ }
     }
-    return [...fileUrlList, ...effectiveExternalVideoUrls];
-    // effectiveExternalVideoUrls is referenced via closure; we recompute when
-    // any of these inputs change so the merchant sees the latest mix.
+    return [...fileUrlList, ...effectiveExternalVideoUrls, ...effectiveThreeDModelUrls];
+    // effective*Urls are referenced via closure; we recompute when any of
+    // these inputs change so the merchant sees the latest mix.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), fileUrlMap]);
+  }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), fileUrlMap]);
 
   const displayUrls = orderedUrls;
 
   // Augment the parent's imageMetas with synthetic entries for external
-  // video URLs — the parent only populates entries for product images, so
-  // without this the SortableThumbnail dispatch would fall back to <img>
-  // and try to load a YouTube watch-page URL as an image (broken icon).
+  // video URLs and 3D model URLs — the parent only populates entries for
+  // product images, so without this the SortableThumbnail dispatch would
+  // fall back to <img> and try to load a YouTube watch-page URL or a .glb
+  // binary as an image (broken icon).
   const enrichedImageMetas = useMemo(() => {
-    if (effectiveExternalVideoUrls.length === 0) return imageMetas;
+    if (effectiveExternalVideoUrls.length === 0 && effectiveThreeDModelUrls.length === 0) return imageMetas;
     const out: Record<string, ImageMeta> = { ...imageMetas };
     for (const u of effectiveExternalVideoUrls) {
       if (out[u]?.kind === "external_video") continue;
@@ -161,9 +182,17 @@ export function VariantGallerySection({
         altText: (out[u]?.altText ?? variant.title),
       };
     }
+    for (const u of effectiveThreeDModelUrls) {
+      if (out[u]?.kind === "model") continue;
+      out[u] = {
+        ...(out[u] ?? {}),
+        kind: "model",
+        altText: (out[u]?.altText ?? variant.title),
+      };
+    }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageMetas, effectiveExternalVideoUrls.join("|"), variant.title]);
+  }, [imageMetas, effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), variant.title]);
 
   const urlToGid = Object.fromEntries(
     Object.entries(fileUrlMap).map(([gid, url]) => [url, gid])

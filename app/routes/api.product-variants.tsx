@@ -50,6 +50,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // variant_gallery_order (json) — kept idempotent: defining it twice is a
   // no-op thanks to ensureVariantMetafieldDefinition's lookup.
   await ensureVariantMetafieldDefinition(admin, "variant_external_videos", "Variant External Videos", "list.url");
+  // 3D models (.glb) cannot live in list.file_reference (it rejects Media3d),
+  // so they sit in their own list.url metafield. The variant_gallery_order
+  // entries with kind "model" reference these URLs.
+  await ensureVariantMetafieldDefinition(admin, "variant_3d_models", "Variant 3D Models", "list.url");
   await ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json");
 
   // Fetch product media + variants in one query.
@@ -102,6 +106,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 value
               }
               externalVideosMetafield: metafield(namespace: "custom", key: "variant_external_videos") {
+                value
+              }
+              threeDModelsMetafield: metafield(namespace: "custom", key: "variant_3d_models") {
                 value
               }
               galleryOrderMetafield: metafield(namespace: "custom", key: "variant_gallery_order") {
@@ -257,6 +264,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     galleryJson: v.metafield?.value ?? null,
     imageKey: v.imageKeyMetafield?.value ?? null,
     externalVideosJson: v.externalVideosMetafield?.value ?? null,
+    threeDModelsJson: v.threeDModelsMetafield?.value ?? null,
     galleryOrderJson: v.galleryOrderMetafield?.value ?? null,
     // selectedOptions already enriched with handles above
   }));

@@ -746,6 +746,7 @@ export default function ProductsPage() {
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
+              onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}

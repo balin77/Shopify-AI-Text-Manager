@@ -57,16 +57,19 @@
     {%- for variant in product.variants -%}
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
       {%- assign cp_order_mf = variant.metafields.custom.variant_gallery_order -%}
+      {%- assign cp_models_mf = variant.metafields.custom.variant_3d_models -%}
       "{{ variant.id }}": [
         {%- assign cp_has_any = false -%}
         {%- assign cp_seen_file_ids = ',' -%}
         {%- assign cp_seen_urls = ',' -%}
+        {%- assign cp_seen_models = ',' -%}
         {%- comment -%}
           Voll-mix path: variant_gallery_order (json) is a unified array of
-          { kind: 'file' | 'url', value } entries that mirrors how the
-          merchant drag-arranged files + external URLs in the admin. When
-          present we iterate it as the primary source of order, then append
-          unreferenced items (new uploads / URLs added since the last save).
+          { kind: 'file' | 'url' | 'model', value } entries that mirrors how
+          the merchant drag-arranged files + external URLs + 3D models in
+          the admin. When present we iterate it as the primary source of
+          order, then append unreferenced items (new uploads / URLs / models
+          added since the last save).
         {%- endcomment -%}
         {%- if cp_order_mf != blank and cp_order_mf.value != blank -%}
           {%- if variant.featured_image != blank -%}
@@ -189,6 +192,27 @@
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
+            {%- elsif entry.kind == 'model' -%}
+              {%- assign entry_val = entry.value | append: '' -%}
+              {%- comment -%} Same comma-safe membership pattern as the url branch. {%- endcomment -%}
+              {%- assign model_token = entry_val | url_encode -%}
+              {%- assign model_needle = ',' | append: model_token | append: ',' -%}
+              {%- if cp_seen_models contains model_needle -%}{%- continue -%}{%- endif -%}
+              {%- assign cp_seen_models = cp_seen_models | append: model_token | append: ',' -%}
+              {%- assign cp_model_url = entry_val | strip -%}
+              {%- if cp_model_url != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":      "model",
+                  "thumb":     "",
+                  "poster":    "",
+                  "w":         800,
+                  "h":         800,
+                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "model_src": {{ cp_model_url | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
           {%- comment -%}
@@ -293,9 +317,12 @@
           {%- endif -%}
         {%- comment -%}
           Default path (no variant_gallery_order yet): existing behaviour —
-          featured_image, then vg.value items, then external URLs.
+          featured_image, then vg.value items, then external URLs, then
+          3D models. The branch also fires when ONLY models are set so a
+          variant with just a .glb is not silently dropped into the
+          product.media fallback.
         {%- endcomment -%}
-        {%- elsif vg != blank and vg.value != blank -%}
+        {%- elsif (vg != blank and vg.value != blank) or (cp_models_mf != blank and cp_models_mf.value != blank) -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {
@@ -350,7 +377,7 @@
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
-            {%- comment -%} No vg-model branch: Shopify `list.file_reference` returns MediaImage / Video / GenericFile only. 3D models live on product.media or — once the Image Manager v2 ships — in a dedicated URL metafield. {%- endcomment -%}
+            {%- comment -%} No vg-model branch here: Shopify `list.file_reference` returns MediaImage / Video / GenericFile only. Variant-specific 3D models live in custom.variant_3d_models (list.url) and are emitted below, after the external-video loop. {%- endcomment -%}
             {%- endif -%}
           {%- endfor -%}
           {%- comment -%}
@@ -407,6 +434,31 @@
                   "alt":         {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
                   "host":        {{ cp_ev_host | json }},
                   "external_id": {{ cp_ev_id | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {%- comment -%}
+            3D models from custom.variant_3d_models (list.url). Shopify's
+            list.file_reference rejects Media3d, so variant-scoped models
+            live in this parallel list.url metafield. .glb URLs are emitted
+            directly; <model-viewer> on the storefront knows how to handle
+            them without a Shopify-side preview image.
+          {%- endcomment -%}
+          {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}
+            {%- for cp_model_url_raw in cp_models_mf.value -%}
+              {%- assign cp_model_url = cp_model_url_raw | strip -%}
+              {%- if cp_model_url != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":      "model",
+                  "thumb":     "",
+                  "poster":    "",
+                  "w":         800,
+                  "h":         800,
+                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "model_src": {{ cp_model_url | json }}
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}

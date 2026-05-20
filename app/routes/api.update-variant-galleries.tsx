@@ -1,7 +1,7 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { isValidExternalVideoUrl, kindToMediaContentType } from "../utils/mediaKind";
+import { isValidExternalVideoUrl, isValid3dModelUrl, kindToMediaContentType } from "../utils/mediaKind";
 import type { MediaKind } from "../components/image-manager/types";
 
 interface UpdateVariantGalleriesBody {
@@ -19,10 +19,15 @@ interface UpdateVariantGalleriesBody {
    *  (list.url). Server re-validates every URL with isValidExternalVideoUrl and
    *  drops anything we can't safely embed. */
   variantExternalVideos?: Array<{ variantId: string; urls: string[] }>;
-  /** Combined order across files + external URLs per variant. JSON array of
-   *  { kind: "file" | "url", value: gid|url }. Position 0 must be a file
-   *  reference (image) — enforced client-side. Stored in
-   *  custom.variant_gallery_order (json). */
+  /** GLB CDN URLs per variant — persisted to custom.variant_3d_models
+   *  (list.url). Shopify rejects Media3d in list.file_reference, so 3D models
+   *  live in their own list.url metafield. Server re-validates every URL with
+   *  isValid3dModelUrl and drops anything that isn't a `.glb`. */
+  variant3dModels?: Array<{ variantId: string; urls: string[] }>;
+  /** Combined order across files + external URLs + 3D models per variant.
+   *  JSON array of { kind: "file" | "url" | "model", value: gid|url }.
+   *  Position 0 must be a file reference (image) — enforced client-side.
+   *  Stored in custom.variant_gallery_order (json). */
   variantGalleryOrder?: Array<{ variantId: string; orderJson: string }>;
 }
 
@@ -36,6 +41,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     mediaOrder = [],
     clearVariantMainImages = [],
     variantExternalVideos = [],
+    variant3dModels = [],
     variantGalleryOrder = [],
   } = body;
 
@@ -82,6 +88,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // 1. Neue Bilder zu Produkt hinzufügen und GID-Mapping aufbauen
   // resourceUrl (staged upload URL) → Shopify MediaImage GID
   const resourceUrlToGid: Record<string, string> = {};
+  // For uploaded .glb files in variant mode: maps the staging URL the client
+  // pushed into pendingVariant3dModels onto the final Model3d.sources[0].url
+  // (Shopify-CDN, public). Populated by the polling block below.
+  const resourceUrlToModelUrl: Record<string, string> = {};
+  // Per-staging-URL post-create status used by the variant3dModels loop to
+  // route to the right dropped-bucket: "ready" → substitute, "processing" →
+  // polling timed out (merchant should re-save), "failed" → Shopify rejected
+  // the .glb (invalid file).
+  const modelResolutionStatus: Record<string, "ready" | "processing" | "failed"> = {};
   if (newMedia.length > 0) {
     console.log("[update-variant-galleries] calling productCreateMedia with", newMedia.length, "items");
     const r = await admin.graphql(`
@@ -130,6 +145,77 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     });
     console.log("[update-variant-galleries] resourceUrlToGid", resourceUrlToGid);
+
+    // Post-create resolution for Model3d uploads: Shopify processes .glb
+    // asynchronously, so productCreateMedia returns the Model3d GID
+    // immediately but Model3d.sources[0].url is populated only after the
+    // processor finishes (typically 1–5s for small files). The
+    // pendingVariant3dModels metafield is list.url — it needs the FINAL CDN
+    // URL, not the staging URL the client pushed in. Poll Model3d.sources
+    // up to 5 times with backoff so the common case lands in this same
+    // save; if processing exceeds ~9s we drop the URL with reason
+    // "processing" and the client tells the merchant to save again in a
+    // moment.
+    const modelResources: Array<{ gid: string; resourceUrl: string }> = [];
+    newMedia.forEach((m, i) => {
+      if (m.kind === "model" && createdMedia[i]?.id) {
+        modelResources.push({ gid: createdMedia[i].id, resourceUrl: m.resourceUrl });
+      }
+    });
+    if (modelResources.length > 0) {
+      const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
+      const pending = new Set(modelResources.map(m => m.gid));
+      // 5-step backoff: first attempt immediate (most small models are
+      // already done by the time productCreateMedia returns), then back
+      // off — total bounded ~8.8s.
+      const delays = [0, 800, 1500, 2500, 4000];
+      for (const delay of delays) {
+        if (delay > 0) await new Promise(r => setTimeout(r, delay));
+        if (pending.size === 0) break;
+        try {
+          const q = await admin.graphql(`
+            query GetModel3dSources($ids: [ID!]!) {
+              nodes(ids: $ids) {
+                ... on Model3d {
+                  id
+                  status
+                  sources { url }
+                }
+              }
+            }
+          `, { variables: { ids: [...pending] } });
+          const qd = await q.json();
+          for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[] }>) {
+            if (!node?.id) continue;
+            const resourceUrl = gidToResourceUrl.get(node.id);
+            if (!resourceUrl) continue;
+            if (node.status === "FAILED") {
+              modelResolutionStatus[resourceUrl] = "failed";
+              pending.delete(node.id);
+            } else if (node.sources?.[0]?.url) {
+              resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
+              modelResolutionStatus[resourceUrl] = "ready";
+              pending.delete(node.id);
+            }
+          }
+        } catch (err) {
+          console.warn("[update-variant-galleries] Model3d polling iteration failed:", err);
+          // Don't abort the save — the unresolved staging URLs simply land
+          // in the "processing" bucket and the merchant retries the save.
+          break;
+        }
+      }
+      // Anything still pending after the bounded polling window is treated
+      // as processing — the merchant's next save (seconds later) finds the
+      // Model3d.sources populated and substitutes correctly via the
+      // assetUrl path from the library.
+      for (const gid of pending) {
+        const resourceUrl = gidToResourceUrl.get(gid);
+        if (resourceUrl) modelResolutionStatus[resourceUrl] = "processing";
+      }
+      console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
+        "| modelResolutionStatus", modelResolutionStatus);
+    }
   }
 
   // Resolve a fileGid that may be a staged resourceUrl to an actual Shopify GID
@@ -173,12 +259,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Any-position Model3d guard. variant_gallery is a list.file_reference
   // metafield, which Shopify rejects for Model3d at *any* index (the union
-  // is MediaImage | Video | GenericFile). Before this guard a GLB at index
-  // 1+ slipped past position-0 and Shopify aborted the entire
-  // productVariantsBulkUpdate with metafieldsUserError, so none of the
-  // variant's pending changes landed. The picker now hides 3D in variant
-  // mode (FilePickerModal disallowModel), but older client builds or
-  // direct API calls could still send one — fail closed here.
+  // is MediaImage | Video | GenericFile). 3D models picked in variant mode
+  // are routed to custom.variant_3d_models (list.url) — they must NEVER
+  // appear in vg.fileGids. Fail closed here if an older client build or
+  // a direct API call still slips one through.
   for (const vg of variantGalleries) {
     for (let i = 0; i < vg.fileGids.length; i++) {
       const raw = vg.fileGids[i];
@@ -337,14 +421,54 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  // 3D models (.glb URLs) per variant — same partial-failure semantics as
+  // external videos. Drops include a `reason` so the client can give a
+  // useful nudge instead of a generic "save failed". Three reasons:
+  //   "processing"  — uploaded .glb still being processed by Shopify after
+  //                   the post-create polling window timed out; re-save
+  //                   in a few seconds and it lands.
+  //   "invalid_glb" — Shopify Model3d.status came back FAILED (corrupt
+  //                   file, unsupported format inside the GLB container).
+  //   "invalid_url" — anything else that doesn't pass isValid3dModelUrl
+  //                   (typo, non-`.glb` URL, malformed).
+  const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url" }> = [];
+  for (const m of variant3dModels) {
+    const sanitized: string[] = [];
+    for (const u of m.urls) {
+      const status = modelResolutionStatus[u];
+      if (status === "processing") {
+        dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "processing" });
+        continue;
+      }
+      if (status === "failed") {
+        dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "invalid_glb" });
+        continue;
+      }
+      // Substitute staging URLs with their resolved CDN URLs (status==="ready"
+      // entries land here). Library-picked URLs are not in the map and pass
+      // through unchanged.
+      const resolved = resourceUrlToModelUrl[u] ?? u;
+      if (isValid3dModelUrl(resolved)) sanitized.push(resolved);
+      else dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "invalid_url" });
+    }
+    metafieldOps.push({
+      ownerId: m.variantId,
+      namespace: "custom",
+      key: "variant_3d_models",
+      type: "list.url",
+      value: JSON.stringify(sanitized),
+    });
+  }
+
   for (const vo of variantGalleryOrder) {
     // The order metafield is the source of truth for the voll-mix gallery
     // sequence. Validate the shape here — relying purely on client-side
     // checks would let a DevTools-savvy merchant persist e.g. a URL at
     // position 0, which would desync variant.featured_image (still
     // MediaImage from vg.fileGids[0]) from the storefront's first tile.
-    // Shape contract: array of { kind: "file" | "url", value: string }
-    // with the first entry's kind === "file".
+    // Shape contract: array of { kind: "file" | "url" | "model", value: string }
+    // with the first entry's kind === "file" (only MediaImage can become
+    // variant.image — URLs / models can never occupy position 0).
     let parsed: unknown;
     try {
       parsed = JSON.parse(vo.orderJson);
@@ -359,7 +483,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     let invalidEntry = false;
     for (let i = 0; i < parsed.length; i++) {
       const entry = parsed[i] as { kind?: unknown; value?: unknown };
-      if (!entry || typeof entry !== "object" || (entry.kind !== "file" && entry.kind !== "url") || typeof entry.value !== "string") {
+      const validKind = entry?.kind === "file" || entry?.kind === "url" || entry?.kind === "model";
+      if (!entry || typeof entry !== "object" || !validKind || typeof entry.value !== "string") {
         errors.push(`variantGalleryOrder: variant ${vo.variantId} — entry ${i} is malformed.`);
         invalidEntry = true;
         break;
@@ -399,6 +524,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (errors.length > 0) return fail();
-  console.log("[update-variant-galleries] success", { completedSteps, droppedExternalUrlCount: droppedExternalUrls.length });
-  return json({ success: true, droppedExternalUrls });
+  console.log("[update-variant-galleries] success", {
+    completedSteps,
+    droppedExternalUrlCount: droppedExternalUrls.length,
+    dropped3dModelUrlCount: dropped3dModelUrls.length,
+  });
+  return json({ success: true, droppedExternalUrls, dropped3dModelUrls });
 };

@@ -49,10 +49,14 @@ interface VariantImageManagerProps {
    *  any variant. The shape mirrors the /api/update-variant-galleries body
    *  field so the hook can pass it straight through. */
   onExternalVideosChange?: (variantExternalVideos: Record<string, string[]>) => void;
-  /** Notified whenever the combined file+URL order changes on any variant
-   *  (drag-reorder of a mixed gallery). The value is variantId → stringified
-   *  JSON array of { kind: "file" | "url", value }, ready to be persisted
-   *  to custom.variant_gallery_order. */
+  /** Notified whenever the merchant adds / removes a 3D model URL on any
+   *  variant. Mirrors onExternalVideosChange exactly — variant_3d_models is
+   *  also a list.url metafield. */
+  onThreeDModelsChange?: (variant3dModels: Record<string, string[]>) => void;
+  /** Notified whenever the combined file+URL+model order changes on any
+   *  variant (drag-reorder of a mixed gallery). The value is variantId →
+   *  stringified JSON array of { kind: "file" | "url" | "model", value },
+   *  ready to be persisted to custom.variant_gallery_order. */
   onGalleryOrderChange?: (variantGalleryOrder: Record<string, string>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
@@ -120,6 +124,7 @@ export function VariantImageManager({
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
   onExternalVideosChange,
+  onThreeDModelsChange,
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
@@ -128,6 +133,9 @@ export function VariantImageManager({
   // (they mean "merchant explicitly cleared this variant's videos") so
   // resetting an array to [] still gets persisted on save.
   const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  // Per-variant overrides for 3D model (.glb) URLs. Same contract as
+  // pendingExternalVideos — both live in list.url metafields.
+  const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const pendingGalleryOrderRef = useRef<Record<string, string>>({});
   useEffect(() => { pendingGalleryOrderRef.current = pendingGalleryOrder; }, [pendingGalleryOrder]);
@@ -240,6 +248,7 @@ export function VariantImageManager({
     // otherwise a URL the merchant typed for product A but never saved would
     // ride along to product B's save payload and end up on the wrong variant.
     setPendingExternalVideos({});
+    setPendingVariant3dModels({});
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
@@ -326,6 +335,15 @@ export function VariantImageManager({
           externalVideoUrls: (() => {
             try {
               const parsed = JSON.parse(v.externalVideosJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
+          // GLB CDN URLs from custom.variant_3d_models. Same tolerant-parse
+          // contract as externalVideoUrls — a corrupt metafield must never
+          // crash the Image Manager.
+          threeDModelUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.threeDModelsJson || "[]");
               return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
             } catch { return []; }
           })(),
@@ -902,14 +920,17 @@ export function VariantImageManager({
 
   const handleVariantReorder = useCallback((variantId: string, newItems: string[]) => {
     // `newItems` is the unified post-reorder sequence — each entry is either
-    // a file GID / staged resourceUrl OR an external-video URL (starts with
-    // "http"). Split the two so each lands in the correct pending slot,
+    // a file GID / staged resourceUrl OR a URL (external video or .glb 3D
+    // model). Split the three so each lands in the correct pending slot,
     // then build the combined order JSON for variant_gallery_order.
     const fileEntries: string[] = [];
-    const orderEntries: Array<{ kind: "file" | "url"; value: string }> = [];
+    const orderEntries: Array<{ kind: "file" | "url" | "model"; value: string }> = [];
+    const isGlb = (u: string) => {
+      try { return /\.glb$/i.test(new URL(u).pathname); } catch { return false; }
+    };
     for (const it of newItems) {
       if (it.startsWith("http")) {
-        orderEntries.push({ kind: "url", value: it });
+        orderEntries.push({ kind: isGlb(it) ? "model" : "url", value: it });
       } else {
         fileEntries.push(it);
         orderEntries.push({ kind: "file", value: it });
@@ -1204,11 +1225,26 @@ export function VariantImageManager({
     if (pickerTarget.mode === "variant") {
       // ──────────────────────────────────────────────────────────────────
       // VARIANT MODE
-      //   library  → append GID to pendingVariantGalleries
-      //   upload   → append resourceUrl to pendingVariantGalleries (resolved
-      //              to a real GID at save time via resourceUrlToGid) AND
-      //              register the upload in pendingProductNewMedia so the
-      //              backend actually runs productCreateMedia for it
+      //   library  → image/video: append GID to pendingVariantGalleries
+      //              model:       extract assetUrl, push to variant_3d_models
+      //                           (Shopify's list.file_reference rejects
+      //                           Media3d, so 3D models live in their own
+      //                           list.url metafield)
+      //   upload   → image/video: append resourceUrl to pendingVariantGalleries
+      //                           (resolved to a real GID at save time via
+      //                           resourceUrlToGid) AND register the upload
+      //                           in pendingProductNewMedia so the backend
+      //                           actually runs productCreateMedia for it
+      //              model:       register the upload in pendingProductNewMedia
+      //                           (Shopify materializes it as a Model3d on
+      //                           product.media) AND push the staging URL
+      //                           into pendingVariant3dModels — the backend
+      //                           polls Model3d.sources after productCreateMedia
+      //                           and substitutes the staging URL with the
+      //                           final CDN URL before metafieldsSet runs.
+      //                           If processing exceeds ~9s the URL gets
+      //                           dropped with reason "processing" and the
+      //                           merchant retries the save in a moment.
       //   external → handle via the URL path (variantExternalVideos)
       // ──────────────────────────────────────────────────────────────────
       const variantId = pickerTarget.variantId;
@@ -1216,10 +1252,22 @@ export function VariantImageManager({
       const uploadEntries: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }> = [];
       for (const it of items) {
         if (it.source === "library") {
-          refsForGallery.push(it.gid);
+          if (it.kind === "model") {
+            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl);
+          } else {
+            refsForGallery.push(it.gid);
+          }
         } else if (it.source === "upload") {
-          refsForGallery.push(it.resourceUrl);
-          uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+          if (it.kind === "model") {
+            // Materialize the .glb on product.media so the library and the
+            // storefront agree on the asset, AND register the staging URL
+            // for backend post-create resolution → variant_3d_models.
+            uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+            handleAddThreeDModelUrl(variantId, it.resourceUrl);
+          } else {
+            refsForGallery.push(it.resourceUrl);
+            uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+          }
         } else if (it.source === "external_url") {
           handleAddExternalVideoUrl(variantId, it.url);
         }
@@ -1274,6 +1322,10 @@ export function VariantImageManager({
     // onAddExternalUrl directly).
     const hasNonUrlCommit = items.some(it => it.source !== "external_url");
     if (hasNonUrlCommit) setPickerTarget(null);
+    // handleAddExternalVideoUrl / handleAddThreeDModelUrl are declared after
+    // this callback (parent ordering); intentionally omitted from deps —
+    // they are captured via closure at call-time, never re-bound.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pickerTarget, variants]);
 
   // Called the moment the merchant hits "Add link" inside the modal. Wired
@@ -1318,6 +1370,29 @@ export function VariantImageManager({
     });
   }, [variants, onExternalVideosChange]);
 
+  // 3D-model URL handlers — mirror the external-video pair exactly. Both
+  // metafields are list.url and share the same "effective list" pattern.
+  const handleAddThreeDModelUrl = useCallback((variantId: string, url: string) => {
+    setPendingVariant3dModels(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+      if (current.includes(url)) return prev;
+      const next = { ...prev, [variantId]: [...current, url] };
+      onThreeDModelsChange?.(next);
+      return next;
+    });
+  }, [variants, onThreeDModelsChange]);
+
+  const handleRemoveThreeDModelUrl = useCallback((variantId: string, url: string) => {
+    setPendingVariant3dModels(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+      const next = { ...prev, [variantId]: current.filter(u => u !== url) };
+      onThreeDModelsChange?.(next);
+      return next;
+    });
+  }, [variants, onThreeDModelsChange]);
+
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
     const variant = variants.find(v => v.id === variantId);
@@ -1328,14 +1403,29 @@ export function VariantImageManager({
       setLocallyExcludedMainGids(prev => new Set([...prev, variantId]));
     }
 
-    // External-video URLs live in pendingExternalVideos, not pendingVariantGalleries.
-    // Split the removal so each URL ends up clearing the right slot.
-    const externalToRemove = urls.filter(u => u.startsWith("http"));
+    // URL-backed items live in their own list.url metafields, not in
+    // pendingVariantGalleries. Split the removal so each URL ends up clearing
+    // the right slot. `.glb` URLs → variant_3d_models, anything else → external
+    // videos (YouTube / Vimeo).
+    const httpUrls = urls.filter(u => u.startsWith("http"));
+    const isGlb = (u: string) => {
+      try { return /\.glb$/i.test(new URL(u).pathname); } catch { return false; }
+    };
+    const modelToRemove = httpUrls.filter(isGlb);
+    const externalToRemove = httpUrls.filter(u => !isGlb(u));
     if (externalToRemove.length > 0) {
       setPendingExternalVideos(prev => {
         const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
         const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
         onExternalVideosChange?.(next);
+        return next;
+      });
+    }
+    if (modelToRemove.length > 0) {
+      setPendingVariant3dModels(prev => {
+        const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
+        onThreeDModelsChange?.(next);
         return next;
       });
     }
@@ -1349,7 +1439,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap, onExternalVideosChange]);
+  }, [variants, fileUrlMap, onExternalVideosChange, onThreeDModelsChange]);
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];
@@ -2143,6 +2233,8 @@ export function VariantImageManager({
                 externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
                 onAddExternalVideoUrl={handleAddExternalVideoUrl}
                 onRemoveExternalVideoUrl={handleRemoveExternalVideoUrl}
+                threeDModelUrls={pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? []}
+                onRemoveThreeDModelUrl={handleRemoveThreeDModelUrl}
                 onBrowseLibrary={() => setPickerTarget({ mode: "variant", variantId: v.id })}
               />
               );
@@ -2203,11 +2295,12 @@ export function VariantImageManager({
       // to product.media via productCreateMedia EXTERNAL_VIDEO.
       onAddExternalUrl={handleModalAddExternalUrl}
       uploadCommitMode={pickerTarget?.mode === "variant" ? "immediate" : "queue"}
-      // Variant-gallery's metafield (list.file_reference) refuses Model3d.
-      // Hide the 3D filter + reject GLB picks/uploads at the modal so we
-      // never assemble a save payload Shopify would reject — the prior bug
-      // was that a GLB at any non-zero position aborted the whole save.
-      disallowModel={pickerTarget?.mode === "variant"}
+      // Models are now accepted in variant mode too — picked .glb URLs are
+      // routed to custom.variant_3d_models (list.url) instead of the
+      // variant_gallery file_reference metafield (which rejects Media3d).
+      // disallowModel stays available as an API for callers that need to
+      // hide 3D entirely; nothing in the merchant flow sets it today.
+      disallowModel={false}
       currentProductId={productId}
       title={
         pickerTarget?.mode === "variant"

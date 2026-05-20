@@ -46,9 +46,15 @@ export interface VariantWithGallery {
   selectedOptions: VariantSelectedOption[];
   /** YouTube/Vimeo URLs from custom.variant_external_videos (list.url). */
   externalVideoUrls?: string[];
-  /** Optional total order across galleryFileGids ∪ externalVideoUrls as JSON
-   *  array of { kind: "file" | "url", value: gid|url }. Position 0 is always
-   *  the variant's featured image — must remain image-only. */
+  /** GLB CDN URLs from custom.variant_3d_models (list.url). Shopify's
+   *  list.file_reference rejects Media3d, so 3D models live in a parallel
+   *  list.url metafield and are woven into galleryOrderJson via
+   *  { kind: "model", value: url } entries. */
+  threeDModelUrls?: string[];
+  /** Optional total order across galleryFileGids ∪ externalVideoUrls ∪
+   *  threeDModelUrls as JSON array of
+   *  { kind: "file" | "url" | "model", value: gid|url }. Position 0 is
+   *  always the variant's featured image — must remain image-only. */
   galleryOrderJson?: string | null;
 }
 

@@ -187,9 +187,19 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           (isMain ? `, ${t.imageManager.mainImage}` : "")
         }
       >
-        {kind === "model" && !url ? (
-          // GLB without a preview poster — neutral placeholder. The "3D" badge
-          // below still renders, so the tile is identifiable.
+        {kind === "model" && (!url || !/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(url)) ? (
+          // No image preview available. Three sub-cases land here:
+          //   • Product-media Model3d without a preview image
+          //   • Variant model: raw .glb URL from variant_3d_models (the
+          //     storefront's <model-viewer> reads .glb directly, but a .glb
+          //     binary cannot be rendered as an <img>)
+          //   • Variant model just uploaded: the staging URL has no file
+          //     extension and is not yet substituted with a CDN URL —
+          //     happens between handleModalAdd and save
+          // Whitelist (vs blacklist) is safer: ONLY render <img> when the
+          // URL clearly points at an image; everything else gets the
+          // placeholder. The "3D" badge below still renders so the tile is
+          // identifiable.
           <div
             aria-label={`${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
             style={{

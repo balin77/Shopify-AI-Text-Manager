@@ -43,10 +43,13 @@ export function useVariantImageManager() {
   // Empty array is meaningful: it means "the merchant cleared this variant's
   // external videos" and the metafield value should be persisted as `[]`.
   const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
-  // Combined order (file GIDs + external URLs) per variant. Stringified JSON
-  // array of { kind: "file" | "url", value }. Updated whenever the merchant
-  // reorders a gallery that mixes both kinds; only emitted to the backend
-  // when non-empty so legacy save flows stay byte-identical.
+  // Per-variant GLB CDN URLs. Mirrors pendingExternalVideos exactly (variant_3d_models
+  // is a list.url metafield too) — same empty-array-means-cleared contract.
+  const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Combined order (file GIDs + external URLs + 3D model URLs) per variant.
+  // Stringified JSON array of { kind: "file" | "url" | "model", value }.
+  // Updated whenever the merchant reorders a gallery that mixes kinds; only
+  // emitted to the backend when non-empty so legacy save flows stay byte-identical.
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
@@ -163,6 +166,10 @@ export function useVariantImageManager() {
         variantId,
         urls,
       }));
+      const variant3dModels = Object.entries(pendingVariant3dModels).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
       const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
         variantId,
         orderJson,
@@ -178,6 +185,7 @@ export function useVariantImageManager() {
           mediaOrder: pendingMediaOrder,
           clearVariantMainImages: pendingClearVariantMainImages,
           variantExternalVideos,
+          variant3dModels,
           variantGalleryOrder,
         }),
       });
@@ -192,6 +200,39 @@ export function useVariantImageManager() {
       if (Array.isArray(data.droppedExternalUrls) && data.droppedExternalUrls.length > 0) {
         console.warn("[useVariantImageManager] server dropped external video URLs", data.droppedExternalUrls);
       }
+      if (Array.isArray(data.dropped3dModelUrls) && data.dropped3dModelUrls.length > 0) {
+        // Group by reason so the UI / console message is actionable. The
+        // most common case is `processing`: the merchant uploaded a .glb,
+        // productCreateMedia returned a Model3d GID but Shopify hadn't
+        // finished processing the file by the end of the bounded polling
+        // window — the URL was dropped on purpose so the metafield never
+        // points at an unprocessed asset. A re-save in a few seconds picks
+        // up the now-ready Model3d.sources.url.
+        type Drop3D = { variantId: string; url: string; reason?: string };
+        const drops = data.dropped3dModelUrls as Drop3D[];
+        const processing = drops.filter(d => d.reason === "processing");
+        const failed = drops.filter(d => d.reason === "invalid_glb");
+        const invalid = drops.filter(d => !d.reason || d.reason === "invalid_url");
+        if (processing.length > 0) {
+          console.warn(
+            `[useVariantImageManager] ${processing.length} 3D model upload(s) still processing on Shopify — ` +
+            `re-save in a few seconds to attach them to their variants`,
+            processing,
+          );
+        }
+        if (failed.length > 0) {
+          console.error(
+            `[useVariantImageManager] ${failed.length} 3D model upload(s) rejected by Shopify (invalid .glb)`,
+            failed,
+          );
+        }
+        if (invalid.length > 0) {
+          console.warn(
+            `[useVariantImageManager] ${invalid.length} 3D model URL(s) failed isValid3dModelUrl validation`,
+            invalid,
+          );
+        }
+      }
       setBulkItems([]);
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);
@@ -199,6 +240,7 @@ export function useVariantImageManager() {
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
       setPendingExternalVideos({});
+      setPendingVariant3dModels({});
       setPendingGalleryOrder({});
       setHasAltTextEdits(false);
       setResetCounter(c => c + 1);
@@ -206,7 +248,7 @@ export function useVariantImageManager() {
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingGalleryOrder]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingGalleryOrder]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -218,6 +260,7 @@ export function useVariantImageManager() {
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
     setPendingExternalVideos({});
+    setPendingVariant3dModels({});
     setPendingGalleryOrder({});
     setHasAltTextEdits(false);
     // Clear data derived from the previous product so the bulk panels never match
@@ -252,6 +295,8 @@ export function useVariantImageManager() {
     selectedGalleryGids,
     pendingExternalVideos,
     setPendingExternalVideos,
+    pendingVariant3dModels,
+    setPendingVariant3dModels,
     pendingGalleryOrder,
     setPendingGalleryOrder,
     handleVariantsLoaded,

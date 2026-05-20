@@ -174,3 +174,28 @@ export function parseExternalVideoUrl(input: string): ParsedExternalVideo | null
 export function isValidExternalVideoUrl(input: string): boolean {
   return parseExternalVideoUrl(input) !== null;
 }
+
+// ---------------------------------------------------------------------------
+// 3D model URL validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate that a value persisted in `custom.variant_3d_models` is a `.glb`
+ * URL. Scope is deliberately `.glb` only (binary, single-file format) —
+ * `.gltf` references separate `.bin` and texture assets that are brittle
+ * across CDN caches, so we mirror the `product.media` fallback path which
+ * already filters to glb format.
+ */
+export function isValid3dModelUrl(input: string): boolean {
+  if (typeof input !== "string") return false;
+  const trimmed = input.trim();
+  if (!trimmed) return false;
+  let u: URL;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  return /\.glb$/i.test(u.pathname);
+}
