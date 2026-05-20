@@ -8,7 +8,8 @@ import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
-import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
+import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
+import { parseExternalVideoUrl } from "../../utils/mediaKind";
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
@@ -43,6 +44,10 @@ interface VariantImageManagerProps {
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
   onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[], clearVariantMainImages?: string[]) => void;
+  /** Notified whenever the merchant adds / removes a YouTube or Vimeo URL on
+   *  any variant. The shape mirrors the /api/update-variant-galleries body
+   *  field so the hook can pass it straight through. */
+  onExternalVideosChange?: (variantExternalVideos: Record<string, string[]>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
   variantReloadKey?: number;
@@ -95,11 +100,23 @@ export function VariantImageManager({
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
+  onExternalVideosChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
+  // Per-variant overrides for external video URLs. Empty entries are kept
+  // (they mean "merchant explicitly cleared this variant's videos") so
+  // resetting an array to [] still gets persisted on save.
+  const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
   // Authoritative GID→URL map fetched from Shopify product media (not DB cache).
   const [shopifyMediaMap, setShopifyMediaMap] = useState<Record<string, string>>({});
+  // Richer GID→{kind, previewUrl} map for the same product media. Drives the
+  // SortableImageGrid tile dispatch (play icon for video, "3D" badge for
+  // model) so the admin gallery mirrors the storefront's visual language.
+  // Carries `kind: "external_video"` for ExternalVideo entries from
+  // product.media — variant-scoped YouTube/Vimeo URLs live elsewhere and
+  // are merged in further down.
+  const [mediaMetaMap, setMediaMetaMap] = useState<Record<string, { kind: MediaKind; previewUrl: string }>>({});
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
   const [pendingProductImageOrder, setPendingProductImageOrder] = useState<string[] | null>(null);
@@ -244,12 +261,13 @@ export function VariantImageManager({
 
     fetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
       .then(r => r.json())
-      .then(({ variants: raw, mediaMap, error }) => {
+      .then(({ variants: raw, mediaMap, mediaMetaMap: mmm, error }) => {
         // A newer product was selected while this request was in flight — drop the
         // result so it can't overwrite the current product's variants/galleries.
         if (isStale()) return;
         if (error) { setVariantError(error); return; }
         if (mediaMap) setShopifyMediaMap(mediaMap);
+        if (mmm) setMediaMetaMap(mmm);
         // Build URL→GID reverse map to resolve each variant's main image GID
         const urlToGidMap: Record<string, string> = {};
         if (mediaMap) {
@@ -266,6 +284,17 @@ export function VariantImageManager({
           galleryFileGids: (() => {
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
+          // YouTube / Vimeo URLs from custom.variant_external_videos. Stored
+          // as a JSON-stringified array on the metafield — we tolerate
+          // malformed values (returns []) so a hand-edit in the Shopify
+          // admin can't crash the Image Manager.
+          externalVideoUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.externalVideosJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
+          galleryOrderJson: v.galleryOrderJson ?? null,
           mainImageGid: v.image?.url ? urlToGidMap[v.image.url.split("?")[0]] : undefined,
           defaultImageUrl: v.image?.url ?? undefined,
           selectedOptions: v.selectedOptions ?? [],
@@ -718,16 +747,22 @@ export function VariantImageManager({
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
     const map: Record<string, ImageMeta> = {};
     for (const img of effectiveProductImages) {
+      // mediaMetaMap is keyed by Shopify GID — use the image's mediaId to look
+      // up its media kind (image / video / model / external_video) and apply
+      // it under both the DB-cached and the shopifyMediaMap-fresh URL so the
+      // SortableThumbnail dispatch works regardless of which URL got rendered.
+      const meta = img.mediaId ? mediaMetaMap[img.mediaId] : undefined;
       const entry: ImageMeta = {
         altText: img.altText,
         isConverting: convertingImageUrls.has(img.mediaId),
+        kind: meta?.kind,
       };
       map[img.url] = entry;
       const freshUrl = img.mediaId ? shopifyMediaMap[img.mediaId] : undefined;
       if (freshUrl && freshUrl !== img.url) map[freshUrl] = entry;
     }
     return map;
-  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
@@ -1059,6 +1094,32 @@ export function VariantImageManager({
     }
     // Copy: keep action mode + selection active so user can copy to multiple variants
   }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, locallyExcludedMainGids, onRemoveBulk, onSetAction]);
+
+  // External-video URL handlers. The "effective" URL list for a variant is
+  // pendingExternalVideos[id] if the merchant has touched the row this session,
+  // otherwise the server-loaded variant.externalVideoUrls. We notify the parent
+  // hook on every mutation so its handleApply can ship the changes alongside
+  // the regular gallery save without an extra round-trip.
+  const handleAddExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    setPendingExternalVideos(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+      if (current.includes(url)) return prev;
+      const next = { ...prev, [variantId]: [...current, url] };
+      onExternalVideosChange?.(next);
+      return next;
+    });
+  }, [variants, onExternalVideosChange]);
+
+  const handleRemoveExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    setPendingExternalVideos(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+      const next = { ...prev, [variantId]: current.filter(u => u !== url) };
+      onExternalVideosChange?.(next);
+      return next;
+    });
+  }, [variants, onExternalVideosChange]);
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
@@ -1866,6 +1927,9 @@ export function VariantImageManager({
                 primaryLocale={primaryLocale}
                 skipDndContext
                 forceOpen={autoExpandId === v.id}
+                externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
+                onAddExternalVideoUrl={handleAddExternalVideoUrl}
+                onRemoveExternalVideoUrl={handleRemoveExternalVideoUrl}
               />
               );
             })

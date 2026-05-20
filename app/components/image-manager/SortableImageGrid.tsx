@@ -5,6 +5,8 @@ import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, us
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
+// MediaKind is referenced indirectly via ImageMeta.kind — no direct import
+// needed here, but kept as a comment for grep-discoverability of the dispatch.
 
 function getFormatBadge(url: string, mimeType?: string): { label: string; color: string } | null {
   const lower = url.toLowerCase();
@@ -71,7 +73,11 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        // Mirror the BulkImageUploadPanel whitelist so merchants can pick a
+        // video or GLB directly from the placeholder tile too. The /api/staged-
+        // upload route revalidates via classifyFile() — this attribute is just
+        // OS picker UX.
+        accept="image/*,video/mp4,video/quicktime,video/webm,model/gltf-binary,model/gltf+json,.glb,.gltf"
         multiple
         style={{ display: "none" }}
         onChange={(e) => {
@@ -123,13 +129,22 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
     id: sortableId,
     data: { containerId, url },
   });
-  const formatBadge = getFormatBadge(url, meta?.mimeType);
+  // Format badge is only meaningful for images — video / model / external
+  // video have their own play / 3D / host overlays and showing JPG/PNG/etc
+  // on a video poster would just be confusing.
+  const kind = meta?.kind ?? "image";
+  const formatBadge = kind === "image" ? getFormatBadge(url, meta?.mimeType) : null;
   const currentLocaleAltText = isPrimaryLocale
     ? (localAltTexts?.[url] ?? meta?.altText ?? "")
     : (localAltTexts?.[url] ?? "");
   const hasAlt = Boolean(currentLocaleAltText);
   const filename = extractFilename(url);
   const isConverting = Boolean(meta?.isConverting);
+
+  const tileBorder = isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5");
+  const tileBoxShadow = isMain
+    ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
+    : "none";
 
   return (
     <div
@@ -159,22 +174,105 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           (isMain ? `, ${t.imageManager.mainImage}` : "")
         }
       >
-        <img
-          src={url}
-          alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
-          draggable={false}
-          style={{
-            width: thumbSize,
-            height: thumbSize,
-            objectFit: "cover",
-            borderRadius: 6,
-            border: isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5"),
-            boxShadow: isMain
-              ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
-              : "none",
-            display: "block",
-          }}
-        />
+        {kind === "model" && !url ? (
+          // GLB without a preview poster — neutral placeholder. The "3D" badge
+          // below still renders, so the tile is identifiable.
+          <div
+            aria-label={`${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
+            style={{
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: 6,
+              border: tileBorder,
+              boxShadow: tileBoxShadow,
+              background: "#f1f2f4",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#616161",
+              fontWeight: 700,
+              fontSize: Math.max(10, Math.round(thumbSize * 0.18)),
+              letterSpacing: 0.5,
+            }}
+          >
+            3D
+          </div>
+        ) : (
+          <img
+            src={url}
+            alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
+            draggable={false}
+            style={{
+              width: thumbSize,
+              height: thumbSize,
+              objectFit: "cover",
+              borderRadius: 6,
+              border: tileBorder,
+              boxShadow: tileBoxShadow,
+              display: "block",
+            }}
+          />
+        )}
+
+        {/* Media-type overlays (mirrors the storefront tile language so the
+            admin gallery and the storefront gallery stay visually consistent).
+            Skipped for plain images. */}
+        {(kind === "video" || kind === "external_video") && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 6,
+              background: "rgba(0,0,0,0.32)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <svg width={Math.max(18, Math.round(thumbSize * 0.32))} height={Math.max(18, Math.round(thumbSize * 0.32))} viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
+          </div>
+        )}
+        {kind === "model" && url && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              right: 4,
+              bottom: 4,
+              background: "rgba(0,0,0,0.72)",
+              color: "#fff",
+              font: "700 10px/1 system-ui, sans-serif",
+              letterSpacing: 0.5,
+              padding: "2px 5px",
+              borderRadius: 3,
+              pointerEvents: "none",
+            }}
+          >
+            3D
+          </div>
+        )}
+        {kind === "external_video" && meta?.externalHost && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 4,
+              left: 4,
+              background: "rgba(0,0,0,0.72)",
+              color: "#fff",
+              font: "700 9px/1 system-ui, sans-serif",
+              letterSpacing: 0.4,
+              padding: "2px 5px",
+              borderRadius: 3,
+              pointerEvents: "none",
+              textTransform: "uppercase",
+            }}
+          >
+            {meta.externalHost}
+          </div>
+        )}
 
         {/* Selection checkmark */}
         {isSelected && (

@@ -69,4 +69,12 @@ export interface ImageMeta {
   altText?: string | null;
   mimeType?: string;       // e.g. "image/webp", "image/jpeg"
   isConverting?: boolean;  // true while a WebP conversion task is running for this image
+  /** Drives the thumbnail rendering in SortableImageGrid: play overlay for
+   *  video / external_video, "3D" badge for model. Undefined falls back to
+   *  the legacy image branch. */
+  kind?: MediaKind;
+  /** Optional host label for external_video tiles (e.g. "YouTube" / "Vimeo"),
+   *  shown as a small badge so the merchant can tell platforms apart at a
+   *  glance. */
+  externalHost?: string;
 }
