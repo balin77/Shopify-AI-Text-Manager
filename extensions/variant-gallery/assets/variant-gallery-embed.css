@@ -259,3 +259,30 @@ cp-embed-gallery {
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
   align-items: flex-start;
 }
+
+/* ─── Path C: mirror theme's mobile_thumbnails setting ──────────────── */
+/* Dawn's mobile breakpoint is 750px. Below that, the merchant's chosen
+   mobile_thumbnails value drives whether the thumb strip is hidden, kept
+   visible, or collapsed to a 2-column thumbnail layout. We detect the
+   value at init via DOM inspection and set it on .cp-gallery__inner. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"] .cp-gallery__thumbs-wrap {
+    display: none;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__thumbs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    overflow: visible;
+    max-height: none;
+    scroll-snap-type: none;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__thumb img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__arrow {
+    display: none;
+  }
+}

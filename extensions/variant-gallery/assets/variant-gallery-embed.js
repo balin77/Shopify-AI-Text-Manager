@@ -57,6 +57,13 @@ class CpEmbedGallery extends HTMLElement {
     this._data = this._loadData();
     if (!this._data) { this._warn('no/invalid variant data — aborting'); return; }
 
+    // Path C: read theme gallery settings from DOM (Dawn-compatible) so
+    // thumbnail layout, position, mobile behaviour and video looping
+    // follow the theme's own product-gallery settings without the
+    // merchant having to mirror them in our App-Embed UI.
+    this._themeSettings = this._detectThemeSettings();
+    this._log('theme settings:', JSON.stringify(this._themeSettings));
+
     const configured = this.dataset.nativeSelector && this.dataset.nativeSelector.trim();
     // Default list kept in sync with the blanket <style> in
     // variant-gallery-prehead.liquid (canonical) and the dormant copy in
@@ -490,12 +497,16 @@ class CpEmbedGallery extends HTMLElement {
     const sources = (item.sources || [])
       .map((s) => `<source src="${this._esc(s.src)}" type="${this._esc(s.mime)}">`)
       .join('');
+    // Path C: mirror Dawn's enable_video_looping section setting if the
+    // theme has it on (detected via the presence of any <video loop>).
+    const loopAttr = (this._themeSettings && this._themeSettings.videoLoop) ? 'loop' : '';
     return `<video
           class="cp-gallery__main-image${active ? ' is-active' : ''}"
           poster="${this._esc(item.poster)}"
           controls
           preload="metadata"
           playsinline
+          ${loopAttr}
           data-index="${index}"
           data-type="video"
           ${w ? `width="${w}"` : ''}${h ? ` height="${h}"` : ''}
@@ -572,10 +583,62 @@ class CpEmbedGallery extends HTMLElement {
     document.head.appendChild(s);
   }
 
-  _resolveThumbMode() {
-    const show = this.dataset.showThumbs === '1';
+  // Path C: detect the host theme's product-gallery settings from the DOM
+  // so our gallery can mirror them. Dawn exposes them as classes on the
+  // .product wrapper and as data-attrs on <media-gallery>:
+  //
+  //   thumbnail_position    → <media-gallery data-thumbnail-position="…">
+  //                           OR .product--thumbnails-{pos} on .product
+  //   gallery_layout        → <media-gallery data-desktop-layout="…">
+  //                           OR .product--{stacked|columns|thumbnail|
+  //                           thumbnail_slider} on .product
+  //   mobile_thumbnails     → .product--mobile-{columns|show|hide}
+  //   enable_video_looping  → <video loop> present anywhere
+  //
+  // Non-Dawn themes that don't publish these will simply produce a null
+  // result and we fall back to our own App-Embed settings — no harm.
+  _detectThemeSettings() {
+    if (this.dataset.inheritTheme !== '1') return null;
+    const gallery = document.querySelector('media-gallery');
+    const product = document.querySelector('.product');
+    if (!gallery && !product) return null;
+    const out = {};
     const allowed = ['bottom', 'top', 'left', 'right'];
-    const pos = allowed.indexOf(this.dataset.thumbPos) >= 0 ? this.dataset.thumbPos : 'bottom';
+
+    let tp = gallery && gallery.dataset && gallery.dataset.thumbnailPosition;
+    if (!tp && product) {
+      const m = product.className.match(/product--thumbnails-(bottom|top|left|right)/);
+      if (m) tp = m[1];
+    }
+    if (allowed.indexOf(tp) >= 0) out.thumbPos = tp;
+
+    let dl = gallery && gallery.dataset && gallery.dataset.desktopLayout;
+    if (!dl && product) {
+      const layouts = ['thumbnail_slider', 'thumbnail', 'columns', 'stacked'];
+      for (const l of layouts) {
+        if (product.classList.contains('product--' + l)) { dl = l; break; }
+      }
+    }
+    if (dl) out.showThumbs = (dl === 'thumbnail' || dl === 'thumbnail_slider');
+
+    if (product) {
+      const m = product.className.match(/product--mobile-(columns|show|hide)/);
+      if (m) out.mobileThumbs = m[1];
+    }
+
+    out.videoLoop = !!document.querySelector('video[loop]');
+
+    return out;
+  }
+
+  _resolveThumbMode() {
+    const theme = this._themeSettings || {};
+    const show = (typeof theme.showThumbs === 'boolean')
+      ? theme.showThumbs
+      : (this.dataset.showThumbs === '1');
+    const allowed = ['bottom', 'top', 'left', 'right'];
+    let pos = theme.thumbPos || this.dataset.thumbPos;
+    if (allowed.indexOf(pos) < 0) pos = 'bottom';
     return { show, pos };
   }
 
@@ -599,6 +662,12 @@ class CpEmbedGallery extends HTMLElement {
     inner.className = 'cp-gallery__inner' + (thumbMode ? '' : ' cp-gallery__inner--stacked');
     if (thumbMode) inner.setAttribute('data-thumb-pos', pos);
     else inner.removeAttribute('data-thumb-pos');
+    // Path C: mirror the theme's mobile-thumbnail behaviour. CSS reads
+    // this attribute to hide / show / collapse-to-columns the thumb strip
+    // below the Dawn breakpoint (750px).
+    const mt = this._themeSettings && this._themeSettings.mobileThumbs;
+    if (mt) inner.setAttribute('data-mobile-thumbs', mt);
+    else inner.removeAttribute('data-mobile-thumbs');
 
     if (!thumbMode) {
       // Stacked mode: one .cp-gallery__main per item (each at its own

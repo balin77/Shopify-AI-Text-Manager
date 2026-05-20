@@ -588,6 +588,7 @@
   data-thumb-size="{{ block.settings.thumbnail_size }}"
   data-show-thumbs="{% if block.settings.enable_thumbnails %}1{% endif %}"
   data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' }}"
+  data-inherit-theme="{% if block.settings.inherit_theme_settings %}1{% endif %}"
   data-model-viewer-src="{{ 'model-viewer.min.js' | asset_url }}"
 >
   <div class="cp-gallery__inner"></div>
@@ -602,10 +603,17 @@
   "settings": [
     {
       "type": "checkbox",
+      "id": "inherit_theme_settings",
+      "label": "Inherit theme gallery settings (recommended)",
+      "default": true,
+      "info": "When on, the gallery automatically follows the theme's own product-gallery settings — thumbnail position, layout (stacked vs. with thumbs), mobile thumbnail behaviour, video looping. The settings below are ignored. Turn off only if you want to override the theme."
+    },
+    {
+      "type": "checkbox",
       "id": "enable_thumbnails",
       "label": "Show thumbnails",
       "default": false,
-      "info": "Off: all relevant images stack vertically at full width (matches a typical Shopify gallery). On: a single main image is shown with a clickable thumbnail strip in the position chosen below."
+      "info": "Override (ignored when Inherit theme settings is on). Off: all relevant images stack vertically at full width. On: a single main image is shown with a clickable thumbnail strip in the position chosen below."
     },
     {
       "type": "select",
