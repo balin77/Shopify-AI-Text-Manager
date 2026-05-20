@@ -247,3 +247,15 @@ cp-embed-gallery {
 .cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]:has(img[src=""])::after {
   background-color: #111;
 }
+
+/* Vertical strips reserve a few extra px in the wrap for the scrollbar,
+   but flex-column's default align-items:stretch would then stretch each
+   thumb button to that full width — so the active 2px border sits 4-6 px
+   to the right of the thumbnail image instead of hugging it. Align to
+   start keeps thumbs at their natural width (image + border) and makes
+   the active border symmetric. Horizontal strips don't need this — the
+   container height auto-fits the children. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+  align-items: flex-start;
+}
