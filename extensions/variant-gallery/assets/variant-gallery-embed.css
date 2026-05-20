@@ -184,3 +184,52 @@ cp-embed-gallery {
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev { top: 4px; }
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { bottom: 4px; }
+
+/* ─── media-type harmonisation in the main slot ─────────────────────── */
+/* iframe (YouTube/Vimeo) and <model-viewer> reuse .cp-gallery__main-
+   image so the absolute / opacity is-active stack works the same way. */
+.cp-embed-gallery iframe.cp-gallery__main-image {
+  border: 0;
+  background: #000;
+}
+.cp-embed-gallery model-viewer.cp-gallery__main-image {
+  background: #f0f0f0;
+  --poster-color: transparent;
+}
+/* Native <video> already inherits object-fit:contain from the shared
+   rule, but ensure the controls bar is not clipped by border-radius. */
+.cp-embed-gallery video.cp-gallery__main-image {
+  background: #000;
+}
+
+/* ─── thumbnail overlays (video / 3D) ───────────────────────────────── */
+.cp-embed-gallery .cp-gallery__thumb { position: relative; }
+
+/* Play-icon overlay for native and external videos. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.32);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'><path d='M8 5v14l11-7z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 40% 40%;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Small "3D" badge in the corner for model items. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]::after {
+  content: "3D";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 700 10px/1 system-ui, sans-serif;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+}

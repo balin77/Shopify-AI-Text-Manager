@@ -429,16 +429,29 @@ class CpEmbedGallery extends HTMLElement {
     return (w > 0 && h > 0) ? ` style="aspect-ratio: ${w} / ${h};"` : '';
   }
 
+  // Dispatcher: render any media item (image / video / external_video /
+  // model) into a main-slot element. The .cp-gallery__main-image class
+  // is reused for all types because the CSS layout (absolute, opacity
+  // .is-active toggle) applies the same regardless of element tag.
+  _mainItemHtml(item, active, index, thumbMode) {
+    if (!item) return '';
+    const t = item.type || 'image';
+    if (t === 'image')          return this._mainImageHtml(item, active, index, thumbMode);
+    if (t === 'video')          return this._mainVideoHtml(item, active, index);
+    if (t === 'external_video') return this._mainExternalVideoHtml(item, active, index);
+    if (t === 'model')          return this._mainModelHtml(item, active, index);
+    return '';
+  }
+
   // Render every image as an <img> in the DOM up front. Loading strategy
-  // depends on layout (RISK-2):
-  //  • Thumb mode: all <img>s overlap absolutely at the same viewport
-  //    position, so any of them can become active at any time. They are
-  //    loaded eagerly (first with fetchpriority=high) so a click on a
-  //    yet-unloaded thumb never reveals a blank during the opacity
-  //    transition. The "blank between two image loads" flicker is gone.
-  //  • Stacked mode: images flow vertically, so the off-screen ones are
-  //    safely deferred via loading=lazy.
-  _mainImgHtml(img, active, index, thumbMode) {
+  // depends on layout:
+  //  • Thumb mode: all main elements overlap absolutely at the same
+  //    viewport position, so any of them can become active at any time.
+  //    Images load eagerly so a click on a yet-unloaded thumb never
+  //    reveals a blank during the opacity transition.
+  //  • Stacked mode: items flow vertically, so off-screen ones safely
+  //    defer via loading=lazy.
+  _mainImageHtml(img, active, index, thumbMode) {
     const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
     const h = Number(img && img.h) > 0 ? Number(img.h) : '';
     const isFirst = index === 0;
@@ -454,8 +467,91 @@ class CpEmbedGallery extends HTMLElement {
           ${loadAttrs}
           decoding="async"
           data-index="${index}"
+          data-type="image"
           width="${w}"${h ? ` height="${h}"` : ''}
         >`;
+  }
+
+  // Native Shopify video: HTML5 <video> with poster + controls.
+  // preload=metadata is light (just dimensions / duration). No autoplay.
+  // playsinline keeps iOS from going fullscreen on play.
+  _mainVideoHtml(item, active, index) {
+    const w = Number(item.w) > 0 ? Number(item.w) : '';
+    const h = Number(item.h) > 0 ? Number(item.h) : '';
+    const sources = (item.sources || [])
+      .map((s) => `<source src="${this._esc(s.src)}" type="${this._esc(s.mime)}">`)
+      .join('');
+    return `<video
+          class="cp-gallery__main-image${active ? ' is-active' : ''}"
+          poster="${this._esc(item.poster)}"
+          controls
+          preload="metadata"
+          playsinline
+          data-index="${index}"
+          data-type="video"
+          ${w ? `width="${w}"` : ''}${h ? ` height="${h}"` : ''}
+        >${sources}</video>`;
+  }
+
+  // YouTube/Vimeo: build embed URL by host. loading=lazy keeps the
+  // iframe network cost off the critical path until activation.
+  _mainExternalVideoHtml(item, active, index) {
+    const w = Number(item.w) > 0 ? Number(item.w) : '';
+    const h = Number(item.h) > 0 ? Number(item.h) : '';
+    const host = String(item.host || '').toLowerCase();
+    const xid  = encodeURIComponent(String(item.external_id || ''));
+    let url = '';
+    if (host === 'youtube')    url = `https://www.youtube.com/embed/${xid}?enablejsapi=1&playsinline=1&rel=0`;
+    else if (host === 'vimeo') url = `https://player.vimeo.com/video/${xid}?dnt=1`;
+    if (!url) return '';
+    return `<iframe
+          class="cp-gallery__main-image${active ? ' is-active' : ''}"
+          src="${url}"
+          title="${this._esc(item.alt)}"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"
+          data-index="${index}"
+          data-type="external_video"
+          ${w ? `width="${w}"` : ''}${h ? ` height="${h}"` : ''}
+        ></iframe>`;
+  }
+
+  // 3D model via Google's <model-viewer> custom element. The library
+  // is lazy-loaded once per page (see _ensureModelViewerLib). Until it
+  // arrives the unknown <model-viewer> tag shows the poster image via
+  // its CSS, so users never see a blank — they get a 3D-rotatable
+  // preview as soon as the script lands.
+  _mainModelHtml(item, active, index) {
+    const w = Number(item.w) > 0 ? Number(item.w) : 800;
+    const h = Number(item.h) > 0 ? Number(item.h) : 800;
+    return `<model-viewer
+          class="cp-gallery__main-image${active ? ' is-active' : ''}"
+          src="${this._esc(item.model_src)}"
+          poster="${this._esc(item.poster)}"
+          alt="${this._esc(item.alt)}"
+          camera-controls
+          touch-action="pan-y"
+          reveal="interaction"
+          loading="lazy"
+          data-index="${index}"
+          data-type="model"
+          style="aspect-ratio: ${w} / ${h};"
+        ></model-viewer>`;
+  }
+
+  // Lazy-load Google's model-viewer Web Component on first 3D render.
+  // Cached per page session by the global flag; the browser caches the
+  // script itself across navigations, so the cost is paid at most once
+  // per shopper visit and only when a product page actually has 3D.
+  _ensureModelViewerLib() {
+    if (window.__cpVgModelViewerLoading) return;
+    window.__cpVgModelViewerLoading = true;
+    const s = document.createElement('script');
+    s.type = 'module';
+    s.src = 'https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.0/dist/model-viewer.min.js';
+    document.head.appendChild(s);
   }
 
   _resolveThumbMode() {
@@ -476,42 +572,53 @@ class CpEmbedGallery extends HTMLElement {
     // refs to the now-detached old strip element.
     if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
 
+    // Lazy-load model-viewer once if any item is a 3D model — the
+    // unknown element falls back to its poster CSS until the library
+    // upgrades it, so users never see a blank.
+    if (images.some((it) => it && it.type === 'model')) this._ensureModelViewerLib();
+
     // Reset wrapper state — class + data-attr drive all layout/CSS.
     inner.className = 'cp-gallery__inner' + (thumbMode ? '' : ' cp-gallery__inner--stacked');
     if (thumbMode) inner.setAttribute('data-thumb-pos', pos);
     else inner.removeAttribute('data-thumb-pos');
 
     if (!thumbMode) {
-      // Stacked mode: one .cp-gallery__main per image (each at its own
+      // Stacked mode: one .cp-gallery__main per item (each at its own
       // natural aspect ratio), no thumbnail strip. Behaves like the
-      // native theme gallery but scoped to the variant's images.
-      inner.innerHTML = images.map((img, i) => `
-        <div class="cp-gallery__main"${this._ratioStyle(img)}>
-          ${this._mainImgHtml(img, true, i, false)}
+      // native theme gallery but scoped to the variant's media.
+      inner.innerHTML = images.map((item, i) => `
+        <div class="cp-gallery__main"${this._ratioStyle(item)}>
+          ${this._mainItemHtml(item, true, i, false)}
         </div>`).join('');
       return;
     }
 
-    // Thumb mode: one .cp-gallery__main with ALL images stacked
+    // Thumb mode: one .cp-gallery__main with ALL items stacked
     // absolutely (only one .is-active at a time) so toggling between
     // them never reloads and never flashes.
-    const mainImgs = images.map((img, i) => this._mainImgHtml(img, i === 0, i, true)).join('');
+    const mainImgs = images.map((item, i) => this._mainItemHtml(item, i === 0, i, true)).join('');
     const mainHtml = `
       <div class="cp-gallery__main"${this._ratioStyle(images[0])}>
         ${mainImgs}
       </div>`;
 
-    const thumbItems = images.map((img, i) => `
-      <button
+    const thumbItems = images.map((item, i) => {
+      const t = item.type || 'image';
+      const overlay = (t === 'video' || t === 'external_video') ? 'play'
+                    : (t === 'model') ? '3d' : '';
+      return `<button
         class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
         type="button"
-        aria-label="Image ${i + 1}"
+        aria-label="Media ${i + 1}"
         data-index="${i}"
-        data-w="${img.w || ''}"
-        data-h="${img.h || ''}"
+        data-type="${this._esc(t)}"
+        data-overlay="${overlay}"
+        data-w="${item.w || ''}"
+        data-h="${item.h || ''}"
       >
-        <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
-      </button>`).join('');
+        <img src="${item.thumb}" alt="${this._esc(item.alt)} ${i + 1}" loading="lazy" width="160" height="160">
+      </button>`;
+    }).join('');
 
     const thumbsHtml = `
       <div class="cp-gallery__thumbs-wrap">
@@ -525,6 +632,31 @@ class CpEmbedGallery extends HTMLElement {
     this._bindArrows(inner);
   }
 
+  // Pause whatever is currently playing before switching items so a
+  // hidden iframe / video does not keep audio running off-screen.
+  // <video>: .pause(). <iframe>: postMessage to YT/Vimeo APIs (cheap,
+  // graceful — if the message is unrecognised the player just ignores
+  // it). <model-viewer>: nothing to pause.
+  _pauseMedia(el) {
+    if (!el) return;
+    if (el.tagName === 'VIDEO') {
+      try { el.pause(); } catch (_) {}
+      return;
+    }
+    if (el.tagName === 'IFRAME') {
+      try {
+        const win = el.contentWindow;
+        if (!win) return;
+        const src = el.getAttribute('src') || '';
+        if (src.indexOf('youtube.com') >= 0) {
+          win.postMessage('{"event":"command","func":"pauseVideo","args":""}', '*');
+        } else if (src.indexOf('vimeo.com') >= 0) {
+          win.postMessage('{"method":"pause"}', '*');
+        }
+      } catch (_) { /* cross-origin, ignore */ }
+    }
+  }
+
   _bindThumbs(container) {
     const mains = Array.from(container.querySelectorAll('.cp-gallery__main-image'));
     const thumbs = Array.from(container.querySelectorAll('.cp-gallery__thumb'));
@@ -534,6 +666,10 @@ class CpEmbedGallery extends HTMLElement {
         const i = Number(thumb.dataset.index);
         const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
         if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
+        // Pause the outgoing item (video / external embed) BEFORE the
+        // class swap so the user does not briefly hear audio over a
+        // newly visible image.
+        this._pauseMedia(container.querySelector('.cp-gallery__main-image.is-active'));
         mains.forEach((m, j) => m.classList.toggle('is-active', j === i));
         thumbs.forEach((t, j) => t.classList.toggle('is-active', j === i));
         // Keep the active thumb visible in the carousel.

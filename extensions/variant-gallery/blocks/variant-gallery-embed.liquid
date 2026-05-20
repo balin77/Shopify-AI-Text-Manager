@@ -63,6 +63,7 @@
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
             {
+              "type":     "image",
               "src_400":  {{ vfi | image_url: width: 400  | json }},
               "src_800":  {{ vfi | image_url: width: 800  | json }},
               "src_1200": {{ vfi | image_url: width: 1200 | json }},
@@ -80,6 +81,7 @@
               {%- assign cp_w = img.preview_image.width  | default: img.width -%}
               {%- assign cp_h = img.preview_image.height | default: img.height -%}
               {
+                "type":     "image",
                 "src_400":  {{ img | image_url: width: 400  | json }},
                 "src_800":  {{ cp_src | json }},
                 "src_1200": {{ img | image_url: width: 1200 | json }},
@@ -92,36 +94,34 @@
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
-        {%- comment -%} Step 2 (RISK-1/4/5): if no images so far (no metafield OR metafield URLs all blank), fall back to product.media so the custom gallery serves ALL products. RISK-1: leave products with ANY non-image media (video/3D) untouched so the merchant-uploaded video stays visible in the native gallery (no silent content loss). RISK-4: emit variant.featured_image first as primary, deduped from the product.media loop so visible Image #1 always matches the selected variant. {%- endcomment -%}
+        {%- comment -%} Step 2: if no images from metafield, fall back to product.media. Handles ALL media types so a merchant-uploaded video / 3D model is no longer silently dropped (Bilder + Video-Player). featured_image emitted first as primary (RISK-4) and deduped from the loop. {%- endcomment -%}
         {%- unless cp_has_any -%}
-          {%- assign cp_has_non_image = false -%}
+          {%- assign cp_vfi_id = blank -%}
+          {%- if variant.featured_image != blank -%}
+            {%- assign vfi = variant.featured_image -%}
+            {
+              "type":     "image",
+              "src_400":  {{ vfi | image_url: width: 400  | json }},
+              "src_800":  {{ vfi | image_url: width: 800  | json }},
+              "src_1200": {{ vfi | image_url: width: 1200 | json }},
+              "thumb":    {{ vfi | image_url: width: 160  | json }},
+              "w":        {{ vfi.width  | json }},
+              "h":        {{ vfi.height | json }},
+              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+            }
+            {%- assign cp_has_any = true -%}
+            {%- assign cp_vfi_id = vfi.id -%}
+          {%- endif -%}
           {%- for media in product.media -%}
-            {%- unless media.media_type == 'image' -%}{%- assign cp_has_non_image = true -%}{%- endunless -%}
-          {%- endfor -%}
-          {%- unless cp_has_non_image -%}
-            {%- assign cp_vfi_id = blank -%}
-            {%- if variant.featured_image != blank -%}
-              {%- assign vfi = variant.featured_image -%}
-              {
-                "src_400":  {{ vfi | image_url: width: 400  | json }},
-                "src_800":  {{ vfi | image_url: width: 800  | json }},
-                "src_1200": {{ vfi | image_url: width: 1200 | json }},
-                "thumb":    {{ vfi | image_url: width: 160  | json }},
-                "w":        {{ vfi.width  | json }},
-                "h":        {{ vfi.height | json }},
-                "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-              }
-              {%- assign cp_has_any = true -%}
-              {%- assign cp_vfi_id = vfi.id -%}
-            {%- endif -%}
-            {%- for media in product.media -%}
-              {%- if media.media_type == 'image' and media.id != cp_vfi_id -%}
+            {%- if media.id != cp_vfi_id -%}
+              {%- if media.media_type == 'image' -%}
                 {%- assign cp_src = media | image_url: width: 800 -%}
                 {%- if cp_src != blank -%}
                   {%- if cp_has_any %},{% endif -%}
                   {%- assign cp_w = media.preview_image.width  | default: media.width -%}
                   {%- assign cp_h = media.preview_image.height | default: media.height -%}
                   {
+                    "type":     "image",
                     "src_400":  {{ media | image_url: width: 400  | json }},
                     "src_800":  {{ cp_src | json }},
                     "src_1200": {{ media | image_url: width: 1200 | json }},
@@ -132,9 +132,66 @@
                   }
                   {%- assign cp_has_any = true -%}
                 {%- endif -%}
+              {%- elsif media.media_type == 'video' -%}
+                {%- if media.preview_image != blank -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_pi = media.preview_image -%}
+                  {
+                    "type":   "video",
+                    "thumb":  {{ cp_pi | image_url: width: 160  | json }},
+                    "poster": {{ cp_pi | image_url: width: 1200 | json }},
+                    "w":      {{ cp_pi.width  | json }},
+                    "h":      {{ cp_pi.height | json }},
+                    "alt":    {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                    "sources": [
+                      {%- for src in media.sources -%}
+                        {%- unless forloop.first %},{% endunless -%}
+                        {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
+                      {%- endfor -%}
+                    ]
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- elsif media.media_type == 'external_video' -%}
+                {%- if media.preview_image != blank -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_pi = media.preview_image -%}
+                  {
+                    "type":        "external_video",
+                    "thumb":       {{ cp_pi | image_url: width: 160  | json }},
+                    "poster":      {{ cp_pi | image_url: width: 1200 | json }},
+                    "w":           {{ cp_pi.width  | json }},
+                    "h":           {{ cp_pi.height | json }},
+                    "alt":         {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                    "host":        {{ media.host | json }},
+                    "external_id": {{ media.external_id | json }}
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- elsif media.media_type == 'model' -%}
+                {%- if media.preview_image != blank -%}
+                  {%- assign cp_glb = blank -%}
+                  {%- for src in media.sources -%}
+                    {%- if src.format == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
+                  {%- endfor -%}
+                  {%- if cp_glb != blank -%}
+                    {%- if cp_has_any %},{% endif -%}
+                    {%- assign cp_pi = media.preview_image -%}
+                    {
+                      "type":      "model",
+                      "thumb":     {{ cp_pi | image_url: width: 160  | json }},
+                      "poster":    {{ cp_pi | image_url: width: 1200 | json }},
+                      "w":         {{ cp_pi.width  | json }},
+                      "h":         {{ cp_pi.height | json }},
+                      "alt":       {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                      "model_src": {{ cp_glb | json }}
+                    }
+                    {%- assign cp_has_any = true -%}
+                  {%- endif -%}
+                {%- endif -%}
               {%- endif -%}
-            {%- endfor -%}
-          {%- endunless -%}
+            {%- endif -%}
+          {%- endfor -%}
         {%- endunless -%}
       ]{% unless forloop.last %},{% endunless %}
     {%- endfor -%}
