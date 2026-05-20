@@ -46,6 +46,15 @@ export function useVariantImageManager() {
   // Per-variant GLB CDN URLs. Mirrors pendingExternalVideos exactly (variant_3d_models
   // is a list.url metafield too) — same empty-array-means-cleared contract.
   const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Carry-over for Model3d uploads that didn't finish processing within the
+  // backend's bounded polling window. Maps each still-staging URL onto its
+  // Model3d GID (returned by the prior productCreateMedia call). The next
+  // save sends this map as `knownModelGids` so the backend can poll the
+  // GID directly instead of re-uploading the same .glb → no duplicate
+  // product media. Cleared selectively after a save: only entries whose
+  // staging URL came back resolved (i.e. NOT in the new "processing" drop
+  // list) are removed.
+  const [pendingKnownModelGids, setPendingKnownModelGids] = useState<Record<string, string>>({});
   // Combined order (file GIDs + external URLs + 3D model URLs) per variant.
   // Stringified JSON array of { kind: "file" | "url" | "model", value }.
   // Updated whenever the merchant reorders a gallery that mixes kinds; only
@@ -186,6 +195,10 @@ export function useVariantImageManager() {
           clearVariantMainImages: pendingClearVariantMainImages,
           variantExternalVideos,
           variant3dModels,
+          // Carry-over from prior processing drops: lets the backend poll
+          // pre-existing Model3d GIDs directly without re-running
+          // productCreateMedia on the same staging URL.
+          knownModelGids: pendingKnownModelGids,
           variantGalleryOrder,
         }),
       });
@@ -200,39 +213,48 @@ export function useVariantImageManager() {
       if (Array.isArray(data.droppedExternalUrls) && data.droppedExternalUrls.length > 0) {
         console.warn("[useVariantImageManager] server dropped external video URLs", data.droppedExternalUrls);
       }
-      if (Array.isArray(data.dropped3dModelUrls) && data.dropped3dModelUrls.length > 0) {
-        // Group by reason so the UI / console message is actionable. The
-        // most common case is `processing`: the merchant uploaded a .glb,
-        // productCreateMedia returned a Model3d GID but Shopify hadn't
-        // finished processing the file by the end of the bounded polling
-        // window — the URL was dropped on purpose so the metafield never
-        // points at an unprocessed asset. A re-save in a few seconds picks
-        // up the now-ready Model3d.sources.url.
-        type Drop3D = { variantId: string; url: string; reason?: string };
-        const drops = data.dropped3dModelUrls as Drop3D[];
-        const processing = drops.filter(d => d.reason === "processing");
-        const failed = drops.filter(d => d.reason === "invalid_glb");
-        const invalid = drops.filter(d => !d.reason || d.reason === "invalid_url");
-        if (processing.length > 0) {
-          console.warn(
-            `[useVariantImageManager] ${processing.length} 3D model upload(s) still processing on Shopify — ` +
-            `re-save in a few seconds to attach them to their variants`,
-            processing,
-          );
-        }
-        if (failed.length > 0) {
-          console.error(
-            `[useVariantImageManager] ${failed.length} 3D model upload(s) rejected by Shopify (invalid .glb)`,
-            failed,
-          );
-        }
-        if (invalid.length > 0) {
-          console.warn(
-            `[useVariantImageManager] ${invalid.length} 3D model URL(s) failed isValid3dModelUrl validation`,
-            invalid,
-          );
-        }
+      // Group dropped 3D URLs by reason. The bucket determines:
+      //   • console feedback (informational vs error)
+      //   • whether the staging URL + Model3d GID must be carried over
+      //     to the next save so we can substitute it without re-running
+      //     productCreateMedia (which would create a duplicate Media3d)
+      type Drop3D = { variantId: string; url: string; reason?: string; gid?: string };
+      const drops: Drop3D[] = Array.isArray(data.dropped3dModelUrls) ? data.dropped3dModelUrls : [];
+      const processing = drops.filter(d => d.reason === "processing");
+      const failed = drops.filter(d => d.reason === "invalid_glb");
+      const invalid = drops.filter(d => !d.reason || d.reason === "invalid_url");
+      if (processing.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${processing.length} 3D model upload(s) still processing on Shopify — ` +
+          `the model is uploaded and on product.media; click Save again in ~10–30 seconds and the variant ` +
+          `binding will land automatically (no duplicate media will be created).`,
+          processing,
+        );
       }
+      if (failed.length > 0) {
+        console.error(
+          `[useVariantImageManager] ${failed.length} 3D model upload(s) rejected by Shopify (invalid .glb)`,
+          failed,
+        );
+      }
+      if (invalid.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${invalid.length} 3D model URL(s) failed isValid3dModelUrl validation`,
+          invalid,
+        );
+      }
+      // Carry-over: build the surviving pendingVariant3dModels (only the
+      // still-processing staging URLs) and the staging→GID map for the
+      // next save. Everything else gets cleared as usual.
+      const carryOverModels: Record<string, string[]> = {};
+      const carryOverGids: Record<string, string> = {};
+      for (const d of processing) {
+        if (!d.gid) continue; // skip drops without a GID — can't carry over
+        if (!carryOverModels[d.variantId]) carryOverModels[d.variantId] = [];
+        carryOverModels[d.variantId].push(d.url);
+        carryOverGids[d.url] = d.gid;
+      }
+
       setBulkItems([]);
       setSelectedBulkIds(new Set());
       setPendingVariantGalleries([]);
@@ -240,7 +262,8 @@ export function useVariantImageManager() {
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
       setPendingExternalVideos({});
-      setPendingVariant3dModels({});
+      setPendingVariant3dModels(carryOverModels);
+      setPendingKnownModelGids(carryOverGids);
       setPendingGalleryOrder({});
       setHasAltTextEdits(false);
       setResetCounter(c => c + 1);
@@ -248,7 +271,7 @@ export function useVariantImageManager() {
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingGalleryOrder]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingKnownModelGids, pendingGalleryOrder]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -261,6 +284,7 @@ export function useVariantImageManager() {
     setPendingClearVariantMainImages([]);
     setPendingExternalVideos({});
     setPendingVariant3dModels({});
+    setPendingKnownModelGids({});
     setPendingGalleryOrder({});
     setHasAltTextEdits(false);
     // Clear data derived from the previous product so the bulk panels never match
@@ -297,6 +321,8 @@ export function useVariantImageManager() {
     setPendingExternalVideos,
     pendingVariant3dModels,
     setPendingVariant3dModels,
+    pendingKnownModelGids,
+    setPendingKnownModelGids,
     pendingGalleryOrder,
     setPendingGalleryOrder,
     handleVariantsLoaded,

@@ -747,6 +747,12 @@ export default function ProductsPage() {
               onPendingChange={imageManagerState.handlePendingChange}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
+              // Feeds the carry-over from a prior "processing" drop back
+              // into VariantImageManager's local state so the merchant
+              // keeps seeing the tile after Save and the next save still
+              // includes the staging URL in its payload. Owned by the
+              // hook (single source of truth for the next save's body).
+              seedThreeDModelUrls={imageManagerState.pendingVariant3dModels}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}

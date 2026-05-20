@@ -24,6 +24,13 @@ interface UpdateVariantGalleriesBody {
    *  live in their own list.url metafield. Server re-validates every URL with
    *  isValid3dModelUrl and drops anything that isn't a `.glb`. */
   variant3dModels?: Array<{ variantId: string; urls: string[] }>;
+  /** Carry-over from a previous save where a Model3d upload didn't finish
+   *  processing within the bounded polling window. Maps each still-staging
+   *  URL onto the Model3d GID returned by the prior productCreateMedia call.
+   *  The backend polls these GIDs directly (no re-upload, no duplicate
+   *  product media) and substitutes the resolved sources URL into the
+   *  variant_3d_models metafield write. */
+  knownModelGids?: Record<string, string>;
   /** Combined order across files + external URLs + 3D models per variant.
    *  JSON array of { kind: "file" | "url" | "model", value: gid|url }.
    *  Position 0 must be a file reference (image) — enforced client-side.
@@ -42,6 +49,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     clearVariantMainImages = [],
     variantExternalVideos = [],
     variant3dModels = [],
+    knownModelGids = {},
     variantGalleryOrder = [],
   } = body;
 
@@ -146,76 +154,99 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
     console.log("[update-variant-galleries] resourceUrlToGid", resourceUrlToGid);
 
-    // Post-create resolution for Model3d uploads: Shopify processes .glb
-    // asynchronously, so productCreateMedia returns the Model3d GID
-    // immediately but Model3d.sources[0].url is populated only after the
-    // processor finishes (typically 1–5s for small files). The
-    // pendingVariant3dModels metafield is list.url — it needs the FINAL CDN
-    // URL, not the staging URL the client pushed in. Poll Model3d.sources
-    // up to 5 times with backoff so the common case lands in this same
-    // save; if processing exceeds ~9s we drop the URL with reason
-    // "processing" and the client tells the merchant to save again in a
-    // moment.
-    const modelResources: Array<{ gid: string; resourceUrl: string }> = [];
-    newMedia.forEach((m, i) => {
-      if (m.kind === "model" && createdMedia[i]?.id) {
-        modelResources.push({ gid: createdMedia[i].id, resourceUrl: m.resourceUrl });
+  }
+
+  // Post-create resolution for Model3d uploads: Shopify processes .glb
+  // asynchronously, so productCreateMedia returns the Model3d GID
+  // immediately but Model3d.sources[0].url is populated only after the
+  // processor finishes (typically 1–5s for small files). The
+  // pendingVariant3dModels metafield is list.url — it needs the FINAL CDN
+  // URL, not the staging URL the client pushed in.
+  //
+  // Two inputs feed the polling:
+  //   1. Fresh uploads from this save (newMedia + kind === "model"). Their
+  //      Model3d GIDs come from this request's productCreateMedia response.
+  //   2. Carry-over from a PREVIOUS save where polling timed out
+  //      (knownModelGids). These GIDs already exist on product.media; we
+  //      just need to check whether processing finished in the meantime.
+  // Both populate the SAME `modelResources` list so one polling pass
+  // resolves all of them with shared GraphQL roundtrips.
+  const modelResources: Array<{ gid: string; resourceUrl: string }> = [];
+  for (const [resourceUrl, gid] of Object.entries(knownModelGids)) {
+    if (typeof gid === "string" && gid.startsWith("gid://")) {
+      modelResources.push({ gid, resourceUrl });
+    }
+  }
+  if (newMedia.length > 0) {
+    // resourceUrlToGid was populated inside the productCreateMedia block;
+    // re-derive the Model3d entries from there. Using resourceUrlToGid
+    // (vs reaching back into createdMedia) keeps this block self-contained.
+    for (const m of newMedia) {
+      if (m.kind === "model") {
+        const gid = resourceUrlToGid[m.resourceUrl];
+        if (gid) modelResources.push({ gid, resourceUrl: m.resourceUrl });
       }
-    });
-    if (modelResources.length > 0) {
-      const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
-      const pending = new Set(modelResources.map(m => m.gid));
-      // 5-step backoff: first attempt immediate (most small models are
-      // already done by the time productCreateMedia returns), then back
-      // off — total bounded ~8.8s.
-      const delays = [0, 800, 1500, 2500, 4000];
-      for (const delay of delays) {
-        if (delay > 0) await new Promise(r => setTimeout(r, delay));
-        if (pending.size === 0) break;
-        try {
-          const q = await admin.graphql(`
-            query GetModel3dSources($ids: [ID!]!) {
-              nodes(ids: $ids) {
-                ... on Model3d {
-                  id
-                  status
-                  sources { url }
-                }
+    }
+  }
+  if (modelResources.length > 0) {
+    const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
+    const pending = new Set(modelResources.map(m => m.gid));
+    // 5-step backoff: first attempt immediate (most small models are
+    // already done by the time productCreateMedia returns), then back
+    // off — total bounded ~8.8s.
+    const delays = [0, 800, 1500, 2500, 4000];
+    for (const delay of delays) {
+      if (delay > 0) await new Promise(r => setTimeout(r, delay));
+      if (pending.size === 0) break;
+      try {
+        const q = await admin.graphql(`
+          query GetModel3dSources($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on Model3d {
+                id
+                status
+                sources { url }
               }
             }
-          `, { variables: { ids: [...pending] } });
-          const qd = await q.json();
-          for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[] }>) {
-            if (!node?.id) continue;
-            const resourceUrl = gidToResourceUrl.get(node.id);
-            if (!resourceUrl) continue;
-            if (node.status === "FAILED") {
-              modelResolutionStatus[resourceUrl] = "failed";
-              pending.delete(node.id);
-            } else if (node.sources?.[0]?.url) {
-              resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
-              modelResolutionStatus[resourceUrl] = "ready";
-              pending.delete(node.id);
-            }
           }
-        } catch (err) {
-          console.warn("[update-variant-galleries] Model3d polling iteration failed:", err);
-          // Don't abort the save — the unresolved staging URLs simply land
-          // in the "processing" bucket and the merchant retries the save.
-          break;
+        `, { variables: { ids: [...pending] } });
+        const qd = await q.json();
+        for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[] }>) {
+          if (!node?.id) continue;
+          const resourceUrl = gidToResourceUrl.get(node.id);
+          if (!resourceUrl) continue;
+          if (node.status === "FAILED") {
+            modelResolutionStatus[resourceUrl] = "failed";
+            pending.delete(node.id);
+          } else if (node.sources?.[0]?.url) {
+            resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
+            modelResolutionStatus[resourceUrl] = "ready";
+            pending.delete(node.id);
+          }
         }
+      } catch (err) {
+        console.warn("[update-variant-galleries] Model3d polling iteration failed:", err);
+        // Don't abort the save — the unresolved staging URLs simply land
+        // in the "processing" bucket and the merchant retries the save.
+        break;
       }
-      // Anything still pending after the bounded polling window is treated
-      // as processing — the merchant's next save (seconds later) finds the
-      // Model3d.sources populated and substitutes correctly via the
-      // assetUrl path from the library.
-      for (const gid of pending) {
-        const resourceUrl = gidToResourceUrl.get(gid);
-        if (resourceUrl) modelResolutionStatus[resourceUrl] = "processing";
-      }
-      console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
-        "| modelResolutionStatus", modelResolutionStatus);
     }
+    // Anything still pending after the bounded polling window is treated
+    // as processing — the client carries the GID across so the next save
+    // polls it directly (no duplicate productCreateMedia).
+    for (const gid of pending) {
+      const resourceUrl = gidToResourceUrl.get(gid);
+      if (resourceUrl) modelResolutionStatus[resourceUrl] = "processing";
+    }
+    console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
+      "| modelResolutionStatus", modelResolutionStatus);
+  }
+  // Expose the staging-URL → Model3d-GID mapping so the variant3dModels loop
+  // can attach it to "processing" drops, letting the client carry it across
+  // to the next save.
+  const resourceUrlToModelGid: Record<string, string> = {};
+  for (const r of modelResources) {
+    resourceUrlToModelGid[r.resourceUrl] = r.gid;
   }
 
   // Resolve a fileGid that may be a staged resourceUrl to an actual Shopify GID
@@ -431,13 +462,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   //                   file, unsupported format inside the GLB container).
   //   "invalid_url" — anything else that doesn't pass isValid3dModelUrl
   //                   (typo, non-`.glb` URL, malformed).
-  const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url" }> = [];
+  const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url"; gid?: string }> = [];
   for (const m of variant3dModels) {
     const sanitized: string[] = [];
     for (const u of m.urls) {
       const status = modelResolutionStatus[u];
       if (status === "processing") {
-        dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "processing" });
+        // Attach the Model3d GID so the client can carry it across and the
+        // next save polls it directly (skipping productCreateMedia, so no
+        // duplicate product media).
+        dropped3dModelUrls.push({
+          variantId: m.variantId,
+          url: u,
+          reason: "processing",
+          gid: resourceUrlToModelGid[u],
+        });
         continue;
       }
       if (status === "failed") {

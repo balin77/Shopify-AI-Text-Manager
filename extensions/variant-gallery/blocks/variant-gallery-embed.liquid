@@ -315,6 +315,39 @@
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
+          {%- comment -%}
+            Tail-emit for 3D models added since the last reorder save:
+            handleAddThreeDModelUrl in the admin only writes
+            variant_3d_models, NOT variant_gallery_order. Without this
+            loop, a model added to a variant with an existing order JSON
+            would be visible in the admin (the orderedUrls memo appends
+            unseen URLs) but invisible on the storefront — silent state
+            drift between admin and storefront. The dedup against
+            cp_seen_models ensures models that ARE already in the order
+            JSON aren't double-emitted.
+          {%- endcomment -%}
+          {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}
+            {%- for cp_model_url_raw in cp_models_mf.value -%}
+              {%- assign cp_model_url = cp_model_url_raw | strip -%}
+              {%- assign model_tail_token = cp_model_url | url_encode -%}
+              {%- assign model_tail_needle = ',' | append: model_tail_token | append: ',' -%}
+              {%- if cp_seen_models contains model_tail_needle -%}{%- continue -%}{%- endif -%}
+              {%- assign cp_seen_models = cp_seen_models | append: model_tail_token | append: ',' -%}
+              {%- if cp_model_url != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {
+                  "type":      "model",
+                  "thumb":     "",
+                  "poster":    "",
+                  "w":         800,
+                  "h":         800,
+                  "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "model_src": {{ cp_model_url | json }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
         {%- comment -%}
           Default path (no variant_gallery_order yet): existing behaviour —
           featured_image, then vg.value items, then external URLs, then

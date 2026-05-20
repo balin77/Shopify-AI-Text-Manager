@@ -53,6 +53,13 @@ interface VariantImageManagerProps {
    *  variant. Mirrors onExternalVideosChange exactly — variant_3d_models is
    *  also a list.url metafield. */
   onThreeDModelsChange?: (variant3dModels: Record<string, string[]>) => void;
+  /** Carry-over from a "processing" drop on a prior save. The hook owns
+   *  this map (it's its own pendingVariant3dModels state); we pass it in
+   *  so the resetKey effect can re-seed our local state with the still-
+   *  processing staging URLs after a Save instead of clearing them and
+   *  letting the merchant's next mutation wipe the hook's carry-over via
+   *  onThreeDModelsChange. */
+  seedThreeDModelUrls?: Record<string, string[]>;
   /** Notified whenever the combined file+URL+model order changes on any
    *  variant (drag-reorder of a mixed gallery). The value is variantId →
    *  stringified JSON array of { kind: "file" | "url" | "model", value },
@@ -125,6 +132,7 @@ export function VariantImageManager({
   onGallerySelectionGidsChange,
   onExternalVideosChange,
   onThreeDModelsChange,
+  seedThreeDModelUrls,
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
@@ -248,7 +256,11 @@ export function VariantImageManager({
     // otherwise a URL the merchant typed for product A but never saved would
     // ride along to product B's save payload and end up on the wrong variant.
     setPendingExternalVideos({});
-    setPendingVariant3dModels({});
+    // Re-seed with the hook's carry-over (still-processing staging URLs
+    // from a prior save) rather than clearing outright. Falls back to {}
+    // when there's nothing to carry over — same effective behaviour as
+    // before for non-3D and non-processing flows.
+    setPendingVariant3dModels(seedThreeDModelUrls ?? {});
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
@@ -923,14 +935,22 @@ export function VariantImageManager({
     // a file GID / staged resourceUrl OR a URL (external video or .glb 3D
     // model). Split the three so each lands in the correct pending slot,
     // then build the combined order JSON for variant_gallery_order.
+    //
+    // 3D-model detection by URL set, not by `.glb$` regex. Freshly uploaded
+    // models sit in pendingVariant3dModels with a Shopify staging URL whose
+    // pathname has no `.glb` extension — a regex check would mis-tag those
+    // as `kind: "url"` (external video), the server-side external-video
+    // parser would fail to extract host/id, and the storefront would
+    // silently skip the entry. The state-of-truth IS the URL set itself.
+    const variant = variants.find(v => v.id === variantId);
+    const modelUrlSet = new Set(
+      pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? []
+    );
     const fileEntries: string[] = [];
     const orderEntries: Array<{ kind: "file" | "url" | "model"; value: string }> = [];
-    const isGlb = (u: string) => {
-      try { return /\.glb$/i.test(new URL(u).pathname); } catch { return false; }
-    };
     for (const it of newItems) {
       if (it.startsWith("http")) {
-        orderEntries.push({ kind: isGlb(it) ? "model" : "url", value: it });
+        orderEntries.push({ kind: modelUrlSet.has(it) ? "model" : "url", value: it });
       } else {
         fileEntries.push(it);
         orderEntries.push({ kind: "file", value: it });
@@ -939,7 +959,7 @@ export function VariantImageManager({
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
     onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
-  }, []);
+  }, [variants, pendingVariant3dModels, onGalleryOrderChange]);
 
   const handleProductReorder = useCallback((newUrls: string[]) => {
     setPendingProductImageOrder(newUrls);
@@ -1405,14 +1425,16 @@ export function VariantImageManager({
 
     // URL-backed items live in their own list.url metafields, not in
     // pendingVariantGalleries. Split the removal so each URL ends up clearing
-    // the right slot. `.glb` URLs → variant_3d_models, anything else → external
-    // videos (YouTube / Vimeo).
+    // the right slot. Membership in pendingVariant3dModels (falling back to
+    // the server-loaded variant.threeDModelUrls) is the source of truth —
+    // a regex on `.glb$` would miss freshly uploaded models that still sit
+    // on a Shopify staging URL without that extension.
     const httpUrls = urls.filter(u => u.startsWith("http"));
-    const isGlb = (u: string) => {
-      try { return /\.glb$/i.test(new URL(u).pathname); } catch { return false; }
-    };
-    const modelToRemove = httpUrls.filter(isGlb);
-    const externalToRemove = httpUrls.filter(u => !isGlb(u));
+    const modelUrlSet = new Set(
+      pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? []
+    );
+    const modelToRemove = httpUrls.filter(u => modelUrlSet.has(u));
+    const externalToRemove = httpUrls.filter(u => !modelUrlSet.has(u));
     if (externalToRemove.length > 0) {
       setPendingExternalVideos(prev => {
         const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
@@ -1439,7 +1461,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap, onExternalVideosChange, onThreeDModelsChange]);
+  }, [variants, fileUrlMap, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange]);
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];
