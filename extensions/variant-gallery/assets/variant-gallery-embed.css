@@ -233,3 +233,17 @@ cp-embed-gallery {
   border-radius: 3px;
   pointer-events: none;
 }
+
+/* ─── Vimeo / no-poster thumb fallback ──────────────────────────────── */
+/* Vimeo has no public thumbnail API accessible from Liquid (oEmbed call
+   only), so its thumb <img> arrives with src="" and the browser would
+   show a broken-image icon. Hide the img (visibility:hidden keeps the
+   tile size via the explicit width/height CSS), and force the play
+   overlay to a solid dark backdrop so the tile looks intentional — a
+   plain black square with a centred play icon. */
+.cp-embed-gallery .cp-gallery__thumb img[src=""] {
+  visibility: hidden;
+}
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]:has(img[src=""])::after {
+  background-color: #111;
+}
