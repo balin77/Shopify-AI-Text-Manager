@@ -286,3 +286,11 @@ cp-embed-gallery {
     display: none;
   }
 }
+
+/* ─── Path C: mirror theme's media_fit setting ──────────────────────── */
+/* When the host theme uses object-fit: cover (cropping) instead of the
+   default contain (letterboxing), apply the same in our gallery. The
+   data-attribute is set by _detectThemeSettings from the native
+   gallery's computed object-fit. Specificity beats the base rules. */
+.cp-embed-gallery .cp-gallery__inner[data-media-fit="cover"]   .cp-gallery__main-image { object-fit: cover; }
+.cp-embed-gallery .cp-gallery__inner[data-media-fit="contain"] .cp-gallery__main-image { object-fit: contain; }

@@ -628,6 +628,36 @@ class CpEmbedGallery extends HTMLElement {
 
     out.videoLoop = !!document.querySelector('video[loop]');
 
+    // media_fit: read object-fit from a native gallery image. The native
+    // gallery is in the DOM (possibly visibility:hidden via cp-vg-prehide,
+    // which doesn't affect computed styles) so this is reliable. Falls
+    // back to undefined when no image found → our default rules apply.
+    const sampleRoot = gallery || product || document;
+    const sampleImg = sampleRoot.querySelector(
+      '[data-media-id] img, .product__media img, .product__media-item img'
+    );
+    if (sampleImg) {
+      try {
+        const fit = getComputedStyle(sampleImg).objectFit;
+        if (fit === 'cover' || fit === 'contain') out.mediaFit = fit;
+      } catch (_) { /* hidden / not paintable */ }
+    }
+
+    // image_zoom: detect via DOM markers, independent of Dawn's media-
+    // gallery.js execution order (defer scripts run after us in source
+    // order). We pick up either Dawn's lightbox path (<product-modal> /
+    // .product__modal-opener), Dawn's hover path (image-magnify wrapper),
+    // or the modified-Dawn inline-cursor signal.
+    const root = gallery || product || document;
+    const hasLightbox = !!document.querySelector('product-modal')
+                     || !!root.querySelector('.product__modal-opener');
+    const hasHover    = !!root.querySelector('image-magnify, [class*="image-magnify"]');
+    let inlineCursor = false;
+    if (sampleImg) {
+      try { inlineCursor = (sampleImg.style.cursor === 'zoom-in'); } catch (_) {}
+    }
+    if (hasLightbox || hasHover || inlineCursor) out.zoom = true;
+
     return out;
   }
 
@@ -668,6 +698,10 @@ class CpEmbedGallery extends HTMLElement {
     const mt = this._themeSettings && this._themeSettings.mobileThumbs;
     if (mt) inner.setAttribute('data-mobile-thumbs', mt);
     else inner.removeAttribute('data-mobile-thumbs');
+    // Path C: mirror the theme's media_fit (object-fit: contain / cover).
+    const mf = this._themeSettings && this._themeSettings.mediaFit;
+    if (mf) inner.setAttribute('data-media-fit', mf);
+    else inner.removeAttribute('data-media-fit');
 
     if (!thumbMode) {
       // Stacked mode: one .cp-gallery__main per item (each at its own
@@ -677,6 +711,7 @@ class CpEmbedGallery extends HTMLElement {
         <div class="cp-gallery__main"${this._ratioStyle(item)}>
           ${this._mainItemHtml(item, true, i, false)}
         </div>`).join('');
+      this._bindZoom(inner);
       return;
     }
 
@@ -717,6 +752,52 @@ class CpEmbedGallery extends HTMLElement {
     inner.innerHTML = mainHtml + thumbsHtml;
     this._bindThumbs(inner);
     this._bindArrows(inner);
+    this._bindZoom(inner);
+  }
+
+  // Path C: click-to-scale-2x zoom on the active main image, matching
+  // the modified-Dawn behaviour (theme's image_zoom is detected via DOM
+  // markers in _detectThemeSettings). Bound once per <img> via a
+  // data-flag so subsequent _render calls do not stack listeners.
+  // Right-click / context-menu unaffected (only the default click
+  // event fires this). State is kept in img.dataset so _bindThumbs can
+  // reset it cross-image.
+  _bindZoom(container) {
+    if (!this._themeSettings || !this._themeSettings.zoom) return;
+    const imgs = container.querySelectorAll('img.cp-gallery__main-image');
+    imgs.forEach((img) => {
+      if (img.dataset.cpZoomBound === '1') return;
+      img.dataset.cpZoomBound = '1';
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', (e) => {
+        const zoomed = img.dataset.cpZoomed === '1';
+        if (!zoomed) {
+          const r = img.getBoundingClientRect();
+          const x = ((e.clientX - r.left) / r.width) * 100;
+          const y = ((e.clientY - r.top) / r.height) * 100;
+          img.style.transformOrigin = `${x}% ${y}%`;
+          img.style.transform = 'scale(2)';
+          img.style.transition = 'transform 0.3s ease';
+          img.style.cursor = 'zoom-out';
+          img.dataset.cpZoomed = '1';
+        } else {
+          img.style.transform = '';
+          img.style.cursor = 'zoom-in';
+          img.dataset.cpZoomed = '0';
+        }
+      });
+    });
+  }
+
+  // Reset any zoom state on the currently-active image. Called from
+  // _bindThumbs on thumb click so switching items never leaves the
+  // outgoing image stuck mid-zoom when the shopper returns to it.
+  _resetZoomOn(el) {
+    if (el && el.dataset && el.dataset.cpZoomed === '1') {
+      el.style.transform = '';
+      el.style.cursor = 'zoom-in';
+      el.dataset.cpZoomed = '0';
+    }
   }
 
   // Pause whatever is currently playing before switching items so a
@@ -762,8 +843,11 @@ class CpEmbedGallery extends HTMLElement {
         const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
         if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
         // Pause the outgoing item BEFORE awaiting decode so audio does
-        // not keep playing while the next image is being decoded.
-        this._pauseMedia(container.querySelector('.cp-gallery__main-image.is-active'));
+        // not keep playing while the next image is being decoded. Also
+        // reset any zoom state on the outgoing image (Path C image_zoom).
+        const outgoing = container.querySelector('.cp-gallery__main-image.is-active');
+        this._pauseMedia(outgoing);
+        this._resetZoomOn(outgoing);
         // RISK-6: preload the target image fully before the opacity
         // swap so a not-yet-loaded lazy image never reveals a blank
         // during the .is-active transition. <video> / <iframe> /
