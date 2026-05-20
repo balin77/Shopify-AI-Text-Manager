@@ -31,9 +31,16 @@ RUN apk add --no-cache openssl libc6-compat
 
 WORKDIR /app
 
+# Drop root early: hand /app to the built-in unprivileged `node` user (uid 1000)
+# and do all installs + copies as that user. Avoids a final `chown -R /app` that
+# would rewrite every file in node_modules and double the layer size (Railway
+# builders run out of disk on the @huggingface/inference tree otherwise).
+RUN chown node:node /app
+USER node
+
 # Copy package files and install production deps only
-COPY package.json package-lock.json ./
-COPY prisma ./prisma/
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node prisma ./prisma/
 
 RUN npm ci --legacy-peer-deps --omit=dev --ignore-scripts
 
@@ -41,23 +48,16 @@ RUN npm ci --legacy-peer-deps --omit=dev --ignore-scripts
 RUN npx prisma generate
 
 # Copy built application from builder stage
-COPY --from=builder /app/build ./build
+COPY --chown=node:node --from=builder /app/build ./build
 
 # Copy runtime files
-COPY server.js start.js remix.config.js ./
-COPY task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js ./
-COPY scripts ./scripts/
+COPY --chown=node:node server.js start.js remix.config.js ./
+COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js ./
+COPY --chown=node:node scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js
-COPY app/middleware ./app/middleware/
-COPY app/utils ./app/utils/
-
-# Drop root: run as the built-in unprivileged `node` user (uid 1000) shipped
-# with the official node:alpine image. All files were copied as root, so hand
-# ownership of the app dir to `node` first. The app only reads from /app and
-# writes to the DB (network) + /tmp, so this needs no extra writable paths.
-RUN chown -R node:node /app
-USER node
+COPY --chown=node:node app/middleware ./app/middleware/
+COPY --chown=node:node app/utils ./app/utils/
 
 EXPOSE 3000
 
