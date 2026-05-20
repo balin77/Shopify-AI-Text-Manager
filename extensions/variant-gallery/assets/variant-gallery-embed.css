@@ -11,7 +11,7 @@ cp-embed-gallery {
 }
 
 .cp-embed-gallery .cp-gallery__main {
-  border-radius: 4px;
+  border-radius: var(--media-radius, 4px);
   overflow: hidden;
   background: #f0f0f0;
   /* Fallback reservation; JS sets the exact aspect-ratio inline when the
@@ -111,7 +111,7 @@ cp-embed-gallery {
   padding: 0;
   background: transparent;
   border: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--media-radius, 4px);
   cursor: pointer;
   overflow: hidden;
   scroll-snap-align: start;
