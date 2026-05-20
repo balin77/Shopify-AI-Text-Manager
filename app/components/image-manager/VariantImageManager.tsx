@@ -8,6 +8,7 @@ import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
+import { FilePickerModal, type PickedFile } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl } from "../../utils/mediaKind";
 
@@ -108,6 +109,9 @@ export function VariantImageManager({
   // (they mean "merchant explicitly cleared this variant's videos") so
   // resetting an array to [] still gets persisted on save.
   const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  // Files-browser modal state. `pickerTargetVariantId` is the variant whose
+  // gallery the picked files should land in — null while closed.
+  const [pickerTargetVariantId, setPickerTargetVariantId] = useState<string | null>(null);
   // Authoritative GID→URL map fetched from Shopify product media (not DB cache).
   const [shopifyMediaMap, setShopifyMediaMap] = useState<Record<string, string>>({});
   // Richer GID→{kind, previewUrl} map for the same product media. Drives the
@@ -1095,6 +1099,35 @@ export function VariantImageManager({
     // Copy: keep action mode + selection active so user can copy to multiple variants
   }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, locallyExcludedMainGids, onRemoveBulk, onSetAction]);
 
+  // Browse-files handlers. Adding library files to a variant gallery is just
+  // an append to pendingVariantGalleries — no productCreateMedia round-trip
+  // needed because the file already exists in the merchant's Files library
+  // and list.file_reference accepts arbitrary FileReference GIDs.
+  const handleAddFromLibrary = useCallback((picked: PickedFile[]) => {
+    const targetId = pickerTargetVariantId;
+    if (!targetId || picked.length === 0) return;
+    setPendingVariantGalleries(prev => {
+      const variant = variants.find(v => v.id === targetId);
+      const current = prev[targetId] ?? variant?.galleryFileGids ?? [];
+      // Skip GIDs the variant already has assigned (idempotent re-add).
+      const seen = new Set(current);
+      const additions = picked.map(p => p.gid).filter(g => !seen.has(g));
+      if (additions.length === 0) return prev;
+      return { ...prev, [targetId]: [...current, ...additions] };
+    });
+    // Pre-seed mediaMetaMap so the new tiles render with the correct kind
+    // immediately — without this they would briefly show as plain <img>
+    // until the next /api/product-variants refetch.
+    setMediaMetaMap(prev => {
+      const next = { ...prev };
+      for (const p of picked) {
+        if (!next[p.gid]) next[p.gid] = { kind: p.kind, previewUrl: p.previewUrl };
+      }
+      return next;
+    });
+    setPickerTargetVariantId(null);
+  }, [pickerTargetVariantId, variants]);
+
   // External-video URL handlers. The "effective" URL list for a variant is
   // pendingExternalVideos[id] if the merchant has touched the row this session,
   // otherwise the server-loaded variant.externalVideoUrls. We notify the parent
@@ -1930,6 +1963,7 @@ export function VariantImageManager({
                 externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
                 onAddExternalVideoUrl={handleAddExternalVideoUrl}
                 onRemoveExternalVideoUrl={handleRemoveExternalVideoUrl}
+                onBrowseLibrary={() => setPickerTargetVariantId(v.id)}
               />
               );
             })
@@ -1980,6 +2014,11 @@ export function VariantImageManager({
         </div>
       ) : null}
     </DragOverlay>
+    <FilePickerModal
+      open={pickerTargetVariantId !== null}
+      onClose={() => setPickerTargetVariantId(null)}
+      onAdd={handleAddFromLibrary}
+    />
     </DndContext>
   );
 }

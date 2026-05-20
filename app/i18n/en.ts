@@ -824,6 +824,7 @@ export const en: Translation = {
     close: "Close",
     clear: "Clear",
     copied: "Copied",
+    loadMore: "Load more",
     loading: "Loading...",
     error: "Error",
     success: "Success!",

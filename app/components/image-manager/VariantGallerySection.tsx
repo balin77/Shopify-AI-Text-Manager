@@ -39,6 +39,10 @@ interface VariantGallerySectionProps {
   externalVideoUrls?: string[];
   onAddExternalVideoUrl?: (variantId: string, url: string) => void;
   onRemoveExternalVideoUrl?: (variantId: string, url: string) => void;
+  /** Opens the parent's Browse-Files modal targeted at this variant. The
+   *  parent owns the modal so its selection callback can update pending
+   *  gallery state without re-mounting on every variant. */
+  onBrowseLibrary?: () => void;
 }
 
 export function VariantGallerySection({
@@ -70,6 +74,7 @@ export function VariantGallerySection({
   externalVideoUrls,
   onAddExternalVideoUrl,
   onRemoveExternalVideoUrl,
+  onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -197,6 +202,15 @@ export function VariantGallerySection({
                 onClick={() => onRemoveFromGallery(variant.id, localSelectedUrls)}
               >
                 {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
+              </Button>
+            )}
+            {onBrowseLibrary && (
+              <Button
+                size="slim"
+                variant="secondary"
+                onClick={onBrowseLibrary}
+              >
+                {t.imageManager.browseFilesButton ?? "Browse existing files"}
               </Button>
             )}
           </div>

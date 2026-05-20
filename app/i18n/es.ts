@@ -823,6 +823,7 @@ export const es: Translation = {
     close: "Cerrar",
     clear: "Limpiar",
     copied: "Copiado",
+    loadMore: "Cargar más",
     loading: "Cargando...",
     error: "Error",
     success: "¡Éxito!",

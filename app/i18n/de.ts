@@ -821,6 +821,7 @@ export const de = {
     close: "Schließen",
     clear: "Leeren",
     copied: "Übertragen",
+    loadMore: "Mehr laden",
     loading: "Lädt...",
     error: "Fehler",
     success: "Erfolg!",
