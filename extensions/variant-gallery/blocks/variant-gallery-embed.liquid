@@ -58,20 +58,21 @@
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
       "{{ variant.id }}": [
         {%- assign cp_has_any = false -%}
-        {%- if variant.featured_image != blank -%}
-          {%- assign vfi = variant.featured_image -%}
-          {
-            "src_400":  {{ vfi | image_url: width: 400  | json }},
-            "src_800":  {{ vfi | image_url: width: 800  | json }},
-            "src_1200": {{ vfi | image_url: width: 1200 | json }},
-            "thumb":    {{ vfi | image_url: width: 160  | json }},
-            "w":        {{ vfi.width  | json }},
-            "h":        {{ vfi.height | json }},
-            "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-          }
-          {%- assign cp_has_any = true -%}
-        {%- endif -%}
         {%- if vg != blank and vg.value != blank -%}
+          {%- comment -%} Variant has variant_gallery metafield: use ONLY those images (restricted to this variant), with featured_image as primary if present. {%- endcomment -%}
+          {%- if variant.featured_image != blank -%}
+            {%- assign vfi = variant.featured_image -%}
+            {
+              "src_400":  {{ vfi | image_url: width: 400  | json }},
+              "src_800":  {{ vfi | image_url: width: 800  | json }},
+              "src_1200": {{ vfi | image_url: width: 1200 | json }},
+              "thumb":    {{ vfi | image_url: width: 160  | json }},
+              "w":        {{ vfi.width  | json }},
+              "h":        {{ vfi.height | json }},
+              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+            }
+            {%- assign cp_has_any = true -%}
+          {%- endif -%}
           {%- for img in vg.value -%}
             {%- assign cp_src = img | image_url: width: 800 -%}
             {%- if cp_src != blank -%}
@@ -88,6 +89,28 @@
                 "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
               }
               {%- assign cp_has_any = true -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- else -%}
+          {%- comment -%} No variant_gallery metafield: fall back to product.media so the custom gallery serves ALL products. Images only (videos / 3D skipped). {%- endcomment -%}
+          {%- for media in product.media -%}
+            {%- if media.media_type == 'image' -%}
+              {%- assign cp_src = media | image_url: width: 800 -%}
+              {%- if cp_src != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {%- assign cp_w = media.preview_image.width  | default: media.width -%}
+                {%- assign cp_h = media.preview_image.height | default: media.height -%}
+                {
+                  "src_400":  {{ media | image_url: width: 400  | json }},
+                  "src_800":  {{ cp_src | json }},
+                  "src_1200": {{ media | image_url: width: 1200 | json }},
+                  "thumb":    {{ media | image_url: width: 160  | json }},
+                  "w":        {{ cp_w | json }},
+                  "h":        {{ cp_h | json }},
+                  "alt":      {{ media.alt | default: product.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
@@ -164,6 +187,8 @@
   data-scope-selector="{{ block.settings.scope_selector }}"
   data-extra-hide="{{ block.settings.extra_hide_selector }}"
   data-thumb-size="{{ block.settings.thumbnail_size }}"
+  data-show-thumbs="{% if block.settings.enable_thumbnails %}1{% endif %}"
+  data-thumb-pos="{{ block.settings.thumbnail_position | default: 'bottom' }}"
 >
   <div class="cp-gallery__inner"></div>
 </cp-embed-gallery>
@@ -175,6 +200,26 @@
   "name": "Variant Image Gallery",
   "target": "head",
   "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_thumbnails",
+      "label": "Show thumbnails",
+      "default": false,
+      "info": "Off: all relevant images stack vertically at full width (matches a typical Shopify gallery). On: a single main image is shown with a clickable thumbnail strip in the position chosen below."
+    },
+    {
+      "type": "select",
+      "id": "thumbnail_position",
+      "label": "Thumbnail position",
+      "default": "bottom",
+      "options": [
+        { "value": "bottom", "label": "Below main image" },
+        { "value": "top", "label": "Above main image" },
+        { "value": "left", "label": "Left of main image" },
+        { "value": "right", "label": "Right of main image" }
+      ],
+      "info": "Only applies when 'Show thumbnails' is enabled. Long lists scroll horizontally (top/bottom) or vertically (left/right) with arrow controls on hover."
+    },
     {
       "type": "range",
       "id": "thumbnail_size",

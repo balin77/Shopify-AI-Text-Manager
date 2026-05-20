@@ -2,6 +2,8 @@ cp-embed-gallery {
   display: block;
 }
 
+/* ─── shared ────────────────────────────────────────────────────────── */
+
 .cp-embed-gallery .cp-gallery__inner {
   display: flex;
   flex-direction: column;
@@ -22,33 +24,102 @@ cp-embed-gallery {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  transition: opacity 0.18s ease;
 }
 
-.cp-embed-gallery .cp-gallery__thumbs {
+/* ─── stacked mode (no thumbnails) ──────────────────────────────────── */
+/* Each image is its own .cp-gallery__main block; they flow vertically at
+   their own aspect ratios, no carousel, no overlap. */
+.cp-embed-gallery .cp-gallery__inner--stacked {
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── thumb mode (positioned strip + carousel) ──────────────────────── */
+/* Position via flex-direction on the inner wrapper. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] { flex-direction: column; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    { flex-direction: column-reverse; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]   { flex-direction: row-reverse; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"]  { flex-direction: row; }
+
+/* In thumb mode the main slot stacks images absolutely so toggling
+   .is-active swaps them without any reload / blank frame. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-image.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Thumb strip wrapper (holds the strip + arrows for overflow scroll). */
+.cp-embed-gallery .cp-gallery__thumbs-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* Horizontal strip (top/bottom). */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: row;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+}
+
+/* Vertical strip (left/right). */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 70vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+}
+
+/* Reserve a column width for the vertical strip wrapper so the arrows
+   sit centred above/below it without overlapping the main image. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
+  width: calc(var(--cp-thumb-size, 80px) + 8px);
 }
 
 .cp-embed-gallery .cp-gallery__thumb {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   padding: 0;
   background: transparent;
   border: 2px solid transparent;
   border-radius: 4px;
   cursor: pointer;
   overflow: hidden;
+  scroll-snap-align: start;
   transition: border-color 0.15s ease;
 }
 
-.cp-embed-gallery .cp-gallery__thumb:hover {
-  border-color: rgba(0, 0, 0, 0.25);
-}
-
-.cp-embed-gallery .cp-gallery__thumb.is-active {
-  border-color: currentColor;
-}
+.cp-embed-gallery .cp-gallery__thumb:hover { border-color: rgba(0, 0, 0, 0.25); }
+.cp-embed-gallery .cp-gallery__thumb.is-active { border-color: currentColor; }
 
 .cp-embed-gallery .cp-gallery__thumb img {
   display: block;
@@ -56,3 +127,60 @@ cp-embed-gallery {
   height: var(--cp-thumb-size, 80px);
   object-fit: cover;
 }
+
+/* ─── carousel arrows ───────────────────────────────────────────────── */
+/* Hidden by default — only revealed when the strip actually overflows
+   (the controller toggles .cp-gallery__thumbs-wrap--scrollable) AND on
+   hover/focus, so they never sit there cluttering a non-scrolling list. */
+.cp-embed-gallery .cp-gallery__arrow {
+  position: absolute;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  color: #111;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable:hover .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable:focus-within .cp-gallery__arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cp-embed-gallery .cp-gallery__arrow[disabled] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Arrow placement — horizontal strip: arrows at the left/right ends. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--prev,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--prev { left: 4px; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--next,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--next { right: 4px; }
+
+/* Vertical strip: arrows at top/bottom ends. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev { top: 4px; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { bottom: 4px; }

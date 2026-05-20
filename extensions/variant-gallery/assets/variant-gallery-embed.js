@@ -428,66 +428,133 @@ class CpEmbedGallery extends HTMLElement {
     return (w > 0 && h > 0) ? ` style="aspect-ratio: ${w} / ${h};"` : '';
   }
 
-  _mainImgHtml(img) {
+  // Render ALL images as <img> in the DOM up front. The first is loaded
+  // eagerly with high priority, the rest with loading=lazy + decoding=
+  // async so they trickle in without blocking. Thumb-mode swaps purely
+  // toggle .is-active (CSS opacity) — no src reassignment, so the
+  // earlier "blank-frame between two image loads" flicker is gone.
+  _mainImgHtml(img, active, index) {
     const w = Number(img && img.w) > 0 ? Number(img.w) : 800;
     const h = Number(img && img.h) > 0 ? Number(img.h) : '';
+    const isFirst = index === 0;
     return `<img
-          class="cp-gallery__main-image"
+          class="cp-gallery__main-image${active ? ' is-active' : ''}"
           src="${img.src_800}"
           srcset="${img.src_400} 400w, ${img.src_800} 800w, ${img.src_1200} 1200w"
           sizes="(min-width: 1024px) 50vw, 100vw"
           alt="${this._esc(img.alt)}"
-          loading="eager"
+          ${isFirst ? 'loading="eager" fetchpriority="high"' : 'loading="lazy" fetchpriority="auto"'}
+          decoding="async"
+          data-index="${index}"
           width="${w}"${h ? ` height="${h}"` : ''}
         >`;
   }
 
+  _resolveThumbMode() {
+    const show = this.dataset.showThumbs === '1';
+    const allowed = ['bottom', 'top', 'left', 'right'];
+    const pos = allowed.indexOf(this.dataset.thumbPos) >= 0 ? this.dataset.thumbPos : 'bottom';
+    return { show, pos };
+  }
+
   _render(images) {
-    const first = images[0];
+    const inner = this._mount.querySelector('.cp-gallery__inner');
+    if (!inner) return;
+    const { show, pos } = this._resolveThumbMode();
+    const thumbMode = show && images.length > 1;
+
+    // Reset wrapper state — class + data-attr drive all layout/CSS.
+    inner.className = 'cp-gallery__inner' + (thumbMode ? '' : ' cp-gallery__inner--stacked');
+    if (thumbMode) inner.setAttribute('data-thumb-pos', pos);
+    else inner.removeAttribute('data-thumb-pos');
+
+    if (!thumbMode) {
+      // Stacked mode: one .cp-gallery__main per image (each at its own
+      // natural aspect ratio), no thumbnail strip. Behaves like the
+      // native theme gallery but scoped to the variant's images.
+      inner.innerHTML = images.map((img, i) => `
+        <div class="cp-gallery__main"${this._ratioStyle(img)}>
+          ${this._mainImgHtml(img, true, i)}
+        </div>`).join('');
+      return;
+    }
+
+    // Thumb mode: one .cp-gallery__main with ALL images stacked
+    // absolutely (only one .is-active at a time) so toggling between
+    // them never reloads and never flashes.
+    const mainImgs = images.map((img, i) => this._mainImgHtml(img, i === 0, i)).join('');
     const mainHtml = `
-      <div class="cp-gallery__main"${this._ratioStyle(first)}>
-        ${this._mainImgHtml(first)}
+      <div class="cp-gallery__main"${this._ratioStyle(images[0])}>
+        ${mainImgs}
       </div>`;
 
-    let thumbsHtml = '';
-    if (images.length > 1) {
-      const items = images.map((img, i) => `
-        <button
-          class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
-          type="button"
-          aria-label="Image ${i + 1}"
-          data-src-sm="${img.src_400}"
-          data-src-md="${img.src_800}"
-          data-src-lg="${img.src_1200}"
-          data-w="${img.w || ''}"
-          data-h="${img.h || ''}"
-        >
-          <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
-        </button>`).join('');
-      thumbsHtml = `<div class="cp-gallery__thumbs">${items}</div>`;
-    }
+    const thumbItems = images.map((img, i) => `
+      <button
+        class="cp-gallery__thumb${i === 0 ? ' is-active' : ''}"
+        type="button"
+        aria-label="Image ${i + 1}"
+        data-index="${i}"
+        data-w="${img.w || ''}"
+        data-h="${img.h || ''}"
+      >
+        <img src="${img.thumb}" alt="${this._esc(img.alt)} ${i + 1}" loading="lazy" width="160" height="160">
+      </button>`).join('');
 
-    const inner = this._mount.querySelector('.cp-gallery__inner');
-    if (inner) {
-      inner.innerHTML = mainHtml + thumbsHtml;
-      this._bindThumbs(inner);
-    }
+    const thumbsHtml = `
+      <div class="cp-gallery__thumbs-wrap">
+        <button class="cp-gallery__arrow cp-gallery__arrow--prev" type="button" aria-label="Previous">‹</button>
+        <div class="cp-gallery__thumbs">${thumbItems}</div>
+        <button class="cp-gallery__arrow cp-gallery__arrow--next" type="button" aria-label="Next">›</button>
+      </div>`;
+
+    inner.innerHTML = mainHtml + thumbsHtml;
+    this._bindThumbs(inner);
+    this._bindArrows(inner);
   }
 
   _bindThumbs(container) {
-    container.querySelectorAll('.cp-gallery__thumb').forEach((thumb) => {
+    const mains = Array.from(container.querySelectorAll('.cp-gallery__main-image'));
+    const thumbs = Array.from(container.querySelectorAll('.cp-gallery__thumb'));
+    const mainBox = container.querySelector('.cp-gallery__main');
+    thumbs.forEach((thumb) => {
       thumb.addEventListener('click', () => {
-        const mainImg = this._mount.querySelector('.cp-gallery__main-image');
-        if (!mainImg) return;
-        const mainBox = this._mount.querySelector('.cp-gallery__main');
+        const i = Number(thumb.dataset.index);
         const w = Number(thumb.dataset.w), h = Number(thumb.dataset.h);
         if (mainBox && w > 0 && h > 0) mainBox.style.aspectRatio = `${w} / ${h}`;
-        mainImg.src    = thumb.dataset.srcMd;
-        mainImg.srcset = `${thumb.dataset.srcSm} 400w, ${thumb.dataset.srcMd} 800w, ${thumb.dataset.srcLg} 1200w`;
-        container.querySelectorAll('.cp-gallery__thumb').forEach((t) => t.classList.remove('is-active'));
-        thumb.classList.add('is-active');
+        mains.forEach((m, j) => m.classList.toggle('is-active', j === i));
+        thumbs.forEach((t, j) => t.classList.toggle('is-active', j === i));
+        // Keep the active thumb visible in the carousel.
+        thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
       });
     });
+  }
+
+  _bindArrows(container) {
+    const wrap = container.querySelector('.cp-gallery__thumbs-wrap');
+    if (!wrap) return;
+    const strip = wrap.querySelector('.cp-gallery__thumbs');
+    const prev = wrap.querySelector('.cp-gallery__arrow--prev');
+    const next = wrap.querySelector('.cp-gallery__arrow--next');
+    if (!strip || !prev || !next) return;
+    const vertical = container.dataset.thumbPos === 'left' || container.dataset.thumbPos === 'right';
+    const stepBy = (dir) => {
+      const step = (vertical ? strip.clientHeight : strip.clientWidth) * 0.8;
+      strip.scrollBy(vertical ? { top: dir * step, behavior: 'smooth' } : { left: dir * step, behavior: 'smooth' });
+    };
+    prev.addEventListener('click', () => stepBy(-1));
+    next.addEventListener('click', () => stepBy(1));
+    const updateState = () => {
+      const max = vertical ? strip.scrollHeight - strip.clientHeight : strip.scrollWidth - strip.clientWidth;
+      const cur = vertical ? strip.scrollTop : strip.scrollLeft;
+      // Hide arrows entirely when the strip does not overflow.
+      const overflow = max > 1;
+      wrap.classList.toggle('cp-gallery__thumbs-wrap--scrollable', overflow);
+      prev.toggleAttribute('disabled', !overflow || cur <= 0);
+      next.toggleAttribute('disabled', !overflow || cur >= max - 1);
+    };
+    strip.addEventListener('scroll', updateState, { passive: true });
+    // Defer to next frame so layout (esp. vertical heights) is final.
+    requestAnimationFrame(updateState);
   }
 
   _esc(str) {
