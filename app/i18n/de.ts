@@ -722,6 +722,7 @@ export const de = {
     browseFilesFilterImages: "Bilder",
     browseFilesFilterVideos: "Videos",
     browseFilesFilterModels: "3D-Modelle",
+    browseFilesNoModelsInVariant: "3D-Modelle können nur zur Produktgalerie hinzugefügt werden, nicht zu einer Variante.",
     browseFilesSearchPlaceholder: "Nach Dateinamen suchen…",
     browseFilesAddSelected: "Auswahl hinzufügen",
     browseFilesEmpty: "Keine passenden Dateien in deiner Shopify-Bibliothek.",

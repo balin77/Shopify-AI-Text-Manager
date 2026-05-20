@@ -170,6 +170,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
   }
+
+  // Any-position Model3d guard. variant_gallery is a list.file_reference
+  // metafield, which Shopify rejects for Model3d at *any* index (the union
+  // is MediaImage | Video | GenericFile). Before this guard a GLB at index
+  // 1+ slipped past position-0 and Shopify aborted the entire
+  // productVariantsBulkUpdate with metafieldsUserError, so none of the
+  // variant's pending changes landed. The picker now hides 3D in variant
+  // mode (FilePickerModal disallowModel), but older client builds or
+  // direct API calls could still send one — fail closed here.
+  for (const vg of variantGalleries) {
+    for (let i = 0; i < vg.fileGids.length; i++) {
+      const raw = vg.fileGids[i];
+      const kind = newMediaKindByResourceUrl[raw];
+      const isModel = kind === "model" || raw.startsWith("gid://shopify/Model3d/");
+      if (isModel) {
+        errors.push(
+          `position-${i}: variant ${vg.variantId} would store a 3D model in variant_gallery — ` +
+          `Shopify only accepts MediaImage/Video/GenericFile here. Add the 3D model to the product gallery instead.`
+        );
+      }
+    }
+  }
+
   if (errors.length > 0) return fail();
 
   // 2. Bilder neu sortieren

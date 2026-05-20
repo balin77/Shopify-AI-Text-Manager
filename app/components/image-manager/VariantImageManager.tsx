@@ -2203,6 +2203,11 @@ export function VariantImageManager({
       // to product.media via productCreateMedia EXTERNAL_VIDEO.
       onAddExternalUrl={handleModalAddExternalUrl}
       uploadCommitMode={pickerTarget?.mode === "variant" ? "immediate" : "queue"}
+      // Variant-gallery's metafield (list.file_reference) refuses Model3d.
+      // Hide the 3D filter + reject GLB picks/uploads at the modal so we
+      // never assemble a save payload Shopify would reject — the prior bug
+      // was that a GLB at any non-zero position aborted the whole save.
+      disallowModel={pickerTarget?.mode === "variant"}
       currentProductId={productId}
       title={
         pickerTarget?.mode === "variant"

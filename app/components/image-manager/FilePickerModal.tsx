@@ -94,6 +94,14 @@ interface FilePickerModalProps {
    *  placeholders where the merchant's intent is clearly "this variant". */
   uploadCommitMode: "queue" | "immediate";
   initialKind?: "all" | "image" | "video" | "model";
+  /** Variant-gallery callers must set this. Shopify's variant_gallery is a
+   *  `list.file_reference` metafield, which only accepts MediaImage | Video |
+   *  GenericFile — explicitly NOT Model3d. Without this guard a picked GLB
+   *  would crash the whole save (metafieldsUserError "must be a MediaImage,
+   *  Video, or GenericFile"). When true: the 3D filter chip is hidden, model
+   *  rows are filtered out of the library grid, and model uploads are
+   *  rejected with a banner pointing the merchant at the product gallery. */
+  disallowModel?: boolean;
   /** Product GID currently in focus — drives the "in this product" toggle
    *  and lets the dropdown skip itself in the "other product" list. */
   currentProductId?: string;
@@ -129,13 +137,18 @@ export function FilePickerModal({
   onAddExternalUrl,
   uploadCommitMode,
   initialKind = "all",
+  disallowModel = false,
   currentProductId,
   title,
 }: FilePickerModalProps) {
   const { t } = useI18n();
 
   const [query, setQuery] = useState("");
-  const [kind, setKind] = useState<KindFilter>(initialKind);
+  const [kind, setKind] = useState<KindFilter>(
+    // A `disallowModel` caller passing initialKind="model" would otherwise
+    // open the modal with an instantly-empty (and uncloseable) filter.
+    disallowModel && initialKind === "model" ? "all" : initialKind
+  );
   // Product filter: "all" = library-wide; any other value = the product GID
   // to scope to. Includes the current product as just another option in the
   // dropdown — no special-cased toggle.
@@ -162,7 +175,7 @@ export function FilePickerModal({
   useEffect(() => {
     if (open) {
       setQuery("");
-      setKind(initialKind);
+      setKind(disallowModel && initialKind === "model" ? "all" : initialKind);
       setProductScope("all");
       setProductList([]);
       setSelected(new Set());
@@ -174,7 +187,7 @@ export function FilePickerModal({
       setUrlInput("");
       setUrlError(null);
     }
-  }, [open, initialKind]);
+  }, [open, initialKind, disallowModel]);
 
   // ------------------------------------------------------------------------
   // File-list fetching
@@ -247,7 +260,20 @@ export function FilePickerModal({
   // ------------------------------------------------------------------------
   const handleFilesChosen = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    const accepted = Array.from(fileList).filter(f => classifyFile(f.type, f.name) !== null);
+    const classified = Array.from(fileList)
+      .map(f => ({ file: f, kind: classifyFile(f.type, f.name) }))
+      .filter(x => x.kind !== null);
+    // Variant-gallery context: drop GLBs before they ever hit
+    // stagedUploadsCreate, and surface a clear banner so the merchant knows
+    // to use the product gallery instead.
+    let accepted = classified.map(x => x.file);
+    if (disallowModel) {
+      const models = classified.filter(x => x.kind === "model");
+      accepted = classified.filter(x => x.kind !== "model").map(x => x.file);
+      if (models.length > 0) {
+        setError(t.imageManager.browseFilesNoModelsInVariant ?? "3D models can only be added to the product gallery, not to a variant.");
+      }
+    }
     if (accepted.length === 0) return;
 
     const newItems: PendingUpload[] = accepted.map(f => {
@@ -343,7 +369,7 @@ export function FilePickerModal({
         setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
     }));
-  }, [uploadCommitMode, onAdd, t]);
+  }, [uploadCommitMode, onAdd, t, disallowModel]);
 
   const triggerFilePicker = useCallback(() => {
     fileInputRef.current?.click();
@@ -496,7 +522,7 @@ export function FilePickerModal({
             {filterButton("all", t.imageManager.browseFilesFilterAll ?? "All")}
             {filterButton("image", t.imageManager.browseFilesFilterImages ?? "Images")}
             {filterButton("video", t.imageManager.browseFilesFilterVideos ?? "Videos")}
-            {filterButton("model", t.imageManager.browseFilesFilterModels ?? "3D models")}
+            {!disallowModel && filterButton("model", t.imageManager.browseFilesFilterModels ?? "3D models")}
           </ButtonGroup>
 
           {/* Product filter — one dropdown, default "All products", every
@@ -535,15 +561,24 @@ export function FilePickerModal({
                   )}
                 </div>
               ))}
-              {files.length === 0 && pendingUploads.length === 0 ? (
-                <div style={{ gridColumn: "1 / -1", padding: "24px 0", textAlign: "center", color: "#6d7175" }}>
-                  <Text as="p" tone="subdued">
-                    {t.imageManager.browseFilesEmpty ?? "No matching files in your Shopify library."}
-                  </Text>
-                </div>
-              ) : (
-                files.map(f => renderTile({ id: f.id, kind: f.kind, previewUrl: f.previewUrl, alt: f.alt }))
-              )}
+              {(() => {
+                // Variant-gallery callers strip Model3d here as the final
+                // belt-and-braces guard — the server still rejects them, but
+                // the merchant should never even see a pickable 3D tile in a
+                // variant picker. The kind=image|video|all server filter
+                // already covers most rows; this catches the "All" branch.
+                const visible = disallowModel ? files.filter(f => f.kind !== "model") : files;
+                if (visible.length === 0 && pendingUploads.length === 0) {
+                  return (
+                    <div style={{ gridColumn: "1 / -1", padding: "24px 0", textAlign: "center", color: "#6d7175" }}>
+                      <Text as="p" tone="subdued">
+                        {t.imageManager.browseFilesEmpty ?? "No matching files in your Shopify library."}
+                      </Text>
+                    </div>
+                  );
+                }
+                return visible.map(f => renderTile({ id: f.id, kind: f.kind, previewUrl: f.previewUrl, alt: f.alt }));
+              })()}
             </div>
           )}
 
