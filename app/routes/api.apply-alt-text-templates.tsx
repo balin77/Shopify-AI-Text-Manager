@@ -1,7 +1,7 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-template";
+import { fillAltTextTemplate, resolveVariableValues, createTranslationCache } from "../utils/alt-text-template";
 import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
@@ -259,6 +259,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   };
 
+  // Single cache for the whole apply call. Multiple variants typically share
+  // the same option values (e.g. "Red" appears on 10 variants of one product)
+  // — without this, each occurrence fired its own translatableResource query
+  // and a partial Shopify cost-throttle would silently leave some variants
+  // with the primary-locale fallback while others showed the translation.
+  const translationCache = createTranslationCache();
+
   try {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
@@ -274,7 +281,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       variant.selectedOptions,
       locale,
       isPrimary,
-      admin
+      admin,
+      translationCache,
     );
 
     for (const tmpl of templates) {
