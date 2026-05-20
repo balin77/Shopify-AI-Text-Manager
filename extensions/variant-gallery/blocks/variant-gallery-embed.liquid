@@ -74,23 +74,67 @@
             }
             {%- assign cp_has_any = true -%}
           {%- endif -%}
-          {%- for img in vg.value -%}
-            {%- assign cp_src = img | image_url: width: 800 -%}
-            {%- if cp_src != blank -%}
-              {%- if cp_has_any %},{% endif -%}
-              {%- assign cp_w = img.preview_image.width  | default: img.width -%}
-              {%- assign cp_h = img.preview_image.height | default: img.height -%}
-              {
-                "type":     "image",
-                "src_400":  {{ img | image_url: width: 400  | json }},
-                "src_800":  {{ cp_src | json }},
-                "src_1200": {{ img | image_url: width: 1200 | json }},
-                "thumb":    {{ img | image_url: width: 160  | json }},
-                "w":        {{ cp_w | json }},
-                "h":        {{ cp_h | json }},
-                "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
-              }
-              {%- assign cp_has_any = true -%}
+          {%- comment -%} vg.value items via list.file_reference: dispatch on media_type so videos and 3D models added to the metafield are honoured, not silently dropped (previously this branch was image-only). {%- endcomment -%}
+          {%- for item in vg.value -%}
+            {%- if item.media_type == 'image' -%}
+              {%- assign cp_src = item | image_url: width: 800 -%}
+              {%- if cp_src != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {%- assign cp_w = item.preview_image.width  | default: item.width -%}
+                {%- assign cp_h = item.preview_image.height | default: item.height -%}
+                {
+                  "type":     "image",
+                  "src_400":  {{ item | image_url: width: 400  | json }},
+                  "src_800":  {{ cp_src | json }},
+                  "src_1200": {{ item | image_url: width: 1200 | json }},
+                  "thumb":    {{ item | image_url: width: 160  | json }},
+                  "w":        {{ cp_w | json }},
+                  "h":        {{ cp_h | json }},
+                  "alt":      {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- elsif item.media_type == 'video' -%}
+              {%- if item.preview_image != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {%- assign cp_pi = item.preview_image -%}
+                {
+                  "type":   "video",
+                  "thumb":  {{ cp_pi | image_url: width: 160  | json }},
+                  "poster": {{ cp_pi | image_url: width: 1200 | json }},
+                  "w":      {{ cp_pi.width  | json }},
+                  "h":      {{ cp_pi.height | json }},
+                  "alt":    {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                  "sources": [
+                    {%- for src in item.sources -%}
+                      {%- unless forloop.first %},{% endunless -%}
+                      {"src": {{ src.url | json }}, "mime": {{ src.mime_type | json }}}
+                    {%- endfor -%}
+                  ]
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- elsif item.media_type == 'model' -%}
+              {%- if item.preview_image != blank -%}
+                {%- assign cp_glb = blank -%}
+                {%- for src in item.sources -%}
+                  {%- if src.format == 'glb' and cp_glb == blank -%}{%- assign cp_glb = src.url -%}{%- endif -%}
+                {%- endfor -%}
+                {%- if cp_glb != blank -%}
+                  {%- if cp_has_any %},{% endif -%}
+                  {%- assign cp_pi = item.preview_image -%}
+                  {
+                    "type":      "model",
+                    "thumb":     {{ cp_pi | image_url: width: 160  | json }},
+                    "poster":    {{ cp_pi | image_url: width: 1200 | json }},
+                    "w":         {{ cp_pi.width  | json }},
+                    "h":         {{ cp_pi.height | json }},
+                    "alt":       {{ item.alt | default: variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
+                    "model_src": {{ cp_glb | json }}
+                  }
+                  {%- assign cp_has_any = true -%}
+                {%- endif -%}
+              {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
         {%- endif -%}
