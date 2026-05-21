@@ -149,9 +149,21 @@ export function VariantGallerySection({
           }
           // Append anything the order JSON didn't cover (new uploads / URLs /
           // models added since the last save) so they're still visible.
+          const tailStartIdx = out.length;
           for (const u of fileUrlList) if (!seenFiles.has(u)) out.push(u);
           for (const u of effectiveExternalVideoUrls) if (!seenUrls.has(u)) out.push(u);
           for (const u of effectiveThreeDModelUrls) if (!seenModels.has(u)) out.push(u);
+          console.log("[VariantGallerySection orderedUrls] computed", {
+            variantId: variant.id,
+            galleryOrderJson: raw,
+            fileUrlList,
+            effectiveExternalVideoUrls,
+            effectiveThreeDModelUrls,
+            jsonResolvedCount: tailStartIdx,
+            tailAppendCount: out.length - tailStartIdx,
+            tailAppended: out.slice(tailStartIdx),
+            result: out,
+          });
           return out;
         }
       } catch { /* fall through to default */ }

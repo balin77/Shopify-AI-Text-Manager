@@ -1042,6 +1042,12 @@ export function VariantImageManager({
         orderEntries.push({ kind: "file", value: it });
       }
     }
+    console.log("[handleVariantReorder] writing state", {
+      variantId,
+      newItems,
+      fileEntries,
+      orderEntries,
+    });
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
     onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
@@ -1183,6 +1189,18 @@ export function VariantImageManager({
 
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
+        console.log("[reorder variant] drag", {
+          variantId: sourceContainerId,
+          draggedUrl: url,
+          dropTargetUrl: overUrl,
+          variantUrls,
+          oldIndex,
+          newIndex,
+          storedGids,
+          variantMainGid,
+          externalUrls,
+          modelUrls,
+        });
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
           // Variant gallery position 0 maps to mediaId (MediaImage only).
           // Refuse the drop iff the new head would be a non-image. The check
@@ -1198,10 +1216,11 @@ export function VariantImageManager({
             return k === "video" || k === "model" || k === "external_video";
           };
           const moved = arrayMove(variantUrls, oldIndex, newIndex);
-          if (moved[0] && isNonImage(moved[0])) return;
-          handleVariantReorder(
-            sourceContainerId,
-            moved.map(u => {
+          if (moved[0] && isNonImage(moved[0])) {
+            console.warn("[reorder variant] refused — position 0 would be non-image", { head: moved[0] });
+            return;
+          }
+          const newItemsForReorder = moved.map(u => {
               // External-video / 3D-model URLs must stay as URLs in the
               // payload — handleVariantReorder's URL-pattern detection
               // routes them to the right `kind` (`url` vs `model`).
@@ -1215,8 +1234,13 @@ export function VariantImageManager({
               // though they don't currently collide with urlToGid.
               if (externalSet.has(u) || modelSet.has(u)) return u;
               return urlToGid[u] ?? u;
-            }),
-          );
+            });
+          console.log("[reorder variant] → handleVariantReorder", {
+            variantId: sourceContainerId,
+            moved,
+            newItemsForReorder,
+          });
+          handleVariantReorder(sourceContainerId, newItemsForReorder);
         }
       }
       return;
