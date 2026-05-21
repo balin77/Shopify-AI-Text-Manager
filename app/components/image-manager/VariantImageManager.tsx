@@ -182,7 +182,25 @@ export function VariantImageManager({
   // `${galleryId}::${url}` → sourceVariantId (null = product gallery)
   // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
-  const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
+  const [pendingVariantGalleries, _setPendingVariantGalleriesRaw] = useState<Record<string, string[]>>({});
+  // Wrap the setter so every write is logged with a stack trace — we have a
+  // bug where storedGids shrinks from N to N-1 across renders without any
+  // explicit user action, and we need to find the caller that's writing the
+  // shrunken value.
+  const setPendingVariantGalleries: typeof _setPendingVariantGalleriesRaw = useCallback((updater) => {
+    _setPendingVariantGalleriesRaw((prev) => {
+      const next = typeof updater === "function" ? (updater as (p: Record<string, string[]>) => Record<string, string[]>)(prev) : updater;
+      const targetVid = 'gid://shopify/ProductVariant/50164323451208';
+      if (next[targetVid] !== prev[targetVid]) {
+        console.log("[setPendingVariantGalleries] for target variant",
+          "prev=" + JSON.stringify(prev[targetVid] ?? null),
+          "next=" + JSON.stringify(next[targetVid] ?? null),
+          "stack:", new Error().stack?.split("\n").slice(1, 6).join("\n"),
+        );
+      }
+      return next;
+    });
+  }, []);
   // Variant IDs whose injected main image was dragged to the product gallery this session
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
@@ -1060,12 +1078,11 @@ export function VariantImageManager({
         orderEntries.push({ kind: "file", value: it });
       }
     }
-    console.log("[handleVariantReorder] writing state", {
-      variantId,
-      newItems,
-      fileEntries,
-      orderEntries,
-    });
+    console.log("[handleVariantReorder] writing state",
+      "newItems=" + JSON.stringify(newItems),
+      "fileEntries=" + JSON.stringify(fileEntries),
+      "orderEntries=" + JSON.stringify(orderEntries),
+    );
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
     onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
