@@ -289,7 +289,24 @@ export const action = async (args: ActionFunctionArgs) => {
 // COMPONENT - Simple, unified approach (like Collections)
 // ============================================================================
 
+// TEMP DIAG: render counter to verify the infinite-render-loop fix.
+// Increments on every render of ProductsPage; logs the count + a delta-ms
+// since the previous render. Remove once the fix is confirmed in the browser.
+let __PRODUCTS_RENDER_COUNT__ = 0;
+let __PRODUCTS_LAST_RENDER_TS__ = 0;
+
 export default function ProductsPage() {
+  // TEMP DIAG: render-time log (no useEffect, no guard) — must print only a
+  // handful of times after mount and then go silent. If this fires hundreds of
+  // times with no user interaction the loop is back.
+  if (typeof window !== "undefined") {
+    __PRODUCTS_RENDER_COUNT__ += 1;
+    const now = performance.now();
+    const dt = __PRODUCTS_LAST_RENDER_TS__ ? Math.round(now - __PRODUCTS_LAST_RENDER_TS__) : 0;
+    __PRODUCTS_LAST_RENDER_TS__ = now;
+    console.log(`[app.products render #${__PRODUCTS_RENDER_COUNT__}] +${dt}ms`);
+  }
+
   const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
@@ -352,6 +369,19 @@ export default function ProductsPage() {
       return next;
     });
   }, []);
+
+  // Memoised so VariantImageManager's onMissingMainImageChange-deps useEffect
+  // does not refire on every render. An inline arrow here had a new identity
+  // each render → effect always fired → loop (before the hook setter's
+  // bail-out was added). Kept memoised even now to avoid wasted effect runs.
+  const handleMissingMainImageChangeForSelected = useCallback(
+    (hasMissing: boolean) => {
+      const selectedId = editor.selectedItem?.id;
+      if (!selectedId) return;
+      imageManagerState.handleMissingMainImageChange(selectedId, hasMissing);
+    },
+    [editor.selectedItem?.id, imageManagerState.handleMissingMainImageChange],
+  );
 
   // Initialize sub-resources hook for options + metafields translations
   // Uses its own internal fetcher to avoid race conditions with the main editor
@@ -802,7 +832,7 @@ export default function ProductsPage() {
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
               variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
-              onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
+              onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />

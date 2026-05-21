@@ -77,6 +77,12 @@ export function useVariantImageManager() {
 
   const handleMissingMainImageChange = useCallback((productId: string, hasMissing: boolean) => {
     setMissingMainImageProductIds(prev => {
+      // Bail-out when membership wouldn't change. Without this, callers that
+      // fire the same value on every render (e.g. an unmemoised parent prop
+      // feeding a useEffect inside VariantImageManager) would still receive a
+      // new Set instance from this setter → React commits the "change" → loop.
+      const has = prev.has(productId);
+      if (hasMissing === has) return prev;
       const next = new Set(prev);
       if (hasMissing) next.add(productId);
       else next.delete(productId);
