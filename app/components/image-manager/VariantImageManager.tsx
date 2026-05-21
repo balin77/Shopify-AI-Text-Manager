@@ -18,16 +18,18 @@ const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   if (hits.length === 0) return closestCenter(args);
   const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
-  // Prefer hits in the source container so a cursor that drifts slightly
-  // outside a small variant gallery doesn't accidentally resolve to a
-  // product-gallery tile underneath it. Without this, dragging from a
-  // small variant section (few tiles) is fragile — any cursor jitter
-  // onto the product gallery (many tiles, large area) fires a cross-
-  // container move and the merchant's image vanishes. Cross-container
-  // drags still work whenever the cursor leaves the source's tiles
-  // entirely (no same-container hits → fall through to all itemHits).
+  // Stickiness for variant-source drags only. Small variant galleries sit on
+  // top of a much larger product gallery, so any cursor jitter inside the
+  // variant tile area also overlaps a product tile underneath. Without the
+  // filter, the merchant's intent (reorder inside the variant) silently
+  // turned into a cross-container move and the image vanished. We only
+  // apply the filter when the source is a variant — product → anywhere
+  // would otherwise stay locked to product tiles because the product
+  // gallery is large enough that the cursor is virtually always over one.
+  // Cross-container drags from a variant still work: drop on whitespace
+  // or move clearly off the variant's tiles.
   const sourceContainer = args.active.data.current?.containerId as string | undefined;
-  if (sourceContainer && itemHits.length > 0) {
+  if (sourceContainer && sourceContainer !== "product" && itemHits.length > 0) {
     const sameContainer = itemHits.filter(({ id }) =>
       (id as string).startsWith(sourceContainer + "::")
     );
