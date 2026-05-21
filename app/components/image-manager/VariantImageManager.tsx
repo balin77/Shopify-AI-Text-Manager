@@ -2534,10 +2534,13 @@ export function VariantImageManager({
               //      NOT force mainGid back to slot 0, otherwise the merchant's
               //      drag to demote it would visually snap back.
               let effectiveGids: string[];
+              let effectiveGidsBranch: string;
               if (!hasMainImageForVariant) {
                 effectiveGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
+                effectiveGidsBranch = "no-main";
               } else if (mainGid && !storedGids.includes(mainGid)) {
                 effectiveGids = [mainGid, ...storedGids];
+                effectiveGidsBranch = "prepend-mainGid";
               } else {
                 // Dedup while preserving first-seen order (handles the rare
                 // bug case where the metafield contained mainGid twice).
@@ -2546,6 +2549,20 @@ export function VariantImageManager({
                   if (seen.has(g)) return false;
                   seen.add(g);
                   return true;
+                });
+                effectiveGidsBranch = "dedup";
+              }
+              if (v.id === 'gid://shopify/ProductVariant/50164323451208') {
+                console.log("[VariantImageManager render variant]", {
+                  variantId: v.id,
+                  storedGids,
+                  storedGidsLength: storedGids.length,
+                  hasPendingEntry: pendingVariantGalleries[v.id] !== undefined,
+                  fromMetafield: pendingVariantGalleries[v.id] === undefined,
+                  mainGid,
+                  hasMainImageForVariant,
+                  effectiveGidsBranch,
+                  effectiveGids,
                 });
               }
               return (
