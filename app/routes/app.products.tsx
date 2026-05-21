@@ -422,6 +422,13 @@ export default function ProductsPage() {
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
   }), [subResources.state, hasPendingImageChanges]);
 
+  // BUILD-MARKER: lets us verify the deployed JS actually contains the
+  // current diagnostic instrumentation. If the merchant sees the OLD bundle
+  // hash + an old timestamp, hard-reload is needed before any other debug.
+  useEffect(() => {
+    console.log("[app.products BUILD]", "2026-05-21 — image manager diag bundle");
+  }, []);
+
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {

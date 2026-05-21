@@ -1264,7 +1264,11 @@ export function VariantImageManager({
   // product gallery. Closes the modal afterwards — except for URL adds,
   // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((items: AddedItem[]) => {
-    if (!pickerTarget || items.length === 0) return;
+    console.log("[handleModalAdd] called", { mode: pickerTarget?.mode, itemCount: items.length });
+    if (!pickerTarget || items.length === 0) {
+      console.warn("[handleModalAdd] short-circuit", { hasPickerTarget: !!pickerTarget, itemCount: items.length });
+      return;
+    }
 
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants

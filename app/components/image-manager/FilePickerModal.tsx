@@ -349,19 +349,57 @@ export function FilePickerModal({
                 : it));
               // In immediate mode commit the freshly uploaded file the moment
               // it's ready so the merchant sees it on the variant without an
-              // extra click. We pull the latest snapshot via the setter
-              // callback to avoid stale-closure issues if multiple uploads
-              // finish out of order.
+              // extra click. For 3D models we additionally wait for the
+              // snapshot+persist pipeline so the storefront gets a real
+              // preview URL on first save — without the await, onAdd would
+              // fire with persistentPreviewUrl=undefined and the snapshot
+              // would only land on a later save (or not at all, since the
+              // pending state was already consumed by handleModalAdd).
               if (uploadCommitMode === "immediate") {
-                onAdd([{
-                  source: "upload",
-                  resourceUrl,
-                  kind: item.kind,
-                  previewUrl: item.previewUrl,
-                  fileName: item.fileName,
-                  mimeType: item.mimeType,
-                }]);
-                setPendingUploads(prev => prev.filter(p => p.uniqueId !== item.uniqueId));
+                const finalize = async (persistentPreviewUrl?: string) => {
+                  onAdd([{
+                    source: "upload",
+                    resourceUrl,
+                    kind: item.kind,
+                    previewUrl: item.previewUrl,
+                    fileName: item.fileName,
+                    mimeType: item.mimeType,
+                    persistentPreviewUrl,
+                  }]);
+                  setPendingUploads(prev => prev.filter(p => p.uniqueId !== item.uniqueId));
+                };
+                if (item.kind === "model") {
+                  // Snapshot+persist is awaited but its failure must NOT
+                  // block onAdd — the .glb is uploaded and the merchant
+                  // should still see the tile. Storefront falls back to
+                  // its "3D" placeholder for this slot.
+                  snapshotAndPersist(file)
+                    .then(({ blobUrl, cdnUrl }) => {
+                      setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
+                        ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
+                        : it));
+                      return finalize(cdnUrl);
+                    })
+                    .catch((err) => {
+                      console.warn("[FilePickerModal] 3D snapshot/persist failed", { file: file.name, err });
+                      return finalize(undefined);
+                    });
+                } else {
+                  void finalize();
+                }
+              } else if (item.kind === "model") {
+                // Queue mode: the user will hit Add later. Run snapshot+
+                // persist in the background and stash the URLs on the
+                // PendingUpload so handleCommitSelected forwards them.
+                snapshotAndPersist(file)
+                  .then(({ blobUrl, cdnUrl }) => {
+                    setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
+                      ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
+                      : it));
+                  })
+                  .catch((err) => {
+                    console.warn("[FilePickerModal] 3D snapshot/persist failed", { file: file.name, err });
+                  });
               }
               resolve();
             } else {
@@ -442,6 +480,12 @@ export function FilePickerModal({
   }, []);
 
   const handleCommitSelected = useCallback(() => {
+    console.log("[FilePickerModal handleCommitSelected] clicked", {
+      selectedCount: selected.size,
+      pendingUploadsReady: pendingUploads.filter(u => u.status === "ready").length,
+      pendingUploadsUploading: pendingUploads.filter(u => u.status === "uploading").length,
+      pendingUploadsError: pendingUploads.filter(u => u.status === "error").length,
+    });
     const picked: AddedItem[] = [];
     for (const f of files) {
       if (selected.has(f.id)) {
@@ -466,6 +510,7 @@ export function FilePickerModal({
         });
       }
     }
+    console.log("[FilePickerModal handleCommitSelected] → committing", { pickedCount: picked.length, willCallOnAdd: picked.length > 0 });
     if (picked.length > 0) onAdd(picked);
     onClose();
   }, [files, selected, pendingUploads, onAdd, onClose]);
