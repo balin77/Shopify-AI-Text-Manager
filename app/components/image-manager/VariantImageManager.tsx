@@ -16,26 +16,33 @@ import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
 // fall back to closestCenter when pointer is outside all droppables.
 const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
-  if (hits.length === 0) return closestCenter(args);
-  const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
-  // Stickiness for variant-source drags only. Small variant galleries sit on
-  // top of a much larger product gallery, so any cursor jitter inside the
-  // variant tile area also overlaps a product tile underneath. Without the
-  // filter, the merchant's intent (reorder inside the variant) silently
-  // turned into a cross-container move and the image vanished. We only
-  // apply the filter when the source is a variant — product → anywhere
-  // would otherwise stay locked to product tiles because the product
-  // gallery is large enough that the cursor is virtually always over one.
-  // Cross-container drags from a variant still work: drop on whitespace
-  // or move clearly off the variant's tiles.
+  // No closestCenter fallback: releasing in genuine empty space must abort
+  // the drag, not snap to the nearest tile. Without this, a merchant who
+  // released a variant image outside the gallery saw the image deleted —
+  // closestCenter resolved to a far-away product tile and the variant→product
+  // branch fired with that tile as the (unintended) drop target.
+  if (hits.length === 0) return [];
   const sourceContainer = args.active.data.current?.containerId as string | undefined;
-  if (sourceContainer && sourceContainer !== "product" && itemHits.length > 0) {
-    const sameContainer = itemHits.filter(({ id }) =>
+  const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
+  const containerHits = hits.filter(({ id }) => !(id as string).includes("::"));
+  // Variant source: prefer same-container item hits. Small variant galleries
+  // sit over a larger product gallery, so the cursor often overlaps both;
+  // without the filter, drags inside the variant silently routed to product.
+  if (sourceContainer && sourceContainer !== "product") {
+    const sameContainerItems = itemHits.filter(({ id }) =>
       (id as string).startsWith(sourceContainer + "::")
     );
-    if (sameContainer.length > 0) return sameContainer;
+    if (sameContainerItems.length > 0) return sameContainerItems;
   }
-  return itemHits.length > 0 ? itemHits : hits;
+  if (itemHits.length > 0) return itemHits;
+  // No item hits — only containers. Prefer containers that aren't the source,
+  // so a product→variant drop on the variant section's whitespace doesn't
+  // get hijacked by the (overlapping) product container underneath.
+  if (sourceContainer) {
+    const nonSource = containerHits.filter(({ id }) => id !== sourceContainer);
+    if (nonSource.length > 0) return nonSource;
+  }
+  return containerHits;
 };
 
 interface ProductImageRef {
@@ -1152,6 +1159,8 @@ export function VariantImageManager({
     currentOverContainerRef.current = null;
     if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
     if (!over) return;
+    // Self-drop: dropped on the exact tile that was picked up — abort.
+    if (over.id === active.id) return;
 
     const sourceContainerId = active.data.current?.containerId as string | undefined;
     const url = active.data.current?.url as string | undefined;
@@ -1293,12 +1302,16 @@ export function VariantImageManager({
     // Must be checked before urlToGid lookup — image may not be in urlToGid if resolved via shopifyMediaMap only.
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
-      // Only act when the drop landed on a specific product tile. Dropping
-      // on the product container's whitespace (or releasing outside any
-      // tile) used to count as a destructive "remove from variant" gesture
-      // — the merchant got their image deleted just by aborting a drag in
-      // the wrong spot. Require an explicit tile target to keep the
-      // destructive action intentional.
+      // Destructive cross-gallery moves require Ctrl/Cmd. The gesture is
+      // undiscoverable, irreversible without an undo, and was firing on
+      // any drop landing inside the product gallery's hit rect (which
+      // wraps the whole section, including padding) — merchants kept
+      // losing variant images on incidental drag-aborts. The per-tile
+      // remove button (handleRemoveFromVariant) stays the discoverable
+      // path; modifier-drag is the power-user shortcut.
+      if (!isCtrlHeldRef.current) return;
+      // Also require a real tile target so an accidental Ctrl-held drop
+      // onto product whitespace doesn't fire.
       if (!overUrl) return;
       const sourceVariant = variants.find(v => v.id === sourceContainerId);
       // Main-image-first routing: if the dragged URL matches this variant's
@@ -1328,7 +1341,14 @@ export function VariantImageManager({
       return;
     }
 
-    const gid = urlToGid[url];
+    // urlToGid is built from effectiveProductImages + shopifyMediaMap. The
+    // dragged tile's URL can carry a different ?v= query param than the live
+    // map entries (Shopify refreshes the version on every metadata save), so
+    // the exact-key lookup silently misses and the handler returns early —
+    // dragging a product image onto a variant felt like "nothing happens."
+    // Fall back to base-URL match.
+    const gid = urlToGid[url]
+      ?? Object.entries(urlToGid).find(([k]) => k.split("?")[0] === url.split("?")[0])?.[1];
     if (!gid) return;
 
     if (sourceContainerId !== "product") {
