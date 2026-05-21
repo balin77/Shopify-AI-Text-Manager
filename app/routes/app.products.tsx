@@ -404,9 +404,15 @@ export default function ProductsPage() {
     Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
-  if (showImageManager) {
-    console.log("[app.products hasPendingImageChanges]", {
-      hasPendingImageChanges,
+  // Diagnostic: emit a single log only when hasPendingImageChanges flips,
+  // never on every render. The previous render-time console.log flooded the
+  // console and made it impossible to read other log lines.
+  const prevHasPendingRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!showImageManager) return;
+    if (prevHasPendingRef.current === hasPendingImageChanges) return;
+    prevHasPendingRef.current = hasPendingImageChanges;
+    console.log("[app.products hasPendingImageChanges] flipped →", hasPendingImageChanges, {
       pendingVariantGalleries: imageManagerState.pendingVariantGalleries.length,
       pendingMediaOrder: imageManagerState.pendingMediaOrder.length,
       pendingProductNewMedia: imageManagerState.pendingProductNewMedia.length,
@@ -417,7 +423,7 @@ export default function ProductsPage() {
       pendingGalleryOrder: Object.keys(imageManagerState.pendingGalleryOrder).length,
       pendingKnownModelGids: Object.keys(imageManagerState.pendingKnownModelGids).length,
     });
-  }
+  }, [hasPendingImageChanges, showImageManager, imageManagerState]);
 
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
