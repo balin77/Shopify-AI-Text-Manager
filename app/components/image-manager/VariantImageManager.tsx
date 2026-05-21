@@ -381,7 +381,6 @@ export function VariantImageManager({
         if (isStale()) return;
         if (error) { setVariantError(error); return; }
         if (mediaMap) {
-          console.log("[fetchVariantsForProduct] setShopifyMediaMap", { mediaMapSize: Object.keys(mediaMap as Record<string, string>).length });
           setShopifyMediaMap(mediaMap);
         }
         if (mmm) setMediaMetaMap(mmm);
@@ -1098,11 +1097,6 @@ export function VariantImageManager({
         orderEntries.push({ kind: "file", value: it });
       }
     }
-    console.log("[handleVariantReorder] writing state",
-      "newItems=" + JSON.stringify(newItems),
-      "fileEntries=" + JSON.stringify(fileEntries),
-      "orderEntries=" + JSON.stringify(orderEntries),
-    );
     __pvgLabel("handleVariantReorder");
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
@@ -1245,18 +1239,6 @@ export function VariantImageManager({
 
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
-        console.log("[reorder variant] drag", {
-          variantId: sourceContainerId,
-          draggedUrl: url,
-          dropTargetUrl: overUrl,
-          variantUrls,
-          oldIndex,
-          newIndex,
-          storedGids,
-          variantMainGid,
-          externalUrls,
-          modelUrls,
-        });
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
           // Variant gallery position 0 maps to mediaId (MediaImage only).
           // Refuse the drop iff the new head would be a non-image. The check
@@ -1301,11 +1283,6 @@ export function VariantImageManager({
               const stripped = Object.entries(urlToGid).find(([k]) => k.split("?")[0] === base)?.[1];
               return stripped ?? u;
             });
-          console.log("[reorder variant] → handleVariantReorder", {
-            variantId: sourceContainerId,
-            moved,
-            newItemsForReorder,
-          });
           handleVariantReorder(sourceContainerId, newItemsForReorder);
         }
       }
@@ -1316,6 +1293,13 @@ export function VariantImageManager({
     // Must be checked before urlToGid lookup — image may not be in urlToGid if resolved via shopifyMediaMap only.
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
+      // Only act when the drop landed on a specific product tile. Dropping
+      // on the product container's whitespace (or releasing outside any
+      // tile) used to count as a destructive "remove from variant" gesture
+      // — the merchant got their image deleted just by aborting a drag in
+      // the wrong spot. Require an explicit tile target to keep the
+      // destructive action intentional.
+      if (!overUrl) return;
       const sourceVariant = variants.find(v => v.id === sourceContainerId);
       // Main-image-first routing: if the dragged URL matches this variant's
       // defaultImageUrl, treat it as a main-image drag (exclude on save) BEFORE
@@ -2594,13 +2578,10 @@ export function VariantImageManager({
               //      NOT force mainGid back to slot 0, otherwise the merchant's
               //      drag to demote it would visually snap back.
               let effectiveGids: string[];
-              let effectiveGidsBranch: string;
               if (!hasMainImageForVariant) {
                 effectiveGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
-                effectiveGidsBranch = "no-main";
               } else if (mainGid && !storedGids.includes(mainGid)) {
                 effectiveGids = [mainGid, ...storedGids];
-                effectiveGidsBranch = "prepend-mainGid";
               } else {
                 // Dedup while preserving first-seen order (handles the rare
                 // bug case where the metafield contained mainGid twice).
@@ -2610,17 +2591,6 @@ export function VariantImageManager({
                   seen.add(g);
                   return true;
                 });
-                effectiveGidsBranch = "dedup";
-              }
-              if (v.id === 'gid://shopify/ProductVariant/50164323451208') {
-                console.log("[VariantImageManager render variant]",
-                  "storedGids=" + JSON.stringify(storedGids),
-                  "mainGid=" + mainGid,
-                  "branch=" + effectiveGidsBranch,
-                  "effectiveGids=" + JSON.stringify(effectiveGids),
-                  "hasPendingEntry=" + (pendingVariantGalleries[v.id] !== undefined),
-                  "vGalleryFileGids=" + JSON.stringify(v.galleryFileGids),
-                );
               }
               return (
               <VariantGallerySection
