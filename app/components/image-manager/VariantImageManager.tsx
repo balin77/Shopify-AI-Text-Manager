@@ -287,6 +287,7 @@ export function VariantImageManager({
   // Reload variant data (e.g. after alt text templates are applied) without clearing pending state
   useEffect(() => {
     if (!variantReloadKey || !productId) return;
+    console.log("[fetchVariantsForProduct] triggered by variantReloadKey", { variantReloadKey });
     fetchVariantsForProduct(productId, false);
   }, [variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -338,7 +339,10 @@ export function VariantImageManager({
         // result so it can't overwrite the current product's variants/galleries.
         if (isStale()) return;
         if (error) { setVariantError(error); return; }
-        if (mediaMap) setShopifyMediaMap(mediaMap);
+        if (mediaMap) {
+          console.log("[fetchVariantsForProduct] setShopifyMediaMap", { mediaMapSize: Object.keys(mediaMap as Record<string, string>).length });
+          setShopifyMediaMap(mediaMap);
+        }
         if (mmm) setMediaMetaMap(mmm);
         // Re-derive refreshedProductImages from the fresh Shopify media so the
         // product-gallery section (which renders from effectiveProductImages =
@@ -788,6 +792,11 @@ export function VariantImageManager({
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
     if (prev !== "" && prev !== productImagesKey && !isConvertingWebPRef.current) {
+      console.log("[productImagesKey effect] productImages changed → re-fetching", {
+        prevKey: prev,
+        newKey: productImagesKey,
+        productImagesLength: productImages.length,
+      });
       setRefreshedProductImages(null);
       if (productId) fetchVariantsForProduct(productId, false);
     }

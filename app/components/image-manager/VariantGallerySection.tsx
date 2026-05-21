@@ -155,13 +155,16 @@ export function VariantGallerySection({
           for (const u of effectiveThreeDModelUrls) if (!seenModels.has(u)) out.push(u);
           console.log("[VariantGallerySection orderedUrls] computed", {
             variantId: variant.id,
-            galleryOrderJson: raw,
+            galleryOrderJsonFull: raw,
+            galleryFileGids: variant.galleryFileGids,
             fileUrlList,
+            fileUrlListLength: fileUrlList.length,
             effectiveExternalVideoUrls,
             effectiveThreeDModelUrls,
             jsonResolvedCount: tailStartIdx,
             tailAppendCount: out.length - tailStartIdx,
             tailAppended: out.slice(tailStartIdx),
+            resultLength: out.length,
             result: out,
           });
           return out;

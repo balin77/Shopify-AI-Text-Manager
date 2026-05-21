@@ -89,8 +89,10 @@ export function useVariantImageManager() {
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
     const deferred = postSaveDeferredClearRef.current;
+    console.log("[handleVariantsLoaded] called", { variantCount: variants.length, hasDeferredClear: !!deferred });
     if (deferred) {
       postSaveDeferredClearRef.current = null;
+      console.warn("[handleVariantsLoaded] CLEARING pending state via deferred-clear");
       // The refetch has landed and shopifyMediaMap / refreshedProductImages
       // now contain the new MediaImage entries. Safe to drop the optimistic
       // staging tiles — what remains in pendingVariant3dModels /
