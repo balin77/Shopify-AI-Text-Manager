@@ -856,11 +856,18 @@ class CpEmbedGallery extends HTMLElement {
       </button>`;
     }).join('');
 
+    // Inline chevron-down SVG, drawn once. CSS rotates per data-thumb-pos
+    // (and the mobile-fallback media query) so we get up/down/left/right
+    // chevrons from this single source — no per-direction unicode glyph
+    // hunting, no font-availability surprises.
+    const chevron = '<svg viewBox="0 0 12 12" aria-hidden="true">' +
+      '<path d="M3 4.5 L6 7.5 L9 4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
     const thumbsHtml = `
       <div class="cp-gallery__thumbs-wrap">
-        <button class="cp-gallery__arrow cp-gallery__arrow--prev" type="button" aria-label="Previous">‹</button>
+        <button class="cp-gallery__arrow cp-gallery__arrow--prev" type="button" aria-label="Previous">${chevron}</button>
         <div class="cp-gallery__thumbs">${thumbItems}</div>
-        <button class="cp-gallery__arrow cp-gallery__arrow--next" type="button" aria-label="Next">›</button>
+        <button class="cp-gallery__arrow cp-gallery__arrow--next" type="button" aria-label="Next">${chevron}</button>
       </div>`;
 
     inner.innerHTML = mainHtml + thumbsHtml;

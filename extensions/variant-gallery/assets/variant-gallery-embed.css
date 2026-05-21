@@ -82,28 +82,48 @@ cp-embed-gallery {
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   scroll-behavior: smooth;
-  scrollbar-width: thin;
 }
 
-/* Vertical strip (left/right). */
+/* Vertical strip (left/right). Wrap becomes a flex column so the inner
+   thumbs container can stretch to the wrap's cross-axis height (which
+   in turn matches the main image via the outer row-flex stretch).
+   `min-height: 0` is the standard nested-flexbox trick that lets the
+   overflow:auto inside actually clip rather than letting children push
+   the parent taller. Removes the previous fixed `max-height: 70vh`
+   that allowed the strip to outrun the main image. */
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 70vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-snap-type: y mandatory;
   scroll-behavior: smooth;
-  scrollbar-width: thin;
 }
 
-/* Reserve a column width for the vertical strip wrapper so the arrows
-   sit centred above/below it without overlapping the main image. */
+/* Vertical strip wrap: flex-column containing the strip plus the
+   absolutely-positioned arrows. Stretches to main-image height by
+   virtue of being a flex item of the row-flex inner. */
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
-  width: calc(var(--cp-thumb-size, 80px) + 8px);
+  width: calc(var(--cp-thumb-size, 80px) + 4px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Hide native scrollbars on every strip — visually noisy. Scrolling
+   still works via wheel, touch, keyboard, and the arrow buttons. */
+.cp-embed-gallery .cp-gallery__thumbs {
+  scrollbar-width: none;
+}
+.cp-embed-gallery .cp-gallery__thumbs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .cp-embed-gallery .cp-gallery__thumb {
@@ -434,4 +454,79 @@ cp-embed-gallery {
    cursor is set as an inline style attribute. */
 .cp-embed-gallery .cp-gallery__inner[data-zoom="off"] .cp-gallery__main-image {
   cursor: default !important;
+}
+
+/* ─── Soft fade at carousel edges (background-agnostic) ─────────────── */
+/* mask-image fades the strip's own opacity to transparent at both ends,
+   so whatever is behind (page bg, parent gradient, anything) shows
+   through cleanly — never a hardcoded white overlay. Applied only when
+   the strip actually overflows (.--scrollable, toggled by _bindArrows)
+   so a short non-scrolling strip is not partially faded. */
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  -webkit-mask-size:   100% 100%;
+          mask-size:   100% 100%;
+}
+/* Horizontal: fade left and right edges over 20px. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+/* Vertical: fade top and bottom edges over 20px. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+/* Mobile fallback (left/right collapse to bottom): re-flip to horizontal. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  }
+}
+
+/* ─── SVG chevron arrows, rotated per position ──────────────────────── */
+/* A single chevron-down SVG path drawn in each button; CSS rotates it
+   for the right direction so we get up/down/left/right chevrons from
+   one shared asset. Inline SVG (not unicode) for consistent rendering
+   regardless of merchant font availability. */
+.cp-embed-gallery .cp-gallery__arrow > svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transition: transform 0.15s ease;
+}
+/* Default chevron-down orientation already correct for `next` in a
+   vertical (left/right) strip. */
+
+/* Horizontal: prev = left chevron, next = right chevron. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--prev > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--prev > svg {
+  transform: rotate(90deg);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--next > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--next > svg {
+  transform: rotate(-90deg);
+}
+/* Vertical: prev = up chevron, next = down chevron (default). */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev > svg {
+  transform: rotate(180deg);
+}
+
+/* Mobile fallback (left/right collapse to bottom): re-flip arrows to
+   horizontal. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev > svg,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev > svg {
+    transform: rotate(90deg);
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next > svg,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next > svg {
+    transform: rotate(-90deg);
+  }
 }
