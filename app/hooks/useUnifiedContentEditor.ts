@@ -86,9 +86,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(
-    initialItemId || readLastSelectedId(config.contentType) || null
-  );
+  // SSR-safe: initial state is always null. The restore effect below reads
+  // localStorage on the client once `items` are available and picks the right
+  // item (initialItemId > localStorage > items[0]). Reading localStorage in the
+  // useState initializer would run during server render where it throws/returns
+  // null, and that null would be reused on hydration — causing the auto-select
+  // fallback to overwrite the persisted value before we ever got to read it.
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [hasRestored, setHasRestored] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
@@ -322,24 +327,57 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [initialItemId, items]);
 
   // ============================================================================
-  // AUTO-SELECT FIRST ITEM ON MOUNT
-  // Automatically select the first item when the page loads
+  // RESTORE SELECTION ON MOUNT (client-only, once)
+  // Priority: initialItemId (URL param) > localStorage > items[0] fallback.
+  // Runs exactly once per mount as soon as `items` is non-empty. Gated by
+  // `hasRestored` so the persist-effect below can't overwrite the stored
+  // value before we've read it (the bug that motivated this rework).
   // ============================================================================
 
   useEffect(() => {
+    if (hasRestored) return;
     if (items.length === 0) return;
-    // If no item selected, or selected item doesn't exist in list, select first item
-    if (!selectedItemId || !items.find(i => i.id === selectedItemId)) {
-      setSelectedItemId(items[0].id);
-    }
-  }, [items, selectedItemId]);
 
-  // Persist selected item so the same item reopens after a page reload
+    if (initialItemId && items.find(i => i.id === initialItemId)) {
+      setSelectedItemId(initialItemId);
+      appliedInitialItemIdRef.current = initialItemId;
+      setHasRestored(true);
+      return;
+    }
+
+    const saved = readLastSelectedId(config.contentType);
+    if (saved && items.find(i => i.id === saved)) {
+      setSelectedItemId(saved);
+      setHasRestored(true);
+      return;
+    }
+
+    // Fallback: no usable stored or URL-provided ID — pick the first item.
+    setSelectedItemId(items[0].id);
+    setHasRestored(true);
+  }, [hasRestored, items, initialItemId, config.contentType]);
+
+  // ============================================================================
+  // AUTO-SELECT FIRST ITEM if the selected one disappears (e.g. deleted)
+  // Only runs after restoration is complete.
+  // ============================================================================
+
   useEffect(() => {
+    if (!hasRestored) return;
+    if (items.length === 0) return;
+    if (selectedItemId && items.find(i => i.id === selectedItemId)) return;
+    setSelectedItemId(items[0].id);
+  }, [hasRestored, items, selectedItemId]);
+
+  // Persist selected item so the same item reopens after a page reload.
+  // Gated by `hasRestored` to prevent the initial-render or fallback path
+  // from overwriting the previously stored value before we've consumed it.
+  useEffect(() => {
+    if (!hasRestored) return;
     if (selectedItemId) {
       writeLastSelectedId(config.contentType, selectedItemId);
     }
-  }, [selectedItemId, config.contentType]);
+  }, [hasRestored, selectedItemId, config.contentType]);
 
   // ============================================================================
   // FOCUS MANAGEMENT - Set focus when item changes

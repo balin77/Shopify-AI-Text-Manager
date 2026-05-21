@@ -508,46 +508,6 @@ export default function ProductsPage() {
   const selectedProduct = editor.selectedItem;
 
   // ============================================================================
-  // RESTORE SELECTION AFTER RELOAD
-  // If user clicked reload button, restore the previously selected product
-  // ============================================================================
-
-  // Ref to access editor.handlers without adding as dependency (unstable reference)
-  const editorHandlersRef = useRef(editor.handlers);
-  editorHandlersRef.current = editor.handlers;
-
-  useEffect(() => {
-    // Wait for products to load
-    if (!isMountedRef.current || !products.length) {
-      return;
-    }
-
-    // Check URL for selected parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const selectedFromUrl = urlParams.get('selected');
-
-    if (selectedFromUrl) {
-      // Find the product in the list
-      const productExists = products.find((p: any) => p.id === selectedFromUrl);
-
-      if (productExists && typeof editorHandlersRef.current?.handleItemSelect === 'function') {
-        // Restore selection via editor
-        try {
-          editorHandlersRef.current.handleItemSelect(selectedFromUrl);
-        } catch (error) {
-          // Selection restoration failed - non-critical
-        }
-
-        // Clean up URL parameter
-        urlParams.delete('selected');
-        urlParams.delete('_t');
-        const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
-        window.history.replaceState({}, '', newUrl);
-      }
-    }
-  }, [products]); // Only run when products load
-
-  // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
   // When a product is selected, check if it has translations. If not, load them.
   // ============================================================================
