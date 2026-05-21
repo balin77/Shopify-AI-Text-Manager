@@ -1495,7 +1495,20 @@ export function VariantImageManager({
           } catch { /* fall through */ }
         }
         if (entries.length === 0) {
-          for (const g of existingFileGids) entries.push({ kind: "file", value: g });
+          // Default order MUST include the main image first. variant.galleryFileGids
+          // is the raw metafield (gallery files only — main is implicit at position 0
+          // via effectiveGids prepend at render time). Without explicitly pushing
+          // mainImageGid here, the new order JSON references everything EXCEPT main,
+          // and VariantGallerySection's tail-append then pushes main to the very
+          // end of the combined sequence — visually moving the featured image to
+          // the back of the gallery.
+          const mainImageGid = targetVariant?.mainImageGid;
+          if (mainImageGid && !locallyExcludedMainGids.has(targetContainerId)) {
+            entries.push({ kind: "file", value: mainImageGid });
+          }
+          for (const g of existingFileGids) {
+            if (g !== mainImageGid) entries.push({ kind: "file", value: g });
+          }
           for (const u of externalUrls) entries.push({ kind: "url", value: u });
           for (const u of modelUrls) entries.push({ kind: "model", value: u });
         }
