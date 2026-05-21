@@ -1473,11 +1473,40 @@ export function VariantImageManager({
           : undefined;
         const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
         const next = noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap);
-        console.log("[p2v-copy]", JSON.stringify({ tgt: targetContainerId, gid, existing, next, isMainEqualsGid: targetMainGid === gid }));
+        console.log("[p2v-copy]", JSON.stringify({ tgt: targetContainerId, gid, existing, next, isMainEqualsGid: targetMainGid === gid, isEndDrop }));
         return { ...p, [targetContainerId]: next };
       });
+      // When the drop lands on the end-placeholder, also update the gallery
+      // order so the new file appears at the visual end of the COMBINED
+      // sequence (files + videos + models), not at the end of the files-only
+      // block. Without this, the default tail-append in VariantGallerySection
+      // puts a freshly-added file before existing videos/3D models because
+      // orderedUrls tail-appends in the order [files, urls, models].
+      if (isEndDrop) {
+        const existingOrderJson = pendingGalleryOrder[targetContainerId] ?? targetVariant?.galleryOrderJson;
+        const existingFileGids = pendingVariantGalleries[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+        const externalUrls = pendingExternalVideos[targetContainerId] ?? targetVariant?.externalVideoUrls ?? [];
+        const modelUrls = pendingVariant3dModels[targetContainerId] ?? targetVariant?.threeDModelUrls ?? [];
+        let entries: Array<{ kind: "file" | "url" | "model"; value: string }> = [];
+        if (existingOrderJson) {
+          try {
+            const parsed = JSON.parse(existingOrderJson);
+            if (Array.isArray(parsed)) entries = parsed.filter((e: { kind?: string; value?: string }) => e?.kind && e?.value) as typeof entries;
+          } catch { /* fall through */ }
+        }
+        if (entries.length === 0) {
+          for (const g of existingFileGids) entries.push({ kind: "file", value: g });
+          for (const u of externalUrls) entries.push({ kind: "url", value: u });
+          for (const u of modelUrls) entries.push({ kind: "model", value: u });
+        }
+        entries = entries.filter(e => !(e.kind === "file" && e.value === gid));
+        entries.push({ kind: "file", value: gid });
+        const newOrderJson = JSON.stringify(entries);
+        setPendingGalleryOrder(p => ({ ...p, [targetContainerId]: newOrderJson }));
+        onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [targetContainerId]: newOrderJson });
+      }
     }
-  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder, onGalleryOrderChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
