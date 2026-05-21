@@ -84,6 +84,21 @@ class WebhookRetryService {
       const payloadString = JSON.stringify(payload);
       const errorMessage = error?.message || 'Unknown error';
 
+      // Don't enqueue retries we already know will fail. A 401 means the
+      // offline token is dead; retrying with the same dead token can't work,
+      // and a session refresh only happens when the merchant opens the app.
+      // The inline webhook that just failed will be picked up again by the
+      // next products/update event after the token is refreshed.
+      if (/\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)) {
+        logger.warn('Skipping webhook retry — auth error not recoverable by retry', {
+          context: 'WebhookRetry',
+          shop,
+          topic,
+          error: errorMessage,
+        });
+        return;
+      }
+
       const retry = await db.webhookRetry.create({
         data: {
           shop,
@@ -276,6 +291,28 @@ class WebhookRetryService {
         maxAttempts: retry.maxAttempts,
         error: errorMessage,
       });
+
+      // A 401 from Shopify means the offline access token stored for this shop
+      // is invalid — usually the merchant uninstalled/reinstalled or Shopify
+      // rotated the token. Retrying with the same dead token can't succeed, so
+      // keep looping just spams logs and burns DB writes until maxAttempts.
+      // Drop the whole shop's queue in one shot: the next authenticated
+      // request will refresh the session, and ProductSync is idempotent — so
+      // the next inline webhook (or a user-triggered open of the app) will
+      // resync the latest state anyway.
+      const isAuthError = /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+      if (isAuthError) {
+        const purged = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } });
+        logger.warn('Webhook retry aborted — auth error, dropping all retries for shop', {
+          context: 'WebhookRetry',
+          retryId: retry.id,
+          shop: retry.shop,
+          topic: retry.topic,
+          purgedCount: purged.count,
+          hint: 'Offline access token is dead. The merchant needs to re-open the app to refresh the session.',
+        });
+        return;
+      }
 
       if (newAttempt >= retry.maxAttempts) {
         // Max attempts reached - log final failure and delete
