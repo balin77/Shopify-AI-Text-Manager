@@ -10,7 +10,7 @@ import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
-import { parseExternalVideoUrl } from "../../utils/mediaKind";
+import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
@@ -1656,12 +1656,16 @@ export function VariantImageManager({
     setWebpError(null); // clear any stale error before a fresh upload
     for (const file of files) {
       try {
+        // Classify so we (a) know what to push into pendingProductNewMedia
+        // (which is typed as Array<{resourceUrl, kind, previewUrl?}>) and
+        // (b) dispatch the upload XHR correctly per Shopify's resource type.
+        const kind: MediaKind = (classifyFile(file.type, file.name) ?? "image");
         const res = await fetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error, code, limit } = await res.json();
+        const { url, resourceUrl, parameters, httpMethod, error, code, limit } = await res.json();
         if (code === "IMAGE_QUOTA_EXCEEDED") {
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
@@ -1672,13 +1676,33 @@ export function VariantImageManager({
           const xhr = new XMLHttpRequest();
           xhr.onload = () => resolve();
           xhr.onerror = () => reject();
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
+          // path produced a 405 against video / model staged targets, so a
+          // drag-drop .glb to the product-gallery placeholder silently
+          // failed and the merchant saw the modal close with nothing saved.
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
 
         if (resourceUrl) {
-          setPendingProductNewMedia(p => [...p, resourceUrl]);
+          // Push the typed shape — bare resourceUrl strings would survive the
+          // local state (resourceUrl is `any` from res.json) and then crash
+          // silently in handleApply when it does m.resourceUrl / m.kind on
+          // a string, producing newMedia entries with undefined fields that
+          // productCreateMedia drops.
+          const previewUrl = kind === "image" ? URL.createObjectURL(file) : undefined;
+          setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
         // silent — user can retry
@@ -1735,17 +1759,28 @@ export function VariantImageManager({
 
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
-    if (!mediaId) return;
+    console.log("[ALT-SAVE-DBG] handleSaveAltText called", { url, mediaId, altText, currentLanguage, primaryLocale, hasMediaId: !!mediaId });
+    if (!mediaId) {
+      console.warn("[ALT-SAVE-DBG] aborting — no mediaId in urlToGid for this url", { url, urlToGidKeys: Object.keys(urlToGid).slice(0, 5) });
+      return;
+    }
     const form = new FormData();
     form.append("action", "saveImageAltText");
     form.append("mediaId", mediaId);
     form.append("altText", altText);
     if (currentLanguage) form.append("locale", currentLanguage);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
+    console.log("[ALT-SAVE-DBG] submitting saveAltTextFetcher", { action: "saveImageAltText", mediaId, altText, locale: currentLanguage, primaryLocale });
     saveAltTextFetcher.submit(form, { method: "post" });
     dirtyUrlsRef.current.delete(url);
     if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
   }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
+
+  // Diagnostic: surface saveAltTextFetcher state transitions and response data
+  // so we can see whether the request actually completed and what the server returned.
+  useEffect(() => {
+    console.log("[ALT-SAVE-DBG] saveAltTextFetcher state →", saveAltTextFetcher.state, "data:", saveAltTextFetcher.data);
+  }, [saveAltTextFetcher.state, saveAltTextFetcher.data]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
