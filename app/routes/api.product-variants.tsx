@@ -1,6 +1,14 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { logger } from "../utils/logger.server";
+
+// Shops whose variant-metafield definitions have already been verified in
+// this process. Set on first /api/product-variants hit per shop; resets only
+// on server restart. If a definition ever gets externally deleted, the next
+// metafieldsSet call will surface a clear userError — handler can then
+// invalidate via `verifiedDefShops.delete(shop)`.
+const verifiedDefShops = new Set<string>();
 
 async function ensureVariantMetafieldDefinition(
   adminClient: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> },
@@ -35,6 +43,7 @@ async function ensureVariantMetafieldDefinition(
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const tAll = performance.now();
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const productId = url.searchParams.get("productId");
@@ -43,32 +52,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ error: "productId required" }, { status: 400 });
   }
 
-  await ensureVariantMetafieldDefinition(admin, "variant_gallery", "Variant Gallery", "list.file_reference");
-  await ensureVariantMetafieldDefinition(admin, "image_key", "Image Key", "single_line_text_field");
-  // YouTube/Vimeo URLs cannot be stored in list.file_reference, so they live
-  // in a parallel list.url metafield. Order across files + URLs is held by
-  // variant_gallery_order (json) — kept idempotent: defining it twice is a
-  // no-op thanks to ensureVariantMetafieldDefinition's lookup.
-  await ensureVariantMetafieldDefinition(admin, "variant_external_videos", "Variant External Videos", "list.url");
-  // 3D models (.glb) cannot live in list.file_reference (it rejects Media3d),
-  // so they sit in their own list.url metafield. The variant_gallery_order
-  // entries with kind "model" reference these URLs.
-  await ensureVariantMetafieldDefinition(admin, "variant_3d_models", "Variant 3D Models", "list.url");
-  // Per-model JPEG preview URLs. Parallel array to variant_3d_models — index N
-  // here is the preview for index N in variant_3d_models. Generated client-side
-  // at upload time via <model-viewer>.toBlob (see app/utils/threeDSnapshot.ts),
-  // uploaded via fileCreate as a standalone Shopify File (so it does not
-  // pollute the product media library), and stored here as a CDN URL. The
-  // storefront uses it as both the thumb and the model-viewer poster.
-  await ensureVariantMetafieldDefinition(admin, "variant_3d_previews", "Variant 3D Model Previews", "list.url");
-  await ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json");
+  // Metafield-definition existence checks: parallelized + cached per shop
+  // per process. First request after server boot pays ~1 roundtrip (six
+  // checks in parallel); subsequent requests skip entirely.
+  const tDefs = performance.now();
+  let defsBranch: "skipped-cache" | "verified" = "skipped-cache";
+  if (!verifiedDefShops.has(session.shop)) {
+    defsBranch = "verified";
+    await Promise.all([
+      ensureVariantMetafieldDefinition(admin, "variant_gallery", "Variant Gallery", "list.file_reference"),
+      ensureVariantMetafieldDefinition(admin, "image_key", "Image Key", "single_line_text_field"),
+      // YouTube/Vimeo URLs cannot be stored in list.file_reference, so they live
+      // in a parallel list.url metafield. Order across files + URLs is held by
+      // variant_gallery_order (json).
+      ensureVariantMetafieldDefinition(admin, "variant_external_videos", "Variant External Videos", "list.url"),
+      // 3D models (.glb) cannot live in list.file_reference (it rejects Media3d),
+      // so they sit in their own list.url metafield. The variant_gallery_order
+      // entries with kind "model" reference these URLs.
+      ensureVariantMetafieldDefinition(admin, "variant_3d_models", "Variant 3D Models", "list.url"),
+      // Per-model JPEG preview URLs. Parallel array to variant_3d_models — index N
+      // here is the preview for index N in variant_3d_models.
+      ensureVariantMetafieldDefinition(admin, "variant_3d_previews", "Variant 3D Model Previews", "list.url"),
+      ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json"),
+    ]);
+    verifiedDefShops.add(session.shop);
+  }
+  const dDefs = performance.now() - tDefs;
 
   // Fetch product media + variants in one query.
   // media(first:250) gives us a definitive GID→URL map for ALL product images,
   // independent of the DB cache — so gallery thumbnails always resolve correctly.
+  const tMain = performance.now();
   const response = await admin.graphql(`
     query GetVariantsWithGallery($id: ID!) {
       product(id: $id) {
+        options {
+          name
+          optionValues {
+            id
+            name
+            linkedMetafieldValue
+          }
+        }
         media(first: 250) {
           edges {
             node {
@@ -133,33 +158,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const data = await response.json();
   const productData = data.data?.product;
+  const dMain = performance.now() - tMain;
 
-  // Fetch metaobject handles + GIDs separately — optional, degrades gracefully if unavailable.
+  // Resolve metaobject handles + GIDs from the options block we already
+  // fetched in the main query. Falls back gracefully if anything throws.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
   const optionGidMap: Record<string, Record<string, string | null>> = {};
   const optionValueIdMap: Record<string, Record<string, string | null>> = {};
+  const tOpts = performance.now();
+  let dNodes = 0;
   try {
-    // Step 1: get optionValues with their id and linked metaobject GID (stored as string)
-    const optionsRes = await admin.graphql(`
-      query GetProductOptionValues($id: ID!) {
-        product(id: $id) {
-          options {
-            name
-            optionValues {
-              id
-              name
-              linkedMetafieldValue
-            }
-          }
-        }
-      }
-    `, { variables: { id: productId } });
-    const optionsData = await optionsRes.json();
-
     // Collect all non-null metaobject GIDs and track which option/value they belong to
     type OVRef = { optionName: string; valueName: string };
     const gidToRefs: Record<string, OVRef[]> = {};
-    for (const opt of (optionsData.data?.product?.options ?? [])) {
+    for (const opt of (productData?.options ?? [])) {
       for (const ov of (opt.optionValues ?? [])) {
         // Always remember the ProductOptionValue id so non-linked options can be translated too.
         if (ov.id) {
@@ -176,6 +188,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const gids = Object.keys(gidToRefs);
     if (gids.length > 0) {
       // Step 2: batch-fetch all metaobject handles in one nodes query
+      const tNodes = performance.now();
       const nodesRes = await admin.graphql(`
         query GetMetaobjectHandles($ids: [ID!]!) {
           nodes(ids: $ids) {
@@ -195,10 +208,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           optionGidMap[optionName][valueName] = node.id;
         }
       }
+      dNodes = performance.now() - tNodes;
     }
   } catch (err: any) {
     console.error("[api.product-variants] handle lookup failed:", err?.message);
   }
+  const dOpts = performance.now() - tOpts - dNodes;
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
     const node = e.node;
@@ -243,8 +258,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     mediaMetaMap[node.id] = { kind, previewUrl };
   }
 
-  // In DB cachen (upsert)
-  await Promise.all(variants.map((v: any) => {
+  // In DB cachen (upsert) — fire-and-forget. The response below doesn't read
+  // from db.productVariant, and other callers (webp-processor, alt-text,
+  // update-variant-match-key) use their own upserts and tolerate missing rows.
+  // Awaiting here added N Prisma roundtrips to every product open for no
+  // client-visible benefit.
+  const tDb = performance.now();
+  const dbUpsertPromise = Promise.allSettled(variants.map((v: any) => {
     const numericId = v.id.replace("gid://shopify/ProductVariant/", "");
     return db.productVariant.upsert({
       where: { shopifyGid: v.id },
@@ -267,6 +287,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
     });
   }));
+  dbUpsertPromise
+    .then(results => {
+      const dDbBg = performance.now() - tDb;
+      const failed = results.filter(r => r.status === "rejected").length;
+      if (failed > 0) {
+        logger.warn(`[api.product-variants] variant upsert: ${failed}/${results.length} failed`, {
+          productId,
+          db_upsert_bg_ms: Math.round(dDbBg),
+        });
+      } else {
+        logger.debug(`[api.product-variants] variant upsert finished in background`, {
+          productId,
+          db_upsert_bg_ms: Math.round(dDbBg),
+        });
+      }
+    });
 
   const mappedVariants = variants.map((v: any) => ({
     ...v,
@@ -279,6 +315,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     galleryOrderJson: v.galleryOrderMetafield?.value ?? null,
     // selectedOptions already enriched with handles above
   }));
+
+  const dAll = performance.now() - tAll;
+  logger.info(`[api.product-variants] timing`, {
+    productId,
+    total_ms: Math.round(dAll),
+    defs_ms: Math.round(dDefs),
+    defs_branch: defsBranch,
+    main_ms: Math.round(dMain),
+    options_ms: Math.round(dOpts),
+    nodes_ms: Math.round(dNodes),
+    db_upsert_dispatch_ms: Math.round(performance.now() - tDb),
+    variant_count: variants.length,
+    media_count: Object.keys(mediaMap).length,
+  });
 
   return json({ variants: mappedVariants, mediaMap, mediaMetaMap });
 };
