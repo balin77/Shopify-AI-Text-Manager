@@ -37,6 +37,13 @@ class CpEmbedGallery extends HTMLElement {
     // defensively anyway so we never leak observers/listeners.
     if (this._bodyMo) { this._bodyMo.disconnect(); this._bodyMo = null; }
     if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
+    // Lightbox is appended to <body>; remove on disconnect so it does
+    // not leak across SPA-style navigations that destroy the controller.
+    if (this._lightbox && this._lightbox.isConnected) {
+      try { this._lightbox.close(); } catch (_) {}
+      this._lightbox.remove();
+      this._lightbox = null;
+    }
     clearTimeout(this._t);
     // NOTE-3: also drop any pending fail-safe timers we registered on the
     // shared registry so a disconnect can never leave one to fire later.
@@ -712,22 +719,24 @@ class CpEmbedGallery extends HTMLElement {
     const hasLightbox = !!document.querySelector('product-modal')
                      || !!zoomRoot.querySelector('.product__modal-opener');
     const hasHover    = !!zoomRoot.querySelector('image-magnify, [class*="image-magnify"]');
-    // Known limitation (R1): on a modified Dawn fork whose ONLY zoom
-    // signal is an inline cursor:zoom-in style applied by its own
-    // media-gallery.js, this read is false-negative — defer scripts run
-    // in source-order, our App-Embed is in <head> so we execute BEFORE
-    // the section script. Stock Dawn is fine (lightbox + hover use
-    // Liquid-rendered markers, see above). Merchants on such forks can
-    // turn `inherit_theme_settings` off and use the explicit App-Embed
-    // settings. A second detection pass post-load was considered and
-    // rejected to avoid race + flash risk; documented here instead.
-    let inlineCursor = false;
-    if (sampleImg) {
-      try { inlineCursor = (sampleImg.style.cursor === 'zoom-in'); } catch (_) {}
-    }
-    if (hasLightbox || hasHover || inlineCursor) out.zoom = true;
+    // Use ONLY the Liquid-rendered markers as positive signals — Dawn
+    // gates the rendering of <product-modal> (lightbox) and image-
+    // magnify (hover) on the section setting, so their presence/absence
+    // accurately reflects merchant intent. We do NOT use inline
+    // cursor:zoom-in as a signal: modified Dawn forks may apply that
+    // unconditionally from their media-gallery.js constructor (i.e.
+    // even when image_zoom is set to 'none'), which would false-
+    // positively turn our zoom on. Forks that ONLY use the inline-cursor
+    // hack are not supported by Path C inheritance — those merchants can
+    // disable `inherit_theme_settings` and configure the embed
+    // explicitly (a future iteration could add an explicit App-Embed
+    // zoom-mode override, but is out of scope here).
+    if (hasLightbox)   out.zoomMode = 'lightbox';
+    else if (hasHover) out.zoomMode = 'hover';
+    out.zoom = !!out.zoomMode;
     this._log('theme-inherit: zoom markers — lightbox=', hasLightbox,
-      'hover=', hasHover, 'inlineCursor=', inlineCursor, '→ zoom=', !!out.zoom);
+      'hover=', hasHover, '→ zoom=', !!out.zoom,
+      '| zoomMode=', out.zoomMode || '(off)');
 
     return out;
   }
@@ -791,6 +800,14 @@ class CpEmbedGallery extends HTMLElement {
     const constrain = !!(this._themeSettings && this._themeSettings.constrain);
     if (constrain) inner.setAttribute('data-constrain', '1');
     else inner.removeAttribute('data-constrain');
+    // Path C: data-zoom drives both the cursor CSS and which click
+    // handler _bindZoom installs. Setting it to 'off' explicitly lets
+    // CSS override the inline cursor:zoom-in that modified Dawn forks
+    // apply unconditionally from their media-gallery.js.
+    const zm = (this._themeSettings && this._themeSettings.zoom)
+      ? (this._themeSettings.zoomMode || 'scale')
+      : 'off';
+    inner.setAttribute('data-zoom', zm);
 
     if (!thumbMode) {
       // Stacked mode: one .cp-gallery__main per item (each at its own
@@ -844,21 +861,52 @@ class CpEmbedGallery extends HTMLElement {
     this._bindZoom(inner);
   }
 
-  // Path C: click-to-scale-2x zoom on the active main image, matching
-  // the modified-Dawn behaviour (theme's image_zoom is detected via DOM
-  // markers in _detectThemeSettings). Bound once per <img> via a
-  // data-flag so subsequent _render calls do not stack listeners.
-  // Right-click / context-menu unaffected (only the default click
-  // event fires this). State is kept in img.dataset so _bindThumbs can
-  // reset it cross-image.
+  // Path C: zoom dispatcher. Three modes share the same trigger
+  // (click on a main-image <img>) but differ in what happens:
+  //   • lightbox → open a fullscreen <dialog> modal with the image at
+  //     up to viewport size; ESC / backdrop click / × close.
+  //   • hover / inline → click-to-scale-2x on the image itself
+  //     (matches the modified-Dawn behaviour).
+  // Non-image items (video / iframe / model-viewer) keep their own
+  // built-in controls and are not bound here.
   _bindZoom(container) {
-    if (!this._themeSettings || !this._themeSettings.zoom) return;
+    const mode = (this._themeSettings && this._themeSettings.zoom)
+      ? this._themeSettings.zoomMode
+      : 'off';
+    if (mode === 'off') {
+      // Bind a no-op click blocker so theme JS (e.g. modified Dawn's
+      // `.product__media img` fallback that calls applyZoom on our
+      // first image regardless of the section image_zoom setting)
+      // cannot scale the image when the merchant has chosen "no zoom".
+      // We register our listener during our defer-script (which runs
+      // BEFORE Dawn's body-defer); stopImmediatePropagation here
+      // cancels theme listeners added later on the same element.
+      container.querySelectorAll('img.cp-gallery__main-image').forEach((img) => {
+        if (img.dataset.cpZoomBound === '1') return;
+        img.dataset.cpZoomBound = '1';
+        img.addEventListener('click', (e) => e.stopImmediatePropagation());
+      });
+      return;
+    }
+    if (mode === 'lightbox') this._bindLightbox(container);
+    else this._bindScaleZoom(container);
+  }
+
+  // Scale-2x zoom (hover/inline modes). Bound once per <img> via a
+  // data-flag so subsequent _render calls do not stack listeners.
+  // State kept in img.dataset so _bindThumbs can reset cross-image.
+  _bindScaleZoom(container) {
     const imgs = container.querySelectorAll('img.cp-gallery__main-image');
     imgs.forEach((img) => {
       if (img.dataset.cpZoomBound === '1') return;
       img.dataset.cpZoomBound = '1';
       img.style.cursor = 'zoom-in';
       img.addEventListener('click', (e) => {
+        // Block theme JS that also bound a click handler to our images
+        // (e.g. modified Dawn's `.product__media img` fallback) from
+        // running its own scale-transform in parallel, which would
+        // remain on the image even after our handler completes.
+        e.stopImmediatePropagation();
         const zoomed = img.dataset.cpZoomed === '1';
         if (!zoomed) {
           const r = img.getBoundingClientRect();
@@ -874,6 +922,57 @@ class CpEmbedGallery extends HTMLElement {
           img.style.cursor = 'zoom-in';
           img.dataset.cpZoomed = '0';
         }
+      });
+    });
+  }
+
+  // Lightbox: lazily create a single body-level <dialog> on first use
+  // and reuse it (one per controller instance). Body-level placement
+  // avoids any parent-overflow clipping; native <dialog> handles ESC
+  // and focus trapping for free.
+  _ensureLightbox() {
+    if (this._lightbox && this._lightbox.isConnected) return this._lightbox;
+    const dlg = document.createElement('dialog');
+    dlg.className = 'cp-gallery__lightbox';
+    dlg.innerHTML =
+      '<button type="button" class="cp-gallery__lightbox-close" aria-label="Close">×</button>' +
+      '<img class="cp-gallery__lightbox-image" alt="">';
+    // Backdrop click closes — the dialog itself is the click target
+    // when shoppers click outside the centered image.
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    dlg.querySelector('.cp-gallery__lightbox-close')
+      .addEventListener('click', () => dlg.close());
+    document.body.appendChild(dlg);
+    this._lightbox = dlg;
+    return dlg;
+  }
+
+  _openLightbox(sourceImg) {
+    const dlg = this._ensureLightbox();
+    const img = dlg.querySelector('.cp-gallery__lightbox-image');
+    // Reuse the source's src + srcset so the browser picks the largest
+    // candidate suited to the now-much-larger render box.
+    img.src = sourceImg.currentSrc || sourceImg.src;
+    img.srcset = sourceImg.getAttribute('srcset') || '';
+    img.sizes  = '100vw';
+    img.alt    = sourceImg.alt || '';
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+  }
+
+  _bindLightbox(container) {
+    const imgs = container.querySelectorAll('img.cp-gallery__main-image');
+    imgs.forEach((img) => {
+      if (img.dataset.cpZoomBound === '1') return;
+      img.dataset.cpZoomBound = '1';
+      img.style.cursor = 'zoom-in';
+      img.addEventListener('click', (e) => {
+        // Block theme JS that also bound a click handler to our images
+        // (e.g. modified Dawn's `.product__media img` fallback) — without
+        // this it would scale-transform the underlying image in parallel,
+        // and the scale would remain after the lightbox is closed.
+        e.stopImmediatePropagation();
+        this._openLightbox(img);
       });
     });
   }
