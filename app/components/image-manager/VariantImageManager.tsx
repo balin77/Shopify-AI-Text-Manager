@@ -1119,16 +1119,60 @@ export function VariantImageManager({
       } else {
         const variant = variants.find(v => v.id === sourceContainerId);
         const gids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
-        const variantUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+        const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+        const externalUrls = pendingExternalVideos[sourceContainerId] ?? variant?.externalVideoUrls ?? [];
+        const modelUrls = pendingVariant3dModels[sourceContainerId] ?? variant?.threeDModelUrls ?? [];
+        // Build the same ordered display list that VariantGallerySection
+        // shows the merchant — saved order JSON first (honouring per-kind
+        // value lookups), then tail-append any item the order metafield
+        // doesn't cover. Without this, dragging a video / 3D model fired a
+        // drag-end whose URL wasn't in the (file-only) variantUrls list →
+        // indexOf returned -1 → the if-guard rejected the move and nothing
+        // happened. The merchant couldn't reorder mixed galleries.
+        const orderJsonRaw = pendingGalleryOrder[sourceContainerId] ?? variant?.galleryOrderJson ?? null;
+        const fileSet = new Set(fileUrls);
+        const externalSet = new Set(externalUrls);
+        const modelSet = new Set(modelUrls);
+        let variantUrls: string[] = [];
+        if (orderJsonRaw) {
+          try {
+            const parsed = JSON.parse(orderJsonRaw) as Array<{ kind: string; value: string }>;
+            const seenFile = new Set<string>();
+            const seenExternal = new Set<string>();
+            const seenModel = new Set<string>();
+            for (const entry of (Array.isArray(parsed) ? parsed : [])) {
+              if (entry?.kind === "file") {
+                const u = fileUrlMap[entry.value];
+                if (u && fileSet.has(u) && !seenFile.has(u)) { variantUrls.push(u); seenFile.add(u); }
+              } else if (entry?.kind === "url") {
+                if (externalSet.has(entry.value) && !seenExternal.has(entry.value)) { variantUrls.push(entry.value); seenExternal.add(entry.value); }
+              } else if (entry?.kind === "model") {
+                if (modelSet.has(entry.value) && !seenModel.has(entry.value)) { variantUrls.push(entry.value); seenModel.add(entry.value); }
+              }
+            }
+            for (const u of fileUrls) if (!seenFile.has(u)) variantUrls.push(u);
+            for (const u of externalUrls) if (!seenExternal.has(u)) variantUrls.push(u);
+            for (const u of modelUrls) if (!seenModel.has(u)) variantUrls.push(u);
+          } catch {
+            variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+          }
+        } else {
+          variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+        }
+
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
           // Variant gallery position 0 maps to mediaId (MediaImage only).
-          // Compute the post-move order and refuse the drop iff the new
-          // head would be a non-image — same logic as SortableImageGrid's
-          // standalone handler so swaps and away-moves stay legal when
-          // they leave an image at 0.
+          // Refuse the drop iff the new head would be a non-image. The check
+          // covers three sources: pendingExternalVideos (YouTube/Vimeo for
+          // this variant), pendingVariant3dModels (variant .glb URLs), and
+          // any imageMetas entry whose kind is non-image. Without the first
+          // two, a video/model dragged to position 0 would slip past this
+          // guard (their URLs aren't in imageMetas) and the server-side
+          // position-0 validator would reject the whole save.
           const isNonImage = (u: string) => {
+            if (externalSet.has(u) || modelSet.has(u)) return true;
             const k = imageMetas[u]?.kind;
             return k === "video" || k === "model" || k === "external_video";
           };

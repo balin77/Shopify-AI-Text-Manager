@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
 
 /** Resource URL + the kind it was uploaded as. The kind is needed at save
@@ -74,8 +74,40 @@ export function useVariantImageManager() {
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
   const [selectedGalleryGids, setSelectedGalleryGids] = useState<string[]>([]);
 
+  // Holds the per-variant pending state we WOULD clear at save-success time
+  // if we wanted no flicker. handleApply sets this; handleVariantsLoaded
+  // (which fires once the post-save /api/product-variants refetch lands)
+  // applies it. The interleaving keeps the optimistic tiles visible until
+  // the real product.media entries are in the local cache → seamless
+  // transition instead of "image disappears for 500ms".
+  const postSaveDeferredClearRef = useRef<null | {
+    carryOverModels: Record<string, string[]>;
+    carryOverPreviews: Record<string, string[]>;
+    carryOverGids: Record<string, string>;
+  }>(null);
+
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
+    const deferred = postSaveDeferredClearRef.current;
+    if (deferred) {
+      postSaveDeferredClearRef.current = null;
+      // The refetch has landed and shopifyMediaMap / refreshedProductImages
+      // now contain the new MediaImage entries. Safe to drop the optimistic
+      // staging tiles — what remains in pendingVariant3dModels /
+      // pendingKnownModelGids is the "still-processing" carry-over (3D model
+      // uploads whose Shopify-side processing hadn't finished by the time
+      // the bounded polling window timed out).
+      setPendingVariantGalleries([]);
+      setPendingMediaOrder([]);
+      setPendingProductNewMedia([]);
+      setPendingClearVariantMainImages([]);
+      setPendingExternalVideos({});
+      setPendingVariant3dModels(deferred.carryOverModels);
+      setPendingVariant3dPreviews(deferred.carryOverPreviews);
+      setPendingKnownModelGids(deferred.carryOverGids);
+      setPendingGalleryOrder({});
+      setResetCounter(c => c + 1);
+    }
   }, []);
 
   const handleGallerySelectionGidsChange = useCallback((gids: string[]) => {
@@ -287,26 +319,29 @@ export function useVariantImageManager() {
         });
       }
 
+      // Defer the per-variant + per-product pending clears until the
+      // post-save refetch lands (see handleVariantsLoaded). Eager clearing
+      // produced a visible flicker: pendingProductNewMedia dropped → tile
+      // gone → refetch ~300-800ms later → tile re-appeared. By keeping the
+      // optimistic staging tiles in state while the refetch is in flight,
+      // the merchant sees a continuous image — the optimistic blob:URL
+      // version + the real CDN-URL version coexist for one render tick at
+      // most, then the deferred clear runs and only the real tile remains.
+      postSaveDeferredClearRef.current = {
+        carryOverModels,
+        carryOverPreviews,
+        carryOverGids,
+      };
+      // bulkItems / hasAltTextEdits aren't tied to the gallery render in the
+      // same way (no optimistic-tile flicker risk) so clear them now.
       setBulkItems([]);
       setSelectedBulkIds(new Set());
-      setPendingVariantGalleries([]);
-      setPendingMediaOrder([]);
-      setPendingProductNewMedia([]);
-      setPendingClearVariantMainImages([]);
-      setPendingExternalVideos({});
-      setPendingVariant3dModels(carryOverModels);
-      setPendingVariant3dPreviews(carryOverPreviews);
-      setPendingKnownModelGids(carryOverGids);
-      setPendingGalleryOrder({});
       setHasAltTextEdits(false);
-      setResetCounter(c => c + 1);
-      // Force a /api/product-variants refetch so the just-created product.media
-      // entries (with their permanent Shopify GIDs + CDN URLs) replace the
-      // optimistic pendingProductNewMedia tiles immediately. Without this the
-      // tile disappeared the moment we cleared pendingProductNewMedia above
-      // and only reappeared on a manual page reload (because the local cache
-      // of product.media wasn't refreshed). The refetch lands ~300–800ms
-      // later — a brief gap but no more "image vanished" complaint.
+      // Trigger the /api/product-variants refetch. When it returns,
+      // handleVariantsLoaded reads postSaveDeferredClearRef and applies the
+      // pending clears — at which point the new media is already on
+      // shopifyMediaMap + refreshedProductImages so the visual transition
+      // is seamless.
       setVariantReloadCounter(c => c + 1);
       return null;
     } finally {
