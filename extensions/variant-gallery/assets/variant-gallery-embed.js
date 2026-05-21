@@ -710,15 +710,23 @@ class CpEmbedGallery extends HTMLElement {
       this._log('theme-inherit: no sample img found for media_fit detection');
     }
 
-    // image_zoom: detect via DOM markers, independent of Dawn's media-
-    // gallery.js execution order (defer scripts run after us in source
-    // order). We pick up either Dawn's lightbox path (<product-modal> /
-    // .product__modal-opener), Dawn's hover path (image-magnify wrapper),
-    // or the modified-Dawn inline-cursor signal.
+    // image_zoom: Dawn always renders <product-modal> and a
+    // `.product__modal-opener` wrapper regardless of the image_zoom
+    // section setting (the modal also powers the standalone gallery
+    // viewer), and the `image-magnify` prefix exists for ALL three
+    // values (image-magnify-lightbox / image-magnify-hover / image-
+    // magnify-none). The only DOM markers that actually reflect the
+    // setting are the value-specific class suffixes Dawn emits in
+    // product-thumbnail.liquid: `.product__media-zoom-{value}` and
+    // `.image-magnify-{value}`. Match those explicitly — anything
+    // ending in `-none` is correctly skipped.
     const zoomRoot = gallery || product || document;
-    const hasLightbox = !!document.querySelector('product-modal')
-                     || !!zoomRoot.querySelector('.product__modal-opener');
-    const hasHover    = !!zoomRoot.querySelector('image-magnify, [class*="image-magnify"]');
+    const hasLightbox = !!zoomRoot.querySelector(
+      '.product__media-zoom-lightbox, .image-magnify-lightbox'
+    );
+    const hasHover = !!zoomRoot.querySelector(
+      '.product__media-zoom-hover, .image-magnify-hover'
+    );
     // Use ONLY the Liquid-rendered markers as positive signals — Dawn
     // gates the rendering of <product-modal> (lightbox) and image-
     // magnify (hover) on the section setting, so their presence/absence
