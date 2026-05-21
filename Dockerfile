@@ -52,12 +52,13 @@ COPY --chown=node:node --from=builder /app/build ./build
 
 # Copy runtime files
 COPY --chown=node:node server.js start.js remix.config.js ./
-COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js ./
+COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js ./
 COPY --chown=node:node scripts ./scripts/
 
 # Copy middleware and other app files needed at runtime by server.js
 COPY --chown=node:node app/middleware ./app/middleware/
 COPY --chown=node:node app/utils ./app/utils/
+COPY --chown=node:node app/config ./app/config/
 
 EXPOSE 3000
 
