@@ -1150,6 +1150,14 @@ export function VariantImageManager({
     const sepIdx = overStr.indexOf("::");
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
     const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+    console.log("[dragEnd raw]",
+      "sourceContainerId=" + sourceContainerId,
+      "draggedUrl=" + url,
+      "overStr=" + overStr,
+      "targetContainerId=" + targetContainerId,
+      "overUrl=" + overUrl,
+      "overData=" + JSON.stringify(over.data?.current ?? null),
+    );
 
     if (sourceContainerId === targetContainerId) {
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
