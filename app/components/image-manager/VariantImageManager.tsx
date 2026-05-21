@@ -776,12 +776,26 @@ export function VariantImageManager({
   // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
   // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
   // always resolve even when the DB cache is stale or incomplete.
+  //
+  // For uploads that haven't been saved yet, pendingProductNewMedia carries a
+  // local previewUrl (typically a blob: URL from URL.createObjectURL on the
+  // upload pipeline). Inject those staging-URL → previewUrl entries into the
+  // same map so the variant gallery's render loop — which maps galleryFileGids
+  // through fileUrlMap and .filter(Boolean)s anything that doesn't resolve —
+  // can actually show the optimistic tile for a freshly uploaded image. Without
+  // this, the gallery silently filtered the entry out and the merchant saw
+  // "I added it, nothing happened".
   const fileUrlMap: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(
       effectiveProductImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
     ),
     ...shopifyMediaMap,
-  }), [effectiveProductImages, shopifyMediaMap]);
+    ...Object.fromEntries(
+      pendingProductNewMedia
+        .filter(m => m.previewUrl && m.resourceUrl)
+        .map(m => [m.resourceUrl, m.previewUrl as string])
+    ),
+  }), [effectiveProductImages, shopifyMediaMap, pendingProductNewMedia]);
 
   const urlToGid: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
