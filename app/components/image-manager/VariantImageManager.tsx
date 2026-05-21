@@ -17,27 +17,43 @@ import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
 const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   // No closestCenter fallback: releasing in genuine empty space must abort
-  // the drag, not snap to the nearest tile. Without this, a merchant who
-  // released a variant image outside the gallery saw the image deleted —
-  // closestCenter resolved to a far-away product tile and the variant→product
-  // branch fired with that tile as the (unintended) drop target.
+  // the drag, not snap to the nearest tile.
   if (hits.length === 0) return [];
   const sourceContainer = args.active.data.current?.containerId as string | undefined;
   const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
   const containerHits = hits.filter(({ id }) => !(id as string).includes("::"));
-  // Variant source: prefer same-container item hits. Small variant galleries
-  // sit over a larger product gallery, so the cursor often overlaps both;
-  // without the filter, drags inside the variant silently routed to product.
-  if (sourceContainer && sourceContainer !== "product") {
-    const sameContainerItems = itemHits.filter(({ id }) =>
-      (id as string).startsWith(sourceContainer + "::")
-    );
-    if (sameContainerItems.length > 0) return sameContainerItems;
+  if (sourceContainer) {
+    if (sourceContainer === "product") {
+      // Product source: prefer cross-container targets so a drop landing
+      // on a variant tile (with an overlapping product tile underneath
+      // from pointerWithin's stacked hits) routes to the variant. Without
+      // this, the product tile won the tie and the handler fell into the
+      // within-product reorder branch instead of product→variant copy —
+      // the merchant saw the dragged image rearrange inside product
+      // ("disappears from where it was") and never arrive in the variant.
+      const nonSource = itemHits.filter(({ id }) =>
+        !(id as string).startsWith("product::")
+      );
+      if (nonSource.length > 0) return nonSource;
+    } else {
+      // Variant source: prefer same-variant items so a small variant
+      // gallery's reorder doesn't get hijacked by an overlapping product
+      // tile underneath.
+      const sameContainerItems = itemHits.filter(({ id }) =>
+        (id as string).startsWith(sourceContainer + "::")
+      );
+      if (sameContainerItems.length > 0) return sameContainerItems;
+      // No same-variant tile under cursor — accept any cross-container item.
+      const nonSource = itemHits.filter(({ id }) =>
+        !(id as string).startsWith(sourceContainer + "::")
+      );
+      if (nonSource.length > 0) return nonSource;
+    }
   }
   if (itemHits.length > 0) return itemHits;
-  // No item hits — only containers. Prefer containers that aren't the source,
-  // so a product→variant drop on the variant section's whitespace doesn't
-  // get hijacked by the (overlapping) product container underneath.
+  // No item hits — only containers. Prefer non-source containers so a
+  // cross-gallery drop on whitespace isn't hijacked by the source's own
+  // overlapping container droppable.
   if (sourceContainer) {
     const nonSource = containerHits.filter(({ id }) => id !== sourceContainer);
     if (nonSource.length > 0) return nonSource;
