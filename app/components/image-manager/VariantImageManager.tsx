@@ -18,6 +18,21 @@ const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
   if (hits.length === 0) return closestCenter(args);
   const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
+  // Prefer hits in the source container so a cursor that drifts slightly
+  // outside a small variant gallery doesn't accidentally resolve to a
+  // product-gallery tile underneath it. Without this, dragging from a
+  // small variant section (few tiles) is fragile — any cursor jitter
+  // onto the product gallery (many tiles, large area) fires a cross-
+  // container move and the merchant's image vanishes. Cross-container
+  // drags still work whenever the cursor leaves the source's tiles
+  // entirely (no same-container hits → fall through to all itemHits).
+  const sourceContainer = args.active.data.current?.containerId as string | undefined;
+  if (sourceContainer && itemHits.length > 0) {
+    const sameContainer = itemHits.filter(({ id }) =>
+      (id as string).startsWith(sourceContainer + "::")
+    );
+    if (sameContainer.length > 0) return sameContainer;
+  }
   return itemHits.length > 0 ? itemHits : hits;
 };
 
