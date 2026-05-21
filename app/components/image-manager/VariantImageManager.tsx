@@ -1118,7 +1118,28 @@ export function VariantImageManager({
         }
       } else {
         const variant = variants.find(v => v.id === sourceContainerId);
-        const gids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
+        const storedGids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
+        // mainGid is what gets shown at position 0 in the variant gallery
+        // when storedGids doesn't already include it (legacy metafield
+        // convention: variant_gallery list.file_reference holds gallery
+        // items, mainGid is implicit at slot 0). For reorder to be aware of
+        // it (so the merchant can drag it to a different position OR drag
+        // something else to position 0 to promote that one to the new
+        // featured image), include it in the source variantUrls. If
+        // storedGids already contains it (after a prior reorder this
+        // session), use as-is — handleVariantReorder pushes mainGid into
+        // pendingVariantGalleries on each reorder so the second drag onwards
+        // doesn't need the prepend.
+        const variantMainGid = variant?.defaultImageUrl
+          ? (urlToGid[variant.defaultImageUrl] ??
+             Object.entries(urlToGid).find(([u]) =>
+               u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
+             )?.[1])
+          : undefined;
+        const hasMainImageInGallery = !locallyExcludedMainGids.has(sourceContainerId) && Boolean(variantMainGid);
+        const gids = (hasMainImageInGallery && variantMainGid && !storedGids.includes(variantMainGid))
+          ? [variantMainGid, ...storedGids]
+          : storedGids;
         const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
         const externalUrls = pendingExternalVideos[sourceContainerId] ?? variant?.externalVideoUrls ?? [];
         const modelUrls = pendingVariant3dModels[sourceContainerId] ?? variant?.threeDModelUrls ?? [];
@@ -2455,18 +2476,36 @@ export function VariantImageManager({
                      u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
                    )?.[1])
                 : undefined;
-              // Always strip mainGid from the gallery portion and re-inject once at position 0.
-              // This prevents duplicate React keys when mainGid was wrongly saved into the
-              // metafield (which would cause React to silently drop the second occurrence).
-              // Skip injection when the user dragged the main image to the product gallery this session.
-              const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
               // hasMainImage is true only when a native Shopify main image (defaultImageUrl) resolves
               // to a GID. Gallery-only images from the metafield are NOT a substitute — without a
               // native main image the section must show the placeholder and pulse warning.
               const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && Boolean(mainGid);
-              const effectiveGids = hasMainImageForVariant
-                ? [mainGid!, ...galleryGids]
-                : galleryGids;
+              // effectiveGids is the ordered file-GID list the variant gallery
+              // renders. Three cases:
+              //   1. No main image (none on Shopify, or merchant locally excluded it):
+              //      use storedGids as-is, with mainGid filtered out as a safety net.
+              //   2. Legacy state: storedGids excludes mainGid (the metafield holds
+              //      gallery items only). Prepend mainGid so it shows at position 0.
+              //   3. Post-reorder state: storedGids ALREADY contains mainGid in some
+              //      position (handleVariantReorder always pushes the full ordered
+              //      list including mainGid). Use as-is and dedup defensively — DO
+              //      NOT force mainGid back to slot 0, otherwise the merchant's
+              //      drag to demote it would visually snap back.
+              let effectiveGids: string[];
+              if (!hasMainImageForVariant) {
+                effectiveGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
+              } else if (mainGid && !storedGids.includes(mainGid)) {
+                effectiveGids = [mainGid, ...storedGids];
+              } else {
+                // Dedup while preserving first-seen order (handles the rare
+                // bug case where the metafield contained mainGid twice).
+                const seen = new Set<string>();
+                effectiveGids = storedGids.filter(g => {
+                  if (seen.has(g)) return false;
+                  seen.add(g);
+                  return true;
+                });
+              }
               return (
               <VariantGallerySection
                 key={v.id}
