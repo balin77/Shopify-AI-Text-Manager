@@ -676,6 +676,15 @@ class CpEmbedGallery extends HTMLElement {
     out.videoLoop = !!document.querySelector('video[loop]');
     this._log('theme-inherit: videoLoop=', out.videoLoop);
 
+    // constrain_to_viewport: Dawn adds the `.constrain-height` class to
+    // `.product-media-container` when the section setting is enabled,
+    // and the bundled CSS sets a --constrained-height of
+    // max(300px, calc(100vh - 400px)) on that container. We mirror the
+    // intent (cap tall images at roughly viewport height) via a single
+    // CSS max-height rule gated by data-constrain="1" — see stylesheet.
+    out.constrain = !!document.querySelector('.product-media-container.constrain-height');
+    this._log('theme-inherit: constrainToViewport=', out.constrain);
+
     // media_fit: read object-fit from a native gallery image. The native
     // gallery is in the DOM (possibly visibility:hidden via cp-vg-prehide,
     // which doesn't affect computed styles) so this is reliable. Falls
@@ -777,6 +786,11 @@ class CpEmbedGallery extends HTMLElement {
     // slider mode — both refinements that pure `show` could not express.
     if (layout) inner.setAttribute('data-layout', layout);
     else inner.removeAttribute('data-layout');
+    // Path C: mirror Dawn's "auf Bildschirmhöhe beschränken"
+    // (constrain_to_viewport) — cap tall main-slot heights via CSS.
+    const constrain = !!(this._themeSettings && this._themeSettings.constrain);
+    if (constrain) inner.setAttribute('data-constrain', '1');
+    else inner.removeAttribute('data-constrain');
 
     if (!thumbMode) {
       // Stacked mode: one .cp-gallery__main per item (each at its own

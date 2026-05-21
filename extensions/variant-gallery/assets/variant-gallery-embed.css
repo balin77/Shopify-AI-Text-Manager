@@ -350,3 +350,16 @@ cp-embed-gallery {
   .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
   .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { right: 4px; left: auto; }
 }
+
+/* ─── Path C: constrain_to_viewport ─────────────────────────────────── */
+/* When Dawn's "Auf Bildschirmhöhe beschränken" is on, the native gallery
+   applies max(300px, calc(100vh - 400px)) to .product-media-container
+   (the 400px is Dawn's average-header-plus-spacing budget). Mirror the
+   same formula on our main-slot so very tall portrait images don't force
+   the shopper to scroll a single image — they get letterboxed by the
+   shared object-fit: contain rule instead. The aspect-ratio inline style
+   that JS sets on .cp-gallery__main still takes precedence for width
+   distribution; max-height just caps the eventual rendered height. */
+.cp-embed-gallery .cp-gallery__inner[data-constrain="1"] .cp-gallery__main {
+  max-height: max(300px, calc(100vh - 400px));
+}
