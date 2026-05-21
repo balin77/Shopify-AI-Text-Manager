@@ -3,6 +3,19 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { isValidExternalVideoUrl, isValid3dModelUrl, kindToMediaContentType } from "../utils/mediaKind";
 import type { MediaKind } from "../components/image-manager/types";
+import { invalidateVariantDefsCache } from "./api.product-variants";
+
+// metafieldsSet userError messages that indicate one of our variant
+// metafield definitions has gone missing (deleted externally, type-changed,
+// etc.). When we see one of these, drop the verified-definitions cache for
+// the shop so the next /api/product-variants hit re-creates the definition
+// instead of papering over the broken state for the rest of the process
+// lifetime.
+function looksLikeMissingDefinitionError(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("definition") &&
+    (m.includes("not found") || m.includes("does not exist") || m.includes("unknown") || m.includes("invalid"));
+}
 
 interface UpdateVariantGalleriesBody {
   productId: string;
@@ -48,7 +61,7 @@ interface UpdateVariantGalleriesBody {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const body: UpdateVariantGalleriesBody = await request.json();
   const {
     productId,
@@ -588,8 +601,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     `, { variables: { metafields: metafieldOps } });
     const d = await r.json();
     const ue = d.data?.metafieldsSet?.userErrors ?? [];
-    if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `metafieldsSet: ${e.message}`));
-    else completedSteps.push("metafieldsSet");
+    if (ue.length > 0) {
+      errors.push(...ue.map((e: { message: string }) => `metafieldsSet: ${e.message}`));
+      // If any userError points at a missing definition, drop the
+      // verified-definitions cache for this shop. Next product open
+      // will re-create whatever got deleted, so the merchant recovers
+      // without needing a server restart.
+      const missingDef = ue.some((e: { message: string }) => looksLikeMissingDefinitionError(e.message));
+      if (missingDef) invalidateVariantDefsCache(session.shop);
+    } else {
+      completedSteps.push("metafieldsSet");
+    }
   }
 
   if (errors.length > 0) return fail();

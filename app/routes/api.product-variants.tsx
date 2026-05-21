@@ -3,12 +3,28 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 
+// Bump this whenever the list of ensured metafield definitions below
+// changes (add / remove / rename / type-change). The cache below is keyed
+// on `${shop}:${DEFS_VERSION}`, so a bump forces re-verification on every
+// shop after the next deploy.
+const DEFS_VERSION = 6;
+
 // Shops whose variant-metafield definitions have already been verified in
-// this process. Set on first /api/product-variants hit per shop; resets only
-// on server restart. If a definition ever gets externally deleted, the next
-// metafieldsSet call will surface a clear userError — handler can then
-// invalidate via `verifiedDefShops.delete(shop)`.
+// this process, keyed on `${shop}:${DEFS_VERSION}`. Set on first
+// /api/product-variants hit per shop; resets on server restart or
+// DEFS_VERSION bump. Save handlers call `invalidateVariantDefsCache(shop)`
+// after a Shopify userError that indicates a missing definition, so a
+// merchant who deleted a definition externally recovers on the next save
+// attempt without needing a deploy.
 const verifiedDefShops = new Set<string>();
+
+function defsCacheKey(shop: string): string {
+  return `${shop}:${DEFS_VERSION}`;
+}
+
+export function invalidateVariantDefsCache(shop: string): void {
+  verifiedDefShops.delete(defsCacheKey(shop));
+}
 
 async function ensureVariantMetafieldDefinition(
   adminClient: { graphql: (query: string, options?: Record<string, unknown>) => Promise<Response> },
@@ -43,7 +59,7 @@ async function ensureVariantMetafieldDefinition(
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const tAll = performance.now();
+  const tStart = performance.now();
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const productId = url.searchParams.get("productId");
@@ -52,12 +68,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ error: "productId required" }, { status: 400 });
   }
 
+  let defsBranch: "verified" | "cached" = "cached";
+
   // Metafield-definition existence checks: parallelized + cached per shop
   // per process. First request after server boot pays ~1 roundtrip (six
-  // checks in parallel); subsequent requests skip entirely.
-  const tDefs = performance.now();
-  let defsBranch: "skipped-cache" | "verified" = "skipped-cache";
-  if (!verifiedDefShops.has(session.shop)) {
+  // checks in parallel); subsequent requests skip entirely. Cache key
+  // includes DEFS_VERSION so adding a new definition forces a re-check.
+  const defsKey = defsCacheKey(session.shop);
+  if (!verifiedDefShops.has(defsKey)) {
     defsBranch = "verified";
     await Promise.all([
       ensureVariantMetafieldDefinition(admin, "variant_gallery", "Variant Gallery", "list.file_reference"),
@@ -75,14 +93,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ensureVariantMetafieldDefinition(admin, "variant_3d_previews", "Variant 3D Model Previews", "list.url"),
       ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json"),
     ]);
-    verifiedDefShops.add(session.shop);
+    verifiedDefShops.add(defsKey);
   }
-  const dDefs = performance.now() - tDefs;
 
   // Fetch product media + variants in one query.
   // media(first:250) gives us a definitive GID→URL map for ALL product images,
   // independent of the DB cache — so gallery thumbnails always resolve correctly.
-  const tMain = performance.now();
   const response = await admin.graphql(`
     query GetVariantsWithGallery($id: ID!) {
       product(id: $id) {
@@ -158,15 +174,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const data = await response.json();
   const productData = data.data?.product;
-  const dMain = performance.now() - tMain;
 
   // Resolve metaobject handles + GIDs from the options block we already
   // fetched in the main query. Falls back gracefully if anything throws.
   const optionHandleMap: Record<string, Record<string, string | null>> = {};
   const optionGidMap: Record<string, Record<string, string | null>> = {};
   const optionValueIdMap: Record<string, Record<string, string | null>> = {};
-  const tOpts = performance.now();
-  let dNodes = 0;
   try {
     // Collect all non-null metaobject GIDs and track which option/value they belong to
     type OVRef = { optionName: string; valueName: string };
@@ -188,7 +201,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const gids = Object.keys(gidToRefs);
     if (gids.length > 0) {
       // Step 2: batch-fetch all metaobject handles in one nodes query
-      const tNodes = performance.now();
       const nodesRes = await admin.graphql(`
         query GetMetaobjectHandles($ids: [ID!]!) {
           nodes(ids: $ids) {
@@ -208,12 +220,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           optionGidMap[optionName][valueName] = node.id;
         }
       }
-      dNodes = performance.now() - tNodes;
     }
   } catch (err: any) {
     console.error("[api.product-variants] handle lookup failed:", err?.message);
   }
-  const dOpts = performance.now() - tOpts - dNodes;
 
   const variants = (productData?.variants?.edges?.map((e: any) => {
     const node = e.node;
@@ -263,8 +273,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // update-variant-match-key) use their own upserts and tolerate missing rows.
   // Awaiting here added N Prisma roundtrips to every product open for no
   // client-visible benefit.
-  const tDb = performance.now();
-  const dbUpsertPromise = Promise.allSettled(variants.map((v: any) => {
+  //
+  // Known narrow race: api.update-variant-match-key.tsx:24-27 uses findMany
+  // for the tenancy check and returns 404 "Product not found — please
+  // reload" if no row exists yet. If a merchant opens a brand-new product
+  // and submits an SKU/image-key edit within the ~20-50ms upsert window
+  // before this background promise lands, they'll see that error. The
+  // Image Manager UI guards against this in practice (the edit panel only
+  // mounts after /api/product-variants resolves), and a retry succeeds.
+  // Acceptable; documented here so the dependency isn't invisible.
+  //
+  // Deployment note: this is safe on a long-running Node server (see
+  // start.js / nixpacks.toml). On a serverless / edge runtime that freezes
+  // the function after response, dangling upserts may be killed and the
+  // affected variants will simply re-upsert on the next product open.
+  Promise.allSettled(variants.map((v: any) => {
     const numericId = v.id.replace("gid://shopify/ProductVariant/", "");
     return db.productVariant.upsert({
       where: { shopifyGid: v.id },
@@ -286,23 +309,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         galleryJson: v.metafield?.value ?? null,
       },
     });
-  }));
-  dbUpsertPromise
-    .then(results => {
-      const dDbBg = performance.now() - tDb;
-      const failed = results.filter(r => r.status === "rejected").length;
-      if (failed > 0) {
-        logger.warn(`[api.product-variants] variant upsert: ${failed}/${results.length} failed`, {
-          productId,
-          db_upsert_bg_ms: Math.round(dDbBg),
-        });
-      } else {
-        logger.debug(`[api.product-variants] variant upsert finished in background`, {
-          productId,
-          db_upsert_bg_ms: Math.round(dDbBg),
-        });
-      }
-    });
+  })).then(results => {
+    const failed = results.filter(r => r.status === "rejected").length;
+    if (failed > 0) {
+      logger.warn(`[api.product-variants] variant upsert: ${failed}/${results.length} failed`, { productId });
+    }
+  }).catch(err => {
+    // Defensive: protect against an unhandled rejection if logger.warn itself
+    // throws (e.g. transport failure). Node 16+ crashes the process on
+    // unhandled rejection by default; this last-resort fallback keeps the
+    // background path safe.
+    console.error("[api.product-variants] upsert post-log failed", err);
+  });
 
   const mappedVariants = variants.map((v: any) => ({
     ...v,
@@ -316,18 +334,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // selectedOptions already enriched with handles above
   }));
 
-  const dAll = performance.now() - tAll;
-  logger.info(`[api.product-variants] timing`, {
-    productId,
-    total_ms: Math.round(dAll),
-    defs_ms: Math.round(dDefs),
+  logger.info(`[api.product-variants] served`, {
     defs_branch: defsBranch,
-    main_ms: Math.round(dMain),
-    options_ms: Math.round(dOpts),
-    nodes_ms: Math.round(dNodes),
-    db_upsert_dispatch_ms: Math.round(performance.now() - tDb),
-    variant_count: variants.length,
-    media_count: Object.keys(mediaMap).length,
+    total_ms: Math.round(performance.now() - tStart),
   });
 
   return json({ variants: mappedVariants, mediaMap, mediaMetaMap });
