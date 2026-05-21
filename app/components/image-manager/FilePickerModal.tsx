@@ -312,7 +312,7 @@ export function FilePickerModal({
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
         const stagedJson = await res.json();
-        const { url, resourceUrl, error: stagedErr } = stagedJson;
+        const { url, resourceUrl, parameters, httpMethod, error: stagedErr } = stagedJson;
         if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
           setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
           setError(t.imageManager.imageQuotaExceeded?.replace("{limit}", String(stagedJson.limit ?? "")) ?? "Quota exceeded");
@@ -361,9 +361,28 @@ export function FilePickerModal({
             setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
             reject(new Error("Upload network error"));
           };
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // Shopify's staged target is reached differently per resource:
+          //   IMAGE: signed PUT — body is the raw file, Content-Type header
+          //   VIDEO / MODEL_3D: signed POST policy — multipart/form-data with
+          //     every `parameters` entry as a form field FIRST, then `file`
+          //     LAST (the underlying storage requires this order). Skipping
+          //     this branch (always PUT) was the previous bug: PUTting a
+          //     `.glb` to a POST-only target returned 405 and the upload
+          //     silently failed, leaving the merchant clicking Add with
+          //     nothing happening.
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
       } catch {
         setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));

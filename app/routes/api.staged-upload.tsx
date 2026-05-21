@@ -20,6 +20,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
   const resource = kindToStagedResource(kind);
+  // Shopify's staged-upload destinations differ by resource:
+  //   IMAGE     → Google Cloud Storage signed PUT (simple body upload)
+  //   VIDEO     → multipart POST (typically Mux / GCS POST policy)
+  //   MODEL_3D  → multipart POST (same as VIDEO)
+  // Using `httpMethod: "PUT"` for VIDEO/MODEL_3D returns a target URL that
+  // rejects PUT (405 Method Not Allowed) — the upload silently fails on the
+  // client side and the merchant sees "nothing happens" when they try to
+  // upload a .glb. Pick the method that matches the resource so each
+  // staged target is reachable with the upload technique it expects.
+  const httpMethod: "PUT" | "POST" = resource === "IMAGE" ? "PUT" : "POST";
 
   // Each staged upload = one billable image operation (real compute/bandwidth;
   // AI is merchant-funded BYO). Reserve quota before asking Shopify for a target.
@@ -54,7 +64,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         mimeType,
         fileSize: String(fileSize),
         resource,
-        httpMethod: "PUT",
+        httpMethod,
       }],
     },
   });
@@ -79,6 +89,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     url: target.url,
     resourceUrl: target.resourceUrl,
     parameters: target.parameters,
+    // Client uses this to decide between a single-body PUT (image) and a
+    // multipart-form POST that includes Shopify's signed `parameters`
+    // (video / 3D model). Older clients that ignore the field still PUT,
+    // which only works for images.
+    httpMethod,
     kind,
   });
 };

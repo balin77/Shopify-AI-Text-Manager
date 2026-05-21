@@ -376,13 +376,33 @@ export default function ProductsPage() {
   });
 
   // Extend subResource state/handlers to include pending gallery changes so the
-  // main Speichern/Verwerfen buttons also save and reset variant gallery assignments.
+  // main Speichern/Verwerfen buttons also save and reset variant gallery
+  // assignments. Every per-variant pending bucket has to be listed here —
+  // missing one means the Save button stays disabled while the merchant's
+  // unsaved change is sitting in the corresponding state slot, looking
+  // applied but never reaching Shopify. Buckets:
+  //   • pendingVariantGalleries   — file-backed gallery edits
+  //   • pendingMediaOrder         — product-media reorder
+  //   • pendingProductNewMedia    — fresh uploads + library picks (product mode)
+  //   • bulkItems (ready)         — bulk-uploaded files awaiting assignment
+  //   • hasAltTextEdits           — alt-text per image
+  //   • pendingExternalVideos     — YouTube / Vimeo URLs per variant
+  //   • pendingVariant3dModels    — .glb URLs per variant (list.url metafield)
+  //   • pendingGalleryOrder       — combined file+url+model order per variant
+  //   • pendingClearVariantMainImages — explicit clear-main-image requests
+  //   • pendingKnownModelGids     — carry-over from a prior "processing" save
+  //                                 so a second click on Save retries the GID
+  //                                 polling even when nothing else changed
   const hasPendingImageChanges = showImageManager && (
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
     imageManagerState.pendingProductNewMedia.length > 0 ||
     imageManagerState.bulkItems.some(i => i.status === "ready") ||
-    imageManagerState.hasAltTextEdits
+    imageManagerState.hasAltTextEdits ||
+    Object.keys(imageManagerState.pendingExternalVideos).length > 0 ||
+    Object.keys(imageManagerState.pendingVariant3dModels).length > 0 ||
+    Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
+    Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
 
   const wrappedSubResourceState = useMemo(() => ({

@@ -1605,7 +1605,7 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error, code, limit } = await res.json();
+        const { url, resourceUrl, parameters, httpMethod, error, code, limit } = await res.json();
         if (code === "IMAGE_QUOTA_EXCEEDED") {
           setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
           break;
@@ -1616,9 +1616,20 @@ export function VariantImageManager({
           const xhr = new XMLHttpRequest();
           xhr.onload = () => resolve();
           xhr.onerror = () => reject();
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
 
         if (resourceUrl) {

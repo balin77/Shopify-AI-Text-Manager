@@ -392,7 +392,7 @@ export function BulkImageUploadPanel({
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
         const stagedJson = await res.json();
-        const { url, resourceUrl, error } = stagedJson;
+        const { url, resourceUrl, parameters, httpMethod, error } = stagedJson;
         if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
           setQuotaError(
             t.imageManager.imageQuotaExceeded.replace("{limit}", String(stagedJson.limit ?? ""))
@@ -433,10 +433,24 @@ export function BulkImageUploadPanel({
             onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
             reject(new Error("Upload network error"));
           };
-          console.log("[BulkUpload] XHR PUT →", url);
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // PUT (image) vs multipart POST (video/3D) — Shopify's staged target
+          // rejects PUT for the POST-only resources, which would silently
+          // fail the upload (see api.staged-upload.tsx).
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            console.log("[BulkUpload] XHR POST (multipart) →", url);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            console.log("[BulkUpload] XHR PUT →", url);
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
       } catch (err) {
         console.error("[BulkUpload] unexpected error", err);
