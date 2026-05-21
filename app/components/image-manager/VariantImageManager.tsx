@@ -413,7 +413,16 @@ export function VariantImageManager({
   useEffect(() => {
     const hasGalleryChanges = Object.keys(pendingVariantGalleries).length > 0;
     const hasExcludedMain = locallyExcludedMainGids.size > 0;
-    if (!hasGalleryChanges && !hasExcludedMain) return;
+    const hasProductNewMedia = pendingProductNewMedia.length > 0;
+    // Skip the propagation only when ALL the tracked buckets are empty. The
+    // previous check was variant-only and ignored pendingProductNewMedia,
+    // which is the bucket that grows when the merchant adds something to
+    // the product gallery via the modal (library pick or upload). Without
+    // pendingProductNewMedia in the guard, the useEffect fires on dep
+    // change but immediately returns early, so onPendingChange is never
+    // called → the hook never sees the new media → hasPendingImageChanges
+    // stays false → Save button stays disabled.
+    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) return;
 
     // Track variants with no featured image so backend keeps all GIDs in the metafield
     // and never promotes fileGids[0] to become mediaId on Shopify.
