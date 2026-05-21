@@ -1180,7 +1180,21 @@ export function VariantImageManager({
           if (moved[0] && isNonImage(moved[0])) return;
           handleVariantReorder(
             sourceContainerId,
-            moved.map(u => urlToGid[u] ?? u),
+            moved.map(u => {
+              // External-video / 3D-model URLs must stay as URLs in the
+              // payload — handleVariantReorder's URL-pattern detection
+              // routes them to the right `kind` (`url` vs `model`).
+              // urlToGid[glbUrl] resolves to a Model3d GID when the model
+              // is also on product.media (cross-product picks), so a blind
+              // ?? would mistakenly serialise it as kind:"file" → the
+              // server rejects Model3d in variant_gallery list.file_reference
+              // AND the 3D badge disappears from the tile on the next
+              // render (no model URL in pendingVariant3dModels for that
+              // entry). Same shape concern for YouTube/Vimeo URLs even
+              // though they don't currently collide with urlToGid.
+              if (externalSet.has(u) || modelSet.has(u)) return u;
+              return urlToGid[u] ?? u;
+            }),
           );
         }
       }
@@ -2459,6 +2473,16 @@ export function VariantImageManager({
                 variant={{
                   ...v,
                   galleryFileGids: effectiveGids,
+                  // Inject the in-session pending order so a fresh reorder
+                  // is reflected in displayUrls immediately. Without this,
+                  // VariantGallerySection's orderedUrls memo reads the
+                  // saved-but-stale variant.galleryOrderJson and the drag
+                  // appeared to do nothing (especially obvious for mixed
+                  // galleries — file reorders sneaked through the tail-
+                  // append branch when no order JSON existed yet, but
+                  // anything with a saved order or any non-file drop
+                  // looked like a no-op).
+                  galleryOrderJson: pendingGalleryOrder[v.id] ?? v.galleryOrderJson,
                 }}
                 hasMainImage={hasMainImageForVariant}
                 fileUrlMap={fileUrlMap}
