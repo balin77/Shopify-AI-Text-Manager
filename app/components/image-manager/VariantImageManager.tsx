@@ -2767,22 +2767,53 @@ export function VariantImageManager({
       </BlockStack>
     </Card>
     <DragOverlay>
-      {activeDragUrl ? (
+      {activeDragUrl ? (() => {
+        // Non-image tiles can't render the resourceUrl directly as an <img>
+        // (.mp4 / .glb / youtube watch URLs are not images). Use the meta's
+        // previewUrl (variant_3d_previews snapshot, YouTube/Vimeo thumb,
+        // video poster) and fall back to a kind-specific placeholder when
+        // no preview exists.
+        const meta = imageMetas[activeDragUrl];
+        const isImage = !meta?.kind || meta.kind === "image";
+        const ytThumb = meta?.kind === "external_video" ? youtubeThumbForUrl(activeDragUrl) : undefined;
+        const thumbSrc = isImage ? activeDragUrl : (meta?.previewUrl ?? ytThumb ?? null);
+        const placeholderLabel = meta?.kind === "model" ? "3D" : meta?.kind === "video" ? "▶" : meta?.kind === "external_video" ? "▶" : null;
+        return (
         <div style={{ position: "relative", display: "inline-block" }}>
-          <img
-            src={activeDragUrl}
-            alt=""
-            style={{
-              width: thumbSize,
-              height: thumbSize,
-              objectFit: "cover",
-              borderRadius: 6,
-              opacity: 0.9,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-              pointerEvents: "none",
-              display: "block",
-            }}
-          />
+          {thumbSrc ? (
+            <img
+              src={thumbSrc}
+              alt=""
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                opacity: 0.9,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                pointerEvents: "none",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                opacity: 0.9,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#1a1a1a",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: meta?.kind === "model" ? 24 : 32,
+              }}
+            >{placeholderLabel}</div>
+          )}
           {isCtrlHeld && (
             <div style={{
               position: "absolute",
@@ -2803,7 +2834,8 @@ export function VariantImageManager({
             }}>+</div>
           )}
         </div>
-      ) : null}
+        );
+      })() : null}
     </DragOverlay>
     <FilePickerModal
       open={pickerTarget !== null}
