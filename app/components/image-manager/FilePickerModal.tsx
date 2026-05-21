@@ -556,6 +556,16 @@ export function FilePickerModal({
   }, [productList, t]);
 
   const queuedSelectionCount = selected.size;
+  // Selected uploads that haven't reached "ready" yet — used to gate the
+  // primary Add button so the merchant can't commit while an upload is mid-
+  // flight (handleCommitSelected would otherwise silently filter them out and
+  // their content would be lost without any feedback).
+  const selectedUploadingCount = pendingUploads.filter(
+    u => selected.has(u.uniqueId) && u.status === "uploading"
+  ).length;
+  const selectedErrorCount = pendingUploads.filter(
+    u => selected.has(u.uniqueId) && u.status === "error"
+  ).length;
 
   return (
     <Modal
@@ -567,8 +577,18 @@ export function FilePickerModal({
       // mode uploads commit on-the-fly (without contributing to the count)
       // — only library picks accumulate in the selection.
       primaryAction={{
-        content: `${t.imageManager.browseFilesAddSelected ?? "Add selected"}${queuedSelectionCount > 0 ? ` (${queuedSelectionCount})` : ""}`,
-        disabled: queuedSelectionCount === 0,
+        // Show "Uploading…" while any selected upload is still in flight, so
+        // the merchant gets explicit visual feedback that the button is
+        // intentionally inactive (not broken). The spinner state also blocks
+        // the click, which is the real fix for the "I clicked Add but nothing
+        // happened" report: previously the click ran handleCommitSelected,
+        // which filtered out non-ready uploads, leaving picked=[] and the
+        // user's content silently lost.
+        content: selectedUploadingCount > 0
+          ? "Uploading…"
+          : `${t.imageManager.browseFilesAddSelected ?? "Add selected"}${queuedSelectionCount > 0 ? ` (${queuedSelectionCount})` : ""}`,
+        disabled: queuedSelectionCount === 0 || selectedUploadingCount > 0,
+        loading: selectedUploadingCount > 0,
         onAction: handleCommitSelected,
       }}
       secondaryActions={[{ content: t.common?.close ?? "Close", onAction: onClose }]}
