@@ -356,8 +356,15 @@ export function VariantImageManager({
         // already populated stays intact for entries that survive, and drop
         // entries that no longer exist in Shopify.
         if (mediaMap && mmm) {
+          // Read from the live ref (effectiveProductImages) instead of the
+          // useCallback closure — the closure captures the initial props and
+          // so its altText snapshot goes stale after the loader hands back a
+          // freshly bulk-applied set (mediaIds unchanged but altTexts new).
+          // currentImagesRef is updated every render, so this merge always
+          // sees the latest altTexts.
+          const liveImages = currentImagesRef.current ?? (refreshedProductImages ?? productImages);
           const existingByMediaId = new Map(
-            (refreshedProductImages ?? productImages).map(img => [img.mediaId, img])
+            liveImages.map(img => [img.mediaId, img])
           );
           const fresh: ProductImageRef[] = [];
           for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
@@ -787,7 +794,9 @@ export function VariantImageManager({
   // refreshedProductImages overrides productImages via effectiveProductImages; without this,
   // a user-triggered reload would be silently ignored as long as the stale override is set.
   // Also re-fetch variants so defaultImageUrl is fresh — missing-main detection depends on it.
-  const productImagesKey = productImages.map(i => i.mediaId).join(",");
+  // Hash altText into the key so a bulk-apply (mediaIds unchanged, altTexts new) also
+  // invalidates the stale refreshedProductImages and re-triggers the variant fetch.
+  const productImagesKey = productImages.map(i => `${i.mediaId}|${i.altText ?? ""}`).join(",");
   useEffect(() => {
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
