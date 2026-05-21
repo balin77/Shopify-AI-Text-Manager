@@ -666,10 +666,7 @@ export async function handleSaveImageAltText(
   const locale = getFormString(formData, "locale") || null;
   const primaryLocale = getFormString(formData, "primaryLocale") || null;
 
-  console.log("[ALT-SAVE-DBG] handleSaveImageAltText incoming", { shop: session.shop, mediaId, altText, locale, primaryLocale });
-
   if (!mediaId) {
-    console.warn("[ALT-SAVE-DBG] aborting — no mediaId");
     return json({ success: false, error: "mediaId required" }, { status: 400 });
   }
 
@@ -677,7 +674,6 @@ export async function handleSaveImageAltText(
 
   if (!locale || locale === primaryLocale) {
     // Primary locale: update media alt text via fileUpdate
-    let rawResponse: any = null;
     try {
       const r = await admin.graphql(
         `#graphql
@@ -686,30 +682,24 @@ export async function handleSaveImageAltText(
           }`,
         { variables: { files: [{ id: mediaId, alt: altText }] } }
       );
-      rawResponse = await r.json() as any;
-      shopifySaved = (rawResponse.data?.fileUpdate?.userErrors ?? []).length === 0;
-      console.log("[ALT-SAVE-DBG] fileUpdate response", { httpStatus: r.status, hasData: !!rawResponse.data, hasFileUpdate: !!rawResponse.data?.fileUpdate, userErrors: rawResponse.data?.fileUpdate?.userErrors, topLevelErrors: rawResponse.errors, shopifySaved });
+      const d = await r.json() as any;
+      shopifySaved = (d.data?.fileUpdate?.userErrors ?? []).length === 0;
     } catch (err: unknown) {
       logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
-      console.error("[ALT-SAVE-DBG] fileUpdate threw", String(err));
       return json({ success: false, error: "Shopify API error" }, { status: 500 });
     }
 
     if (shopifySaved) {
       // R4-DI7: shop-scoped (see note above) so a cross-shop media-GID
       // collision can't overwrite another tenant's row.
-      const dbResult = await db.productImage.updateMany({
+      await db.productImage.updateMany({
         where: { mediaId, product: { shop: session.shop } },
         data: { altText: altText || null, altTextModifiedAt: new Date() },
       }).catch((e) => {
         // Best-effort cache write (Shopify is source of truth) — but log
         // instead of fully swallowing, so a real failure is observable.
         logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
-        return { count: -1 };
       });
-      console.log("[ALT-SAVE-DBG] DB updateMany result (primary)", { mediaId, shop: session.shop, count: dbResult.count, expectedAltText: altText });
-    } else {
-      console.warn("[ALT-SAVE-DBG] skipping DB update because shopifySaved=false");
     }
   } else {
     // Foreign locale: use translationsRegister (needs digest from Shopify)

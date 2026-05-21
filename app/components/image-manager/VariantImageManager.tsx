@@ -1759,28 +1759,17 @@ export function VariantImageManager({
 
   const handleSaveAltText = useCallback((url: string, altText: string) => {
     const mediaId = urlToGid[url];
-    console.log("[ALT-SAVE-DBG] handleSaveAltText called", { url, mediaId, altText, currentLanguage, primaryLocale, hasMediaId: !!mediaId });
-    if (!mediaId) {
-      console.warn("[ALT-SAVE-DBG] aborting — no mediaId in urlToGid for this url", { url, urlToGidKeys: Object.keys(urlToGid).slice(0, 5) });
-      return;
-    }
+    if (!mediaId) return;
     const form = new FormData();
     form.append("action", "saveImageAltText");
     form.append("mediaId", mediaId);
     form.append("altText", altText);
     if (currentLanguage) form.append("locale", currentLanguage);
     if (primaryLocale) form.append("primaryLocale", primaryLocale);
-    console.log("[ALT-SAVE-DBG] submitting saveAltTextFetcher", { action: "saveImageAltText", mediaId, altText, locale: currentLanguage, primaryLocale });
     saveAltTextFetcher.submit(form, { method: "post" });
     dirtyUrlsRef.current.delete(url);
     if (dirtyUrlsRef.current.size === 0) onDirtyChange?.(false);
   }, [urlToGid, currentLanguage, primaryLocale, saveAltTextFetcher, onDirtyChange]);
-
-  // Diagnostic: surface saveAltTextFetcher state transitions and response data
-  // so we can see whether the request actually completed and what the server returned.
-  useEffect(() => {
-    console.log("[ALT-SAVE-DBG] saveAltTextFetcher state →", saveAltTextFetcher.state, "data:", saveAltTextFetcher.data);
-  }, [saveAltTextFetcher.state, saveAltTextFetcher.data]);
 
   const handleGenerateAltTextForImage = useCallback((url: string) => {
     const imageIndex = effectiveProductImages.findIndex(i => i.url === url);
