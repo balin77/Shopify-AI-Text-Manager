@@ -451,6 +451,12 @@ export function VariantImageManager({
     }
 
     const clearVariantMainImages = [...locallyExcludedMainGids, ...noMainVariantIds];
+    console.log("[VariantImageManager useEffect propagate] →", {
+      galleriesCount: galleries.length,
+      pendingProductNewMediaCount: pendingProductNewMedia.length,
+      clearMainCount: clearVariantMainImages.length,
+      hasOnPendingChange: !!onPendingChange,
+    });
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, clearVariantMainImages);
   }, [pendingVariantGalleries, pendingProductNewMedia, locallyExcludedMainGids]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1225,7 +1231,11 @@ export function VariantImageManager({
   // product gallery. Closes the modal afterwards — except for URL adds,
   // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((items: AddedItem[]) => {
-    if (!pickerTarget || items.length === 0) return;
+    console.log("[handleModalAdd] called", { mode: pickerTarget?.mode, itemCount: items.length, items });
+    if (!pickerTarget || items.length === 0) {
+      console.warn("[handleModalAdd] short-circuited", { hasPickerTarget: !!pickerTarget, itemCount: items.length });
+      return;
+    }
 
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants
@@ -1328,10 +1338,13 @@ export function VariantImageManager({
           additions.push({ resourceUrl: it.url, kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) });
         }
       }
+      console.log("[handleModalAdd PRODUCT] computed additions", { additionsCount: additions.length, additions });
       if (additions.length > 0) {
         setPendingProductNewMedia(prev => {
           const seen = new Set(prev.map(e => e.resourceUrl));
-          return [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
+          const next = [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
+          console.log("[handleModalAdd PRODUCT] setPendingProductNewMedia", { prevCount: prev.length, nextCount: next.length });
+          return next;
         });
       }
     }

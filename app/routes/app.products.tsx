@@ -404,6 +404,20 @@ export default function ProductsPage() {
     Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
+  if (showImageManager) {
+    console.log("[app.products hasPendingImageChanges]", {
+      hasPendingImageChanges,
+      pendingVariantGalleries: imageManagerState.pendingVariantGalleries.length,
+      pendingMediaOrder: imageManagerState.pendingMediaOrder.length,
+      pendingProductNewMedia: imageManagerState.pendingProductNewMedia.length,
+      bulkReady: imageManagerState.bulkItems.filter(i => i.status === "ready").length,
+      hasAltTextEdits: imageManagerState.hasAltTextEdits,
+      pendingExternalVideos: Object.keys(imageManagerState.pendingExternalVideos).length,
+      pendingVariant3dModels: Object.keys(imageManagerState.pendingVariant3dModels).length,
+      pendingGalleryOrder: Object.keys(imageManagerState.pendingGalleryOrder).length,
+      pendingKnownModelGids: Object.keys(imageManagerState.pendingKnownModelGids).length,
+    });
+  }
 
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,

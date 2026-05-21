@@ -107,6 +107,12 @@ export function useVariantImageManager() {
 
   const handlePendingChange = useCallback(
     (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: string[]) => {
+      console.log("[useVariantImageManager handlePendingChange] ←", {
+        galleriesCount: galleries.length,
+        mediaOrderCount: mediaOrder.length,
+        productNewMediaCount: productNewMedia?.length,
+        clearMainCount: clearVariantMainImages?.length,
+      });
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
