@@ -134,7 +134,24 @@ class CpEmbedGallery extends HTMLElement {
     // O(records·nodes·selectors) scan on the common unrelated-mutation
     // path (RISK-B mitigation).
     this._bodyMo = new MutationObserver((muts) => {
-      if (this._needsCover() && this._mutationTouchesNative(muts)) this._preCover();
+      // Section re-render replaces the native gallery → also a signal
+      // that Dawn theme-editor settings may have just changed (Shopify
+      // uses Section Rendering API for live-preview setting updates).
+      // Re-detect theme markers and, if they changed, invalidate the
+      // mount-rendered cache so the next _tick re-renders with fresh
+      // settings instead of returning the upToDate short-circuit.
+      const touchedNative = this._mutationTouchesNative(muts);
+      if (touchedNative) {
+        const fresh = this._detectThemeSettings();
+        const before = JSON.stringify(this._themeSettings || null);
+        const after  = JSON.stringify(fresh || null);
+        if (before !== after) {
+          this._log('theme settings changed:', after);
+          this._themeSettings = fresh;
+          this._mountRendered = null;
+        }
+        if (this._needsCover()) this._preCover();
+      }
       this._schedule();
     });
     this._bodyMo.observe(document.body, { childList: true, subtree: true });
