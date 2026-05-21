@@ -187,20 +187,24 @@ export function VariantImageManager({
   // bug where storedGids shrinks from N to N-1 across renders without any
   // explicit user action, and we need to find the caller that's writing the
   // shrunken value.
+  const lastSetPVGLabelRef = useRef<string>("(unlabeled)");
   const setPendingVariantGalleries: typeof _setPendingVariantGalleriesRaw = useCallback((updater) => {
+    const label = lastSetPVGLabelRef.current;
+    lastSetPVGLabelRef.current = "(unlabeled)";
     _setPendingVariantGalleriesRaw((prev) => {
       const next = typeof updater === "function" ? (updater as (p: Record<string, string[]>) => Record<string, string[]>)(prev) : updater;
       const targetVid = 'gid://shopify/ProductVariant/50164323451208';
       if (next[targetVid] !== prev[targetVid]) {
-        console.log("[setPendingVariantGalleries] for target variant",
+        console.log("[setPVG]",
+          "label=" + label,
           "prev=" + JSON.stringify(prev[targetVid] ?? null),
           "next=" + JSON.stringify(next[targetVid] ?? null),
-          "stack:", new Error().stack?.split("\n").slice(1, 6).join("\n"),
         );
       }
       return next;
     });
   }, []);
+  const __pvgLabel = (label: string) => { lastSetPVGLabelRef.current = label; };
   // Variant IDs whose injected main image was dragged to the product gallery this session
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
@@ -279,6 +283,7 @@ export function VariantImageManager({
 
   useEffect(() => {
     if (!resetKey) return;
+    __pvgLabel("resetKey-effect");
     setPendingVariantGalleries({});
     setPendingProductNewMedia([]);
     setPendingProductImageOrder(null);
@@ -345,6 +350,7 @@ export function VariantImageManager({
     setIsLoadingVariants(true);
     setVariantError(null);
     if (resetState) {
+      __pvgLabel("fetchVariants-reset");
       setPendingVariantGalleries({});
       setSelectedGalleryItems(new Map());
       setLocallyExcludedMainGids(new Set());
@@ -457,6 +463,7 @@ export function VariantImageManager({
             }
           }
           if (Object.keys(autoFixes).length > 0) {
+            __pvgLabel("autoFix");
             setPendingVariantGalleries(autoFixes);
           }
         }
@@ -618,6 +625,7 @@ export function VariantImageManager({
                   setPendingProductImageOrder(curr =>
                     curr ? curr.map(url => urlRemap[url] ?? url) : null
                   );
+                  __pvgLabel("webp-remap");
                   setPendingVariantGalleries(curr => {
                     const next: Record<string, string[]> = {};
                     for (const [variantId, gids] of Object.entries(curr)) {
@@ -1078,6 +1086,7 @@ export function VariantImageManager({
       "fileEntries=" + JSON.stringify(fileEntries),
       "orderEntries=" + JSON.stringify(orderEntries),
     );
+    __pvgLabel("handleVariantReorder");
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
     onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
@@ -1308,6 +1317,7 @@ export function VariantImageManager({
         }
         return;
       }
+      __pvgLabel("variant-to-product-drag");
       setPendingVariantGalleries(p => ({
         ...p,
         [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove),
@@ -1321,6 +1331,7 @@ export function VariantImageManager({
     if (sourceContainerId !== "product") {
       if (isCtrlHeldRef.current) {
         // Variant → Variant + Ctrl: copy (keep in source)
+        __pvgLabel("variant-to-variant-ctrl-copy");
         setPendingVariantGalleries(p => {
           const targetVariant = variants.find(v => v.id === targetContainerId);
           const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
@@ -1336,6 +1347,7 @@ export function VariantImageManager({
         });
       } else {
         // Variant → Variant: move (remove from source, add to target) in single update
+        __pvgLabel("variant-to-variant-move");
         setPendingVariantGalleries(p => {
           const targetVariant = variants.find(v => v.id === targetContainerId);
           const sourceVariant = variants.find(v => v.id === sourceContainerId);
@@ -1374,6 +1386,7 @@ export function VariantImageManager({
           return;
         }
       }
+      __pvgLabel("product-to-variant-copy");
       setPendingVariantGalleries(p => {
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
         if (existing.includes(gid)) return p;
@@ -1405,6 +1418,7 @@ export function VariantImageManager({
     const newGids = [...bulkGids, ...galleryGids];
     if (newGids.length === 0) return;
 
+    __pvgLabel("handleDropToVariant");
     setPendingVariantGalleries(p => {
       const targetVariant = variants.find(v => v.id === targetVariantId);
       const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];
@@ -1434,6 +1448,7 @@ export function VariantImageManager({
       }
       for (const [srcVariantId, urls] of bySource.entries()) {
         if (srcVariantId === targetVariantId) continue;
+        __pvgLabel("handleDropToVariant-removeFromSource");
         setPendingVariantGalleries(p => {
           const srcVariant = variants.find(v => v.id === srcVariantId);
           const current = p[srcVariantId] ?? srcVariant?.galleryFileGids ?? [];
@@ -1556,6 +1571,7 @@ export function VariantImageManager({
         });
       }
       if (refsForGallery.length > 0) {
+        __pvgLabel("handleModalAdd-variant");
         setPendingVariantGalleries(prev => {
           const variant = variants.find(v => v.id === variantId);
           const current = prev[variantId] ?? variant?.galleryFileGids ?? [];
@@ -1748,6 +1764,7 @@ export function VariantImageManager({
       });
     }
 
+    __pvgLabel("handleRemoveFromVariant");
     setPendingVariantGalleries(p => {
       const current = p[variantId] ?? variant?.galleryFileGids ?? [];
       return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
@@ -1780,6 +1797,7 @@ export function VariantImageManager({
     setDeleteConfirm(null);
 
     // Optimistically remove from local state
+    __pvgLabel("handleConfirmDelete");
     setPendingVariantGalleries(p => {
       const next = { ...p };
       for (const v of variants) {
@@ -1929,6 +1947,7 @@ export function VariantImageManager({
         });
 
         if (resourceUrl) {
+          __pvgLabel("handleUploadToVariantGallery");
           setPendingVariantGalleries(p => {
             const variant = variants.find(v => v.id === variantId);
             const current = p[variantId] ?? variant?.galleryFileGids ?? [];
