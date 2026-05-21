@@ -1150,14 +1150,6 @@ export function VariantImageManager({
     const sepIdx = overStr.indexOf("::");
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
     const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
-    console.log("[dragEnd raw]",
-      "sourceContainerId=" + sourceContainerId,
-      "draggedUrl=" + url,
-      "overStr=" + overStr,
-      "targetContainerId=" + targetContainerId,
-      "overUrl=" + overUrl,
-      "overData=" + JSON.stringify(over.data?.current ?? null),
-    );
 
     if (sourceContainerId === targetContainerId) {
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
@@ -1308,23 +1300,25 @@ export function VariantImageManager({
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
       const sourceVariant = variants.find(v => v.id === sourceContainerId);
-      const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
-      const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
-      if (!gidToRemove) {
-        // The dragged image is the injected main image (not stored in the metafield).
-        // Mark it as locally excluded so it disappears from the variant gallery this session.
-        const mainGid = sourceVariant?.defaultImageUrl
-          ? (urlToGid[sourceVariant.defaultImageUrl] ??
-             Object.entries(urlToGid).find(([u]) =>
-               u.split("?")[0] === sourceVariant.defaultImageUrl!.split("?")[0]
-             )?.[1])
-          : undefined;
-        if (mainGid && fileUrlMap[mainGid] === url) {
-          setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
-          onDirtyChange?.(true);
-        }
+      // Main-image-first routing: if the dragged URL matches this variant's
+      // defaultImageUrl, treat it as a main-image drag (exclude on save) BEFORE
+      // searching the gallery for a same-URL match. Two distinct MediaImage GIDs
+      // can share the same CDN URL (Shopify deduplicates the underlying Files
+      // asset), so a gallery file with the same URL as the main image would
+      // otherwise win the find() below and the main-image exclusion path would
+      // never fire — the wrong GID would be stripped from the metafield while
+      // the main image stayed on the variant.
+      const draggedMatchesMain = sourceVariant?.defaultImageUrl &&
+        (sourceVariant.defaultImageUrl === url ||
+         sourceVariant.defaultImageUrl.split("?")[0] === url.split("?")[0]);
+      if (draggedMatchesMain) {
+        setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
+        onDirtyChange?.(true);
         return;
       }
+      const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+      const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
+      if (!gidToRemove) return;
       __pvgLabel("variant-to-product-drag");
       setPendingVariantGalleries(p => ({
         ...p,
