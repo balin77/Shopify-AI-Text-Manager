@@ -444,21 +444,16 @@ export function VariantImageManager({
 
         // Auto-detect variants whose metafield wrongly contains the main image GID.
         // Queue them for cleanup so the user only needs to click Save to fix existing bad data.
-        if (resetState && mediaMap) {
-          const urlToGidFromMedia: Record<string, string> = {};
-          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
-            urlToGidFromMedia[url] = gid;
-          }
+        // Use v.mainImageGid (computed via stripped urlToGidMap at line 433) as the
+        // single source of truth — building a parallel non-stripped lookup here previously
+        // resolved to a different GID for variants with versioned image URLs, then this
+        // block stripped the wrong GID from the gallery.
+        if (resetState) {
           const autoFixes: Record<string, string[]> = {};
           for (const v of realVariants) {
-            if (!v.defaultImageUrl || v.galleryFileGids.length === 0) continue;
-            const mainGid =
-              urlToGidFromMedia[v.defaultImageUrl] ??
-              Object.entries(urlToGidFromMedia).find(([u]) =>
-                u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
-              )?.[1];
-            if (mainGid && v.galleryFileGids.includes(mainGid)) {
-              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== mainGid);
+            if (!v.mainImageGid || v.galleryFileGids.length === 0) continue;
+            if (v.galleryFileGids.includes(v.mainImageGid)) {
+              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== v.mainImageGid);
             }
           }
           if (Object.keys(autoFixes).length > 0) {
@@ -1268,7 +1263,17 @@ export function VariantImageManager({
               // entry). Same shape concern for YouTube/Vimeo URLs even
               // though they don't currently collide with urlToGid.
               if (externalSet.has(u) || modelSet.has(u)) return u;
-              return urlToGid[u] ?? u;
+              const exact = urlToGid[u];
+              if (exact) return exact;
+              // Fallback: strip query string and search by base URL. Without
+              // this, a file URL whose ?v= query param differs between
+              // urlToGid (built from effectiveProductImages + shopifyMediaMap)
+              // and fileUrlMap (the variantUrls source) leaks as a raw URL
+              // and handleVariantReorder mis-routes it to kind:"url" → the
+              // file vanishes from fileEntries on the next reorder.
+              const base = u.split("?")[0];
+              const stripped = Object.entries(urlToGid).find(([k]) => k.split("?")[0] === base)?.[1];
+              return stripped ?? u;
             });
           console.log("[reorder variant] → handleVariantReorder", {
             variantId: sourceContainerId,
