@@ -340,6 +340,31 @@ export function VariantImageManager({
         if (error) { setVariantError(error); return; }
         if (mediaMap) setShopifyMediaMap(mediaMap);
         if (mmm) setMediaMetaMap(mmm);
+        // Re-derive refreshedProductImages from the fresh Shopify media so the
+        // product-gallery section (which renders from effectiveProductImages =
+        // refreshedProductImages ?? productImages) reflects newly created
+        // MediaImage entries after a save. Previously a save triggered a
+        // variant refetch that updated shopifyMediaMap but did NOT propagate
+        // into effectiveProductImages, so the just-uploaded image vanished
+        // from the in-app product gallery until a full page reload synced
+        // the loader's productImages prop with Shopify. We merge into the
+        // existing refreshed/prop list so any altText / id that the loader
+        // already populated stays intact for entries that survive, and drop
+        // entries that no longer exist in Shopify.
+        if (mediaMap && mmm) {
+          const existingByMediaId = new Map(
+            (refreshedProductImages ?? productImages).map(img => [img.mediaId, img])
+          );
+          const fresh: ProductImageRef[] = [];
+          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
+            if ((mmm as Record<string, { kind?: string }>)[gid]?.kind !== "image") continue;
+            const existing = existingByMediaId.get(gid);
+            fresh.push(existing
+              ? { ...existing, url }
+              : { url, mediaId: gid, id: gid, altText: null });
+          }
+          setRefreshedProductImages(fresh);
+        }
         // Build URL→GID reverse map to resolve each variant's main image GID
         const urlToGidMap: Record<string, string> = {};
         if (mediaMap) {
@@ -872,8 +897,16 @@ export function VariantImageManager({
     // because that's what we shove into displayedProductUrls below.
     for (const pending of pendingProductNewMedia) {
       const previewUrl = pending.previewUrl;
-      if (!previewUrl || map[previewUrl]) continue;
-      map[previewUrl] = { kind: pending.kind };
+      if (!previewUrl) continue;
+      // Mark as pending whether or not the URL already had a meta entry —
+      // this is the visual cue for "still unsaved", driven by the parent
+      // through pendingProductNewMedia. Once the merchant saves, the pending
+      // list is cleared and the same URL no longer flags as isPending.
+      if (map[previewUrl]) {
+        map[previewUrl] = { ...map[previewUrl], isPending: true };
+      } else {
+        map[previewUrl] = { kind: pending.kind, isPending: true };
+      }
     }
     // Surface mediaMetaMap's previewUrl on every keyed entry. For .glb
     // model URLs (variant_3d_models), the only renderable preview is the
@@ -1278,11 +1311,7 @@ export function VariantImageManager({
   // product gallery. Closes the modal afterwards — except for URL adds,
   // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((items: AddedItem[]) => {
-    console.log("[handleModalAdd] called", { mode: pickerTarget?.mode, itemCount: items.length });
-    if (!pickerTarget || items.length === 0) {
-      console.warn("[handleModalAdd] short-circuit", { hasPickerTarget: !!pickerTarget, itemCount: items.length });
-      return;
-    }
+    if (!pickerTarget || items.length === 0) return;
 
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants

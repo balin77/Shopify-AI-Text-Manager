@@ -657,12 +657,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Button
                           variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
                           onClick={() => {
-                            console.log("[UnifiedContentEditor desktop-save onClick] fired", {
-                              editorHasChanges: state.hasChanges,
-                              subResourceHasChanges: subResourceState?.hasChanges ?? false,
-                              hasSubResourceHandlers: !!subResourceHandlers,
-                              hasSaveSubResourcesFn: typeof subResourceHandlers?.saveSubResources,
-                            });
                             handlers.handleSave();
                             subResourceHandlers?.saveSubResources?.();
                           }}

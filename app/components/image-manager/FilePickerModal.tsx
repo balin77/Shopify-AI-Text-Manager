@@ -480,12 +480,6 @@ export function FilePickerModal({
   }, []);
 
   const handleCommitSelected = useCallback(() => {
-    console.log("[FilePickerModal handleCommitSelected] clicked", {
-      selectedCount: selected.size,
-      pendingUploadsReady: pendingUploads.filter(u => u.status === "ready").length,
-      pendingUploadsUploading: pendingUploads.filter(u => u.status === "uploading").length,
-      pendingUploadsError: pendingUploads.filter(u => u.status === "error").length,
-    });
     const picked: AddedItem[] = [];
     for (const f of files) {
       if (selected.has(f.id)) {
@@ -510,7 +504,6 @@ export function FilePickerModal({
         });
       }
     }
-    console.log("[FilePickerModal handleCommitSelected] → committing", { pickedCount: picked.length, willCallOnAdd: picked.length > 0 });
     if (picked.length > 0) onAdd(picked);
     onClose();
   }, [files, selected, pendingUploads, onAdd, onClose]);

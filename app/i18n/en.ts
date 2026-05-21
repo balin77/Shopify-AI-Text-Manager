@@ -728,6 +728,7 @@ export const en: Translation = {
     browseFilesNoModelsInVariant: "3D models can only be added to the product gallery, not to a variant.",
     browseFilesSearchPlaceholder: "Search by filename…",
     browseFilesAddSelected: "Add selected",
+    optimisticTileBadge: "Save?",
     browseFilesEmpty: "No matching files in your Shopify library.",
     browseFilesScopeCurrent: "Only files used in this product",
     browseFilesScopeOther: "Pick another product…",

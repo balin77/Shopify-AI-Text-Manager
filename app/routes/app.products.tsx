@@ -422,43 +422,26 @@ export default function ProductsPage() {
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
   }), [subResources.state, hasPendingImageChanges]);
 
-  // BUILD-MARKER: lets us verify the deployed JS actually contains the
-  // current diagnostic instrumentation. If the merchant sees the OLD bundle
-  // hash + an old timestamp, hard-reload is needed before any other debug.
-  useEffect(() => {
-    console.log("[app.products BUILD]", "2026-05-21 — image manager diag bundle");
-  }, []);
-
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
-      console.log("[app.products saveSubResources] clicked", {
-        hasPendingImageChanges,
-        hasSelectedItem: !!editor.selectedItem,
-        selectedItemId: editor.selectedItem?.id,
-        pendingProductNewMedia: imageManagerState.pendingProductNewMedia.length,
-        pendingVariantGalleries: imageManagerState.pendingVariantGalleries.length,
-        pendingExternalVideos: Object.keys(imageManagerState.pendingExternalVideos).length,
-        pendingVariant3dModels: Object.keys(imageManagerState.pendingVariant3dModels).length,
-      });
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
-        console.log("[app.products saveSubResources] firing handleApply");
         imageManagerState.handleApply(editor.selectedItem.id).then(err => {
-          console.log("[app.products saveSubResources] handleApply resolved", { err });
           if (err) {
             showInfoBox(err, "critical", t.products.galleryErrorTitle);
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
           }
-        }).catch((e) => {
-          console.error("[app.products saveSubResources] handleApply threw", e);
+          // Image-only saves never go through editor.handleSave's response
+          // handler, so the navigation guard's pendingNavigation would stay
+          // stuck if the merchant had pending nav (e.g. clicked another
+          // language while only image changes were pending). Clear it here
+          // — clearPendingNavigation is a no-op when nothing is queued, so
+          // calling it on every save (with or without queued nav) is safe.
+          editor.navigationGuard.clearPendingNavigation();
+        }).catch(() => {
           showInfoBox(t.products.gallerySaveError, "critical");
-        });
-      } else {
-        console.warn("[app.products saveSubResources] SKIPPED handleApply", {
-          hasPendingImageChanges,
-          hasSelectedItem: !!editor.selectedItem,
         });
       }
     },
@@ -486,6 +469,36 @@ export default function ProductsPage() {
       handleTranslateAllForLocale: () => {
         editor.handlers.handleTranslateAllForLocale();
         subResources.handlers.translateAllSubResources();
+      },
+      // Navigation guard hooks: the editor's own handleLanguageChange /
+      // handleItemSelect only gate on editor.state.hasChanges (field-level
+      // text edits) — they don't know about image-manager pending state
+      // (uploads / library picks / variant gallery edits / 3D models /
+      // external videos). Without these wrappers a merchant who only
+      // touched the gallery and then clicked a different language saw the
+      // page swap and their pending uploads silently discarded. We
+      // pre-empt with our own guard when image changes exist; the
+      // wrapped action eventually re-fires from clearPendingNavigation
+      // (post-save) and then proceeds through the editor's normal path.
+      handleLanguageChange: (locale: string) => {
+        if (hasPendingImageChanges && !editor.state.hasChanges) {
+          editor.navigationGuard.handleNavigationAttempt(
+            () => editor.handlers.handleLanguageChange(locale),
+            true,
+          );
+        } else {
+          editor.handlers.handleLanguageChange(locale);
+        }
+      },
+      handleItemSelect: (itemId: string) => {
+        if (hasPendingImageChanges && !editor.state.hasChanges) {
+          editor.navigationGuard.handleNavigationAttempt(
+            () => editor.handlers.handleItemSelect(itemId),
+            true,
+          );
+        } else {
+          editor.handlers.handleItemSelect(itemId);
+        }
       },
     },
   };

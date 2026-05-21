@@ -153,11 +153,18 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
   const hasAlt = Boolean(currentLocaleAltText);
   const filename = extractFilename(url);
   const isConverting = Boolean(meta?.isConverting);
+  const isPending = Boolean(meta?.isPending);
 
   const tileBorder = isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5");
   const tileBoxShadow = isMain
     ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
     : "none";
+
+  // Pending tiles render half-transparent with a "Save?" badge so the merchant
+  // sees which items are still unsaved at a glance. Combines multiplicatively
+  // with the drag-in-flight opacity so dragging a pending tile stays visible.
+  const pendingOpacity = isPending ? 0.55 : 1;
+  const dragOpacity = isDragging ? 0.5 : 1;
 
   return (
     <div
@@ -166,7 +173,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.5 : 1,
+        opacity: pendingOpacity * dragOpacity,
         position: "relative",
         userSelect: "none",
       }}
@@ -434,6 +441,29 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
             pointerEvents: "none",
           }}>
             {formatBadge.label}
+          </div>
+        )}
+
+        {/* Pending / unsaved badge — sits on top so the merchant immediately
+            sees which tiles still need a Save click. The transparent body
+            (set on the outer wrapper) reinforces the "ghost"/draft state. */}
+        {isPending && (
+          <div style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            background: "#005bd3",
+            color: "white",
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 6px",
+            borderRadius: 3,
+            lineHeight: "14px",
+            pointerEvents: "none",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            letterSpacing: 0.3,
+          }}>
+            {t.imageManager.optimisticTileBadge ?? "Save?"}
           </div>
         )}
       </div>

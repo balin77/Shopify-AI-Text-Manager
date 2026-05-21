@@ -103,4 +103,10 @@ export interface ImageMeta {
    *  pipeline for .glb uploads. Empty/undefined falls back to the kind-
    *  specific placeholder (e.g. "3D" badge for models). */
   previewUrl?: string;
+  /** Tile is an unsaved optimistic entry: a fresh upload or library pick
+   *  that has been added to pendingProductNewMedia / pendingVariantGalleries
+   *  but not yet persisted to Shopify (productCreateMedia + metafieldsSet).
+   *  Drives a semi-transparent treatment + a "Save?" badge so the merchant
+   *  sees at a glance which tiles still need saving. */
+  isPending?: boolean;
 }
