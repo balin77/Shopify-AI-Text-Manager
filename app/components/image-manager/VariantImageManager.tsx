@@ -2553,17 +2553,14 @@ export function VariantImageManager({
                 effectiveGidsBranch = "dedup";
               }
               if (v.id === 'gid://shopify/ProductVariant/50164323451208') {
-                console.log("[VariantImageManager render variant]", {
-                  variantId: v.id,
-                  storedGids,
-                  storedGidsLength: storedGids.length,
-                  hasPendingEntry: pendingVariantGalleries[v.id] !== undefined,
-                  fromMetafield: pendingVariantGalleries[v.id] === undefined,
-                  mainGid,
-                  hasMainImageForVariant,
-                  effectiveGidsBranch,
-                  effectiveGids,
-                });
+                console.log("[VariantImageManager render variant]",
+                  "storedGids=" + JSON.stringify(storedGids),
+                  "mainGid=" + mainGid,
+                  "branch=" + effectiveGidsBranch,
+                  "effectiveGids=" + JSON.stringify(effectiveGids),
+                  "hasPendingEntry=" + (pendingVariantGalleries[v.id] !== undefined),
+                  "vGalleryFileGids=" + JSON.stringify(v.galleryFileGids),
+                );
               }
               return (
               <VariantGallerySection
