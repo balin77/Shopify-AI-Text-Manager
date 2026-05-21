@@ -313,6 +313,16 @@ export function FilePickerModal({
         });
         const stagedJson = await res.json();
         const { url, resourceUrl, parameters, httpMethod, error: stagedErr } = stagedJson;
+        console.log("[FilePickerModal staged-upload response]", {
+          fileName: file.name,
+          mimeType: file.type,
+          hasUrl: !!url,
+          hasResourceUrl: !!resourceUrl,
+          httpMethod,
+          paramCount: parameters?.length ?? 0,
+          error: stagedErr,
+          code: stagedJson?.code,
+        });
         if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
           setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
           setError(t.imageManager.imageQuotaExceeded?.replace("{limit}", String(stagedJson.limit ?? "")) ?? "Quota exceeded");
@@ -331,6 +341,11 @@ export function FilePickerModal({
             }
           };
           xhr.onload = () => {
+            console.log("[FilePickerModal XHR onload]", {
+              fileName: file.name,
+              xhrStatus: xhr.status,
+              responseSnippet: (xhr.responseText || "").slice(0, 200),
+            });
             if (xhr.status >= 200 && xhr.status < 300) {
               setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
                 ? { ...it, status: "ready" as const, progress: 100, resourceUrl }
@@ -353,11 +368,18 @@ export function FilePickerModal({
               }
               resolve();
             } else {
+              console.error("[FilePickerModal XHR upload FAILED]", {
+                fileName: file.name,
+                xhrStatus: xhr.status,
+                statusText: xhr.statusText,
+                response: xhr.responseText.slice(0, 500),
+              });
               setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
               reject(new Error(`Upload failed: HTTP ${xhr.status}`));
             }
           };
           xhr.onerror = () => {
+            console.error("[FilePickerModal XHR network error]", { fileName: file.name });
             setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
             reject(new Error("Upload network error"));
           };
@@ -423,6 +445,20 @@ export function FilePickerModal({
   }, []);
 
   const handleCommitSelected = useCallback(() => {
+    console.log("[FilePickerModal handleCommitSelected]", {
+      selectedCount: selected.size,
+      pendingUploadsCount: pendingUploads.length,
+      pendingUploadsDetail: pendingUploads.map(u => ({
+        uniqueId: u.uniqueId,
+        fileName: u.fileName,
+        status: u.status,
+        hasResourceUrl: !!u.resourceUrl,
+        kind: u.kind,
+        isSelected: selected.has(u.uniqueId),
+      })),
+      libraryFileCount: files.length,
+      librarySelectedCount: files.filter(f => selected.has(f.id)).length,
+    });
     const picked: AddedItem[] = [];
     for (const f of files) {
       if (selected.has(f.id)) {
@@ -430,10 +466,21 @@ export function FilePickerModal({
       }
     }
     for (const u of pendingUploads) {
-      if (selected.has(u.uniqueId) && u.status === "ready" && u.resourceUrl) {
+      const wouldInclude = selected.has(u.uniqueId) && u.status === "ready" && !!u.resourceUrl;
+      if (selected.has(u.uniqueId) && !wouldInclude) {
+        console.warn("[FilePickerModal] upload selected but filtered out", {
+          uniqueId: u.uniqueId,
+          fileName: u.fileName,
+          status: u.status,
+          hasResourceUrl: !!u.resourceUrl,
+          reason: u.status !== "ready" ? `status is "${u.status}", not "ready"` : "resourceUrl is empty",
+        });
+      }
+      if (wouldInclude) {
         picked.push({ source: "upload", resourceUrl: u.resourceUrl, kind: u.kind, previewUrl: u.previewUrl, fileName: u.fileName, mimeType: u.mimeType });
       }
     }
+    console.log("[FilePickerModal handleCommitSelected] →", { pickedCount: picked.length, willCallOnAdd: picked.length > 0 });
     if (picked.length > 0) onAdd(picked);
     onClose();
   }, [files, selected, pendingUploads, onAdd, onClose]);
