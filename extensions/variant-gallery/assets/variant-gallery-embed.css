@@ -369,19 +369,27 @@ cp-embed-gallery {
    gives us ESC handling, focus trap, and a ::backdrop pseudo-element
    for the dim overlay. Backdrop click is handled in JS (event target ===
    dialog) so clicks on the image don't close. */
+/* Base styles applied in BOTH states; do NOT set `display` here — the
+   UA default `dialog:not([open]) { display: none }` must remain in
+   effect when the dialog is closed (any author display value would
+   beat it, regardless of specificity). Without this guard the dialog
+   stays visible after .close() because flex overrides the UA hide. */
 .cp-gallery__lightbox {
   border: 0;
   padding: 0;
   background: transparent;
-  max-width: 100vw;
-  max-height: 100vh;
-  width: 100vw;
-  height: 100vh;
   margin: 0;
-  inset: 0;
+}
+/* Layout only when actually open. */
+.cp-gallery__lightbox[open] {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  inset: 0;
 }
 .cp-gallery__lightbox::backdrop {
   background: rgba(0, 0, 0, 0.88);
