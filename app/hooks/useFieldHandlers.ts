@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
+import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
 import type {
   TranslatableContentItem,
@@ -997,7 +998,13 @@ const handleToggleLanguage = (locale: string) => {
 };
 
 const handleItemSelect = (itemId: string) => {
-  handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges || isSavingCurrentItem);
+  handleNavigationAttempt(() => {
+    setSelectedItemId(itemId);
+    // Persist only on explicit user selection. Restore-effects and the
+    // disappear-fallback in useUnifiedContentEditor must NOT write — see
+    // the comment block above the restore effect for why.
+    writeLastSelectedId(config.contentType, itemId);
+  }, hasChanges || isSavingCurrentItem);
 };
 
 const handleValueChange = useCallback((fieldKey: string, value: string) => {
