@@ -52,8 +52,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               node {
                 __typename
                 ... on MediaImage { id alt image { url width height } mimeType }
-                ... on Video      { id alt preview { image { url } } sources { url mimeType } }
-                ... on Model3d    { id alt preview { image { url } } sources { url mimeType } }
+                ... on Video      { id alt preview { image { url } } sources { url mimeType format } }
+                ... on Model3d    { id alt preview { image { url } } sources { url mimeType format } }
                 ... on ExternalVideo { id alt host originUrl embeddedUrl preview { image { url } } }
               }
             }
@@ -88,7 +88,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         }
         if (tn === "Model3d") {
           if (kindAllow && kindAllow !== "model") return null;
-          return { kind: "model" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", assetUrl: n?.sources?.[0]?.url ?? "", reference: n.id, alt: altText };
+          // Model3d.sources is a heterogeneous list (glb / usdz / gltf etc).
+          // Prefer the .glb source — it's the format <model-viewer> needs and
+          // it's what the storefront renderer expects. `sources[0]` blindly
+          // could land on `.usdz` (iOS quicklook) which isn't a valid
+          // model_src for our renderer and would fail validation on save.
+          const glbSource = (n?.sources ?? []).find((s: any) =>
+            String(s?.format ?? "").toLowerCase() === "glb" ||
+            /\.glb(\?|$)/i.test(String(s?.url ?? ""))
+          );
+          const chosen = glbSource ?? n?.sources?.[0];
+          return { kind: "model" as const, id: n.id, previewUrl: n?.preview?.image?.url ?? "", assetUrl: chosen?.url ?? "", reference: n.id, alt: altText };
         }
         // ExternalVideo deliberately excluded from the picker — URLs are
         // managed via the modal's link input, not as selectable file tiles.
@@ -187,11 +197,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         };
       }
       if (tn === "Model3d") {
+        // Same glb-preference logic as the usedByProductId branch — pick
+        // the source matching .glb so the resulting assetUrl is the one
+        // <model-viewer> can render and isValid3dModelUrl accepts.
+        const glbSource = (n?.sources ?? []).find((s: any) =>
+          String(s?.format ?? "").toLowerCase() === "glb" ||
+          /\.glb(\?|$)/i.test(String(s?.url ?? ""))
+        );
+        const chosen = glbSource ?? n?.sources?.[0];
         return {
           kind: "model" as const,
           id: n.id,
           previewUrl: n?.preview?.image?.url ?? "",
-          assetUrl: n?.sources?.[0]?.url ?? "",
+          assetUrl: chosen?.url ?? "",
           reference: n.id,
           alt: n.alt ?? null,
         };

@@ -180,11 +180,19 @@ export function isValidExternalVideoUrl(input: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Validate that a value persisted in `custom.variant_3d_models` is a `.glb`
- * URL. Scope is deliberately `.glb` only (binary, single-file format) —
- * `.gltf` references separate `.bin` and texture assets that are brittle
- * across CDN caches, so we mirror the `product.media` fallback path which
- * already filters to glb format.
+ * Validate that a value persisted in `custom.variant_3d_models` plausibly
+ * points at a 3D model.
+ *
+ * Two acceptance paths:
+ *   1. The URL pathname ends in `.glb` or `.gltf`. Covers self-hosted /
+ *      external assets that the merchant pastes by hand.
+ *   2. The URL is on a Shopify CDN host and lives under a Model3d-shaped
+ *      path (`/3d/models/`). Shopify-served Model3d source URLs do NOT
+ *      always end in `.glb` — depending on the storefront file delivery
+ *      they can land on a hash-only path served with the right MIME but
+ *      no file extension. The previous strict `.glb$` check rejected
+ *      those library-pick URLs and the metafield ended up with `[]` on
+ *      every save, so the model "disappeared" after reload.
  */
 export function isValid3dModelUrl(input: string): boolean {
   if (typeof input !== "string") return false;
@@ -197,5 +205,14 @@ export function isValid3dModelUrl(input: string): boolean {
     return false;
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return false;
-  return /\.glb$/i.test(u.pathname);
+  if (/\.(glb|gltf)$/i.test(u.pathname)) return true;
+  // Shopify-served Model3d sources live under /3d/models/ on cdn.shopify.com
+  // (and a couple of variants like shopifycdn.com). Accept those even
+  // without an extension since the merchant didn't author the URL — it
+  // came from a /api/files lookup of an existing Model3d node.
+  const host = u.hostname.toLowerCase();
+  if ((host === "cdn.shopify.com" || host.endsWith(".shopifycdn.com")) && /\/3d\/models\//i.test(u.pathname)) {
+    return true;
+  }
+  return false;
 }

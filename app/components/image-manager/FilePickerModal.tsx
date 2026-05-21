@@ -566,7 +566,11 @@ export function FilePickerModal({
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))", gap: 8, maxHeight: 400, overflowY: "auto", padding: 4 }}>
               {pendingUploads.map(u => (
-                <div key={u.uniqueId} style={{ position: "relative" }}>
+                // Constrain the wrapper to the tile's 108px so the absolutely
+                // positioned progress + error overlays line up. Without this
+                // the grid cell stretches to its 1fr column width and the
+                // overlays (left:0/right:0) end up wider than the tile.
+                <div key={u.uniqueId} style={{ position: "relative", width: 108 }}>
                   {renderTile({ id: u.uniqueId, kind: u.kind, previewUrl: u.previewUrl, alt: u.fileName })}
                   {u.status === "uploading" && (
                     <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 4, background: "#e1e3e5", borderRadius: "0 0 6px 6px", overflow: "hidden" }}>

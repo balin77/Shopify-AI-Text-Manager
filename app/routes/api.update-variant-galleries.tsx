@@ -563,6 +563,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (errors.length > 0) return fail();
+  if (dropped3dModelUrls.length > 0) {
+    // Log the actual dropped URLs + reasons so a "model disappeared on
+    // reload" report can be diagnosed without a separate trace pass.
+    // Reasons: "processing" (poll timeout, carry-over via knownModelGids),
+    // "invalid_glb" (Shopify Model3d status === FAILED), "invalid_url"
+    // (URL did not pass isValid3dModelUrl — typically a library-pick
+    // returning a non-glb / non-Shopify-Model3d source URL).
+    console.warn("[update-variant-galleries] dropped 3D model URLs", dropped3dModelUrls);
+  }
+  if (droppedExternalUrls.length > 0) {
+    console.warn("[update-variant-galleries] dropped external video URLs", droppedExternalUrls);
+  }
   console.log("[update-variant-galleries] success", {
     completedSteps,
     droppedExternalUrlCount: droppedExternalUrls.length,
