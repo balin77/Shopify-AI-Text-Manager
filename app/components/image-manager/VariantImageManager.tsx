@@ -2457,7 +2457,13 @@ export function VariantImageManager({
       // the per-variant metafield, product scope adds an ExternalVideo node
       // to product.media via productCreateMedia EXTERNAL_VIDEO.
       onAddExternalUrl={handleModalAddExternalUrl}
-      uploadCommitMode={pickerTarget?.mode === "variant" ? "immediate" : "queue"}
+      // Queue mode for both variant and product flows: the merchant wants
+      // to see the upload land in the modal grid, optionally select / deselect
+      // it, then click "Add" once. Immediate mode (used for variant uploads
+      // earlier) auto-committed on xhr.onload → modal closed before the
+      // merchant could confirm, which felt like a bug ("ich kam nicht zum
+      // Knopf"). Queue is consistent across both modes now.
+      uploadCommitMode="queue"
       // Models are now accepted in variant mode too — picked .glb URLs are
       // routed to custom.variant_3d_models (list.url) instead of the
       // variant_gallery file_reference metafield (which rejects Media3d).

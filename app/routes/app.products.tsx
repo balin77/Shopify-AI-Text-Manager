@@ -425,16 +425,33 @@ export default function ProductsPage() {
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
+      console.log("[app.products saveSubResources] clicked", {
+        hasPendingImageChanges,
+        hasSelectedItem: !!editor.selectedItem,
+        selectedItemId: editor.selectedItem?.id,
+        pendingProductNewMedia: imageManagerState.pendingProductNewMedia.length,
+        pendingVariantGalleries: imageManagerState.pendingVariantGalleries.length,
+        pendingExternalVideos: Object.keys(imageManagerState.pendingExternalVideos).length,
+        pendingVariant3dModels: Object.keys(imageManagerState.pendingVariant3dModels).length,
+      });
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
+        console.log("[app.products saveSubResources] firing handleApply");
         imageManagerState.handleApply(editor.selectedItem.id).then(err => {
+          console.log("[app.products saveSubResources] handleApply resolved", { err });
           if (err) {
             showInfoBox(err, "critical", t.products.galleryErrorTitle);
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
           }
-        }).catch(() => {
+        }).catch((e) => {
+          console.error("[app.products saveSubResources] handleApply threw", e);
           showInfoBox(t.products.gallerySaveError, "critical");
+        });
+      } else {
+        console.warn("[app.products saveSubResources] SKIPPED handleApply", {
+          hasPendingImageChanges,
+          hasSelectedItem: !!editor.selectedItem,
         });
       }
     },
