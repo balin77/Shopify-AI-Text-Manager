@@ -1187,6 +1187,28 @@ export function VariantImageManager({
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
     const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
 
+    {
+      const exact = urlToGid[url];
+      const base = url.split("?")[0];
+      const fallback = exact ? null : Object.entries(urlToGid).find(([k]) => k.split("?")[0] === base)?.[1];
+      const resolves = exact ? "exact" : (fallback ? "fallback" : "no");
+      const resolvedGid = exact ?? fallback ?? null;
+      const fileUrlForGid = resolvedGid ? (fileUrlMap[resolvedGid] ?? null) : null;
+      let branch: string;
+      if (sourceContainerId === targetContainerId) branch = !overUrl || url === overUrl ? "same-gallery-noop" : "same-gallery-reorder";
+      else if (targetContainerId === "product") branch = sourceContainerId === "product" ? "noop-product-to-product" : !isCtrlHeldRef.current ? "variant-to-product-no-ctrl" : !overUrl ? "variant-to-product-no-overUrl" : "variant-to-product";
+      else if (!exact && !fallback) branch = "early-return-no-gid";
+      else if (sourceContainerId !== "product") branch = isCtrlHeldRef.current ? "variant-to-variant-ctrl-copy" : "variant-to-variant-move";
+      else branch = "product-to-variant";
+      console.log("[dnd]", JSON.stringify({
+        src: sourceContainerId, tgt: targetContainerId,
+        overUrl: overUrl ?? "null",
+        dragged: url.split("/").pop()?.split("?")[0],
+        resolves, resolvedGid, fileUrlForGid: fileUrlForGid?.split("/").pop()?.split("?")[0] ?? null,
+        branch,
+      }));
+    }
+
     if (sourceContainerId === targetContainerId) {
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
       if (!overUrl || url === overUrl) return;
@@ -1405,6 +1427,7 @@ export function VariantImageManager({
             result[targetContainerId] = noMain ? [gid, ...targetExisting] : insertGidAtPosition(targetExisting, gid, overUrl, fileUrlMap);
           }
           result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
+          console.log("[v2v-move]", JSON.stringify({ src: sourceContainerId, tgt: targetContainerId, gid, srcBefore: sourceCurrent, srcAfter: result[sourceContainerId], tgtBefore: targetExisting, tgtAfter: result[targetContainerId] }));
           return result;
         });
       }
@@ -1428,7 +1451,10 @@ export function VariantImageManager({
       __pvgLabel("product-to-variant-copy");
       setPendingVariantGalleries(p => {
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
-        if (existing.includes(gid)) return p;
+        if (existing.includes(gid)) {
+          console.log("[p2v-copy]", JSON.stringify({ skipped: "already-in-target", existing, gid }));
+          return p;
+        }
         const targetMainGid = targetVariant?.defaultImageUrl
           ? (urlToGid[targetVariant.defaultImageUrl] ??
              Object.entries(urlToGid).find(([u]) =>
@@ -1436,7 +1462,9 @@ export function VariantImageManager({
              )?.[1])
           : undefined;
         const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
-        return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap) };
+        const next = noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap);
+        console.log("[p2v-copy]", JSON.stringify({ tgt: targetContainerId, gid, existing, next, isMainEqualsGid: targetMainGid === gid }));
+        return { ...p, [targetContainerId]: next };
       });
     }
   }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
