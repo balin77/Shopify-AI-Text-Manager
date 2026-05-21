@@ -657,7 +657,13 @@ class CpEmbedGallery extends HTMLElement {
         if (product.classList.contains('product--' + l)) { dl = l; break; }
       }
     }
-    if (dl) out.showThumbs = (dl === 'thumbnail' || dl === 'thumbnail_slider');
+    if (dl) {
+      // Keep the full 4-way value so the renderer can distinguish all
+      // Dawn modes — stacked vs. columns (2-col grid) in no-thumb mode,
+      // thumbnail vs. thumbnail_slider (always-on arrows) in thumb mode.
+      out.layout = dl;
+      out.showThumbs = (dl === 'thumbnail' || dl === 'thumbnail_slider');
+    }
     this._log('theme-inherit: gallery_layout=', dl || '(none)',
       '→ showThumbs=', out.showThumbs);
 
@@ -725,13 +731,20 @@ class CpEmbedGallery extends HTMLElement {
     const allowed = ['bottom', 'top', 'left', 'right'];
     let pos = theme.thumbPos || this.dataset.thumbPos;
     if (allowed.indexOf(pos) < 0) pos = 'bottom';
-    return { show, pos };
+    // Full Dawn-layout value when inheriting: 'stacked' | 'columns' |
+    // 'thumbnail' | 'thumbnail_slider'. CSS uses it via [data-layout="…"]
+    // to differentiate columns (2-col grid in stacked mode) and
+    // thumbnail_slider (always-visible carousel arrows in thumb mode).
+    // Null when no theme detection (inherit off or non-Dawn) — then CSS
+    // falls back to the base stacked / thumb rules driven by show alone.
+    const layout = theme.layout || null;
+    return { show, pos, layout };
   }
 
   _render(images) {
     const inner = this._mount.querySelector('.cp-gallery__inner');
     if (!inner) return;
-    const { show, pos } = this._resolveThumbMode();
+    const { show, pos, layout } = this._resolveThumbMode();
     const thumbMode = show && images.length > 1;
 
     // RISK-3: tear down any prior ResizeObserver on the thumb strip so
@@ -758,6 +771,12 @@ class CpEmbedGallery extends HTMLElement {
     const mf = this._themeSettings && this._themeSettings.mediaFit;
     if (mf) inner.setAttribute('data-media-fit', mf);
     else inner.removeAttribute('data-media-fit');
+    // Path C: full 4-way layout from Dawn (stacked / columns /
+    // thumbnail / thumbnail_slider). CSS reads this to distinguish
+    // 2-column grid in stacked mode and always-visible arrows in
+    // slider mode — both refinements that pure `show` could not express.
+    if (layout) inner.setAttribute('data-layout', layout);
+    else inner.removeAttribute('data-layout');
 
     if (!thumbMode) {
       // Stacked mode: one .cp-gallery__main per item (each at its own
@@ -928,16 +947,26 @@ class CpEmbedGallery extends HTMLElement {
     const prev = wrap.querySelector('.cp-gallery__arrow--prev');
     const next = wrap.querySelector('.cp-gallery__arrow--next');
     if (!strip || !prev || !next) return;
-    const vertical = container.dataset.thumbPos === 'left' || container.dataset.thumbPos === 'right';
+    // Detect vertical scroll direction from the strip's effective
+    // flex-direction rather than the configured data-thumb-pos. Read
+    // it inside each callback so the mobile CSS-override (left/right
+    // collapse to bottom on narrow viewports) re-evaluates correctly
+    // on resize / rotation without needing an extra resize listener.
+    const isVertical = () => {
+      const d = getComputedStyle(strip).flexDirection || '';
+      return d.indexOf('column') === 0;
+    };
     const stepBy = (dir) => {
-      const step = (vertical ? strip.clientHeight : strip.clientWidth) * 0.8;
-      strip.scrollBy(vertical ? { top: dir * step, behavior: 'smooth' } : { left: dir * step, behavior: 'smooth' });
+      const v = isVertical();
+      const step = (v ? strip.clientHeight : strip.clientWidth) * 0.8;
+      strip.scrollBy(v ? { top: dir * step, behavior: 'smooth' } : { left: dir * step, behavior: 'smooth' });
     };
     prev.addEventListener('click', () => stepBy(-1));
     next.addEventListener('click', () => stepBy(1));
     const updateState = () => {
-      const max = vertical ? strip.scrollHeight - strip.clientHeight : strip.scrollWidth - strip.clientWidth;
-      const cur = vertical ? strip.scrollTop : strip.scrollLeft;
+      const v = isVertical();
+      const max = v ? strip.scrollHeight - strip.clientHeight : strip.scrollWidth - strip.clientWidth;
+      const cur = v ? strip.scrollTop : strip.scrollLeft;
       // Hide arrows entirely when the strip does not overflow.
       const overflow = max > 1;
       wrap.classList.toggle('cp-gallery__thumbs-wrap--scrollable', overflow);

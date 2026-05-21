@@ -294,3 +294,59 @@ cp-embed-gallery {
    gallery's computed object-fit. Specificity beats the base rules. */
 .cp-embed-gallery .cp-gallery__inner[data-media-fit="cover"]   .cp-gallery__main-image { object-fit: cover; }
 .cp-embed-gallery .cp-gallery__inner[data-media-fit="contain"] .cp-gallery__main-image { object-fit: contain; }
+
+/* ─── Path C: full 4-way Dawn gallery_layout differentiation ────────── */
+
+/* `columns` — 2-column grid in stacked mode (Dawn's "2 Spalten"). The
+   inner is .cp-gallery__inner--stacked (no thumb strip) plus the
+   data-layout attribute to opt into grid instead of single-column. */
+.cp-embed-gallery .cp-gallery__inner--stacked[data-layout="columns"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* `thumbnail_slider` — make the carousel arrows always visible on the
+   strip wrapper, not just on hover, so the thumbs read as a slider.
+   The overflow / disabled gating in _bindArrows still hides them when
+   there is genuinely nothing to scroll. */
+.cp-embed-gallery .cp-gallery__inner[data-layout="thumbnail_slider"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ─── Path C: thumbnail position — mobile fallback ──────────────────── */
+/* On narrow viewports (< 750px) left / right positions are too cramped
+   beside the main image — fall back to a horizontal strip below the
+   main slot (i.e. behave like 'bottom'). Pure CSS so the merchant's
+   thumbnail_position setting (or theme inheritance) stays intact for
+   desktop; resize / rotation flips back automatically. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"],
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] {
+    flex-direction: column;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
+    width: auto;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__arrow,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow {
+    top: 50%;
+    left: auto;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev { left: 4px;  right: auto; }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { right: 4px; left: auto; }
+}
