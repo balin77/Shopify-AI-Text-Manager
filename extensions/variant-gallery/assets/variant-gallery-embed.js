@@ -563,21 +563,25 @@ class CpEmbedGallery extends HTMLElement {
   }
 
   // 3D model via Google's <model-viewer> custom element. The library
-  // is lazy-loaded once per page (see _ensureModelViewerLib). Until it
-  // arrives the unknown <model-viewer> tag shows the poster image via
-  // its CSS, so users never see a blank — they get a 3D-rotatable
-  // preview as soon as the script lands.
+  // is lazy-loaded once per page (see _ensureModelViewerLib).
+  // No `reveal="interaction"` / `poster=""`: variant-scoped models come
+  // from custom.variant_3d_models (list.url) which only stores the GLB
+  // URL — Shopify generates no preview image for these. With an empty
+  // poster, reveal=interaction would leave a transparent area with no
+  // visible affordance for the user to click, and the model would never
+  // load. Default reveal=auto kicks loading off as soon as the element
+  // is in view via the existing loading=lazy hint. `poster` is only
+  // emitted when a real URL is available (e.g. product.media path).
   _mainModelHtml(item, active, index) {
     const w = Number(item.w) > 0 ? Number(item.w) : 800;
     const h = Number(item.h) > 0 ? Number(item.h) : 800;
+    const posterAttr = item.poster ? ` poster="${this._esc(item.poster)}"` : '';
     return `<model-viewer
           class="cp-gallery__main-image${active ? ' is-active' : ''}"
-          src="${this._esc(item.model_src)}"
-          poster="${this._esc(item.poster)}"
+          src="${this._esc(item.model_src)}"${posterAttr}
           alt="${this._esc(item.alt)}"
           camera-controls
           touch-action="pan-y"
-          reveal="interaction"
           loading="lazy"
           data-index="${index}"
           data-type="model"

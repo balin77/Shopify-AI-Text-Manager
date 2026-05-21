@@ -46,6 +46,13 @@ export function useVariantImageManager() {
   // Per-variant GLB CDN URLs. Mirrors pendingExternalVideos exactly (variant_3d_models
   // is a list.url metafield too) — same empty-array-means-cleared contract.
   const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Parallel preview URLs per variant — same index as pendingVariant3dModels.
+  // An empty string at a slot means "this model has no preview yet" (legacy
+  // entries from before variant_3d_previews existed, or library-picked models
+  // we haven't snapshotted on the admin side). Persisted to
+  // custom.variant_3d_previews (list.url). Add/remove handlers in
+  // VariantImageManager keep both arrays in lockstep.
+  const [pendingVariant3dPreviews, setPendingVariant3dPreviews] = useState<Record<string, string[]>>({});
   // Carry-over for Model3d uploads that didn't finish processing within the
   // backend's bounded polling window. Maps each still-staging URL onto its
   // Model3d GID (returned by the prior productCreateMedia call). The next
@@ -113,12 +120,6 @@ export function useVariantImageManager() {
 
   const handlePendingChange = useCallback(
     (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: string[]) => {
-      console.log("[useVariantImageManager handlePendingChange] ←", {
-        galleriesCount: galleries.length,
-        mediaOrderCount: mediaOrder.length,
-        productNewMediaCount: productNewMedia?.length,
-        clearMainCount: clearVariantMainImages?.length,
-      });
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
@@ -191,6 +192,10 @@ export function useVariantImageManager() {
         variantId,
         urls,
       }));
+      const variant3dPreviews = Object.entries(pendingVariant3dPreviews).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
       const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
         variantId,
         orderJson,
@@ -207,6 +212,7 @@ export function useVariantImageManager() {
           clearVariantMainImages: pendingClearVariantMainImages,
           variantExternalVideos,
           variant3dModels,
+          variant3dPreviews,
           // Carry-over from prior processing drops: lets the backend poll
           // pre-existing Model3d GIDs directly without re-running
           // productCreateMedia on the same staging URL.
@@ -266,6 +272,20 @@ export function useVariantImageManager() {
         carryOverModels[d.variantId].push(d.url);
         carryOverGids[d.url] = d.gid;
       }
+      // Parallel carry-over for the previews: same indices as
+      // carryOverModels. Look up each surviving URL's old index in the
+      // pre-save pendingVariant3dModels to find its preview, so a
+      // still-processing model keeps its already-uploaded preview JPEG
+      // (we do not want the merchant to re-snapshot on the next save).
+      const carryOverPreviews: Record<string, string[]> = {};
+      for (const variantId of Object.keys(carryOverModels)) {
+        const oldModels = pendingVariant3dModels[variantId] ?? [];
+        const oldPreviews = pendingVariant3dPreviews[variantId] ?? [];
+        carryOverPreviews[variantId] = carryOverModels[variantId].map((url) => {
+          const idx = oldModels.indexOf(url);
+          return idx >= 0 ? (oldPreviews[idx] ?? "") : "";
+        });
+      }
 
       setBulkItems([]);
       setSelectedBulkIds(new Set());
@@ -275,15 +295,24 @@ export function useVariantImageManager() {
       setPendingClearVariantMainImages([]);
       setPendingExternalVideos({});
       setPendingVariant3dModels(carryOverModels);
+      setPendingVariant3dPreviews(carryOverPreviews);
       setPendingKnownModelGids(carryOverGids);
       setPendingGalleryOrder({});
       setHasAltTextEdits(false);
       setResetCounter(c => c + 1);
+      // Force a /api/product-variants refetch so the just-created product.media
+      // entries (with their permanent Shopify GIDs + CDN URLs) replace the
+      // optimistic pendingProductNewMedia tiles immediately. Without this the
+      // tile disappeared the moment we cleared pendingProductNewMedia above
+      // and only reappeared on a manual page reload (because the local cache
+      // of product.media wasn't refreshed). The refetch lands ~300–800ms
+      // later — a brief gap but no more "image vanished" complaint.
+      setVariantReloadCounter(c => c + 1);
       return null;
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingKnownModelGids, pendingGalleryOrder]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -296,6 +325,7 @@ export function useVariantImageManager() {
     setPendingClearVariantMainImages([]);
     setPendingExternalVideos({});
     setPendingVariant3dModels({});
+    setPendingVariant3dPreviews({});
     setPendingKnownModelGids({});
     setPendingGalleryOrder({});
     setHasAltTextEdits(false);
@@ -333,6 +363,8 @@ export function useVariantImageManager() {
     setPendingExternalVideos,
     pendingVariant3dModels,
     setPendingVariant3dModels,
+    pendingVariant3dPreviews,
+    setPendingVariant3dPreviews,
     pendingKnownModelGids,
     setPendingKnownModelGids,
     pendingGalleryOrder,

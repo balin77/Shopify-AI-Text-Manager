@@ -84,35 +84,32 @@ cp-embed-gallery {
   scroll-behavior: smooth;
 }
 
-/* Vertical strip (left/right). Wrap becomes a flex column so the inner
-   thumbs container can stretch to the wrap's cross-axis height (which
-   in turn matches the main image via the outer row-flex stretch).
-   `min-height: 0` is the standard nested-flexbox trick that lets the
-   overflow:auto inside actually clip rather than letting children push
-   the parent taller. Removes the previous fixed `max-height: 70vh`
-   that allowed the strip to outrun the main image. */
+/* Vertical strip (left/right). The thumbs strip is absolutely
+   positioned to fill the wrap; that way the wrap has NO in-flow
+   content of its own and contributes 0 to the inner row-flex's
+   intrinsic height. Inner's height is then driven purely by the main
+   image (aspect-ratio derived), and the wrap stretches to that height
+   via the default `align-self: stretch`. Result: the strip clips
+   exactly at the main image's top/bottom edges — no overrun. */
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1 1 auto;
-  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-snap-type: y mandatory;
   scroll-behavior: smooth;
 }
 
-/* Vertical strip wrap: flex-column containing the strip plus the
-   absolutely-positioned arrows. Stretches to main-image height by
-   virtue of being a flex item of the row-flex inner. */
+/* Vertical strip wrap: just sets the fixed cross-axis width. The base
+   `.cp-gallery__thumbs-wrap { position: relative }` rule above provides
+   the containing block for the absolutely-positioned strip + arrows. */
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
   width: calc(var(--cp-thumb-size, 80px) + 4px);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 
 /* Hide native scrollbars on every strip — visually noisy. Scrolling
@@ -266,6 +263,28 @@ cp-embed-gallery {
 }
 .cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]:has(img[src=""])::after {
   background-color: #111;
+}
+
+/* 3D model thumb without preview — variant-scoped models from
+   custom.variant_3d_models (list.url) only store a GLB URL, so the
+   thumb <img> arrives empty. Mirror the Vimeo fallback: solid dark
+   tile, then promote the corner "3D" badge to a centred, larger
+   "3D" wordmark so the tile is recognisable. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]:has(img[src=""]) {
+  background: #111;
+}
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]:has(img[src=""])::after {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 18px/1 system-ui, sans-serif;
+  letter-spacing: 1.5px;
+  padding: 0;
+  border-radius: inherit;
 }
 
 /* Vertical strips reserve a few extra px in the wrap for the scrollbar,
@@ -486,6 +505,33 @@ cp-embed-gallery {
   .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
     -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
             mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  }
+}
+
+/* Inset thumbs from the strip's scroll-axis ends so the first and last
+   thumb sit OUTSIDE the 20px fade region — otherwise a correctly-fitted
+   thumb at the scroll start/end renders semi-transparent. Conditional on
+   .--scrollable so a non-carousel strip stays flush. scroll-padding
+   matches so scroll-snap and arrow-driven scrollIntoView still align the
+   thumb visibly inside the unmasked area. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  padding-inline: 20px;
+  scroll-padding-inline: 20px;
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  padding-block: 20px;
+  scroll-padding-block: 20px;
+}
+/* Mobile fallback (left/right collapse to bottom): switch to inline padding. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+    padding-block: 0;
+    padding-inline: 20px;
+    scroll-padding-block: 0;
+    scroll-padding-inline: 20px;
   }
 }
 

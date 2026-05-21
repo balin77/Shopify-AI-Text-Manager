@@ -188,38 +188,51 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         }
       >
         {kind === "model" && (!url || !/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(url)) ? (
-          // No image preview available. Three sub-cases land here:
-          //   • Product-media Model3d without a preview image
-          //   • Variant model: raw .glb URL from variant_3d_models (the
-          //     storefront's <model-viewer> reads .glb directly, but a .glb
-          //     binary cannot be rendered as an <img>)
-          //   • Variant model just uploaded: the staging URL has no file
-          //     extension and is not yet substituted with a CDN URL —
-          //     happens between handleModalAdd and save
-          // Whitelist (vs blacklist) is safer: ONLY render <img> when the
-          // URL clearly points at an image; everything else gets the
-          // placeholder. The "3D" badge below still renders so the tile is
-          // identifiable.
-          <div
-            aria-label={`${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
-            style={{
-              width: thumbSize,
-              height: thumbSize,
-              borderRadius: 6,
-              border: tileBorder,
-              boxShadow: tileBoxShadow,
-              background: "#f1f2f4",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "#616161",
-              fontWeight: 700,
-              fontSize: Math.max(10, Math.round(thumbSize * 0.18)),
-              letterSpacing: 0.5,
-            }}
-          >
-            3D
-          </div>
+          // No directly-renderable URL. Two render branches:
+          //   • meta.previewUrl set → client-generated snapshot (blob: URL
+          //     from BulkImageUploadPanel's threeDSnapshot pipeline, or in
+          //     a later stage a CDN URL persisted via variant_3d_previews).
+          //     Render as <img> so the merchant sees the actual model.
+          //   • previewUrl missing → fall back to a "3D" placeholder tile
+          //     so the entry is at least identifiable.
+          meta?.previewUrl ? (
+            <img
+              src={meta.previewUrl}
+              alt={currentLocaleAltText || `${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
+              draggable={false}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#f1f2f4",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              aria-label={`${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#f1f2f4",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#616161",
+                fontWeight: 700,
+                fontSize: Math.max(10, Math.round(thumbSize * 0.18)),
+                letterSpacing: 0.5,
+              }}
+            >
+              3D
+            </div>
+          )
         ) : kind === "external_video" ? (
           // YouTube / Vimeo URL: the merchant's URL is not an image, so we
           // either fetch the host's thumbnail (img.youtube.com for YT) when

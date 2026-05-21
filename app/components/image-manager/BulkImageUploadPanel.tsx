@@ -19,6 +19,7 @@ import "../../styles/HelpTooltip.css";
 import { useI18n } from "../../contexts/I18nContext";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
 import { ALL_UPLOADABLE_MIME_TYPES, classifyFile } from "../../utils/mediaKind";
+import { snapshotAndPersist } from "../../utils/threeDSnapshot";
 import { BulkSortableList } from "./BulkSortableList";
 import type { StagedItem, VariantWithGallery, VariantSelectedOption } from "./types";
 
@@ -381,6 +382,39 @@ export function BulkImageUploadPanel({
       autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
     );
     onItemsChange(prev => [...prev, ...assignedItems]);
+
+    // .glb tiles ship with previewUrl="" because the browser can't render a
+    // model binary as an <img>. Generate a snapshot off-screen via
+    // <model-viewer>.toBlob and patch it onto the item as a blob: URL so the
+    // upload-panel tile + downstream image-manager tile (via mediaMetaMap)
+    // show a real preview immediately. THEN persist the same JPEG to Shopify
+    // Files via the staged-upload → fileCreate pipeline so the storefront
+    // can use it too — that permanent CDN URL becomes `persistentPreviewUrl`
+    // and lands in custom.variant_3d_previews on save. Both steps wrap in
+    // try/catch so one stuck/corrupt GLB never blocks other uploads, and
+    // either step's failure is non-fatal (the .glb upload itself still
+    // succeeds, the tile keeps its "3D" placeholder on the storefront).
+    validFiles.forEach((file, i) => {
+      const item = assignedItems[i];
+      if (item.kind !== "model") return;
+      (async () => {
+        try {
+          const { blobUrl, cdnUrl } = await snapshotAndPersist(file);
+          onItemsChange((prev) =>
+            prev.map((it) =>
+              it.uniqueId === item.uniqueId
+                ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
+                : it,
+            ),
+          );
+        } catch (err) {
+          // Non-fatal — the .glb upload itself still succeeds. Tile keeps
+          // its "3D" placeholder, and variant_3d_previews stays empty for
+          // this slot. Storefront falls back to its own placeholder too.
+          console.warn("[BulkUpload] 3D snapshot/persist failed", { file: file.name, err });
+        }
+      })();
+    });
 
     await Promise.all(validFiles.map(async (file, i) => {
       const item = assignedItems[i];

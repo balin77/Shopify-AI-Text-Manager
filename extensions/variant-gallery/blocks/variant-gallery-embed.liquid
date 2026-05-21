@@ -58,6 +58,7 @@
       {%- assign vg = variant.metafields.custom.variant_gallery -%}
       {%- assign cp_order_mf = variant.metafields.custom.variant_gallery_order -%}
       {%- assign cp_models_mf = variant.metafields.custom.variant_3d_models -%}
+      {%- assign cp_previews_mf = variant.metafields.custom.variant_3d_previews -%}
       "{{ variant.id }}": [
         {%- assign cp_has_any = false -%}
         {%- assign cp_seen_file_ids = ',' -%}
@@ -210,12 +211,30 @@
               {%- if cp_seen_models contains model_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_models = cp_seen_models | append: model_token | append: ',' -%}
               {%- assign cp_model_url = entry_val | strip -%}
+              {%- comment -%}
+                Look up the parallel JPEG preview (custom.variant_3d_previews
+                is a list.url metafield aligned 1:1 with variant_3d_models by
+                index). voll-mix path has no natural index — the entry came
+                from the order JSON — so we re-scan cp_models_mf.value to
+                find this URL's position, then pull the same-index preview.
+                Empty string when the metafield is missing or the slot has
+                no preview yet (legacy models from before this metafield).
+              {%- endcomment -%}
+              {%- assign cp_model_preview = '' -%}
+              {%- if cp_previews_mf != blank and cp_previews_mf.value != blank and cp_models_mf != blank and cp_models_mf.value != blank -%}
+                {%- for cp_m_url in cp_models_mf.value -%}
+                  {%- if cp_m_url == cp_model_url -%}
+                    {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
+                    {%- break -%}
+                  {%- endif -%}
+                {%- endfor -%}
+              {%- endif -%}
               {%- if cp_model_url != blank -%}
                 {%- if cp_has_any %},{% endif -%}
                 {
                   "type":      "model",
-                  "thumb":     "",
-                  "poster":    "",
+                  "thumb":     {{ cp_model_preview | json }},
+                  "poster":    {{ cp_model_preview | json }},
                   "w":         800,
                   "h":         800,
                   "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
@@ -343,12 +362,17 @@
               {%- assign model_tail_needle = ',' | append: model_tail_token | append: ',' -%}
               {%- if cp_seen_models contains model_tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_models = cp_seen_models | append: model_tail_token | append: ',' -%}
+              {%- comment -%} Parallel preview lookup by index — forloop.index0 maps directly to the same slot in custom.variant_3d_previews. {%- endcomment -%}
+              {%- assign cp_model_preview = '' -%}
+              {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
+                {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
+              {%- endif -%}
               {%- if cp_model_url != blank -%}
                 {%- if cp_has_any %},{% endif -%}
                 {
                   "type":      "model",
-                  "thumb":     "",
-                  "poster":    "",
+                  "thumb":     {{ cp_model_preview | json }},
+                  "poster":    {{ cp_model_preview | json }},
                   "w":         800,
                   "h":         800,
                   "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},
@@ -380,7 +404,20 @@
             }
             {%- assign cp_has_any = true -%}
           {%- endif -%}
-          {%- comment -%} vg.value items via list.file_reference: dispatch on media_type so videos and 3D models added to the metafield are honoured, not silently dropped (previously this branch was image-only). {%- endcomment -%}
+          {%- comment -%}
+            Default order (when variant_gallery_order is not set):
+            ALL images first (vg.value natural order, preceded by featured_image
+            above), then ALL native videos, then external videos, then 3D models.
+            We split vg.value into two passes — pass 1 emits image entries only,
+            pass 2 emits video entries only — so a video inserted between two
+            images in the metafield does not break up the image group on the
+            storefront. The merchant-defined mix order is still respected via
+            the voll-mix path above when variant_gallery_order IS set.
+            No vg-model branch here either: Shopify `list.file_reference`
+            returns MediaImage / Video / GenericFile only — variant-specific
+            3D models live in custom.variant_3d_models (list.url) and are
+            emitted after the external-video loop.
+          {%- endcomment -%}
           {%- for item in vg.value -%}
             {%- if item.media_type == 'image' -%}
               {%- assign cp_src = item | image_url: width: 800 -%}
@@ -400,7 +437,10 @@
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
-            {%- elsif item.media_type == 'video' -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- for item in vg.value -%}
+            {%- if item.media_type == 'video' -%}
               {%- if item.preview_image != blank and item.sources.size > 0 -%}
                 {%- if cp_has_any %},{% endif -%}
                 {%- assign cp_pi = item.preview_image -%}
@@ -420,7 +460,6 @@
                 }
                 {%- assign cp_has_any = true -%}
               {%- endif -%}
-            {%- comment -%} No vg-model branch here: Shopify `list.file_reference` returns MediaImage / Video / GenericFile only. Variant-specific 3D models live in custom.variant_3d_models (list.url) and are emitted below, after the external-video loop. {%- endcomment -%}
             {%- endif -%}
           {%- endfor -%}
           {%- comment -%}
@@ -492,12 +531,17 @@
           {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}
             {%- for cp_model_url_raw in cp_models_mf.value -%}
               {%- assign cp_model_url = cp_model_url_raw | strip -%}
+              {%- comment -%} Parallel preview lookup — same index in variant_3d_previews. {%- endcomment -%}
+              {%- assign cp_model_preview = '' -%}
+              {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
+                {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
+              {%- endif -%}
               {%- if cp_model_url != blank -%}
                 {%- if cp_has_any %},{% endif -%}
                 {
                   "type":      "model",
-                  "thumb":     "",
-                  "poster":    "",
+                  "thumb":     {{ cp_model_preview | json }},
+                  "poster":    {{ cp_model_preview | json }},
                   "w":         800,
                   "h":         800,
                   "alt":       {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }},

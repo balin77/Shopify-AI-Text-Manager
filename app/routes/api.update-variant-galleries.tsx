@@ -24,6 +24,15 @@ interface UpdateVariantGalleriesBody {
    *  live in their own list.url metafield. Server re-validates every URL with
    *  isValid3dModelUrl and drops anything that isn't a `.glb`. */
   variant3dModels?: Array<{ variantId: string; urls: string[] }>;
+  /** JPEG preview URLs per variant — persisted to custom.variant_3d_previews
+   *  (list.url). Parallel array to variant3dModels: index N is the preview for
+   *  index N in variant3dModels. Empty string at an index means no preview.
+   *  Generated client-side via app/utils/threeDSnapshot.ts → uploaded via
+   *  /api/create-shopify-file. Server passes the URLs through verbatim
+   *  (they're already Shopify-CDN URLs from fileCreate), but trims the array
+   *  to the same length as the corresponding variant3dModels array so a
+   *  dropped/processing model never has an orphaned preview. */
+  variant3dPreviews?: Array<{ variantId: string; urls: string[] }>;
   /** Carry-over from a previous save where a Model3d upload didn't finish
    *  processing within the bounded polling window. Maps each still-staging
    *  URL onto the Model3d GID returned by the prior productCreateMedia call.
@@ -49,6 +58,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     clearVariantMainImages = [],
     variantExternalVideos = [],
     variant3dModels = [],
+    variant3dPreviews = [],
     knownModelGids = {},
     variantGalleryOrder = [],
   } = body;
@@ -463,9 +473,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   //   "invalid_url" — anything else that doesn't pass isValid3dModelUrl
   //                   (typo, non-`.glb` URL, malformed).
   const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url"; gid?: string }> = [];
+  // Look up parallel previews per variant. Same-index pairing with the
+  // model urls array — when a model gets dropped (processing / invalid /
+  // failed) its preview at the same index is dropped too so the persisted
+  // arrays stay aligned at write time.
+  const previewsByVid: Record<string, string[]> = {};
+  for (const p of variant3dPreviews) previewsByVid[p.variantId] = p.urls;
   for (const m of variant3dModels) {
     const sanitized: string[] = [];
-    for (const u of m.urls) {
+    const sanitizedPreviews: string[] = [];
+    const previewsForVariant = previewsByVid[m.variantId] ?? [];
+    for (let i = 0; i < m.urls.length; i++) {
+      const u = m.urls[i];
       const status = modelResolutionStatus[u];
       if (status === "processing") {
         // Attach the Model3d GID so the client can carry it across and the
@@ -487,8 +506,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // entries land here). Library-picked URLs are not in the map and pass
       // through unchanged.
       const resolved = resourceUrlToModelUrl[u] ?? u;
-      if (isValid3dModelUrl(resolved)) sanitized.push(resolved);
-      else dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "invalid_url" });
+      if (isValid3dModelUrl(resolved)) {
+        sanitized.push(resolved);
+        sanitizedPreviews.push(previewsForVariant[i] ?? "");
+      } else {
+        dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "invalid_url" });
+      }
     }
     metafieldOps.push({
       ownerId: m.variantId,
@@ -496,6 +519,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       key: "variant_3d_models",
       type: "list.url",
       value: JSON.stringify(sanitized),
+    });
+    metafieldOps.push({
+      ownerId: m.variantId,
+      namespace: "custom",
+      key: "variant_3d_previews",
+      type: "list.url",
+      value: JSON.stringify(sanitizedPreviews),
     });
   }
 

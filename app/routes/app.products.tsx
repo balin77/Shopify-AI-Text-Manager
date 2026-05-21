@@ -417,27 +417,6 @@ export default function ProductsPage() {
     Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
-  // Diagnostic: emit a single log only when hasPendingImageChanges flips,
-  // never on every render. The previous render-time console.log flooded the
-  // console and made it impossible to read other log lines.
-  const prevHasPendingRef = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (!showImageManager) return;
-    if (prevHasPendingRef.current === hasPendingImageChanges) return;
-    prevHasPendingRef.current = hasPendingImageChanges;
-    console.log("[app.products hasPendingImageChanges] flipped →", hasPendingImageChanges, {
-      pendingVariantGalleries: imageManagerState.pendingVariantGalleries.length,
-      pendingMediaOrder: imageManagerState.pendingMediaOrder.length,
-      pendingProductNewMedia: imageManagerState.pendingProductNewMedia.length,
-      bulkReady: imageManagerState.bulkItems.filter(i => i.status === "ready").length,
-      hasAltTextEdits: imageManagerState.hasAltTextEdits,
-      pendingExternalVideos: Object.keys(imageManagerState.pendingExternalVideos).length,
-      pendingVariant3dModels: Object.keys(imageManagerState.pendingVariant3dModels).length,
-      pendingGalleryOrder: Object.keys(imageManagerState.pendingGalleryOrder).length,
-      pendingKnownModelGids: Object.keys(imageManagerState.pendingKnownModelGids).length,
-    });
-  }, [hasPendingImageChanges, showImageManager, imageManagerState]);
-
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -800,12 +779,14 @@ export default function ProductsPage() {
               onPendingChange={imageManagerState.handlePendingChange}
               onExternalVideosChange={imageManagerState.setPendingExternalVideos}
               onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
+              onThreeDPreviewsChange={imageManagerState.setPendingVariant3dPreviews}
               // Feeds the carry-over from a prior "processing" drop back
               // into VariantImageManager's local state so the merchant
               // keeps seeing the tile after Save and the next save still
               // includes the staging URL in its payload. Owned by the
               // hook (single source of truth for the next save's body).
               seedThreeDModelUrls={imageManagerState.pendingVariant3dModels}
+              seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}

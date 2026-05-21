@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { snapshotAndPersist } from "../../utils/threeDSnapshot";
 import {
   Modal,
   TextField,
@@ -52,6 +53,12 @@ export type AddedItem =
       previewUrl: string;
       fileName: string;
       mimeType: string;
+      /** For 3D model uploads only: the permanent Shopify CDN URL of the
+       *  auto-generated preview JPEG (see app/utils/threeDSnapshot.ts +
+       *  /api/create-shopify-file). Persisted to custom.variant_3d_previews
+       *  parallel to the model URL so the storefront can show a real
+       *  thumbnail instead of the "3D" placeholder. */
+      persistentPreviewUrl?: string;
     }
   | {
       /** External YouTube/Vimeo URL — variant mode persists it to the
@@ -128,6 +135,11 @@ interface PendingUpload {
   resourceUrl: string;
   progress: number;
   status: "uploading" | "ready" | "error";
+  /** 3D-model uploads: permanent Shopify CDN URL of the auto-generated
+   *  preview JPEG (forwarded from StagedItem.persistentPreviewUrl, set by
+   *  BulkImageUploadPanel's snapshot pipeline). Undefined when the snapshot
+   *  is still being uploaded or the file isn't a model. */
+  persistentPreviewUrl?: string;
 }
 
 export function FilePickerModal({
@@ -313,16 +325,6 @@ export function FilePickerModal({
         });
         const stagedJson = await res.json();
         const { url, resourceUrl, parameters, httpMethod, error: stagedErr } = stagedJson;
-        console.log("[FilePickerModal staged-upload response]", {
-          fileName: file.name,
-          mimeType: file.type,
-          hasUrl: !!url,
-          hasResourceUrl: !!resourceUrl,
-          httpMethod,
-          paramCount: parameters?.length ?? 0,
-          error: stagedErr,
-          code: stagedJson?.code,
-        });
         if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
           setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
           setError(t.imageManager.imageQuotaExceeded?.replace("{limit}", String(stagedJson.limit ?? "")) ?? "Quota exceeded");
@@ -341,11 +343,6 @@ export function FilePickerModal({
             }
           };
           xhr.onload = () => {
-            console.log("[FilePickerModal XHR onload]", {
-              fileName: file.name,
-              xhrStatus: xhr.status,
-              responseSnippet: (xhr.responseText || "").slice(0, 200),
-            });
             if (xhr.status >= 200 && xhr.status < 300) {
               setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
                 ? { ...it, status: "ready" as const, progress: 100, resourceUrl }
@@ -445,20 +442,6 @@ export function FilePickerModal({
   }, []);
 
   const handleCommitSelected = useCallback(() => {
-    console.log("[FilePickerModal handleCommitSelected]", {
-      selectedCount: selected.size,
-      pendingUploadsCount: pendingUploads.length,
-      pendingUploadsDetail: pendingUploads.map(u => ({
-        uniqueId: u.uniqueId,
-        fileName: u.fileName,
-        status: u.status,
-        hasResourceUrl: !!u.resourceUrl,
-        kind: u.kind,
-        isSelected: selected.has(u.uniqueId),
-      })),
-      libraryFileCount: files.length,
-      librarySelectedCount: files.filter(f => selected.has(f.id)).length,
-    });
     const picked: AddedItem[] = [];
     for (const f of files) {
       if (selected.has(f.id)) {
@@ -466,21 +449,23 @@ export function FilePickerModal({
       }
     }
     for (const u of pendingUploads) {
-      const wouldInclude = selected.has(u.uniqueId) && u.status === "ready" && !!u.resourceUrl;
-      if (selected.has(u.uniqueId) && !wouldInclude) {
-        console.warn("[FilePickerModal] upload selected but filtered out", {
-          uniqueId: u.uniqueId,
+      if (selected.has(u.uniqueId) && u.status === "ready" && u.resourceUrl) {
+        picked.push({
+          source: "upload",
+          resourceUrl: u.resourceUrl,
+          kind: u.kind,
+          previewUrl: u.previewUrl,
           fileName: u.fileName,
-          status: u.status,
-          hasResourceUrl: !!u.resourceUrl,
-          reason: u.status !== "ready" ? `status is "${u.status}", not "ready"` : "resourceUrl is empty",
+          mimeType: u.mimeType,
+          // 3D model uploads carry a permanent CDN URL of their generated
+          // preview JPEG (see BulkImageUploadPanel snapshot pipeline). Forward
+          // it so the parent's handleModalAdd can persist it to
+          // variant_3d_previews. Undefined for non-models / when the snapshot
+          // never completed — handler treats both as "no preview".
+          persistentPreviewUrl: u.persistentPreviewUrl,
         });
       }
-      if (wouldInclude) {
-        picked.push({ source: "upload", resourceUrl: u.resourceUrl, kind: u.kind, previewUrl: u.previewUrl, fileName: u.fileName, mimeType: u.mimeType });
-      }
     }
-    console.log("[FilePickerModal handleCommitSelected] →", { pickedCount: picked.length, willCallOnAdd: picked.length > 0 });
     if (picked.length > 0) onAdd(picked);
     onClose();
   }, [files, selected, pendingUploads, onAdd, onClose]);

@@ -53,6 +53,11 @@ interface VariantImageManagerProps {
    *  variant. Mirrors onExternalVideosChange exactly — variant_3d_models is
    *  also a list.url metafield. */
   onThreeDModelsChange?: (variant3dModels: Record<string, string[]>) => void;
+  /** Parallel to onThreeDModelsChange — fires whenever the per-variant
+   *  preview-URL list changes (add / remove / index alignment after a
+   *  model drop). Same lockstep index contract as the metafield write:
+   *  preview[i] is the JPEG snapshot for model[i]. */
+  onThreeDPreviewsChange?: (variant3dPreviews: Record<string, string[]>) => void;
   /** Carry-over from a "processing" drop on a prior save. The hook owns
    *  this map (it's its own pendingVariant3dModels state); we pass it in
    *  so the resetKey effect can re-seed our local state with the still-
@@ -60,6 +65,9 @@ interface VariantImageManagerProps {
    *  letting the merchant's next mutation wipe the hook's carry-over via
    *  onThreeDModelsChange. */
   seedThreeDModelUrls?: Record<string, string[]>;
+  /** Parallel carry-over for the preview URLs of still-processing models.
+   *  Same lockstep index contract as seedThreeDModelUrls. */
+  seedThreeDPreviewUrls?: Record<string, string[]>;
   /** Notified whenever the combined file+URL+model order changes on any
    *  variant (drag-reorder of a mixed gallery). The value is variantId →
    *  stringified JSON array of { kind: "file" | "url" | "model", value },
@@ -132,7 +140,9 @@ export function VariantImageManager({
   onGallerySelectionGidsChange,
   onExternalVideosChange,
   onThreeDModelsChange,
+  onThreeDPreviewsChange,
   seedThreeDModelUrls,
+  seedThreeDPreviewUrls,
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
@@ -144,6 +154,11 @@ export function VariantImageManager({
   // Per-variant overrides for 3D model (.glb) URLs. Same contract as
   // pendingExternalVideos — both live in list.url metafields.
   const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Parallel preview URLs — index N in pendingVariant3dPreviews[v] is the
+  // JPEG snapshot for index N in pendingVariant3dModels[v]. add / remove
+  // handlers keep both arrays in lockstep so the server can write
+  // variant_3d_previews aligned with variant_3d_models.
+  const [pendingVariant3dPreviews, setPendingVariant3dPreviews] = useState<Record<string, string[]>>({});
   const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const pendingGalleryOrderRef = useRef<Record<string, string>>({});
   useEffect(() => { pendingGalleryOrderRef.current = pendingGalleryOrder; }, [pendingGalleryOrder]);
@@ -261,6 +276,7 @@ export function VariantImageManager({
     // when there's nothing to carry over — same effective behaviour as
     // before for non-3D and non-processing flows.
     setPendingVariant3dModels(seedThreeDModelUrls ?? {});
+    setPendingVariant3dPreviews(seedThreeDPreviewUrls ?? {});
     setPendingGalleryOrder({});
     pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
@@ -460,12 +476,6 @@ export function VariantImageManager({
     }
 
     const clearVariantMainImages = [...locallyExcludedMainGids, ...noMainVariantIds];
-    console.log("[VariantImageManager useEffect propagate] →", {
-      galleriesCount: galleries.length,
-      pendingProductNewMediaCount: pendingProductNewMedia.length,
-      clearMainCount: clearVariantMainImages.length,
-      hasOnPendingChange: !!onPendingChange,
-    });
     onPendingChange?.(galleries, pendingMediaOrderRef.current, pendingProductNewMedia, clearVariantMainImages);
   }, [pendingVariantGalleries, pendingProductNewMedia, locallyExcludedMainGids]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -850,6 +860,20 @@ export function VariantImageManager({
       const previewUrl = pending.previewUrl;
       if (!previewUrl || map[previewUrl]) continue;
       map[previewUrl] = { kind: pending.kind };
+    }
+    // Surface mediaMetaMap's previewUrl on every keyed entry. For .glb
+    // model URLs (variant_3d_models), the only renderable preview is the
+    // client-generated snapshot stored at upload time — without copying
+    // it onto ImageMeta the SortableThumbnail falls back to the "3D"
+    // placeholder even though we have a real image to show.
+    for (const [key, m] of Object.entries(mediaMetaMap)) {
+      const existing = map[key];
+      if (existing) {
+        if (!existing.previewUrl && m.previewUrl) existing.previewUrl = m.previewUrl;
+        if (!existing.kind && m.kind) existing.kind = m.kind;
+      } else if (m.previewUrl) {
+        map[key] = { kind: m.kind, previewUrl: m.previewUrl };
+      }
     }
     return map;
   }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia]);
@@ -1240,11 +1264,7 @@ export function VariantImageManager({
   // product gallery. Closes the modal afterwards — except for URL adds,
   // which leave it open so the merchant can pile more.
   const handleModalAdd = useCallback((items: AddedItem[]) => {
-    console.log("[handleModalAdd] called", { mode: pickerTarget?.mode, itemCount: items.length, items });
-    if (!pickerTarget || items.length === 0) {
-      console.warn("[handleModalAdd] short-circuited", { hasPickerTarget: !!pickerTarget, itemCount: items.length });
-      return;
-    }
+    if (!pickerTarget || items.length === 0) return;
 
     // Pre-seed mediaMetaMap so library tiles render with the right overlay
     // immediately instead of waiting for the next /api/product-variants
@@ -1292,9 +1312,32 @@ export function VariantImageManager({
       for (const it of items) {
         if (it.source === "library") {
           if (it.kind === "model") {
-            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl);
+            // Library-picked models have no admin-side snapshot — pass "" so
+            // the parallel preview array stays index-aligned. The storefront
+            // falls back to its own "3D" placeholder for these slots until
+            // we add a server-side or on-demand snapshot path for legacy
+            // models.
+            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl, "");
           } else {
             refsForGallery.push(it.gid);
+            // Library-picked images/videos that aren't already on this
+            // product's media should also land on product.media (so they
+            // show up in the theme's product gallery, not just in the
+            // variant metafield). Position-0 picks are already enforced by
+            // Shopify (mediaId rejects MediaImage from other products), but
+            // position-1+ picks would otherwise live only in the variant
+            // metafield — inconsistent with the merchant's expectation that
+            // "added to a variant" means "part of the product".
+            // We only clone images for now: productCreateMedia accepts a
+            // public URL as originalSource for IMAGE, but VIDEO/MODEL_3D
+            // require staged-uploads URLs (no server-side download+restage
+            // path exists yet). Cross-product video library picks therefore
+            // stay metafield-only; same-product picks were already on
+            // product.media so no clone is needed.
+            const alreadyOnThisProduct = !!shopifyMediaMap[it.gid];
+            if (it.kind === "image" && !alreadyOnThisProduct && it.assetUrl) {
+              uploadEntries.push({ resourceUrl: it.assetUrl, kind: "image", previewUrl: it.previewUrl });
+            }
           }
         } else if (it.source === "upload") {
           if (it.kind === "model") {
@@ -1302,7 +1345,12 @@ export function VariantImageManager({
             // storefront agree on the asset, AND register the staging URL
             // for backend post-create resolution → variant_3d_models.
             uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
-            handleAddThreeDModelUrl(variantId, it.resourceUrl);
+            // persistentPreviewUrl is the CDN URL of the snapshot JPEG
+            // uploaded by BulkImageUploadPanel via fileCreate. Empty if the
+            // snapshot pipeline failed or wasn't ready before the merchant
+            // clicked "Confirm" — handler treats it as "no preview" and the
+            // storefront falls back to the placeholder.
+            handleAddThreeDModelUrl(variantId, it.resourceUrl, it.persistentPreviewUrl ?? "");
           } else {
             refsForGallery.push(it.resourceUrl);
             uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
@@ -1347,13 +1395,10 @@ export function VariantImageManager({
           additions.push({ resourceUrl: it.url, kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) });
         }
       }
-      console.log("[handleModalAdd PRODUCT] computed additions", { additionsCount: additions.length, additions });
       if (additions.length > 0) {
         setPendingProductNewMedia(prev => {
           const seen = new Set(prev.map(e => e.resourceUrl));
-          const next = [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
-          console.log("[handleModalAdd PRODUCT] setPendingProductNewMedia", { prevCount: prev.length, nextCount: next.length });
-          return next;
+          return [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
         });
       }
     }
@@ -1412,28 +1457,51 @@ export function VariantImageManager({
     });
   }, [variants, onExternalVideosChange]);
 
-  // 3D-model URL handlers — mirror the external-video pair exactly. Both
-  // metafields are list.url and share the same "effective list" pattern.
-  const handleAddThreeDModelUrl = useCallback((variantId: string, url: string) => {
+  // 3D-model URL handlers — mirror the external-video pair, with the
+  // additional twist that variant_3d_previews is a parallel list.url
+  // metafield. Add appends to BOTH arrays at the same index; remove
+  // deletes at the same index in both. previewUrl defaults to "" so a
+  // library-picked model (no admin-side snapshot) still adds — the
+  // storefront falls back to its "3D" wordmark placeholder for that slot.
+  const handleAddThreeDModelUrl = useCallback((variantId: string, url: string, previewUrl: string = "") => {
+    const variant = variants.find(v => v.id === variantId);
     setPendingVariant3dModels(prev => {
-      const variant = variants.find(v => v.id === variantId);
       const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
       if (current.includes(url)) return prev;
       const next = { ...prev, [variantId]: [...current, url] };
       onThreeDModelsChange?.(next);
       return next;
     });
-  }, [variants, onThreeDModelsChange]);
+    setPendingVariant3dPreviews(prev => {
+      const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+      if (currentModels.includes(url)) return prev;
+      const current = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+      const next = { ...prev, [variantId]: [...current, previewUrl] };
+      onThreeDPreviewsChange?.(next);
+      return next;
+    });
+  }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const handleRemoveThreeDModelUrl = useCallback((variantId: string, url: string) => {
+    const variant = variants.find(v => v.id === variantId);
+    const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+    const idx = currentModels.indexOf(url);
     setPendingVariant3dModels(prev => {
-      const variant = variants.find(v => v.id === variantId);
-      const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
-      const next = { ...prev, [variantId]: current.filter(u => u !== url) };
+      const cur = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+      const next = { ...prev, [variantId]: cur.filter(u => u !== url) };
       onThreeDModelsChange?.(next);
       return next;
     });
-  }, [variants, onThreeDModelsChange]);
+    if (idx >= 0) {
+      setPendingVariant3dPreviews(prev => {
+        const cur = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+        const nextArr = cur.filter((_, i) => i !== idx);
+        const next = { ...prev, [variantId]: nextArr };
+        onThreeDPreviewsChange?.(next);
+        return next;
+      });
+    }
+  }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
@@ -1466,10 +1534,26 @@ export function VariantImageManager({
       });
     }
     if (modelToRemove.length > 0) {
+      // Capture the pre-removal model index for every removed URL so we
+      // can prune the parallel preview array at the SAME indices. Doing
+      // both lookups against `current` before any setState keeps the
+      // ordering aligned even if multiple models are removed at once.
+      const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+      const removedIndices = new Set(
+        modelToRemove
+          .map(u => currentModels.indexOf(u))
+          .filter(i => i >= 0)
+      );
       setPendingVariant3dModels(prev => {
         const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
         const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
         onThreeDModelsChange?.(next);
+        return next;
+      });
+      setPendingVariant3dPreviews(prev => {
+        const current = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter((_, i) => !removedIndices.has(i)) };
+        onThreeDPreviewsChange?.(next);
         return next;
       });
     }
@@ -1483,7 +1567,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange]);
+  }, [variants, fileUrlMap, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];

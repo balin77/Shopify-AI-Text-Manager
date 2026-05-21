@@ -24,6 +24,14 @@ export interface StagedItem {
   assignmentMode?: "unassigned" | "assigned" | "manual";
   /** Drives upload route (stagedUploadsCreate.resource) + productCreateMedia.mediaContentType. */
   kind?: MediaKind;
+  /** For 3D models only: the permanent Shopify CDN URL of the auto-generated
+   *  preview JPEG (snapshot of the .glb via <model-viewer>.toBlob). Lives on
+   *  the item from the moment BulkImageUploadPanel finishes uploading the
+   *  snapshot via fileCreate. Distinct from `previewUrl`, which is a local
+   *  blob: URL good only for the current session's admin display. The
+   *  persistent URL is what gets written to custom.variant_3d_previews so
+   *  the storefront can use it as both thumb and model-viewer poster. */
+  persistentPreviewUrl?: string;
 }
 
 export interface VariantSelectedOption {
@@ -51,6 +59,12 @@ export interface VariantWithGallery {
    *  list.url metafield and are woven into galleryOrderJson via
    *  { kind: "model", value: url } entries. */
   threeDModelUrls?: string[];
+  /** JPEG preview URLs from custom.variant_3d_previews (list.url). Parallel
+   *  array to threeDModelUrls — index N here is the preview for index N in
+   *  threeDModelUrls. Empty string at an index means no preview was
+   *  generated for that model (e.g. legacy entries from before this
+   *  metafield existed) — UI falls back to the "3D" placeholder. */
+  threeDPreviewUrls?: string[];
   /** Optional total order across galleryFileGids ∪ externalVideoUrls ∪
    *  threeDModelUrls as JSON array of
    *  { kind: "file" | "url" | "model", value: gid|url }. Position 0 is
@@ -83,4 +97,10 @@ export interface ImageMeta {
    *  shown as a small badge so the merchant can tell platforms apart at a
    *  glance. */
   externalHost?: string;
+  /** Visual stand-in URL for non-image tiles whose primary URL can't be
+   *  rendered as an <img> (3D model .glb, video resourceUrl). Populated from
+   *  mediaMetaMap which receives it from BulkImageUploadPanel's snapshot
+   *  pipeline for .glb uploads. Empty/undefined falls back to the kind-
+   *  specific placeholder (e.g. "3D" badge for models). */
+  previewUrl?: string;
 }

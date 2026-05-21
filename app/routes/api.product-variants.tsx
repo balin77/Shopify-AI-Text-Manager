@@ -54,6 +54,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // so they sit in their own list.url metafield. The variant_gallery_order
   // entries with kind "model" reference these URLs.
   await ensureVariantMetafieldDefinition(admin, "variant_3d_models", "Variant 3D Models", "list.url");
+  // Per-model JPEG preview URLs. Parallel array to variant_3d_models — index N
+  // here is the preview for index N in variant_3d_models. Generated client-side
+  // at upload time via <model-viewer>.toBlob (see app/utils/threeDSnapshot.ts),
+  // uploaded via fileCreate as a standalone Shopify File (so it does not
+  // pollute the product media library), and stored here as a CDN URL. The
+  // storefront uses it as both the thumb and the model-viewer poster.
+  await ensureVariantMetafieldDefinition(admin, "variant_3d_previews", "Variant 3D Model Previews", "list.url");
   await ensureVariantMetafieldDefinition(admin, "variant_gallery_order", "Variant Gallery Order", "json");
 
   // Fetch product media + variants in one query.
@@ -109,6 +116,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 value
               }
               threeDModelsMetafield: metafield(namespace: "custom", key: "variant_3d_models") {
+                value
+              }
+              threeDPreviewsMetafield: metafield(namespace: "custom", key: "variant_3d_previews") {
                 value
               }
               galleryOrderMetafield: metafield(namespace: "custom", key: "variant_gallery_order") {
@@ -265,6 +275,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     imageKey: v.imageKeyMetafield?.value ?? null,
     externalVideosJson: v.externalVideosMetafield?.value ?? null,
     threeDModelsJson: v.threeDModelsMetafield?.value ?? null,
+    threeDPreviewsJson: v.threeDPreviewsMetafield?.value ?? null,
     galleryOrderJson: v.galleryOrderMetafield?.value ?? null,
     // selectedOptions already enriched with handles above
   }));
