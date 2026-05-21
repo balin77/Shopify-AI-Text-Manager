@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useSortable, SortableContext, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
@@ -31,6 +31,10 @@ interface PlaceholderThumbnailProps {
   onDrop: () => void;
   onUpload: (files: File[]) => void;
   thumbSize: number;
+  /** Container ID this placeholder belongs to. Used to register the drop-at-end
+   *  droppable so cross-gallery drags onto the upload tile route to the right
+   *  container. */
+  containerId: string;
   /** When set, a plain click on the placeholder opens the parent's media
    *  picker modal instead of launching the OS file dialog directly. The
    *  modal is the new central entry point for browse-library + upload +
@@ -39,15 +43,24 @@ interface PlaceholderThumbnailProps {
   onOpenPicker?: () => void;
 }
 
-function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpenPicker }: PlaceholderThumbnailProps) {
+function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpenPicker, containerId }: PlaceholderThumbnailProps) {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isActionMode = activeAction !== null;
+  // Distinct droppable so a cross-gallery drag that lands on the upload tile
+  // routes to "append to end of this container". Without it, pointerWithin
+  // sometimes resolved to an adjacent product tile and the merchant's drop
+  // turned into a within-product reorder instead of a copy into the target.
+  const { setNodeRef: setEndDropRef, isOver } = useDroppable({ id: `${containerId}::__end__` });
 
-  const borderColor = isActionMode
+  const borderColor = isOver
+    ? "#005bd3"
+    : isActionMode
     ? (activeAction === "copy" ? "#008060" : "#005bd3")
     : "#c9cccf";
-  const bgColor = isActionMode
+  const bgColor = isOver
+    ? "rgba(0,91,211,0.12)"
+    : isActionMode
     ? (activeAction === "copy" ? "rgba(0,128,96,0.07)" : "rgba(0,91,211,0.07)")
     : "transparent";
   const labelColor = isActionMode
@@ -56,6 +69,7 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpe
 
   return (
     <div
+      ref={setEndDropRef}
       style={{
         width: thumbSize,
         height: thumbSize,
@@ -604,6 +618,7 @@ export function SortableImageGrid({
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
           onOpenPicker={onOpenPicker}
+          containerId={containerId}
         />
       )}
 
@@ -638,6 +653,7 @@ export function SortableImageGrid({
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
           onOpenPicker={onOpenPicker}
+          containerId={containerId}
         />
       )}
     </>

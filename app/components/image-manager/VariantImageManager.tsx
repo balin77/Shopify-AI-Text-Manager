@@ -1185,7 +1185,17 @@ export function VariantImageManager({
     const overStr = over.id as string;
     const sepIdx = overStr.indexOf("::");
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
-    const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+    // overUrl semantics:
+    //   - string: dropped on a specific tile (URL of that tile)
+    //   - null:   dropped on the container itself (whitespace)
+    //   - "__end__": dropped on the upload placeholder → append to end of container
+    // Downstream branches that expect a real URL treat "__end__" the same as
+    // null (insertGidAtPosition / no-overUrl guards). The variant-to-product
+    // explicit-tile guard now also accepts "__end__" so the merchant can drop
+    // onto the product gallery's upload tile to remove from the variant.
+    const rawOverUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+    const isEndDrop = rawOverUrl === "__end__";
+    const overUrl = isEndDrop ? null : rawOverUrl;
 
     {
       const exact = urlToGid[url];
