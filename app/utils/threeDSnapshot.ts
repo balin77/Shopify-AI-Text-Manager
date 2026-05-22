@@ -30,10 +30,33 @@ export function loadModelViewerLib(): Promise<void> {
     const existing = document.querySelector(
       `script[data-cp-model-viewer="1"]`,
     ) as HTMLScriptElement | null;
+    // Wait until the custom element is actually defined, not just until the
+    // module script fires onload. type="module" scripts can fire onload
+    // before the module body has executed (export resolution is async), so
+    // resolving on script.onload was racing the registration — we created
+    // a <model-viewer> element before the class was registered, the browser
+    // treated it as HTMLUnknownElement, and the "load" event we awaited in
+    // snapshotFromGlbFile never fired → 20s timeout → "no preview generated".
+    const waitForCustomElement = () => {
+      const timer = window.setTimeout(() => {
+        modelViewerLoadPromise = null;
+        reject(new Error("model-viewer custom element never registered"));
+      }, 15000);
+      customElements
+        .whenDefined("model-viewer")
+        .then(() => {
+          window.clearTimeout(timer);
+          resolve();
+        })
+        .catch((err) => {
+          window.clearTimeout(timer);
+          modelViewerLoadPromise = null;
+          reject(err);
+        });
+    };
     const s = existing ?? document.createElement("script");
     s.type = "module";
     s.dataset.cpModelViewer = "1";
-    s.onload = () => resolve();
     s.onerror = () => {
       modelViewerLoadPromise = null;
       reject(new Error("Failed to load model-viewer library"));
@@ -42,6 +65,7 @@ export function loadModelViewerLib(): Promise<void> {
       s.src = MODEL_VIEWER_SCRIPT_URL;
       document.head.appendChild(s);
     }
+    waitForCustomElement();
   });
   return modelViewerLoadPromise;
 }
