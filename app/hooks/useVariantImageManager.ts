@@ -104,8 +104,31 @@ export function useVariantImageManager() {
       setPendingProductNewMedia([]);
       setPendingClearVariantMainImages([]);
       setPendingExternalVideos({});
-      setPendingVariant3dModels(deferred.carryOverModels);
-      setPendingVariant3dPreviews(deferred.carryOverPreviews);
+      // Merge the still-processing staging URLs with the variant's freshly-
+      // fetched saved metafield URLs. Without the merge, pendingVariant3dModels
+      // contains only the staging URL — and because the variant gallery's
+      // render uses `pendingVariant3dModels[v.id] ?? variant.threeDModelUrls`
+      // (override semantics), the override hides the saved models from the
+      // gallery view. The merchant sees only the new (still-processing) model
+      // until the next save, even though saved models are intact on Shopify.
+      const mergedModels: Record<string, string[]> = {};
+      const mergedPreviews: Record<string, string[]> = {};
+      for (const [variantId, processingUrls] of Object.entries(deferred.carryOverModels)) {
+        const v = variants.find((x) => x.id === variantId);
+        const savedModels = v?.threeDModelUrls ?? [];
+        const savedPreviews = v?.threeDPreviewUrls ?? [];
+        const carryPreviews = deferred.carryOverPreviews[variantId] ?? [];
+        mergedModels[variantId] = [...savedModels, ...processingUrls];
+        mergedPreviews[variantId] = [
+          ...savedPreviews,
+          // Pad to length match: if the saved array is shorter than its
+          // models, fill with "" so indices stay aligned.
+          ...Array(Math.max(0, savedModels.length - savedPreviews.length)).fill(""),
+          ...carryPreviews,
+        ];
+      }
+      setPendingVariant3dModels(mergedModels);
+      setPendingVariant3dPreviews(mergedPreviews);
       setPendingKnownModelGids(deferred.carryOverGids);
       setPendingGalleryOrder({});
       setResetCounter(c => c + 1);
