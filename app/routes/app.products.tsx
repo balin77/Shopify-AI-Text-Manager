@@ -418,78 +418,85 @@ export default function ProductsPage() {
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
 
-  // Background 3D asset backfill. After save returns, the .glb's
-  // Model3d.sources[0].url and Model3d.preview.image.url may not be
-  // populated by Shopify yet (sync save only waits ~1.5s; resolution
-  // can take seconds to minutes server-side). Poll
-  // /api/refresh-3d-previews on backoff until every variant's
-  // variant_3d_models + variant_3d_previews metafield is filled.
+  // Background 3D asset backfill. Sync save only waits ~1.5s for
+  // Model3d.sources[0].url + preview, anything slower lands here.
   //
-  // pendingKnownModelGids comes from the last save's "processing"
-  // carry-over — it tells the endpoint which Model3d GIDs to look up
-  // and which variant slot to populate when resolution lands.
+  // Refs (not deps) for the imageManager handle and the editor's
+  // selected product. Without them the tick() closure captured stale
+  // state from BEFORE the post-save deferred-clear populated the
+  // carry-over — pendingModels resolved to [] and the endpoint
+  // returned "nothing to do", stopping the loop the moment it
+  // started. By always reading from a fresh ref we pick up the
+  // carry-over the next time tick() fires regardless of which render
+  // schedulePreviewBackfill was bound on.
+  const imageManagerStateRef = useRef(imageManagerState);
+  imageManagerStateRef.current = imageManagerState;
   const previewBackfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewBackfillStepRef = useRef(0);
+  const previewBackfillProductIdRef = useRef<string | null>(null);
+  const previewBackfillTick = useCallback(async () => {
+    previewBackfillTimerRef.current = null;
+    const productId = previewBackfillProductIdRef.current;
+    if (!productId) return;
+    const state = imageManagerStateRef.current;
+    const pendingModels: Array<{ variantId: string; modelGid: string; stagingUrl: string }> = [];
+    for (const [variantId, urls] of Object.entries(state.pendingVariant3dModels ?? {})) {
+      for (const u of urls) {
+        const gid = state.pendingKnownModelGids?.[u];
+        if (gid) pendingModels.push({ variantId, modelGid: gid, stagingUrl: u });
+      }
+    }
+    const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
+    try {
+      const r = await fetch("/api/refresh-3d-previews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, pendingModels }),
+      });
+      const data = await r.json();
+      const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string }> : [];
+      if (resolved.length > 0) {
+        state.setPendingVariant3dModels(prev => {
+          const next = { ...prev };
+          for (const r of resolved) {
+            const arr = next[r.variantId];
+            if (!arr) continue;
+            const filtered = arr.filter(u => u !== r.stagingUrl);
+            if (filtered.length === 0) delete next[r.variantId];
+            else next[r.variantId] = filtered;
+          }
+          return next;
+        });
+        state.setPendingKnownModelGids(prev => {
+          const next = { ...prev };
+          for (const r of resolved) delete next[r.stagingUrl];
+          return next;
+        });
+      }
+      if (data?.updated > 0) state.reloadVariants();
+      const stillPending = data?.stillPending ?? 0;
+      const hasPendingLocally = pendingModels.length > 0 || resolved.length > 0;
+      if ((stillPending > 0 || hasPendingLocally) && previewBackfillStepRef.current < delays.length) {
+        const delay = delays[previewBackfillStepRef.current];
+        previewBackfillStepRef.current += 1;
+        previewBackfillTimerRef.current = setTimeout(previewBackfillTick, delay);
+      }
+    } catch {
+      if (previewBackfillStepRef.current < delays.length) {
+        const delay = delays[previewBackfillStepRef.current];
+        previewBackfillStepRef.current += 1;
+        previewBackfillTimerRef.current = setTimeout(previewBackfillTick, delay);
+      }
+    }
+  }, []);
   const schedulePreviewBackfill = useCallback((productId: string) => {
     if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
-    const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
-    let step = 0;
-    const tick = async () => {
-      previewBackfillTimerRef.current = null;
-      // Build pendingModels from current carry-over state. Each entry
-      // maps a staging URL to its Model3d GID + the variant it belongs
-      // to so the endpoint can replace the staging slot once Shopify
-      // populates Model3d.sources[0].url.
-      const pendingModels: Array<{ variantId: string; modelGid: string; stagingUrl: string }> = [];
-      for (const [variantId, urls] of Object.entries(imageManagerState.pendingVariant3dModels ?? {})) {
-        for (const u of urls) {
-          const gid = imageManagerState.pendingKnownModelGids?.[u];
-          if (gid) pendingModels.push({ variantId, modelGid: gid, stagingUrl: u });
-        }
-      }
-      try {
-        const r = await fetch("/api/refresh-3d-previews", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ productId, pendingModels }),
-        });
-        const data = await r.json();
-        // Clear resolved staging URLs from carry-over state so the variant
-        // gallery stops shadowing variant.threeDModelUrls (which now has
-        // the CDN URL) with the obsolete pending staging URL.
-        const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string }> : [];
-        if (resolved.length > 0) {
-          imageManagerState.setPendingVariant3dModels(prev => {
-            const next = { ...prev };
-            for (const r of resolved) {
-              const arr = next[r.variantId];
-              if (!arr) continue;
-              const filtered = arr.filter(u => u !== r.stagingUrl);
-              if (filtered.length === 0) delete next[r.variantId];
-              else next[r.variantId] = filtered;
-            }
-            return next;
-          });
-          imageManagerState.setPendingKnownModelGids(prev => {
-            const next = { ...prev };
-            for (const r of resolved) delete next[r.stagingUrl];
-            return next;
-          });
-        }
-        if (data?.updated > 0) imageManagerState.reloadVariants();
-        if (data?.stillPending > 0 && step < delays.length) {
-          previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
-          step += 1;
-        }
-      } catch {
-        if (step < delays.length) {
-          previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
-          step += 1;
-        }
-      }
-    };
-    previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
-    step += 1;
-  }, [imageManagerState]);
+    previewBackfillProductIdRef.current = productId;
+    previewBackfillStepRef.current = 0;
+    const firstDelay = 10000;
+    previewBackfillStepRef.current = 1;
+    previewBackfillTimerRef.current = setTimeout(previewBackfillTick, firstDelay);
+  }, [previewBackfillTick]);
   useEffect(() => () => {
     if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
   }, []);
