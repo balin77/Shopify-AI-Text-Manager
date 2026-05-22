@@ -218,13 +218,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
   }
+  // ── Backfill pass: also poll Model3d previews for .glb URLs that are
+  // already on the variant_3d_models metafield (from earlier saves) but
+  // still have an empty slot in variant_3d_previews. Big files often
+  // generate their Shopify preview minutes after the initial save —
+  // without this backfill, the preview never lands on the metafield
+  // unless the merchant re-uploads the file. Resolves URLs to Model3d
+  // GIDs by querying product.media once per save.
+  const cdnUrlsNeedingPreview = new Set<string>();
+  for (const m of variant3dModels) {
+    const previewsForVariant = variant3dPreviews.find(p => p.variantId === m.variantId)?.urls ?? [];
+    for (let i = 0; i < m.urls.length; i++) {
+      const u = m.urls[i];
+      const previewAtIdx = previewsForVariant[i] ?? "";
+      // Only consider CDN URLs (staging URLs are handled by the existing
+      // productCreateMedia/polling path); only when preview is missing.
+      if (previewAtIdx.trim() === "" && u.startsWith("https://") && !resourceUrlToShopifyPreviewUrl[u]) {
+        cdnUrlsNeedingPreview.add(u);
+      }
+    }
+  }
+  if (cdnUrlsNeedingPreview.size > 0) {
+    try {
+      // product.media gives us every Model3d on this product with its
+      // sources.url — match URL → GID, then append to modelResources so
+      // the polling loop below picks them up alongside fresh uploads.
+      const pmRes = await admin.graphql(`
+        query ProductMedia3D($id: ID!) {
+          product(id: $id) {
+            media(first: 250) {
+              nodes {
+                ... on Model3d {
+                  id
+                  sources { url }
+                }
+              }
+            }
+          }
+        }
+      `, { variables: { id: productId } });
+      const pmData = await pmRes.json();
+      const nodes = (pmData.data?.product?.media?.nodes ?? []) as Array<{ id?: string; sources?: { url: string }[] }>;
+      for (const n of nodes) {
+        if (!n?.id || !n.sources) continue;
+        for (const s of n.sources) {
+          if (cdnUrlsNeedingPreview.has(s.url)) {
+            modelResources.push({ gid: n.id, resourceUrl: s.url });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[update-variant-galleries] backfill product.media query failed:", err);
+    }
+  }
   if (modelResources.length > 0) {
     const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
     const pending = new Set(modelResources.map(m => m.gid));
-    // 5-step backoff: first attempt immediate (most small models are
-    // already done by the time productCreateMedia returns), then back
-    // off — total bounded ~8.8s.
-    const delays = [0, 800, 1500, 2500, 4000];
+    // 10-step backoff: starts immediate, extends to ~38s total. Big .glb
+    // files (60MB+) commonly need 20-30s before Shopify's Model3d.preview
+    // is generated server-side — the short 8.8s window meant the merchant
+    // saved with an empty preview every time and had no way to backfill it
+    // (besides re-uploading the same file). The window early-exits as
+    // soon as `pending` empties, so saves with no pending models still
+    // complete instantly.
+    const delays = [0, 800, 1500, 2500, 4000, 5000, 6000, 6000, 6000, 6000];
     for (const delay of delays) {
       if (delay > 0) await new Promise(r => setTimeout(r, delay));
       if (pending.size === 0) break;
@@ -246,18 +303,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           if (!node?.id) continue;
           const resourceUrl = gidToResourceUrl.get(node.id);
           if (!resourceUrl) continue;
-          // Capture the auto-generated preview URL whenever Shopify has it,
-          // even if the model itself is still processing — preview readiness
-          // and source readiness are independent on Shopify's side.
+          // Capture the auto-generated preview URL whenever Shopify has it.
           if (node.preview?.image?.url) {
             resourceUrlToShopifyPreviewUrl[resourceUrl] = node.preview.image.url;
           }
           if (node.status === "FAILED") {
             modelResolutionStatus[resourceUrl] = "failed";
             pending.delete(node.id);
-          } else if (node.sources?.[0]?.url) {
+            continue;
+          }
+          const isBackfill = cdnUrlsNeedingPreview.has(resourceUrl);
+          if (node.sources?.[0]?.url && !isBackfill && !resourceUrlToModelUrl[resourceUrl]) {
             resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
             modelResolutionStatus[resourceUrl] = "ready";
+          }
+          // Stop polling this entry once we have everything we need from it.
+          // Fresh uploads need both source URL and preview before they can
+          // exit; backfill candidates only need the preview (their CDN URL
+          // is already on the metafield).
+          const sourceDone = isBackfill || !!resourceUrlToModelUrl[resourceUrl];
+          const previewDone = !!resourceUrlToShopifyPreviewUrl[resourceUrl];
+          if (sourceDone && previewDone) {
             pending.delete(node.id);
           }
         }
@@ -271,9 +337,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Anything still pending after the bounded polling window is treated
     // as processing — the client carries the GID across so the next save
     // polls it directly (no duplicate productCreateMedia).
+    // Exception: backfill candidates (CDN URLs already in variant_3d_models
+    // whose preview hadn't generated yet). Their model itself is fine —
+    // only the preview lagged. Don't mark them as "processing", which
+    // would cause the sanitiser below to drop the model entirely. The
+    // preview slot simply stays empty for this save; the next save's
+    // backfill pass tries again.
     for (const gid of pending) {
       const resourceUrl = gidToResourceUrl.get(gid);
-      if (resourceUrl) modelResolutionStatus[resourceUrl] = "processing";
+      if (!resourceUrl) continue;
+      if (cdnUrlsNeedingPreview.has(resourceUrl)) continue;
+      modelResolutionStatus[resourceUrl] = "processing";
     }
     console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
       "| modelResolutionStatus", modelResolutionStatus);

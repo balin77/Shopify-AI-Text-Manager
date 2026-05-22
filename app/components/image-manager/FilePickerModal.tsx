@@ -350,17 +350,8 @@ export function FilePickerModal({
           };
           xhr.onload = () => {
             if (xhr.status >= 200 && xhr.status < 300) {
-              // For 3D models in queue mode we keep status="uploading" until
-              // snapshotAndPersist finishes — otherwise the merchant can hit
-              // "Add selected" before the snapshot resolves and the model
-              // lands in the variant gallery with previewUrl="" forever
-              // (snapshot completes after handleCommitSelected has already
-              // emitted the AddedItem with no preview, so the variant tile
-              // shows only the "3D" placeholder even though we successfully
-              // generated a thumbnail).
-              const keepUploadingForSnapshot = item.kind === "model" && uploadCommitMode !== "immediate";
               setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
-                ? { ...it, status: keepUploadingForSnapshot ? "uploading" : "ready" as const, progress: 100, resourceUrl }
+                ? { ...it, status: "ready" as const, progress: 100, resourceUrl }
                 : it));
               // In immediate mode commit the freshly uploaded file the moment
               // it's ready so the merchant sees it on the variant without an
@@ -402,27 +393,14 @@ export function FilePickerModal({
                 } else {
                   void finalize();
                 }
-              } else if (item.kind === "model") {
-                // Queue mode: the user will hit Add later. Run snapshot+
-                // persist in the background and stash the URLs on the
-                // PendingUpload so handleCommitSelected forwards them.
-                // We kept status="uploading" above so the Add button stays
-                // disabled until the snapshot lands — flip to "ready" only
-                // when the preview URLs are stashed (or the snapshot fails,
-                // so the merchant isn't blocked forever).
-                snapshotAndPersist(file)
-                  .then(({ blobUrl, cdnUrl }) => {
-                    setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
-                      ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl, status: "ready" as const }
-                      : it));
-                  })
-                  .catch((err) => {
-                    console.warn("[FilePickerModal] 3D snapshot/persist failed", { file: file.name, err });
-                    setPendingUploads(prev => prev.map(it => it.uniqueId === item.uniqueId
-                      ? { ...it, status: "ready" as const }
-                      : it));
-                  });
               }
+              // Queue mode + 3D model: no client-side snapshot. The pipeline
+              // (model-viewer + canvas.toBlob) timed out on big .glb files
+              // and forced the merchant to wait ~20s before "Add selected"
+              // became active, with no upside — server-side Shopify
+              // Model3d.preview generation runs on save anyway and handles
+              // arbitrarily large files without occupying the merchant's
+              // browser tab.
               resolve();
             } else {
               console.error("[FilePickerModal XHR upload FAILED]", {
