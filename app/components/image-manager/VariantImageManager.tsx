@@ -996,7 +996,12 @@ export function VariantImageManager({
       if (existing) {
         if (!existing.previewUrl && m.previewUrl) existing.previewUrl = m.previewUrl;
         if (!existing.kind && m.kind) existing.kind = m.kind;
-      } else if (m.previewUrl) {
+      } else if (m.previewUrl || m.kind) {
+        // Seed the entry even when previewUrl is missing — without the kind
+        // signal, SortableThumbnail and DragOverlay fall back to the "image"
+        // branch and try to render the raw resourceUrl (.glb / .mp4) as an
+        // <img>, producing a broken-link icon. With kind populated they
+        // render the appropriate placeholder ("3D" / "▶").
         map[key] = { kind: m.kind, previewUrl: m.previewUrl };
       }
     }
@@ -1600,6 +1605,12 @@ export function VariantImageManager({
           if (!next[it.gid]) next[it.gid] = { kind: it.kind, previewUrl: it.previewUrl };
         } else if (it.source === "upload") {
           if (!next[it.resourceUrl]) next[it.resourceUrl] = { kind: it.kind, previewUrl: it.previewUrl };
+        } else if (it.source === "external_url") {
+          // Without this, imageMetas had no entry for the queued YouTube/Vimeo
+          // URL — the DragOverlay then fell into the "treat as image" branch
+          // and rendered the YouTube watch URL inside <img src> (broken link
+          // during drag).
+          if (!next[it.url]) next[it.url] = { kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) ?? "" };
         }
       }
       return next;
@@ -2775,11 +2786,22 @@ export function VariantImageManager({
         // previewUrl (variant_3d_previews snapshot, YouTube/Vimeo thumb,
         // video poster) and fall back to a kind-specific placeholder when
         // no preview exists.
+        //
+        // URL-pattern fallback: variant-scope external videos and 3D models
+        // live in their own metafields (variant_external_videos /
+        // variant_3d_models), so their URLs never get seeded into mediaMetaMap.
+        // Inferring kind from the URL itself keeps the overlay correct without
+        // having to mirror every variant-mode write into mediaMetaMap.
         const meta = imageMetas[activeDragUrl];
-        const isImage = !meta?.kind || meta.kind === "image";
-        const ytThumb = meta?.kind === "external_video" ? youtubeThumbForUrl(activeDragUrl) : undefined;
-        const thumbSrc = isImage ? activeDragUrl : (meta?.previewUrl ?? ytThumb ?? null);
-        const placeholderLabel = meta?.kind === "model" ? "3D" : meta?.kind === "video" ? "▶" : meta?.kind === "external_video" ? "▶" : null;
+        const inferredKind: MediaKind | undefined = meta?.kind
+          ?? (parseExternalVideoUrl(activeDragUrl) ? "external_video"
+            : /\.(glb|gltf)(\?|$)/i.test(activeDragUrl) ? "model"
+            : /\.(mp4|mov|webm)(\?|$)/i.test(activeDragUrl) ? "video"
+            : undefined);
+        const isImage = !inferredKind || inferredKind === "image";
+        const ytThumb = inferredKind === "external_video" ? youtubeThumbForUrl(activeDragUrl) : undefined;
+        const thumbSrc = isImage ? activeDragUrl : (meta?.previewUrl || ytThumb || null);
+        const placeholderLabel = inferredKind === "model" ? "3D" : inferredKind === "video" ? "▶" : inferredKind === "external_video" ? "▶" : null;
         return (
         <div style={{ position: "relative", display: "inline-block" }}>
           {thumbSrc ? (
