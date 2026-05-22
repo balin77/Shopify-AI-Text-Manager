@@ -123,6 +123,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // pushed into pendingVariant3dModels onto the final Model3d.sources[0].url
   // (Shopify-CDN, public). Populated by the polling block below.
   const resourceUrlToModelUrl: Record<string, string> = {};
+  // Parallel to resourceUrlToModelUrl: Shopify's auto-generated preview JPG
+  // for the Model3d (via the `preview { image { url } }` field). Used as a
+  // fallback when the client's WebGL snapshot pipeline failed (e.g. .glb is
+  // too large for in-browser model-viewer rendering — saw a 20s timeout on
+  // an 80MB file). Shopify generates the preview server-side regardless of
+  // file size, so this is the only reliable path for big models.
+  const resourceUrlToShopifyPreviewUrl: Record<string, string> = {};
   // Per-staging-URL post-create status used by the variant3dModels loop to
   // route to the right dropped-bucket: "ready" → substitute, "processing" →
   // polling timed out (merchant should re-save), "failed" → Shopify rejected
@@ -229,15 +236,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 id
                 status
                 sources { url }
+                preview { image { url } status }
               }
             }
           }
         `, { variables: { ids: [...pending] } });
         const qd = await q.json();
-        for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[] }>) {
+        for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[]; preview?: { image?: { url?: string } | null; status?: string } | null }>) {
           if (!node?.id) continue;
           const resourceUrl = gidToResourceUrl.get(node.id);
           if (!resourceUrl) continue;
+          // Capture the auto-generated preview URL whenever Shopify has it,
+          // even if the model itself is still processing — preview readiness
+          // and source readiness are independent on Shopify's side.
+          if (node.preview?.image?.url) {
+            resourceUrlToShopifyPreviewUrl[resourceUrl] = node.preview.image.url;
+          }
           if (node.status === "FAILED") {
             modelResolutionStatus[resourceUrl] = "failed";
             pending.delete(node.id);
@@ -521,7 +535,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const resolved = resourceUrlToModelUrl[u] ?? u;
       if (isValid3dModelUrl(resolved)) {
         sanitized.push(resolved);
-        sanitizedPreviews.push(previewsForVariant[i] ?? "");
+        // Prefer the client's WebGL snapshot when present (handles existing
+        // saves + small models), else fall back to Shopify's auto-generated
+        // Model3d.preview.image.url (catches large .glb files where the
+        // in-browser snapshot pipeline timed out).
+        const clientPreview = previewsForVariant[i];
+        const shopifyPreview = resourceUrlToShopifyPreviewUrl[u];
+        sanitizedPreviews.push(clientPreview && clientPreview.trim() !== "" ? clientPreview : (shopifyPreview ?? ""));
       } else {
         dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "invalid_url" });
       }
