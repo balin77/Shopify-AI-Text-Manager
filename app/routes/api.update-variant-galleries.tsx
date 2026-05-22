@@ -350,16 +350,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Anything still pending after the bounded polling window is treated
     // as processing — the client carries the GID across so the next save
     // polls it directly (no duplicate productCreateMedia).
-    // Exception: backfill candidates (CDN URLs already in variant_3d_models
-    // whose preview hadn't generated yet). Their model itself is fine —
-    // only the preview lagged. Don't mark them as "processing", which
-    // would cause the sanitiser below to drop the model entirely. The
-    // preview slot simply stays empty for this save; the next save's
-    // backfill pass tries again.
+    // Exceptions (do NOT downgrade to "processing"):
+    //   • Backfill candidates: their model is fine, only the preview lagged.
+    //     Skip; the preview slot stays empty this save, next save retries.
+    //   • Already-resolved fresh uploads: status was set to "ready" when the
+    //     source URL came back, but the entry stayed in `pending` because
+    //     the loop exit also needed the preview. For big .glb files the
+    //     preview can take minutes — overwriting "ready" to "processing"
+    //     made the sanitiser drop the model entirely (variant_3d_models
+    //     metafield saved as []), even though the source URL was perfectly
+    //     usable. Keep "ready" and let the model land on the metafield;
+    //     the preview backfill on the next save fills the preview slot.
     for (const gid of pending) {
       const resourceUrl = gidToResourceUrl.get(gid);
       if (!resourceUrl) continue;
       if (cdnUrlsNeedingPreview.has(resourceUrl)) continue;
+      if (modelResolutionStatus[resourceUrl] === "ready") continue;
       modelResolutionStatus[resourceUrl] = "processing";
     }
     console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,

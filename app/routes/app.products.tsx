@@ -420,7 +420,15 @@ export default function ProductsPage() {
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
-  }), [subResources.state, hasPendingImageChanges]);
+    // OR isApplying into isSaving so the Save button shows a spinner and
+    // stays disabled while imageManagerState.handleApply is in flight.
+    // The image-manager save can run for up to ~38s (server-side polling
+    // for big 3D model previews) — without this wiring the button stayed
+    // active during the wait, the merchant double-clicked, and the second
+    // POST hit /api/update-variant-galleries with the same staging URL
+    // (duplicate productCreateMedia → Shopify 422).
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
