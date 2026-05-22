@@ -287,14 +287,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (modelResources.length > 0) {
     const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
     const pending = new Set(modelResources.map(m => m.gid));
-    // 10-step backoff: starts immediate, extends to ~38s total. Big .glb
-    // files (60MB+) commonly need 20-30s before Shopify's Model3d.preview
-    // is generated server-side — the short 8.8s window meant the merchant
-    // saved with an empty preview every time and had no way to backfill it
-    // (besides re-uploading the same file). The window early-exits as
-    // soon as `pending` empties, so saves with no pending models still
-    // complete instantly.
-    const delays = [0, 800, 1500, 2500, 4000, 5000, 6000, 6000, 6000, 6000];
+    // Bounded polling window. Big .glb files (60MB+) often need 30-90s
+    // before Model3d.sources[0].url is populated by Shopify's async media
+    // processor — even longer for Model3d.preview.image.url. Without a
+    // long-enough wait, the resolved CDN URL never lands on the metafield
+    // this save and the model gets dropped as "processing".
+    //
+    // Total ~90s, early-exit when `pending` empties, so saves with no
+    // model uploads complete instantly. We accept the latency tax on the
+    // initial save for big models in exchange for the model actually
+    // landing on the variant gallery without forcing the merchant to
+    // re-save twice.
+    const delays = [0, 800, 1500, 2500, 4000, 5000, 6000, 8000, 10000, 12000, 15000, 20000];
     for (const delay of delays) {
       if (delay > 0) await new Promise(r => setTimeout(r, delay));
       if (pending.size === 0) break;
@@ -368,6 +372,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (modelResolutionStatus[resourceUrl] === "ready") continue;
       modelResolutionStatus[resourceUrl] = "processing";
     }
+    // Diagnostic so we can see exactly what happened for slow / oversized models.
+    console.log("[update-variant-galleries] 3D polling final state",
+      "modelResolutionStatus=" + JSON.stringify(modelResolutionStatus),
+      "resourceUrlToModelUrl=" + JSON.stringify(resourceUrlToModelUrl),
+      "resourceUrlToShopifyPreviewUrl=" + JSON.stringify(resourceUrlToShopifyPreviewUrl),
+      "stillPendingGids=" + JSON.stringify([...pending]),
+    );
     console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
       "| modelResolutionStatus", modelResolutionStatus);
   }
