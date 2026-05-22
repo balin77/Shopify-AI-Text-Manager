@@ -225,15 +225,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // without this backfill, the preview never lands on the metafield
   // unless the merchant re-uploads the file. Resolves URLs to Model3d
   // GIDs by querying product.media once per save.
+  // CRITICAL: exclude staging URLs (the fresh uploads from THIS save).
+  // They live in `newMedia` and are handled by the productCreateMedia
+  // path — treating them as backfill candidates breaks source-URL
+  // substitution (the staging URL never gets replaced with the CDN URL,
+  // metafield write rejects it via isValid3dModelUrl, model gets dropped
+  // entirely on the first save and the merchant has no model in the
+  // gallery after reload despite the .glb being in Shopify).
+  const freshUploadStagingUrls = new Set<string>(
+    newMedia.filter(m => m.kind === "model").map(m => m.resourceUrl)
+  );
   const cdnUrlsNeedingPreview = new Set<string>();
   for (const m of variant3dModels) {
     const previewsForVariant = variant3dPreviews.find(p => p.variantId === m.variantId)?.urls ?? [];
     for (let i = 0; i < m.urls.length; i++) {
       const u = m.urls[i];
       const previewAtIdx = previewsForVariant[i] ?? "";
-      // Only consider CDN URLs (staging URLs are handled by the existing
-      // productCreateMedia/polling path); only when preview is missing.
-      if (previewAtIdx.trim() === "" && u.startsWith("https://") && !resourceUrlToShopifyPreviewUrl[u]) {
+      if (
+        previewAtIdx.trim() === "" &&
+        u.startsWith("https://") &&
+        !freshUploadStagingUrls.has(u) &&
+        !resourceUrlToShopifyPreviewUrl[u]
+      ) {
         cdnUrlsNeedingPreview.add(u);
       }
     }
