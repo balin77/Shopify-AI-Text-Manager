@@ -96,6 +96,9 @@ export function VariantGallerySection({
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
   const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
   const effectiveThreeDModelUrls = threeDModelUrls ?? variant.threeDModelUrls ?? [];
+  // Parallel array to effectiveThreeDModelUrls: index N is the preview JPG
+  // URL for the model at index N. Comes from custom.variant_3d_previews.
+  const effectiveThreeDPreviewUrls = variant.threeDPreviewUrls ?? [];
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
@@ -182,17 +185,25 @@ export function VariantGallerySection({
         altText: (out[u]?.altText ?? variant.title),
       };
     }
-    for (const u of effectiveThreeDModelUrls) {
-      if (out[u]?.kind === "model") continue;
+    for (let i = 0; i < effectiveThreeDModelUrls.length; i++) {
+      const u = effectiveThreeDModelUrls[i];
+      // Forward the parallel preview JPG URL (Shopify's auto-generated
+      // Model3d.preview.image.url, persisted to custom.variant_3d_previews).
+      // Without it the SortableThumbnail renderer rendered just the "3D"
+      // placeholder for variant 3D models even after the metafield was
+      // populated with real thumbnails.
+      const previewUrl = effectiveThreeDPreviewUrls[i];
+      if (out[u]?.kind === "model" && out[u]?.previewUrl) continue;
       out[u] = {
         ...(out[u] ?? {}),
         kind: "model",
+        previewUrl: previewUrl && previewUrl.trim() !== "" ? previewUrl : (out[u]?.previewUrl),
         altText: (out[u]?.altText ?? variant.title),
       };
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageMetas, effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), variant.title]);
+  }, [imageMetas, effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), effectiveThreeDPreviewUrls.join("|"), variant.title]);
 
   const urlToGid = Object.fromEntries(
     Object.entries(fileUrlMap).map(([gid, url]) => [url, gid])

@@ -2748,6 +2748,13 @@ export function VariantImageManager({
                   // anything with a saved order or any non-file drop
                   // looked like a no-op).
                   galleryOrderJson: pendingGalleryOrder[v.id] ?? v.galleryOrderJson,
+                  // Inject the in-session preview URLs so a freshly library-
+                  // picked 3D model (where the modal grid already had the
+                  // Shopify thumbnail) renders with that thumbnail in the
+                  // variant gallery, not just the "3D" placeholder. Without
+                  // this the tile waited until the next save → /api/product-
+                  // variants refetch before showing the preview.
+                  threeDPreviewUrls: pendingVariant3dPreviews[v.id] ?? v.threeDPreviewUrls,
                 }}
                 hasMainImage={hasMainImageForVariant}
                 fileUrlMap={fileUrlMap}
