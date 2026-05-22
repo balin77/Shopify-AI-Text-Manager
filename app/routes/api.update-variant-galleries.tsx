@@ -677,6 +677,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: "list.url",
       value: JSON.stringify(sanitizedPreviews),
     });
+    console.log("[update-variant-galleries] variant3dModels write",
+      "variantId=" + m.variantId.slice(-12),
+      "inputCount=" + m.urls.length,
+      "sanitizedCount=" + sanitized.length,
+      "sanitized=" + JSON.stringify(sanitized.map(u => u.split("/").pop()?.split("?")[0])),
+      "previews=" + JSON.stringify(sanitizedPreviews.map(u => u ? u.split("/").pop()?.split("?")[0] : "")),
+      "droppedThisVariant=" + dropped3dModelUrls.filter(d => d.variantId === m.variantId).length,
+    );
   }
 
   for (const vo of variantGalleryOrder) {

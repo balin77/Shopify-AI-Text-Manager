@@ -126,6 +126,12 @@ export function useVariantImageManager() {
           ...Array(Math.max(0, savedModels.length - savedPreviews.length)).fill(""),
           ...carryPreviews,
         ];
+        console.log("[deferred-clear merge]",
+          "variantId=" + variantId.slice(-12),
+          "saved=" + JSON.stringify(savedModels.map(u => u.split("/").pop()?.split("?")[0])),
+          "processing=" + JSON.stringify(processingUrls.map(u => u.split("/").pop()?.split("?")[0])),
+          "merged=" + JSON.stringify(mergedModels[variantId].map(u => u.split("/").pop()?.split("?")[0])),
+        );
       }
       setPendingVariant3dModels(mergedModels);
       setPendingVariant3dPreviews(mergedPreviews);
