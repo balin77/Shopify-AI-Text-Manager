@@ -456,15 +456,23 @@ export default function ProductsPage() {
       const data = await r.json();
       const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string }> : [];
       if (resolved.length > 0) {
+        // Delete the variant's whole pending entry, not just the resolved
+        // staging URL. The remaining entries in the pending array are saved
+        // models that are ALREADY in variant.threeDModelUrls — keeping them
+        // in the pending state would cause the gallery's override semantics
+        // (`pendingVariant3dModels[v.id] ?? variant.threeDModelUrls`) to
+        // hide the freshly-resolved CDN URL that we just persisted to the
+        // metafield. After reloadVariants() lands, variant.threeDModelUrls
+        // is the canonical truth.
+        const resolvedVariantIds = new Set(resolved.map(r => r.variantId));
         state.setPendingVariant3dModels(prev => {
           const next = { ...prev };
-          for (const r of resolved) {
-            const arr = next[r.variantId];
-            if (!arr) continue;
-            const filtered = arr.filter(u => u !== r.stagingUrl);
-            if (filtered.length === 0) delete next[r.variantId];
-            else next[r.variantId] = filtered;
-          }
+          for (const vid of resolvedVariantIds) delete next[vid];
+          return next;
+        });
+        state.setPendingVariant3dPreviews(prev => {
+          const next = { ...prev };
+          for (const vid of resolvedVariantIds) delete next[vid];
           return next;
         });
         state.setPendingKnownModelGids(prev => {
