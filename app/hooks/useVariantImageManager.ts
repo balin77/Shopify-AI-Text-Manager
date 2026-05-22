@@ -419,6 +419,7 @@ export function useVariantImageManager() {
     pendingVariantGalleries,
     pendingMediaOrder,
     pendingProductNewMedia,
+    pendingClearVariantMainImages,
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
