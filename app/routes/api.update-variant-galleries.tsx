@@ -112,7 +112,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // does not detect it (no status poll) — left to the webhook drift-reconcile.
   const completedSteps: string[] = [];
   const fail = () => {
-    console.error("[update-variant-galleries] aborting with errors", { errors, completedSteps });
+    console.error("[update-variant-galleries] aborting with errors", {
+      errors,
+      completedSteps,
+      newMediaCount: newMedia?.length ?? 0,
+      newMediaKinds: (newMedia ?? []).map((m: { kind?: string }) => m.kind ?? "image"),
+    });
     return json({ success: false, errors, completedSteps }, { status: 422 });
   };
 
@@ -305,14 +310,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               ... on Model3d {
                 id
                 status
-                sources { url }
+                sources { url format mimeType }
                 preview { image { url } status }
               }
             }
           }
         `, { variables: { ids: [...pending] } });
         const qd = await q.json();
-        for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string }[]; preview?: { image?: { url?: string } | null; status?: string } | null }>) {
+        for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string; format?: string; mimeType?: string }[]; preview?: { image?: { url?: string } | null; status?: string } | null }>) {
           if (!node?.id) continue;
           const resourceUrl = gidToResourceUrl.get(node.id);
           if (!resourceUrl) continue;
@@ -325,9 +330,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             pending.delete(node.id);
             continue;
           }
+          // Pick the GLB source explicitly. Shopify exposes multiple sources
+          // per Model3d (.glb + .usdz at minimum). The storefront's
+          // <model-viewer> only renders glTF — .usdz in the metafield would
+          // make the variant gallery show a generic placeholder and the
+          // storefront fail to load the model.
+          const glbSource = node.sources?.find(s =>
+            s.format === "model/gltf-binary" ||
+            s.mimeType === "model/gltf-binary" ||
+            /\.glb(\?|$)/i.test(s.url),
+          );
           const isBackfill = cdnUrlsNeedingPreview.has(resourceUrl);
-          if (node.sources?.[0]?.url && !isBackfill && !resourceUrlToModelUrl[resourceUrl]) {
-            resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
+          if (glbSource?.url && !isBackfill && !resourceUrlToModelUrl[resourceUrl]) {
+            resourceUrlToModelUrl[resourceUrl] = glbSource.url;
             modelResolutionStatus[resourceUrl] = "ready";
           }
           // Stop polling this entry once the source URL is resolved (or it's

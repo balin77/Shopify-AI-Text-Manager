@@ -61,7 +61,7 @@ async function handleRefresh(request: Request) {
             ... on Model3d {
               id
               status
-              sources { url }
+              sources { url format mimeType }
               preview { image { url } status }
             }
           }
@@ -90,14 +90,21 @@ async function handleRefresh(request: Request) {
 
   const mediaNodes = (product.media?.nodes ?? []) as Array<{
     id?: string;
-    sources?: { url: string }[];
+    sources?: { url: string; format?: string; mimeType?: string }[];
     preview?: { image?: { url?: string } | null } | null;
   }>;
   const gidToSourceUrl = new Map<string, string>();
   const gidToPreviewUrl = new Map<string, string>();
   const urlToPreviewUrl = new Map<string, string>();
   for (const n of mediaNodes) {
-    if (n.id && n.sources?.[0]?.url) gidToSourceUrl.set(n.id, n.sources[0].url);
+    // Pick the GLB source explicitly — Shopify exposes both glb and usdz on
+    // every Model3d; storefront <model-viewer> only renders glTF.
+    const glbSource = n.sources?.find(s =>
+      s.format === "model/gltf-binary" ||
+      s.mimeType === "model/gltf-binary" ||
+      /\.glb(\?|$)/i.test(s.url),
+    );
+    if (n.id && glbSource?.url) gidToSourceUrl.set(n.id, glbSource.url);
     if (n.id && n.preview?.image?.url) gidToPreviewUrl.set(n.id, n.preview.image.url);
     const previewUrl = n.preview?.image?.url;
     if (!previewUrl || !n.sources) continue;

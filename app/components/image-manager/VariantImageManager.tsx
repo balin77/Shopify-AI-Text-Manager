@@ -474,6 +474,17 @@ export function VariantImageManager({
               return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
             } catch { return []; }
           })(),
+          // Parallel preview JPG URLs from custom.variant_3d_previews — must
+          // be parsed alongside threeDModelUrls because the variant tile's
+          // thumbnail renderer reads variant.threeDPreviewUrls[i] for the
+          // model at index i. Without this branch the tile always fell back
+          // to the "3D" placeholder even after the metafield was populated.
+          threeDPreviewUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.threeDPreviewsJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
           galleryOrderJson: v.galleryOrderJson ?? null,
           mainImageGid: v.image?.url ? urlToGidMap[v.image.url.split("?")[0]] : undefined,
           defaultImageUrl: v.image?.url ?? undefined,
