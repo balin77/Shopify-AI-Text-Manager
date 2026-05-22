@@ -34,6 +34,15 @@ import { authenticate } from "../shopify.server";
 type PendingModel = { variantId: string; modelGid: string; stagingUrl: string };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  try {
+    return await handleRefresh(request);
+  } catch (err) {
+    console.error("[refresh-3d-previews] unhandled error", err);
+    return json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+};
+
+async function handleRefresh(request: Request) {
   const { admin } = await authenticate.admin(request);
   const body = (await request.json()) as { productId?: string; pendingModels?: PendingModel[] };
   const productId = body.productId;
@@ -60,10 +69,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         variants(first: 250) {
           nodes {
             id
-            metafields(identifiers: [
-              { namespace: "custom", key: "variant_3d_models" }
-              { namespace: "custom", key: "variant_3d_previews" }
-            ]) { key value }
+            threeDModelsMetafield: metafield(namespace: "custom", key: "variant_3d_models") {
+              value
+            }
+            threeDPreviewsMetafield: metafield(namespace: "custom", key: "variant_3d_previews") {
+              value
+            }
           }
         }
       }
@@ -100,20 +111,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   };
   const variantNodes = (product.variants?.nodes ?? []) as Array<{
     id: string;
-    metafields: Array<{ key: string; value: string }>;
+    threeDModelsMetafield?: { value?: string } | null;
+    threeDPreviewsMetafield?: { value?: string } | null;
   }>;
   const parsedVariants = new Map<string, ParsedVariant>();
   for (const v of variantNodes) {
-    const modelsMf = v.metafields.find((m) => m.key === "variant_3d_models");
-    const previewsMf = v.metafields.find((m) => m.key === "variant_3d_previews");
     let models: string[] = [];
     let previews: string[] = [];
     try {
-      const parsed = JSON.parse(modelsMf?.value ?? "[]");
+      const parsed = JSON.parse(v.threeDModelsMetafield?.value ?? "[]");
       if (Array.isArray(parsed)) models = parsed.filter((x) => typeof x === "string");
     } catch { /* fall through */ }
     try {
-      const parsed = JSON.parse(previewsMf?.value ?? "[]");
+      const parsed = JSON.parse(v.threeDPreviewsMetafield?.value ?? "[]");
       if (Array.isArray(parsed)) previews = parsed.filter((x) => typeof x === "string");
     } catch { /* fall through */ }
     parsedVariants.set(v.id, { id: v.id, models, previews });
@@ -223,4 +233,4 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     stillPending: pendingSourceCount + pendingPreviewCount,
     resolvedEntries,
   });
-};
+}
