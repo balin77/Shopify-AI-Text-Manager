@@ -287,18 +287,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (modelResources.length > 0) {
     const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
     const pending = new Set(modelResources.map(m => m.gid));
-    // Bounded polling window. Big .glb files (60MB+) often need 30-90s
-    // before Model3d.sources[0].url is populated by Shopify's async media
-    // processor — even longer for Model3d.preview.image.url. Without a
-    // long-enough wait, the resolved CDN URL never lands on the metafield
-    // this save and the model gets dropped as "processing".
-    //
-    // Total ~90s, early-exit when `pending` empties, so saves with no
-    // model uploads complete instantly. We accept the latency tax on the
-    // initial save for big models in exchange for the model actually
-    // landing on the variant gallery without forcing the merchant to
-    // re-save twice.
-    const delays = [0, 800, 1500, 2500, 4000, 5000, 6000, 8000, 10000, 12000, 15000, 20000];
+    // Minimal sync polling: one immediate query, one quick retry. Source
+    // URL resolution for small .glb files often lands within ~1.5s; if
+    // it doesn't, we don't block the save — fall through to "processing",
+    // let the client carry the Model3d GID across, and the background
+    // /api/refresh-3d-previews endpoint resolves it asynchronously while
+    // the merchant continues working. Anything longer here just freezes
+    // the Save button for no upside.
+    const delays = [0, 1500];
     for (const delay of delays) {
       if (delay > 0) await new Promise(r => setTimeout(r, delay));
       if (pending.size === 0) break;
@@ -334,13 +330,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             resourceUrlToModelUrl[resourceUrl] = node.sources[0].url;
             modelResolutionStatus[resourceUrl] = "ready";
           }
-          // Stop polling this entry once we have everything we need from it.
-          // Fresh uploads need both source URL and preview before they can
-          // exit; backfill candidates only need the preview (their CDN URL
-          // is already on the metafield).
+          // Stop polling this entry once the source URL is resolved (or it's
+          // already resolved for backfill candidates). Preview readiness is
+          // deferred to the /api/refresh-3d-previews background path so the
+          // save doesn't block on it. For backfill candidates we still
+          // require the preview because backfill IS the preview poll —
+          // there's nothing else to wait for.
           const sourceDone = isBackfill || !!resourceUrlToModelUrl[resourceUrl];
           const previewDone = !!resourceUrlToShopifyPreviewUrl[resourceUrl];
-          if (sourceDone && previewDone) {
+          if (isBackfill ? previewDone : sourceDone) {
             pending.delete(node.id);
           }
         }

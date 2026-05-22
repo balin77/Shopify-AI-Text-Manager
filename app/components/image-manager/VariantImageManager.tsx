@@ -1647,12 +1647,12 @@ export function VariantImageManager({
       for (const it of items) {
         if (it.source === "library") {
           if (it.kind === "model") {
-            // Library-picked models have no admin-side snapshot — pass "" so
-            // the parallel preview array stays index-aligned. The storefront
-            // falls back to its own "3D" placeholder for these slots until
-            // we add a server-side or on-demand snapshot path for legacy
-            // models.
-            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl, "");
+            // Library-picked models inherit Shopify's auto-generated
+            // Model3d.preview thumbnail (the same URL the modal grid
+            // showed). Without forwarding it the variant tile fell back
+            // to the "3D" placeholder even though we already had a real
+            // image to display.
+            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl, it.previewUrl ?? "");
           } else {
             refsForGallery.push(it.gid);
             // Library-picked images/videos that aren't already on this

@@ -417,6 +417,82 @@ export default function ProductsPage() {
     Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
     Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
+
+  // Background 3D asset backfill. After save returns, the .glb's
+  // Model3d.sources[0].url and Model3d.preview.image.url may not be
+  // populated by Shopify yet (sync save only waits ~1.5s; resolution
+  // can take seconds to minutes server-side). Poll
+  // /api/refresh-3d-previews on backoff until every variant's
+  // variant_3d_models + variant_3d_previews metafield is filled.
+  //
+  // pendingKnownModelGids comes from the last save's "processing"
+  // carry-over — it tells the endpoint which Model3d GIDs to look up
+  // and which variant slot to populate when resolution lands.
+  const previewBackfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePreviewBackfill = useCallback((productId: string) => {
+    if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
+    const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
+    let step = 0;
+    const tick = async () => {
+      previewBackfillTimerRef.current = null;
+      // Build pendingModels from current carry-over state. Each entry
+      // maps a staging URL to its Model3d GID + the variant it belongs
+      // to so the endpoint can replace the staging slot once Shopify
+      // populates Model3d.sources[0].url.
+      const pendingModels: Array<{ variantId: string; modelGid: string; stagingUrl: string }> = [];
+      for (const [variantId, urls] of Object.entries(imageManagerState.pendingVariant3dModels ?? {})) {
+        for (const u of urls) {
+          const gid = imageManagerState.pendingKnownModelGids?.[u];
+          if (gid) pendingModels.push({ variantId, modelGid: gid, stagingUrl: u });
+        }
+      }
+      try {
+        const r = await fetch("/api/refresh-3d-previews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productId, pendingModels }),
+        });
+        const data = await r.json();
+        // Clear resolved staging URLs from carry-over state so the variant
+        // gallery stops shadowing variant.threeDModelUrls (which now has
+        // the CDN URL) with the obsolete pending staging URL.
+        const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string }> : [];
+        if (resolved.length > 0) {
+          imageManagerState.setPendingVariant3dModels(prev => {
+            const next = { ...prev };
+            for (const r of resolved) {
+              const arr = next[r.variantId];
+              if (!arr) continue;
+              const filtered = arr.filter(u => u !== r.stagingUrl);
+              if (filtered.length === 0) delete next[r.variantId];
+              else next[r.variantId] = filtered;
+            }
+            return next;
+          });
+          imageManagerState.setPendingKnownModelGids(prev => {
+            const next = { ...prev };
+            for (const r of resolved) delete next[r.stagingUrl];
+            return next;
+          });
+        }
+        if (data?.updated > 0) imageManagerState.reloadVariants();
+        if (data?.stillPending > 0 && step < delays.length) {
+          previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
+          step += 1;
+        }
+      } catch {
+        if (step < delays.length) {
+          previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
+          step += 1;
+        }
+      }
+    };
+    previewBackfillTimerRef.current = setTimeout(tick, delays[step]);
+    step += 1;
+  }, [imageManagerState]);
+  useEffect(() => () => {
+    if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
+  }, []);
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
@@ -435,18 +511,22 @@ export default function ProductsPage() {
     saveSubResources: () => {
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
-        imageManagerState.handleApply(editor.selectedItem.id).then(err => {
+        const productId = editor.selectedItem.id;
+        imageManagerState.handleApply(productId).then(err => {
           if (err) {
             showInfoBox(err, "critical", t.products.galleryErrorTitle);
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
+            // Kick off background polling for 3D model previews. Shopify
+            // takes minutes to generate the .glb thumbnail server-side —
+            // the save route only waits ~25s (enough for source URL), the
+            // preview lands later. This loop calls /api/refresh-3d-previews
+            // with exponential backoff until every Model3d has a preview
+            // or we hit the ~5min budget. Each successful update triggers
+            // a variant data refresh so the merchant sees the thumbnail
+            // appear automatically.
+            schedulePreviewBackfill(productId);
           }
-          // Image-only saves never go through editor.handleSave's response
-          // handler, so the navigation guard's pendingNavigation would stay
-          // stuck if the merchant had pending nav (e.g. clicked another
-          // language while only image changes were pending). Clear it here
-          // — clearPendingNavigation is a no-op when nothing is queued, so
-          // calling it on every save (with or without queued nav) is safe.
           editor.navigationGuard.clearPendingNavigation();
         }).catch(() => {
           showInfoBox(t.products.gallerySaveError, "critical");
