@@ -1016,8 +1016,29 @@ export function VariantImageManager({
         map[key] = { kind: m.kind, previewUrl: m.previewUrl };
       }
     }
+    // Variant 3D models live on their own metafield (variant_3d_models +
+    // variant_3d_previews) and never pass through mediaMetaMap. Surface
+    // their kind + preview URL here so the DragOverlay (which reads from
+    // the parent's imageMetas, not from VariantGallerySection's local
+    // enrichedImageMetas) can render the real thumbnail during a drag
+    // instead of falling back to the generic "3D" placeholder.
+    for (const v of variants) {
+      const models = pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? [];
+      const previews = pendingVariant3dPreviews[v.id] ?? v.threeDPreviewUrls ?? [];
+      for (let i = 0; i < models.length; i++) {
+        const u = models[i];
+        const previewUrl = previews[i];
+        const existing = map[u];
+        if (existing) {
+          if (!existing.previewUrl && previewUrl) existing.previewUrl = previewUrl;
+          if (!existing.kind) existing.kind = "model";
+        } else {
+          map[u] = { kind: "model", previewUrl: previewUrl && previewUrl.trim() !== "" ? previewUrl : undefined };
+        }
+      }
+    }
     return map;
-  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia, variants, pendingVariant3dModels, pendingVariant3dPreviews]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
