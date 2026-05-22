@@ -20,6 +20,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
   const resource = kindToStagedResource(kind);
+  // Browsers commonly report `.glb`/`.gltf` with an empty `type` because
+  // model/gltf-binary isn't in the standard MIME database — classifyFile
+  // recognises the file via the filename regex, but forwarding the empty
+  // string to Shopify's stagedUploadsCreate gets rejected with
+  // `" is not a supported mime type"` and the upload never starts.
+  // Normalise to a Shopify-accepted value so the staged target is created.
+  let effectiveMimeType = mimeType;
+  if (!effectiveMimeType || effectiveMimeType.trim() === "") {
+    if (kind === "model") {
+      effectiveMimeType = /\.gltf$/i.test(filename) ? "model/gltf+json" : "model/gltf-binary";
+    }
+    // Image / video uploads always carry a valid Content-Type from the
+    // browser, so a missing mimeType there is genuinely unsupported —
+    // surface the original error rather than guessing.
+    if (!effectiveMimeType || effectiveMimeType.trim() === "") {
+      return json({ error: `Unsupported media type: ${mimeType}` }, { status: 400 });
+    }
+  }
   // Shopify's staged-upload destinations differ by resource:
   //   IMAGE     → Google Cloud Storage signed PUT (simple body upload)
   //   VIDEO     → multipart POST (typically Mux / GCS POST policy)
@@ -61,7 +79,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     variables: {
       input: [{
         filename,
-        mimeType,
+        mimeType: effectiveMimeType,
         fileSize: String(fileSize),
         resource,
         httpMethod,
