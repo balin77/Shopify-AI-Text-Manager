@@ -140,6 +140,12 @@ interface PendingUpload {
    *  BulkImageUploadPanel's snapshot pipeline). Undefined when the snapshot
    *  is still being uploaded or the file isn't a model. */
   persistentPreviewUrl?: string;
+  /** External YouTube/Vimeo URL queued in the modal. When set, this row
+   *  represents an external_video that needs no upload — it should be
+   *  committed via onAdd with source="external_url" when the merchant
+   *  hits Add. Keeps URL-add consistent with library picks + uploads
+   *  (everything queues in the same selection grid). */
+  externalUrl?: string;
 }
 
 export function FilePickerModal({
@@ -461,7 +467,30 @@ export function FilePickerModal({
       setUrlError(t.imageManager.externalVideoInvalid ?? "Not a recognised YouTube or Vimeo URL.");
       return;
     }
-    onAddExternalUrl(parsed.canonicalUrl);
+    // Queue the URL as a pending row in the modal grid (same selection model
+    // as uploads + library picks) instead of committing immediately. Before
+    // this, external URLs were the only add-flow that bypassed the modal's
+    // Add-selected button — every other source queued, hit-Add-once was
+    // already muscle memory, so the URL row felt unexpectedly destructive.
+    setPendingUploads(prev => {
+      if (prev.some(u => u.externalUrl === parsed.canonicalUrl)) return prev;
+      const uniqueId = crypto.randomUUID();
+      setSelected(s => { const n = new Set(s); n.add(uniqueId); return n; });
+      return [
+        ...prev,
+        {
+          uniqueId,
+          fileName: parsed.canonicalUrl,
+          mimeType: "",
+          kind: "external_video" as MediaKind,
+          previewUrl: parsed.thumbnailUrl ?? "",
+          resourceUrl: parsed.canonicalUrl,
+          progress: 100,
+          status: "ready" as const,
+          externalUrl: parsed.canonicalUrl,
+        },
+      ];
+    });
     setUrlInput("");
     setUrlError(null);
     // Intentionally don't close — merchants often add several links in a row.
@@ -487,7 +516,15 @@ export function FilePickerModal({
       }
     }
     for (const u of pendingUploads) {
-      if (selected.has(u.uniqueId) && u.status === "ready" && u.resourceUrl) {
+      if (!selected.has(u.uniqueId)) continue;
+      // Queued external URL — emit via the external_url source so the parent
+      // routes it through onAddExternalUrl (variant: per-variant metafield;
+      // product: productCreateMedia EXTERNAL_VIDEO).
+      if (u.externalUrl) {
+        picked.push({ source: "external_url", url: u.externalUrl });
+        continue;
+      }
+      if (u.status === "ready" && u.resourceUrl) {
         picked.push({
           source: "upload",
           resourceUrl: u.resourceUrl,

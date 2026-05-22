@@ -1728,12 +1728,14 @@ export function VariantImageManager({
       }
     }
 
-    // Library + upload commits close the modal; URL commits go through the
-    // dedicated handler below and leave the modal open. handleModalAdd is
-    // only called for the former two (the modal's URL flow calls
-    // onAddExternalUrl directly).
-    const hasNonUrlCommit = items.some(it => it.source !== "external_url");
-    if (hasNonUrlCommit) setPickerTarget(null);
+    // Always close the modal once the merchant has hit "Add selected".
+    // External URLs used to skip the modal entirely (onAddExternalUrl fired
+    // synchronously when the merchant pressed "+ Add URL"), so the modal
+    // intentionally stayed open after a URL commit. URLs now queue in the
+    // same selection grid as uploads / library picks and ride out via the
+    // same Add-selected button — closing the modal afterwards keeps the
+    // flow consistent across all three sources.
+    setPickerTarget(null);
     // handleAddExternalVideoUrl / handleAddThreeDModelUrl are declared after
     // this callback (parent ordering); intentionally omitted from deps —
     // they are captured via closure at call-time, never re-bound.
