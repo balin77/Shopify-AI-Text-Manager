@@ -410,6 +410,7 @@ export default function ProductsPage() {
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
     imageManagerState.pendingProductNewMedia.length > 0 ||
+    imageManagerState.pendingClearVariantMainImages.length > 0 ||
     imageManagerState.bulkItems.some(i => i.status === "ready") ||
     imageManagerState.hasAltTextEdits ||
     Object.keys(imageManagerState.pendingExternalVideos).length > 0 ||
@@ -438,6 +439,12 @@ export default function ProductsPage() {
     previewBackfillTimerRef.current = null;
     const productId = previewBackfillProductIdRef.current;
     if (!productId) return;
+    // Cancel if the merchant switched products mid-flight. Without this,
+    // a tick scheduled for product A would POST to the refresh endpoint
+    // with productId=A but using imageManagerStateRef which has been
+    // overwritten with product B's state — resolvedEntries belonging to
+    // A's variants would clobber B's pending state.
+    if (editor.selectedItem?.id && editor.selectedItem.id !== productId) return;
     const state = imageManagerStateRef.current;
     const pendingModels: Array<{ variantId: string; modelGid: string; stagingUrl: string }> = [];
     for (const [variantId, urls] of Object.entries(state.pendingVariant3dModels ?? {})) {
@@ -454,30 +461,82 @@ export default function ProductsPage() {
         body: JSON.stringify({ productId, pendingModels }),
       });
       const data = await r.json();
-      const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string }> : [];
+      const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string; previewUrl: string }> : [];
       if (resolved.length > 0) {
-        // Delete the variant's whole pending entry, not just the resolved
-        // staging URL. The remaining entries in the pending array are saved
-        // models that are ALREADY in variant.threeDModelUrls — keeping them
-        // in the pending state would cause the gallery's override semantics
-        // (`pendingVariant3dModels[v.id] ?? variant.threeDModelUrls`) to
-        // hide the freshly-resolved CDN URL that we just persisted to the
-        // metafield. After reloadVariants() lands, variant.threeDModelUrls
-        // is the canonical truth.
-        const resolvedVariantIds = new Set(resolved.map(r => r.variantId));
+        // In-place URL substitution: replace each resolved staging URL with
+        // its final CDN URL inside pendingVariant3dModels (and the parallel
+        // preview slot with the resolved preview URL). The pending state
+        // continues to act as the optimistic override — preserving removals
+        // and any concurrent edits the merchant made during the polling
+        // window — but with the freshly-persisted CDN URL + preview instead
+        // of the staging URL + empty preview slot. Once reloadVariants lands,
+        // variant.threeDModelUrls / variant.threeDPreviewUrls match.
+        const stagingToFinal = new Map<string, { variantId: string; finalUrl: string; previewUrl: string }>();
+        for (const r of resolved) stagingToFinal.set(r.stagingUrl, { variantId: r.variantId, finalUrl: r.finalUrl, previewUrl: r.previewUrl });
+        // Snapshot the pre-substitution models so the preview setter can
+        // index against the original staging-URL positions.
+        const modelsBeforeSubstitution = state.pendingVariant3dModels;
         state.setPendingVariant3dModels(prev => {
           const next = { ...prev };
-          for (const vid of resolvedVariantIds) delete next[vid];
+          for (const [vid, urls] of Object.entries(prev)) {
+            let changed = false;
+            const replaced = urls.map(u => {
+              const m = stagingToFinal.get(u);
+              if (m && m.variantId === vid) {
+                changed = true;
+                return m.finalUrl;
+              }
+              return u;
+            });
+            if (changed) next[vid] = replaced;
+          }
           return next;
         });
         state.setPendingVariant3dPreviews(prev => {
           const next = { ...prev };
-          for (const vid of resolvedVariantIds) delete next[vid];
+          for (const [vid, oldPreviews] of Object.entries(prev)) {
+            const oldModels = modelsBeforeSubstitution[vid];
+            if (!oldModels) continue;
+            let changed = false;
+            const updated = oldPreviews.map((p, i) => {
+              const oldModelUrl = oldModels[i];
+              const m = oldModelUrl ? stagingToFinal.get(oldModelUrl) : undefined;
+              if (m && m.variantId === vid && m.previewUrl && m.previewUrl !== p) {
+                changed = true;
+                return m.previewUrl;
+              }
+              return p;
+            });
+            if (changed) next[vid] = updated;
+          }
           return next;
         });
         state.setPendingKnownModelGids(prev => {
           const next = { ...prev };
           for (const r of resolved) delete next[r.stagingUrl];
+          return next;
+        });
+      }
+      // Orphans: Model3d GIDs the server can't find on product.media (deleted,
+      // typo, wrong product). Without an exit the backfill would poll them
+      // forever. Drop them from pending state and warn so the merchant can
+      // see something happened.
+      const orphans = Array.isArray(data?.orphanedStagingUrls) ? data.orphanedStagingUrls as string[] : [];
+      if (orphans.length > 0) {
+        console.warn(`[preview-backfill] dropping ${orphans.length} orphaned pending 3D model(s) — Model3d GID not found on product.media`, orphans);
+        const orphanSet = new Set(orphans);
+        state.setPendingVariant3dModels(prev => {
+          const next = { ...prev };
+          for (const [vid, urls] of Object.entries(prev)) {
+            const kept = urls.filter(u => !orphanSet.has(u));
+            if (kept.length === 0) delete next[vid];
+            else next[vid] = kept;
+          }
+          return next;
+        });
+        state.setPendingKnownModelGids(prev => {
+          const next = { ...prev };
+          for (const u of orphans) delete next[u];
           return next;
         });
       }
@@ -508,6 +567,20 @@ export default function ProductsPage() {
   useEffect(() => () => {
     if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
   }, []);
+  // Cancel any pending backfill tick when the merchant switches products.
+  // The previewBackfillProductIdRef stays bound to the original product —
+  // without cancelling, the next scheduled tick would still fire (and the
+  // in-tick productId-guard would no-op it, but we save the wasted timer
+  // and any in-flight fetch race).
+  useEffect(() => {
+    return () => {
+      if (previewBackfillTimerRef.current) {
+        clearTimeout(previewBackfillTimerRef.current);
+        previewBackfillTimerRef.current = null;
+      }
+      previewBackfillProductIdRef.current = null;
+    };
+  }, [editor.selectedItem?.id]);
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,

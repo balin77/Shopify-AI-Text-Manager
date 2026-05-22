@@ -140,17 +140,32 @@ async function handleRefresh(request: Request) {
   // variant's metafield once even when several pending entries point at it.
   const updatedModels = new Map<string, string[]>();    // variantId → next models[]
   const updatedPreviews = new Map<string, string[]>();  // variantId → next previews[]
-  const resolvedEntries: Array<{ variantId: string; stagingUrl: string; finalUrl: string }> = [];
+  const resolvedEntries: Array<{ variantId: string; stagingUrl: string; finalUrl: string; previewUrl: string }> = [];
+  // Pending Model3d GIDs that don't appear on product.media at all (deleted,
+  // typo, wrong product, orphaned from a prior session). The client must
+  // give up on these — without an exit signal the backfill loop would poll
+  // a dead GID forever, every 60s, until the page is closed.
+  const orphanedStagingUrls: string[] = [];
+  const mediaNodeGids = new Set<string>(mediaNodes.map(n => n.id).filter(Boolean) as string[]);
   let pendingSourceCount = 0;
   for (const pm of pendingModels) {
     const variant = parsedVariants.get(pm.variantId);
     if (!variant) continue;
+    if (!mediaNodeGids.has(pm.modelGid)) {
+      orphanedStagingUrls.push(pm.stagingUrl);
+      continue;
+    }
     const resolvedUrl = gidToSourceUrl.get(pm.modelGid);
     if (!resolvedUrl) {
       pendingSourceCount += 1;
       continue;
     }
-    resolvedEntries.push({ variantId: pm.variantId, stagingUrl: pm.stagingUrl, finalUrl: resolvedUrl });
+    resolvedEntries.push({
+      variantId: pm.variantId,
+      stagingUrl: pm.stagingUrl,
+      finalUrl: resolvedUrl,
+      previewUrl: gidToPreviewUrl.get(pm.modelGid) ?? "",
+    });
     const currentModels = updatedModels.get(pm.variantId) ?? [...variant.models];
     const currentPreviews = updatedPreviews.get(pm.variantId) ?? [...variant.previews];
     // Replace the staging-URL slot in-place if we can find it, otherwise
@@ -239,5 +254,6 @@ async function handleRefresh(request: Request) {
     updated: updatedModels.size + updatedPreviews.size,
     stillPending: pendingSourceCount + pendingPreviewCount,
     resolvedEntries,
+    orphanedStagingUrls,
   });
 }

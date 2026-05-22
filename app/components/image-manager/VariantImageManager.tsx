@@ -430,8 +430,15 @@ export function VariantImageManager({
             liveImages.map(img => [img.mediaId, img])
           );
           const fresh: ProductImageRef[] = [];
+          // Include every media kind in the product gallery — images, videos,
+          // 3D models, external videos. The previous filter dropped non-images,
+          // so a .glb uploaded into a variant landed on product.media (via
+          // productCreateMedia) but never showed up in the product gallery
+          // view after the post-save refetch. The Image Manager renders the
+          // right tile per kind via mediaMetaMap; refreshedProductImages just
+          // owns the order + altText metadata.
           for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
-            if ((mmm as Record<string, { kind?: string }>)[gid]?.kind !== "image") continue;
+            if (!(mmm as Record<string, { kind?: string }>)[gid]?.kind) continue;
             const existing = existingByMediaId.get(gid);
             fresh.push(existing
               ? { ...existing, url }
