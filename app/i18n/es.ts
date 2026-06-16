@@ -494,6 +494,7 @@ export const es: Translation = {
     corruptedApiKeyWarning: "La clave API guardada para {provider} no se pudo descifrar y se ha borrado. Vuelve a introducirla y guárdala.",
     apiKeyFormatError: "Esta clave no tiene el formato esperado. Compruébala en el panel del proveedor y pégala de nuevo.",
     apiKeySaveErrorIntro: "Algunas entradas no tienen el formato esperado. Los campos con problemas están resaltados a continuación: corrígelos y vuelve a hacer clic en Guardar.",
+    imageManagerSaveError: "No se pudo guardar la configuración del gestor de imágenes. Inténtalo de nuevo.",
     modelsFallback_no_api_key: "Lista predeterminada — se necesita una clave API para cargar la lista de modelos en vivo.",
     modelsFallback_api_error: "Lista predeterminada — no se pudo contactar con la API del proveedor.",
     modelsFallback_invalid_key: "Lista predeterminada — la clave API guardada parece no ser válida.",

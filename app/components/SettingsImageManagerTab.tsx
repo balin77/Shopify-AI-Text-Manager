@@ -55,8 +55,12 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
     } else if (data.success === false) {
       // Previously errors here were silently swallowed — no banner, no toast,
       // just the unsaved local state. Surface both inline and in the global
-      // toast so the merchant can't miss it.
-      const msg = data.error || t.products?.saveFailed || "Save failed";
+      // toast so the merchant can't miss it. Use an i18n string instead of
+      // data.error — the server-side message is English-only and can leak
+      // backend wording (e.g. raw Prisma errors).
+      const msg = (t.settings as unknown as Record<string, string>)?.imageManagerSaveError
+        || t.products?.saveFailed
+        || "Save failed";
       setSaveError(msg);
       showInfoBox(msg, "critical", t.common?.error || "Error");
     }

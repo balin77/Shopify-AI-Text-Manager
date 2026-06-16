@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { FetcherWithComponents } from "@remix-run/react";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import {
   Card,
   Text,
@@ -67,6 +68,14 @@ interface SettingsAITabProps {
 }
 
 export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
+  const { dismissByKey } = useInfoBox();
+  // Build per-provider setters that ALSO clear any active "corrupted API
+  // key" warning for that provider. The warning is no longer actionable
+  // once the merchant starts typing a new key — keeping it around clutters
+  // the message bell. Each entry only dismisses its own provider's warning,
+  // so a Claude edit doesn't silence an OpenAI warning that still applies.
+  const dismissCorruptedFor = (provider: string) => dismissByKey(`corrupted-api-key:${provider}`);
+
   const AI_PROVIDERS = [
     { label: t.settings.providers.openai, value: "openai" },
     { label: t.settings.providers.gemini, value: "gemini" },
@@ -379,7 +388,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={openaiKey}
-                  onChange={setOpenaiKey}
+                  onChange={(v) => { setOpenaiKey(v); dismissCorruptedFor("openai"); }}
                   type={showOpenaiKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.openaiApiKey)}
@@ -455,7 +464,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={geminiKey}
-                  onChange={setGeminiKey}
+                  onChange={(v) => { setGeminiKey(v); dismissCorruptedFor("gemini"); }}
                   type={showGeminiKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.geminiApiKey)}
@@ -531,7 +540,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={claudeKey}
-                  onChange={setClaudeKey}
+                  onChange={(v) => { setClaudeKey(v); dismissCorruptedFor("claude"); }}
                   type={showClaudeKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.claudeApiKey)}
@@ -607,7 +616,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={huggingfaceKey}
-                  onChange={setHuggingfaceKey}
+                  onChange={(v) => { setHuggingfaceKey(v); dismissCorruptedFor("huggingface"); }}
                   type={showHuggingfaceKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.huggingfaceApiKey)}
@@ -683,7 +692,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={grokKey}
-                  onChange={setGrokKey}
+                  onChange={(v) => { setGrokKey(v); dismissCorruptedFor("grok"); }}
                   type={showGrokKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.grokApiKey)}
@@ -759,7 +768,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                 <TextField
                   label="API Key"
                   value={deepseekKey}
-                  onChange={setDeepseekKey}
+                  onChange={(v) => { setDeepseekKey(v); dismissCorruptedFor("deepseek"); }}
                   type={showDeepseekKey ? "text" : "password"}
                   autoComplete="off"
                   error={translateFieldError(fieldErrors.deepseekApiKey)}

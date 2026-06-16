@@ -369,12 +369,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       grokApiKey: "",
       deepseekApiKey: "",
     };
-    const corruptedApiKeys: string[] = [];
+    // Provider IDs (not display names) — the UI needs the id to build the
+     // InfoBox `dedupeKey` so it can clear a specific provider's warning
+     // when the merchant re-enters that key. Display name is derived at
+     // render time.
+    const corruptedApiKeys: AIProvider[] = [];
     for (const { field, provider } of keyFields) {
       const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
       decryptedKeys[field] = value || "";
       if (corrupted) {
-        corruptedApiKeys.push(getProviderDisplayName(provider));
+        corruptedApiKeys.push(provider);
         logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
       }
     }
@@ -790,18 +794,24 @@ export default function SettingsPage() {
 
   // Surface which stored API key(s) could not be decrypted (e.g. after an
   // ENCRYPTION_KEY change). The key was reset to empty — the merchant must
-  // re-enter and save it. Show once when the page loads.
+  // re-enter and save it. One warning per provider, each tagged with a
+  // dedupeKey so SettingsAITab can dismiss only the provider the merchant
+  // is currently retyping (instead of all of them at once).
   useEffect(() => {
     if (corruptedApiKeys.length === 0) return;
-    const providers = corruptedApiKeys.join(", ");
     const template =
       t.settings?.corruptedApiKeyWarning ||
       "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
-    showInfoBox(
-      template.replace("{provider}", providers),
-      "critical",
-      t.settings?.corruptedApiKeyTitle || "API key error"
-    );
+    const title = t.settings?.corruptedApiKeyTitle || "API key error";
+    for (const provider of corruptedApiKeys) {
+      showInfoBox(
+        template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),
+        "critical",
+        title,
+        undefined,
+        `corrupted-api-key:${provider}`,
+      );
+    }
   }, [corruptedApiKeys, showInfoBox, t]);
 
   // Register settings sections in item selector context (for mobile header dropdown)

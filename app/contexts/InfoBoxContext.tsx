@@ -14,6 +14,14 @@ export interface InfoBoxState {
   title?: string;
   link?: InfoBoxLink;
   id: string; // Unique ID to track individual messages
+  /**
+   * Optional stable identifier used to dismiss the message programmatically
+   * when the underlying condition is resolved (e.g. a "corrupted API key"
+   * warning is removed once the merchant re-enters a key for that provider).
+   * Multiple messages can share a key prefix — `dismissByKey` matches by
+   * full string OR `startsWith(prefix + ":")`.
+   */
+  dedupeKey?: string;
 }
 
 export interface InfoBoxHistoryEntry extends InfoBoxState {
@@ -30,8 +38,15 @@ export interface SyncProgressState {
 
 interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
-  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string, link?: InfoBoxLink) => void;
+  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string, link?: InfoBoxLink, dedupeKey?: string) => void;
   hideInfoBox: () => void;
+  /**
+   * Remove any message (active toast + history) whose `dedupeKey` equals
+   * `keyOrPrefix` exactly OR starts with `keyOrPrefix + ":"`. Used to clear
+   * a warning once its cause is resolved (e.g. user re-enters an API key
+   * that was previously corrupted).
+   */
+  dismissByKey: (keyOrPrefix: string) => void;
   isGlobalLoading: boolean;
   setGlobalLoading: (loading: boolean, message?: string) => void;
   messageHistory: InfoBoxHistoryEntry[];
@@ -60,10 +75,10 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   infoBoxRef.current = infoBox;
 
   // Queue for messages that arrive while a toast is already showing
-  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink }>>([]);
+  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink; dedupeKey?: string }>>([]);
 
   // Ref-based functions so setTimeout always calls the latest version
-  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink }) => void>(undefined);
+  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink; dedupeKey?: string }) => void>(undefined);
   const processQueueRef = useRef<() => void>(undefined);
 
   processQueueRef.current = () => {
@@ -78,7 +93,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
   displayToastRef.current = (msg) => {
     const id = `${msg.message}-${msg.tone}-${Date.now()}`;
-    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, link: msg.link, id });
+    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, link: msg.link, id, dedupeKey: msg.dedupeKey });
 
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
 
@@ -90,7 +105,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string, link?: InfoBoxLink) => {
+  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string, link?: InfoBoxLink, dedupeKey?: string) => {
     // Don't show if this exact message was recently dismissed
     const messageKey = `${message}-${tone}`;
     if (dismissedMessages.current.has(messageKey)) {
@@ -98,7 +113,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
 
     const id = `${message}-${tone}-${Date.now()}`;
-    const entry: InfoBoxHistoryEntry = { message, tone, title, link, id, timestamp: new Date() };
+    const entry: InfoBoxHistoryEntry = { message, tone, title, link, id, timestamp: new Date(), dedupeKey };
 
     // Always add to history and increment unread count
     setMessageHistory(prev => [entry, ...prev]);
@@ -106,12 +121,12 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
     // If a toast is currently showing, queue this one instead of replacing it
     if (infoBoxRef.current) {
-      messageQueue.current.push({ message, tone, title, link });
+      messageQueue.current.push({ message, tone, title, link, dedupeKey });
       return;
     }
 
     // No current toast — show immediately
-    displayToastRef.current?.({ message, tone, title, link });
+    displayToastRef.current?.({ message, tone, title, link, dedupeKey });
   }, []);
 
   const hideInfoBox = useCallback(() => {
@@ -137,6 +152,35 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     processQueueRef.current?.();
   }, []);
 
+  const dismissByKey = useCallback((keyOrPrefix: string) => {
+    const matches = (k: string | undefined) =>
+      !!k && (k === keyOrPrefix || k.startsWith(`${keyOrPrefix}:`));
+
+    // Drop from the queue so it never gets shown after dismissal.
+    messageQueue.current = messageQueue.current.filter(m => !matches(m.dedupeKey));
+
+    // Drop the active toast if it matches; show the next queued (or clear).
+    if (matches(infoBoxRef.current?.dedupeKey)) {
+      if (autoHideTimer.current) {
+        clearTimeout(autoHideTimer.current);
+        autoHideTimer.current = null;
+      }
+      processQueueRef.current?.();
+    }
+
+    // Drop matching entries from history AND decrement unread by the
+    // number of removed entries (clamped at 0 so the badge never goes
+    // negative if some entries were already marked read).
+    setMessageHistory(prev => {
+      const next = prev.filter(e => !matches(e.dedupeKey));
+      const removed = prev.length - next.length;
+      if (removed > 0) {
+        setUnreadCount(u => Math.max(0, u - removed));
+      }
+      return next;
+    });
+  }, []);
+
   const setGlobalLoading = useCallback((loading: boolean, message?: string) => {
     setIsGlobalLoading(loading);
     setGlobalLoadingMessage(loading ? message : undefined);
@@ -155,6 +199,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     infoBox,
     showInfoBox,
     hideInfoBox,
+    dismissByKey,
     isGlobalLoading,
     setGlobalLoading,
     messageHistory,
@@ -163,7 +208,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     clearHistory,
     syncProgress,
     setSyncProgress,
-  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress]);
+  }), [infoBox, showInfoBox, hideInfoBox, dismissByKey, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress]);
 
   return (
     <InfoBoxContext.Provider value={value}>
