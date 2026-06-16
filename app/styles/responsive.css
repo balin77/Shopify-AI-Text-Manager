@@ -59,6 +59,14 @@
   }
 }
 
+/* Polaris Modal must render above the fixed MainNavigation (z-index 1000).
+   Without this, the upload-images modal and other dialogs slide under the
+   navbar at the top edge of the viewport. */
+.Polaris-Modal-Dialog__Container,
+.Polaris-Backdrop {
+  z-index: 1100 !important;
+}
+
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */
 .image-preview-large > div {
   padding-bottom: 100% !important; /* Always maintain square aspect ratio */
