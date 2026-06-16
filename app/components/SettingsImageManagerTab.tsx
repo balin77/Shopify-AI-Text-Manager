@@ -26,10 +26,9 @@ interface Props {
   /** Override the theme app extension UUID (e.g. wired from a loader/env). */
   extensionUid?: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasChangesChange, highlightSaveButton = false }: Props) {
+export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasChangesChange }: Props) {
   const { t } = useI18n();
   const uid = extensionUid || DEFAULT_EXTENSION_UID;
   const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${uid}/variant-gallery-embed`;
@@ -75,7 +74,6 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
               saveText={t.common.save}
               discardText={t.content?.discardChanges ?? "Verwerfen"}
               isSavingCurrentItem={fetcher.state !== "idle"}
-              highlightSaveButton={highlightSaveButton}
             />
           </div>
         </InlineStack>

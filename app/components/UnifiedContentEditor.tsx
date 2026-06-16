@@ -220,7 +220,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     }
   }, [fieldPagination?.search]);
 
-  const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
+  const { state, handlers, selectedItem, helpers, effectiveFieldDefinitions } = editor;
 
   // Overlay-aware snapshot: re-derived whenever baselineVersion ticks (overlays changed)
   const validationOverlays = useMemo(
@@ -500,7 +500,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   primaryLocale={primaryLocale}
                   selectedItem={selectedItem}
                   contentType={config.contentType}
-                  hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
                   onLanguageChange={handlers.handleLanguageChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
@@ -508,26 +507,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   validationVersion={helpers.validationVersion}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
-                  onSave={() => {
-                    // Same double-click guard as the desktop Save button.
-                    if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
-                    handlers.handleSave();
-                    subResourceHandlers?.saveSubResources?.();
-                  }}
-                  onDiscard={() => {
-                    handlers.handleDiscard();
-                    subResourceHandlers?.resetChanges?.();
-                  }}
                   onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
                   sendImageToAI={state.sendImageToAI}
                   images={state.images}
                   featuredImage={state.featuredImage ?? undefined}
-                  fetcherState={fetcherState}
-                  fetcherFormData={fetcherFormData}
-                  isSavingCurrentItem={state.isSavingCurrentItem}
-                  isSubResourceSaving={subResourceState?.isSaving ?? false}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
-                  highlightSaveButton={navigationGuard.highlightSaveButton}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getResourceType(config.contentType)}
                   reloadLocale={state.currentLanguage}
@@ -538,8 +522,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
-                    save: t.content?.save || "Save",
-                    discardChanges: t.content?.discardChanges || "Discard",
                     sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                   }}
                 />
@@ -650,12 +632,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       >
                         {t.content?.discardChanges || "Discard"}
                       </Button>
-                      <div
-                        style={{
-                          animation: navigationGuard.highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-                          borderRadius: "8px",
-                        }}
-                      >
+                      <div style={{ borderRadius: "8px" }}>
                         <Button
                           variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
                           onClick={() => {
