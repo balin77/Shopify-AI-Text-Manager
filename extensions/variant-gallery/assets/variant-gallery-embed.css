@@ -42,12 +42,22 @@ cp-embed-gallery {
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"]  { flex-direction: row; }
 
 /* In thumb mode the main slot stacks images absolutely so toggling
-   .is-active swaps them without any reload / blank frame. */
-.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main {
+   .is-active swaps them without any reload / blank frame. The wrap
+   exists to give the dot overlay (mobile-only) a positioning context
+   that is OUTSIDE the scroll container, so dots don't scroll with
+   slides. The wrap is also the flex item — main fills it. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-wrap {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main {
+  position: relative;
+  width: 100%;
+  /* Height is derived from the aspect-ratio inline style JS sets on this
+     element — DO NOT set height:100% here, that would make the wrap and
+     main size off each other (circular) and collapse the slot. */
 }
 
 .cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-image {
@@ -574,5 +584,97 @@ cp-embed-gallery {
   .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next > svg,
   .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next > svg {
     transform: rotate(-90deg);
+  }
+}
+
+/* ─── Mobile pager: swipe carousel + dot overlay ────────────────────── */
+/* When Dawn's `mobile_thumbnails: 'hide'` is on, the thumb strip is
+   hidden on mobile (display:none, rule above). Without a pager the
+   shopper would be stuck on the first image. We swap the absolute-
+   stacked main slot for a horizontal scroll-snap carousel and overlay
+   a dot pagination — matches Dawn's own mobile gallery. Desktop is
+   untouched (the at-rule never matches above 749px).
+
+   Selector requires BOTH data-mobile-thumbs="hide" AND data-thumb-pos
+   so the rule only fires in thumb mode — stacked mode is unaffected. */
+
+/* Dots are hidden everywhere by default — only revealed by the mobile
+   rule below. Keeps the markup constant; the layout flips with viewport. */
+.cp-embed-gallery .cp-gallery__dots {
+  display: none;
+}
+
+@media (max-width: 749px) {
+  /* Main becomes a horizontal scroll-snap carousel. Slides are in flow,
+     not absolute, so native touch scroll handles the swipe. `position:
+     relative` makes main the offsetParent of its slides, so the JS
+     dot-tap handler can use `slides[i].offsetLeft` to scroll to the
+     right position regardless of any padding/margin on the wrap. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main::-webkit-scrollbar {
+    display: none;
+    height: 0;
+  }
+
+  /* Slides flip from position:absolute (stacked overlay) to in-flow
+     full-width carousel items. Override the absolute/opacity rules
+     from the base thumb-mode block. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main-image {
+    position: relative;
+    inset: auto;
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100%;
+    opacity: 1;
+    pointer-events: auto;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  /* Pill-shaped dot overlay, vertically anchored at the bottom of the
+     main slot. Mirrors Dawn's .product__media-dots styling so themes
+     using inheritance feel consistent across native vs. our gallery. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__dots {
+    display: flex;
+    position: absolute;
+    left: 50%;
+    bottom: 1rem;
+    transform: translateX(-50%);
+    z-index: 1;
+    gap: 0.6rem;
+    padding: 0.5rem 0.9rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 2rem;
+    pointer-events: auto;
+  }
+
+  .cp-embed-gallery .cp-gallery__dot {
+    appearance: none;
+    -webkit-appearance: none;
+    display: block;
+    width: 0.7rem;
+    height: 0.7rem;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.45);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+    flex-shrink: 0;
+  }
+  .cp-embed-gallery .cp-gallery__dot--active {
+    background: rgba(255, 255, 255, 0.95);
+    transform: scale(1.2);
   }
 }

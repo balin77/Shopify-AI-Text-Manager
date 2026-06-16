@@ -37,6 +37,7 @@ class CpEmbedGallery extends HTMLElement {
     // defensively anyway so we never leak observers/listeners.
     if (this._bodyMo) { this._bodyMo.disconnect(); this._bodyMo = null; }
     if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
+    if (this._dotsIO) { this._dotsIO.disconnect(); this._dotsIO = null; }
     // Lightbox is appended to <body>; remove on disconnect so it does
     // not leak across SPA-style navigations that destroy the controller.
     if (this._lightbox && this._lightbox.isConnected) {
@@ -781,6 +782,9 @@ class CpEmbedGallery extends HTMLElement {
     // re-renders (e.g. variant switch) do not leak observers holding
     // refs to the now-detached old strip element.
     if (this._thumbsRO) { this._thumbsRO.disconnect(); this._thumbsRO = null; }
+    // Same hygiene for the mobile dots IntersectionObserver — its slides
+    // are about to be removed from the DOM.
+    if (this._dotsIO) { this._dotsIO.disconnect(); this._dotsIO = null; }
 
     // Lazy-load model-viewer once if any item is a 3D model — the
     // unknown element falls back to its poster CSS until the library
@@ -837,9 +841,29 @@ class CpEmbedGallery extends HTMLElement {
     // absolutely (only one .is-active at a time) so toggling between
     // them never reloads and never flashes.
     const mainImgs = images.map((item, i) => this._mainItemHtml(item, i === 0, i, true)).join('');
+    // Mobile-only dot pagination: only emitted when the host theme is set
+    // to hide thumbs on mobile (Dawn's `mobile_thumbnails: 'hide'`).
+    // Without thumbs the shopper had no way to browse — CSS converts the
+    // main slot into a horizontal scroll-snap carousel below the Dawn
+    // breakpoint and these dots become the visible pager.
+    const mobileDots =
+      this._themeSettings && this._themeSettings.mobileThumbs === 'hide' && images.length > 1;
+    const dotsHtml = mobileDots
+      ? `<div class="cp-gallery__dots" role="group" aria-label="Slide navigation">${
+          images.map((_, i) =>
+            `<button type="button" class="cp-gallery__dot${i === 0 ? ' cp-gallery__dot--active' : ''}" data-dot-index="${i}" tabindex="-1" aria-label="Slide ${i + 1} of ${images.length}"></button>`
+          ).join('')
+        }</div>`
+      : '';
+    // Wrap so the dots overlay sits OUTSIDE the scroll container — a child
+    // of an overflow:auto parent would scroll with the content. The wrap
+    // becomes the positioning context; .cp-gallery__main fills it.
     const mainHtml = `
-      <div class="cp-gallery__main"${this._ratioStyle(images[0])}>
-        ${mainImgs}
+      <div class="cp-gallery__main-wrap">
+        <div class="cp-gallery__main"${this._ratioStyle(images[0])}>
+          ${mainImgs}
+        </div>
+        ${dotsHtml}
       </div>`;
 
     const thumbItems = images.map((item, i) => {
@@ -878,6 +902,51 @@ class CpEmbedGallery extends HTMLElement {
     this._bindThumbs(inner);
     this._bindArrows(inner);
     this._bindZoom(inner);
+    if (mobileDots) this._bindDots(inner);
+  }
+
+  // Mobile carousel pager. CSS turns .cp-gallery__main into a horizontal
+  // scroll-snap container below 750px when data-mobile-thumbs="hide";
+  // these dots are the only visible pager in that layout. Bindings are
+  // safe on desktop too — the dots are display:none there, the main slot
+  // is not scrollable, so clicks have no effect and the observer simply
+  // sees the first slide as fully visible.
+  _bindDots(container) {
+    const main   = container.querySelector('.cp-gallery__main');
+    const dots   = Array.from(container.querySelectorAll('.cp-gallery__dot'));
+    const slides = Array.from(container.querySelectorAll('.cp-gallery__main-image'));
+    if (!main || !dots.length || !slides.length) return;
+
+    dots.forEach((dot) => {
+      dot.addEventListener('click', () => {
+        const i = Number(dot.dataset.dotIndex);
+        const target = slides[i];
+        if (!target) return;
+        // offsetLeft is relative to the scroll container — exactly what
+        // scrollTo expects. Smooth so taps feel like a swipe-to-slide.
+        main.scrollTo({ left: target.offsetLeft, behavior: 'smooth' });
+      });
+    });
+
+    if (typeof IntersectionObserver === 'function') {
+      this._dotsIO = new IntersectionObserver((entries) => {
+        // Desktop / single-slide guard: above the mobile breakpoint the
+        // CSS reverts main to absolute-stacked layout and scrollWidth ≈
+        // clientWidth — there's no carousel to track, no dot to update
+        // (dots are display:none). Bail before doing layout work.
+        if (main.scrollWidth <= main.clientWidth + 1) return;
+        let bestIdx = -1, bestRatio = 0;
+        entries.forEach((entry) => {
+          if (entry.intersectionRatio > bestRatio) {
+            bestRatio = entry.intersectionRatio;
+            bestIdx = slides.indexOf(entry.target);
+          }
+        });
+        if (bestIdx < 0) return;
+        dots.forEach((d, j) => d.classList.toggle('cp-gallery__dot--active', j === bestIdx));
+      }, { root: main, threshold: 0.5 });
+      slides.forEach((s) => this._dotsIO.observe(s));
+    }
   }
 
   // Path C: zoom dispatcher. Three modes share the same trigger
