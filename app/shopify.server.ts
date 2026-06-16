@@ -1,4 +1,12 @@
 import "@shopify/shopify-app-remix/adapters/node";
+// Defensive: the adapter import above is side-effect-only and
+// @shopify/shopify-app-remix declares no "sideEffects" field, so the Rollup
+// SSR build can drop it — leaving abstractRuntimeString() at its default
+// throw and crashing the Remix build load at boot. Re-invoke the setter
+// directly so the call is a top-level expression Rollup cannot eliminate.
+import { setAbstractRuntimeString } from "@shopify/shopify-api/runtime";
+setAbstractRuntimeString(() => "Remix (Node)");
+
 import {
   ApiVersion,
   AppDistribution,

@@ -18,10 +18,9 @@ interface SettingsLanguageTabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, highlightSaveButton = false }: SettingsLanguageTabProps) {
+export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }: SettingsLanguageTabProps) {
   const APP_LANGUAGES = [
     { label: t.settings.languages.de, value: "de" },
     { label: t.settings.languages.en, value: "en" },
@@ -94,19 +93,16 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, 
           <Text as="h2" variant="headingLg">
             {t.settings.appLanguage}
           </Text>
-          <div style={{ marginLeft: "auto" }}>
-            <SaveDiscardButtons
-              hasChanges={languageChanged}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.products.saveChanges}
-              discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveSettings"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
-              highlightSaveButton={highlightSaveButton}
-            />
-          </div>
+          <SaveDiscardButtons
+            hasChanges={languageChanged}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+          />
         </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">

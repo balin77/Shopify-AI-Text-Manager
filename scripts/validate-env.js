@@ -126,7 +126,6 @@ if (!encKey) {
   console.log('✅ ENCRYPTION_KEY: valid (64 hex chars)');
 }
 
-
 // Optional: Sentry status (never an error — purely informational)
 console.log('\n📡 Sentry error tracking:');
 if (!process.env.SENTRY_DSN) {

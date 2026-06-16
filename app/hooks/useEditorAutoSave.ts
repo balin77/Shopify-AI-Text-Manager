@@ -290,9 +290,6 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     savedItemIdRef.current = selectedItemId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
-    // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
-    // response handler in useUnifiedContentEditor, which checks that the saved
-    // item is still the currently-selected item before unblocking navigation.
   }, [selectedItemId, primaryLocale, effectiveFieldDefinitions, getChangedFields, getChangedAltTextIndices, safeSubmit]);
 
   return {

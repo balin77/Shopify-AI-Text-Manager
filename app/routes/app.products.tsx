@@ -15,6 +15,7 @@ import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -615,7 +616,6 @@ export default function ProductsPage() {
             // appear automatically.
             schedulePreviewBackfill(productId);
           }
-          editor.navigationGuard.clearPendingNavigation();
         }).catch(() => {
           showInfoBox(t.products.gallerySaveError, "critical");
         });
@@ -650,31 +650,20 @@ export default function ProductsPage() {
       // handleItemSelect only gate on editor.state.hasChanges (field-level
       // text edits) — they don't know about image-manager pending state
       // (uploads / library picks / variant gallery edits / 3D models /
-      // external videos). Without these wrappers a merchant who only
-      // touched the gallery and then clicked a different language saw the
-      // page swap and their pending uploads silently discarded. We
-      // pre-empt with our own guard when image changes exist; the
-      // wrapped action eventually re-fires from clearPendingNavigation
-      // (post-save) and then proceeds through the editor's normal path.
-      handleLanguageChange: (locale: string) => {
+      // external videos). When image changes are pending, the native save
+      // bar is visible and confirmNavigation() shows the native confirm
+      // dialog before letting the action proceed.
+      handleLanguageChange: async (locale: string) => {
         if (hasPendingImageChanges && !editor.state.hasChanges) {
-          editor.navigationGuard.handleNavigationAttempt(
-            () => editor.handlers.handleLanguageChange(locale),
-            true,
-          );
-        } else {
-          editor.handlers.handleLanguageChange(locale);
+          await confirmNavigation();
         }
+        editor.handlers.handleLanguageChange(locale);
       },
-      handleItemSelect: (itemId: string) => {
+      handleItemSelect: async (itemId: string) => {
         if (hasPendingImageChanges && !editor.state.hasChanges) {
-          editor.navigationGuard.handleNavigationAttempt(
-            () => editor.handlers.handleItemSelect(itemId),
-            true,
-          );
-        } else {
-          editor.handlers.handleItemSelect(itemId);
+          await confirmNavigation();
         }
+        editor.handlers.handleItemSelect(itemId);
       },
     },
   };

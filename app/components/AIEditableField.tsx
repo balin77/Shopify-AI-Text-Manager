@@ -188,7 +188,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(disableGeneration && !value) || isLoading}
             >
-              {disableGeneration || value
+              ✨ {disableGeneration || value
                 ? (t.products?.aiImprove || "Improve with AI")
                 : (t.products?.aiGenerateShort || "Generate with AI")}
             </Button>
@@ -200,7 +200,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={!value || isLoading}
             >
-              {t.products?.formatWithAI || "Format"}
+              🎨 {t.products?.formatWithAI || "Format"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -210,7 +210,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading}
             >
-              {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
+              🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
             </Button>
           )}
           {(onCopy || onCopyToAllLocales) && (

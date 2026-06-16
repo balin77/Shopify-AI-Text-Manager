@@ -303,7 +303,7 @@ export function AIEditableHTMLField({
           {onGenerateAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
               <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={(disableGeneration && !value) || isLoading}>
-                {disableGeneration || value
+                ✨ {disableGeneration || value
                   ? (t.products?.aiImprove || "Improve with AI")
                   : (t.products?.aiGenerateShort || "Generate with AI")}
               </Button>
@@ -317,7 +317,7 @@ export function AIEditableHTMLField({
                 loading={isLoading}
                 disabled={!value || isLoading}
               >
-                {t.products?.formatWithAI || "Format"}
+                🎨 {t.products?.formatWithAI || "Format"}
               </Button>
             </div>
           )}
@@ -329,7 +329,7 @@ export function AIEditableHTMLField({
                 loading={isLoading}
                 disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading}
               >
-                {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
+                🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
               </Button>
             </div>
           )}

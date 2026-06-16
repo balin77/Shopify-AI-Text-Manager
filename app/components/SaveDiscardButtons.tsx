@@ -1,17 +1,9 @@
-import { Button } from "@shopify/polaris";
-
-const PULSE_STYLE = `
-  @keyframes save-btn-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7); }
-    50% { box-shadow: 0 0 12px 6px rgba(255, 149, 0, 0.3); }
-  }
-`;
+import { AppSaveBar } from "./AppSaveBar";
 
 interface SaveDiscardButtonsProps {
   hasChanges: boolean;
   onSave: () => void;
   onDiscard: () => void;
-  highlightSaveButton?: boolean;
   saveText?: string;
   discardText?: string;
   action?: string;
@@ -21,23 +13,18 @@ interface SaveDiscardButtonsProps {
 }
 
 /**
- * Unified Save/Discard buttons component
- * Used across all content editing pages (Collections, Blog, Pages, Policies, Templates, Products)
+ * Unified Save/Discard control.
  *
- * Features:
- * - Discard button always visible but disabled when no changes
- * - Save button always visible but disabled when no changes
- * - Pulse animation on save button when highlightSaveButton is true
- * - Loading state on save button during submission
- * - Primary variant on save button when changes exist
- * - Consistent flex layout matching UnifiedLanguageBar styling
- * - Responsive wrapping with proper gap spacing on mobile
+ * Renders the native Shopify save bar (`AppSaveBar` / `ui-save-bar`) above the
+ * embedded app instead of in-page buttons. This is the "Built for Shopify"
+ * compliant approach and replaces the deprecated Polaris ContextualSaveBar.
+ * The component keeps its original prop API so existing callers (Settings tabs)
+ * work unchanged.
  */
 export function SaveDiscardButtons({
   hasChanges,
   onSave,
   onDiscard,
-  highlightSaveButton = false,
   saveText = "Save Changes",
   discardText = "Discard",
   action = "updateContent",
@@ -52,31 +39,13 @@ export function SaveDiscardButtons({
     fetcherFormData?.get("action") === action);
 
   return (
-    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
-      {highlightSaveButton && <style>{PULSE_STYLE}</style>}
-      <Button
-        onClick={onDiscard}
-        disabled={!hasChanges || isSubmitting}
-        size="slim"
-      >
-        {discardText}
-      </Button>
-      <div
-        style={{
-          animation: highlightSaveButton ? "save-btn-pulse 1.5s ease-in-out infinite" : "none",
-          borderRadius: "8px",
-        }}
-      >
-        <Button
-          variant={hasChanges ? "primary" : undefined}
-          onClick={onSave}
-          disabled={!hasChanges}
-          loading={isSubmitting}
-          size="slim"
-        >
-          {saveText}
-        </Button>
-      </div>
-    </div>
+    <AppSaveBar
+      hasChanges={hasChanges}
+      onSave={onSave}
+      onDiscard={onDiscard}
+      saveText={saveText}
+      discardText={discardText}
+      loading={isSubmitting}
+    />
   );
 }

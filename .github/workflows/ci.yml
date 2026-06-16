@@ -45,5 +45,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Mirrors the Railway production build (prisma generate + remix vite:build
+      # + strip-client-sourcemaps). Catches client-bundle esbuild errors that
+      # tsc/vitest miss — e.g. the bad merge that left `sentryActive`/`ENV`
+      # declared twice in app/root.tsx and broke the prod deploy.
+      - name: Production build
+        run: npm run build
+
       - name: Unit tests
         run: npm test

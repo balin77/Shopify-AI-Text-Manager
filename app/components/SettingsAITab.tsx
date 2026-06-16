@@ -64,10 +64,9 @@ interface SettingsAITabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highlightSaveButton = false }: SettingsAITabProps) {
+export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: SettingsAITabProps) {
   const AI_PROVIDERS = [
     { label: t.settings.providers.openai, value: "openai" },
     { label: t.settings.providers.gemini, value: "gemini" },
@@ -263,19 +262,16 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange, highli
           <Text as="h2" variant="headingLg">
             {t.settings.manageAiKeys}
           </Text>
-          <div style={{ marginLeft: "auto" }}>
-            <SaveDiscardButtons
-              hasChanges={hasChanges}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.products.saveChanges}
-              discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveSettings"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
-              highlightSaveButton={highlightSaveButton}
-            />
-          </div>
+          <SaveDiscardButtons
+            hasChanges={hasChanges}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+          />
         </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">
