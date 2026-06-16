@@ -248,6 +248,13 @@ export const AIRequestBaseSchema = z.object({
 });
 
 /**
+ * Schema for the request body of api.update-plan.tsx
+ */
+export const UpdatePlanSchema = z.object({
+  plan: z.enum(['free', 'basic', 'pro', 'max']),
+});
+
+/**
  * Schema for query parameters in api.sync-content.tsx
  */
 const VALID_SYNC_TYPES = ['collections', 'articles', 'pages', 'policies', 'themes'] as const;

@@ -26,18 +26,15 @@ interface MobileToolbarProps {
   primaryLocale: string;
   selectedItem: TranslatableItem | null;
   contentType: ContentType;
-  hasChanges: boolean;
   onLanguageChange: (locale: string) => void;
   enabledLanguages?: string[];
   isLoadingData?: boolean;
   validationOverlays?: ValidationOverlays;
   validationVersion?: number;
 
-  // Operation handlers
+  // Operation handlers (Save/Discard are handled by the native save bar)
   onTranslateAll: () => void;
   onClearAll: () => void;
-  onSave: () => void;
-  onDiscard: () => void;
   onToggleSendImageToAI?: () => void;
 
   // Send image to AI feature
@@ -45,21 +42,8 @@ interface MobileToolbarProps {
   images?: ContentImage[];
   featuredImage?: ContentImage;
 
-  // Fetcher state for loading indicators
-  fetcherState: string;
-  fetcherFormData: FormData | undefined;
-
-  // Item-scoped saving state (true only when saving the currently-selected item)
-  isSavingCurrentItem?: boolean;
-
-  // Sub-resource saving state (separate fetcher)
-  isSubResourceSaving?: boolean;
-
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
-
-  // Save button highlight
-  highlightSaveButton?: boolean;
 
   // Reload button props
   reloadResourceId: string;
@@ -73,8 +57,6 @@ interface MobileToolbarProps {
     translateAll?: string;
     translating?: string;
     clearAll?: string;
-    save?: string;
-    discardChanges?: string;
     sendImageToAI?: string;
   };
 }
@@ -85,7 +67,6 @@ export function MobileToolbar({
   primaryLocale,
   selectedItem,
   contentType,
-  hasChanges,
   onLanguageChange,
   enabledLanguages,
   isLoadingData = false,
@@ -93,18 +74,11 @@ export function MobileToolbar({
   validationVersion,
   onTranslateAll,
   onClearAll,
-  onSave,
-  onDiscard,
   onToggleSendImageToAI,
   sendImageToAI = false,
   images = [],
   featuredImage,
-  fetcherState,
-  fetcherFormData,
-  isSavingCurrentItem,
-  isSubResourceSaving = false,
   isTranslatingGlobal = false,
-  highlightSaveButton = false,
   reloadResourceId,
   reloadResourceType,
   reloadLocale,
@@ -123,15 +97,8 @@ export function MobileToolbar({
   const togglePopover = useCallback(() => setPopoverActive((prev) => !prev), []);
   const closePopover = useCallback(() => setPopoverActive(false), []);
 
-  const currentAction = fetcherFormData?.get("action");
-  // Use global store state for translation (persists across navigation), fall back to fetcher state
+  // Global store state for translation (persists across navigation)
   const isTranslating = isTranslatingGlobal;
-  // Use item-scoped saving state when available to prevent spinner leaking across items
-  const isSaving = isSubResourceSaving || (isSavingCurrentItem ?? (fetcherState !== "idle" && (
-    currentAction === "updateContent" ||
-    currentAction === "savePrimarySubResources" ||
-    currentAction === "saveSubResourceTranslations"
-  )));
 
   const popoverActivator = (
     <Button icon={MenuHorizontalIcon} size="slim" onClick={togglePopover} accessibilityLabel="More actions" />
@@ -185,24 +152,9 @@ export function MobileToolbar({
           })}
         </div>
 
-        {/* Right: Save + Reload icon + More Actions Popover */}
+        {/* Right: Reload icon + More Actions Popover. Save/Discard are handled
+            by the native Shopify save bar (AppSaveBar in UnifiedContentEditor). */}
         <div style={{ flexShrink: 0, display: "flex", gap: "0.25rem", alignItems: "center" }}>
-          <div
-            style={{
-              animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-              borderRadius: "8px",
-            }}
-          >
-            <Button
-              variant={hasChanges ? "primary" : undefined}
-              onClick={onSave}
-              disabled={!hasChanges}
-              loading={isSaving}
-              size="slim"
-            >
-              {t.save || "Save"}
-            </Button>
-          </div>
           <ReloadButton
             resourceId={reloadResourceId}
             resourceType={reloadResourceType}
@@ -236,14 +188,6 @@ export function MobileToolbar({
                     closePopover();
                   },
                   destructive: true,
-                },
-                {
-                  content: t.discardChanges || "Discard Changes",
-                  onAction: () => {
-                    onDiscard();
-                    closePopover();
-                  },
-                  disabled: !hasChanges || isSaving,
                 },
                 // Send image to AI checkbox (only in main language for products/collections/blogs with images)
                 ...((currentLanguage === primaryLocale &&

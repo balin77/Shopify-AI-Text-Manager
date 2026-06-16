@@ -80,10 +80,9 @@ interface AIInstructionsTabsProps {
   fetcher: FetcherWithComponents<any>;
   readOnly?: boolean;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange, highlightSaveButton = false }: AIInstructionsTabsProps) {
+export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
@@ -202,19 +201,16 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {t.settings.aiInstructions}
           </Text>
           {!readOnly && (
-            <div style={{ marginLeft: "auto" }}>
-              <SaveDiscardButtons
-                hasChanges={hasChanges}
-                onSave={handleSave}
-                onDiscard={handleDiscard}
-                saveText={t.products?.saveChanges || "Änderungen speichern"}
-                discardText={t.content?.discardChanges || "Verwerfen"}
-                action="saveInstructions"
-                fetcherState={fetcher.state}
-                fetcherFormData={fetcher.formData}
-                highlightSaveButton={highlightSaveButton}
-              />
-            </div>
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products?.saveChanges || "Änderungen speichern"}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveInstructions"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+            />
           )}
         </InlineStack>
 
