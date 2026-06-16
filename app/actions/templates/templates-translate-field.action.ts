@@ -230,7 +230,12 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
           locale,
           error: error instanceof Error ? error.message : String(error),
         });
-        translations[locale] = sourceText; // Fallback to original
+        // R3-H10 / N-H3 audited-safe: RESPONSE-MAP ONLY. Persistence below is
+        // driven exclusively by `pendingUpserts`, which this catch does NOT
+        // push to — so a failed locale is skipped for Shopify + DB, never
+        // written as source-as-translation. Keep persistence keyed off
+        // pendingUpserts; do not persist `translations` without an N-H3 guard.
+        translations[locale] = sourceText; // response map only — see note
       }
     }
 

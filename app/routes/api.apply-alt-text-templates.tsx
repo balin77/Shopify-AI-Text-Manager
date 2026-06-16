@@ -1,7 +1,8 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { fillAltTextTemplate, resolveVariableValues } from "../utils/alt-text-template";
+import { fillAltTextTemplate, resolveVariableValues, createTranslationCache } from "../utils/alt-text-template";
+import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
 
@@ -28,16 +29,78 @@ async function resolveImageUrl(admin: { graphql: (q: string, opts?: any) => Prom
   return gid;
 }
 
-// Get-or-create the local ProductImage row for a given media GID. Without this,
-// productImageAltTranslation upserts silently no-op when the gallery image was
-// never synced into the local DB (common for variant_gallery metafield images).
-async function getOrCreateProductImage(productId: string, gid: string, admin: { graphql: (q: string, opts?: any) => Promise<Response> }): Promise<{ id: string }> {
-  const existing = await db.productImage.findFirst({ where: { mediaId: gid }, select: { id: true } });
-  if (existing) return existing;
-  const url = await resolveImageUrl(admin, gid);
-  return db.productImage.create({
-    data: { productId, mediaId: gid, url },
-    select: { id: true },
+// Shopify's Admin GraphQL API is cost-throttled per shop. Applying every
+// locale in parallel (and the webhook syncs each apply triggers) can exhaust
+// the bucket → HTTP 429 or a top-level THROTTLED error. Without this the
+// previously-sequential path's work would just fail outright. Back off and
+// retry so "apply to all languages" stays correct on large catalogs.
+async function gqlWithThrottleRetry(
+  admin: { graphql: (q: string, opts?: any) => Promise<Response> },
+  query: string,
+  variables: Record<string, unknown>,
+  attempts = 4
+): Promise<any> {
+  const backoffMs = [800, 1600, 3200];
+  for (let i = 0; ; i++) {
+    const r = await admin.graphql(query, { variables });
+    const status = r.status;
+    const d = (await r.json()) as any;
+    const throttled =
+      status === 429 ||
+      (Array.isArray(d?.errors) &&
+        d.errors.some(
+          (e: any) =>
+            e?.extensions?.code === "THROTTLED" || /throttl/i.test(e?.message ?? "")
+        ));
+    if (!throttled || i >= attempts - 1) return d;
+    await new Promise((res) => setTimeout(res, backoffMs[Math.min(i, backoffMs.length - 1)]));
+  }
+}
+
+// Persist the alt-text (primary) or translation (foreign locale) for one media
+// GID, atomically and idempotently. The ProductImage row is upserted on the
+// (productId, mediaId) unique key so concurrent applies collapse instead of
+// creating duplicates; both writes share one transaction so a racing sync
+// either sees both or neither, and the retry above heals an interleaved wipe.
+async function persistAltText(
+  productId: string,
+  gid: string,
+  shop: string,
+  locale: string,
+  isPrimary: boolean,
+  altText: string,
+  admin: { graphql: (q: string, opts?: any) => Promise<Response> }
+): Promise<void> {
+  await withDbRaceRetry(async () => {
+    // Resolve a URL only when the row is missing — avoids a Shopify call per
+    // image on the common update path. Scoped by shop: media GIDs are unique
+    // per shop, so an unscoped match could touch another tenant's row.
+    const existing = await db.productImage.findFirst({
+      where: { mediaId: gid, product: { shop } },
+      select: { id: true },
+    });
+    const createUrl = existing ? gid : await resolveImageUrl(admin, gid);
+
+    await db.$transaction(async (tx) => {
+      const img = await tx.productImage.upsert({
+        where: { productId_mediaId: { productId, mediaId: gid } },
+        create: {
+          productId,
+          mediaId: gid,
+          url: createUrl,
+          ...(isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {}),
+        },
+        update: isPrimary ? { altText: altText || null, altTextModifiedAt: new Date() } : {},
+        select: { id: true },
+      });
+      if (!isPrimary) {
+        await tx.productImageAltTranslation.upsert({
+          where: { imageId_locale: { imageId: img.id, locale } },
+          create: { imageId: img.id, locale, altText },
+          update: { altText },
+        });
+      }
+    });
   });
 }
 
@@ -63,14 +126,67 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "productId, locale, and variants are required" }, { status: 400 });
   }
 
-  // Load templates for this product
-  const templates = await db.altTextTemplate.findMany({
-    where: { shop: session.shop, productId, locale },
-    orderBy: { position: "asc" },
+  // Fail-closed ownership guard, aligned with the strong `shop_id` compound
+  // pattern (see alt-text.handler). The only persistent work this route does
+  // is creating ProductImage rows, whose required FK to Product means a
+  // not-synced product would FK-fail anyway — so requiring an owned, synced
+  // Product here rejects cross-tenant productIds without breaking any
+  // legitimate flow.
+  const ownedProduct = await db.product.findUnique({
+    where: { shop_id: { shop: session.shop, id: productId } },
+    select: { title: true },
   });
+  if (!ownedProduct) {
+    return json({ success: false, error: "Product not found for this shop" }, { status: 404 });
+  }
+
+  // Load templates for this product.
+  //
+  // Per-position merge: foreign-locale templates (authored via
+  // api.translate-alt-text-template — full sentence translated by AI) win.
+  // For positions where no foreign-locale row exists, fall back to the
+  // primary-locale template so variable substitution still produces *some*
+  // alt text. The earlier R5-M2 fix loaded *only* the primary template for
+  // foreign applies, which meant the full German sentence was written into
+  // the French translation with just the {color} variable swapped — that's
+  // the bug this merge restores.
+  const isPrimaryApply = !locale || locale === primaryLocale;
+  let templates: Awaited<ReturnType<typeof db.altTextTemplate.findMany>>;
+  if (isPrimaryApply) {
+    templates = await db.altTextTemplate.findMany({
+      where: { shop: session.shop, productId, locale },
+      orderBy: { position: "asc" },
+    });
+  } else {
+    const foreignRows = await db.altTextTemplate.findMany({
+      where: { shop: session.shop, productId, locale },
+      orderBy: { position: "asc" },
+    });
+    const primaryRows = primaryLocale
+      ? await db.altTextTemplate.findMany({
+          where: { shop: session.shop, productId, locale: primaryLocale },
+          orderBy: { position: "asc" },
+        })
+      : [];
+    const byPosition = new Map<number, (typeof foreignRows)[number]>();
+    for (const t of primaryRows) byPosition.set(t.position, t);
+    // Foreign wins — but only when it has actual content. An empty foreign
+    // row (e.g. saved by a blur before translation completed) must not
+    // overwrite the primary fallback with "".
+    for (const t of foreignRows) {
+      if (t.template && t.template.trim().length > 0) byPosition.set(t.position, t);
+    }
+    templates = [...byPosition.values()].sort((a, b) => a.position - b.position);
+  }
 
   if (templates.length === 0) {
-    return json({ success: true, applied: 0, message: "No templates found for this locale" });
+    return json({
+      success: true,
+      applied: 0,
+      message: isPrimaryApply
+        ? "No templates found for this locale"
+        : "No alt-text templates authored for this product (none under the primary locale)",
+    });
   }
 
   // Legacy templates were stored 0-based (0 = main image, 1 = first gallery, …).
@@ -87,12 +203,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const isPrimary = !locale || locale === primaryLocale;
 
   // Resolve a display title for the navigation InfoBox.
-  // Falls back to productId if the product isn't synced yet.
-  const productRecord = await db.product.findUnique({
-    where: { id: productId },
-    select: { title: true },
-  });
-  const taskTitle = productRecord?.title || productId;
+  const taskTitle = ownedProduct.title || productId;
 
   // Create the task up-front with status "running" so the navigation badge
   // counts it while we work — otherwise it only appeared after completion.
@@ -123,6 +234,39 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Task tracking is best-effort — failure here must not block the apply.
   }
 
+  // Everything past task creation runs inside this guard so a thrown error
+  // (notably resolveVariableValues hitting a Shopify THROTTLE on a foreign
+  // locale — the primary path never calls it, which is exactly why foreign
+  // tasks were the ones left stuck "running") still finalizes the task
+  // instead of leaking it forever.
+  // Progress heartbeat. The apply loop is the slow part; without periodic
+  // task updates the bar sat at 0 until the final 100, AND the stuck-task
+  // recovery (which keys off updatedAt and explicitly requires handlers to
+  // heartbeat) could not tell a slow-but-alive apply from a dead one.
+  let lastHeartbeatPct = 0;
+  const heartbeat = async () => {
+    if (!taskId) return;
+    const pct = Math.min(99, Math.round((attempted / Math.max(estimatedTotal, 1)) * 100));
+    if (pct === lastHeartbeatPct) return; // ≤100 writes/request, no churn
+    lastHeartbeatPct = pct;
+    try {
+      await db.task.update({
+        where: { id: taskId },
+        data: { progress: pct, processed: applied },
+      });
+    } catch {
+      // best-effort — a missed heartbeat must not break the apply
+    }
+  };
+
+  // Single cache for the whole apply call. Multiple variants typically share
+  // the same option values (e.g. "Red" appears on 10 variants of one product)
+  // — without this, each occurrence fired its own translatableResource query
+  // and a partial Shopify cost-throttle would silently leave some variants
+  // with the primary-locale fallback while others showed the translation.
+  const translationCache = createTranslationCache();
+
+  try {
   for (const variant of variants) {
     // Build ordered list of image GIDs for this variant:
     // Position 0 = main featured image, positions 1+ = gallery images
@@ -137,7 +281,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       variant.selectedOptions,
       locale,
       isPrimary,
-      admin
+      admin,
+      translationCache,
     );
 
     for (const tmpl of templates) {
@@ -154,7 +299,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       try {
         if (isPrimary) {
           // Primary locale: fileUpdate mutation
-          const r = await admin.graphql(
+          const d = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               mutation fileUpdate($files: [FileUpdateInput!]!) {
                 fileUpdate(files: $files) {
@@ -162,18 +308,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   files { id }
                 }
               }`,
-            { variables: { files: [{ id: gid, alt: altText }] } }
+            { files: [{ id: gid, alt: altText }] }
           );
-          const d = await r.json() as any;
           const errs = d.data?.fileUpdate?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, admin);
-              await db.productImage.update({
-                where: { id: dbImage.id },
-                data: { altText: altText || null, altTextModifiedAt: new Date() },
-              });
+              await persistAltText(productId, gid, session.shop, locale, true, altText, admin);
             } catch (dbErr: unknown) {
               // Don't roll back the Shopify save; surface the DB failure so the user
               // knows the local cache is out of sync and can retry / re-sync.
@@ -184,16 +325,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }
         } else {
           // Foreign locale: get digest first
-          const tr = await admin.graphql(
+          const td = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               query translatableContent($id: ID!) {
                 translatableResource(resourceId: $id) {
                   translatableContent { key digest }
                 }
               }`,
-            { variables: { id: gid } }
+            { id: gid }
           );
-          const td = await tr.json() as any;
           const altDigest = (td.data?.translatableResource?.translatableContent ?? [])
             .find((c: { key: string; digest?: string }) => c.key === "alt")?.digest;
 
@@ -202,7 +343,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             continue;
           }
 
-          const r = await admin.graphql(
+          const d = await gqlWithThrottleRetry(
+            admin,
             `#graphql
               mutation translateMedia($resourceId: ID!, $translations: [TranslationInput!]!) {
                 translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -210,23 +352,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 }
               }`,
             {
-              variables: {
-                resourceId: gid,
-                translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
-              },
+              resourceId: gid,
+              translations: [{ key: "alt", value: altText, locale, translatableContentDigest: altDigest }],
             }
           );
-          const d = await r.json() as any;
           const errs = d.data?.translationsRegister?.userErrors ?? [];
           if (errs.length === 0) {
             applied++;
             try {
-              const dbImage = await getOrCreateProductImage(productId, gid, admin);
-              await db.productImageAltTranslation.upsert({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
-                create: { imageId: dbImage.id, locale, altText },
-                update: { altText },
-              });
+              await persistAltText(productId, gid, session.shop, locale, false, altText, admin);
             } catch (dbErr: unknown) {
               errors.push(`${variant.title} (Position ${tmpl.position}, ${locale} DB save): ${String(dbErr)}`);
             }
@@ -237,6 +371,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (err: unknown) {
         errors.push(`${variant.title} (Position ${tmpl.position}, GID ${gid}): ${String(err)}`);
       }
+      await heartbeat();
     }
   }
 
@@ -297,4 +432,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     errors: errors.length > 0 ? errors : undefined,
     error: errorSummary,
   });
+  } catch (fatal: unknown) {
+    // An unexpected throw (Shopify throttle/network during variable resolution,
+    // etc.) reached here. Close out the task as failed so the navigation badge
+    // stops showing it as perpetually running, then surface the error.
+    const msg = fatal instanceof Error ? fatal.message : String(fatal);
+    if (taskId) {
+      try {
+        await db.task.update({
+          where: { id: taskId },
+          data: {
+            status: "failed",
+            progress: 100,
+            total: attempted,
+            processed: applied,
+            error: `${msg}`.substring(0, 1000),
+            completedAt: new Date(),
+          },
+        });
+      } catch {
+        // best-effort — never mask the original failure
+      }
+    }
+    return json(
+      { success: false, applied, attempted, error: msg },
+      { status: 500 }
+    );
+  }
 };

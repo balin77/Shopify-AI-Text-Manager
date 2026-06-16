@@ -41,6 +41,7 @@ import { markRecentlySaved } from "../utils/translation-timing";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
+import { readLastSelectedId } from "../utils/last-selected-item";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -55,14 +56,6 @@ import {
 interface TaskData {
   fieldType?: string | null;
   targetLocale?: string | null;
-}
-
-function readLastSelectedId(contentType: string): string | null {
-  try { return localStorage.getItem(`contentpilot_last_selected_${contentType}`); } catch { return null; }
-}
-
-function writeLastSelectedId(contentType: string, id: string): void {
-  try { localStorage.setItem(`contentpilot_last_selected_${contentType}`, id); } catch {}
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
@@ -86,9 +79,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // STATE MANAGEMENT
   // ============================================================================
 
-  const [selectedItemId, setSelectedItemId] = useState<string | null>(
-    initialItemId || readLastSelectedId(config.contentType) || null
-  );
+  // SSR-safe: initial state is always null. The restore effect below reads
+  // localStorage on the client once `items` are available and picks the right
+  // item (initialItemId > localStorage > items[0]). Reading localStorage in the
+  // useState initializer would run during server render where it throws/returns
+  // null, and that null would be reused on hydration — causing the auto-select
+  // fallback to overwrite the persisted value before we ever got to read it.
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [hasRestored, setHasRestored] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
@@ -101,9 +99,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Track if we're in the middle of an accept-and-translate flow to prevent immediate deletion
   const [isAcceptAndTranslateFlow, setIsAcceptAndTranslateFlow] = useState(false);
   const isAcceptAndTranslateFlowRef = useLatestRef(isAcceptAndTranslateFlow);
-  // Track if we're currently loading data to prevent false change detection
-  // Initialize to true if an item is selected to prevent race condition
-  const [isLoadingData, setIsLoadingData] = useState(!!selectedItemId);
+  // Track if we're currently loading data to prevent false change detection.
+  // selectedItemId starts null on mount (SSR-safe), but if items already
+  // exist, the restore effect will pick one synchronously after first paint
+  // and the data-loader effect will set this to true. Initialize true when
+  // items are available so the brief window before restoration doesn't show
+  // a stale "not loading" state on client-side mounts where the previous
+  // implementation started true.
+  const [isLoadingData, setIsLoadingData] = useState(items.length > 0);
   // Track save-in-progress for spinner — fetcher.state is unreliable due to React 18 batching
   const [isSaving, setIsSaving] = useState(false);
   // Track when initial data is ready (used to prevent field flash on load)
@@ -322,24 +325,55 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   }, [initialItemId, items]);
 
   // ============================================================================
-  // AUTO-SELECT FIRST ITEM ON MOUNT
-  // Automatically select the first item when the page loads
+  // RESTORE SELECTION ON MOUNT (client-only, once)
+  // Priority: initialItemId (URL param) > localStorage > items[0] fallback.
+  // Runs exactly once per mount as soon as `items` is non-empty.
+  //
+  // Writes to localStorage are NOT made here — only handleItemSelect (the
+  // user-action handler) persists. A restore-write or fallback-write would
+  // mean any transient missing-from-list state (mid-resync, plan-cap, lazy
+  // batch) clobbers the user's saved id when the disappear-effect below
+  // re-selects items[0]. By keeping writes user-initiated, the saved id
+  // survives transient list anomalies and only changes when the user
+  // explicitly clicks something.
   // ============================================================================
 
   useEffect(() => {
+    if (hasRestored) return;
     if (items.length === 0) return;
-    // If no item selected, or selected item doesn't exist in list, select first item
-    if (!selectedItemId || !items.find(i => i.id === selectedItemId)) {
-      setSelectedItemId(items[0].id);
-    }
-  }, [items, selectedItemId]);
 
-  // Persist selected item so the same item reopens after a page reload
-  useEffect(() => {
-    if (selectedItemId) {
-      writeLastSelectedId(config.contentType, selectedItemId);
+    if (initialItemId && items.find(i => i.id === initialItemId)) {
+      setSelectedItemId(initialItemId);
+      appliedInitialItemIdRef.current = initialItemId;
+      setHasRestored(true);
+      return;
     }
-  }, [selectedItemId, config.contentType]);
+
+    const saved = readLastSelectedId(config.contentType);
+    if (saved && items.find(i => i.id === saved)) {
+      setSelectedItemId(saved);
+      setHasRestored(true);
+      return;
+    }
+
+    // Fallback: no usable stored or URL-provided ID — pick the first item.
+    setSelectedItemId(items[0].id);
+    setHasRestored(true);
+  }, [hasRestored, items, initialItemId, config.contentType]);
+
+  // ============================================================================
+  // AUTO-SELECT FIRST ITEM if the selected one disappears (e.g. deleted, or
+  // temporarily missing during a revalidation). Only runs after restoration
+  // is complete. Does NOT touch localStorage — the saved id stays intact so
+  // a transient absence doesn't permanently destroy the user's selection.
+  // ============================================================================
+
+  useEffect(() => {
+    if (!hasRestored) return;
+    if (items.length === 0) return;
+    if (selectedItemId && items.find(i => i.id === selectedItemId)) return;
+    setSelectedItemId(items[0].id);
+  }, [hasRestored, items, selectedItemId]);
 
   // ============================================================================
   // FOCUS MANAGEMENT - Set focus when item changes

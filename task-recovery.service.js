@@ -5,17 +5,48 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { refundImageOperations } from "./image-op-refund.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
 
-// Timeout for stuck tasks (10 minutes)
-const STUCK_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+// R4-H2: a task is "stuck" only if its updatedAt has not advanced for this
+// long. ANY running/pending/queued task older than this is blanket-failed,
+// so a LEGITIMATELY long task is killed unless it heartbeats. Contract:
+// long-running task handlers MUST bump updatedAt periodically (a progress
+// write does this; webp-processor heartbeats explicitly and is also
+// recovered before this reaper runs). Env-overridable so an operator can
+// raise it for shops with legitimately long bulk jobs without a redeploy.
+const STUCK_TASK_TIMEOUT_MS = parseInt(process.env.STUCK_TASK_TIMEOUT_MS || String(10 * 60 * 1000), 10);
 
-// Check for stuck tasks every 5 minutes (configurable via env)
+// Check for stuck tasks on this interval (env-configurable; default 5 min).
 const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || String(5 * 60 * 1000), 10);
+
+// R4-H2 (core): a SINGLE global 10-min threshold mis-classifies legitimately
+// long bulk AI work (translating a large catalog across many locales, bulk
+// generation, alt-text-template apply) as "stuck" and kills it mid-run.
+// These task types get a much larger threshold; everything else (incl.
+// imageWebpConversion, which has its own 4-min internal timeout + dedicated
+// recovery) keeps the default. Env-overridable.
+const LONG_TASK_TIMEOUT_MS = parseInt(process.env.LONG_TASK_TIMEOUT_MS || String(45 * 60 * 1000), 10);
+const LONG_RUNNING_TASK_TYPES = [
+  'bulkTranslation',
+  'bulkAIGeneration',
+  'altTextTemplateApply',
+  'translation',
+  'aiGeneration',
+  'aiFormatting',
+  'templates',
+  'metaobjects',
+  'menus',
+];
+
+// R4-H2 (core): cap how many rows a single reaper pass flips per statement
+// (the old blanket updateMany had no bound). Loop until drained.
+const STUCK_REAP_BATCH = Math.max(1, parseInt(process.env.STUCK_REAP_BATCH || '500', 10));
+const NON_TERMINAL = ['running', 'pending', 'queued'];
 
 export class TaskRecoveryService {
   static instance = null;
@@ -40,7 +71,7 @@ export class TaskRecoveryService {
       return;
     }
 
-    console.log('[TaskRecovery] Starting stuck task monitoring (every 2 minutes)');
+    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min)`);
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
@@ -81,9 +112,16 @@ export class TaskRecoveryService {
     // Mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
 
-    // Reset queued/pending tasks so they can be retried
-    // Note: We don't auto-requeue them because that requires AI settings
-    // which should be loaded in the context of a user request
+    // Reset queued/pending tasks so they can be retried.
+    // DELIBERATE: we do NOT auto-re-enqueue AI tasks here. Re-enqueueing
+    // needs per-shop AI settings + provider keys + queue rate limits, which
+    // must be resolved in a user/request context, not blindly from a
+    // background restart hook. This standalone service SUPERSEDES the old
+    // src/services/task-recovery.service.ts (deleted), whose recoverTask()/
+    // queue.enqueueFromTask() did exactly that background auto-requeue — it
+    // was never wired into server.js (server.js only loads THIS .js) and was
+    // intentionally dropped. Tasks left "queued" are re-driven on the next
+    // user interaction instead.
     const resetCount = await this.resetPendingTasks();
 
     console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
@@ -104,7 +142,7 @@ export class TaskRecoveryService {
   async recoverRunningWebpTasks() {
     const tasks = await prisma.task.findMany({
       where: { type: 'imageWebpConversion', status: 'running' },
-      select: { id: true, progress: true, retryCount: true },
+      select: { id: true, progress: true, retryCount: true, shop: true },
     });
 
     let retried = 0;
@@ -131,6 +169,12 @@ export class TaskRecoveryService {
           },
         });
         failed++;
+        // R3-C4: this task consumed an image op at batch creation but
+        // produced no result. Refund it (the status:'running' query filter
+        // means a re-run won't re-select/double-refund this now-'failed'
+        // task). The retry branch above intentionally does NOT refund — it
+        // will run again.
+        await refundImageOperations(prisma, t.shop, 1);
       }
     }
 
@@ -144,27 +188,87 @@ export class TaskRecoveryService {
   /**
    * Mark tasks stuck in "running" or "pending" status as failed
    * A task is considered stuck if it's been running/pending for more than 10 minutes without update
+   *
+   * R4-DI9 — known, ACCEPTED reaper↔finalizer interaction (LOW, not fixed):
+   * task finalizers across the app call `task.update({ where: { id } })`
+   * WITHOUT a status precondition. If a genuinely-slow task is reaped here
+   * (running → failed) and then finishes, its finalizer can overwrite that
+   * back to completed/failed (a "lost transition"). This is intentionally
+   * left as-is: it is observability-only — the task's actual side effects
+   * (Shopify writes / DB upserts) are independent of the row's status and
+   * are themselves idempotent, so no data is lost or duplicated; only the
+   * final status label can thrash for one >10-min task. The proportionate
+   * fix is NOT a status precondition sprinkled over ~100 update sites (risky,
+   * for a cosmetic edge); if a STRICTER reaper is ever added (one whose
+   * decision must be authoritative), make finalizers monotonic via
+   * `updateMany({ where: { id, status: { notIn: TERMINAL } } })` instead —
+   * see the matching note in src/services/task-recovery.service.ts.
    */
   async markStuckTasksAsFailed() {
-    const stuckThreshold = new Date(Date.now() - STUCK_TASK_TIMEOUT_MS);
+    const now = Date.now();
+    const defaultCutoff = new Date(now - STUCK_TASK_TIMEOUT_MS);
+    const longCutoff = new Date(now - LONG_TASK_TIMEOUT_MS);
 
-    const result = await prisma.task.updateMany({
-      where: {
-        status: { in: ['running', 'pending', 'queued'] },
-        updatedAt: { lt: stuckThreshold },
-      },
-      data: {
-        status: 'failed',
-        error: 'Task timed out - no progress for more than 10 minutes',
-        completedAt: new Date(),
-      },
+    // R3-C4: each stuck imageWebpConversion task consumed an image op at
+    // batch creation, so we must refund it when WE flip it to 'failed'.
+    // We select rows (incl. type+shop), then updateMany ONLY those ids that
+    // are still non-terminal, and refund webp rows. Once 'failed' a row no
+    // longer matches the selector, so a later pass cannot re-select /
+    // double-refund (idempotent across runs, same guarantee as before).
+    const refundByShop = new Map();
+    let total = 0;
+
+    // Reap one selector in bounded batches so a single statement can never
+    // flip an unbounded number of rows (R4-H2 batch cap).
+    const reapBatched = async (where) => {
+      for (;;) {
+        const rows = await prisma.task.findMany({
+          where,
+          select: { id: true, shop: true, type: true },
+          take: STUCK_REAP_BATCH,
+        });
+        if (rows.length === 0) break;
+        const res = await prisma.task.updateMany({
+          where: { id: { in: rows.map((r) => r.id) }, status: { in: NON_TERMINAL } },
+          data: {
+            status: 'failed',
+            error: 'Task timed out - no progress within the stuck threshold',
+            completedAt: new Date(),
+          },
+        });
+        total += res.count;
+        for (const r of rows) {
+          if (r.type === 'imageWebpConversion') {
+            refundByShop.set(r.shop, (refundByShop.get(r.shop) ?? 0) + 1);
+          }
+        }
+        if (rows.length < STUCK_REAP_BATCH) break;
+      }
+    };
+
+    // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
+    await reapBatched({
+      type: { in: LONG_RUNNING_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: longCutoff },
     });
 
-    if (result.count > 0) {
-      console.log(`[TaskRecovery] Marked ${result.count} stuck task(s) as failed`);
+    // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
+    await reapBatched({
+      type: { notIn: LONG_RUNNING_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: defaultCutoff },
+    });
+
+    if (total > 0) {
+      console.log(`[TaskRecovery] Marked ${total} stuck task(s) as failed`);
     }
 
-    return result.count;
+    for (const [shop, n] of refundByShop) {
+      await refundImageOperations(prisma, shop, n);
+    }
+
+    return total;
   }
 
   /**

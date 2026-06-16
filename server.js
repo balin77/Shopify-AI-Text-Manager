@@ -44,8 +44,19 @@ installGlobals();
 // dev/staging environment never sends events. Lazy + try/catch so a Sentry
 // load failure can never prevent the server from starting (mirrors the
 // server-logger fallback pattern above).
+// Shared gate + scrubbing — the SAME module the TS app uses, so events sent
+// from this early window are redacted identically (review R2/H2). Plain .cjs
+// so it loads via require() before the Remix build exists.
+let sentryScrub;
+try {
+  sentryScrub = require("./app/utils/sentry-scrub.cjs");
+} catch (e) {
+  sentryScrub = null;
+  serverLogger.error("[server.js] Failed to load sentry-scrub.cjs: " + e.message);
+}
+
 let sentryNode = null;
-if (process.env.APP_ENV === "production" && process.env.SENTRY_DSN) {
+if (sentryScrub && sentryScrub.sentryEnabled()) {
   try {
     sentryNode = await import("@sentry/node");
     sentryNode.init({
@@ -56,20 +67,66 @@ if (process.env.APP_ENV === "production" && process.env.SENTRY_DSN) {
         process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
       tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || "0"),
       sendDefaultPii: false,
+      // Drop OnUncaughtException (R1: would exit despite our handler below),
+      // Console (B2: PII/noise breadcrumbs), and LocalVariables(Async)
+      // (RISIKO: leaks local variable values — keys/tokens/PII — into stack
+      // frames; also shrinks payloads, free-tier friendly).
+      integrations: (defaults) =>
+        defaults.filter(
+          (i) =>
+            i.name !== "OnUncaughtException" &&
+            i.name !== "Console" &&
+            i.name !== "LocalVariables" &&
+            i.name !== "LocalVariablesAsync",
+        ),
+      // R2/B1/B2: identical redaction to the app's beforeSend.
+      beforeSend: (event) => sentryScrub.scrubEvent(event),
+      beforeBreadcrumb: (breadcrumb) => sentryScrub.scrubBreadcrumb(breadcrumb),
     });
+    // After an uncaughtException the process is in an undefined state — Node
+    // best practice (and the reviewer) say: capture, flush, then exit so
+    // Railway restarts a clean container. We override Sentry's own fatal
+    // handler (R1) precisely so we control the exit path here.
     process.on("uncaughtException", (err) => {
+      serverLogger.error("[server.js] uncaughtException (exiting): " + (err?.stack || err));
       try { sentryNode.captureException(err); } catch {}
-      serverLogger.error("[server.js] uncaughtException: " + (err?.stack || err));
+      // Flush queued events (2s cap), then exit non-zero regardless.
+      Promise.resolve(sentryNode.flush(2000)).catch(() => {}).finally(() => process.exit(1));
+      // Hard fallback in case flush() hangs past the cap.
+      setTimeout(() => process.exit(1), 2500).unref();
     });
+    // Unhandled rejections are usually less catastrophic; keep logging +
+    // capturing without exiting to avoid restart loops on transient async
+    // errors (the chosen option scoped the controlled exit to
+    // uncaughtException only).
     process.on("unhandledRejection", (reason) => {
       try { sentryNode.captureException(reason); } catch {}
       serverLogger.error("[server.js] unhandledRejection: " + String(reason));
     });
     serverLogger.info("[server.js] Sentry initialized (production)");
   } catch (e) {
+    sentryNode = null;
     serverLogger.error("[server.js] Sentry init skipped: " + e.message);
   }
 }
+
+// Process-level safety net — FALLBACK only. When Sentry is active the richer
+// scrubbing + controlled-exit handlers above are already registered; this
+// block exists so dev/staging (Sentry disabled) is not left with NO handler
+// at all (Node would otherwise terminate on unhandledRejection with no log).
+// Guarded on !sentryNode so handlers are never double-registered.
+if (!sentryNode) {
+  process.on("uncaughtException", (err) => {
+    serverLogger.error("[server.js] uncaughtException (exiting): " + (err?.stack || err));
+    // Undefined state after an uncaughtException — exit so the supervisor
+    // restarts a clean process (mirrors the Sentry-path philosophy).
+    setTimeout(() => process.exit(1), 100).unref();
+  });
+  process.on("unhandledRejection", (reason) => {
+    serverLogger.error("[server.js] unhandledRejection: " + String(reason?.stack || reason));
+  });
+}
+
 
 const viteDevServer =
   process.env.NODE_ENV === "production"
@@ -234,6 +291,37 @@ const host = process.env.HOST || '0.0.0.0';
 const server = app.listen(port, host, async () => {
   serverLogger.info(`Express server listening at http://${host}:${port}`);
 
+  // ───────────────────────────────────────────────────────────────────────
+  // R4-C2 — KNOWN multi-instance limitation (assessed; deliberately NOT
+  // patched here, documented instead).
+  //
+  // Every replica that boots starts ALL of the singleton background jobs
+  // below (task cleanup, GDPR-audit cleanup, task-recovery / stuck-task
+  // reaper, stale-image cleanup, WebP processor) and the in-bundle
+  // sync-scheduler cleanup. With >1 replica they run concurrently:
+  //   • two reapers can both select the same stuck WebP tasks before either
+  //     flips them → double image-op REFUND (interacts with R4-DI3: the
+  //     refund is atomic per statement but two reapers each issue one);
+  //   • the R4-DI5 product-delete tombstone is an in-process Map → it only
+  //     guards resurrect/refund WITHIN one instance, not across replicas;
+  //   • duplicated cleanup churn / racing deletes.
+  //
+  // This is currently LATENT: the app is deployed as a single `web` process
+  // (Procfile: `web: npm run start:production`; no replica/scale config).
+  //
+  // A correct fix needs cluster-wide mutual exclusion, but every safe option
+  // is a dedicated piece of infra work, NOT a rider here:
+  //   • a held session advisory lock needs a dedicated connection — Prisma's
+  //     pool can recycle the lock-owning connection, silently releasing it;
+  //   • wrapping each whole job in one tx + pg_try_advisory_xact_lock pins a
+  //     connection for minutes and is outright wrong for stale-image (it
+  //     sleeps between products → idle-in-transaction);
+  //   • a leader-election/lease table needs a migration + TTL renewal.
+  // RECOMMENDED when multi-instance is actually enabled: a dedicated
+  // `pg`-client session advisory lock acquired once at boot (one well-known
+  // key); only the lock holder starts the jobs below; release on shutdown.
+  // ───────────────────────────────────────────────────────────────────────
+
   // Start task cleanup service
   try {
     const { TaskCleanupService } = await import("./task-cleanup.service.js");
@@ -301,7 +389,16 @@ const server = app.listen(port, host, async () => {
 });
 
 // Graceful shutdown handler
+let shutdownInProgress = false;
 async function gracefulShutdown(signal) {
+  // Reentrancy guard: SIGTERM quickly followed by SIGINT (or a repeated
+  // signal) would otherwise stack a second server.close() and a second
+  // force-exit timer, racing $disconnect() against the first run's work.
+  if (shutdownInProgress) {
+    serverLogger.info(`${signal} received but shutdown already in progress — ignoring`);
+    return;
+  }
+  shutdownInProgress = true;
   serverLogger.info(`${signal} received. Starting graceful shutdown...`);
 
   // Stop accepting new connections
@@ -346,6 +443,35 @@ async function gracefulShutdown(signal) {
       } catch (error) {
         serverLogger.error("Error stopping stale image cleanup service", { error: String(error) });
       }
+    }
+
+    try {
+      // Stop the WebP conversion processor (no new polls; in-flight finishes)
+      const { WebPProcessorService } = await import("./webp-processor.service.js");
+      WebPProcessorService.getInstance().stop();
+      serverLogger.info("WebP processor stopped");
+    } catch (error) {
+      serverLogger.error("Error stopping WebP processor", { error: String(error) });
+    }
+
+    try {
+      // Stop AI queue dispatch + cancel retry timers, then drain in-flight
+      // provider calls BEFORE closing the DB. Otherwise running AI jobs keep
+      // writing to a $disconnect()-ed Prisma client and tasks stay "running".
+      // The singleton lives inside the Remix bundle, so it's reached via the
+      // process-wide globalThis bridge (set in AIQueueService.getInstance()),
+      // not a module import. If no AI request ran yet, __aiQueue is undefined
+      // and there is nothing to drain.
+      const aiQueue = globalThis.__aiQueue;
+      if (aiQueue) {
+        aiQueue.stop();
+        await aiQueue.drain(8000);
+        serverLogger.info("AI queue drained");
+      } else {
+        serverLogger.info("AI queue not initialized — nothing to drain");
+      }
+    } catch (error) {
+      serverLogger.error("Error draining AI queue", { error: String(error) });
     }
 
     try {

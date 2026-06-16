@@ -11,6 +11,7 @@ import { db as prisma } from '~/db.server';
 import { logger } from '~/utils/logger.server';
 import { cleanupCacheForPlan } from '~/utils/planCacheCleanup';
 import { resolveDevPlanMode, getDevForcedPlan } from '~/services/dev-plan-override.server';
+import type { Plan } from '~/utils/planUtils';
 
 interface ShopifyAdminClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -282,8 +283,44 @@ export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise
   const result = await response.json() as { data?: { currentAppInstallation?: { activeSubscriptions?: AppSubscription[] } } };
   const subscriptions = result.data?.currentAppInstallation?.activeSubscriptions || [];
 
-  // Return the first active subscription
-  return subscriptions.length > 0 ? subscriptions[0] : null;
+  // R5-G3: in PRODUCTION, ignore `test: true` subscriptions. A test-billing
+  // ACTIVE subscription is created while a shop is in DEV_PLAN_OVERRIDE_SHOPS
+  // (test billing). After the shop is removed from that allowlist the stale
+  // test subscription would otherwise keep granting the paid plan with no
+  // payment — a self-grant residual. A real paid customer always has a
+  // non-test subscription, so preferring/limiting to test===false closes the
+  // leak. Non-production keeps all subs so dev/test stores still resolve
+  // their plan.
+  const isProd = process.env.APP_ENV === 'production';
+  const eligible = isProd ? subscriptions.filter((s) => s.test === false) : subscriptions;
+
+  // Return the first eligible active subscription
+  return eligible.length > 0 ? eligible[0] : null;
+}
+
+/**
+ * Pure, testable trial detection. Shopify has NO TRIAL status: during the
+ * trial, status === 'ACTIVE' and currentPeriodEnd == trial end (<= trialDays
+ * away). After the trial ends, currentPeriodEnd jumps to the next paid period
+ * (> trialDays away) -> the condition becomes false automatically
+ * (self-correcting). Fail-safe: when uncertain, do NOT show.
+ */
+export function getTrialInfo(input: {
+  subscriptionStatus: string | null;
+  trialDays: number;
+  currentPeriodEnd: string | null;
+  now?: Date;
+}): { inTrial: boolean; remainingDays: number } {
+  const { subscriptionStatus, trialDays, currentPeriodEnd } = input;
+  const now = input.now ?? new Date();
+  if (subscriptionStatus !== 'ACTIVE' || trialDays <= 0 || !currentPeriodEnd) {
+    return { inTrial: false, remainingDays: 0 };
+  }
+  const end = new Date(currentPeriodEnd).getTime();
+  if (Number.isNaN(end)) return { inTrial: false, remainingDays: 0 };
+  const remainingDays = Math.ceil((end - now.getTime()) / 86_400_000);
+  const inTrial = remainingDays >= 1 && remainingDays <= trialDays;
+  return { inTrial, remainingDays: inTrial ? remainingDays : 0 };
 }
 
 /**
@@ -389,6 +426,43 @@ async function reconcileCacheForVerifiedPlan(shop: string, previousPlan: Billing
 }
 
 /**
+ * On a verified plan UPGRADE (more of any content type entitled — higher cap
+ * or a newly-unlocked type), trigger a non-destructive server-side re-sync so
+ * the newly-allowed content (e.g. products beyond the old cap, or articles on
+ * pro) is fetched without merchant interaction. Mirrors the downgrade-side
+ * cleanupCacheForPlan. Fire-and-forget safety: never throws into billing.
+ *
+ * force:false — cleanupCacheForPlan already ran (pruning); we only need to
+ * FILL the new gap (products upsert, newly-enabled phases), no destructive
+ * delete. Downgrade/lateral moves return early via planGrantsMore.
+ */
+async function maybeTriggerUpgradeResync(
+  admin: ShopifyAdminClient,
+  shop: string,
+  previousPlan: BillingPlan,
+  newPlan: BillingPlan,
+): Promise<void> {
+  if (newPlan === previousPlan) return;
+  try {
+    const { planGrantsMore } = await import('~/utils/planUtils');
+    if (!planGrantsMore(previousPlan as unknown as Plan, newPlan as unknown as Plan)) return;
+
+    const { requestInitialResync } = await import('~/services/initial-sync.service');
+    await requestInitialResync(shop, { force: false });
+
+    const { syncScheduler } = await import('~/services/sync-scheduler.service');
+    syncScheduler.startSyncForShop(shop, admin as never);
+
+    logger.info('[Billing] Upgrade resync requested', { shop, from: previousPlan, to: newPlan });
+  } catch (e) {
+    logger.warn('[Billing] Upgrade resync trigger failed (plan sync still successful)', {
+      shop, from: previousPlan, to: newPlan,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
  * Checks subscription status and updates database accordingly.
  *
  * The plan is derived exclusively from the Shopify-verified active
@@ -409,6 +483,7 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   if (forced) {
     await syncSubscriptionToDatabase(shop, forced);
     await reconcileCacheForVerifiedPlan(shop, previousPlan, forced);
+    await maybeTriggerUpgradeResync(admin, shop, previousPlan, forced);
     return forced;
   }
 
@@ -423,6 +498,23 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
     }
 
     const plan = getPlanFromSubscription(subscription);
+
+    // R4-DI4: ~6 callers (afterAuth, app.tsx loader on every navigation,
+    // settings, billing.callback, webhooks.subscription + redelivery,
+    // scheduler) can run this concurrently. The old flow let two racers both
+    // observe previousPlan='free', both write 'pro' and BOTH fire a full
+    // upgrade resync for the same shop. Gate the expensive resync behind an
+    // atomic compare-and-set executed BEFORE the (idempotent) write: exactly
+    // one caller's updateMany moves the row off its old plan (count === 1);
+    // concurrent callers then match 0 rows and skip the resync. The
+    // syncSubscriptionToDatabase upsert below still runs unconditionally so
+    // the durable plan write (and the no-row reinstall case) is unchanged.
+    const claim = await prisma.aISettings.updateMany({
+      where: { shop, subscriptionPlan: { not: plan } },
+      data: { subscriptionPlan: plan },
+    });
+    const transitioned = claim.count === 1;
+
     await syncSubscriptionToDatabase(shop, plan);
 
     // Trial-consumption is recorded HERE — at the Shopify-verified point, not
@@ -434,7 +526,13 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
       await markTrialConsumed(shop);
     }
 
-    await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
+    // Only the CAS winner (the single caller that actually performed the
+    // plan transition) reconciles the cache and triggers the one-time
+    // upgrade resync — racing losers skip both, so no duplicate full sync.
+    if (transitioned) {
+      await reconcileCacheForVerifiedPlan(shop, previousPlan, plan);
+      await maybeTriggerUpgradeResync(admin, shop, previousPlan, plan);
+    }
     return plan;
   } catch (error) {
     logger.error('Error checking subscription', { error });

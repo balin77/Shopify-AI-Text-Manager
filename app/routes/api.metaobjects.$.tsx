@@ -9,11 +9,24 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { authenticate } from "../shopify.server";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT, METAOBJECT_UPDATE } from "../graphql/content.mutations";
+import { GET_TRANSLATABLE_CONTENT } from "../graphql/content.queries";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { isMetaobjectLabelField, findMetaobjectLabelField } from "~/constants/shopifyFields";
+
+// R3-M8: shape of GET_TRANSLATABLE_CONTENT so the digest hot-path is typed
+// instead of `as any` + `(c: any) => …` (an undefined `key`/`digest` would
+// otherwise pass the compiler and only fail at runtime under load).
+interface TranslatableContentEntry {
+  key: string;
+  digest: string | null;
+}
+interface GetTranslatableContentResponse {
+  data?: { translatableResource?: { translatableContent?: TranslatableContentEntry[] } };
+  errors?: unknown;
+}
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -163,6 +176,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
         }
 
+        if (!isValidLocale(locale)) {
+          return json({ success: false, error: `Invalid locale: ${locale}` }, { status: 400 });
+        }
+
         logger.debug("[API-METAOBJECTS-ACTION] Loading translations", {
           context: "Metaobjects",
           shop: session.shop,
@@ -236,6 +253,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           }, { status: 400 });
         }
 
+        if (!isValidLocale(targetLocale) || !isValidLocale(primaryLocale)) {
+          return json({ success: false, error: "Invalid locale" }, { status: 400 });
+        }
+
         const settings = await db.aISettings.findUnique({
           where: { shop: session.shop }
         });
@@ -273,6 +294,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
         if (!metaobjectId) {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
+        }
+
+        if (!isValidLocale(locale)) {
+          return json({ success: false, error: `Invalid locale: ${locale}` }, { status: 400 });
         }
 
         logger.debug("[API-METAOBJECTS-ACTION] Updating content", {
@@ -366,7 +391,34 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
           return json({ success: true });
         } else {
-          // Update translation: Use translationsRegister
+          // Update translation: Use translationsRegister.
+          // Shopify rejects a translation whose `translatableContentDigest`
+          // does not match the current source content, so the digest MUST be
+          // fetched first — sending "" makes Shopify discard the call while
+          // the DB upsert below would still mark it "translated" (silent
+          // divergence). Mirrors the pattern in translation.action.ts.
+          const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
+            variables: { resourceId: metaobjectId }
+          });
+          const digestData = (await digestResponse.json()) as GetTranslatableContentResponse;
+          if (digestData.errors) {
+            logger.error("[API-METAOBJECTS] GraphQL error loading digest", {
+              context: "Metaobjects", metaobjectId, locale, errors: digestData.errors
+            });
+            return json({ success: false, error: "GraphQL error loading translation digest" }, { status: 502 });
+          }
+          const translatableContent = digestData.data?.translatableResource?.translatableContent ?? [];
+          const digestEntry = translatableContent.find((c) => c.key === labelField.key);
+          if (!digestEntry?.digest) {
+            logger.error("[API-METAOBJECTS] Missing translatableContentDigest", {
+              context: "Metaobjects", metaobjectId, locale, key: labelField.key
+            });
+            return json({
+              success: false,
+              error: "Could not resolve translation digest for this field"
+            }, { status: 502 });
+          }
+
           const translationResponse = await admin.graphql(TRANSLATE_CONTENT, {
             variables: {
               resourceId: metaobjectId,
@@ -375,7 +427,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   key: labelField.key,
                   value: updatedValue,
                   locale: locale,
-                  translatableContentDigest: ""
+                  translatableContentDigest: digestEntry.digest
                 }
               ]
             }

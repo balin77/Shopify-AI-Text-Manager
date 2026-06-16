@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { Card, Text, BlockStack, Button, Banner, ProgressBar, InlineStack, Box } from "@shopify/polaris";
-import { useSyncProgress, type SyncProgress } from "./SyncProgressBar";
+import { Card, Text, BlockStack, Button, Banner } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 
 interface WebhookEntry {
@@ -18,18 +17,6 @@ interface SettingsSetupTabProps {
   t: I18nTranslation;
 }
 
-const phaseKeys: Record<string, string> = {
-  products: "phaseProducts",
-  collections: "phaseCollections",
-  articles: "phaseArticles",
-  pages: "phasePages",
-  policies: "phasePolicies",
-  themes: "phaseThemes",
-  metaobjects: "phaseMetaobjects",
-};
-
-const phaseOrder = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects"];
-
 export function SettingsSetupTab({
   shop,
   productCount,
@@ -42,10 +29,9 @@ export function SettingsSetupTab({
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookData, setWebhookData] = useState<any>(null);
-  const [syncErrors, setSyncErrors] = useState<string[]>([]);
-
-  // Use the reusable sync progress hook
-  const { syncStatus, syncLoading, syncProgress, startSync } = useSyncProgress();
+  const [syncTriggerLoading, setSyncTriggerLoading] = useState(false);
+  const [syncTriggered, setSyncTriggered] = useState(false);
+  const [syncTriggerError, setSyncTriggerError] = useState<string>("");
 
   const handleSetupWebhooks = async () => {
     setWebhookStatus(t.settings.settingUpWebhooks || "Setting up webhooks...");
@@ -75,13 +61,19 @@ export function SettingsSetupTab({
     }
   };
 
-  const handleSyncProducts = async (force: boolean = false) => {
-    setSyncErrors([]);
-    const stats = await startSync(force);
-
-    // Reload page to refresh counts if anything was synced
-    if (stats && (stats.products > 0 || stats.collections > 0 || stats.articles > 0)) {
-      setTimeout(() => window.location.reload(), 1500);
+  const handleSyncProducts = async () => {
+    setSyncTriggerError("");
+    setSyncTriggerLoading(true);
+    try {
+      const response = await fetch("/api/sync-trigger", { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      setSyncTriggered(true);
+    } catch (error: unknown) {
+      setSyncTriggerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSyncTriggerLoading(false);
     }
   };
 
@@ -186,85 +178,22 @@ export function SettingsSetupTab({
             {t.content?.syncDescription || t.settings.syncProductsDescription}
           </Text>
           <Button
-            onClick={() => handleSyncProducts(true)}
-            loading={syncLoading}
+            onClick={handleSyncProducts}
+            loading={syncTriggerLoading}
+            disabled={syncTriggered}
             variant="primary"
           >
             {t.content?.syncAllContent || t.settings.syncProducts}
           </Button>
-          {syncProgress && (
-            <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-              <BlockStack gap="400">
-                <InlineStack align="space-between">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {t.settings.syncingContent}
-                  </Text>
-                  <Text as="p" variant="bodyMd" tone="subdued">
-                    {syncProgress.current}%
-                  </Text>
-                </InlineStack>
-                <ProgressBar progress={syncProgress.current} size="small" />
-                <InlineStack gap="300" wrap={true}>
-                  {phaseOrder.map((phase) => {
-                    const isCompleted = syncProgress.completedPhases.includes(phase);
-                    const isCurrent = syncProgress.phase === phase;
-                    return (
-                      <Text
-                        key={phase}
-                        as="span"
-                        variant="bodySm"
-                        tone={isCompleted ? "success" : isCurrent ? "base" : "subdued"}
-                        fontWeight={isCurrent ? "semibold" : "regular"}
-                      >
-                        {isCompleted ? "✓ " : isCurrent ? "● " : "○ "}
-                        {(t.settings as unknown as Record<string, string>)[phaseKeys[phase]] || phase}
-                      </Text>
-                    );
-                  })}
-                </InlineStack>
-                {syncProgress.detailTotal != null && syncProgress.detailTotal > 0 && (
-                  <Box paddingBlockStart="200">
-                    <BlockStack gap="100">
-                      <InlineStack align="space-between">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {syncProgress.detailMessage || `${syncProgress.detailCurrent}/${syncProgress.detailTotal}`}
-                        </Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {syncProgress.detailCurrent}/{syncProgress.detailTotal}
-                        </Text>
-                      </InlineStack>
-                      <ProgressBar
-                        progress={Math.round(((syncProgress.detailCurrent || 0) / syncProgress.detailTotal) * 100)}
-                        size="small"
-                        tone="highlight"
-                      />
-                    </BlockStack>
-                  </Box>
-                )}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {syncProgress.message}
-                </Text>
-              </BlockStack>
-            </Box>
-          )}
-          {syncStatus && !syncProgress && (
-            <Banner
-              tone={syncStatus.startsWith("Error") ? "critical" : "success"}
-            >
-              {syncStatus.startsWith("Error") ? syncStatus : `✓ ${syncStatus}`}
+          {syncTriggered && (
+            <Banner tone="info">
+              <p>{t.settings.syncTriggeredHint}</p>
             </Banner>
           )}
-          {syncErrors.length > 0 && (
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="bold">
-                {t.settings.errors}
-              </Text>
-              {syncErrors.map((err: string, i: number) => (
-                <Text as="p" key={i} tone="critical">
-                  • {err}
-                </Text>
-              ))}
-            </BlockStack>
+          {syncTriggerError && (
+            <Banner tone="critical">
+              {syncTriggerError}
+            </Banner>
           )}
         </BlockStack>
       </Card>

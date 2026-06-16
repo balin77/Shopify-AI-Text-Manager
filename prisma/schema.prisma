@@ -61,6 +61,14 @@ model AISettings {
   // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
   trialConsumedAt   DateTime?
 
+  // One-shot marker: set the first time a Pro/Max shop is shown the
+  // theme-extension setup hint (infobox on app start). Without it the hint
+  // would re-appear on every load. Like trialConsumedAt this lives on the
+  // shop-scoped AISettings row, so it is cleared on shop/redact — a freshly
+  // reinstalled Pro/Max shop may legitimately see the hint again.
+  // null = hint not yet shown.
+  extensionSetupHintShownAt DateTime?
+
   // Rate Limiting - Hugging Face
   hfMaxTokensPerMinute   Int? @default(1000000)
   hfMaxRequestsPerMinute Int? @default(100)
@@ -196,6 +204,11 @@ model Task {
   @@index([shop, createdAt])
   @@index([shop, queuePosition])
   @@index([expiresAt])
+  // R3-H5: /api/recently-completed-tasks polls every ~2s per open admin tab
+  // with WHERE shop=? AND status IN(..) AND completedAt>=? ORDER BY
+  // completedAt DESC. [shop,status] doesn't cover the completedAt range/sort,
+  // forcing a range scan that does not scale to thousands of shops.
+  @@index([shop, status, completedAt])
 }
 
 model Product {
@@ -240,6 +253,27 @@ model ProductImage {
   altTextModifiedAt  DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
   altTextTranslations ProductImageAltTranslation[]
 
+  // Atomic get-or-create keyed on (productId, mediaId) — prevents duplicate
+  // ProductImage rows from concurrent alt-text applies. Postgres treats NULL
+  // mediaId as distinct, so legacy rows without a Shopify media GID are unaffected.
+  //
+  // R4-H6 (assessed; intentionally NOT changed):
+  //  • NULL-mediaId gap: NULL-distinctness is SQL-standard. It is acceptable
+  //    here because every current write path (product sync, WebP, alt-text
+  //    apply) always sets mediaId from a Shopify MediaImage GID — no path
+  //    creates NULL-mediaId rows at volume; the only NULL rows are intentional
+  //    legacy data. Closing the gap would require Postgres-15
+  //    `NULLS NOT DISTINCT`, which could fail the migration on pre-existing
+  //    duplicate-NULL rows and change semantics — disproportionate/uncertain.
+  //  • non-CONCURRENT build: the backing migration
+  //    (20260519100000_…) uses CREATE UNIQUE INDEX, which takes ACCESS
+  //    EXCLUSIVE during the build. Prisma runs migrations in a transaction so
+  //    CREATE INDEX CONCURRENTLY is not usable there. That migration is
+  //    already applied (immutable history — must not be rewritten); on fresh
+  //    DBs it builds on an empty table. FORWARD RULE: any future index on a
+  //    large hot table must be added out-of-band CONCURRENTLY, not via an
+  //    in-transaction Prisma migration, to avoid blocking boot/deploy.
+  @@unique([productId, mediaId])
   @@index([productId])
 }
 
@@ -478,8 +512,17 @@ model Menu {
 model ContentTranslation {
   id String @id @default(cuid())
 
-  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy)
-  // NOTE: No foreign key constraints - we handle this polymorphically in code
+  // Polymorphic relation (can belong to Product, Collection, Article, Page, or ShopPolicy).
+  // NO foreign key / ON DELETE CASCADE is possible: `resourceId` points at one
+  // of several different parent tables depending on `resourceType`, which a
+  // single SQL FK cannot express. Lifecycle is therefore enforced in app code:
+  //   - GDPR/uninstall purge: redactShopData() in app/services/gdpr.service.ts
+  //     deletes every row by `shop` (covered by a schema-drift guard test that
+  //     fails if a shop-scoped model is added without a deleteMany there).
+  //   - Per-resource deletes: callers must delete matching ContentTranslation
+  //     rows by (shop, resourceId) — there is no DB safety net.
+  // The explicit `shop` column below exists precisely to make these bulk
+  // tenant-scoped deletes safe and indexable.
   resourceId   String // The GID of the parent resource
   resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
   shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
@@ -493,11 +536,13 @@ model ContentTranslation {
   updatedAt DateTime @updatedAt
 
   @@unique([shop, resourceId, key, locale])
-  @@index([resourceId, locale])
+  // shop-prefixed so lookups stay within one tenant's index range instead of
+  // scanning across all shops' rows for a (resourceId, locale) pair.
+  @@index([shop, resourceId, locale])
   @@index([resourceType])
   @@index([locale])
   @@index([shop, resourceType])
-  @@index([resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
+  @@index([shop, resourceType, resourceId]) // For bulk joins in loaders - improves query performance by 40-60%
 }
 
 // ============================================
@@ -627,14 +672,18 @@ model GdprAuditLog {
   customerId      BigInt?
   customerEmail   String?
   status          String   // "completed" | "failed"
-  dataExported    String?  @db.Text // JSON summary, truncated to 500 chars
+  dataExported    String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
   error           String?  @db.Text
+  // R5-G4: Shopify X-Shopify-Webhook-Id — correlates redelivered (non-2xx
+  // retried, up to ~48h) compliance attempts in this append-only trail.
+  webhookId       String?
   requestedAt     DateTime @default(now())
   completedAt     DateTime @default(now())
 
   @@index([shop])
   @@index([shop, requestType])
   @@index([requestedAt])
+  @@index([webhookId])
 }
 
 /// Tracks per-shop install lifecycle so the 30-day reaper has a reliable
@@ -644,14 +693,41 @@ model ShopInstallState {
   shop                   String    @id
   uninstalledAt          DateTime?
   // Set ONCE when the initial full sync (incl. product translations) completes
-  // successfully (api.sync-all-stream). Onboarding (app._index) and the
+  // successfully (initial-sync.service). Onboarding (app._index) and the
   // sync-stream products gate key off THIS marker, not db.product.count — a
   // Remix prefetch of the products loader populates db.product before the
   // initial sync runs, so a count-based gate would skip translations forever.
   // null = initial sync not yet completed (run onboarding). Deleted together
   // with products on full GDPR wipe (gdpr.service) → reinstall re-onboards.
   initialSyncCompletedAt DateTime?
+  // Server-side initial-sync progress, written (throttled) by the sync scheduler
+  // so the persistent onboarding banner can poll it without an open SSE stream.
+  // initialSyncStartedAt anchors the 3h bypass cap (process-restart safe).
+  // initialSyncForceRequested is set by the Settings "Sync Products" re-sync
+  // trigger and consumed (force-delete + full re-pull) by the scheduler.
+  initialSyncStartedAt      DateTime?
+  initialSyncPhase          String?
+  initialSyncPercent        Int?
+  initialSyncStats          Json?
+  initialSyncError          String?
+  initialSyncForceRequested Boolean   @default(false)
   updatedAt              DateTime  @updatedAt
 
   @@index([uninstalledAt])
+}
+
+// Rolling monthly counter for billable image operations (Bulk-Upload + WebP
+// conversion). One row per (shop, period). Usage data only — NOT entitlement
+// data, so it is intentionally absent from getSyncScope / planCacheCleanup;
+// the quota is enforced lazily at the upload/convert routes. See
+// docs/ROADMAP.md §Limit-Review Befund 3.
+model ImageOperationCounter {
+  id        String   @id @default(cuid())
+  shop      String
+  period    String // "YYYY-MM" (UTC)
+  count     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, period])
+  @@index([shop])
 }

@@ -8,6 +8,8 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
+import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-delete-lock.server';
+import { withDbRaceRetry } from '~/utils/db-retry.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
@@ -114,7 +116,7 @@ export class ProductSyncService {
 
   /**
    * Bulk-sync all products with translations, images, options, and metafields.
-   * Used by the initial streaming sync to replace inline code in api.sync-all-stream.tsx.
+   * Used by the initial full sync (services/initial-sync.service.ts).
    *
    * Fixes over the previous inline implementation:
    * - Uses metafields(first: 250) instead of first: 50
@@ -251,115 +253,145 @@ export class ProductSyncService {
     let synced = 0;
     const total = allProducts.length;
 
-    for (const product of allProducts) {
-      checkAborted();
-      try {
-        await db.$transaction(async (tx: Prisma.TransactionClient) => {
-          // Upsert product
-          await tx.product.upsert({
-            where: {
-              shop_id: { shop: this.shop, id: product.id },
-            },
-            create: {
-              id: product.id,
-              shop: this.shop,
-              title: product.title,
-              descriptionHtml: product.descriptionHtml || "",
-              handle: product.handle,
-              status: product.status,
-              productType: product.productType || null,
-              seoTitle: product.seo?.title || null,
-              seoDescription: product.seo?.description || null,
-              featuredImageUrl: product.featuredImage?.url || null,
-              featuredImageAlt: product.featuredImage?.altText || null,
-              shopifyUpdatedAt: new Date(product.updatedAt),
-              lastSyncedAt: new Date(),
-            },
-            update: {
-              title: product.title,
-              descriptionHtml: product.descriptionHtml || "",
-              handle: product.handle,
-              status: product.status,
-              productType: product.productType || null,
-              seoTitle: product.seo?.title || null,
-              seoDescription: product.seo?.description || null,
-              featuredImageUrl: product.featuredImage?.url || null,
-              featuredImageAlt: product.featuredImage?.altText || null,
-              shopifyUpdatedAt: new Date(product.updatedAt),
-              lastSyncedAt: new Date(),
-            },
-          });
+    // R3-H3: write products in BATCHES, one transaction per batch, instead
+    // of one interactive transaction per product. The previous loop opened a
+    // separate transaction for every product (~10k tx / ~50k statements for
+    // a 10k-product shop, fully serial). Batching collapses that to
+    // ceil(n/BATCH) transactions. A batch failure (one malformed product
+    // would otherwise roll back its neighbours) falls back to per-product
+    // transactions for that batch only, preserving the original per-product
+    // fault isolation.
+    const writeProduct = async (tx: Prisma.TransactionClient, product: ShopifyProductData) => {
+      // NOTE (review MEDIUM "webhook ordering"): we deliberately do NOT
+      // compare the stored shopifyUpdatedAt against the incoming value to
+      // reject out-of-order writes. Webhook handlers never apply the webhook
+      // payload directly — they call syncProduct(), which fetches the CURRENT
+      // live product state from Shopify, so the last write always reflects
+      // the freshest Shopify state regardless of delivery order.
+      await tx.product.upsert({
+        where: { shop_id: { shop: this.shop, id: product.id } },
+        create: {
+          id: product.id,
+          shop: this.shop,
+          title: product.title,
+          descriptionHtml: product.descriptionHtml || "",
+          handle: product.handle,
+          status: product.status,
+          productType: product.productType || null,
+          seoTitle: product.seo?.title || null,
+          seoDescription: product.seo?.description || null,
+          featuredImageUrl: product.featuredImage?.url || null,
+          featuredImageAlt: product.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(product.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          title: product.title,
+          descriptionHtml: product.descriptionHtml || "",
+          handle: product.handle,
+          status: product.status,
+          productType: product.productType || null,
+          seoTitle: product.seo?.title || null,
+          seoDescription: product.seo?.description || null,
+          featuredImageUrl: product.featuredImage?.url || null,
+          featuredImageAlt: product.featuredImage?.altText || null,
+          shopifyUpdatedAt: new Date(product.updatedAt),
+          lastSyncedAt: new Date(),
+        },
+      });
 
-          // Save images
-          if (cacheProductImages) {
-            const mediaImages = product.media?.edges
-              ?.filter((edge) => edge.node.id && edge.node.image?.url)
-              .map((edge) => edge.node) ?? [];
+      // Save images
+      if (cacheProductImages) {
+        const mediaImages = product.media?.edges
+          ?.filter((edge) => edge.node.id && edge.node.image?.url)
+          .map((edge) => edge.node) ?? [];
 
-            if (mediaImages.length > 0) {
-              await tx.productImage.deleteMany({ where: { productId: product.id } });
-              await tx.productImage.createMany({
-                data: mediaImages.map((media, index) => ({
-                  productId: product.id,
-                  url: media.image.url,
-                  altText: media.alt || null,
-                  mediaId: media.id,
-                  position: index,
-                })),
-              });
-            }
-          }
-
-          // Save options (filter out Shopify's internal "Default Title" placeholder)
-          const realOptions = (product.options ?? []).filter((opt) => !isDefaultTitleOption(opt));
-          // Always delete stale options so products without real variants don't keep phantom options
-          await tx.productOption.deleteMany({ where: { productId: product.id } });
-          if (realOptions.length > 0) {
-            const optCreateData = realOptions.map((opt) => ({
-              id: opt.id,
+        if (mediaImages.length > 0) {
+          await tx.productImage.deleteMany({ where: { productId: product.id } });
+          await tx.productImage.createMany({
+            data: mediaImages.map((media, index) => ({
               productId: product.id,
-              name: opt.name,
-              position: opt.position,
-              values: opt.optionValues
-                ? JSON.stringify(opt.optionValues.map((v) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                : JSON.stringify((opt as { values?: string[] }).values),
-              linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
-            }));
-            try {
-              await tx.productOption.createMany({ data: optCreateData });
-            } catch (optErr: unknown) {
-              const optErrMsg = optErr instanceof Error ? optErr.message : String(optErr);
-              logger.error(`[ProductSync] OPTIONS createMany FAILED for ${product.id}: ${optErrMsg}`);
-              // Fallback: save without linkedMetafieldKey if column doesn't exist yet
-              await tx.productOption.createMany({
-                data: realOptions.map((opt) => ({
-                  id: opt.id,
-                  productId: product.id,
-                  name: opt.name,
-                  position: opt.position,
-                  values: opt.optionValues
-                    ? JSON.stringify(opt.optionValues.map((v) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
-                    : JSON.stringify((opt as { values?: string[] }).values),
-                })),
-              });
-            }
-          }
-
-          // Upsert metafields (idempotent — safe under concurrent execution)
-          const metafields = product.metafields?.edges?.map((edge) => edge.node) ?? [];
-          await upsertProductMetafields(tx, product.id, metafields);
-        });
-
-        synced++;
-
-        if (synced % 10 === 0 || synced === total) {
-          const progress = Math.round(20 + (synced / total) * 40);
-          onProgress?.({ overallPercent: progress, detailCurrent: synced, detailTotal: total, message: `Saving products: ${synced}/${total}` });
+              url: media.image.url,
+              altText: media.alt || null,
+              mediaId: media.id,
+              position: index,
+            })),
+          });
         }
-      } catch (err: unknown) {
-        if (err instanceof DOMException && err.name === "AbortError") throw err;
-        logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err instanceof Error ? err.message : String(err) });
       }
+
+      // Save options (filter out Shopify's internal "Default Title" placeholder)
+      const realOptions = (product.options ?? []).filter((opt) => !isDefaultTitleOption(opt));
+      // Always delete stale options so products without real variants don't keep phantom options
+      await tx.productOption.deleteMany({ where: { productId: product.id } });
+      if (realOptions.length > 0) {
+        const optCreateData = realOptions.map((opt) => ({
+          id: opt.id,
+          productId: product.id,
+          name: opt.name,
+          position: opt.position,
+          values: opt.optionValues
+            ? JSON.stringify(opt.optionValues.map((v) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue, linkedValue: v.linkedMetafieldValue || undefined })))
+            : JSON.stringify((opt as { values?: string[] }).values),
+          linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
+        }));
+        await tx.productOption.createMany({ data: optCreateData });
+      }
+
+      // Upsert metafields (idempotent — safe under concurrent execution)
+      const metafields = product.metafields?.edges?.map((edge) => edge.node) ?? [];
+      await upsertProductMetafields(tx, product.id, metafields);
+    };
+
+    const PRODUCT_BATCH_SIZE = 100;
+    // Interactive-transaction defaults (5s) are far too low for a 100-product
+    // batch; raise them so a batch can't spuriously time out.
+    const TX_OPTS = { maxWait: 15_000, timeout: 120_000 } as const;
+
+    const reportProgress = () => {
+      const done = Math.min(synced, total);
+      const progress = Math.round(20 + (done / total) * 40);
+      onProgress?.({ overallPercent: progress, detailCurrent: done, detailTotal: total, message: `Saving products: ${done}/${total}` });
+    };
+
+    for (let i = 0; i < allProducts.length; i += PRODUCT_BATCH_SIZE) {
+      checkAborted();
+      const chunk = allProducts.slice(i, i + PRODUCT_BATCH_SIZE);
+      try {
+        // R4-DI2: the PRIMARY batch transaction must also be race-retried
+        // (not just the per-product fallback below). A single image colliding
+        // with a concurrent alt-text apply (P2002/P2034/…) otherwise aborts
+        // the whole 100-product batch on the first try; retrying the batch
+        // heals transient contention before paying for the slow per-product
+        // path, and avoids silently skipping a product under sustained
+        // contention. (The earlier "wraps BOTH" claim was only true for the
+        // fallback — this closes that gap.)
+        await withDbRaceRetry(() => db.$transaction(async (tx: Prisma.TransactionClient) => {
+          for (const product of chunk) await writeProduct(tx, product);
+        }, TX_OPTS));
+        synced += chunk.length;
+      } catch (batchErr: unknown) {
+        if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+        logger.warn(`[ProductSync] Batch write failed (${chunk.length} products) — retrying per-product`, { error: batchErr instanceof Error ? batchErr.message : String(batchErr) });
+        for (const product of chunk) {
+          checkAborted();
+          try {
+            // writeProduct does deleteMany+createMany on ProductImage, so the
+            // per-product retry path can lose the (productId, mediaId) race
+            // against a concurrent alt-text apply (P2002, or P2003/P2025/P2034/
+            // P2028 under contention). Heal it here, symmetric to the apply
+            // route — the batch path above already falls back to this.
+            await withDbRaceRetry(() => db.$transaction(async (tx: Prisma.TransactionClient) => {
+              await writeProduct(tx, product);
+            }, TX_OPTS));
+            synced++;
+          } catch (err: unknown) {
+            if (err instanceof DOMException && err.name === "AbortError") throw err;
+            logger.error(`[ProductSync] Failed to save product ${product.id}`, { error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+      }
+      reportProgress();
     }
 
     // ==========================================
@@ -727,6 +759,15 @@ export class ProductSyncService {
           // Product might not exist in database either - this is OK
           logger.debug(`[ProductSync] Product not found in database (already deleted): ${productId}`);
         }
+        return;
+      }
+
+      // R4-DI5: if this product was deleted while we were fetching it from
+      // Shopify, don't continue the (expensive) translation fetch + write —
+      // it would just resurrect a deleted product. saveToDatabase re-checks
+      // too, but bailing here also saves the work.
+      if (isProductRecentlyDeleted(productId)) {
+        logger.warn(`[ProductSync] Product deleted during sync — aborting: ${productId}`);
         return;
       }
 
@@ -1334,6 +1375,15 @@ export class ProductSyncService {
   ) {
     const { db } = await import("../db.server");
 
+    // R4-DI5: do not resurrect a product that was deleted while this sync was
+    // in flight (we fetched it from Shopify before a products/delete webhook
+    // committed deleteProduct()). Re-checked again inside the transaction to
+    // close the check→commit window.
+    if (isProductRecentlyDeleted(productData.id)) {
+      logger.warn(`[ProductSync] Skipping save — product was deleted during this sync: ${productData.id}`);
+      return;
+    }
+
     logger.debug(`[ProductSync] Saving product to database: ${productData.id}`);
 
     // Before starting transaction, preserve alt-texts that were recently modified by user
@@ -1376,8 +1426,19 @@ export class ProductSyncService {
       ?.filter((edge) => edge.node.id && edge.node.image?.url)
       .map((edge) => edge.node) || [];
 
-    // Use transaction to ensure all-or-nothing data consistency
-    await db.$transaction(async (tx) => {
+    // Use transaction to ensure all-or-nothing data consistency. Wrapped in
+    // the race-retry: this is the webhook-driven sync that wipes+recreates
+    // ProductImage rows and can collide on (productId, mediaId) with a
+    // parallel alt-text apply now that a unique constraint exists.
+    await withDbRaceRetry(() => db.$transaction(async (tx) => {
+      // R4-DI5: re-check inside the transaction. deleteProduct() may have
+      // committed (and tombstoned) between the top-of-method guard and here;
+      // returning early commits an empty transaction so nothing is written
+      // and the deleted product stays deleted.
+      if (isProductRecentlyDeleted(productData.id)) {
+        logger.warn(`[ProductSync] Aborting write — product deleted mid-transaction: ${productData.id}`);
+        return;
+      }
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1423,6 +1484,32 @@ export class ProductSyncService {
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });
       } else {
+        // R3-H4: products/update fires on every edit (incl. our own alt-text
+        // writes) and previously always wiped + recreated EVERY translation
+        // row for the product, churning rows/indexes even when nothing
+        // changed. Shopify's translatableContentDigest lets us detect "no
+        // change": skip the rewrite ONLY when every incoming translation has
+        // a digest AND the stored (locale,key)->digest map is byte-identical
+        // (same membership + same digests). Any uncertainty (missing digest,
+        // count/membership mismatch) falls through to the original
+        // delete+recreate, so correctness is never traded for the speed-up.
+        const existingTranslations = await tx.contentTranslation.findMany({
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" },
+          select: { locale: true, key: true, digest: true },
+        });
+        const tkey = (locale: string, key: string) => `${locale} ${key}`;
+        const everyIncomingHasDigest = validTranslations.length > 0 && validTranslations.every(t => !!t.digest);
+        const everyStoredHasDigest = existingTranslations.length > 0 && existingTranslations.every(e => !!e.digest);
+        const existingDigestByKey = new Map(existingTranslations.map(e => [tkey(e.locale, e.key), e.digest]));
+        const translationsUnchanged =
+          everyIncomingHasDigest &&
+          everyStoredHasDigest &&
+          existingTranslations.length === validTranslations.length &&
+          validTranslations.every(t => existingDigestByKey.get(tkey(t.locale, t.key)) === t.digest);
+
+        if (translationsUnchanged) {
+          logger.info(`[ProductSync] [RELOAD] Skipping translation rewrite — all ${validTranslations.length} digests unchanged`, { productId: productData.id });
+        } else {
         // Delete old translations and recreate from Shopify
         const deletedTranslations = await tx.contentTranslation.deleteMany({
           where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" }
@@ -1457,8 +1544,11 @@ export class ProductSyncService {
         } else {
           logger.debug(`[ProductSync] No translations to save`);
         }
+        } // end: translations changed (digest mismatch / uncertain)
 
-        // Save sub-resource translations (options, option values, metafields)
+        // Save sub-resource translations (options, option values, metafields).
+        // Sub-resource rows are stored with digest=null, so they cannot be
+        // digest-skipped and are always reconciled here as before.
         if (subResourceTranslations.length > 0) {
           const subResourceIds = [...new Set(subResourceTranslations.map(t => t.resourceId))];
 
@@ -1606,7 +1696,7 @@ export class ProductSyncService {
       if (metafields.length > 0) {
         logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }
-    });
+    }));
 
     logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
   }
@@ -1619,14 +1709,27 @@ export class ProductSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.product.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: productId,
-        },
-      },
-    });
+    // Atomically remove the product AND its polymorphic ContentTranslation
+    // rows. ContentTranslation has no FK/ON DELETE CASCADE (resourceId is
+    // polymorphic), so without this the translations orphan forever on every
+    // product delete (Shopify products/delete webhook, sync reconcile).
+    // deleteMany (not delete) keeps this idempotent — a missing product is a
+    // successful no-op and still clears any pre-existing orphaned rows.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: productId },
+      }),
+      db.product.deleteMany({
+        where: { shop: this.shop, id: productId },
+      }),
+    ]);
+
+    // R4-DI5: tombstone the id so an in-flight sync that already fetched this
+    // product from Shopify cannot upsert it back AFTER this delete commits
+    // (Shopify never redelivers products/delete, so a resurrected row would
+    // never self-heal). Marked AFTER a successful delete so a failed delete
+    // doesn't wrongly suppress a legitimate sync.
+    markProductDeleted(productId);
 
     logger.debug(`[ProductSync] Successfully deleted product: ${productId}`);
   }

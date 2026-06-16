@@ -165,10 +165,10 @@ export function AIEditableField({
           onAccept={onAcceptSuggestion}
           onDecline={onRejectSuggestion}
           onAcceptAndTranslate={onAcceptAndTranslate}
-          acceptLabel={t.products?.accept || "Übernehmen"}
-          declineLabel={t.products?.decline || "Ablehnen"}
-          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Übernehmen & Übersetzen") : undefined}
-          titleLabel={t.products?.aiSuggestion || "KI-Vorschlag"}
+          acceptLabel={t.products?.accept || "Accept"}
+          declineLabel={t.products?.decline || "Decline"}
+          acceptAndTranslateLabel={onAcceptAndTranslate ? (t.products?.acceptTranslate || "Accept & Translate") : undefined}
+          titleLabel={t.products?.aiSuggestion || "AI suggestion:"}
         />
       )}
 
@@ -188,7 +188,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(disableGeneration && !value) || isLoading}
             >
-              ✨ {disableGeneration || value
+              {disableGeneration || value
                 ? (t.products?.aiImprove || "Improve with AI")
                 : (t.products?.aiGenerateShort || "Generate with AI")}
             </Button>
@@ -200,7 +200,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={!value || isLoading}
             >
-              🎨 {t.products?.formatWithAI || "Formatieren"}
+              {t.products?.formatWithAI || "Format"}
             </Button>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
@@ -210,7 +210,7 @@ export function AIEditableField({
               loading={isLoading}
               disabled={(isPrimaryLocale ? (!onTranslateToAllLocales && !onTranslate) : !sourceTextAvailable) || isLoading}
             >
-              🌍 {isPrimaryLocale ? (t.products?.translate || "Übersetzen") : t.products?.translateFromPrimary}
+              {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
             </Button>
           )}
           {(onCopy || onCopyToAllLocales) && (

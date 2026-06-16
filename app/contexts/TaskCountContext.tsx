@@ -72,7 +72,32 @@ export function TaskCountProvider({ children }: { children: ReactNode }) {
       const response = await fetch(`/api/recently-completed-tasks?${searchParams}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      setRecentlyCompletedTasks(data?.tasks ?? []);
+      // Bail-out when the polled list is structurally identical to current
+      // state. Without this, every 2s poll commits a new array reference (even
+      // when nothing changed) → context value memo recomputes → every consumer
+      // re-renders. useUnifiedContentEditor subscribes via useTaskCount(), so
+      // ProductsPage was re-rendering every 2s in idle. Compare only the
+      // fields that can change for a recently-completed task; if any differ,
+      // accept the new array.
+      const nextTasks: CompletedTask[] = data?.tasks ?? [];
+      setRecentlyCompletedTasks(prev => {
+        if (prev.length !== nextTasks.length) return nextTasks;
+        for (let i = 0; i < prev.length; i++) {
+          const a = prev[i];
+          const b = nextTasks[i];
+          if (
+            a.id !== b.id ||
+            a.status !== b.status ||
+            a.processed !== b.processed ||
+            a.total !== b.total ||
+            a.error !== b.error ||
+            a.completedAt !== b.completedAt
+          ) {
+            return nextTasks;
+          }
+        }
+        return prev;
+      });
 
       if (data?.error || data?.warning) {
         completedTasksErrorCountRef.current += 1;

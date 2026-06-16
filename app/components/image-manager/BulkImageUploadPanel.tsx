@@ -18,10 +18,16 @@ import { QuestionCircleIcon } from "@shopify/polaris-icons";
 import "../../styles/HelpTooltip.css";
 import { useI18n } from "../../contexts/I18nContext";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
+import { ALL_UPLOADABLE_MIME_TYPES, classifyFile } from "../../utils/mediaKind";
+import { snapshotAndPersist } from "../../utils/threeDSnapshot";
 import { BulkSortableList } from "./BulkSortableList";
 import type { StagedItem, VariantWithGallery, VariantSelectedOption } from "./types";
 
-const ALLOWED_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
+// Accept everything Shopify will accept on the staged-upload route. The route
+// re-runs classifyFile() server-side and rejects unsupported types — the
+// client-side filter is just for nicer UX, not a security boundary.
+const ALLOWED_MIME = [...ALL_UPLOADABLE_MIME_TYPES] as string[];
+const DROPZONE_ACCEPT_HINT = "JPG, PNG, GIF, WebP, SVG, MP4, MOV, WebM, GLB";
 
 type SortMode = "identifier" | "sku" | "filename" | "custom";
 type MatchMode = "sku" | "imageKey";
@@ -159,6 +165,7 @@ export function BulkImageUploadPanel({
 }: BulkImageUploadPanelProps) {
   const { t } = useI18n();
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
   const [docsOpen, setDocsOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [generatorDocsOpen, setGeneratorDocsOpen] = useState(false);
@@ -215,6 +222,30 @@ export function BulkImageUploadPanel({
   const matchModeRef = useRef(matchMode);
   useEffect(() => { effectiveVariantsRef.current = effectiveVariants; }, [effectiveVariants]);
   useEffect(() => { matchModeRef.current = matchMode; }, [matchMode]);
+
+  // Re-run auto-assignment for not-yet-assigned items when fresh variants arrive.
+  // After a product switch variantsForBulk is briefly empty (reset in
+  // useVariantImageManager.resetForProduct), so items dropped during that load
+  // window resolve to "unassigned". Once the new product's variants load, retry
+  // those so they land on the correct variant. Manual and already-assigned items
+  // are left untouched. Mirrors the re-assign logic in handleMatchModeChange.
+  useEffect(() => {
+    if (effectiveVariants.length === 0) return;
+    onItemsChange(prev => {
+      let changed = false;
+      const next = prev.map(item => {
+        if (item.assignmentMode === "manual" || item.targetVariantId) return item;
+        const reassigned = autoAssign(item, effectiveVariants, matchMode);
+        if (reassigned.targetVariantId !== item.targetVariantId ||
+            reassigned.assignmentMode !== item.assignmentMode) {
+          changed = true;
+          return reassigned;
+        }
+        return item;
+      });
+      return changed ? next : prev;
+    });
+  }, [effectiveVariants, matchMode, onItemsChange]);
 
   const handleMatchModeChange = useCallback((newMode: MatchMode) => {
     setMatchMode(newMode);
@@ -321,24 +352,69 @@ export function BulkImageUploadPanel({
   }, [variants, localKeys, baseName, matchMode, labelMode, memoryMap, onItemsChange]);
 
   const handleDrop = useCallback(async (_dropFiles: File[], acceptedFiles: File[]) => {
-    const validFiles = acceptedFiles.filter(f => ALLOWED_MIME.includes(f.type));
+    setQuotaError(null); // clear any stale quota banner from a previous drop
+    // We accept anything classifyFile recognizes (.glb often reports as
+    // application/octet-stream, so we pass the filename through too).
+    const validFiles = acceptedFiles.filter(f => classifyFile(f.type, f.name) !== null);
     if (validFiles.length === 0) return;
 
-    const newItems: StagedItem[] = validFiles.map(file => ({
-      uniqueId: crypto.randomUUID(),
-      previewUrl: URL.createObjectURL(file),
-      resourceUrl: "",
-      fileName: file.name,
-      mimeType: file.type,
-      progress: 0,
-      status: "uploading" as const,
-      assignmentMode: "unassigned" as const,
-    }));
+    const newItems: StagedItem[] = validFiles.map(file => {
+      const kind = classifyFile(file.type, file.name) ?? "image";
+      // Browsers can't synthesize a preview for GLB; show a neutral placeholder.
+      // Video previewUrls via URL.createObjectURL are fine — <video> works with them.
+      const previewUrl = kind === "model"
+        ? ""
+        : URL.createObjectURL(file);
+      return {
+        uniqueId: crypto.randomUUID(),
+        previewUrl,
+        resourceUrl: "",
+        fileName: file.name,
+        mimeType: file.type,
+        progress: 0,
+        status: "uploading" as const,
+        assignmentMode: "unassigned" as const,
+        kind,
+      };
+    });
 
     const assignedItems = newItems.map(item =>
       autoAssign(item, effectiveVariantsRef.current, matchModeRef.current)
     );
     onItemsChange(prev => [...prev, ...assignedItems]);
+
+    // .glb tiles ship with previewUrl="" because the browser can't render a
+    // model binary as an <img>. Generate a snapshot off-screen via
+    // <model-viewer>.toBlob and patch it onto the item as a blob: URL so the
+    // upload-panel tile + downstream image-manager tile (via mediaMetaMap)
+    // show a real preview immediately. THEN persist the same JPEG to Shopify
+    // Files via the staged-upload → fileCreate pipeline so the storefront
+    // can use it too — that permanent CDN URL becomes `persistentPreviewUrl`
+    // and lands in custom.variant_3d_previews on save. Both steps wrap in
+    // try/catch so one stuck/corrupt GLB never blocks other uploads, and
+    // either step's failure is non-fatal (the .glb upload itself still
+    // succeeds, the tile keeps its "3D" placeholder on the storefront).
+    validFiles.forEach((file, i) => {
+      const item = assignedItems[i];
+      if (item.kind !== "model") return;
+      (async () => {
+        try {
+          const { blobUrl, cdnUrl } = await snapshotAndPersist(file);
+          onItemsChange((prev) =>
+            prev.map((it) =>
+              it.uniqueId === item.uniqueId
+                ? { ...it, previewUrl: blobUrl, persistentPreviewUrl: cdnUrl }
+                : it,
+            ),
+          );
+        } catch (err) {
+          // Non-fatal — the .glb upload itself still succeeds. Tile keeps
+          // its "3D" placeholder, and variant_3d_previews stays empty for
+          // this slot. Storefront falls back to its own placeholder too.
+          console.warn("[BulkUpload] 3D snapshot/persist failed", { file: file.name, err });
+        }
+      })();
+    });
 
     await Promise.all(validFiles.map(async (file, i) => {
       const item = assignedItems[i];
@@ -350,7 +426,14 @@ export function BulkImageUploadPanel({
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
         const stagedJson = await res.json();
-        const { url, resourceUrl, error } = stagedJson;
+        const { url, resourceUrl, parameters, httpMethod, error } = stagedJson;
+        if (stagedJson?.code === "IMAGE_QUOTA_EXCEEDED") {
+          setQuotaError(
+            t.imageManager.imageQuotaExceeded.replace("{limit}", String(stagedJson.limit ?? ""))
+          );
+          onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
+          return;
+        }
         console.log("[BulkUpload] staged-upload response", { httpStatus: res.status, url, resourceUrl, error });
         if (error || !url) {
           console.error("[BulkUpload] staged-upload failed", { error, url });
@@ -384,17 +467,31 @@ export function BulkImageUploadPanel({
             onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
             reject(new Error("Upload network error"));
           };
-          console.log("[BulkUpload] XHR PUT →", url);
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // PUT (image) vs multipart POST (video/3D) — Shopify's staged target
+          // rejects PUT for the POST-only resources, which would silently
+          // fail the upload (see api.staged-upload.tsx).
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            console.log("[BulkUpload] XHR POST (multipart) →", url);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            console.log("[BulkUpload] XHR PUT →", url);
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
       } catch (err) {
         console.error("[BulkUpload] unexpected error", err);
         onItemsChange(prev => prev.map(it => it.uniqueId === item.uniqueId ? { ...it, status: "error" as const } : it));
       }
     }));
-  }, [onItemsChange]);
+  }, [onItemsChange]); // eslint-disable-line react-hooks/exhaustive-deps -- t/setQuotaError are stable enough; matches sibling callbacks
 
   const selectedItems = items.filter(i => selectedUniqueIds.has(i.uniqueId));
   const hasSelected = selectedItems.length > 0;
@@ -690,9 +787,21 @@ export function BulkImageUploadPanel({
         </BlockStack>
       </Card>
 
+      {quotaError && (
+        <div style={{ padding: "8px 12px", background: "#fff5f5", borderRadius: 6, border: "1px solid #d72c0d", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <Text as="p" variant="bodySm" tone="critical">{quotaError}</Text>
+          <Button variant="plain" size="slim" onClick={() => setQuotaError(null)} accessibilityLabel={t.common?.close ?? "Dismiss"}>
+            {t.common?.close ?? "×"}
+          </Button>
+        </div>
+      )}
+
       {/* Drop Zone */}
       <DropZone onDrop={handleDrop} accept={ALLOWED_MIME.join(",")} allowMultiple>
-        <DropZone.FileUpload actionTitle={t.imageManager.uploadTitle} actionHint="JPG, PNG, GIF, WebP, SVG" />
+        <DropZone.FileUpload
+          actionTitle={t.imageManager.uploadMediaTitle ?? t.imageManager.uploadTitle}
+          actionHint={DROPZONE_ACCEPT_HINT}
+        />
       </DropZone>
 
       {items.length > 0 && (
@@ -739,7 +848,20 @@ export function BulkImageUploadPanel({
                     onClick={() => onSelect(item.uniqueId, !selectedUniqueIds.has(item.uniqueId))}
                     title={variantTitle ? `→ ${variantTitle}` : item.fileName}
                   >
-                    <img src={item.previewUrl} alt={item.fileName} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, display: "block" }} />
+                    {item.kind === "model" ? (
+                      <div style={{ width: 72, height: 72, borderRadius: 6, background: "#f1f2f4", display: "flex", alignItems: "center", justifyContent: "center", color: "#616161", fontWeight: 700, fontSize: 12, letterSpacing: 0.5 }} aria-label={item.fileName}>
+                        3D
+                      </div>
+                    ) : item.kind === "video" ? (
+                      <div style={{ position: "relative", width: 72, height: 72, borderRadius: 6, overflow: "hidden", background: "#000" }} aria-label={item.fileName}>
+                        <video src={item.previewUrl} preload="metadata" muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.32)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="white" aria-hidden><path d="M8 5v14l11-7z" /></svg>
+                        </div>
+                      </div>
+                    ) : (
+                      <img src={item.previewUrl} alt={item.fileName} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, display: "block" }} />
+                    )}
                     {item.status === "uploading" && (
                       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
                         <div style={{ height: 4, background: "#e1e3e5", borderRadius: "0 0 6px 6px", overflow: "hidden" }}>

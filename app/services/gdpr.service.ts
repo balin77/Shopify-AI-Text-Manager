@@ -16,6 +16,25 @@ import { db } from "../db.server";
 import { decryptPII } from "../utils/encryption.server";
 import { logger } from "~/utils/logger.server";
 
+/**
+ * R5-G2: `BigInt(x)` THROWS on an empty / non-numeric / placeholder value.
+ * Shopify's automated customers/data_request compliance test sends a signed
+ * request whose customer.id may be empty/placeholder; an unguarded
+ * BigInt(customer.id) made the handler 500, and the compliance check expects
+ * 2xx for a valid signed request → App Store submission blocked. Parse
+ * defensively and treat anything non-coercible as "no identifier".
+ */
+function toBigIntOrNull(value: unknown): bigint | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (s === '' || !/^-?\d+$/.test(s)) return null;
+  try {
+    return BigInt(s);
+  } catch {
+    return null;
+  }
+}
+
 export interface GDPRCustomerDataRequest {
   shop_id: number;
   shop_domain: string;
@@ -53,14 +72,22 @@ export async function exportCustomerData(
 
   logger.info(`[GDPR] Exporting data for customer ${customer.id} from shop ${shop_domain}`);
 
-  // Find all sessions for this customer (by email or userId)
-  const sessions = await db.session.findMany({
+  // Find all sessions for this customer (by email or userId). R5-G2: build
+  // the OR conditions defensively — only include the userId clause when the
+  // id actually coerces to a BigInt, and only the email clause when present.
+  // If neither identifier is usable (e.g. Shopify's compliance test
+  // payload), return an empty-but-well-formed export instead of throwing.
+  const userIdBig = toBigIntOrNull(customer?.id);
+  const orConditions: Array<Record<string, unknown>> = [];
+  if (customer?.email) orConditions.push({ email: customer.email });
+  if (userIdBig !== null) orConditions.push({ userId: userIdBig });
+
+  const sessions = orConditions.length === 0
+    ? []
+    : await db.session.findMany({
     where: {
       shop: shop_domain,
-      OR: [
-        { email: customer.email },
-        { userId: BigInt(customer.id) },
-      ],
+      OR: orConditions,
     },
     select: {
       id: true,
@@ -154,15 +181,15 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 29 models in prisma/schema.prisma:
+ * Coverage of all 30 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
  *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
- *      Metaobject, MetaobjectTranslation, ShopInstallState
- *                                                (all scoped by `shop`)
+ *      Metaobject, MetaobjectTranslation, ShopInstallState,
+ *      ImageOperationCounter                     (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via Product `onDelete: Cascade` — do NOT delete
@@ -334,6 +361,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${shopInstallStateDeleted.count} install-state rows`);
+
+    // 24. Delete image-operation usage counters — shop-identifying usage data
+    //     (Art. 17). Without this, monthly counters keyed by `shop` survive
+    //     redaction indefinitely.
+    const imageOperationCountersDeleted = await tx.imageOperationCounter.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image operation counters`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
@@ -351,31 +386,45 @@ export async function redactShopData(
 export async function logGDPRRequest(
   shop: string,
   requestType: 'data_request' | 'customer_redact' | 'shop_redact',
-  customerId?: number,
+  customerId?: number | string | null,
   customerEmail?: string,
   dataExported?: unknown,
-  error?: string
+  error?: string,
+  webhookId?: string | null,
 ): Promise<void> {
   const status = error ? 'failed' : 'completed';
-  const dataExportedSnippet = dataExported
-    ? JSON.stringify(dataExported).substring(0, 500)
+  // R5-G1: previously only a 500-char SNIPPET was stored, and the admin page
+  // never surfaced it — so a customers/data_request was a silent no-op (the
+  // merchant could never actually obtain the data Shopify obliges them to
+  // provide). Persist the FULL export JSON (the column is @db.Text; the
+  // stored data is only session rows so it is small). The 1 MB cap is just a
+  // defensive bound against a pathological payload, not the old truncation.
+  const dataExportedJson = dataExported
+    ? JSON.stringify(dataExported).slice(0, 1_000_000)
     : null;
 
   logger.info(`[GDPR] ${requestType} for shop=${shop} status=${status}`, {
     customerId,
     customerEmail,
     error,
+    webhookId,
   });
 
   await db.gdprAuditLog.create({
     data: {
       shop,
       requestType,
-      customerId: customerId != null ? BigInt(customerId) : null,
+      // R5-G2: never let an empty/placeholder id throw here either.
+      customerId: toBigIntOrNull(customerId),
       customerEmail: customerEmail ?? null,
       status,
-      dataExported: dataExportedSnippet,
+      dataExported: dataExportedJson,
       error: error ?? null,
+      // R5-G4: Shopify redelivers a non-2xx compliance webhook for up to
+      // ~48h. Storing X-Shopify-Webhook-Id lets the (deliberately
+      // append-only, 3-year-retained) audit trail CORRELATE the duplicate
+      // attempts instead of presenting contradictory rows with no link.
+      webhookId: webhookId ?? null,
       completedAt: new Date(),
     },
   });

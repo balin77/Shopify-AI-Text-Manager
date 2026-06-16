@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// decryptApiKey is the only side-effectful dependency of the gate helper.
-// Identity mock: whatever is stored is treated as the decrypted value.
+// tryDecryptApiKey is the only side-effectful dependency of the gate helper.
+// Identity mock: whatever is stored is treated as the decrypted value
+// (null/undefined → null, mirroring the real "not set / undecryptable" case).
 vi.mock('../../app/utils/encryption.server', () => ({
-  decryptApiKey: (v: string | null | undefined) => v ?? '',
+  decryptApiKey: (v: string | null | undefined) => v ?? null,
+  tryDecryptApiKey: (v: string | null | undefined) => v ?? null,
 }));
 
 import { getMissingPreferredKey } from '../../app/routes/api-ai-handlers/shared';
@@ -15,10 +17,11 @@ function settings(partial: Partial<AISettings>): AISettings {
 
 describe('getMissingPreferredKey (Option A compliance gate)', () => {
   it('returns the provider info when no settings record exists', () => {
+    // No settings → toValidProvider(undefined) falls back to the default 'claude'.
     const result = getMissingPreferredKey(null);
     expect(result).not.toBeNull();
-    expect(result?.provider).toBe('huggingface');
-    expect(result?.displayName).toBe('Hugging Face');
+    expect(result?.provider).toBe('claude');
+    expect(result?.displayName).toBe('Anthropic Claude');
   });
 
   it('returns the provider info when the preferred provider has no key', () => {

@@ -15,9 +15,14 @@ const mockDb = {
   product: {
     upsert: vi.fn().mockResolvedValue({}),
     delete: vi.fn().mockResolvedValue({}),
+    deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     findUnique: vi.fn().mockResolvedValue(null),
   },
   contentTranslation: {
+    // No pre-existing rows → digest-skip (R3-H4) can't prove "unchanged",
+    // so syncProduct falls through to the delete+recreate path the
+    // assertions below expect.
+    findMany: vi.fn().mockResolvedValue([]),
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
@@ -40,9 +45,11 @@ const mockDb = {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     createMany: vi.fn().mockResolvedValue({ count: 0 }),
   },
-  $transaction: vi.fn((callback) => {
-    // Simuliere Transaction
-    return callback(mockDb);
+  $transaction: vi.fn((arg) => {
+    // Supports both forms: the interactive callback form
+    // $transaction(tx => ...) and the array form $transaction([p1, p2]).
+    if (Array.isArray(arg)) return Promise.all(arg);
+    return arg(mockDb);
   }),
 };
 
@@ -280,13 +287,14 @@ describe('ProductSyncService', () => {
 
       await service.deleteProduct(productId);
 
-      expect(mockDb.product.delete).toHaveBeenCalledWith({
-        where: {
-          shop_id: {
-            shop: testShop,
-            id: productId,
-          },
-        },
+      // deleteProduct atomically clears the product AND its polymorphic
+      // ContentTranslation rows (no FK cascade), using deleteMany for
+      // idempotency — scoped by { shop, id } / { shop, resourceId }.
+      expect(mockDb.contentTranslation.deleteMany).toHaveBeenCalledWith({
+        where: { shop: testShop, resourceId: productId },
+      });
+      expect(mockDb.product.deleteMany).toHaveBeenCalledWith({
+        where: { shop: testShop, id: productId },
       });
     });
   });

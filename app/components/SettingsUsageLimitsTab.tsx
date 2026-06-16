@@ -6,6 +6,8 @@ import type { ResourceType } from "../utils/planUtils";
 import { useNavigate, useFetcher } from "@remix-run/react";
 import { StoragePieChart, type StorageData } from "./StoragePieChart";
 import { HelpTooltip } from "./HelpTooltip";
+import { useI18n } from "../contexts/I18nContext";
+import { formatNumber } from "../utils/format";
 
 interface SettingsUsageLimitsTabProps {
   productCount: number;
@@ -14,6 +16,8 @@ interface SettingsUsageLimitsTabProps {
   articleCount: number;
   pageCount: number;
   themeTranslationCount: number;
+  /** Rolling monthly billable image operations (Bulk-Upload + WebP). */
+  imageOperationCount: number;
   t: I18nTranslation;
   hideUpgradeCard?: boolean;
 }
@@ -31,6 +35,7 @@ interface UsageRowProps {
 }
 
 function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, disabled, helpKey, t }: UsageRowProps) {
+  const { locale } = useI18n(); // R4-UX6: locale-aware number grouping
   const getProgressTone = (): "highlight" | "primary" | "success" | "critical" => {
     if (isAtLimit) return "critical";
     if (isApproaching) return "highlight";
@@ -47,7 +52,7 @@ function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, d
 
   const formatMax = (max: number) => {
     if (max === Infinity) return t.settings?.usageUnlimited || "Unbegrenzt";
-    return max.toLocaleString();
+    return formatNumber(max, locale);
   };
 
   return (
@@ -64,7 +69,7 @@ function UsageRow({ label, current, max, percentage, isApproaching, isAtLimit, d
             {helpKey && <HelpTooltip helpKey={helpKey} />}
           </InlineStack>
           <Text as="span" tone={disabled ? "subdued" : undefined}>
-            {disabled ? "0 / 0" : `${current.toLocaleString()} / ${formatMax(max)}`}
+            {disabled ? "0 / 0" : `${formatNumber(current, locale)} / ${formatMax(max)}`}
           </Text>
         </InlineStack>
 
@@ -110,6 +115,7 @@ export function SettingsUsageLimitsTab({
   articleCount,
   pageCount,
   themeTranslationCount,
+  imageOperationCount,
   t,
   hideUpgradeCard = false,
 }: SettingsUsageLimitsTabProps) {
@@ -220,6 +226,21 @@ export function SettingsUsageLimitsTab({
     themeTranslations: "usageThemeTranslations",
   };
 
+  // Monthly image-operation quota is not a ResourceType (monthly, sourced from
+  // a counter table, not getCacheStats), so it gets its own UsageRow rather
+  // than going through the generic resource map.
+  const imageOpsMax = limits.monthlyImageOperations;
+  const imageOpsData = {
+    label: t.settings?.usageImageOperations || "Bild-Operationen / Monat",
+    current: imageOperationCount,
+    max: imageOpsMax,
+    percentage: imageOpsMax > 0 ? Math.min(100, Math.round((imageOperationCount / imageOpsMax) * 100)) : 0,
+    isApproaching: imageOpsMax > 0 && imageOperationCount >= imageOpsMax * 0.8,
+    isAtLimit: imageOpsMax > 0 && imageOperationCount >= imageOpsMax,
+    disabled: imageOpsMax === 0,
+    helpKey: "usageImageOperations",
+  };
+
   const getResourceData = (resource: ResourceType) => ({
     label: resourceLabels[resource],
     current: counts[resource],
@@ -284,6 +305,14 @@ export function SettingsUsageLimitsTab({
 
             <UsageRow {...getResourceData("locales")} t={t} />
             <UsageRow {...getResourceData("themeTranslations")} t={t} />
+          </BlockStack>
+
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingSm">
+              {t.settings?.usageImageOperations || "Bild-Operationen / Monat"}
+            </Text>
+
+            <UsageRow {...imageOpsData} t={t} />
           </BlockStack>
         </BlockStack>
       </Card>

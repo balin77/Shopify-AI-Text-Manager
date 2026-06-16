@@ -13,7 +13,6 @@
 
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
-import { upsertProductMetafields } from "../db.server";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
@@ -58,228 +57,60 @@ export const loader = createContentLoader({
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    // Paginated fetch from Shopify (capped to plan limit)
-    const maxToFetch = planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts;
-    const shopifyProducts: any[] = [];
-    let hasNextPage = true;
-    let cursor: string | null = null;
-
-    while (hasNextPage && shopifyProducts.length < maxToFetch) {
-      const batchSize = Math.min(250, maxToFetch - shopifyProducts.length);
-      const shopifyResponse = await ctx.admin.graphql(
-        `#graphql
-          query getProductIds($first: Int!, $after: String) {
-            products(first: $first, after: $after) {
-              pageInfo { hasNextPage endCursor }
-              edges {
-                node {
-                  id
-                  title
-                  descriptionHtml
-                  handle
-                  status
-                  productType
-                  updatedAt
-                  seo { title description }
-                  featuredImage { url altText }
-                  media(first: 250) {
-                    edges {
-                      node {
-                        ... on MediaImage {
-                          id
-                          alt
-                          image { url }
-                        }
-                      }
-                    }
-                  }
-                  options {
-                    id
-                    name
-                    position
-                    linkedMetafield {
-                      namespace
-                      key
-                    }
-                    optionValues {
-                      id
-                      name
-                      linkedMetafieldValue
-                    }
-                  }
-                  metafields(first: 50) {
-                    edges {
-                      node {
-                        id
-                        namespace
-                        key
-                        value
-                        type
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }`,
-        { variables: { first: batchSize, after: cursor } },
-      );
-      const shopifyData: any = await shopifyResponse.json();
-
-      if (shopifyData.errors) {
-        logger.error("[PRODUCTS-LOADER] GraphQL error fetching products", {
-          context: "PRODUCTS",
-          errors: shopifyData.errors,
-        });
-        throw new Error(
-          `GraphQL error: ${shopifyData.errors.map((e: any) => e.message).join(", ")}`,
-        );
+    // R3-C3: do NOT resync the entire Shopify catalog on every page load.
+    // This loader runs on every navigation/revalidation (incl. Remix
+    // prefetch). The previous inline implementation paginated the WHOLE
+    // catalog and ran per-product upsert + deleteMany/createMany for images
+    // and options on every load (~10k upserts + ~30k delete/create + dozens
+    // of Shopify GraphQL calls for a 10k-product shop, even when nothing
+    // changed). Catalog -> DB synchronization is the dedicated job of
+    // ProductSyncService, driven by the background SyncScheduler (initial
+    // full sync + periodic reconcile, started at afterAuth). The loader now
+    // only READS from the DB; we just ensure the scheduler is running for
+    // this shop (idempotent + non-blocking — never restarts an active one).
+    try {
+      const { syncScheduler } = await import("../services/sync-scheduler.service");
+      if (!syncScheduler.isShopActive(ctx.session.shop)) {
+        syncScheduler.startSyncForShop(ctx.session.shop, ctx.admin as never);
       }
-
-      const page: any = shopifyData.data?.products;
-      const nodes = page?.edges?.map((e: any) => e.node) || [];
-      shopifyProducts.push(...nodes);
-      hasNextPage = page?.pageInfo?.hasNextPage ?? false;
-      cursor = page?.pageInfo?.endCursor ?? null;
-    }
-
-    // Track whether we fetched ALL products from Shopify (loop ended naturally)
-    // vs. stopped early due to plan cap
-    const fetchedAllFromShopify = !hasNextPage;
-
-    const shopifyProductIds = new Set(shopifyProducts.map((p: any) => p.id));
-
-    const localProducts = await ctx.db.product.findMany({
-      where: { shop: ctx.session.shop },
-      select: { id: true },
-    });
-    const localProductIds = new Set(localProducts.map((p: any) => p.id));
-
-    // Upsert ALL products (create new + update existing)
-    const newProductIds = new Set(
-      shopifyProducts.filter((p: any) => !localProductIds.has(p.id)).map((p: any) => p.id),
-    );
-
-    if (newProductIds.size > 0) {
-      logger.info(`[PRODUCTS-LOADER] Creating ${newProductIds.size} new product(s) from Shopify`);
-    }
-
-    for (const product of shopifyProducts) {
-      await ctx.db.product.upsert({
-        where: { shop_id: { shop: ctx.session.shop, id: product.id } },
-        create: {
-          id: product.id, shop: ctx.session.shop, title: product.title,
-          descriptionHtml: product.descriptionHtml || "", handle: product.handle,
-          status: product.status, productType: product.productType || null,
-          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-          featuredImageUrl: product.featuredImage?.url || null,
-          featuredImageAlt: product.featuredImage?.altText || null,
-          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-        },
-        update: {
-          title: product.title, descriptionHtml: product.descriptionHtml || "",
-          handle: product.handle, status: product.status,
-          productType: product.productType || null,
-          seoTitle: product.seo?.title || null, seoDescription: product.seo?.description || null,
-          featuredImageUrl: product.featuredImage?.url || null,
-          featuredImageAlt: product.featuredImage?.altText || null,
-          shopifyUpdatedAt: new Date(product.updatedAt), lastSyncedAt: new Date(),
-        },
+    } catch (err) {
+      logger.error("[PRODUCTS-LOADER] Could not ensure background sync scheduler", {
+        context: "PRODUCTS",
+        shop: ctx.session.shop,
+        error: err instanceof Error ? err.message : String(err),
       });
-
-      // Sync images for ALL products (not only new ones): Shopify caps a product
-      // at 250 media total, so media(first: 250) above fetches everything in one
-      // page. Re-syncing on every load also self-heals products whose images
-      // were still PROCESSING (image.url null → filtered) during an earlier sync.
-      // The `mediaImages.length > 0` guard below still protects cached images
-      // from being wiped by a transient empty Shopify response.
-      if (planLimits.cacheEnabled.productImages) {
-        const mediaImages = product.media?.edges
-          ?.filter((edge: any) => edge.node.id && edge.node.image?.url)
-          .map((edge: any) => edge.node) || [];
-        if (mediaImages.length > 0) {
-          await ctx.db.productImage.deleteMany({ where: { productId: product.id } });
-          await ctx.db.productImage.createMany({
-            data: mediaImages.map((media: any, index: number) => ({
-              productId: product.id, url: media.image.url,
-              altText: media.alt || null, mediaId: media.id, position: index,
-            })),
-          });
-        }
-      }
-
-      // Sync options (always update to keep optionValues GIDs fresh)
-      // Filter out Shopify's internal "Default Title" placeholder (products with no real variants)
-      const realOptions = (product.options || []).filter((opt: any) => !isDefaultTitleOption(opt));
-      if (realOptions.length > 0) {
-        // Log what Shopify API returns for the first product's options
-        if (product === shopifyProducts[0]) {
-          for (const opt of realOptions) {
-            logger.info(`[PRODUCTS-LOADER] Option "${opt.name}": linkedMetafield=${JSON.stringify(opt.linkedMetafield)}, optionValues=${opt.optionValues?.length ?? 'none'}`);
-          }
-        }
-        try {
-          await ctx.db.productOption.deleteMany({ where: { productId: product.id } });
-          const createData = realOptions.map((opt: any) => ({
-            id: opt.id,
-            productId: product.id,
-            name: opt.name,
-            position: opt.position,
-            values: opt.optionValues
-              ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
-              : JSON.stringify(opt.values),
-            linkedMetafieldKey: opt.linkedMetafield ? `${opt.linkedMetafield.namespace}--${opt.linkedMetafield.key}` : null,
-          }));
-          if (product === shopifyProducts[0]) {
-            logger.info(`[PRODUCTS-LOADER] createMany data sample: linkedMetafieldKey=${createData[0]?.linkedMetafieldKey}, valuesFormat=${createData[0]?.values?.substring(0, 60)}`);
-          }
-          await ctx.db.productOption.createMany({ data: createData });
-          if (product === shopifyProducts[0]) {
-            logger.info(`[PRODUCTS-LOADER] Options saved OK for ${product.id}`);
-          }
-        } catch (optErr: unknown) {
-          logger.error(`[PRODUCTS-LOADER] OPTIONS SAVE FAILED for ${product.id}: ${optErr instanceof Error ? optErr.message : String(optErr)}`);
-          // If the column doesn't exist, createMany fails — try without linkedMetafieldKey
-          try {
-            await ctx.db.productOption.createMany({
-              data: realOptions.map((opt: any) => ({
-                id: opt.id,
-                productId: product.id,
-                name: opt.name,
-                position: opt.position,
-                values: opt.optionValues
-                  ? JSON.stringify(opt.optionValues.map((v: any) => ({ id: v.id, name: v.name, linked: !!v.linkedMetafieldValue })))
-                  : JSON.stringify(opt.values),
-              })),
-            });
-            logger.info(`[PRODUCTS-LOADER] Options saved (without linkedMetafieldKey) for ${product.id}`);
-          } catch (fallbackErr: unknown) {
-            logger.error(`[PRODUCTS-LOADER] OPTIONS FALLBACK ALSO FAILED for ${product.id}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
-          }
-        }
-      }
-
-      // Sync metafields (idempotent upsert — safe under concurrent execution)
-      const metafields = product.metafields?.edges?.map((e: any) => e.node) || [];
-      await upsertProductMetafields(ctx.db, product.id, metafields);
     }
 
-    // Remove deleted products — only when we fetched ALL from Shopify.
-    // When the fetch was capped by plan limits, we can't distinguish
-    // "deleted from Shopify" vs "not fetched due to plan cap".
-    if (fetchedAllFromShopify) {
-      const removedIds = [...localProductIds].filter((id) => !shopifyProductIds.has(id));
-      if (removedIds.length > 0) {
-        logger.info(`[PRODUCTS-LOADER] Removing ${removedIds.length} deleted product(s) from DB`);
-        await ctx.db.productImage.deleteMany({ where: { productId: { in: removedIds } } });
-        await ctx.db.product.deleteMany({ where: { shop: ctx.session.shop, id: { in: removedIds } } });
-        await ctx.db.contentTranslation.deleteMany({
-          where: { shop: ctx.session.shop, resourceType: "Product", resourceId: { in: removedIds } },
-        });
-      }
+
+    // R3-H2: this loader serialises the WHOLE result (deep includes:
+    // images→altTranslations, options, metafields) into ONE JSON payload,
+    // and the factory then runs contentTranslation.findMany({ resourceId:
+    // { in: ids } }) over every id. On unlimited (Pro/Max) plans there was
+    // NO `take`, so a 10k-product shop produced a multi-MB payload + huge
+    // IN() query → OOM/timeout. There is no server-side pagination yet (the
+    // UI filters client-side), so until that exists we apply a hard upper
+    // bound even for unlimited plans. A bounded list degrades gracefully;
+    // an unbounded query takes the page down entirely. Configurable via
+    // PRODUCTS_MAX_LOADED. extraData still returns the true productCount so
+    // the UI can show "X of Y".
+    const HARD_CAP = (() => {
+      const raw = Number(process.env.PRODUCTS_MAX_LOADED);
+      return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2000;
+    })();
+    const effectiveTake =
+      planLimits.maxProducts === Infinity
+        ? HARD_CAP
+        : Math.min(planLimits.maxProducts, HARD_CAP);
+
+    const totalForShop = await ctx.db.product.count({ where: { shop: ctx.session.shop } });
+    if (totalForShop > effectiveTake) {
+      logger.warn(
+        `[PRODUCTS-LOADER] Catalog (${totalForShop}) exceeds load cap (${effectiveTake}) — returning a bounded slice. Server-side pagination is required for this shop.`,
+        { context: "PRODUCTS", shop: ctx.session.shop, totalForShop, effectiveTake },
+      );
     }
 
-    // Fetch products from DATABASE (capped to plan limit)
+    // Fetch products from DATABASE (bounded — see R3-H2 note above)
     const dbProducts = await ctx.db.product.findMany({
       where: { shop: ctx.session.shop },
       include: {
@@ -290,7 +121,7 @@ export const loader = createContentLoader({
         metafields: true,
       },
       orderBy: { title: "asc" },
-      ...(planLimits.maxProducts !== Infinity ? { take: planLimits.maxProducts } : {}),
+      take: effectiveTake,
     });
 
     // Load sub-resource translations (options, option values, metafields) from DB
@@ -522,6 +353,19 @@ export default function ProductsPage() {
     });
   }, []);
 
+  // Memoised so VariantImageManager's onMissingMainImageChange-deps useEffect
+  // does not refire on every render. An inline arrow here had a new identity
+  // each render → effect always fired → loop (before the hook setter's
+  // bail-out was added). Kept memoised even now to avoid wasted effect runs.
+  const handleMissingMainImageChangeForSelected = useCallback(
+    (hasMissing: boolean) => {
+      const selectedId = editor.selectedItem?.id;
+      if (!selectedId) return;
+      imageManagerState.handleMissingMainImageChange(selectedId, hasMissing);
+    },
+    [editor.selectedItem?.id, imageManagerState.handleMissingMainImageChange],
+  );
+
   // Initialize sub-resources hook for options + metafields translations
   // Uses its own internal fetcher to avoid race conditions with the main editor
   const subResources = useProductSubResources({
@@ -545,31 +389,233 @@ export default function ProductsPage() {
   });
 
   // Extend subResource state/handlers to include pending gallery changes so the
-  // main Speichern/Verwerfen buttons also save and reset variant gallery assignments.
+  // main Speichern/Verwerfen buttons also save and reset variant gallery
+  // assignments. Every per-variant pending bucket has to be listed here —
+  // missing one means the Save button stays disabled while the merchant's
+  // unsaved change is sitting in the corresponding state slot, looking
+  // applied but never reaching Shopify. Buckets:
+  //   • pendingVariantGalleries   — file-backed gallery edits
+  //   • pendingMediaOrder         — product-media reorder
+  //   • pendingProductNewMedia    — fresh uploads + library picks (product mode)
+  //   • bulkItems (ready)         — bulk-uploaded files awaiting assignment
+  //   • hasAltTextEdits           — alt-text per image
+  //   • pendingExternalVideos     — YouTube / Vimeo URLs per variant
+  //   • pendingVariant3dModels    — .glb URLs per variant (list.url metafield)
+  //   • pendingGalleryOrder       — combined file+url+model order per variant
+  //   • pendingClearVariantMainImages — explicit clear-main-image requests
+  //   • pendingKnownModelGids     — carry-over from a prior "processing" save
+  //                                 so a second click on Save retries the GID
+  //                                 polling even when nothing else changed
   const hasPendingImageChanges = showImageManager && (
     imageManagerState.pendingVariantGalleries.length > 0 ||
     imageManagerState.pendingMediaOrder.length > 0 ||
     imageManagerState.pendingProductNewMedia.length > 0 ||
+    imageManagerState.pendingClearVariantMainImages.length > 0 ||
     imageManagerState.bulkItems.some(i => i.status === "ready") ||
-    imageManagerState.hasAltTextEdits
+    imageManagerState.hasAltTextEdits ||
+    Object.keys(imageManagerState.pendingExternalVideos).length > 0 ||
+    Object.keys(imageManagerState.pendingVariant3dModels).length > 0 ||
+    Object.keys(imageManagerState.pendingGalleryOrder).length > 0 ||
+    Object.keys(imageManagerState.pendingKnownModelGids).length > 0
   );
 
+  // Background 3D asset backfill. Sync save only waits ~1.5s for
+  // Model3d.sources[0].url + preview, anything slower lands here.
+  //
+  // Refs (not deps) for the imageManager handle and the editor's
+  // selected product. Without them the tick() closure captured stale
+  // state from BEFORE the post-save deferred-clear populated the
+  // carry-over — pendingModels resolved to [] and the endpoint
+  // returned "nothing to do", stopping the loop the moment it
+  // started. By always reading from a fresh ref we pick up the
+  // carry-over the next time tick() fires regardless of which render
+  // schedulePreviewBackfill was bound on.
+  const imageManagerStateRef = useRef(imageManagerState);
+  imageManagerStateRef.current = imageManagerState;
+  const previewBackfillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewBackfillStepRef = useRef(0);
+  const previewBackfillProductIdRef = useRef<string | null>(null);
+  const previewBackfillTick = useCallback(async () => {
+    previewBackfillTimerRef.current = null;
+    const productId = previewBackfillProductIdRef.current;
+    if (!productId) return;
+    // Cancel if the merchant switched products mid-flight. Without this,
+    // a tick scheduled for product A would POST to the refresh endpoint
+    // with productId=A but using imageManagerStateRef which has been
+    // overwritten with product B's state — resolvedEntries belonging to
+    // A's variants would clobber B's pending state.
+    if (editor.selectedItem?.id && editor.selectedItem.id !== productId) return;
+    const state = imageManagerStateRef.current;
+    const pendingModels: Array<{ variantId: string; modelGid: string; stagingUrl: string }> = [];
+    for (const [variantId, urls] of Object.entries(state.pendingVariant3dModels ?? {})) {
+      for (const u of urls) {
+        const gid = state.pendingKnownModelGids?.[u];
+        if (gid) pendingModels.push({ variantId, modelGid: gid, stagingUrl: u });
+      }
+    }
+    const delays = [10000, 15000, 30000, 45000, 60000, 60000, 60000, 60000];
+    try {
+      const r = await fetch("/api/refresh-3d-previews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId, pendingModels }),
+      });
+      const data = await r.json();
+      const resolved = Array.isArray(data?.resolvedEntries) ? data.resolvedEntries as Array<{ variantId: string; stagingUrl: string; finalUrl: string; previewUrl: string }> : [];
+      if (resolved.length > 0) {
+        // In-place URL substitution: replace each resolved staging URL with
+        // its final CDN URL inside pendingVariant3dModels (and the parallel
+        // preview slot with the resolved preview URL). The pending state
+        // continues to act as the optimistic override — preserving removals
+        // and any concurrent edits the merchant made during the polling
+        // window — but with the freshly-persisted CDN URL + preview instead
+        // of the staging URL + empty preview slot. Once reloadVariants lands,
+        // variant.threeDModelUrls / variant.threeDPreviewUrls match.
+        const stagingToFinal = new Map<string, { variantId: string; finalUrl: string; previewUrl: string }>();
+        for (const r of resolved) stagingToFinal.set(r.stagingUrl, { variantId: r.variantId, finalUrl: r.finalUrl, previewUrl: r.previewUrl });
+        // Snapshot the pre-substitution models so the preview setter can
+        // index against the original staging-URL positions.
+        const modelsBeforeSubstitution = state.pendingVariant3dModels;
+        state.setPendingVariant3dModels(prev => {
+          const next = { ...prev };
+          for (const [vid, urls] of Object.entries(prev)) {
+            let changed = false;
+            const replaced = urls.map(u => {
+              const m = stagingToFinal.get(u);
+              if (m && m.variantId === vid) {
+                changed = true;
+                return m.finalUrl;
+              }
+              return u;
+            });
+            if (changed) next[vid] = replaced;
+          }
+          return next;
+        });
+        state.setPendingVariant3dPreviews(prev => {
+          const next = { ...prev };
+          for (const [vid, oldPreviews] of Object.entries(prev)) {
+            const oldModels = modelsBeforeSubstitution[vid];
+            if (!oldModels) continue;
+            let changed = false;
+            const updated = oldPreviews.map((p, i) => {
+              const oldModelUrl = oldModels[i];
+              const m = oldModelUrl ? stagingToFinal.get(oldModelUrl) : undefined;
+              if (m && m.variantId === vid && m.previewUrl && m.previewUrl !== p) {
+                changed = true;
+                return m.previewUrl;
+              }
+              return p;
+            });
+            if (changed) next[vid] = updated;
+          }
+          return next;
+        });
+        state.setPendingKnownModelGids(prev => {
+          const next = { ...prev };
+          for (const r of resolved) delete next[r.stagingUrl];
+          return next;
+        });
+      }
+      // Orphans: Model3d GIDs the server can't find on product.media (deleted,
+      // typo, wrong product). Without an exit the backfill would poll them
+      // forever. Drop them from pending state and warn so the merchant can
+      // see something happened.
+      const orphans = Array.isArray(data?.orphanedStagingUrls) ? data.orphanedStagingUrls as string[] : [];
+      if (orphans.length > 0) {
+        console.warn(`[preview-backfill] dropping ${orphans.length} orphaned pending 3D model(s) — Model3d GID not found on product.media`, orphans);
+        const orphanSet = new Set(orphans);
+        state.setPendingVariant3dModels(prev => {
+          const next = { ...prev };
+          for (const [vid, urls] of Object.entries(prev)) {
+            const kept = urls.filter(u => !orphanSet.has(u));
+            if (kept.length === 0) delete next[vid];
+            else next[vid] = kept;
+          }
+          return next;
+        });
+        state.setPendingKnownModelGids(prev => {
+          const next = { ...prev };
+          for (const u of orphans) delete next[u];
+          return next;
+        });
+      }
+      if (data?.updated > 0) state.reloadVariants();
+      const stillPending = data?.stillPending ?? 0;
+      const hasPendingLocally = pendingModels.length > 0 || resolved.length > 0;
+      if ((stillPending > 0 || hasPendingLocally) && previewBackfillStepRef.current < delays.length) {
+        const delay = delays[previewBackfillStepRef.current];
+        previewBackfillStepRef.current += 1;
+        previewBackfillTimerRef.current = setTimeout(previewBackfillTick, delay);
+      }
+    } catch {
+      if (previewBackfillStepRef.current < delays.length) {
+        const delay = delays[previewBackfillStepRef.current];
+        previewBackfillStepRef.current += 1;
+        previewBackfillTimerRef.current = setTimeout(previewBackfillTick, delay);
+      }
+    }
+  }, []);
+  const schedulePreviewBackfill = useCallback((productId: string) => {
+    if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
+    previewBackfillProductIdRef.current = productId;
+    previewBackfillStepRef.current = 0;
+    const firstDelay = 10000;
+    previewBackfillStepRef.current = 1;
+    previewBackfillTimerRef.current = setTimeout(previewBackfillTick, firstDelay);
+  }, [previewBackfillTick]);
+  useEffect(() => () => {
+    if (previewBackfillTimerRef.current) clearTimeout(previewBackfillTimerRef.current);
+  }, []);
+  // Cancel any pending backfill tick when the merchant switches products.
+  // The previewBackfillProductIdRef stays bound to the original product —
+  // without cancelling, the next scheduled tick would still fire (and the
+  // in-tick productId-guard would no-op it, but we save the wasted timer
+  // and any in-flight fetch race).
+  useEffect(() => {
+    return () => {
+      if (previewBackfillTimerRef.current) {
+        clearTimeout(previewBackfillTimerRef.current);
+        previewBackfillTimerRef.current = null;
+      }
+      previewBackfillProductIdRef.current = null;
+    };
+  }, [editor.selectedItem?.id]);
   const wrappedSubResourceState = useMemo(() => ({
     ...subResources.state,
     hasChanges: subResources.state.hasChanges || hasPendingImageChanges,
-  }), [subResources.state, hasPendingImageChanges]);
+    // OR isApplying into isSaving so the Save button shows a spinner and
+    // stays disabled while imageManagerState.handleApply is in flight.
+    // The image-manager save can run for up to ~38s (server-side polling
+    // for big 3D model previews) — without this wiring the button stayed
+    // active during the wait, the merchant double-clicked, and the second
+    // POST hit /api/update-variant-galleries with the same staging URL
+    // (duplicate productCreateMedia → Shopify 422).
+    isSaving: subResources.state.isSaving || imageManagerState.isApplying,
+  }), [subResources.state, hasPendingImageChanges, imageManagerState.isApplying]);
 
   const wrappedSubResourceHandlers = useMemo(() => ({
     ...subResources.handlers,
     saveSubResources: () => {
       subResources.handlers.saveSubResources();
       if (hasPendingImageChanges && editor.selectedItem) {
-        imageManagerState.handleApply(editor.selectedItem.id).then(err => {
+        const productId = editor.selectedItem.id;
+        imageManagerState.handleApply(productId).then(err => {
           if (err) {
             showInfoBox(err, "critical", t.products.galleryErrorTitle);
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
+            // Kick off background polling for 3D model previews. Shopify
+            // takes minutes to generate the .glb thumbnail server-side —
+            // the save route only waits ~25s (enough for source URL), the
+            // preview lands later. This loop calls /api/refresh-3d-previews
+            // with exponential backoff until every Model3d has a preview
+            // or we hit the ~5min budget. Each successful update triggers
+            // a variant data refresh so the merchant sees the thumbnail
+            // appear automatically.
+            schedulePreviewBackfill(productId);
           }
+          editor.navigationGuard.clearPendingNavigation();
         }).catch(() => {
           showInfoBox(t.products.gallerySaveError, "critical");
         });
@@ -600,52 +646,42 @@ export default function ProductsPage() {
         editor.handlers.handleTranslateAllForLocale();
         subResources.handlers.translateAllSubResources();
       },
+      // Navigation guard hooks: the editor's own handleLanguageChange /
+      // handleItemSelect only gate on editor.state.hasChanges (field-level
+      // text edits) — they don't know about image-manager pending state
+      // (uploads / library picks / variant gallery edits / 3D models /
+      // external videos). Without these wrappers a merchant who only
+      // touched the gallery and then clicked a different language saw the
+      // page swap and their pending uploads silently discarded. We
+      // pre-empt with our own guard when image changes exist; the
+      // wrapped action eventually re-fires from clearPendingNavigation
+      // (post-save) and then proceeds through the editor's normal path.
+      handleLanguageChange: (locale: string) => {
+        if (hasPendingImageChanges && !editor.state.hasChanges) {
+          editor.navigationGuard.handleNavigationAttempt(
+            () => editor.handlers.handleLanguageChange(locale),
+            true,
+          );
+        } else {
+          editor.handlers.handleLanguageChange(locale);
+        }
+      },
+      handleItemSelect: (itemId: string) => {
+        if (hasPendingImageChanges && !editor.state.hasChanges) {
+          editor.navigationGuard.handleNavigationAttempt(
+            () => editor.handlers.handleItemSelect(itemId),
+            true,
+          );
+        } else {
+          editor.handlers.handleItemSelect(itemId);
+        }
+      },
     },
   };
 
   // Get selected product AFTER editor is initialized
   const selectedProductId = editor.state.selectedItemId;
   const selectedProduct = editor.selectedItem;
-
-  // ============================================================================
-  // RESTORE SELECTION AFTER RELOAD
-  // If user clicked reload button, restore the previously selected product
-  // ============================================================================
-
-  // Ref to access editor.handlers without adding as dependency (unstable reference)
-  const editorHandlersRef = useRef(editor.handlers);
-  editorHandlersRef.current = editor.handlers;
-
-  useEffect(() => {
-    // Wait for products to load
-    if (!isMountedRef.current || !products.length) {
-      return;
-    }
-
-    // Check URL for selected parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const selectedFromUrl = urlParams.get('selected');
-
-    if (selectedFromUrl) {
-      // Find the product in the list
-      const productExists = products.find((p: any) => p.id === selectedFromUrl);
-
-      if (productExists && typeof editorHandlersRef.current?.handleItemSelect === 'function') {
-        // Restore selection via editor
-        try {
-          editorHandlersRef.current.handleItemSelect(selectedFromUrl);
-        } catch (error) {
-          // Selection restoration failed - non-critical
-        }
-
-        // Clean up URL parameter
-        urlParams.delete('selected');
-        urlParams.delete('_t');
-        const newUrl = `${window.location.pathname}${urlParams.toString() ? '?' + urlParams.toString() : ''}`;
-        window.history.replaceState({}, '', newUrl);
-      }
-    }
-  }, [products]); // Only run when products load
 
   // ============================================================================
   // ON-DEMAND TRANSLATION LOADING
@@ -914,6 +950,17 @@ export default function ProductsPage() {
               onSetAction={imageManagerState.setActiveAction}
               imageManagerSettings={imageManagerSettings ?? { firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 }}
               onPendingChange={imageManagerState.handlePendingChange}
+              onExternalVideosChange={imageManagerState.setPendingExternalVideos}
+              onThreeDModelsChange={imageManagerState.setPendingVariant3dModels}
+              onThreeDPreviewsChange={imageManagerState.setPendingVariant3dPreviews}
+              // Feeds the carry-over from a prior "processing" drop back
+              // into VariantImageManager's local state so the merchant
+              // keeps seeing the tile after Save and the next save still
+              // includes the staging URL in its payload. Owned by the
+              // hook (single source of truth for the next save's body).
+              seedThreeDModelUrls={imageManagerState.pendingVariant3dModels}
+              seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
+              onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
@@ -922,7 +969,7 @@ export default function ProductsPage() {
               enabledLanguages={shopLocales.map((l: any) => l.locale)}
               variantReloadKey={imageManagerState.variantReloadCounter}
               onDirtyChange={imageManagerState.setHasAltTextEdits}
-              onMissingMainImageChange={(hasMissing) => imageManagerState.handleMissingMainImageChange(editor.selectedItem!.id, hasMissing)}
+              onMissingMainImageChange={handleMissingMainImageChangeForSelected}
               onProductImagesRefreshed={handleProductImagesRefreshed}
               onGallerySelectionGidsChange={imageManagerState.handleGallerySelectionGidsChange}
             />

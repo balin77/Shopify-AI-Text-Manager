@@ -1,11 +1,19 @@
 import { useState, useEffect } from "react";
-import { Card, BlockStack, Text, InlineStack, Divider, Button, Badge, Box } from "@shopify/polaris";
+import { Card, BlockStack, Text, InlineStack, Divider, Button, Box } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { useI18n } from "../contexts/I18nContext";
 
-const EXTENSION_UID = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73";
+/*
+ * Theme app extension UUID used for the theme-editor deep links. This is the
+ * `uid` from extensions/variant-gallery/shopify.extension.toml. It is a single
+ * source of truth committed in this repo, so it is identical for the dev and
+ * prod Shopify apps (both deploy the same extension source). If that ever
+ * changes (e.g. the extension is re-registered), pass the correct value via
+ * the optional `extensionUid` prop from a loader/env instead of editing this.
+ */
+const DEFAULT_EXTENSION_UID = "55861f03-b391-90ea-8394-b3a6d5b6946b5f566a73";
 
 interface ImageManagerSettings {
   enabled: boolean;
@@ -15,14 +23,16 @@ interface ImageManagerSettings {
 interface Props {
   settings: ImageManagerSettings;
   shop: string;
+  /** Override the theme app extension UUID (e.g. wired from a loader/env). */
+  extensionUid?: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
   highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, highlightSaveButton = false }: Props) {
+export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasChangesChange, highlightSaveButton = false }: Props) {
   const { t } = useI18n();
-  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_UID}/variant-gallery-embed`;
-  const blockUrl = `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${EXTENSION_UID}/variant-gallery&target=mainSection`;
+  const uid = extensionUid || DEFAULT_EXTENSION_UID;
+  const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${uid}/variant-gallery-embed`;
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });
@@ -104,30 +114,15 @@ export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, hi
             padding="400"
           >
             <BlockStack gap="200">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionATitle}</Text>
-                <Badge tone="success">Recommended</Badge>
-              </InlineStack>
+              <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionATitle}</Text>
               <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionADescription}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.settings as unknown as Record<string, string>).themeSetupSelectorHint ??
+                  "If your theme’s product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme’s product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."}
+              </Text>
               <div>
                 <Button url={embedUrl} external variant="primary" size="slim">
                   {t.settings.themeSetupOptionAButton}
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
-
-          <Box
-            background="bg-surface-secondary"
-            borderRadius="200"
-            padding="400"
-          >
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">{t.settings.themeSetupOptionBTitle}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">{t.settings.themeSetupOptionBDescription}</Text>
-              <div>
-                <Button url={blockUrl} external variant="secondary" size="slim">
-                  {t.settings.themeSetupOptionBButton}
                 </Button>
               </div>
             </BlockStack>

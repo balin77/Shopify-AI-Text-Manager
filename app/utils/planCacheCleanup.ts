@@ -5,7 +5,7 @@
 
 import { db } from "../db.server";
 import { type Plan } from "../config/plans";
-import { getPlanLimits } from "./planUtils";
+import { getPlanLimits, getSyncScope } from "./planUtils";
 import { logger } from "./logger.server";
 
 export interface CleanupStats {
@@ -21,6 +21,8 @@ export interface CleanupStats {
   deletedThemeContent: number;
   deletedThemeTranslations: number;
   deletedContentTranslations: number;
+  deletedMenus: number;
+  deletedMetaobjects: number;
 }
 
 /**
@@ -41,7 +43,13 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     deletedThemeContent: 0,
     deletedThemeTranslations: 0,
     deletedContentTranslations: 0,
+    deletedMenus: 0,
+    deletedMetaobjects: 0,
   };
+
+  // Single source of truth — same scope the sync uses, so cleanup and sync can
+  // never disagree about which content types a plan is entitled to.
+  const scope = getSyncScope(newPlan);
 
   logger.info(`[PlanCleanup] Starting cleanup for shop ${shop} → ${newPlan}`);
 
@@ -106,9 +114,40 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     stats.deletedThemeTranslations = await deleteThemeTranslationsOverLimit(shop, limits.maxThemeTranslations);
   }
 
+  // 8. Delete menus if the plan is no longer entitled (no per-item cap)
+  if (!scope.menus.enabled) {
+    stats.deletedMenus = await deleteMenus(shop);
+  }
+
+  // 9. Delete metaobjects + definitions + translations if not entitled
+  if (!scope.metaobjects.enabled) {
+    stats.deletedMetaobjects = await deleteMetaobjects(shop);
+  }
+
   logger.info(`[PlanCleanup] Cleanup complete:`, stats);
 
   return stats;
+}
+
+/**
+ * Delete all menus (menus have no ContentTranslation rows).
+ */
+async function deleteMenus(shop: string): Promise<number> {
+  const result = await db.menu.deleteMany({ where: { shop } });
+  return result.count;
+}
+
+/**
+ * Delete all metaobjects, their translations and definitions (transaction).
+ */
+async function deleteMetaobjects(shop: string): Promise<number> {
+  const { metaobjectsCount } = await db.$transaction(async (tx) => {
+    await tx.metaobjectTranslation.deleteMany({ where: { shop } });
+    const mo = await tx.metaobject.deleteMany({ where: { shop } });
+    await tx.metaobjectDefinition.deleteMany({ where: { shop } });
+    return { metaobjectsCount: mo.count };
+  });
+  return metaobjectsCount;
 }
 
 /**

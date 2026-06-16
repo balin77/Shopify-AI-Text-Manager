@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -8,15 +8,57 @@ import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
-import type { StagedItem, VariantWithGallery, ImageMeta } from "./types";
+import { FilePickerModal, type AddedItem } from "./FilePickerModal";
+import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
+import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
 const imageManagerCollision: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
-  if (hits.length === 0) return closestCenter(args);
+  // No closestCenter fallback: releasing in genuine empty space must abort
+  // the drag, not snap to the nearest tile.
+  if (hits.length === 0) return [];
+  const sourceContainer = args.active.data.current?.containerId as string | undefined;
   const itemHits = hits.filter(({ id }) => (id as string).includes("::"));
-  return itemHits.length > 0 ? itemHits : hits;
+  const containerHits = hits.filter(({ id }) => !(id as string).includes("::"));
+  if (sourceContainer) {
+    if (sourceContainer === "product") {
+      // Product source: prefer cross-container targets so a drop landing
+      // on a variant tile (with an overlapping product tile underneath
+      // from pointerWithin's stacked hits) routes to the variant. Without
+      // this, the product tile won the tie and the handler fell into the
+      // within-product reorder branch instead of product→variant copy —
+      // the merchant saw the dragged image rearrange inside product
+      // ("disappears from where it was") and never arrive in the variant.
+      const nonSource = itemHits.filter(({ id }) =>
+        !(id as string).startsWith("product::")
+      );
+      if (nonSource.length > 0) return nonSource;
+    } else {
+      // Variant source: prefer same-variant items so a small variant
+      // gallery's reorder doesn't get hijacked by an overlapping product
+      // tile underneath.
+      const sameContainerItems = itemHits.filter(({ id }) =>
+        (id as string).startsWith(sourceContainer + "::")
+      );
+      if (sameContainerItems.length > 0) return sameContainerItems;
+      // No same-variant tile under cursor — accept any cross-container item.
+      const nonSource = itemHits.filter(({ id }) =>
+        !(id as string).startsWith(sourceContainer + "::")
+      );
+      if (nonSource.length > 0) return nonSource;
+    }
+  }
+  if (itemHits.length > 0) return itemHits;
+  // No item hits — only containers. Prefer non-source containers so a
+  // cross-gallery drop on whitespace isn't hijacked by the source's own
+  // overlapping container droppable.
+  if (sourceContainer) {
+    const nonSource = containerHits.filter(({ id }) => id !== sourceContainer);
+    if (nonSource.length > 0) return nonSource;
+  }
+  return containerHits;
 };
 
 interface ProductImageRef {
@@ -42,7 +84,35 @@ interface VariantImageManagerProps {
   onRemoveBulk: (ids: string[]) => void;
   onSetAction: (action: "copy" | "move" | null) => void;
   imageManagerSettings: ImageManagerSettings;
-  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: string[], clearVariantMainImages?: string[]) => void;
+  onPendingChange?: (variantGalleries: Array<{ variantId: string; fileGids: string[] }>, mediaOrder: Array<{ mediaId: string; position: number }>, productNewMedia?: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>, clearVariantMainImages?: string[]) => void;
+  /** Notified whenever the merchant adds / removes a YouTube or Vimeo URL on
+   *  any variant. The shape mirrors the /api/update-variant-galleries body
+   *  field so the hook can pass it straight through. */
+  onExternalVideosChange?: (variantExternalVideos: Record<string, string[]>) => void;
+  /** Notified whenever the merchant adds / removes a 3D model URL on any
+   *  variant. Mirrors onExternalVideosChange exactly — variant_3d_models is
+   *  also a list.url metafield. */
+  onThreeDModelsChange?: (variant3dModels: Record<string, string[]>) => void;
+  /** Parallel to onThreeDModelsChange — fires whenever the per-variant
+   *  preview-URL list changes (add / remove / index alignment after a
+   *  model drop). Same lockstep index contract as the metafield write:
+   *  preview[i] is the JPEG snapshot for model[i]. */
+  onThreeDPreviewsChange?: (variant3dPreviews: Record<string, string[]>) => void;
+  /** Carry-over from a "processing" drop on a prior save. The hook owns
+   *  this map (it's its own pendingVariant3dModels state); we pass it in
+   *  so the resetKey effect can re-seed our local state with the still-
+   *  processing staging URLs after a Save instead of clearing them and
+   *  letting the merchant's next mutation wipe the hook's carry-over via
+   *  onThreeDModelsChange. */
+  seedThreeDModelUrls?: Record<string, string[]>;
+  /** Parallel carry-over for the preview URLs of still-processing models.
+   *  Same lockstep index contract as seedThreeDModelUrls. */
+  seedThreeDPreviewUrls?: Record<string, string[]>;
+  /** Notified whenever the combined file+URL+model order changes on any
+   *  variant (drag-reorder of a mixed gallery). The value is variantId →
+   *  stringified JSON array of { kind: "file" | "url" | "model", value },
+   *  ready to be persisted to custom.variant_gallery_order. */
+  onGalleryOrderChange?: (variantGalleryOrder: Record<string, string>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
   resetKey?: number;
   variantReloadKey?: number;
@@ -63,6 +133,19 @@ function mapApiImagesToRefs(images: any[]): ProductImageRef[] {
     id: img.mediaId ?? img.url ?? "",
     altText: img.altText ?? null,
   }));
+}
+
+/** Quick optimistic-preview helper for YouTube URLs — used for the tile
+ *  that flashes into the gallery the moment a merchant pastes a link.
+ *  Vimeo has no public thumbnail-from-id endpoint without an oEmbed call
+ *  we don't want to make from the admin; returns empty so the tile falls
+ *  back to the host-name placeholder. */
+function youtubeThumbForUrl(url: string): string | undefined {
+  const m =
+    url.match(/[?&]v=([A-Za-z0-9_-]{11})/) ||
+    url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) ||
+    url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : undefined;
 }
 
 function insertGidAtPosition(gids: string[], gid: string, overUrl: string | null, fileUrlMap: Record<string, string>): string[] {
@@ -95,11 +178,44 @@ export function VariantImageManager({
   onMissingMainImageChange,
   onProductImagesRefreshed,
   onGallerySelectionGidsChange,
+  onExternalVideosChange,
+  onThreeDModelsChange,
+  onThreeDPreviewsChange,
+  seedThreeDModelUrls,
+  seedThreeDPreviewUrls,
+  onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
+  // Per-variant overrides for external video URLs. Empty entries are kept
+  // (they mean "merchant explicitly cleared this variant's videos") so
+  // resetting an array to [] still gets persisted on save.
+  const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  // Per-variant overrides for 3D model (.glb) URLs. Same contract as
+  // pendingExternalVideos — both live in list.url metafields.
+  const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Parallel preview URLs — index N in pendingVariant3dPreviews[v] is the
+  // JPEG snapshot for index N in pendingVariant3dModels[v]. add / remove
+  // handlers keep both arrays in lockstep so the server can write
+  // variant_3d_previews aligned with variant_3d_models.
+  const [pendingVariant3dPreviews, setPendingVariant3dPreviews] = useState<Record<string, string[]>>({});
+  const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
+  const pendingGalleryOrderRef = useRef<Record<string, string>>({});
+  useEffect(() => { pendingGalleryOrderRef.current = pendingGalleryOrder; }, [pendingGalleryOrder]);
+  // Add-media modal state. `pickerTarget` discriminates between "add to
+  // variant X" (each upload commits immediately, can include external URLs)
+  // and "add to product gallery" (uploads queue, external URLs are hidden
+  // because they have no product-global slot).
+  const [pickerTarget, setPickerTarget] = useState<{ mode: "variant"; variantId: string } | { mode: "product" } | null>(null);
   // Authoritative GID→URL map fetched from Shopify product media (not DB cache).
   const [shopifyMediaMap, setShopifyMediaMap] = useState<Record<string, string>>({});
+  // Richer GID→{kind, previewUrl} map for the same product media. Drives the
+  // SortableImageGrid tile dispatch (play icon for video, "3D" badge for
+  // model) so the admin gallery mirrors the storefront's visual language.
+  // Carries `kind: "external_video"` for ExternalVideo entries from
+  // product.media — variant-scoped YouTube/Vimeo URLs live elsewhere and
+  // are merged in further down.
+  const [mediaMetaMap, setMediaMetaMap] = useState<Record<string, { kind: MediaKind; previewUrl: string }>>({});
   const [isLoadingVariants, setIsLoadingVariants] = useState(false);
   const [variantError, setVariantError] = useState<string | null>(null);
   const [pendingProductImageOrder, setPendingProductImageOrder] = useState<string[] | null>(null);
@@ -109,7 +225,7 @@ export function VariantImageManager({
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   // Variant IDs whose injected main image was dragged to the product gallery this session
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
-  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
   const [webpError, setWebpError] = useState<string | null>(null);
   const [isConvertingWebP, setIsConvertingWebP] = useState(false);
   // GIDs (mediaId) of images currently being converted; cleared when done.
@@ -145,6 +261,16 @@ export function VariantImageManager({
   const dirtyUrlsRef = useRef(new Set<string>());
   // Track current media order so we can include it whenever variant galleries change
   const pendingMediaOrderRef = useRef<Array<{ mediaId: string; position: number }>>([]);
+  // Monotonic token guarding against out-of-order /api/product-variants responses:
+  // a fast product switch can leave an earlier request in flight that resolves AFTER
+  // the newer one, overwriting the current product's variants with stale data.
+  // Residual (cosmetic, accepted): `variants` is not synchronously emptied on a
+  // product switch, so the previous product's galleries may flash for one render
+  // until the new fetch resolves. The bulk auto-assign path is NOT affected
+  // (parent-hook variantsForBulk is reset in useVariantImageManager.resetForProduct).
+  // A key={productId} remount was deliberately rejected (redundant reconcile
+  // calls on every product re-visit).
+  const variantsReqIdRef = useRef(0);
 
   // Cross-gallery drag state
   const [activeDragUrl, setActiveDragUrl] = useState<string | null>(null);
@@ -180,6 +306,19 @@ export function VariantImageManager({
     setPendingProductImageOrder(null);
     setSelectedGalleryItems(new Map());
     setLocallyExcludedMainGids(new Set());
+    // Critical: the per-variant external-video URLs and the combined
+    // gallery-order JSON also have to be cleared on Cancel / product switch,
+    // otherwise a URL the merchant typed for product A but never saved would
+    // ride along to product B's save payload and end up on the wrong variant.
+    setPendingExternalVideos({});
+    // Re-seed with the hook's carry-over (still-processing staging URLs
+    // from a prior save) rather than clearing outright. Falls back to {}
+    // when there's nothing to carry over — same effective behaviour as
+    // before for non-3D and non-processing flows.
+    setPendingVariant3dModels(seedThreeDModelUrls ?? {});
+    setPendingVariant3dPreviews(seedThreeDPreviewUrls ?? {});
+    setPendingGalleryOrder({});
+    pendingGalleryOrderRef.current = {};
     pendingMediaOrderRef.current = [];
     dirtyUrlsRef.current.clear();
     onDirtyChange?.(false);
@@ -222,6 +361,8 @@ export function VariantImageManager({
   // (variants-only refresh, no pending-state reset). The resetState flag controls whether
   // pending galleries / selection / exclusions are cleared before fetching.
   const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean) => {
+    const reqId = ++variantsReqIdRef.current;
+    const isStale = () => variantsReqIdRef.current !== reqId;
     setIsLoadingVariants(true);
     setVariantError(null);
     if (resetState) {
@@ -232,9 +373,54 @@ export function VariantImageManager({
 
     fetch(`/api/product-variants?productId=${encodeURIComponent(pid)}`)
       .then(r => r.json())
-      .then(({ variants: raw, mediaMap, error }) => {
+      .then(({ variants: raw, mediaMap, mediaMetaMap: mmm, error }) => {
+        // A newer product was selected while this request was in flight — drop the
+        // result so it can't overwrite the current product's variants/galleries.
+        if (isStale()) return;
         if (error) { setVariantError(error); return; }
-        if (mediaMap) setShopifyMediaMap(mediaMap);
+        if (mediaMap) {
+          setShopifyMediaMap(mediaMap);
+        }
+        if (mmm) setMediaMetaMap(mmm);
+        // Re-derive refreshedProductImages from the fresh Shopify media so the
+        // product-gallery section (which renders from effectiveProductImages =
+        // refreshedProductImages ?? productImages) reflects newly created
+        // MediaImage entries after a save. Previously a save triggered a
+        // variant refetch that updated shopifyMediaMap but did NOT propagate
+        // into effectiveProductImages, so the just-uploaded image vanished
+        // from the in-app product gallery until a full page reload synced
+        // the loader's productImages prop with Shopify. We merge into the
+        // existing refreshed/prop list so any altText / id that the loader
+        // already populated stays intact for entries that survive, and drop
+        // entries that no longer exist in Shopify.
+        if (mediaMap && mmm) {
+          // Read from the live ref (effectiveProductImages) instead of the
+          // useCallback closure — the closure captures the initial props and
+          // so its altText snapshot goes stale after the loader hands back a
+          // freshly bulk-applied set (mediaIds unchanged but altTexts new).
+          // currentImagesRef is updated every render, so this merge always
+          // sees the latest altTexts.
+          const liveImages = currentImagesRef.current ?? (refreshedProductImages ?? productImages);
+          const existingByMediaId = new Map(
+            liveImages.map(img => [img.mediaId, img])
+          );
+          const fresh: ProductImageRef[] = [];
+          // Include every media kind in the product gallery — images, videos,
+          // 3D models, external videos. The previous filter dropped non-images,
+          // so a .glb uploaded into a variant landed on product.media (via
+          // productCreateMedia) but never showed up in the product gallery
+          // view after the post-save refetch. The Image Manager renders the
+          // right tile per kind via mediaMetaMap; refreshedProductImages just
+          // owns the order + altText metadata.
+          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
+            if (!(mmm as Record<string, { kind?: string }>)[gid]?.kind) continue;
+            const existing = existingByMediaId.get(gid);
+            fresh.push(existing
+              ? { ...existing, url }
+              : { url, mediaId: gid, id: gid, altText: null });
+          }
+          setRefreshedProductImages(fresh);
+        }
         // Build URL→GID reverse map to resolve each variant's main image GID
         const urlToGidMap: Record<string, string> = {};
         if (mediaMap) {
@@ -251,6 +437,37 @@ export function VariantImageManager({
           galleryFileGids: (() => {
             try { return JSON.parse(v.galleryJson || "[]"); } catch { return []; }
           })(),
+          // YouTube / Vimeo URLs from custom.variant_external_videos. Stored
+          // as a JSON-stringified array on the metafield — we tolerate
+          // malformed values (returns []) so a hand-edit in the Shopify
+          // admin can't crash the Image Manager.
+          externalVideoUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.externalVideosJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
+          // GLB CDN URLs from custom.variant_3d_models. Same tolerant-parse
+          // contract as externalVideoUrls — a corrupt metafield must never
+          // crash the Image Manager.
+          threeDModelUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.threeDModelsJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
+          // Parallel preview JPG URLs from custom.variant_3d_previews — must
+          // be parsed alongside threeDModelUrls because the variant tile's
+          // thumbnail renderer reads variant.threeDPreviewUrls[i] for the
+          // model at index i. Without this branch the tile always fell back
+          // to the "3D" placeholder even after the metafield was populated.
+          threeDPreviewUrls: (() => {
+            try {
+              const parsed = JSON.parse(v.threeDPreviewsJson || "[]");
+              return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === "string") : [];
+            } catch { return []; }
+          })(),
+          galleryOrderJson: v.galleryOrderJson ?? null,
           mainImageGid: v.image?.url ? urlToGidMap[v.image.url.split("?")[0]] : undefined,
           defaultImageUrl: v.image?.url ?? undefined,
           selectedOptions: v.selectedOptions ?? [],
@@ -265,21 +482,16 @@ export function VariantImageManager({
 
         // Auto-detect variants whose metafield wrongly contains the main image GID.
         // Queue them for cleanup so the user only needs to click Save to fix existing bad data.
-        if (resetState && mediaMap) {
-          const urlToGidFromMedia: Record<string, string> = {};
-          for (const [gid, url] of Object.entries(mediaMap as Record<string, string>)) {
-            urlToGidFromMedia[url] = gid;
-          }
+        // Use v.mainImageGid (computed via stripped urlToGidMap at line 433) as the
+        // single source of truth — building a parallel non-stripped lookup here previously
+        // resolved to a different GID for variants with versioned image URLs, then this
+        // block stripped the wrong GID from the gallery.
+        if (resetState) {
           const autoFixes: Record<string, string[]> = {};
           for (const v of realVariants) {
-            if (!v.defaultImageUrl || v.galleryFileGids.length === 0) continue;
-            const mainGid =
-              urlToGidFromMedia[v.defaultImageUrl] ??
-              Object.entries(urlToGidFromMedia).find(([u]) =>
-                u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
-              )?.[1];
-            if (mainGid && v.galleryFileGids.includes(mainGid)) {
-              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== mainGid);
+            if (!v.mainImageGid || v.galleryFileGids.length === 0) continue;
+            if (v.galleryFileGids.includes(v.mainImageGid)) {
+              autoFixes[v.id] = v.galleryFileGids.filter(g => g !== v.mainImageGid);
             }
           }
           if (Object.keys(autoFixes).length > 0) {
@@ -287,8 +499,8 @@ export function VariantImageManager({
           }
         }
       })
-      .catch(() => setVariantError(t.imageManager.variantsLoadError))
-      .finally(() => setIsLoadingVariants(false));
+      .catch(() => { if (!isStale()) setVariantError(t.imageManager.variantsLoadError); })
+      .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -304,7 +516,16 @@ export function VariantImageManager({
   useEffect(() => {
     const hasGalleryChanges = Object.keys(pendingVariantGalleries).length > 0;
     const hasExcludedMain = locallyExcludedMainGids.size > 0;
-    if (!hasGalleryChanges && !hasExcludedMain) return;
+    const hasProductNewMedia = pendingProductNewMedia.length > 0;
+    // Skip the propagation only when ALL the tracked buckets are empty. The
+    // previous check was variant-only and ignored pendingProductNewMedia,
+    // which is the bucket that grows when the merchant adds something to
+    // the product gallery via the modal (library pick or upload). Without
+    // pendingProductNewMedia in the guard, the useEffect fires on dep
+    // change but immediately returns early, so onPendingChange is never
+    // called → the hook never sees the new media → hasPendingImageChanges
+    // stays false → Save button stays disabled.
+    if (!hasGalleryChanges && !hasExcludedMain && !hasProductNewMedia) return;
 
     // Track variants with no featured image so backend keeps all GIDs in the metafield
     // and never promotes fileGids[0] to become mediaId on Shopify.
@@ -624,7 +845,9 @@ export function VariantImageManager({
   // refreshedProductImages overrides productImages via effectiveProductImages; without this,
   // a user-triggered reload would be silently ignored as long as the stale override is set.
   // Also re-fetch variants so defaultImageUrl is fresh — missing-main detection depends on it.
-  const productImagesKey = productImages.map(i => i.mediaId).join(",");
+  // Hash altText into the key so a bulk-apply (mediaIds unchanged, altTexts new) also
+  // invalidates the stale refreshedProductImages and re-triggers the variant fetch.
+  const productImagesKey = productImages.map(i => `${i.mediaId}|${i.altText ?? ""}`).join(",");
   useEffect(() => {
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
@@ -642,12 +865,26 @@ export function VariantImageManager({
   // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
   // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
   // always resolve even when the DB cache is stale or incomplete.
+  //
+  // For uploads that haven't been saved yet, pendingProductNewMedia carries a
+  // local previewUrl (typically a blob: URL from URL.createObjectURL on the
+  // upload pipeline). Inject those staging-URL → previewUrl entries into the
+  // same map so the variant gallery's render loop — which maps galleryFileGids
+  // through fileUrlMap and .filter(Boolean)s anything that doesn't resolve —
+  // can actually show the optimistic tile for a freshly uploaded image. Without
+  // this, the gallery silently filtered the entry out and the merchant saw
+  // "I added it, nothing happened".
   const fileUrlMap: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(
       effectiveProductImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
     ),
     ...shopifyMediaMap,
-  }), [effectiveProductImages, shopifyMediaMap]);
+    ...Object.fromEntries(
+      pendingProductNewMedia
+        .filter(m => m.previewUrl && m.resourceUrl)
+        .map(m => [m.resourceUrl, m.previewUrl as string])
+    ),
+  }), [effectiveProductImages, shopifyMediaMap, pendingProductNewMedia]);
 
   const urlToGid: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
@@ -703,16 +940,80 @@ export function VariantImageManager({
   const imageMetas: Record<string, ImageMeta> = useMemo(() => {
     const map: Record<string, ImageMeta> = {};
     for (const img of effectiveProductImages) {
+      // mediaMetaMap is keyed by Shopify GID — use the image's mediaId to look
+      // up its media kind (image / video / model / external_video) and apply
+      // it under both the DB-cached and the shopifyMediaMap-fresh URL so the
+      // SortableThumbnail dispatch works regardless of which URL got rendered.
+      const meta = img.mediaId ? mediaMetaMap[img.mediaId] : undefined;
       const entry: ImageMeta = {
         altText: img.altText,
         isConverting: convertingImageUrls.has(img.mediaId),
+        kind: meta?.kind,
       };
       map[img.url] = entry;
       const freshUrl = img.mediaId ? shopifyMediaMap[img.mediaId] : undefined;
       if (freshUrl && freshUrl !== img.url) map[freshUrl] = entry;
     }
+    // Optimistic-display entries for items the merchant just added through
+    // the picker modal — the file isn't on Shopify yet (productCreateMedia
+    // runs at save time), but we want the tile to appear immediately so the
+    // "click Add → nothing happens" UX gap goes away. Keyed by previewUrl
+    // because that's what we shove into displayedProductUrls below.
+    for (const pending of pendingProductNewMedia) {
+      const previewUrl = pending.previewUrl;
+      if (!previewUrl) continue;
+      // Mark as pending whether or not the URL already had a meta entry —
+      // this is the visual cue for "still unsaved", driven by the parent
+      // through pendingProductNewMedia. Once the merchant saves, the pending
+      // list is cleared and the same URL no longer flags as isPending.
+      if (map[previewUrl]) {
+        map[previewUrl] = { ...map[previewUrl], isPending: true };
+      } else {
+        map[previewUrl] = { kind: pending.kind, isPending: true };
+      }
+    }
+    // Surface mediaMetaMap's previewUrl on every keyed entry. For .glb
+    // model URLs (variant_3d_models), the only renderable preview is the
+    // client-generated snapshot stored at upload time — without copying
+    // it onto ImageMeta the SortableThumbnail falls back to the "3D"
+    // placeholder even though we have a real image to show.
+    for (const [key, m] of Object.entries(mediaMetaMap)) {
+      const existing = map[key];
+      if (existing) {
+        if (!existing.previewUrl && m.previewUrl) existing.previewUrl = m.previewUrl;
+        if (!existing.kind && m.kind) existing.kind = m.kind;
+      } else if (m.previewUrl || m.kind) {
+        // Seed the entry even when previewUrl is missing — without the kind
+        // signal, SortableThumbnail and DragOverlay fall back to the "image"
+        // branch and try to render the raw resourceUrl (.glb / .mp4) as an
+        // <img>, producing a broken-link icon. With kind populated they
+        // render the appropriate placeholder ("3D" / "▶").
+        map[key] = { kind: m.kind, previewUrl: m.previewUrl };
+      }
+    }
+    // Variant 3D models live on their own metafield (variant_3d_models +
+    // variant_3d_previews) and never pass through mediaMetaMap. Surface
+    // their kind + preview URL here so the DragOverlay (which reads from
+    // the parent's imageMetas, not from VariantGallerySection's local
+    // enrichedImageMetas) can render the real thumbnail during a drag
+    // instead of falling back to the generic "3D" placeholder.
+    for (const v of variants) {
+      const models = pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? [];
+      const previews = pendingVariant3dPreviews[v.id] ?? v.threeDPreviewUrls ?? [];
+      for (let i = 0; i < models.length; i++) {
+        const u = models[i];
+        const previewUrl = previews[i];
+        const existing = map[u];
+        if (existing) {
+          if (!existing.previewUrl && previewUrl) existing.previewUrl = previewUrl;
+          if (!existing.kind) existing.kind = "model";
+        } else {
+          map[u] = { kind: "model", previewUrl: previewUrl && previewUrl.trim() !== "" ? previewUrl : undefined };
+        }
+      }
+    }
     return map;
-  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia, variants, pendingVariant3dModels, pendingVariant3dPreviews]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
@@ -731,15 +1032,26 @@ export function VariantImageManager({
     return gids;
   }, [variants, pendingVariantGalleries, urlToGid, locallyExcludedMainGids]);
 
-  // Product image URLs to display (all or only unassigned)
+  // Product image URLs to display (all or only unassigned). Pending uploads
+  // / library re-uploads / external URLs that the merchant just queued via
+  // the picker modal land at the END of the list as ghost tiles — they
+  // disappear and get re-rendered with the real Shopify GID once the save
+  // pipeline runs productCreateMedia and /api/product-variants refetches.
   const displayedProductUrls = useMemo(() => {
     const order = pendingProductImageOrder ?? effectiveProductImages.map(i => i.url);
-    if (showAll || variants.length === 0) return order;
-    return order.filter(url => {
-      const gid = urlToGid[url];
-      return !gid || !assignedGids.has(gid);
-    });
-  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length]);
+    const baseUrls = (showAll || variants.length === 0)
+      ? order
+      : order.filter(url => {
+          const gid = urlToGid[url];
+          return !gid || !assignedGids.has(gid);
+        });
+    // Pending entries are de-duped by previewUrl; an entry with no preview
+    // (rare: a GLB without a poster) is skipped because the grid is URL-keyed.
+    const pendingPreviews = pendingProductNewMedia
+      .map(p => p.previewUrl)
+      .filter((u): u is string => typeof u === "string" && u.length > 0 && !baseUrls.includes(u));
+    return [...baseUrls, ...pendingPreviews];
+  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia]);
 
   // Detect whether the product gallery overflows the single-row collapsed height
   useEffect(() => {
@@ -794,9 +1106,36 @@ export function VariantImageManager({
       });
     }, []);
 
-  const handleVariantReorder = useCallback((variantId: string, newGids: string[]) => {
-    setPendingVariantGalleries(p => ({ ...p, [variantId]: newGids }));
-  }, []);
+  const handleVariantReorder = useCallback((variantId: string, newItems: string[]) => {
+    // `newItems` is the unified post-reorder sequence — each entry is either
+    // a file GID / staged resourceUrl OR a URL (external video or .glb 3D
+    // model). Split the three so each lands in the correct pending slot,
+    // then build the combined order JSON for variant_gallery_order.
+    //
+    // 3D-model detection by URL set, not by `.glb$` regex. Freshly uploaded
+    // models sit in pendingVariant3dModels with a Shopify staging URL whose
+    // pathname has no `.glb` extension — a regex check would mis-tag those
+    // as `kind: "url"` (external video), the server-side external-video
+    // parser would fail to extract host/id, and the storefront would
+    // silently skip the entry. The state-of-truth IS the URL set itself.
+    const variant = variants.find(v => v.id === variantId);
+    const modelUrlSet = new Set(
+      pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? []
+    );
+    const fileEntries: string[] = [];
+    const orderEntries: Array<{ kind: "file" | "url" | "model"; value: string }> = [];
+    for (const it of newItems) {
+      if (it.startsWith("http")) {
+        orderEntries.push({ kind: modelUrlSet.has(it) ? "model" : "url", value: it });
+      } else {
+        fileEntries.push(it);
+        orderEntries.push({ kind: "file", value: it });
+      }
+    }
+    setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
+    setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
+    onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
+  }, [variants, pendingVariant3dModels, onGalleryOrderChange]);
 
   const handleProductReorder = useCallback((newUrls: string[]) => {
     setPendingProductImageOrder(newUrls);
@@ -847,6 +1186,8 @@ export function VariantImageManager({
     currentOverContainerRef.current = null;
     if (autoExpandTimerRef.current) { clearTimeout(autoExpandTimerRef.current); autoExpandTimerRef.current = null; }
     if (!over) return;
+    // Self-drop: dropped on the exact tile that was picked up — abort.
+    if (over.id === active.id) return;
 
     const sourceContainerId = active.data.current?.containerId as string | undefined;
     const url = active.data.current?.url as string | undefined;
@@ -855,7 +1196,17 @@ export function VariantImageManager({
     const overStr = over.id as string;
     const sepIdx = overStr.indexOf("::");
     const targetContainerId = sepIdx !== -1 ? overStr.slice(0, sepIdx) : overStr;
-    const overUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+    // overUrl semantics:
+    //   - string: dropped on a specific tile (URL of that tile)
+    //   - null:   dropped on the container itself (whitespace)
+    //   - "__end__": dropped on the upload placeholder → append to end of container
+    // Downstream branches that expect a real URL treat "__end__" the same as
+    // null (insertGidAtPosition / no-overUrl guards). The variant-to-product
+    // explicit-tile guard now also accepts "__end__" so the merchant can drop
+    // onto the product gallery's upload tile to remove from the variant.
+    const rawOverUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
+    const isEndDrop = rawOverUrl === "__end__";
+    const overUrl = isEndDrop ? null : rawOverUrl;
 
     if (sourceContainerId === targetContainerId) {
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
@@ -869,15 +1220,116 @@ export function VariantImageManager({
         }
       } else {
         const variant = variants.find(v => v.id === sourceContainerId);
-        const gids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
-        const variantUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+        const storedGids = pendingVariantGalleries[sourceContainerId] ?? variant?.galleryFileGids ?? [];
+        // mainGid is what gets shown at position 0 in the variant gallery
+        // when storedGids doesn't already include it (legacy metafield
+        // convention: variant_gallery list.file_reference holds gallery
+        // items, mainGid is implicit at slot 0). For reorder to be aware of
+        // it (so the merchant can drag it to a different position OR drag
+        // something else to position 0 to promote that one to the new
+        // featured image), include it in the source variantUrls. If
+        // storedGids already contains it (after a prior reorder this
+        // session), use as-is — handleVariantReorder pushes mainGid into
+        // pendingVariantGalleries on each reorder so the second drag onwards
+        // doesn't need the prepend.
+        const variantMainGid = variant?.defaultImageUrl
+          ? (urlToGid[variant.defaultImageUrl] ??
+             Object.entries(urlToGid).find(([u]) =>
+               u.split("?")[0] === variant.defaultImageUrl!.split("?")[0]
+             )?.[1])
+          : undefined;
+        const hasMainImageInGallery = !locallyExcludedMainGids.has(sourceContainerId) && Boolean(variantMainGid);
+        const gids = (hasMainImageInGallery && variantMainGid && !storedGids.includes(variantMainGid))
+          ? [variantMainGid, ...storedGids]
+          : storedGids;
+        const fileUrls = gids.map(gid => fileUrlMap[gid]).filter(Boolean) as string[];
+        const externalUrls = pendingExternalVideos[sourceContainerId] ?? variant?.externalVideoUrls ?? [];
+        const modelUrls = pendingVariant3dModels[sourceContainerId] ?? variant?.threeDModelUrls ?? [];
+        // Build the same ordered display list that VariantGallerySection
+        // shows the merchant — saved order JSON first (honouring per-kind
+        // value lookups), then tail-append any item the order metafield
+        // doesn't cover. Without this, dragging a video / 3D model fired a
+        // drag-end whose URL wasn't in the (file-only) variantUrls list →
+        // indexOf returned -1 → the if-guard rejected the move and nothing
+        // happened. The merchant couldn't reorder mixed galleries.
+        const orderJsonRaw = pendingGalleryOrder[sourceContainerId] ?? variant?.galleryOrderJson ?? null;
+        const fileSet = new Set(fileUrls);
+        const externalSet = new Set(externalUrls);
+        const modelSet = new Set(modelUrls);
+        let variantUrls: string[] = [];
+        if (orderJsonRaw) {
+          try {
+            const parsed = JSON.parse(orderJsonRaw) as Array<{ kind: string; value: string }>;
+            const seenFile = new Set<string>();
+            const seenExternal = new Set<string>();
+            const seenModel = new Set<string>();
+            for (const entry of (Array.isArray(parsed) ? parsed : [])) {
+              if (entry?.kind === "file") {
+                const u = fileUrlMap[entry.value];
+                if (u && fileSet.has(u) && !seenFile.has(u)) { variantUrls.push(u); seenFile.add(u); }
+              } else if (entry?.kind === "url") {
+                if (externalSet.has(entry.value) && !seenExternal.has(entry.value)) { variantUrls.push(entry.value); seenExternal.add(entry.value); }
+              } else if (entry?.kind === "model") {
+                if (modelSet.has(entry.value) && !seenModel.has(entry.value)) { variantUrls.push(entry.value); seenModel.add(entry.value); }
+              }
+            }
+            for (const u of fileUrls) if (!seenFile.has(u)) variantUrls.push(u);
+            for (const u of externalUrls) if (!seenExternal.has(u)) variantUrls.push(u);
+            for (const u of modelUrls) if (!seenModel.has(u)) variantUrls.push(u);
+          } catch {
+            variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+          }
+        } else {
+          variantUrls = [...fileUrls, ...externalUrls, ...modelUrls];
+        }
+
         const oldIndex = variantUrls.indexOf(url);
         const newIndex = variantUrls.indexOf(overUrl);
         if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-          handleVariantReorder(
-            sourceContainerId,
-            arrayMove(variantUrls, oldIndex, newIndex).map(u => urlToGid[u] ?? u),
-          );
+          // Variant gallery position 0 maps to mediaId (MediaImage only).
+          // Refuse the drop iff the new head would be a non-image. The check
+          // covers three sources: pendingExternalVideos (YouTube/Vimeo for
+          // this variant), pendingVariant3dModels (variant .glb URLs), and
+          // any imageMetas entry whose kind is non-image. Without the first
+          // two, a video/model dragged to position 0 would slip past this
+          // guard (their URLs aren't in imageMetas) and the server-side
+          // position-0 validator would reject the whole save.
+          const isNonImage = (u: string) => {
+            if (externalSet.has(u) || modelSet.has(u)) return true;
+            const k = imageMetas[u]?.kind;
+            return k === "video" || k === "model" || k === "external_video";
+          };
+          const moved = arrayMove(variantUrls, oldIndex, newIndex);
+          if (moved[0] && isNonImage(moved[0])) {
+            console.warn("[reorder variant] refused — position 0 would be non-image", { head: moved[0] });
+            return;
+          }
+          const newItemsForReorder = moved.map(u => {
+              // External-video / 3D-model URLs must stay as URLs in the
+              // payload — handleVariantReorder's URL-pattern detection
+              // routes them to the right `kind` (`url` vs `model`).
+              // urlToGid[glbUrl] resolves to a Model3d GID when the model
+              // is also on product.media (cross-product picks), so a blind
+              // ?? would mistakenly serialise it as kind:"file" → the
+              // server rejects Model3d in variant_gallery list.file_reference
+              // AND the 3D badge disappears from the tile on the next
+              // render (no model URL in pendingVariant3dModels for that
+              // entry). Same shape concern for YouTube/Vimeo URLs even
+              // though they don't currently collide with urlToGid.
+              if (externalSet.has(u) || modelSet.has(u)) return u;
+              const exact = urlToGid[u];
+              if (exact) return exact;
+              // Fallback: strip query string and search by base URL. Without
+              // this, a file URL whose ?v= query param differs between
+              // urlToGid (built from effectiveProductImages + shopifyMediaMap)
+              // and fileUrlMap (the variantUrls source) leaks as a raw URL
+              // and handleVariantReorder mis-routes it to kind:"url" → the
+              // file vanishes from fileEntries on the next reorder.
+              const base = u.split("?")[0];
+              const stripped = Object.entries(urlToGid).find(([k]) => k.split("?")[0] === base)?.[1];
+              return stripped ?? u;
+            });
+          handleVariantReorder(sourceContainerId, newItemsForReorder);
         }
       }
       return;
@@ -887,24 +1339,37 @@ export function VariantImageManager({
     // Must be checked before urlToGid lookup — image may not be in urlToGid if resolved via shopifyMediaMap only.
     if (targetContainerId === "product") {
       if (sourceContainerId === "product") return;
+      // Destructive cross-gallery moves require Ctrl/Cmd. The gesture is
+      // undiscoverable, irreversible without an undo, and was firing on
+      // any drop landing inside the product gallery's hit rect (which
+      // wraps the whole section, including padding) — merchants kept
+      // losing variant images on incidental drag-aborts. The per-tile
+      // remove button (handleRemoveFromVariant) stays the discoverable
+      // path; modifier-drag is the power-user shortcut.
+      if (!isCtrlHeldRef.current) return;
+      // Also require a real tile target so an accidental Ctrl-held drop
+      // onto product whitespace doesn't fire.
+      if (!overUrl) return;
       const sourceVariant = variants.find(v => v.id === sourceContainerId);
-      const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
-      const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
-      if (!gidToRemove) {
-        // The dragged image is the injected main image (not stored in the metafield).
-        // Mark it as locally excluded so it disappears from the variant gallery this session.
-        const mainGid = sourceVariant?.defaultImageUrl
-          ? (urlToGid[sourceVariant.defaultImageUrl] ??
-             Object.entries(urlToGid).find(([u]) =>
-               u.split("?")[0] === sourceVariant.defaultImageUrl!.split("?")[0]
-             )?.[1])
-          : undefined;
-        if (mainGid && fileUrlMap[mainGid] === url) {
-          setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
-          onDirtyChange?.(true);
-        }
+      // Main-image-first routing: if the dragged URL matches this variant's
+      // defaultImageUrl, treat it as a main-image drag (exclude on save) BEFORE
+      // searching the gallery for a same-URL match. Two distinct MediaImage GIDs
+      // can share the same CDN URL (Shopify deduplicates the underlying Files
+      // asset), so a gallery file with the same URL as the main image would
+      // otherwise win the find() below and the main-image exclusion path would
+      // never fire — the wrong GID would be stripped from the metafield while
+      // the main image stayed on the variant.
+      const draggedMatchesMain = sourceVariant?.defaultImageUrl &&
+        (sourceVariant.defaultImageUrl === url ||
+         sourceVariant.defaultImageUrl.split("?")[0] === url.split("?")[0]);
+      if (draggedMatchesMain) {
+        setLocallyExcludedMainGids(prev => new Set([...prev, sourceContainerId]));
+        onDirtyChange?.(true);
         return;
       }
+      const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
+      const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
+      if (!gidToRemove) return;
       setPendingVariantGalleries(p => ({
         ...p,
         [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove),
@@ -912,7 +1377,14 @@ export function VariantImageManager({
       return;
     }
 
-    const gid = urlToGid[url];
+    // urlToGid is built from effectiveProductImages + shopifyMediaMap. The
+    // dragged tile's URL can carry a different ?v= query param than the live
+    // map entries (Shopify refreshes the version on every metadata save), so
+    // the exact-key lookup silently misses and the handler returns early —
+    // dragging a product image onto a variant felt like "nothing happens."
+    // Fall back to base-URL match.
+    const gid = urlToGid[url]
+      ?? Object.entries(urlToGid).find(([k]) => k.split("?")[0] === url.split("?")[0])?.[1];
     if (!gid) return;
 
     if (sourceContainerId !== "product") {
@@ -981,10 +1453,53 @@ export function VariantImageManager({
              )?.[1])
           : undefined;
         const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
-        return { ...p, [targetContainerId]: noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap) };
+        const next = noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap);
+        return { ...p, [targetContainerId]: next };
       });
+      // When the drop lands on the end-placeholder, also update the gallery
+      // order so the new file appears at the visual end of the COMBINED
+      // sequence (files + videos + models), not at the end of the files-only
+      // block. Without this, the default tail-append in VariantGallerySection
+      // puts a freshly-added file before existing videos/3D models because
+      // orderedUrls tail-appends in the order [files, urls, models].
+      if (isEndDrop) {
+        const existingOrderJson = pendingGalleryOrder[targetContainerId] ?? targetVariant?.galleryOrderJson;
+        const existingFileGids = pendingVariantGalleries[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
+        const externalUrls = pendingExternalVideos[targetContainerId] ?? targetVariant?.externalVideoUrls ?? [];
+        const modelUrls = pendingVariant3dModels[targetContainerId] ?? targetVariant?.threeDModelUrls ?? [];
+        let entries: Array<{ kind: "file" | "url" | "model"; value: string }> = [];
+        if (existingOrderJson) {
+          try {
+            const parsed = JSON.parse(existingOrderJson);
+            if (Array.isArray(parsed)) entries = parsed.filter((e: { kind?: string; value?: string }) => e?.kind && e?.value) as typeof entries;
+          } catch { /* fall through */ }
+        }
+        if (entries.length === 0) {
+          // Default order MUST include the main image first. variant.galleryFileGids
+          // is the raw metafield (gallery files only — main is implicit at position 0
+          // via effectiveGids prepend at render time). Without explicitly pushing
+          // mainImageGid here, the new order JSON references everything EXCEPT main,
+          // and VariantGallerySection's tail-append then pushes main to the very
+          // end of the combined sequence — visually moving the featured image to
+          // the back of the gallery.
+          const mainImageGid = targetVariant?.mainImageGid;
+          if (mainImageGid && !locallyExcludedMainGids.has(targetContainerId)) {
+            entries.push({ kind: "file", value: mainImageGid });
+          }
+          for (const g of existingFileGids) {
+            if (g !== mainImageGid) entries.push({ kind: "file", value: g });
+          }
+          for (const u of externalUrls) entries.push({ kind: "url", value: u });
+          for (const u of modelUrls) entries.push({ kind: "model", value: u });
+        }
+        entries = entries.filter(e => !(e.kind === "file" && e.value === gid));
+        entries.push({ kind: "file", value: gid });
+        const newOrderJson = JSON.stringify(entries);
+        setPendingGalleryOrder(p => ({ ...p, [targetContainerId]: newOrderJson }));
+        onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [targetContainerId]: newOrderJson });
+      }
     }
-  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingProductImageOrder, effectiveProductImages, variants, pendingVariantGalleries, pendingGalleryOrder, pendingExternalVideos, pendingVariant3dModels, fileUrlMap, urlToGid, locallyExcludedMainGids, handleProductReorder, handleVariantReorder, onGalleryOrderChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // prepend=true → image lands at position 0 (main image slot, triggered by placeholder click)
   // prepend=false → image appended to end of gallery
@@ -1001,7 +1516,6 @@ export function VariantImageManager({
 
     const newGids = [...bulkGids, ...galleryGids];
     if (newGids.length === 0) return;
-
     setPendingVariantGalleries(p => {
       const targetVariant = variants.find(v => v.id === targetVariantId);
       const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];
@@ -1045,6 +1559,259 @@ export function VariantImageManager({
     // Copy: keep action mode + selection active so user can copy to multiple variants
   }, [bulkItems, selectedBulkIds, selectedGalleryItems, activeAction, variants, urlToGid, fileUrlMap, locallyExcludedMainGids, onRemoveBulk, onSetAction]);
 
+  // Unified add-media commit. Routes the modal's three item shapes (library
+  // pick, fresh upload, external URL) into the right pending state slot
+  // depending on whether the modal was opened from a variant section or the
+  // product gallery. Closes the modal afterwards — except for URL adds,
+  // which leave it open so the merchant can pile more.
+  const handleModalAdd = useCallback((items: AddedItem[]) => {
+    if (!pickerTarget || items.length === 0) return;
+
+    // Pre-seed mediaMetaMap so library tiles render with the right overlay
+    // immediately instead of waiting for the next /api/product-variants
+    // refetch. Uploads + library items both go here.
+    setMediaMetaMap(prev => {
+      const next = { ...prev };
+      for (const it of items) {
+        if (it.source === "library") {
+          if (!next[it.gid]) next[it.gid] = { kind: it.kind, previewUrl: it.previewUrl };
+        } else if (it.source === "upload") {
+          if (!next[it.resourceUrl]) next[it.resourceUrl] = { kind: it.kind, previewUrl: it.previewUrl };
+        } else if (it.source === "external_url") {
+          // Without this, imageMetas had no entry for the queued YouTube/Vimeo
+          // URL — the DragOverlay then fell into the "treat as image" branch
+          // and rendered the YouTube watch URL inside <img src> (broken link
+          // during drag).
+          if (!next[it.url]) next[it.url] = { kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) ?? "" };
+        }
+      }
+      return next;
+    });
+
+    if (pickerTarget.mode === "variant") {
+      // ──────────────────────────────────────────────────────────────────
+      // VARIANT MODE
+      //   library  → image/video: append GID to pendingVariantGalleries
+      //              model:       extract assetUrl, push to variant_3d_models
+      //                           (Shopify's list.file_reference rejects
+      //                           Media3d, so 3D models live in their own
+      //                           list.url metafield)
+      //   upload   → image/video: append resourceUrl to pendingVariantGalleries
+      //                           (resolved to a real GID at save time via
+      //                           resourceUrlToGid) AND register the upload
+      //                           in pendingProductNewMedia so the backend
+      //                           actually runs productCreateMedia for it
+      //              model:       register the upload in pendingProductNewMedia
+      //                           (Shopify materializes it as a Model3d on
+      //                           product.media) AND push the staging URL
+      //                           into pendingVariant3dModels — the backend
+      //                           polls Model3d.sources after productCreateMedia
+      //                           and substitutes the staging URL with the
+      //                           final CDN URL before metafieldsSet runs.
+      //                           If processing exceeds ~9s the URL gets
+      //                           dropped with reason "processing" and the
+      //                           merchant retries the save in a moment.
+      //   external → handle via the URL path (variantExternalVideos)
+      // ──────────────────────────────────────────────────────────────────
+      const variantId = pickerTarget.variantId;
+      const refsForGallery: string[] = [];
+      const uploadEntries: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }> = [];
+      for (const it of items) {
+        if (it.source === "library") {
+          if (it.kind === "model") {
+            // Library-picked models inherit Shopify's auto-generated
+            // Model3d.preview thumbnail (the same URL the modal grid
+            // showed). Without forwarding it the variant tile fell back
+            // to the "3D" placeholder even though we already had a real
+            // image to display.
+            if (it.assetUrl) handleAddThreeDModelUrl(variantId, it.assetUrl, it.previewUrl ?? "");
+          } else {
+            refsForGallery.push(it.gid);
+            // Library-picked images/videos that aren't already on this
+            // product's media should also land on product.media (so they
+            // show up in the theme's product gallery, not just in the
+            // variant metafield). Position-0 picks are already enforced by
+            // Shopify (mediaId rejects MediaImage from other products), but
+            // position-1+ picks would otherwise live only in the variant
+            // metafield — inconsistent with the merchant's expectation that
+            // "added to a variant" means "part of the product".
+            // We only clone images for now: productCreateMedia accepts a
+            // public URL as originalSource for IMAGE, but VIDEO/MODEL_3D
+            // require staged-uploads URLs (no server-side download+restage
+            // path exists yet). Cross-product video library picks therefore
+            // stay metafield-only; same-product picks were already on
+            // product.media so no clone is needed.
+            const alreadyOnThisProduct = !!shopifyMediaMap[it.gid];
+            if (it.kind === "image" && !alreadyOnThisProduct && it.assetUrl) {
+              uploadEntries.push({ resourceUrl: it.assetUrl, kind: "image", previewUrl: it.previewUrl });
+            }
+          }
+        } else if (it.source === "upload") {
+          if (it.kind === "model") {
+            // Materialize the .glb on product.media so the library and the
+            // storefront agree on the asset, AND register the staging URL
+            // for backend post-create resolution → variant_3d_models.
+            uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+            // persistentPreviewUrl is the CDN URL of the snapshot JPEG
+            // uploaded by BulkImageUploadPanel via fileCreate. Empty if the
+            // snapshot pipeline failed or wasn't ready before the merchant
+            // clicked "Confirm" — handler treats it as "no preview" and the
+            // storefront falls back to the placeholder.
+            handleAddThreeDModelUrl(variantId, it.resourceUrl, it.persistentPreviewUrl ?? "");
+          } else {
+            refsForGallery.push(it.resourceUrl);
+            uploadEntries.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+          }
+        } else if (it.source === "external_url") {
+          handleAddExternalVideoUrl(variantId, it.url);
+        }
+      }
+      if (uploadEntries.length > 0) {
+        setPendingProductNewMedia(prev => {
+          const seen = new Set(prev.map(e => e.resourceUrl));
+          return [...prev, ...uploadEntries.filter(e => !seen.has(e.resourceUrl))];
+        });
+      }
+      if (refsForGallery.length > 0) {
+        setPendingVariantGalleries(prev => {
+          const variant = variants.find(v => v.id === variantId);
+          const current = prev[variantId] ?? variant?.galleryFileGids ?? [];
+          const seen = new Set(current);
+          const additions = refsForGallery.filter(r => !seen.has(r));
+          if (additions.length === 0) return prev;
+          return { ...prev, [variantId]: [...current, ...additions] };
+        });
+      }
+    } else {
+      // ──────────────────────────────────────────────────────────────────
+      // PRODUCT MODE — every item ends up as a new product.media via the
+      // pendingProductNewMedia queue. The library branch reuses the file's
+      // assetUrl as the originalSource (Shopify deduplicates the underlying
+      // asset, even if a new media node is created). The external_url
+      // branch uses the canonical YouTube/Vimeo URL with kind=external_video
+      // so productCreateMedia gets mediaContentType: EXTERNAL_VIDEO.
+      // ──────────────────────────────────────────────────────────────────
+      const additions: Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }> = [];
+      for (const it of items) {
+        if (it.source === "library") {
+          if (!it.assetUrl) continue; // library entries without an asset URL can't be re-uploaded
+          additions.push({ resourceUrl: it.assetUrl, kind: it.kind, previewUrl: it.previewUrl });
+        } else if (it.source === "upload") {
+          additions.push({ resourceUrl: it.resourceUrl, kind: it.kind, previewUrl: it.previewUrl });
+        } else if (it.source === "external_url") {
+          additions.push({ resourceUrl: it.url, kind: "external_video", previewUrl: youtubeThumbForUrl(it.url) });
+        }
+      }
+      if (additions.length > 0) {
+        setPendingProductNewMedia(prev => {
+          const seen = new Set(prev.map(e => e.resourceUrl));
+          return [...prev, ...additions.filter(e => !seen.has(e.resourceUrl))];
+        });
+      }
+    }
+
+    // Always close the modal once the merchant has hit "Add selected".
+    // External URLs used to skip the modal entirely (onAddExternalUrl fired
+    // synchronously when the merchant pressed "+ Add URL"), so the modal
+    // intentionally stayed open after a URL commit. URLs now queue in the
+    // same selection grid as uploads / library picks and ride out via the
+    // same Add-selected button — closing the modal afterwards keeps the
+    // flow consistent across all three sources.
+    setPickerTarget(null);
+    // handleAddExternalVideoUrl / handleAddThreeDModelUrl are declared after
+    // this callback (parent ordering); intentionally omitted from deps —
+    // they are captured via closure at call-time, never re-bound.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerTarget, variants]);
+
+  // Called the moment the merchant hits "Add link" inside the modal. Wired
+  // in both modes — product-mode URLs ride through the same handleModalAdd
+  // by being represented as an AddedItem with source "external_url", so
+  // variant- and product-routing stay in one place.
+  const handleModalAddExternalUrl = useCallback((url: string) => {
+    if (!pickerTarget) return;
+    if (pickerTarget.mode === "variant") {
+      handleAddExternalVideoUrl(pickerTarget.variantId, url);
+    } else {
+      // Product mode: bounce through handleModalAdd so the same dedup +
+      // mediaMetaMap seeding logic applies.
+      handleModalAdd([{ source: "external_url", url }]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerTarget, handleModalAdd]);
+
+  // External-video URL handlers. The "effective" URL list for a variant is
+  // pendingExternalVideos[id] if the merchant has touched the row this session,
+  // otherwise the server-loaded variant.externalVideoUrls. We notify the parent
+  // hook on every mutation so its handleApply can ship the changes alongside
+  // the regular gallery save without an extra round-trip.
+  const handleAddExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    setPendingExternalVideos(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+      if (current.includes(url)) return prev;
+      const next = { ...prev, [variantId]: [...current, url] };
+      onExternalVideosChange?.(next);
+      return next;
+    });
+  }, [variants, onExternalVideosChange]);
+
+  const handleRemoveExternalVideoUrl = useCallback((variantId: string, url: string) => {
+    setPendingExternalVideos(prev => {
+      const variant = variants.find(v => v.id === variantId);
+      const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+      const next = { ...prev, [variantId]: current.filter(u => u !== url) };
+      onExternalVideosChange?.(next);
+      return next;
+    });
+  }, [variants, onExternalVideosChange]);
+
+  // 3D-model URL handlers — mirror the external-video pair, with the
+  // additional twist that variant_3d_previews is a parallel list.url
+  // metafield. Add appends to BOTH arrays at the same index; remove
+  // deletes at the same index in both. previewUrl defaults to "" so a
+  // library-picked model (no admin-side snapshot) still adds — the
+  // storefront falls back to its "3D" wordmark placeholder for that slot.
+  const handleAddThreeDModelUrl = useCallback((variantId: string, url: string, previewUrl: string = "") => {
+    const variant = variants.find(v => v.id === variantId);
+    setPendingVariant3dModels(prev => {
+      const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+      if (current.includes(url)) return prev;
+      const next = { ...prev, [variantId]: [...current, url] };
+      onThreeDModelsChange?.(next);
+      return next;
+    });
+    setPendingVariant3dPreviews(prev => {
+      const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+      if (currentModels.includes(url)) return prev;
+      const current = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+      const next = { ...prev, [variantId]: [...current, previewUrl] };
+      onThreeDPreviewsChange?.(next);
+      return next;
+    });
+  }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
+
+  const handleRemoveThreeDModelUrl = useCallback((variantId: string, url: string) => {
+    const variant = variants.find(v => v.id === variantId);
+    const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+    const idx = currentModels.indexOf(url);
+    setPendingVariant3dModels(prev => {
+      const cur = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+      const next = { ...prev, [variantId]: cur.filter(u => u !== url) };
+      onThreeDModelsChange?.(next);
+      return next;
+    });
+    if (idx >= 0) {
+      setPendingVariant3dPreviews(prev => {
+        const cur = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+        const nextArr = cur.filter((_, i) => i !== idx);
+        const next = { ...prev, [variantId]: nextArr };
+        onThreeDPreviewsChange?.(next);
+        return next;
+      });
+    }
+  }, [variants, pendingVariant3dModels, onThreeDModelsChange, onThreeDPreviewsChange]);
+
   const handleRemoveFromGallery = useCallback((variantId: string, urls: string[]) => {
     const urlSet = new Set(urls);
     const variant = variants.find(v => v.id === variantId);
@@ -1055,6 +1822,50 @@ export function VariantImageManager({
       setLocallyExcludedMainGids(prev => new Set([...prev, variantId]));
     }
 
+    // URL-backed items live in their own list.url metafields, not in
+    // pendingVariantGalleries. Split the removal so each URL ends up clearing
+    // the right slot. Membership in pendingVariant3dModels (falling back to
+    // the server-loaded variant.threeDModelUrls) is the source of truth —
+    // a regex on `.glb$` would miss freshly uploaded models that still sit
+    // on a Shopify staging URL without that extension.
+    const httpUrls = urls.filter(u => u.startsWith("http"));
+    const modelUrlSet = new Set(
+      pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? []
+    );
+    const modelToRemove = httpUrls.filter(u => modelUrlSet.has(u));
+    const externalToRemove = httpUrls.filter(u => !modelUrlSet.has(u));
+    if (externalToRemove.length > 0) {
+      setPendingExternalVideos(prev => {
+        const current = prev[variantId] ?? variant?.externalVideoUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
+        onExternalVideosChange?.(next);
+        return next;
+      });
+    }
+    if (modelToRemove.length > 0) {
+      // Capture the pre-removal model index for every removed URL so we
+      // can prune the parallel preview array at the SAME indices. Doing
+      // both lookups against `current` before any setState keeps the
+      // ordering aligned even if multiple models are removed at once.
+      const currentModels = pendingVariant3dModels[variantId] ?? variant?.threeDModelUrls ?? [];
+      const removedIndices = new Set(
+        modelToRemove
+          .map(u => currentModels.indexOf(u))
+          .filter(i => i >= 0)
+      );
+      setPendingVariant3dModels(prev => {
+        const current = prev[variantId] ?? variant?.threeDModelUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter(u => !urlSet.has(u)) };
+        onThreeDModelsChange?.(next);
+        return next;
+      });
+      setPendingVariant3dPreviews(prev => {
+        const current = prev[variantId] ?? variant?.threeDPreviewUrls ?? [];
+        const next = { ...prev, [variantId]: current.filter((_, i) => !removedIndices.has(i)) };
+        onThreeDPreviewsChange?.(next);
+        return next;
+      });
+    }
     setPendingVariantGalleries(p => {
       const current = p[variantId] ?? variant?.galleryFileGids ?? [];
       return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
@@ -1064,7 +1875,7 @@ export function VariantImageManager({
       urls.forEach(u => next.delete(`${variantId}::${u}`));
       return next;
     });
-  }, [variants, fileUrlMap]);
+  }, [variants, fileUrlMap, pendingVariant3dModels, onExternalVideosChange, onThreeDModelsChange, onThreeDPreviewsChange]);
 
   const productSelectedUrls = useMemo(() => {
     const urls: string[] = [];
@@ -1181,7 +1992,16 @@ export function VariantImageManager({
           })),
         }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(
+            t.imageManager.imageQuotaExceeded.replace("{limit}", String(body.limit ?? ""))
+          );
+          return;
+        }
+        throw new Error();
+      }
       localStorage.setItem(`webp_${productId}`, "1");
       setIsConvertingWebP(true);
       startWebPPolling(productId);
@@ -1191,6 +2011,7 @@ export function VariantImageManager({
   }, [productId, productTitle, startWebPPolling, pendingProductImageOrder, productImages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUploadToVariant = useCallback(async (variantId: string, files: File[]) => {
+    setWebpError(null); // clear any stale error before a fresh upload
     for (const file of files) {
       try {
         const res = await fetch("/api/staged-upload", {
@@ -1198,16 +2019,31 @@ export function VariantImageManager({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error } = await res.json();
+        const { url, resourceUrl, parameters, httpMethod, error, code, limit } = await res.json();
+        if (code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
+          break;
+        }
         if (error || !url) continue;
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.onload = () => resolve();
           xhr.onerror = () => reject();
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // See FilePickerModal — PUT (image) vs multipart POST (video/3D).
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
 
         if (resourceUrl) {
@@ -1231,27 +2067,56 @@ export function VariantImageManager({
   }, [variants, urlToGid, locallyExcludedMainGids]);
 
   const handleUploadToProductGallery = useCallback(async (files: File[]) => {
+    setWebpError(null); // clear any stale error before a fresh upload
     for (const file of files) {
       try {
+        // Classify so we (a) know what to push into pendingProductNewMedia
+        // (which is typed as Array<{resourceUrl, kind, previewUrl?}>) and
+        // (b) dispatch the upload XHR correctly per Shopify's resource type.
+        const kind: MediaKind = (classifyFile(file.type, file.name) ?? "image");
         const res = await fetch("/api/staged-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ filename: file.name, mimeType: file.type, fileSize: file.size }),
         });
-        const { url, resourceUrl, error } = await res.json();
+        const { url, resourceUrl, parameters, httpMethod, error, code, limit } = await res.json();
+        if (code === "IMAGE_QUOTA_EXCEEDED") {
+          setWebpError(t.imageManager.imageQuotaExceeded.replace("{limit}", String(limit ?? "")));
+          break;
+        }
         if (error || !url) continue;
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.onload = () => resolve();
           xhr.onerror = () => reject();
-          xhr.open("PUT", url);
-          xhr.setRequestHeader("Content-Type", file.type);
-          xhr.send(file);
+          // PUT (image) vs multipart POST (video/3D). The previous always-PUT
+          // path produced a 405 against video / model staged targets, so a
+          // drag-drop .glb to the product-gallery placeholder silently
+          // failed and the merchant saw the modal close with nothing saved.
+          if (httpMethod === "POST") {
+            const form = new FormData();
+            for (const p of (parameters ?? []) as Array<{ name: string; value: string }>) {
+              form.append(p.name, p.value);
+            }
+            form.append("file", file);
+            xhr.open("POST", url);
+            xhr.send(form);
+          } else {
+            xhr.open("PUT", url);
+            xhr.setRequestHeader("Content-Type", file.type);
+            xhr.send(file);
+          }
         });
 
         if (resourceUrl) {
-          setPendingProductNewMedia(p => [...p, resourceUrl]);
+          // Push the typed shape — bare resourceUrl strings would survive the
+          // local state (resourceUrl is `any` from res.json) and then crash
+          // silently in handleApply when it does m.resourceUrl / m.kind on
+          // a string, producing newMedia entries with undefined fields that
+          // productCreateMedia drops.
+          const previewUrl = kind === "image" ? URL.createObjectURL(file) : undefined;
+          setPendingProductNewMedia(p => [...p, { resourceUrl, kind, previewUrl }]);
         }
       } catch {
         // silent — user can retry
@@ -1551,6 +2416,10 @@ export function VariantImageManager({
               thumbSize={thumbSize}
               skipDndContext
               onUploadToGallery={handleUploadToProductGallery}
+              // Product-gallery placeholder click opens the central add-media
+              // modal in "product" mode — uploads queue, library picks land
+              // on product.media, no external-video row.
+              onOpenPicker={() => setPickerTarget({ mode: "product" })}
               localAltTexts={localAltTexts}
               isPrimaryLocale={isPrimaryLocale}
             />
@@ -1789,24 +2658,59 @@ export function VariantImageManager({
                      u.split("?")[0] === v.defaultImageUrl!.split("?")[0]
                    )?.[1])
                 : undefined;
-              // Always strip mainGid from the gallery portion and re-inject once at position 0.
-              // This prevents duplicate React keys when mainGid was wrongly saved into the
-              // metafield (which would cause React to silently drop the second occurrence).
-              // Skip injection when the user dragged the main image to the product gallery this session.
-              const galleryGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
               // hasMainImage is true only when a native Shopify main image (defaultImageUrl) resolves
               // to a GID. Gallery-only images from the metafield are NOT a substitute — without a
               // native main image the section must show the placeholder and pulse warning.
               const hasMainImageForVariant = !locallyExcludedMainGids.has(v.id) && Boolean(mainGid);
-              const effectiveGids = hasMainImageForVariant
-                ? [mainGid!, ...galleryGids]
-                : galleryGids;
+              // effectiveGids is the ordered file-GID list the variant gallery
+              // renders. Three cases:
+              //   1. No main image (none on Shopify, or merchant locally excluded it):
+              //      use storedGids as-is, with mainGid filtered out as a safety net.
+              //   2. Legacy state: storedGids excludes mainGid (the metafield holds
+              //      gallery items only). Prepend mainGid so it shows at position 0.
+              //   3. Post-reorder state: storedGids ALREADY contains mainGid in some
+              //      position (handleVariantReorder always pushes the full ordered
+              //      list including mainGid). Use as-is and dedup defensively — DO
+              //      NOT force mainGid back to slot 0, otherwise the merchant's
+              //      drag to demote it would visually snap back.
+              let effectiveGids: string[];
+              if (!hasMainImageForVariant) {
+                effectiveGids = mainGid ? storedGids.filter(g => g !== mainGid) : storedGids;
+              } else if (mainGid && !storedGids.includes(mainGid)) {
+                effectiveGids = [mainGid, ...storedGids];
+              } else {
+                // Dedup while preserving first-seen order (handles the rare
+                // bug case where the metafield contained mainGid twice).
+                const seen = new Set<string>();
+                effectiveGids = storedGids.filter(g => {
+                  if (seen.has(g)) return false;
+                  seen.add(g);
+                  return true;
+                });
+              }
               return (
               <VariantGallerySection
                 key={v.id}
                 variant={{
                   ...v,
                   galleryFileGids: effectiveGids,
+                  // Inject the in-session pending order so a fresh reorder
+                  // is reflected in displayUrls immediately. Without this,
+                  // VariantGallerySection's orderedUrls memo reads the
+                  // saved-but-stale variant.galleryOrderJson and the drag
+                  // appeared to do nothing (especially obvious for mixed
+                  // galleries — file reorders sneaked through the tail-
+                  // append branch when no order JSON existed yet, but
+                  // anything with a saved order or any non-file drop
+                  // looked like a no-op).
+                  galleryOrderJson: pendingGalleryOrder[v.id] ?? v.galleryOrderJson,
+                  // Inject the in-session preview URLs so a freshly library-
+                  // picked 3D model (where the modal grid already had the
+                  // Shopify thumbnail) renders with that thumbnail in the
+                  // variant gallery, not just the "3D" placeholder. Without
+                  // this the tile waited until the next save → /api/product-
+                  // variants refetch before showing the preview.
+                  threeDPreviewUrls: pendingVariant3dPreviews[v.id] ?? v.threeDPreviewUrls,
                 }}
                 hasMainImage={hasMainImageForVariant}
                 fileUrlMap={fileUrlMap}
@@ -1832,6 +2736,12 @@ export function VariantImageManager({
                 primaryLocale={primaryLocale}
                 skipDndContext
                 forceOpen={autoExpandId === v.id}
+                externalVideoUrls={pendingExternalVideos[v.id] ?? v.externalVideoUrls ?? []}
+                onAddExternalVideoUrl={handleAddExternalVideoUrl}
+                onRemoveExternalVideoUrl={handleRemoveExternalVideoUrl}
+                threeDModelUrls={pendingVariant3dModels[v.id] ?? v.threeDModelUrls ?? []}
+                onRemoveThreeDModelUrl={handleRemoveThreeDModelUrl}
+                onBrowseLibrary={() => setPickerTarget({ mode: "variant", variantId: v.id })}
               />
               );
             })
@@ -1844,22 +2754,64 @@ export function VariantImageManager({
       </BlockStack>
     </Card>
     <DragOverlay>
-      {activeDragUrl ? (
+      {activeDragUrl ? (() => {
+        // Non-image tiles can't render the resourceUrl directly as an <img>
+        // (.mp4 / .glb / youtube watch URLs are not images). Use the meta's
+        // previewUrl (variant_3d_previews snapshot, YouTube/Vimeo thumb,
+        // video poster) and fall back to a kind-specific placeholder when
+        // no preview exists.
+        //
+        // URL-pattern fallback: variant-scope external videos and 3D models
+        // live in their own metafields (variant_external_videos /
+        // variant_3d_models), so their URLs never get seeded into mediaMetaMap.
+        // Inferring kind from the URL itself keeps the overlay correct without
+        // having to mirror every variant-mode write into mediaMetaMap.
+        const meta = imageMetas[activeDragUrl];
+        const inferredKind: MediaKind | undefined = meta?.kind
+          ?? (parseExternalVideoUrl(activeDragUrl) ? "external_video"
+            : /\.(glb|gltf)(\?|$)/i.test(activeDragUrl) ? "model"
+            : /\.(mp4|mov|webm)(\?|$)/i.test(activeDragUrl) ? "video"
+            : undefined);
+        const isImage = !inferredKind || inferredKind === "image";
+        const ytThumb = inferredKind === "external_video" ? youtubeThumbForUrl(activeDragUrl) : undefined;
+        const thumbSrc = isImage ? activeDragUrl : (meta?.previewUrl || ytThumb || null);
+        const placeholderLabel = inferredKind === "model" ? "3D" : inferredKind === "video" ? "▶" : inferredKind === "external_video" ? "▶" : null;
+        return (
         <div style={{ position: "relative", display: "inline-block" }}>
-          <img
-            src={activeDragUrl}
-            alt=""
-            style={{
-              width: thumbSize,
-              height: thumbSize,
-              objectFit: "cover",
-              borderRadius: 6,
-              opacity: 0.9,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
-              pointerEvents: "none",
-              display: "block",
-            }}
-          />
+          {thumbSrc ? (
+            <img
+              src={thumbSrc}
+              alt=""
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                opacity: 0.9,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                pointerEvents: "none",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                opacity: 0.9,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                pointerEvents: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#1a1a1a",
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: meta?.kind === "model" ? 24 : 32,
+              }}
+            >{placeholderLabel}</div>
+          )}
           {isCtrlHeld && (
             <div style={{
               position: "absolute",
@@ -1880,8 +2832,39 @@ export function VariantImageManager({
             }}>+</div>
           )}
         </div>
-      ) : null}
+        );
+      })() : null}
     </DragOverlay>
+    <FilePickerModal
+      open={pickerTarget !== null}
+      onClose={() => setPickerTarget(null)}
+      onAdd={handleModalAdd}
+      // External-video URLs work in both modes: variant scope persists to
+      // the per-variant metafield, product scope adds an ExternalVideo node
+      // to product.media via productCreateMedia EXTERNAL_VIDEO.
+      onAddExternalUrl={handleModalAddExternalUrl}
+      // Queue mode for both variant and product flows: the merchant wants
+      // to see the upload land in the modal grid, optionally select / deselect
+      // it, then click "Add" once. Immediate mode (used for variant uploads
+      // earlier) auto-committed on xhr.onload → modal closed before the
+      // merchant could confirm, which felt like a bug ("ich kam nicht zum
+      // Knopf"). Queue is consistent across both modes now.
+      uploadCommitMode="queue"
+      // Models are now accepted in variant mode too — picked .glb URLs are
+      // routed to custom.variant_3d_models (list.url) instead of the
+      // variant_gallery file_reference metafield (which rejects Media3d).
+      // disallowModel stays available as an API for callers that need to
+      // hide 3D entirely; nothing in the merchant flow sets it today.
+      disallowModel={false}
+      currentProductId={productId}
+      title={
+        pickerTarget?.mode === "variant"
+          ? (t.imageManager.addMediaToVariantTitle ?? "Add media to variant")
+              .replace("{title}", variants.find(v => v.id === pickerTarget.variantId)?.title ?? "")
+          : (t.imageManager.addMediaToProductTitle ?? "Add media to product")
+      }
+    />
     </DndContext>
   );
 }
+

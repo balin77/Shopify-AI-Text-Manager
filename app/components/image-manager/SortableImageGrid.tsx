@@ -1,10 +1,12 @@
 import { useRef } from "react";
-import { useSortable, SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
+import { useSortable, SortableContext, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { DndContext, closestCenter, MouseSensor, TouchSensor, KeyboardSensor, useSensor, useSensors, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
 import type { ImageMeta } from "./types";
+// MediaKind is referenced indirectly via ImageMeta.kind — no direct import
+// needed here, but kept as a comment for grep-discoverability of the dispatch.
 
 function getFormatBadge(url: string, mimeType?: string): { label: string; color: string } | null {
   const lower = url.toLowerCase();
@@ -29,17 +31,36 @@ interface PlaceholderThumbnailProps {
   onDrop: () => void;
   onUpload: (files: File[]) => void;
   thumbSize: number;
+  /** Container ID this placeholder belongs to. Used to register the drop-at-end
+   *  droppable so cross-gallery drags onto the upload tile route to the right
+   *  container. */
+  containerId: string;
+  /** When set, a plain click on the placeholder opens the parent's media
+   *  picker modal instead of launching the OS file dialog directly. The
+   *  modal is the new central entry point for browse-library + upload +
+   *  external-video URL — having the placeholder bypass it would split the
+   *  add-media UX into two diverging flows. */
+  onOpenPicker?: () => void;
 }
 
-function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: PlaceholderThumbnailProps) {
+function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpenPicker, containerId }: PlaceholderThumbnailProps) {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isActionMode = activeAction !== null;
+  // Distinct droppable so a cross-gallery drag that lands on the upload tile
+  // routes to "append to end of this container". Without it, pointerWithin
+  // sometimes resolved to an adjacent product tile and the merchant's drop
+  // turned into a within-product reorder instead of a copy into the target.
+  const { setNodeRef: setEndDropRef, isOver } = useDroppable({ id: `${containerId}::__end__` });
 
-  const borderColor = isActionMode
+  const borderColor = isOver
+    ? "#005bd3"
+    : isActionMode
     ? (activeAction === "copy" ? "#008060" : "#005bd3")
     : "#c9cccf";
-  const bgColor = isActionMode
+  const bgColor = isOver
+    ? "rgba(0,91,211,0.12)"
+    : isActionMode
     ? (activeAction === "copy" ? "rgba(0,128,96,0.07)" : "rgba(0,91,211,0.07)")
     : "transparent";
   const labelColor = isActionMode
@@ -48,6 +69,7 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
 
   return (
     <div
+      ref={setEndDropRef}
       style={{
         width: thumbSize,
         height: thumbSize,
@@ -64,14 +86,25 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize }: Pla
         gap: 4,
       }}
       onClick={() => {
-        if (isActionMode) onDrop();
+        if (isActionMode) {
+          onDrop();
+          return;
+        }
+        // When the parent gave us a picker handler the modal is the canonical
+        // way to add media (browse / upload / URL all in one place). The
+        // hidden <input> only fires as a last-resort fallback if no handler
+        // is wired — keeps the component usable in isolation / older callers.
+        if (onOpenPicker) onOpenPicker();
         else fileInputRef.current?.click();
       }}
     >
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        // Fallback when no onOpenPicker is wired — same whitelist as the
+        // modal so behaviour stays consistent across both entry points.
+        // /api/staged-upload revalidates via classifyFile() server-side.
+        accept="image/*,video/mp4,video/quicktime,video/webm,model/gltf-binary,model/gltf+json,.glb,.gltf"
         multiple
         style={{ display: "none" }}
         onChange={(e) => {
@@ -123,13 +156,29 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
     id: sortableId,
     data: { containerId, url },
   });
-  const formatBadge = getFormatBadge(url, meta?.mimeType);
+  // Format badge is only meaningful for images — video / model / external
+  // video have their own play / 3D / host overlays and showing JPG/PNG/etc
+  // on a video poster would just be confusing.
+  const kind = meta?.kind ?? "image";
+  const formatBadge = kind === "image" ? getFormatBadge(url, meta?.mimeType) : null;
   const currentLocaleAltText = isPrimaryLocale
     ? (localAltTexts?.[url] ?? meta?.altText ?? "")
     : (localAltTexts?.[url] ?? "");
   const hasAlt = Boolean(currentLocaleAltText);
   const filename = extractFilename(url);
   const isConverting = Boolean(meta?.isConverting);
+  const isPending = Boolean(meta?.isPending);
+
+  const tileBorder = isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5");
+  const tileBoxShadow = isMain
+    ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
+    : "none";
+
+  // Pending tiles render half-transparent with a "Save?" badge so the merchant
+  // sees which items are still unsaved at a glance. Combines multiplicatively
+  // with the drag-in-flight opacity so dragging a pending tile stays visible.
+  const pendingOpacity = isPending ? 0.55 : 1;
+  const dragOpacity = isDragging ? 0.5 : 1;
 
   return (
     <div
@@ -138,7 +187,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.5 : 1,
+        opacity: pendingOpacity * dragOpacity,
         position: "relative",
         userSelect: "none",
       }}
@@ -148,23 +197,186 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         {...listeners}
         style={{ cursor: "grab" }}
         onClick={(e) => { e.stopPropagation(); onSelect(!isSelected); }}
+        // R4-UX5: this is a selectable/deletable/draggable item whose
+        // selected & "main image" state was conveyed by border colour only.
+        // Expose it as a toggle with a textual name + state so the image
+        // manager / bulk-delete is usable without sight.
+        role="button"
+        aria-pressed={isSelected}
+        aria-label={
+          (currentLocaleAltText || t.imageManager.imageThumbLabel) +
+          (isMain ? `, ${t.imageManager.mainImage}` : "")
+        }
       >
-        <img
-          src={url}
-          alt=""
-          draggable={false}
-          style={{
-            width: thumbSize,
-            height: thumbSize,
-            objectFit: "cover",
-            borderRadius: 6,
-            border: isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5"),
-            boxShadow: isMain
-              ? (isSelected ? "0 0 0 2px #e6a817" : "0 0 0 2px rgba(230,168,23,0.35)")
-              : "none",
-            display: "block",
-          }}
-        />
+        {kind === "model" && (!url || !/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(url)) ? (
+          // No directly-renderable URL. Two render branches:
+          //   • meta.previewUrl set → client-generated snapshot (blob: URL
+          //     from BulkImageUploadPanel's threeDSnapshot pipeline, or in
+          //     a later stage a CDN URL persisted via variant_3d_previews).
+          //     Render as <img> so the merchant sees the actual model.
+          //   • previewUrl missing → fall back to a "3D" placeholder tile
+          //     so the entry is at least identifiable.
+          meta?.previewUrl ? (
+            <img
+              src={meta.previewUrl}
+              alt={currentLocaleAltText || `${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
+              draggable={false}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#f1f2f4",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              aria-label={`${t.imageManager.modelLabel ?? "3D model"}: ${filename}`}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#f1f2f4",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#616161",
+                fontWeight: 700,
+                fontSize: Math.max(10, Math.round(thumbSize * 0.18)),
+                letterSpacing: 0.5,
+              }}
+            >
+              3D
+            </div>
+          )
+        ) : kind === "external_video" ? (
+          // YouTube / Vimeo URL: the merchant's URL is not an image, so we
+          // either fetch the host's thumbnail (img.youtube.com for YT) when
+          // available via meta.previewUrl, or render a flat tile with the
+          // host name. The play overlay sits on top either way.
+          meta?.externalHost === "YouTube" || meta?.externalHost === "youtube" ? (
+            <img
+              src={(() => {
+                const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/) || url.match(/youtu\.be\/([A-Za-z0-9_-]{11})/) || url.match(/youtube\.com\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
+                return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : "";
+              })()}
+              alt={currentLocaleAltText || t.imageManager.externalVideoLabel || "External video"}
+              draggable={false}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                objectFit: "cover",
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "#0b0b0b",
+                display: "block",
+              }}
+            />
+          ) : (
+            <div
+              aria-label={currentLocaleAltText || (t.imageManager.externalVideoLabel ?? "External video")}
+              style={{
+                width: thumbSize,
+                height: thumbSize,
+                borderRadius: 6,
+                border: tileBorder,
+                boxShadow: tileBoxShadow,
+                background: "linear-gradient(135deg, #1ab7ea 0%, #007ea8 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "white",
+                fontWeight: 700,
+                fontSize: Math.max(11, Math.round(thumbSize * 0.16)),
+                letterSpacing: 0.5,
+              }}
+            >
+              {meta?.externalHost ?? "VIDEO"}
+            </div>
+          )
+        ) : (
+          <img
+            src={url}
+            alt={currentLocaleAltText || t.imageManager.imageThumbLabel}
+            draggable={false}
+            style={{
+              width: thumbSize,
+              height: thumbSize,
+              objectFit: "cover",
+              borderRadius: 6,
+              border: tileBorder,
+              boxShadow: tileBoxShadow,
+              display: "block",
+            }}
+          />
+        )}
+
+        {/* Media-type overlays (mirrors the storefront tile language so the
+            admin gallery and the storefront gallery stay visually consistent).
+            Skipped for plain images. */}
+        {(kind === "video" || kind === "external_video") && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              inset: 0,
+              borderRadius: 6,
+              background: "rgba(0,0,0,0.32)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <svg width={Math.max(18, Math.round(thumbSize * 0.32))} height={Math.max(18, Math.round(thumbSize * 0.32))} viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z" /></svg>
+          </div>
+        )}
+        {kind === "model" && url && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              right: 4,
+              bottom: 4,
+              background: "rgba(0,0,0,0.72)",
+              color: "#fff",
+              font: "700 10px/1 system-ui, sans-serif",
+              letterSpacing: 0.5,
+              padding: "2px 5px",
+              borderRadius: 3,
+              pointerEvents: "none",
+            }}
+          >
+            3D
+          </div>
+        )}
+        {kind === "external_video" && meta?.externalHost && (
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: 4,
+              left: 4,
+              background: "rgba(0,0,0,0.72)",
+              color: "#fff",
+              font: "700 9px/1 system-ui, sans-serif",
+              letterSpacing: 0.4,
+              padding: "2px 5px",
+              borderRadius: 3,
+              pointerEvents: "none",
+              textTransform: "uppercase",
+            }}
+          >
+            {meta.externalHost}
+          </div>
+        )}
 
         {/* Selection checkmark */}
         {isSelected && (
@@ -245,6 +457,29 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
             {formatBadge.label}
           </div>
         )}
+
+        {/* Pending / unsaved badge — sits on top so the merchant immediately
+            sees which tiles still need a Save click. The transparent body
+            (set on the outer wrapper) reinforces the "ghost"/draft state. */}
+        {isPending && (
+          <div style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            background: "#005bd3",
+            color: "white",
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 6px",
+            borderRadius: 3,
+            lineHeight: "14px",
+            pointerEvents: "none",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            letterSpacing: 0.3,
+          }}>
+            {t.imageManager.optimisticTileBadge ?? "Save?"}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -263,6 +498,11 @@ interface SortableImageGridProps {
   activeAction?: "copy" | "move" | null;
   onDropToPlaceholder?: () => void;
   onUploadToGallery?: (files: File[]) => void;
+  /** When set, the placeholder thumbnail's click handler opens the parent's
+   *  media picker modal instead of the OS file dialog. The picker modal
+   *  unifies browse-library + upload + external-video URL into one place,
+   *  so this should be wired wherever the modal is available. */
+  onOpenPicker?: () => void;
   // When true, no internal DndContext — parent provides one
   skipDndContext?: boolean;
   // When false, no image gets the "main" gold border (variant has no featured image)
@@ -283,6 +523,7 @@ export function SortableImageGrid({
   activeAction,
   onDropToPlaceholder,
   onUploadToGallery,
+  onOpenPicker,
   skipDndContext = false,
   hasMainImage = true,
   localAltTexts,
@@ -292,10 +533,22 @@ export function SortableImageGrid({
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    // R4-UX4: keyboard/screen-reader users could not reorder gallery images
+    // at all (only Mouse+Touch sensors). Matches BulkSortableList's setup.
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const showPlaceholder = onDropToPlaceholder !== undefined || onUploadToGallery !== undefined;
   const sortableIds = imageUrls.map(url => `${containerId}::${url}`);
+
+  // Position 0 of a variant gallery becomes the variant's mediaId — Shopify
+  // only accepts MediaImage there. Block a reorder that would land a video /
+  // model / external_video at index 0; the server has the same guard but
+  // feedback is friendlier when the UI refuses the drop outright.
+  const isNonImageItem = (url: string): boolean => {
+    const k = imageMetas[url]?.kind;
+    return k === "video" || k === "model" || k === "external_video";
+  };
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -305,6 +558,17 @@ export function SortableImageGrid({
       const oldIndex = imageUrls.indexOf(activeUrl);
       const newIndex = imageUrls.indexOf(overUrl);
       if (oldIndex !== -1 && newIndex !== -1) {
+        // Variant galleries (showPlaceholder=true && hasMainImage) reserve
+        // index 0 for the featured image (Shopify only accepts MediaImage
+        // there). Compute the post-move order and refuse the drop iff the
+        // new head would be a non-image — that's the only state we actually
+        // care about, so a same-kind swap or a move that leaves an image at
+        // 0 is fine. Product galleries have no such constraint.
+        const enforcePositionZero = showPlaceholder && hasMainImage;
+        if (enforcePositionZero) {
+          const newOrder = arrayMove(imageUrls, oldIndex, newIndex);
+          if (newOrder[0] && isNonImageItem(newOrder[0])) return;
+        }
         onReorder(arrayMove(imageUrls, oldIndex, newIndex));
       }
     }
@@ -353,6 +617,8 @@ export function SortableImageGrid({
           onDrop={() => onDropToPlaceholder?.()}
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
+          onOpenPicker={onOpenPicker}
+          containerId={containerId}
         />
       )}
 
@@ -386,6 +652,8 @@ export function SortableImageGrid({
           onDrop={() => onDropToPlaceholder?.()}
           onUpload={(files) => onUploadToGallery?.(files)}
           thumbSize={thumbSize}
+          onOpenPicker={onOpenPicker}
+          containerId={containerId}
         />
       )}
     </>

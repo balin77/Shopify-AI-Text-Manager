@@ -1,12 +1,68 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { db } from "../db.server";
+import { type Plan } from "../config/plans";
+import { consumeImageOperations } from "../utils/imageOperations.server";
+import { classifyFile, kindToStagedResource } from "../utils/mediaKind";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { filename, mimeType, fileSize } = await request.json();
 
-  console.log("[staged-upload] request", { filename, mimeType, fileSize });
+  // Detect upload kind from the client-supplied mime-type. We never trust the
+  // mimeType blindly for security, but stagedUploadsCreate.resource is just a
+  // routing hint to Shopify — they re-validate on PUT.
+  const kind = classifyFile(mimeType, filename);
+  if (!kind) {
+    return json(
+      { error: `Unsupported media type: ${mimeType}` },
+      { status: 400 }
+    );
+  }
+  const resource = kindToStagedResource(kind);
+  // Browsers commonly report `.glb`/`.gltf` with an empty `type` because
+  // model/gltf-binary isn't in the standard MIME database — classifyFile
+  // recognises the file via the filename regex, but forwarding the empty
+  // string to Shopify's stagedUploadsCreate gets rejected with
+  // `" is not a supported mime type"` and the upload never starts.
+  // Normalise to a Shopify-accepted value so the staged target is created.
+  let effectiveMimeType = mimeType;
+  if (!effectiveMimeType || effectiveMimeType.trim() === "") {
+    if (kind === "model") {
+      effectiveMimeType = /\.gltf$/i.test(filename) ? "model/gltf+json" : "model/gltf-binary";
+    }
+    // Image / video uploads always carry a valid Content-Type from the
+    // browser, so a missing mimeType there is genuinely unsupported —
+    // surface the original error rather than guessing.
+    if (!effectiveMimeType || effectiveMimeType.trim() === "") {
+      return json({ error: `Unsupported media type: ${mimeType}` }, { status: 400 });
+    }
+  }
+  // Shopify's staged-upload destinations differ by resource:
+  //   IMAGE     → Google Cloud Storage signed PUT (simple body upload)
+  //   VIDEO     → multipart POST (typically Mux / GCS POST policy)
+  //   MODEL_3D  → multipart POST (same as VIDEO)
+  // Using `httpMethod: "PUT"` for VIDEO/MODEL_3D returns a target URL that
+  // rejects PUT (405 Method Not Allowed) — the upload silently fails on the
+  // client side and the merchant sees "nothing happens" when they try to
+  // upload a .glb. Pick the method that matches the resource so each
+  // staged target is reachable with the upload technique it expects.
+  const httpMethod: "PUT" | "POST" = resource === "IMAGE" ? "PUT" : "POST";
+
+  // Each staged upload = one billable image operation (real compute/bandwidth;
+  // AI is merchant-funded BYO). Reserve quota before asking Shopify for a target.
+  const settings = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const quota = await consumeImageOperations(session.shop, plan, 1);
+  if (!quota.allowed) {
+    return json(
+      { error: "Monthly image-operation limit reached", code: "IMAGE_QUOTA_EXCEEDED", limit: quota.limit },
+      { status: 422 }
+    );
+  }
 
   const response = await admin.graphql(`
     mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
@@ -23,17 +79,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     variables: {
       input: [{
         filename,
-        mimeType,
+        mimeType: effectiveMimeType,
         fileSize: String(fileSize),
-        resource: "IMAGE",
-        httpMethod: "PUT",
+        resource,
+        httpMethod,
       }],
     },
   });
 
   const data = await response.json();
-  console.log("[staged-upload] Shopify response", JSON.stringify(data, null, 2));
 
+  // Do NOT log the full Shopify response or the signed upload URLs — they
+  // contain short-lived credentialed CDN URLs. Log only non-sensitive status.
   const userErrors = data.data?.stagedUploadsCreate?.userErrors ?? [];
   if (userErrors.length > 0) {
     console.error("[staged-upload] userErrors", userErrors);
@@ -42,14 +99,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const target = data.data?.stagedUploadsCreate?.stagedTargets?.[0];
   if (!target) {
-    console.error("[staged-upload] no stagedTargets in response", data);
+    console.error("[staged-upload] no stagedTargets returned");
     return json({ error: "Staged upload creation failed" }, { status: 500 });
   }
 
-  console.log("[staged-upload] returning target", { url: target.url, resourceUrl: target.resourceUrl });
   return json({
     url: target.url,
     resourceUrl: target.resourceUrl,
     parameters: target.parameters,
+    // Client uses this to decide between a single-body PUT (image) and a
+    // multipart-form POST that includes Shopify's signed `parameters`
+    // (video / 3D model). Older clients that ignore the field still PUT,
+    // which only works for images.
+    httpMethod,
+    kind,
   });
 };

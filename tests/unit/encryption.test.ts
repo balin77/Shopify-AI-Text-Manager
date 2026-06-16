@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   encrypt,
   decrypt,
@@ -6,6 +6,7 @@ import {
   generateEncryptionKey,
   encryptApiKey,
   decryptApiKey,
+  tryDecryptApiKey,
   encryptPII,
   decryptPII,
   encryptToken,
@@ -284,6 +285,77 @@ describe('Encryption Utils', () => {
       encrypted.forEach(e => {
         expect(decrypt(e)).toBe(plaintext);
       });
+    });
+  });
+
+  // R3-H7: the encrypt-migration / key-rotation scripts
+  // (scripts/migrate-encrypt-*.ts) had no tests. They don't have their own
+  // crypto — they lean entirely on these invariants, so we lock the
+  // invariants down here. (The webhook HMAC check itself is owned by the
+  // Shopify SDK's authenticate.webhook(); a hand-rolled HMAC test would only
+  // re-implement and "verify" our own reimplementation — exactly the
+  // decorative-test anti-pattern this review flags — so it is intentionally
+  // not added.)
+  describe('Key rotation & migration-script invariants (R3-H7)', () => {
+    const KEY_A = '988568df2b8ae4861f66586e234cb1ba58560d67e1842fa5040da8f98a3e5162';
+    const KEY_B = '11112222333344445555666677778888999900001111222233334444aaaabbbb';
+
+    it('decrypt() FAILS CLOSED (throws) when the key was rotated — never returns garbage', () => {
+      process.env.ENCRYPTION_KEY = KEY_A;
+      const ciphertext = encrypt('sk-secret-value');
+
+      process.env.ENCRYPTION_KEY = KEY_B; // operator rotated the key
+      // AES-256-GCM auth tag must reject decryption under the wrong key
+      // rather than silently emit corrupted plaintext.
+      expect(() => decrypt(ciphertext)).toThrow();
+    });
+
+    it('tryDecryptApiKey() returns null (does NOT throw) for value encrypted under a previous key', () => {
+      process.env.ENCRYPTION_KEY = KEY_A;
+      const stored = encryptApiKey('sk-merchant-key');
+
+      process.env.ENCRYPTION_KEY = KEY_B;
+      // Documented rotation contract: an undecryptable key reads as "absent"
+      // so one rotated key cannot break the whole request; the merchant just
+      // re-enters it. The read paths rely on this exact behaviour.
+      expect(tryDecryptApiKey(stored, 'openai')).toBeNull();
+    });
+
+    it('isEncrypted() lets a migration skip already-encrypted rows (idempotency / no double-encryption)', () => {
+      process.env.ENCRYPTION_KEY = KEY_A;
+      const plaintext = 'sk-plain-api-key';
+      const once = encryptApiKey(plaintext)!;
+
+      // The migrate-encrypt-* scripts gate on isEncrypted() before encrypting.
+      expect(isEncrypted(plaintext)).toBe(false); // would be encrypted
+      expect(isEncrypted(once)).toBe(true);        // would be skipped
+
+      // Prove the guard prevents an unrecoverable double-encryption: if a
+      // migration ignored isEncrypted and encrypted twice, one decrypt pass
+      // would yield ciphertext, not the original secret.
+      const twice = encrypt(once);
+      expect(decrypt(twice)).toBe(once);
+      expect(decrypt(twice)).not.toBe(plaintext);
+    });
+
+    it('re-encryption under a new key round-trips (the core migration operation)', () => {
+      process.env.ENCRYPTION_KEY = KEY_A;
+      const secret = 'rotate-me';
+      const oldCipher = encrypt(secret);
+
+      // Migration: decrypt with old key, then re-encrypt with the new key.
+      const plain = decrypt(oldCipher);
+      process.env.ENCRYPTION_KEY = KEY_B;
+      const newCipher = encrypt(plain);
+
+      expect(newCipher).not.toBe(oldCipher);
+      expect(decrypt(newCipher)).toBe(secret);     // readable under new key
+      process.env.ENCRYPTION_KEY = KEY_A;
+      expect(() => decrypt(newCipher)).toThrow();   // not under the old one
+    });
+
+    afterEach(() => {
+      process.env.ENCRYPTION_KEY = KEY_A;
     });
   });
 });

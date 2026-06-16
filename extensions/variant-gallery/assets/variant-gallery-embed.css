@@ -2,6 +2,8 @@ cp-embed-gallery {
   display: block;
 }
 
+/* ─── shared ────────────────────────────────────────────────────────── */
+
 .cp-embed-gallery .cp-gallery__inner {
   display: flex;
   flex-direction: column;
@@ -9,46 +11,670 @@ cp-embed-gallery {
 }
 
 .cp-embed-gallery .cp-gallery__main {
-  border-radius: 4px;
+  border-radius: var(--media-radius, 4px);
   overflow: hidden;
-  background: #f5f5f5;
+  background: #f0f0f0;
+  /* Fallback reservation; JS sets the exact aspect-ratio inline when the
+     image dimensions are known, which overrides this. */
+  aspect-ratio: 1 / 1;
 }
 
 .cp-embed-gallery .cp-gallery__main-image {
   display: block;
   width: 100%;
-  height: auto;
-  transition: opacity 0.18s ease;
+  height: 100%;
+  object-fit: contain;
 }
 
-.cp-embed-gallery .cp-gallery__thumbs {
+/* ─── stacked mode (no thumbnails) ──────────────────────────────────── */
+/* Each image is its own .cp-gallery__main block; they flow vertically at
+   their own aspect ratios, no carousel, no overlap. */
+.cp-embed-gallery .cp-gallery__inner--stacked {
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── thumb mode (positioned strip + carousel) ──────────────────────── */
+/* Position via flex-direction on the inner wrapper. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] { flex-direction: column; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    { flex-direction: column-reverse; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]   { flex-direction: row-reverse; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"]  { flex-direction: row; }
+
+/* In thumb mode the main slot stacks images absolutely so toggling
+   .is-active swaps them without any reload / blank frame. The wrap
+   exists to give the dot overlay (mobile-only) a positioning context
+   that is OUTSIDE the scroll container, so dots don't scroll with
+   slides. The wrap is also the flex item — main fills it. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main {
+  position: relative;
+  width: 100%;
+  /* Height is derived from the aspect-ratio inline style JS sets on this
+     element — DO NOT set height:100% here, that would make the wrap and
+     main size off each other (circular) and collapse the slot. */
+}
+
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos] .cp-gallery__main-image.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Thumb strip wrapper (holds the strip + arrows for overflow scroll). */
+.cp-embed-gallery .cp-gallery__thumbs-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* Horizontal strip (top/bottom). */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: row;
   gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+}
+
+/* Vertical strip (left/right). The thumbs strip is absolutely
+   positioned to fill the wrap; that way the wrap has NO in-flow
+   content of its own and contributes 0 to the inner row-flex's
+   intrinsic height. Inner's height is then driven purely by the main
+   image (aspect-ratio derived), and the wrap stretches to that height
+   via the default `align-self: stretch`. Result: the strip clips
+   exactly at the main image's top/bottom edges — no overrun. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+/* Vertical strip wrap: just sets the fixed cross-axis width. The base
+   `.cp-gallery__thumbs-wrap { position: relative }` rule above provides
+   the containing block for the absolutely-positioned strip + arrows. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
+  width: calc(var(--cp-thumb-size, 80px) + 4px);
+}
+
+/* Hide native scrollbars on every strip — visually noisy. Scrolling
+   still works via wheel, touch, keyboard, and the arrow buttons. */
+.cp-embed-gallery .cp-gallery__thumbs {
+  scrollbar-width: none;
+}
+.cp-embed-gallery .cp-gallery__thumbs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .cp-embed-gallery .cp-gallery__thumb {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   padding: 0;
   background: transparent;
   border: 2px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--media-radius, 4px);
   cursor: pointer;
   overflow: hidden;
+  scroll-snap-align: start;
   transition: border-color 0.15s ease;
 }
 
-.cp-embed-gallery .cp-gallery__thumb:hover {
-  border-color: rgba(0, 0, 0, 0.25);
-}
-
-.cp-embed-gallery .cp-gallery__thumb.is-active {
-  border-color: currentColor;
-}
+.cp-embed-gallery .cp-gallery__thumb:hover { border-color: rgba(0, 0, 0, 0.25); }
+.cp-embed-gallery .cp-gallery__thumb.is-active { border-color: currentColor; }
 
 .cp-embed-gallery .cp-gallery__thumb img {
   display: block;
   width: var(--cp-thumb-size, 80px);
   height: var(--cp-thumb-size, 80px);
   object-fit: cover;
+}
+
+/* ─── carousel arrows ───────────────────────────────────────────────── */
+/* Hidden by default — only revealed when the strip actually overflows
+   (the controller toggles .cp-gallery__thumbs-wrap--scrollable) AND on
+   hover/focus, so they never sit there cluttering a non-scrolling list. */
+.cp-embed-gallery .cp-gallery__arrow {
+  position: absolute;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  color: #111;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable:hover .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable:focus-within .cp-gallery__arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cp-embed-gallery .cp-gallery__arrow[disabled] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Arrow placement — horizontal strip: arrows at the left/right ends. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--prev,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--prev { left: 4px; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--next,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--next { right: 4px; }
+
+/* Vertical strip: arrows at top/bottom ends. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev { top: 4px; }
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { bottom: 4px; }
+
+/* ─── media-type harmonisation in the main slot ─────────────────────── */
+/* iframe (YouTube/Vimeo) and <model-viewer> reuse .cp-gallery__main-
+   image so the absolute / opacity is-active stack works the same way. */
+.cp-embed-gallery iframe.cp-gallery__main-image {
+  border: 0;
+  background: #000;
+}
+.cp-embed-gallery model-viewer.cp-gallery__main-image {
+  background: #f0f0f0;
+  --poster-color: transparent;
+}
+/* Native <video> already inherits object-fit:contain from the shared
+   rule, but ensure the controls bar is not clipped by border-radius. */
+.cp-embed-gallery video.cp-gallery__main-image {
+  background: #000;
+}
+
+/* ─── thumbnail overlays (video / 3D) ───────────────────────────────── */
+.cp-embed-gallery .cp-gallery__thumb { position: relative; }
+
+/* Play-icon overlay for native and external videos. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.32);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'><path d='M8 5v14l11-7z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 40% 40%;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Small "3D" badge in the corner for model items. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]::after {
+  content: "3D";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 700 10px/1 system-ui, sans-serif;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+/* ─── Vimeo / no-poster thumb fallback ──────────────────────────────── */
+/* Vimeo has no public thumbnail API accessible from Liquid (oEmbed call
+   only), so its thumb <img> arrives with src="" and the browser would
+   show a broken-image icon. Hide the img (visibility:hidden keeps the
+   tile size via the explicit width/height CSS), and force the play
+   overlay to a solid dark backdrop so the tile looks intentional — a
+   plain black square with a centred play icon. */
+.cp-embed-gallery .cp-gallery__thumb img[src=""] {
+  visibility: hidden;
+}
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="play"]:has(img[src=""])::after {
+  background-color: #111;
+}
+
+/* 3D model thumb without preview — variant-scoped models from
+   custom.variant_3d_models (list.url) only store a GLB URL, so the
+   thumb <img> arrives empty. Mirror the Vimeo fallback: solid dark
+   tile, then promote the corner "3D" badge to a centred, larger
+   "3D" wordmark so the tile is recognisable. */
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]:has(img[src=""]) {
+  background: #111;
+}
+.cp-embed-gallery .cp-gallery__thumb[data-overlay="3d"]:has(img[src=""])::after {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 18px/1 system-ui, sans-serif;
+  letter-spacing: 1.5px;
+  padding: 0;
+  border-radius: inherit;
+}
+
+/* Vertical strips reserve a few extra px in the wrap for the scrollbar,
+   but flex-column's default align-items:stretch would then stretch each
+   thumb button to that full width — so the active 2px border sits 4-6 px
+   to the right of the thumbnail image instead of hugging it. Align to
+   start keeps thumbs at their natural width (image + border) and makes
+   the active border symmetric. Horizontal strips don't need this — the
+   container height auto-fits the children. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+  align-items: flex-start;
+}
+
+/* ─── Path C: mirror theme's mobile_thumbnails setting ──────────────── */
+/* Dawn's mobile breakpoint is 750px. Below that, the merchant's chosen
+   mobile_thumbnails value drives whether the thumb strip is hidden, kept
+   visible, or collapsed to a 2-column thumbnail layout. We detect the
+   value at init via DOM inspection and set it on .cp-gallery__inner. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"] .cp-gallery__thumbs-wrap {
+    display: none;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__thumbs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    overflow: visible;
+    max-height: none;
+    scroll-snap-type: none;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__thumb img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="columns"] .cp-gallery__arrow {
+    display: none;
+  }
+}
+
+/* ─── Path C: mirror theme's media_fit setting ──────────────────────── */
+/* When the host theme uses object-fit: cover (cropping) instead of the
+   default contain (letterboxing), apply the same in our gallery. The
+   data-attribute is set by _detectThemeSettings from the native
+   gallery's computed object-fit. Specificity beats the base rules. */
+.cp-embed-gallery .cp-gallery__inner[data-media-fit="cover"]   .cp-gallery__main-image { object-fit: cover; }
+.cp-embed-gallery .cp-gallery__inner[data-media-fit="contain"] .cp-gallery__main-image { object-fit: contain; }
+
+/* ─── Path C: full 4-way Dawn gallery_layout differentiation ────────── */
+
+/* `columns` — 2-column grid in stacked mode (Dawn's "2 Spalten"). The
+   inner is .cp-gallery__inner--stacked (no thumb strip) plus the
+   data-layout attribute to opt into grid instead of single-column. */
+.cp-embed-gallery .cp-gallery__inner--stacked[data-layout="columns"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* `thumbnail_slider` — make the carousel arrows always visible on the
+   strip wrapper, not just on hover, so the thumbs read as a slider.
+   The overflow / disabled gating in _bindArrows still hides them when
+   there is genuinely nothing to scroll. */
+.cp-embed-gallery .cp-gallery__inner[data-layout="thumbnail_slider"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ─── Path C: thumbnail position — mobile fallback ──────────────────── */
+/* On narrow viewports (< 750px) left / right positions are too cramped
+   beside the main image — fall back to a horizontal strip below the
+   main slot (i.e. behave like 'bottom'). Pure CSS so the merchant's
+   thumbnail_position setting (or theme inheritance) stays intact for
+   desktop; resize / rotation flips back automatically. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"],
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] {
+    flex-direction: column;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs {
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__thumbs-wrap,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap {
+    width: auto;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"] .cp-gallery__arrow,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow {
+    top: 50%;
+    left: auto;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev { left: 4px;  right: auto; }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next { right: 4px; left: auto; }
+}
+
+/* ─── Path C: constrain_to_viewport ─────────────────────────────────── */
+/* When Dawn's "Auf Bildschirmhöhe beschränken" is on, the native gallery
+   applies max(300px, calc(100vh - 400px)) to .product-media-container
+   (the 400px is Dawn's average-header-plus-spacing budget). Mirror the
+   same formula on our main-slot so very tall portrait images don't force
+   the shopper to scroll a single image — they get letterboxed by the
+   shared object-fit: contain rule instead. The aspect-ratio inline style
+   that JS sets on .cp-gallery__main still takes precedence for width
+   distribution; max-height just caps the eventual rendered height. */
+.cp-embed-gallery .cp-gallery__inner[data-constrain="1"] .cp-gallery__main {
+  max-height: max(300px, calc(100vh - 400px));
+}
+
+/* ─── Path C: lightbox zoom modal ───────────────────────────────────── */
+/* A single body-level <dialog> per controller instance. Native <dialog>
+   gives us ESC handling, focus trap, and a ::backdrop pseudo-element
+   for the dim overlay. Backdrop click is handled in JS (event target ===
+   dialog) so clicks on the image don't close. */
+/* Base styles applied in BOTH states; do NOT set `display` here — the
+   UA default `dialog:not([open]) { display: none }` must remain in
+   effect when the dialog is closed (any author display value would
+   beat it, regardless of specificity). Without this guard the dialog
+   stays visible after .close() because flex overrides the UA hide. */
+.cp-gallery__lightbox {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  margin: 0;
+}
+/* Layout only when actually open. */
+.cp-gallery__lightbox[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  inset: 0;
+}
+.cp-gallery__lightbox::backdrop {
+  background: rgba(0, 0, 0, 0.88);
+}
+.cp-gallery__lightbox-image {
+  display: block;
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  user-select: none;
+  pointer-events: auto;
+}
+.cp-gallery__lightbox-close {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.92);
+  border: 0;
+  border-radius: 50%;
+  font-size: 24px;
+  line-height: 1;
+  color: #111;
+  cursor: pointer;
+}
+.cp-gallery__lightbox-close:hover { background: #fff; }
+
+/* ─── Path C: cursor reset when our zoom is off ─────────────────────── */
+/* Modified Dawn forks may set cursor:zoom-in inline on .product__media
+   img unconditionally (even with section image_zoom: none). Our JS
+   blocks the corresponding click handler via stopImmediatePropagation
+   from a no-op listener; this CSS reaches one step further and reverts
+   the inherited inline cursor, so the merchant's "no zoom" choice is
+   also visually honoured. !important is required because Dawn's
+   cursor is set as an inline style attribute. */
+.cp-embed-gallery .cp-gallery__inner[data-zoom="off"] .cp-gallery__main-image {
+  cursor: default !important;
+}
+
+/* ─── Soft fade at carousel edges (background-agnostic) ─────────────── */
+/* mask-image fades the strip's own opacity to transparent at both ends,
+   so whatever is behind (page bg, parent gradient, anything) shows
+   through cleanly — never a hardcoded white overlay. Applied only when
+   the strip actually overflows (.--scrollable, toggled by _bindArrows)
+   so a short non-scrolling strip is not partially faded. */
+.cp-embed-gallery .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  -webkit-mask-size:   100% 100%;
+          mask-size:   100% 100%;
+}
+/* Horizontal: fade left and right edges over 20px. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+/* Vertical: fade top and bottom edges over 20px. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+/* Mobile fallback (left/right collapse to bottom): re-flip to horizontal. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+            mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  }
+}
+
+/* Inset thumbs from the strip's scroll-axis ends so the first and last
+   thumb sit OUTSIDE the 20px fade region — otherwise a correctly-fitted
+   thumb at the scroll start/end renders semi-transparent. Conditional on
+   .--scrollable so a non-carousel strip stays flush. scroll-padding
+   matches so scroll-snap and arrow-driven scrollIntoView still align the
+   thumb visibly inside the unmasked area. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  padding-inline: 20px;
+  scroll-padding-inline: 20px;
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+  padding-block: 20px;
+  scroll-padding-block: 20px;
+}
+/* Mobile fallback (left/right collapse to bottom): switch to inline padding. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__thumbs-wrap--scrollable .cp-gallery__thumbs {
+    padding-block: 0;
+    padding-inline: 20px;
+    scroll-padding-block: 0;
+    scroll-padding-inline: 20px;
+  }
+}
+
+/* ─── SVG chevron arrows, rotated per position ──────────────────────── */
+/* A single chevron-down SVG path drawn in each button; CSS rotates it
+   for the right direction so we get up/down/left/right chevrons from
+   one shared asset. Inline SVG (not unicode) for consistent rendering
+   regardless of merchant font availability. */
+.cp-embed-gallery .cp-gallery__arrow > svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  transition: transform 0.15s ease;
+}
+/* Default chevron-down orientation already correct for `next` in a
+   vertical (left/right) strip. */
+
+/* Horizontal: prev = left chevron, next = right chevron. */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--prev > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--prev > svg {
+  transform: rotate(90deg);
+}
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="bottom"] .cp-gallery__arrow--next > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="top"]    .cp-gallery__arrow--next > svg {
+  transform: rotate(-90deg);
+}
+/* Vertical: prev = up chevron, next = down chevron (default). */
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev > svg,
+.cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev > svg {
+  transform: rotate(180deg);
+}
+
+/* Mobile fallback (left/right collapse to bottom): re-flip arrows to
+   horizontal. */
+@media (max-width: 749px) {
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--prev > svg,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--prev > svg {
+    transform: rotate(90deg);
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="left"]  .cp-gallery__arrow--next > svg,
+  .cp-embed-gallery .cp-gallery__inner[data-thumb-pos="right"] .cp-gallery__arrow--next > svg {
+    transform: rotate(-90deg);
+  }
+}
+
+/* ─── Mobile pager: swipe carousel + dot overlay ────────────────────── */
+/* When Dawn's `mobile_thumbnails: 'hide'` is on, the thumb strip is
+   hidden on mobile (display:none, rule above). Without a pager the
+   shopper would be stuck on the first image. We swap the absolute-
+   stacked main slot for a horizontal scroll-snap carousel and overlay
+   a dot pagination — matches Dawn's own mobile gallery. Desktop is
+   untouched (the at-rule never matches above 749px).
+
+   Selector requires BOTH data-mobile-thumbs="hide" AND data-thumb-pos
+   so the rule only fires in thumb mode — stacked mode is unaffected. */
+
+/* Dots are hidden everywhere by default — only revealed by the mobile
+   rule below. Keeps the markup constant; the layout flips with viewport. */
+.cp-embed-gallery .cp-gallery__dots {
+  display: none;
+}
+
+@media (max-width: 749px) {
+  /* Main becomes a horizontal scroll-snap carousel. Slides are in flow,
+     not absolute, so native touch scroll handles the swipe. `position:
+     relative` makes main the offsetParent of its slides, so the JS
+     dot-tap handler can use `slides[i].offsetLeft` to scroll to the
+     right position regardless of any padding/margin on the wrap. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main::-webkit-scrollbar {
+    display: none;
+    height: 0;
+  }
+
+  /* Slides flip from position:absolute (stacked overlay) to in-flow
+     full-width carousel items. Override the absolute/opacity rules
+     from the base thumb-mode block. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__main-image {
+    position: relative;
+    inset: auto;
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100%;
+    opacity: 1;
+    pointer-events: auto;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+  }
+
+  /* Pill-shaped dot overlay, vertically anchored at the bottom of the
+     main slot. Mirrors Dawn's .product__media-dots styling so themes
+     using inheritance feel consistent across native vs. our gallery. */
+  .cp-embed-gallery .cp-gallery__inner[data-mobile-thumbs="hide"][data-thumb-pos] .cp-gallery__dots {
+    display: flex;
+    position: absolute;
+    left: 50%;
+    bottom: 1rem;
+    transform: translateX(-50%);
+    z-index: 1;
+    gap: 0.6rem;
+    padding: 0.5rem 0.9rem;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 2rem;
+    pointer-events: auto;
+  }
+
+  .cp-embed-gallery .cp-gallery__dot {
+    appearance: none;
+    -webkit-appearance: none;
+    display: block;
+    width: 0.7rem;
+    height: 0.7rem;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.45);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+    flex-shrink: 0;
+  }
+  .cp-embed-gallery .cp-gallery__dot--active {
+    background: rgba(255, 255, 255, 0.95);
+    transform: scale(1.2);
+  }
 }

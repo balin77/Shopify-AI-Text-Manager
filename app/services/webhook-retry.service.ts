@@ -23,11 +23,15 @@
  * ```
  */
 
-import { PrismaClient, type WebhookRetry } from "@prisma/client";
+import type { WebhookRetry } from "@prisma/client";
+import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
 import { WEBHOOK_CONFIG } from "../config/constants";
 
-const db = new PrismaClient();
+// R4-H3: was `new PrismaClient()` — a SECOND client with its own connection
+// pool that was never $disconnect()-ed (pool leak; doubled DB connections,
+// and the pool stayed open through shutdown). Reuse the single shared client
+// (also $disconnect()-ed exactly once by server.js gracefulShutdown).
 
 export interface WebhookRetryJob {
   id: string;
@@ -48,6 +52,11 @@ class WebhookRetryService {
   private readonly PROCESSING_INTERVAL_MS = 5000; // Check every 5 seconds
 
   constructor() {
+    // R4-H3: start-on-construct is intentional — the singleton must process
+    // retries wherever this module is imported (e.g. webhooks.products needs
+    // it live to actually drain scheduled retries). startProcessing() is
+    // idempotent (guarded by this.processingInterval) and the loop is torn
+    // down on SIGTERM/SIGINT, so this is not a leak.
     this.startProcessing();
   }
 
@@ -74,6 +83,21 @@ class WebhookRetryService {
     try {
       const payloadString = JSON.stringify(payload);
       const errorMessage = error?.message || 'Unknown error';
+
+      // Don't enqueue retries we already know will fail. A 401 means the
+      // offline token is dead; retrying with the same dead token can't work,
+      // and a session refresh only happens when the merchant opens the app.
+      // The inline webhook that just failed will be picked up again by the
+      // next products/update event after the token is refreshed.
+      if (/\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage)) {
+        logger.warn('Skipping webhook retry — auth error not recoverable by retry', {
+          context: 'WebhookRetry',
+          shop,
+          topic,
+          error: errorMessage,
+        });
+        return;
+      }
 
       const retry = await db.webhookRetry.create({
         data: {
@@ -179,8 +203,43 @@ class WebhookRetryService {
   /**
    * Process a single retry attempt
    */
+  /**
+   * Built-in dispatch for the webhook topics the app emits. Without this,
+   * scheduled retries were always dropped (no handler was ever registered via
+   * registerHandler), so the products retry path was effectively dead and
+   * collections had no retry path at all (N-H7). Resyncing the resource is
+   * idempotent, which is exactly what a retry needs.
+   */
+  private defaultHandler(topic: string): WebhookHandler | undefined {
+    if (topic === 'PRODUCTS_CREATE' || topic === 'PRODUCTS_UPDATE' || topic === 'PRODUCTS_DELETE') {
+      return async (payload, shop) => {
+        const productId = String(payload.productId);
+        if (!productId) throw new Error('Retry payload missing productId');
+        const { createAdminClientFromShop } = await import('../utils/admin-client.server');
+        const { ProductSyncService } = await import('../services/product-sync.service');
+        const admin = await createAdminClientFromShop(shop);
+        const sync = new ProductSyncService(admin, shop);
+        if (topic === 'PRODUCTS_DELETE') await sync.deleteProduct(productId);
+        else await sync.syncProduct(productId);
+      };
+    }
+    if (topic === 'COLLECTIONS_CREATE' || topic === 'COLLECTIONS_UPDATE' || topic === 'COLLECTIONS_DELETE') {
+      return async (payload, shop) => {
+        const collectionId = String(payload.collectionId);
+        if (!collectionId) throw new Error('Retry payload missing collectionId');
+        const { createAdminClientFromShop } = await import('../utils/admin-client.server');
+        const { ContentSyncService } = await import('../services/content-sync.service');
+        const admin = await createAdminClientFromShop(shop);
+        const sync = new ContentSyncService(admin, shop);
+        if (topic === 'COLLECTIONS_DELETE') await sync.deleteCollection(collectionId);
+        else await sync.syncCollection(collectionId);
+      };
+    }
+    return undefined;
+  }
+
   private async processRetry(retry: WebhookRetry): Promise<void> {
-    const handler = this.handlers.get(retry.topic);
+    const handler = this.handlers.get(retry.topic) ?? this.defaultHandler(retry.topic);
 
     if (!handler) {
       logger.warn('No handler found for webhook topic', {
@@ -232,6 +291,28 @@ class WebhookRetryService {
         maxAttempts: retry.maxAttempts,
         error: errorMessage,
       });
+
+      // A 401 from Shopify means the offline access token stored for this shop
+      // is invalid — usually the merchant uninstalled/reinstalled or Shopify
+      // rotated the token. Retrying with the same dead token can't succeed, so
+      // keep looping just spams logs and burns DB writes until maxAttempts.
+      // Drop the whole shop's queue in one shot: the next authenticated
+      // request will refresh the session, and ProductSync is idempotent — so
+      // the next inline webhook (or a user-triggered open of the app) will
+      // resync the latest state anyway.
+      const isAuthError = /\b401\b|Unauthorized|Invalid API key or access token/i.test(errorMessage);
+      if (isAuthError) {
+        const purged = await db.webhookRetry.deleteMany({ where: { shop: retry.shop } });
+        logger.warn('Webhook retry aborted — auth error, dropping all retries for shop', {
+          context: 'WebhookRetry',
+          retryId: retry.id,
+          shop: retry.shop,
+          topic: retry.topic,
+          purgedCount: purged.count,
+          hint: 'Offline access token is dead. The merchant needs to re-open the app to refresh the session.',
+        });
+        return;
+      }
 
       if (newAttempt >= retry.maxAttempts) {
         // Max attempts reached - log final failure and delete

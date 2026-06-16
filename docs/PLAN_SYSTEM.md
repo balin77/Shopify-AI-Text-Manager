@@ -9,10 +9,17 @@ Die App implementiert ein vier-stufiges Subscription-Plan-System:
 
 | Plan | Max Produkte | Max Collections | Max Pages | Max Articles | Locales | Produkt-Bilder | Content-Types | AI Instructions editierbar |
 |------|-------------|-----------------|-----------|--------------|---------|----------------|---------------|----------------------------|
-| **Free** | 25 | 5 | 0 | 0 | 2 | Nur Hauptbild | Products, Collections | ❌ Nein |
-| **Basic** | 75 | 50 | 20 | 0 | 5 | Alle Bilder | Products, Collections, Pages, Policies | ❌ Nein |
-| **Pro** | 150 | 100 | 50 | 100 | 10 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
-| **Max** | 5000 | 500 | 200 | 300 | 20 | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
+| **Free** | 50 | 5 | 0 | 0 | ∞ | Nur Hauptbild | Products, Collections | ❌ Nein |
+| **Basic** | 100 | 50 | 20 | 0 | ∞ | Alle Bilder | Products, Collections, Pages, Policies | ❌ Nein |
+| **Pro** | 500 | 100 | 50 | 100 | ∞ | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
+| **Max** | 2500 | 500 | 200 | 300 | ∞ | Alle Bilder | Alle (inkl. Blogs/Articles, Menus, Templates, Metaobjects) | ✅ Ja |
+
+> **Locales sind bewusst unbegrenzt auf allen Tiers** (Entscheidung 2026-05):
+> AI-Tokens sind merchant-finanziert (BYO-Key), zusätzliche Sprachen kosten uns
+> nichts. Sprach-Großzügigkeit ist ein bewusster USP — Segmentierung erfolgt
+> über Produktanzahl & Content-Breite, nicht über Locale-Anzahl. Produkt-Caps
+> auf geometrische Staffelung umgestellt (25 → 100 → 500 → 2500). Hintergrund:
+> `ROADMAP.md` §Limit-Review.
 
 ## Dateien-Struktur
 
@@ -72,7 +79,7 @@ prisma/
 ### 3. Plan-basierte Produkt-Limits
 
 **Products Route** (`app/routes/app.products.tsx`):
-- Loader lädt max. 25/75/150/5000 Produkte je nach Plan (Free/Basic/Pro/Max)
+- Loader lädt max. 50/100/500/2500 Produkte je nach Plan (Free/Basic/Pro/Max)
 - Im Free-Plan:
   - KEINE `ProductImage` geladen (außer featuredImage)
   - KEINE `ProductOption` geladen
@@ -84,7 +91,7 @@ prisma/
 Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 
 **Free-Plan Cleanup:**
-- Produkte über Limit 25
+- Produkte über Limit 50
 - Alle `ProductImage` Einträge
 - Alle `ProductOption` Einträge
 - Alle `ProductMetafield` Einträge
@@ -95,7 +102,7 @@ Beim Plan-Downgrade (z.B. Basic → Free) werden automatisch gelöscht:
 - Zugehörige `ContentTranslation` Einträge
 
 **Basic-Plan Cleanup:**
-- Produkte über Limit 75
+- Produkte über Limit 100
 - Restliche Daten bleiben erhalten
 
 ### 5. Plan Context API
@@ -172,7 +179,7 @@ Downgrades).
 **Zweck**: Minimale Ressourcen-Nutzung für Testing/Kleine Shops
 
 **Einschränkungen:**
-- Nur 25 Produkte gecached
+- Nur 50 Produkte gecached
 - Nur Hauptbild pro Produkt (keine `ProductImage` Table)
 - Keine Produkt-Optionen/Metafelder gecached
 - Nur Products & Collections zugänglich
@@ -186,7 +193,7 @@ Downgrades).
 **Zweck**: Standard-Nutzung für mittelgroße Shops
 
 **Features:**
-- Bis zu 75 Produkte
+- Bis zu 100 Produkte
 - Alle Bilder, Optionen, Metafelder gecached
 - Content-Types: Products, Collections, Pages, Policies (KEINE Blogs/Menus/
   Templates/Metaobjects — erst ab Pro)
@@ -199,10 +206,12 @@ Downgrades).
 **Zweck**: Große Shops mit vielen Produkten
 
 **Features:**
-- Bis zu 150 Produkte
+- Bis zu 500 Produkte
 - Alle Features von Basic
 - Zusätzlich: Blogs/Articles, Menus, Templates, Metaobjects
 - AI Instructions editierbar (erster Plan mit dieser Funktion)
+- Variant Image Manager / Bulk-Upload / WebP: **2000** Bild-Operationen/Monat,
+  2 parallele WebP-Konvertierungen
 
 **Use Case**: Große E-Commerce-Shops
 
@@ -211,11 +220,26 @@ Downgrades).
 **Zweck**: Enterprise/Unlimited
 
 **Features:**
-- Bis zu **5000** Produkte (höchstes Limit, nicht „unbegrenzt")
+- Bis zu **2500** Produkte (höchstes Limit, nicht „unbegrenzt")
 - Alle Features aktiviert (höhere Limits als Pro: 500 Collections, 200 Pages,
-  300 Articles, 20 Locales, 4 parallele WebP-Konvertierungen)
+  300 Articles; Locales unbegrenzt wie alle Tiers)
+- Variant Image Manager / Bulk-Upload / WebP: **10000** Bild-Operationen/Monat
+  (5× Pro), **6** parallele WebP-Konvertierungen (3× Pro) — die beiden realen,
+  kostenausgerichteten Pro→Max-Differenzierer (AI ist BYO)
 
 **Use Case**: Very large shops, agencies
+
+### Bild-Operationen (monthlyImageOperations)
+
+Rolling-Monats-Quota auf abrechenbare Bild-Operationen (Bulk-Upload +
+WebP-Konvertierung) — unser realer variabler Kostentreiber (Compute/Bandbreite),
+da AI-Tokens merchant-finanziert (BYO) sind. Free/Basic = 0 (kein Image Manager),
+Pro 2000, Max 10000. **Lazy erzwungen** an den Upload-/Convert-Pfaden (wie
+`maxProducts`), Ganze-Batch-Semantik, UTC-Monats-Reset ohne Cron. Es ist
+Nutzungs-, **keine** Entitlement-Daten → bewusst **nicht** in `getSyncScope` /
+`planCacheCleanup` (kein Downgrade-Cleanup). `maxConcurrentWebpConversions` ist
+in `app/config/webp-concurrency.js` zentralisiert (Single Source of Truth für
+`plans.ts` *und* den Node-`webp-processor.service.js`; Drift-Guard-Test).
 
 ## Zukünftige Erweiterungen
 

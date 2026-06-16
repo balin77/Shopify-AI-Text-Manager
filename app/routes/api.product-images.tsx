@@ -110,21 +110,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             });
 
             for (const img of mediaImages as Array<{ url: string; altText: string | null; mediaId: string; position: number }>) {
-              const updated = await tx.productImage.updateMany({
-                where: { productId, mediaId: img.mediaId },
-                data: { url: img.url, altText: img.altText, position: img.position },
+              // R4-DI6: was check-then-create (updateMany → create on count 0).
+              // This loader runs highly concurrently (one fallback image load
+              // per open locale tab); two requests both saw count 0 and both
+              // created → P2002 on the ProductImage(productId, mediaId) unique
+              // → the whole $transaction aborted and was only logged, so the
+              // cache silently never filled. An atomic upsert on that same
+              // unique key is race-safe (INSERT … ON CONFLICT) and needs no
+              // retry wrapper.
+              await tx.productImage.upsert({
+                where: { productId_mediaId: { productId, mediaId: img.mediaId } },
+                update: { url: img.url, altText: img.altText, position: img.position },
+                create: {
+                  productId,
+                  url: img.url,
+                  altText: img.altText,
+                  mediaId: img.mediaId,
+                  position: img.position,
+                },
               });
-              if (updated.count === 0) {
-                await tx.productImage.create({
-                  data: {
-                    productId,
-                    url: img.url,
-                    altText: img.altText,
-                    mediaId: img.mediaId,
-                    position: img.position,
-                  },
-                });
-              }
             }
           });
 

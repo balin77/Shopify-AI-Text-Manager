@@ -32,7 +32,7 @@ export const BILLING_PLANS: Record<Exclude<BillingPlan, 'free'>, PlanConfig> = {
   },
   max: {
     name: 'Max Plan',
-    price: 49.90,
+    price: 59.90,
     currency: 'EUR',
     interval: 'EVERY_30_DAYS',
     trialDays: 7,

@@ -16,6 +16,7 @@ import {
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
+import { useAltTextOps } from "../../contexts/AltTextOpsContext";
 import type { VariantWithGallery } from "./types";
 
 export interface AltTextTemplateRow {
@@ -82,13 +83,45 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   ]);
   const [activeLocale, setActiveLocale] = useState(primaryLocale);
   const [isLoading, setIsLoading] = useState(false);
-  const [isApplying, setIsApplying] = useState(false);
-  const [translatingPositions, setTranslatingPositions] = useState<Set<number>>(new Set());
-  const [isTranslatingAll, setIsTranslatingAll] = useState(false);
   const [optionTranslations, setOptionTranslations] = useState<Record<string, Record<string, string>>>({});
   const [excludedLocales, setExcludedLocales] = useState<Set<string>>(new Set());
-  const [isApplyingAll, setIsApplyingAll] = useState(false);
-  const [applyAllProgress, setApplyAllProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // Operation flags live in a product-scoped store so an apply/translate
+  // started here keeps running — and keeps THIS product's buttons disabled —
+  // even after the user switches to another product and back. `productId` is
+  // captured by these callbacks at invocation time, so completions always
+  // settle the product they were started on, never whichever is on screen.
+  const { ops, patch: patchOps, setPositionTranslating, setApplyingLocale } = useAltTextOps(productId);
+  // Per-locale: only the locale actually being applied shows loading/blocked,
+  // so switching to another language frees its button immediately.
+  const isApplyingActiveLocale = ops.applyingLocales.includes(activeLocale);
+  const anyApplying = ops.applyingLocales.length > 0;
+  const isApplyingAll = ops.applyingAll;
+  const applyAllProgress = ops.applyAllProgress;
+  const isTranslatingAll = ops.translatingAll;
+  const translatingPositions = ops.translatingPositions;
+
+  // Tracks the product currently on screen (updated every render, unlike the
+  // productId captured in each callback's closure). Lets a completion that
+  // started on product A skip the gallery refresh / scope its toast when the
+  // user has since navigated to product B.
+  const currentProductIdRef = useRef(productId);
+  currentProductIdRef.current = productId;
+  const isStillActive = useCallback(
+    (startedProductId: string) => currentProductIdRef.current === startedProductId,
+    []
+  );
+  // Prefix the toast with the *started* product's title when the user has
+  // since navigated away, so a background completion isn't mistaken for the
+  // product now on screen. `startedTitle` comes from the handler's closure
+  // (bound to the product the op started on), never the current prop.
+  const scopedMsg = useCallback(
+    (msg: string, startedProductId: string, startedTitle: string) =>
+      currentProductIdRef.current === startedProductId
+        ? msg
+        : `${startedTitle ? `${startedTitle}: ` : ""}${msg}`,
+    []
+  );
   // Tracks which locale chip received a Ctrl+pointerdown so the subsequent click
   // doesn't also switch the active locale.
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
@@ -311,11 +344,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
 
       if (templates.length === 0) return;
 
-      // Set loading state
+      // Key the per-position spinner by the stable pos.position, not the array
+      // index: removing/adding a position mid-translation shifts every later
+      // index, which would strand the spinner on the wrong row.
+      const posKey =
+        positionIndex === null ? null : positions[positionIndex]?.position ?? null;
+
+      // Set loading state (product-scoped). Per-position translations are
+      // independent: starting one must not block the others.
       if (positionIndex === null) {
-        setIsTranslatingAll(true);
-      } else {
-        setTranslatingPositions((prev) => new Set([...prev, positionIndex]));
+        patchOps({ translatingAll: true });
+      } else if (posKey !== null) {
+        setPositionTranslating(posKey, true);
       }
 
       try {
@@ -358,27 +398,27 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       } catch {}
 
       if (positionIndex === null) {
-        setIsTranslatingAll(false);
-      } else {
-        setTranslatingPositions((prev) => {
-          const next = new Set(prev);
-          next.delete(positionIndex);
-          return next;
-        });
+        patchOps({ translatingAll: false });
+      } else if (posKey !== null) {
+        setPositionTranslating(posKey, false);
       }
     },
-    [hasMultipleLocales, isPrimaryLocale, foreignLocales, activeLocale, positions, primaryLocale, saveTemplate]
+    [hasMultipleLocales, isPrimaryLocale, foreignLocales, activeLocale, positions, primaryLocale, productId, productTitle, saveTemplate, patchOps, setPositionTranslating]
   );
 
   const handleApplyToAll = useCallback(async () => {
-    setIsApplying(true);
+    // Bind to the locale at click time: activeLocale can change while the
+    // request is in flight, but this apply (and its button) belong to `loc`.
+    const loc = activeLocale;
+    if (ops.applyingLocales.includes(loc)) return; // reentrancy guard
+    setApplyingLocale(loc, true);
     try {
       const res = await fetch("/api/apply-alt-text-templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId,
-          locale: activeLocale,
+          locale: loc,
           primaryLocale,
           scope: "all",
           variants,
@@ -387,24 +427,28 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       const data = await res.json();
       if (data.success) {
         showInfoBox(
-          (im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully") +
-            (data.applied != null ? ` (${data.applied})` : ""),
+          scopedMsg(
+            (im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully") +
+              (data.applied != null ? ` (${data.applied})` : ""),
+            productId,
+            productTitle
+          ),
           "success"
         );
-        onApplySuccess?.();
+        if (isStillActive(productId)) onApplySuccess?.();
       } else {
         const detail = Array.isArray(data.errors) && data.errors.length > 0
           ? data.errors.join("\n")
           : (data.error ?? "Unknown error");
-        showInfoBox(detail, "critical");
+        showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
       }
     } catch (e: any) {
       const detail = e.message ?? "Unknown error";
-      showInfoBox(detail, "critical");
+      showInfoBox(scopedMsg(detail, productId, productTitle), "critical");
     } finally {
-      setIsApplying(false);
+      setApplyingLocale(loc, false);
     }
-  }, [productId, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess]);
+  }, [ops.applyingLocales, productId, productTitle, activeLocale, primaryLocale, variants, im, showInfoBox, onApplySuccess, setApplyingLocale, scopedMsg, isStillActive]);
 
   // Locales that "Apply to all languages" will write to. Primary is always included;
   // foreign locales can be Ctrl-clicked off via excludedLocales.
@@ -416,14 +460,23 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
     );
 
   const handleApplyToAllLocales = useCallback(async () => {
+    if (ops.applyingAll) return; // reentrancy guard (double-click / keyboard)
     if (targetLocales.length === 0) return;
-    setIsApplyingAll(true);
-    setApplyAllProgress({ done: 0, total: targetLocales.length });
+    const total = targetLocales.length;
+    patchOps({ applyingAll: true, applyAllProgress: { done: 0, total } });
     let totalApplied = 0;
     const allErrors: string[] = [];
     try {
-      for (let i = 0; i < targetLocales.length; i++) {
-        const loc = targetLocales[i];
+      // Send every locale to Shopify simultaneously. An earlier revision ran
+      // the primary locale first and BLOCKED on it before starting the
+      // foreign ones — but the primary apply can be slow (it triggers the
+      // products/update webhook → product-sync), so the foreign locales (and
+      // their tasks) only appeared minutes later, looking like "only the main
+      // language was applied". Concurrency is what the feature is supposed to
+      // do; the server-side DB-race retry already makes the parallel
+      // sync-collision safe.
+      let done = 0;
+      const runLocale = async (loc: string) => {
         try {
           const res = await fetch("/api/apply-alt-text-templates", {
             method: "POST",
@@ -439,25 +492,34 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           }
         } catch (e: any) {
           allErrors.push(`[${loc.toUpperCase()}] ${e?.message ?? "Unknown error"}`);
+        } finally {
+          done += 1;
+          patchOps({ applyAllProgress: { done, total } });
         }
-        setApplyAllProgress({ done: i + 1, total: targetLocales.length });
-      }
+      };
+
+      await Promise.allSettled(targetLocales.map(runLocale));
       if (allErrors.length === 0) {
         const langWord = targetLocales.length === 1 ? "language" : "languages";
         showInfoBox(
-          `${im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully"} (${totalApplied}, ${targetLocales.length} ${langWord})`,
+          scopedMsg(
+            `${im?.altTextTemplateApplySuccess ?? "Alt texts applied successfully"} (${totalApplied}, ${targetLocales.length} ${langWord})`,
+            productId,
+            productTitle
+          ),
           "success"
         );
       } else {
-        showInfoBox(allErrors.join("\n"), "critical");
+        showInfoBox(scopedMsg(allErrors.join("\n"), productId, productTitle), "critical");
       }
-      // Refresh the gallery either way so any partial saves become visible.
-      onApplySuccess?.();
+      // Refresh the gallery only if this product is still on screen — a
+      // background completion must not yank the gallery the user is now
+      // looking at on another product.
+      if (isStillActive(productId)) onApplySuccess?.();
     } finally {
-      setIsApplyingAll(false);
-      setApplyAllProgress(null);
+      patchOps({ applyingAll: false, applyAllProgress: null });
     }
-  }, [targetLocales, productId, primaryLocale, variants, im, showInfoBox, onApplySuccess]);
+  }, [ops.applyingAll, targetLocales, productId, productTitle, primaryLocale, variants, im, showInfoBox, onApplySuccess, patchOps, scopedMsg, isStillActive]);
 
   const previewVariants = variants.slice(0, 3);
 
@@ -470,8 +532,6 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
       </Box>
     );
   }
-
-  const anyTranslating = isTranslatingAll || translatingPositions.size > 0;
 
   return (
     <Card>
@@ -529,7 +589,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
               size="slim"
               onClick={() => handleTranslate(null)}
               loading={isTranslatingAll}
-              disabled={anyTranslating && !isTranslatingAll}
+              disabled={isTranslatingAll}
             >
               🌍 {isTranslatingAll
                 ? (im?.altTextTemplateTranslating ?? "Translating…")
@@ -540,7 +600,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           {/* Positions */}
           {positions.map((pos, idx) => {
             const templateValue = pos.templates[activeLocale] ?? "";
-            const isThisTranslating = translatingPositions.has(idx);
+            const isThisTranslating = translatingPositions.includes(pos.position);
             return (
               <BlockStack key={pos.position} gap="200">
                 <InlineStack align="space-between" blockAlign="center">
@@ -555,7 +615,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                         variant="plain"
                         onClick={() => handleTranslate(idx)}
                         loading={isThisTranslating}
-                        disabled={anyTranslating && !isThisTranslating}
+                        disabled={isThisTranslating || isTranslatingAll}
                       >
                         🌍 {isThisTranslating
                           ? (im?.altTextTemplateTranslating ?? "Translating…")
@@ -568,7 +628,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                         tone="critical"
                         variant="plain"
                         onClick={() => handleRemovePosition(idx)}
-                        accessibilityLabel="Remove position"
+                        accessibilityLabel={im?.altTextTemplateRemovePosition ?? "Remove position"}
                       />
                     )}
                   </InlineStack>
@@ -676,10 +736,10 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
               variant="primary"
               fullWidth
               onClick={handleApplyToAll}
-              loading={isApplying}
-              disabled={variants.length === 0 || isApplyingAll}
+              loading={isApplyingActiveLocale}
+              disabled={variants.length === 0 || isApplyingAll || isApplyingActiveLocale}
             >
-              {isApplying
+              {isApplyingActiveLocale
                 ? (im?.altTextTemplateApplying ?? "Applying…")
                 : hasMultipleLocales
                   ? (im?.altTextTemplateApplyToActiveLocale ?? "Apply to images in {locale}")
@@ -688,7 +748,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
             </Button>
 
             {hasMultipleLocales && (() => {
-              const disabled = !allLocalesComplete || variants.length === 0 || isApplying || isApplyingAll;
+              const disabled = !allLocalesComplete || variants.length === 0 || anyApplying || isApplyingAll;
               const button = (
                 <Button
                   variant="primary"

@@ -105,8 +105,12 @@ describe('logGDPRRequest()', () => {
     expect(data.customerEmail).toBeNull();
   });
 
-  it('should truncate dataExported to 500 characters', async () => {
+  it('persists the FULL data_request export (no 500-char truncation) — R5-G1', async () => {
+    // R5-G1: the old 500-char truncation made customers/data_request a silent
+    // no-op (the merchant could never obtain the full data Shopify obliges
+    // them to provide). The full JSON must now be stored (1 MB defensive cap).
     const longObject = { key: 'x'.repeat(1000) };
+    const fullJson = JSON.stringify(longObject);
 
     await logGDPRRequest(
       'shop.myshopify.com',
@@ -117,8 +121,17 @@ describe('logGDPRRequest()', () => {
     );
 
     const { data } = mockGdprAuditLogCreate.mock.calls[0][0];
-    expect(data.dataExported).not.toBeNull();
-    expect((data.dataExported as string).length).toBeLessThanOrEqual(500);
+    expect(data.dataExported).toBe(fullJson);
+    expect((data.dataExported as string).length).toBeGreaterThan(500);
+  });
+
+  it('caps an oversized data_request export at 1 MB — R5-G1', async () => {
+    const huge = { key: 'x'.repeat(2_000_000) };
+
+    await logGDPRRequest('shop.myshopify.com', 'data_request', 1, undefined, huge);
+
+    const { data } = mockGdprAuditLogCreate.mock.calls[0][0];
+    expect((data.dataExported as string).length).toBe(1_000_000);
   });
 
   it('should store null for dataExported when not provided', async () => {

@@ -3,13 +3,39 @@ import "@shopify/polaris/build/esm/styles.css";
 import type { LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Sentry } from "~/utils/sentry.client";
+import { sentryEnabled } from "~/utils/sentry-scrub.cjs";
 
 export const links: LinksFunction = () => [
   { rel: "icon", href: "/app-icon.png", type: "image/png" },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  // The standalone /admin tool is NOT embedded in the Shopify Admin iframe.
+  // Loading App Bridge there makes it hijack navigation (auth redirect),
+  // which silently breaks form submits. Omit the api key for /admin so the
+  // shopify-api-key meta + App Bridge script are not rendered.
+  const isEmbedded = !new URL(request.url).pathname.startsWith("/admin");
+  const apiKey = isEmbedded ? process.env.SHOPIFY_API_KEY || "" : "";
+
+  // Hard gate: the Sentry DSN reaches the browser ONLY in real production.
+  // Use the SHARED sentryEnabled() (review H2 — no inline duplication left;
+  // single source of truth in sentry-scrub.cjs). In dev/staging window.ENV
+  // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
+  const sentryActive = sentryEnabled();
+  // Review H4: emit the Sentry block ONLY when active. When inactive, ENV is
+  // empty so not even the environment name / commit SHA is exposed to the
+  // browser, and window.ENV is omitted entirely (see Document).
+  const ENV = sentryActive
+    ? {
+        SENTRY_DSN: process.env.SENTRY_DSN,
+        SENTRY_CLIENT_SAMPLE_RATE: process.env.SENTRY_CLIENT_SAMPLE_RATE,
+        SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
+        SENTRY_ENVIRONMENT:
+          process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV,
+        SENTRY_RELEASE:
+          process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA,
+      }
+    : undefined;
 
   // Hard gate: the Sentry DSN reaches the browser ONLY in real production
   // (APP_ENV === "production" + SENTRY_DSN set). In dev/staging window.ENV
@@ -56,7 +82,9 @@ function Document({
           rel="stylesheet"
           href="https://cdn.shopify.com/static/fonts/inter/v4/styles.css"
         />
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+        {apiKey ? (
+          <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
+        ) : null}
         <title>{title}</title>
         <Meta />
         <Links />

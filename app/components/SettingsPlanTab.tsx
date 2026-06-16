@@ -15,10 +15,13 @@ import {
   Divider,
   Button,
   Banner,
+  Modal,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
 import { getNextPlanUpgrade, isApproachingLimit, type ResourceType } from "../utils/planUtils";
 import { getAvailablePlans, type BillingPlan } from "../config/billing";
+import { useI18n } from "../contexts/I18nContext";
+import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
 
 interface SettingsPlanTabProps {
@@ -38,6 +41,7 @@ interface SettingsPlanTabProps {
   articleCount: number;
   pageCount: number;
   themeTranslationCount: number;
+  imageOperationCount: number;
   t: any;
 }
 
@@ -53,29 +57,38 @@ export function SettingsPlanTab({
   articleCount,
   pageCount,
   themeTranslationCount,
+  imageOperationCount,
   t,
 }: SettingsPlanTabProps) {
   const revalidator = useRevalidator();
+  const { locale } = useI18n(); // R4-UX6: locale-aware number grouping
   const [planLoading, setPlanLoading] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
+  // R4-UX7: native window.confirm is a focus trap inside the embedded admin
+  // iframe, isn't Polaris, and the browser's "prevent additional dialogs"
+  // option silently bypasses it → a downgrade with NO confirmation. Use a
+  // Polaris Modal (same pattern as the image-delete confirm).
+  const [downgradeConfirmOpen, setDowngradeConfirmOpen] = useState(false);
   const availablePlans = getAvailablePlans();
+
+  const performDowngrade = async () => {
+    setDowngradeConfirmOpen(false);
+    setPlanLoading("free");
+    setPlanError(null);
+    try {
+      const response = await fetch("/api/billing/cancel-subscription", { method: "POST" });
+      if (!response.ok) throw new Error("Failed to cancel subscription");
+      revalidator.revalidate();
+      setPlanLoading(null);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
+      setPlanLoading(null);
+    }
+  };
 
   const handleSelectPlan = async (plan: BillingPlan) => {
     if (plan === "free") {
-      if (window.confirm(t.settings.confirmDowngrade)) {
-        setPlanLoading("free");
-        setPlanError(null);
-
-        try {
-          const response = await fetch("/api/billing/cancel-subscription", { method: "POST" });
-          if (!response.ok) throw new Error("Failed to cancel subscription");
-          revalidator.revalidate();
-          setPlanLoading(null);
-        } catch (err) {
-          setPlanError(err instanceof Error ? err.message : t.settings.errorOccurred);
-          setPlanLoading(null);
-        }
-      }
+      setDowngradeConfirmOpen(true);
       return;
     }
 
@@ -205,7 +218,9 @@ export function SettingsPlanTab({
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings?.usageLocales || "Sprachen"}:</strong>{" "}
-                        {planDetails.maxLocales}
+                        {planDetails.maxLocales === Infinity
+                          ? t.settings.unlimited
+                          : planDetails.maxLocales}
                       </Text>
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.images}:</strong>{" "}
@@ -230,6 +245,12 @@ export function SettingsPlanTab({
                           )
                         )}
                       </Text>
+                      {planDetails.monthlyImageOperations > 0 && (
+                        <Text as="p" variant="bodyMd">
+                          <strong>{t.settings.monthlyImageOperations}:</strong>{" "}
+                          {formatNumber(planDetails.monthlyImageOperations, locale)}
+                        </Text>
+                      )}
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.contentTypes}:</strong>
                       </Text>
@@ -240,17 +261,17 @@ export function SettingsPlanTab({
                               case "products":
                                 return planDetails.maxProducts === Infinity
                                   ? t.settings.unlimited
-                                  : planDetails.maxProducts.toLocaleString();
+                                  : formatNumber(planDetails.maxProducts, locale);
                               case "collections":
-                                return planDetails.maxCollections.toLocaleString();
+                                return formatNumber(planDetails.maxCollections, locale);
                               case "articles":
-                                return planDetails.maxArticles.toLocaleString();
+                                return formatNumber(planDetails.maxArticles, locale);
                               case "pages":
-                                return planDetails.maxPages.toLocaleString();
+                                return formatNumber(planDetails.maxPages, locale);
                               case "templates":
                                 return planDetails.maxThemeTranslations === 0
                                   ? "—"
-                                  : planDetails.maxThemeTranslations.toLocaleString();
+                                  : formatNumber(planDetails.maxThemeTranslations, locale);
                               default:
                                 return null;
                             }
@@ -269,6 +290,27 @@ export function SettingsPlanTab({
                           );
                         })}
                       </BlockStack>
+
+                      {planDetails.variantImageManager && (
+                        <>
+                          <Text as="p" variant="bodyMd">
+                            <strong>{t.settings.imageFeaturesTitle}:</strong>
+                          </Text>
+                          <BlockStack gap="100">
+                            {[
+                              t.settings.featureImageManager,
+                              t.settings.featureVariantGallery,
+                              t.settings.featureSkuGenerator,
+                              t.settings.featureBulkAltText,
+                              t.settings.featureBulkImageUpload,
+                            ].map((label) => (
+                              <Text key={label} as="p" variant="bodySm" tone="success">
+                                ✓ {label}
+                              </Text>
+                            ))}
+                          </BlockStack>
+                        </>
+                      )}
                     </BlockStack>
                   </BlockStack>
 
@@ -328,6 +370,7 @@ export function SettingsPlanTab({
         articleCount={articleCount}
         pageCount={pageCount}
         themeTranslationCount={themeTranslationCount}
+        imageOperationCount={imageOperationCount}
         t={t}
         hideUpgradeCard
       />
@@ -351,6 +394,28 @@ export function SettingsPlanTab({
           </Text>
         </BlockStack>
       </Card>
+
+      {/* R4-UX7: Polaris downgrade confirmation (replaces window.confirm) */}
+      <Modal
+        open={downgradeConfirmOpen}
+        onClose={() => setDowngradeConfirmOpen(false)}
+        title={t.settings?.confirmDowngradeTitle || "Switch to the free plan?"}
+        primaryAction={{
+          content: t.settings?.downgrade || "Downgrade",
+          onAction: performDowngrade,
+          destructive: true,
+        }}
+        secondaryActions={[
+          {
+            content: t.common?.cancel || "Cancel",
+            onAction: () => setDowngradeConfirmOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">{t.settings.confirmDowngrade}</Text>
+        </Modal.Section>
+      </Modal>
     </BlockStack>
   );
 }

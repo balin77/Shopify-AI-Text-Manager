@@ -16,12 +16,19 @@ export async function handleFormatField(ctx: AIActionContext): Promise<Response>
   const formData = ctx.formData;
 
   const fieldType = getFormString(formData, "fieldType");
-  const sourceText = getFormString(formData, "sourceText");
-  const formatInstruction = getFormString(formData, "formatInstruction") || "Improve and format this text while keeping the same language";
+  const rawSourceText = getFormString(formData, "sourceText");
+  const rawFormatInstruction = getFormString(formData, "formatInstruction") || "Improve and format this text while keeping the same language";
 
-  if (!sourceText) {
+  if (!rawSourceText) {
     return json({ success: false, error: "No source text available" }, { status: 400 });
   }
+
+  // Both fields are fully client-controlled and interpolated into the prompt.
+  // Sanitize them (strip prompt-injection patterns) like the sibling handlers
+  // do for contextTitle/contextDescription — without this, this handler was an
+  // unguarded prompt-injection sink.
+  const sourceText = sanitizePromptInput(rawSourceText, { fieldType: "general", allowNewlines: true });
+  const formatInstruction = sanitizePromptInput(rawFormatInstruction, { fieldType: "general", allowNewlines: true });
 
   // Build the prompt
   const prompt = `${formatInstruction}

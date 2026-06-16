@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
+import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
 import type {
   TranslatableContentItem,
@@ -850,6 +851,21 @@ const handleTranslateAll = () => {
   }
 };
 
+// R4-UX8 — KNOWN LIMITATION (intentionally deferred, not a half-fix):
+// accepting a suggestion overwrites editableValues[fieldKey] in place with
+// no diff preview and no PER-FIELD undo. The only recovery today is the
+// page-level handleDiscard(), which reverts EVERY unsaved field, so undoing
+// one accidental accept also throws away every other in-progress edit.
+//
+// A correct fix is a real UI feature, not a one-liner: snapshot the
+// pre-accept value (e.g. acceptedSuggestionUndo: Record<fieldKey,string>),
+// expose handleUndoAcceptedSuggestion via the FieldHandlers contract, and
+// add a transient per-field "Undo" affordance with a defined lifecycle
+// (clear on save / item switch / reject). That spans this hook, the
+// FieldHandlers type, the provider wiring and AISuggestionBanner, and needs
+// a UX decision on where/how long the affordance shows. Shipping only the
+// state half here would be dead code; a rushed UI risks regressing the
+// accept flow. Tracked for a dedicated, design-aligned change.
 const handleAcceptSuggestion = (fieldKey: string) => {
   const suggestion = aiSuggestions[fieldKey];
   if (!suggestion) return;
@@ -982,7 +998,13 @@ const handleToggleLanguage = (locale: string) => {
 };
 
 const handleItemSelect = (itemId: string) => {
-  handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges || isSavingCurrentItem);
+  handleNavigationAttempt(() => {
+    setSelectedItemId(itemId);
+    // Persist only on explicit user selection. Restore-effects and the
+    // disappear-fallback in useUnifiedContentEditor must NOT write — see
+    // the comment block above the restore effect for why.
+    writeLastSelectedId(config.contentType, itemId);
+  }, hasChanges || isSavingCurrentItem);
 };
 
 const handleValueChange = useCallback((fieldKey: string, value: string) => {

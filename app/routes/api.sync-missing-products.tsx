@@ -12,6 +12,7 @@ import { json } from "@remix-run/node";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 
@@ -132,7 +133,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     for (const product of missingProducts) {
       try {
         // Upsert product (basic data only - no translations)
-        await db.product.upsert({
+        // R4-DI1: atomic + race-safe, mirroring saveToDatabase. Was a
+        // bare deleteMany→createMany with NO transaction/retry; this
+        // route is user-triggered in parallel with "Apply alt-text
+        // templates", so a crash/contention between the two left the
+        // product with zero/partial images until the next full sync.
+        await withDbRaceRetry(() => db.$transaction(async (tx) => {
+        await tx.product.upsert({
           where: {
             shop_id: {
               shop: session.shop,
@@ -177,10 +184,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
           if (mediaImages.length > 0) {
             // Delete existing images first
-            await db.productImage.deleteMany({ where: { productId: product.id } });
+            await tx.productImage.deleteMany({ where: { productId: product.id } });
 
             // Create new images
-            await db.productImage.createMany({
+            await tx.productImage.createMany({
               data: mediaImages.map((media: any, index: number) => ({
                 productId: product.id,
                 url: media.image.url,
@@ -191,6 +198,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             });
           }
         }
+        }, { maxWait: 15_000, timeout: 120_000 }));
 
         synced++;
 

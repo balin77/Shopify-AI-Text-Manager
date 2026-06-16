@@ -10,6 +10,7 @@ import {
   Button,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
+import { resolveMerchantLocale } from "../utils/locale.server";
 import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
@@ -43,6 +44,7 @@ import {
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
+import { getImageOperationUsage } from "~/utils/imageOperations.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
@@ -79,8 +81,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
 
     if (!settings) {
-      // Auto-select app language based on shop's primary locale
-      const autoSelectedLanguage = primaryShopLocale.startsWith("en") ? "en" : "de";
+      // R4-UX1: was a crude binary (en vs. de) on the shop's *storefront*
+      // primary locale — a Spanish merchant wrongly got German. Use the
+      // shared resolver: merchant admin locale (?locale / Accept-Language)
+      // first, shop primary locale only as a weak last resort.
+      const autoSelectedLanguage = resolveMerchantLocale(request, primaryShopLocale);
 
       settings = await db.aISettings.create({
         data: {
@@ -282,6 +287,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
+    // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only and
+    // fail-safe: a transient error or a code-before-migration deploy window
+    // must NOT take down the whole Settings page (other usage counts are
+    // defensively wrapped the same way).
+    let imageOperationCount = 0;
+    try {
+      ({ count: imageOperationCount } = await getImageOperationUsage(session.shop));
+    } catch (e) {
+      logger.warn("[ImageOps] usage read failed, defaulting to 0", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     // Count active locales from shop locales
     const localeCount = localesData.data.shopLocales?.length || 1;
 
@@ -364,13 +382,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
-    const { isProductionLocked } = await import("../utils/planUtils");
-    const showImageManagerTab = !isProductionLocked() && (subscriptionPlan === "pro" || subscriptionPlan === "max");
-    // Future-options Settings tabs (SKU match keys, productType Translations
-    // mapping). Develop-only — hidden in production until ready to ship,
-    // same prod-gate as showImageManagerTab.
-    const showSkuTab = !isProductionLocked();
-    const showTranslationsTab = !isProductionLocked();
+    const showImageManagerTab = true;
+    const showSkuTab = true;
+    const showTranslationsTab = true;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -392,6 +406,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       articleCount,
       pageCount,
       themeTranslationCount,
+      imageOperationCount,
       localeCount,
       isTestStore,
       devPlanMode,
@@ -691,7 +706,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -705,14 +720,17 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
     if (tabParam === "sku" && !showSkuTab) return "setup";
     if (tabParam === "translations" && !showTranslationsTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback";
+    // imagemanager is the deep-link target of the first-run theme-extension
+    // hint; same prod/plan gate as the tab itself so it never renders blank.
+    if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };
@@ -1170,6 +1188,7 @@ export default function SettingsPage() {
                     articleCount={articleCount}
                     pageCount={pageCount}
                     themeTranslationCount={themeTranslationCount}
+                    imageOperationCount={imageOperationCount}
                     t={t}
                   />
                 </>

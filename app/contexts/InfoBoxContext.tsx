@@ -2,10 +2,17 @@ import { createContext, useContext, useState, useRef, useCallback, useMemo, Reac
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
+/** Optional in-app link rendered after the message (e.g. deep-link to a settings tab). */
+export interface InfoBoxLink {
+  url: string;
+  label: string;
+}
+
 export interface InfoBoxState {
   message: string;
   tone: InfoBoxTone;
   title?: string;
+  link?: InfoBoxLink;
   id: string; // Unique ID to track individual messages
 }
 
@@ -13,9 +20,17 @@ export interface InfoBoxHistoryEntry extends InfoBoxState {
   timestamp: Date;
 }
 
+export interface SyncProgressState {
+  phase: string | null;
+  percent: number;
+  error: string | null;
+  /** Running per-phase counts of what has been synced so far. */
+  stats: Record<string, number> | null;
+}
+
 interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
-  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
+  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string, link?: InfoBoxLink) => void;
   hideInfoBox: () => void;
   isGlobalLoading: boolean;
   setGlobalLoading: (loading: boolean, message?: string) => void;
@@ -23,6 +38,10 @@ interface InfoBoxContextType {
   unreadCount: number;
   markAllRead: () => void;
   clearHistory: () => void;
+  // Persistent initial-sync progress, rendered in the nav infobox slot
+  // (takes precedence over toasts, never auto-hides). null = no sync running.
+  syncProgress: SyncProgressState | null;
+  setSyncProgress: (p: SyncProgressState | null) => void;
 }
 
 const InfoBoxContext = createContext<InfoBoxContextType | undefined>(undefined);
@@ -33,6 +52,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   const [globalLoadingMessage, setGlobalLoadingMessage] = useState<string | undefined>();
   const [messageHistory, setMessageHistory] = useState<InfoBoxHistoryEntry[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null);
   const dismissedMessages = useRef<Set<string>>(new Set());
   const autoHideTimer = useRef<NodeJS.Timeout | null>(null);
   // Ref to access infoBox in hideInfoBox without adding it as a dependency
@@ -40,10 +60,10 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   infoBoxRef.current = infoBox;
 
   // Queue for messages that arrive while a toast is already showing
-  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string }>>([]);
+  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink }>>([]);
 
   // Ref-based functions so setTimeout always calls the latest version
-  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string }) => void>(undefined);
+  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink }) => void>(undefined);
   const processQueueRef = useRef<() => void>(undefined);
 
   processQueueRef.current = () => {
@@ -58,7 +78,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
   displayToastRef.current = (msg) => {
     const id = `${msg.message}-${msg.tone}-${Date.now()}`;
-    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, id });
+    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, link: msg.link, id });
 
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
 
@@ -70,7 +90,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string) => {
+  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string, link?: InfoBoxLink) => {
     // Don't show if this exact message was recently dismissed
     const messageKey = `${message}-${tone}`;
     if (dismissedMessages.current.has(messageKey)) {
@@ -78,7 +98,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
 
     const id = `${message}-${tone}-${Date.now()}`;
-    const entry: InfoBoxHistoryEntry = { message, tone, title, id, timestamp: new Date() };
+    const entry: InfoBoxHistoryEntry = { message, tone, title, link, id, timestamp: new Date() };
 
     // Always add to history and increment unread count
     setMessageHistory(prev => [entry, ...prev]);
@@ -86,12 +106,12 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
     // If a toast is currently showing, queue this one instead of replacing it
     if (infoBoxRef.current) {
-      messageQueue.current.push({ message, tone, title });
+      messageQueue.current.push({ message, tone, title, link });
       return;
     }
 
     // No current toast — show immediately
-    displayToastRef.current?.({ message, tone, title });
+    displayToastRef.current?.({ message, tone, title, link });
   }, []);
 
   const hideInfoBox = useCallback(() => {
@@ -141,7 +161,9 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     unreadCount,
     markAllRead,
     clearHistory,
-  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory]);
+    syncProgress,
+    setSyncProgress,
+  }), [infoBox, showInfoBox, hideInfoBox, isGlobalLoading, setGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress]);
 
   return (
     <InfoBoxContext.Provider value={value}>

@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useRouteError } from "@remix-run/react";
+import { Outlet, useLoaderData, useRouteError, useFetcher } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
@@ -13,12 +13,15 @@ import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
-import { useEffect } from "react";
+import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
+import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
+import { InitialSyncBanner } from "../components/InitialSyncBanner";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
 import type { Locale } from "../i18n";
+import { resolveMerchantLocale } from "../utils/locale.server";
 import type { Plan } from "../config/plans";
 import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription } from "~/services/billing.server";
@@ -91,10 +94,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         preferredProvider: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
+        extensionSetupHintShownAt: true,
       },
     });
 
-    const appLanguage = (settings?.appLanguage || "en") as Locale;
+    // R4-UX1: respect an explicit stored choice; otherwise fall back to the
+    // merchant's Shopify admin locale instead of forcing English. (A row is
+    // only created once the merchant visits Settings, so the common
+    // fresh-install path used to be permanently English here.)
+    const appLanguage: Locale = settings?.appLanguage
+      ? (settings.appLanguage as Locale)
+      : resolveMerchantLocale(request);
     const subscriptionPlan = (settings?.subscriptionPlan || "free") as Plan;
 
     // Build API-key presence flags from the single query result
@@ -109,12 +119,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ? settings.seoTitleSuffix
       : "";
 
+    // First-run hint: a shop that just reached Pro/Max still has to enable the
+    // ContentPilot theme app extension in their theme editor for the variant
+    // gallery to render on the storefront. We surface this once (one-shot
+    // marker below), and only while the feature is actually unlocked — same
+    // gate as `showImageManagerTab` in app.settings.tsx.
+    const extensionSetupHint =
+      !isProductionLocked() &&
+      (subscriptionPlan === "pro" || subscriptionPlan === "max") &&
+      !settings?.extensionSetupHintShownAt;
+
+    // Seed the initial-sync banner from the DB so it renders immediately on
+    // any full document load (reopen / hard reload) without waiting for the
+    // first client poll — the poll then keeps it fresh.
+    const installState = await db.shopInstallState.findUnique({
+      where: { shop: session.shop },
+      select: {
+        initialSyncCompletedAt: true,
+        initialSyncPhase: true,
+        initialSyncPercent: true,
+        initialSyncStats: true,
+        initialSyncError: true,
+      },
+    });
+    const initialSync = {
+      needsSetup: !installState?.initialSyncCompletedAt,
+      phase: installState?.initialSyncPhase ?? null,
+      percent: installState?.initialSyncPercent ?? 0,
+      stats: (installState?.initialSyncStats ?? null) as Record<string, number> | null,
+      error: installState?.initialSyncError ?? null,
+    };
+
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
       newFeaturesEnabled: !isProductionLocked(),
+      initialSync,
+      extensionSetupHint,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -133,61 +176,123 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid
     return json({
-      appLanguage: "en" as Locale,
+      appLanguage: resolveMerchantLocale(request),
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
       seoTitleSuffix: "",
       newFeaturesEnabled: !isProductionLocked(),
+      initialSync: null,
+      extensionSetupHint: false,
       loaderError: true,
     });
   }
 };
 
 function AppContent() {
-  const { aiSettings } = useLoaderData<typeof loader>();
+  const { aiSettings, extensionSetupHint } = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const { showInfoBox } = useInfoBox();
+  const { showInfoBox, infoBox } = useInfoBox();
+  const hintFetcher = useFetcher();
+  const extensionHintRequested = useRef(false);
+  const extensionHintPersisted = useRef(false);
+
+  // First-run nudge: a shop that just reached Pro/Max still has to enable the
+  // ContentPilot theme app extension for the variant gallery to appear on the
+  // storefront. Surface it once, non-blocking, with a deep-link into the
+  // Image-Manager settings tab where the actual theme-editor buttons live.
+  // Merchants who don't want it can just dismiss. Message string is computed
+  // here so the persist effect below can match it against the active infobox.
+  const extensionHintMessage =
+    t.settings?.extensionSetupHintMessage ||
+    "You're on Pro/Max — to show variant image galleries on your storefront, the ContentPilot theme extension still needs to be enabled in your theme editor. This is optional.";
+
+  useEffect(() => {
+    if (!extensionSetupHint || extensionHintRequested.current) return;
+    extensionHintRequested.current = true;
+
+    showInfoBox(
+      extensionHintMessage,
+      // 'warning' (not 'info') so the hint persists until dismissed instead of
+      // auto-hiding after 5s — it carries an actionable deep-link.
+      "warning",
+      t.settings?.extensionSetupHintTitle || "Set up the theme extension",
+      {
+        url: "/app/settings?tab=imagemanager",
+        label: t.settings?.extensionSetupHintAction || "Set it up",
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extensionSetupHint]);
+
+  // Persist the one-shot marker only once the hint is ACTUALLY the active
+  // infobox — showInfoBox queues it behind any message already showing, so
+  // persisting on the request alone would mean "attempted once", not "shown
+  // once": a merchant leaving before a queued hint surfaces would burn it
+  // unseen. Watching infoBox keeps the real guarantee. (Residual: two tabs /
+  // a hard reload before this POST commits can show it 2×; accepted for an
+  // optional nudge — it is self-limiting once the marker lands.)
+  useEffect(() => {
+    if (!extensionSetupHint || extensionHintPersisted.current) return;
+    if (infoBox?.message !== extensionHintMessage) return;
+    extensionHintPersisted.current = true;
+    hintFetcher.submit(null, { method: "post", action: "/api/extension-setup-hint" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infoBox, extensionSetupHint]);
 
   // Check API key on mount and show warning in InfoBox if missing
   useEffect(() => {
-    if (!aiSettings || !aiSettings.preferredProvider) return;
+    if (!aiSettings) return;
 
-    // Check if preferred provider has an API key using boolean flags
-    const provider = aiSettings.preferredProvider.toLowerCase();
-    let hasApiKey = false;
+    const hasAnyKey =
+      aiSettings.hasHuggingfaceApiKey ||
+      aiSettings.hasGeminiApiKey ||
+      aiSettings.hasClaudeApiKey ||
+      aiSettings.hasOpenaiApiKey ||
+      aiSettings.hasGrokApiKey ||
+      aiSettings.hasDeepseekApiKey;
 
-    switch (provider) {
-      case 'huggingface':
-        hasApiKey = aiSettings.hasHuggingfaceApiKey;
-        break;
-      case 'gemini':
-        hasApiKey = aiSettings.hasGeminiApiKey;
-        break;
-      case 'claude':
-        hasApiKey = aiSettings.hasClaudeApiKey;
-        break;
-      case 'openai':
-        hasApiKey = aiSettings.hasOpenaiApiKey;
-        break;
-      case 'grok':
-        hasApiKey = aiSettings.hasGrokApiKey;
-        break;
-      case 'deepseek':
-        hasApiKey = aiSettings.hasDeepseekApiKey;
-        break;
+    // Does the preferred provider (if one is selected) have a key?
+    let hasPreferredKey = false;
+    switch (aiSettings.preferredProvider?.toLowerCase()) {
+      case 'huggingface': hasPreferredKey = aiSettings.hasHuggingfaceApiKey; break;
+      case 'gemini': hasPreferredKey = aiSettings.hasGeminiApiKey; break;
+      case 'claude': hasPreferredKey = aiSettings.hasClaudeApiKey; break;
+      case 'openai': hasPreferredKey = aiSettings.hasOpenaiApiKey; break;
+      case 'grok': hasPreferredKey = aiSettings.hasGrokApiKey; break;
+      case 'deepseek': hasPreferredKey = aiSettings.hasDeepseekApiKey; break;
     }
 
-    if (!hasApiKey) {
+    // Nothing to warn about: the selected provider has a key. (When no
+    // provider is selected we still warn iff there is no key at all.)
+    if (aiSettings.preferredProvider && hasPreferredKey) return;
+    if (!aiSettings.preferredProvider && hasAnyKey) return;
+
+    const link = {
+      url: "/app/settings?tab=ai",
+      label: t.settings?.manageAiKeys || "Go to Settings",
+    };
+
+    if (!hasAnyKey) {
+      // No key anywhere — the merchant must set one up first.
+      showInfoBox(
+        t.settings?.noApiKeyAtAllDescription ||
+          "To use AI features, you first need to add an API key for an AI provider.",
+        "warning",
+        t.settings?.noApiKeyAtAll || "No AI API key set up yet",
+        link
+      );
+    } else {
+      // Keys exist, just not for the preferred provider.
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
       const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
-
-      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key");
+      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link);
     }
   }, [aiSettings, t, showInfoBox]);
 
   return (
     <AppErrorBoundary>
+      <InitialSyncBanner />
       <Outlet />
     </AppErrorBoundary>
   );
@@ -206,7 +311,9 @@ export default function App() {
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
-                <AppContent />
+                <AltTextOpsProvider>
+                  <AppContent />
+                </AltTextOpsProvider>
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>

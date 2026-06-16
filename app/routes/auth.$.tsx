@@ -31,7 +31,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // and the app loads correctly on first visit, not just after a reload.
     if ('session' in authResult && authResult.session) {
       const url = new URL(request.url);
-      const shop = url.searchParams.get('shop') || authResult.session.shop;
+      // R5-G6: only reflect `shop` from the query string when it is a
+      // well-formed *.myshopify.com host; otherwise use the trusted
+      // authenticated session shop. Downstream authenticate.admin re-validates
+      // and the target is same-origin /app, so this is defense-in-depth
+      // against reflecting an attacker-controlled value into the redirect.
+      const qsShop = url.searchParams.get('shop');
+      const shop =
+        qsShop && /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/.test(qsShop)
+          ? qsShop
+          : authResult.session.shop;
       const host = url.searchParams.get('host') || '';
       const redirectUrl = host
         ? `/app?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`

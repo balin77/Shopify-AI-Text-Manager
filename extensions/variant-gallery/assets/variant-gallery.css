@@ -11,13 +11,17 @@ cp-variant-gallery {
 .cp-gallery__main {
   border-radius: 4px;
   overflow: hidden;
-  background: #f5f5f5;
+  background: #f0f0f0;
+  /* Fallback reservation; JS sets the exact aspect-ratio inline when the
+     image dimensions are known, which overrides this. */
+  aspect-ratio: 1 / 1;
 }
 
 .cp-gallery__main-image {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: contain;
   transition: opacity 0.18s ease;
 }
 

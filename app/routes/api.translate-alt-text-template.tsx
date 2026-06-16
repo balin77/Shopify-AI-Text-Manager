@@ -60,6 +60,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const aiService = createAIService(settings, session.shop, task.id);
 
+    // One AI request for ALL positions × ALL locales instead of N×M
+    // round-trips (was 16 sequential calls for 4 positions × 4 languages).
+    const nonEmpty = templates.filter((t) => t.template);
+    let batch: Record<string, Record<number, string>> = {};
+    try {
+      batch = await aiService.translateTemplatesBatch(nonEmpty, fromLocale, toLocales);
+    } catch {
+      batch = {};
+    }
+    await db.task.update({ where: { id: task.id }, data: { progress: 80 } });
+
     const result: Record<string, TemplateItem[]> = {};
     let doneSteps = 0;
 
@@ -70,16 +81,60 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           result[locale].push({ position: tmpl.position, template: "" });
           continue;
         }
-        try {
-          const translated = await aiService.translateTemplate(tmpl.template, fromLocale, locale);
-          result[locale].push({ position: tmpl.position, template: translated });
-        } catch {
-          result[locale].push({ position: tmpl.position, template: tmpl.template });
+        let translated = batch[locale]?.[tmpl.position];
+        if (translated == null) {
+          // The batch omitted this cell — re-translate just this one so a
+          // single bad cell never falls back to untranslated source text.
+          try {
+            translated = await aiService.translateTemplate(tmpl.template, fromLocale, locale);
+          } catch {
+            translated = tmpl.template;
+          }
         }
+        result[locale].push({ position: tmpl.position, template: translated });
         doneSteps++;
-        const progress = Math.round(10 + (doneSteps / Math.max(totalSteps, 1)) * 85);
+        const progress = Math.round(80 + (doneSteps / Math.max(totalSteps, 1)) * 15);
         await db.task.update({ where: { id: task.id }, data: { progress } });
       }
+    }
+
+    // Persist server-side so a navigation/reload before the client's own
+    // saveTemplate calls can no longer lose the translation. The unique key
+    // matches the save route; update only touches `template` so an existing
+    // per-position label is preserved.
+    if (productId && productId !== "unknown") {
+      await Promise.all(
+        Object.entries(result).flatMap(([locale, items]) =>
+          items
+            .filter((it) => it.template && it.template.trim().length > 0)
+            .map((it) =>
+              db.altTextTemplate
+                .upsert({
+                  where: {
+                    shop_productId_position_locale: {
+                      shop: session.shop,
+                      productId,
+                      position: it.position,
+                      locale,
+                    },
+                  },
+                  create: {
+                    shop: session.shop,
+                    productId,
+                    position: it.position,
+                    positionLabel: null,
+                    locale,
+                    template: it.template,
+                  },
+                  update: { template: it.template },
+                })
+                .catch(() => {
+                  // Best-effort: the client also saves; a single failed row
+                  // must not fail the whole translation response.
+                })
+            )
+        )
+      );
     }
 
     await db.task.update({

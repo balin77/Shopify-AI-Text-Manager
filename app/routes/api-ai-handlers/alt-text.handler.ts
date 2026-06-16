@@ -3,12 +3,23 @@ import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isPrismaError } from "./shared";
 import type { TranslatableContentItem } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
+
+// Reject a malformed productId before it reaches a DB lookup or Shopify
+// mutation. productId is optional in several flows, so an empty value passes
+// (the callers already guard on `if (productId && ...)`); only a non-empty,
+// non-GID value is rejected.
+function invalidProductGidResponse(productId: string): Response | null {
+  if (productId && !isValidShopifyGID(productId)) {
+    return json({ success: false, error: `Invalid product GID: ${productId}` }, { status: 400 });
+  }
+  return null;
+}
 
 export async function handleGenerateAltText(ctx: AIActionContext): Promise<Response> {
   const { session, db, settings, formData, contentType, itemId } = ctx;
@@ -122,6 +133,8 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
   const { session, db, settings, formData, contentType } = ctx;
 
   const productId = getFormString(formData, "productId");
+  const gidErr1 = invalidProductGidResponse(productId);
+  if (gidErr1) return gidErr1;
   const productTitle = getFormString(formData, "productTitle");
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
   const imagesDataJson = getFormString(formData, "imagesData");
@@ -136,6 +149,15 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
 
   if (totalImages === 0) {
     return json({ success: false, error: "No images to process" }, { status: 400 });
+  }
+
+  // Bound the per-request AI fan-out (one queued AI call per image).
+  const MAX_IMAGES_PER_REQUEST = 250;
+  if (totalImages > MAX_IMAGES_PER_REQUEST) {
+    return json(
+      { success: false, error: `Too many images in one request (max ${MAX_IMAGES_PER_REQUEST}, got ${totalImages})` },
+      { status: 413 },
+    );
   }
 
   const altTextInstructions = await db.aIInstructions.findUnique({
@@ -290,6 +312,10 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
     return json({ success: false, error: "No source alt-text available" }, { status: 400 });
   }
 
+  if (!isValidLocale(targetLocale)) {
+    return json({ success: false, error: `Invalid target locale: ${targetLocale}` }, { status: 400 });
+  }
+
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const task = await db.task.create({
     data: {
@@ -364,6 +390,8 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const gidErr2 = invalidProductGidResponse(productId);
+  if (gidErr2) return gidErr2;
   const productTitle = getFormString(formData, "productTitle");
 
   if (!sourceAltText) {
@@ -373,6 +401,25 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
   if (targetLocales.length === 0) {
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
+  }
+
+  // Hard upper bound on locales: one AI translation call is queued per locale,
+  // so an unbounded client-supplied array is an unbounded AI fan-out that also
+  // sidesteps plan-level language limits.
+  const MAX_TARGET_LOCALES = 50;
+  if (targetLocales.length > MAX_TARGET_LOCALES) {
+    return json(
+      { success: false, error: `Too many target locales (max ${MAX_TARGET_LOCALES}, got ${targetLocales.length})` },
+      { status: 413 },
+    );
+  }
+
+  const invalidLocales = targetLocales.filter((l) => !isValidLocale(l));
+  if (invalidLocales.length > 0) {
+    return json(
+      { success: false, error: `Invalid target locale(s): ${invalidLocales.join(", ")}` },
+      { status: 400 },
+    );
   }
 
   // Create task entry (prompts will be saved by AI service via savePromptToTask)
@@ -480,7 +527,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },
@@ -630,6 +677,8 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const productId = getFormString(formData, "productId");
+  const gidErr3 = invalidProductGidResponse(productId);
+  if (gidErr3) return gidErr3;
   const productTitle = getFormString(formData, "productTitle");
 
   if (!altTextsDataJson) {
@@ -642,6 +691,22 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
 
   if (targetLocales.length === 0 || imageIndices.length === 0) {
     return json({ success: false, error: "No target locales or images specified" }, { status: 400 });
+  }
+
+  const MAX_TARGET_LOCALES = 50;
+  if (targetLocales.length > MAX_TARGET_LOCALES) {
+    return json(
+      { success: false, error: `Too many target locales (max ${MAX_TARGET_LOCALES}, got ${targetLocales.length})` },
+      { status: 413 },
+    );
+  }
+
+  const invalidLocales = targetLocales.filter((l) => !isValidLocale(l));
+  if (invalidLocales.length > 0) {
+    return json(
+      { success: false, error: `Invalid target locale(s): ${invalidLocales.join(", ")}` },
+      { status: 400 },
+    );
   }
 
   // Create task
@@ -730,7 +795,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },
@@ -959,6 +1024,8 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
 
     // Save translations to Shopify first, then DB only on Shopify success
     const productId = getFormString(formData, "productId");
+    const gidErr4 = invalidProductGidResponse(productId);
+    if (gidErr4) return gidErr4;
     const failedImages: number[] = [];
     let savedCount = 0;
 
@@ -991,7 +1058,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       const gateway = new ShopifyApiGateway(admin, session.shop);
 
       const dbProduct = await db.product.findUnique({
-        where: { id: productId },
+        where: { shop_id: { shop: session.shop, id: productId } },
         include: {
           images: { orderBy: { position: 'asc' } },
         },

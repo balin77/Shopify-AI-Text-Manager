@@ -190,38 +190,154 @@ export function canAccessVariantImageManager(plan: Plan): boolean {
   return getPlanLimits(plan).variantImageManager;
 }
 
-// ============================================================================
-// Production lock — temporary gating while the app is under Shopify review.
-// Hides features that were added on `develop` after the version submitted for
-// review. Remove these once the new feature set is approved and ready to ship.
-// ============================================================================
+// ---------------------------------------------------------------------------
+// Monthly image-operation quota — pure helpers (single source of truth)
+// ---------------------------------------------------------------------------
+//
+// Billable image operations = Bulk-Upload + WebP conversion (real compute/
+// bandwidth cost; AI is merchant-funded BYO). The quota is rolling per calendar
+// month and enforced LAZILY at the upload/convert routes (mirrors how
+// maxProducts is enforced lazily, not via cleanup). It is usage data, not
+// entitlement data, so it is deliberately NOT a sync phase — getSyncScope and
+// planCacheCleanup stay untouched. See docs/ROADMAP.md §Limit-Review Befund 3.
 
 /**
- * Server-only: true when running with APP_ENV=production (Railway prod).
- * Do NOT call from client code — use `newFeaturesEnabled` from PlanContext.
+ * Monthly billable-image-operation cap for a plan. 0 = feature unavailable
+ * (Free/Basic have no image manager anyway).
  */
+export function getMonthlyImageOperationsLimit(plan: Plan): number {
+  return getPlanLimits(plan).monthlyImageOperations;
+}
+
+/**
+ * Current quota period key in UTC, format "YYYY-MM". The counter table keys
+ * rows by (shop, period); a new month starts a fresh row (lazy reset, no cron).
+ */
+export function currentImageOpPeriod(date: Date = new Date()): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/**
+ * True if `n` more image operations fit within the plan's monthly quota given
+ * the current count. limit === 0 ⇒ always false (feature disabled), matching
+ * the isAtLimit convention. No Infinity case — image ops are always capped.
+ */
+export function isWithinImageOperationQuota(
+  plan: Plan,
+  currentCount: number,
+  n: number = 1
+): boolean {
+  const limit = getMonthlyImageOperationsLimit(plan);
+  if (limit === 0) return false;
+  return currentCount + n <= limit;
+}
+
+// ============================================================================
+// Feature gates — fully unlocked.
+// The Image Manager, Bulk Video Upload, Bulk Alt Text, SKU modification and
+// related Settings tabs are available on every plan in every environment.
+// The functions below stay as no-op shims so existing call sites keep
+// compiling without a sweeping refactor; they always return permissive values.
+// ============================================================================
+
 export function isProductionLocked(): boolean {
-  return process.env.APP_ENV === "production";
+  return false;
 }
 
-/**
- * Variant Image Manager visibility, combining plan tier + production lock.
- */
-export function canAccessVariantImageManagerInEnv(plan: Plan, newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled && canAccessVariantImageManager(plan);
+export function canAccessVariantImageManagerInEnv(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return true;
 }
 
-/**
- * Image Processing tab (new sub-tabs: Bulk Alt Text Templates, new Bulk Upload flow).
- * No plan check — the tab exists for all paying plans on develop.
- */
-export function canAccessImageProcessingTab(newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled;
+export function canAccessImageProcessingTab(_newFeaturesEnabled: boolean): boolean {
+  return true;
 }
 
+export function canAccessImageManagerSettingsTab(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Sync scope — single source of truth for "what may a plan sync"
+// ---------------------------------------------------------------------------
+//
+// Both sync paths (services/initial-sync.service.ts and the recurring
+// BackgroundSyncService.syncAll) consult ONLY getSyncScope, so the sync stays
+// automatically correct whenever the central plan config (config/plans.ts)
+// changes. A disabled phase means "do not fetch" — pruning already-cached but
+// no-longer-entitled data stays the responsibility of planCacheCleanup.ts
+// (the downgrade path), never the sync. The derivation deliberately mirrors
+// planCacheCleanup so scope and cleanup can never disagree.
+
+export type SyncPhase =
+  | "products"
+  | "collections"
+  | "articles"
+  | "pages"
+  | "policies"
+  | "themes"
+  | "metaobjects"
+  | "menus";
+
+export interface PhaseScope {
+  enabled: boolean;
+  /** Numeric cap where the sync service supports one; undefined = no cap param. */
+  max?: number;
+}
+
+export type SyncScope = Record<SyncPhase, PhaseScope>;
+
 /**
- * Settings → Image Manager card (theme editor deeplinks, enabled toggle, etc.).
+ * Derives the per-phase sync scope for a plan, purely from getPlanLimits().
+ * `enabled` combines contentTypes + cacheEnabled + numeric caps so the scope
+ * auto-corrects on any central-config change.
+ *
+ * Note: "themes" is not part of the ContentType union — its entitlement is
+ * derived from cacheEnabled.themes && maxThemeTranslations > 0, mirroring
+ * planCacheCleanup.ts exactly (a plan whose themes get pruned on downgrade is
+ * exactly a plan where themes.enabled is false).
  */
-export function canAccessImageManagerSettingsTab(plan: Plan, newFeaturesEnabled: boolean): boolean {
-  return newFeaturesEnabled && (plan === "pro" || plan === "max");
+export function getSyncScope(plan: Plan): SyncScope {
+  const l = getPlanLimits(plan);
+  const has = (t: ContentType) => l.contentTypes.includes(t);
+  return {
+    products: { enabled: l.cacheEnabled.products && l.maxProducts > 0, max: l.maxProducts },
+    collections: { enabled: has("collections") && l.cacheEnabled.collections, max: l.maxCollections },
+    articles: { enabled: has("articles") && l.cacheEnabled.articles && l.maxArticles > 0, max: l.maxArticles },
+    pages: { enabled: has("pages") && l.cacheEnabled.pages && l.maxPages > 0, max: l.maxPages },
+    policies: { enabled: has("policies") && l.cacheEnabled.policies },
+    themes: { enabled: l.cacheEnabled.themes && l.maxThemeTranslations > 0 },
+    metaobjects: { enabled: has("metaobjects") },
+    menus: { enabled: has("menus") },
+  };
+}
+
+const ALL_SYNC_PHASES: SyncPhase[] = [
+  "products", "collections", "articles", "pages",
+  "policies", "themes", "metaobjects", "menus",
+];
+
+/**
+ * True if moving from `prev` to `next` grants MORE of any content type — a
+ * phase becomes newly entitled, or a capped phase's cap increases. Pure
+ * function of the central config (future-proof if limits/order change).
+ * Returns false for lateral/downgrade moves.
+ */
+export function planGrantsMore(prev: Plan, next: Plan): boolean {
+  const a = getSyncScope(prev);
+  const b = getSyncScope(next);
+  for (const phase of ALL_SYNC_PHASES) {
+    const pa = a[phase];
+    const pb = b[phase];
+    if (pb.enabled && !pa.enabled) return true; // newly entitled
+    if (
+      pb.enabled && pa.enabled &&
+      pb.max !== undefined && pa.max !== undefined &&
+      pb.max > pa.max
+    ) {
+      return true; // higher cap
+    }
+  }
+  return false;
 }

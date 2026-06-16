@@ -1,13 +1,29 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { isValidShopifyGID } from "../utils/validation";
+import { db } from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  if (process.env.APP_ENV === "production") throw new Response("Not Found", { status: 404 });
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { productId, mediaIds } = await request.json();
 
   if (!productId || !Array.isArray(mediaIds) || mediaIds.length === 0) {
     return json({ success: false, error: "Missing required fields" }, { status: 400 });
+  }
+
+  // Reject malformed GIDs before they reach the Shopify mutation.
+  if (!isValidShopifyGID(productId) || !mediaIds.every((id) => typeof id === "string" && isValidShopifyGID(id))) {
+    return json({ success: false, error: "Invalid Shopify GID format" }, { status: 400 });
+  }
+
+  // Fail-closed ownership guard (strong `shop_id` compound), consistent with
+  // the other product-mutating routes (N-H6).
+  const owned = await db.product.findUnique({
+    where: { shop_id: { shop: session.shop, id: productId } },
+    select: { id: true },
+  });
+  if (!owned) {
+    return json({ success: false, error: "Product not found for this shop" }, { status: 404 });
   }
 
   const r = await admin.graphql(`

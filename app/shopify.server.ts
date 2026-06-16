@@ -71,7 +71,8 @@ const appUrl = (process.env.SHOPIFY_APP_URL || "https://localhost:3000").trim();
 
 // Log Shopify configuration on startup
 logger.info(`[SHOPIFY.SERVER] Initializing Shopify App...`);
-logger.info(`[SHOPIFY.SERVER] Env diagnostics: SHOPIFY_API_KEY=${apiKey ? `${apiKey.substring(0, 8)}... (len=${apiKey.length})` : "MISSING"} | SHOPIFY_API_SECRET=${apiSecretKey ? `SET (len=${apiSecretKey.length}, rawLen=${process.env.SHOPIFY_API_SECRET?.length})` : "MISSING"} | SHOPIFY_APP_URL=${appUrl}`);
+// Presence/length only — never log any portion of the API key or secret.
+logger.info(`[SHOPIFY.SERVER] Env diagnostics: SHOPIFY_API_KEY=${apiKey ? `SET (len=${apiKey.length})` : "MISSING"} | SHOPIFY_API_SECRET=${apiSecretKey ? `SET (len=${apiSecretKey.length})` : "MISSING"} | SHOPIFY_APP_URL=${appUrl}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_SCOPES: ${process.env.SHOPIFY_SCOPES || "❌ MISSING"}`);
 logger.debug(`[SHOPIFY.SERVER]  - SHOPIFY_API_VERSION: ${process.env.SHOPIFY_API_VERSION || "❌ MISSING (using default: 2025-10)"}`);
 logger.debug(`[SHOPIFY.SERVER]  - NODE_ENV: ${process.env.NODE_ENV || "development"}`);
@@ -92,6 +93,14 @@ const shopify = shopifyApp({
   future: {
     unstable_newEmbeddedAuthStrategy: true,
   },
+  // NOTE (review LOW "no scopes_update handling"): we intentionally do not
+  // subscribe to the SCOPES_UPDATE webhook. With unstable_newEmbeddedAuthStrategy
+  // (token-exchange/managed install), Shopify re-runs OAuth and fires afterAuth
+  // on any scope change, and access scopes are declared in shopify.app.toml
+  // (managed installation) rather than tracked per-shop in our DB. afterAuth
+  // already re-establishes the session with the current granted scopes, so a
+  // separate scopes_update subscription would be redundant bookkeeping. If we
+  // ever gate features on specific granted scopes at runtime, revisit this.
   hooks: {
     afterAuth: async ({ session, admin }) => {
       logger.info(`[SHOPIFY.SERVER] afterAuth hook triggered`);
@@ -132,6 +141,21 @@ const shopify = shopifyApp({
         });
       } catch (error) {
         logger.warn(`[SHOPIFY.SERVER] afterAuth uninstall-marker clear failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
+      }
+
+      // Kick off the background scheduler at install time (fire-and-forget).
+      // The initial full sync now runs server-side, so it must start even if the
+      // user closes the tab immediately after install and never makes another
+      // in-app request (enhancedAuthenticate.admin would otherwise be the only
+      // starter). Idempotent: startSyncForShop restarts cleanly and the
+      // isShopActive guard in enhancedAuthenticate prevents a double-start.
+      try {
+        if (!syncScheduler.isShopActive(session.shop)) {
+          syncScheduler.startSyncForShop(session.shop, admin);
+          logger.info(`[SHOPIFY.SERVER] afterAuth started background scheduler for ${session.shop}`);
+        }
+      } catch (error) {
+        logger.warn(`[SHOPIFY.SERVER] afterAuth scheduler start failed`, { shop: session.shop, error: error instanceof Error ? error.message : String(error) });
       }
     },
   },

@@ -509,6 +509,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   onSave={() => {
+                    // Same double-click guard as the desktop Save button.
+                    if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
                     handlers.handleSave();
                     subResourceHandlers?.saveSubResources?.();
                   }}
@@ -657,10 +659,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Button
                           variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
                           onClick={() => {
+                            // Guard against double-click: Polaris's `loading`
+                            // prop shows the spinner but does not block clicks.
+                            // Without this guard, a long-running image save
+                            // (up to ~38s for big 3D models) lets the merchant
+                            // re-click and fire a duplicate /api/update-variant-
+                            // galleries POST → Shopify 422 on the duplicate
+                            // productCreateMedia for the same staging URL.
+                            if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
                             handlers.handleSave();
                             subResourceHandlers?.saveSubResources?.();
                           }}
-                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
+                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
                           loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
                           size="slim"
                         >

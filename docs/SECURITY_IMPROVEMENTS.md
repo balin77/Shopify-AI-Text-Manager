@@ -861,6 +861,13 @@ werden **keine neuen Secrets erzeugt oder committet**.
 | `ENCRYPTION_KEY` | Mittel — **nicht blind drehen** | Schützt die at-rest verschlüsselten Merchant-Keys. Rotation erfordert Re-Encrypt der gespeicherten Werte (Migration), sonst werden alle Merchant-Keys unlesbar. Separat planen. |
 | `DATABASE_URL` (Postgres-Credentials) | Hoch | Railway-DB-Passwort rotieren; kein Provider-Key, aber im Working Tree geleakt. |
 
+**Status (2026-05-19):** `SHOPIFY_API_SECRET`, `DATABASE_URL`,
+`GOOGLE_API_KEY` und `HUGGINGFACE_API_KEY` wurden vom Betreiber beim
+jeweiligen Anbieter widerrufen/neu erzeugt (extern bestätigt — nicht
+repo-seitig nachprüfbar, da die Rotation außerhalb dieses Repos erfolgt).
+`ENCRYPTION_KEY` bewusst **nicht** gedreht (s. Zeile darüber: Re-Encrypt-
+Migration erforderlich, separat geplant).
+
 ### 2. Git-History-Bereinigung
 
 - `.env` selbst ist gitignored (`.gitignore`) und wurde **nie committet**;

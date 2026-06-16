@@ -1,21 +1,29 @@
 /**
  * Sentry — server-side error tracking.
  *
- * Hard preconditions (see docs/plan): Sentry only initializes and captures when
+ * Hard preconditions: Sentry only initializes and captures when
  *   process.env.APP_ENV === "production"  AND  process.env.SENTRY_DSN is set.
  * Otherwise every function here is a complete no-op — the dev/staging
  * environment (same code, APP_ENV !== "production") produces zero events even
  * if a DSN is accidentally present.
  *
- * Free-tier strategy: no tracing/replay by default (env-tunable), and expected
- * 4xx SafeErrors are filtered out — they are normal user behaviour, not bugs,
- * and would burn the shared 5k/month quota instantly.
+ * Free-tier strategy (DELIBERATE — kept regardless of review pressure):
+ *  - no tracing/replay by default (env-tunable)
+ *  - expected 4xx SafeErrors are filtered out (normal user behaviour, not bugs)
+ *  - noisy Console/Http breadcrumbs dropped (also shrinks every payload)
  *
- * Scale-up = env vars only, no code change:
- *   SENTRY_TRACES_SAMPLE_RATE, SENTRY_ENVIRONMENT, SENTRY_RELEASE
+ * Scrubbing (review B1/B2/H3/H6) and the gate (review H2) live in the shared
+ * CommonJS module sentry-scrub.cjs so server.js (pre-build, require) and this
+ * module use byte-identical redaction — no drift, no unscrubbed startup window.
  */
 
 import * as Sentry from '@sentry/node';
+import {
+  sentryEnabled as sharedSentryEnabled,
+  scrubEvent,
+  scrubBreadcrumb,
+  scrubValue,
+} from '~/utils/sentry-scrub.cjs';
 
 let initialized = false;
 
@@ -24,6 +32,17 @@ let initialized = false;
  * import SafeError from error-handler.ts: error-handler.ts calls
  * captureServerError() from this module, so importing back would create a
  * circular dependency. A structural check is robust and avoids it.
+ *
+ * REVIEW R3 — DELIBERATE DECISION, DO NOT "FIX":
+ * The reviewer suggested also skipping generic Errors whose message gets
+ * heuristically categorized to a 4xx by error-handler.ts. We intentionally do
+ * NOT do that. categorizeError() is a fuzzy string match — a real bug whose
+ * message merely contains "invalid"/"not found" would then be silently
+ * dropped, directly defeating the stated goal "User-Fehler schnell
+ * identifizieren". Only an *explicit* SafeError with statusCode < 500 is a
+ * truly expected outcome. The (small) extra quota cost of occasionally
+ * reporting a heuristic-4xx generic Error is the accepted price for not
+ * blinding ourselves to genuine bugs.
  */
 function isExpected4xx(error: unknown): boolean {
   return (
@@ -35,44 +54,24 @@ function isExpected4xx(error: unknown): boolean {
   );
 }
 
-/**
- * The single source of truth for whether Sentry is active.
- * Shared conceptually with the client path (root.tsx only emits the DSN to
- * window.ENV under the same condition).
- */
+/** Single source of truth for whether Sentry is active (shared with server.js). */
 export function sentryEnabled(): boolean {
-  return process.env.APP_ENV === 'production' && !!process.env.SENTRY_DSN;
-}
-
-/** Keys whose values must never leave the server (case-insensitive substring match). */
-const SENSITIVE_KEY_PATTERN =
-  /(authorization|cookie|token|secret|password|api[-_]?key|x-shopify|email|access[-_]?token|refresh[-_]?token|encryption)/i;
-
-/**
- * Recursively redact anything that looks sensitive. Mirrors the "NIEMALS
- * loggen" list from docs/LOGGING_GUIDE.md so Sentry never receives tokens,
- * cookies, Shopify headers, emails, etc.
- */
-function scrub(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value == null) return value;
-  if (Array.isArray(value)) return value.map((v) => scrub(v, depth + 1));
-  if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = SENSITIVE_KEY_PATTERN.test(k) ? '[redacted]' : scrub(v, depth + 1);
-    }
-    return out;
-  }
-  return value;
+  return sharedSentryEnabled();
 }
 
 /**
- * Initialize the Sentry Node SDK. Safe to call multiple times (idempotent);
- * a no-op unless sentryEnabled().
+ * Initialize the Sentry Node SDK. Idempotent and a no-op unless
+ * sentryEnabled(). If server.js already created a client (it initializes early
+ * to catch build-load failures, with the SAME shared beforeSend), we adopt it
+ * instead of calling Sentry.init() a second time — review R2: a double init in
+ * v8 creates two clients/integration sets.
  */
 export function initSentryServer(): void {
   if (initialized || !sentryEnabled()) return;
   initialized = true;
+
+  // R2: server.js may have initialized first (same scrub) — don't double-init.
+  if (Sentry.getClient()) return;
 
   Sentry.init({
     dsn: process.env.SENTRY_DSN,
@@ -80,28 +79,29 @@ export function initSentryServer(): void {
       process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV || 'production',
     release: process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA || undefined,
     // Default 0 → no performance/tracing volume on the free plan. Env-tunable.
+    // NOTE (review R4): with tracesSampleRate>0 the SDK still works for error
+    // capture, but full OTel auto-instrumentation needs `node --import` (see
+    // .env.production.template). Error tracking — our only goal here — does not.
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
     sendDefaultPii: false,
-    beforeSend(event) {
-      if (event.request) {
-        if (event.request.headers) {
-          event.request.headers = scrub(event.request.headers) as Record<string, string>;
-        }
-        if (event.request.data) {
-          event.request.data = scrub(event.request.data);
-        }
-        if (event.request.cookies) {
-          event.request.cookies = '[redacted]' as unknown as Record<string, string>;
-        }
-      }
-      if (event.contexts) {
-        event.contexts = scrub(event.contexts) as typeof event.contexts;
-      }
-      if (event.extra) {
-        event.extra = scrub(event.extra) as typeof event.extra;
-      }
-      return event;
-    },
+    // Drop, in order:
+    //  - OnUncaughtException (R1): its fatal handler would exit the process
+    //    despite server.js's own non-exiting handler.
+    //  - Console (B2): console.* breadcrumbs are pure PII/noise on free tier.
+    //  - LocalVariables/LocalVariablesAsync (RISIKO): attaches local variable
+    //    VALUES (decrypted keys/tokens/PII at crash time) to stack frames.
+    //    Disabling is also payload-shrinking → free-tier friendly. scrubEvent
+    //    additionally scrubs frame.vars as defense-in-depth.
+    integrations: (defaults) =>
+      defaults.filter(
+        (i) =>
+          i.name !== 'OnUncaughtException' &&
+          i.name !== 'Console' &&
+          i.name !== 'LocalVariables' &&
+          i.name !== 'LocalVariablesAsync',
+      ),
+    beforeSend: (event) => scrubEvent(event),
+    beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),
   });
 }
 
@@ -111,6 +111,7 @@ export function initSentryServer(): void {
  * No-op unless sentryEnabled(). Expected 4xx SafeErrors (validation, auth,
  * notFound, rateLimit — statusCode < 500) are intentionally skipped: they are
  * normal user behaviour, not bugs, and must not consume the error quota.
+ * (See the R3 note on isExpected4xx for why the filter is intentionally tight.)
  */
 export function captureServerError(error: unknown, context?: Record<string, unknown>): void {
   if (!sentryEnabled()) return;
@@ -125,11 +126,14 @@ export function captureServerError(error: unknown, context?: Record<string, unkn
       scope.setTag('shop', shop);
     }
     if (context) {
-      scope.setContext('app', scrub(context) as Record<string, unknown>);
+      // Pre-scrub here too; beforeSend is the authoritative second pass.
+      scope.setContext('app', scrubValue(context) as Record<string, unknown>);
     }
     if (error instanceof Error) {
       Sentry.captureException(error);
     } else {
+      // Goes through beforeSend → scrubEvent, so a PII-bearing string throw is
+      // redacted before transport (review H6).
       Sentry.captureMessage(typeof error === 'string' ? error : 'Non-Error thrown', 'error');
     }
   });

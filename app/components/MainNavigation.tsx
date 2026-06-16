@@ -1,4 +1,4 @@
-import { useLocation, useNavigate, useMatches, useNavigation } from "@remix-run/react";
+import { useLocation, useMatches, useNavigation } from "@remix-run/react";
 import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
@@ -18,12 +18,11 @@ import type { InfoBoxTone } from "../contexts/InfoBoxContext";
 
 export function MainNavigation() {
   const location = useLocation();
-  const navigate = useNavigate();
   const navigation = useNavigation();
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
-  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory } = useInfoBox();
+  const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress } = useInfoBox();
   const [popoverActive, setPopoverActive] = useState(false);
   const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
@@ -188,7 +187,7 @@ export function MainNavigation() {
     return () => {
       window.removeEventListener('resize', updateHeight);
     };
-  }, [infoBox, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox or loading indicator changes
+  }, [infoBox, syncProgress, showLoadingIndicator, isGlobalLoading, setMainNavHeight]); // Re-measure when infoBox/progress or loading indicator changes
 
   const togglePopover = useCallback(() => {
     setPopoverActive(prev => {
@@ -227,6 +226,15 @@ export function MainNavigation() {
   const handleClick = (path: string, tabId: string) => {
     if (!checkGuard()) return;
     handleNavigate(path);
+  };
+
+  // Navigate from an InfoBox link. Must go through handleNavigate so Shopify
+  // session params (host/shop/embedded) are preserved — a raw client-side
+  // navigate() drops them and breaks the *next* navigation (blank page).
+  const handleInfoBoxLink = (url: string) => {
+    const [path, query] = url.split("?");
+    const options = query ? { searchParams: new URLSearchParams(query) } : {};
+    handleNavigate(path, options);
   };
 
   // Navigate to settings/plan page when any plan button is clicked
@@ -398,8 +406,97 @@ export function MainNavigation() {
             </div>
           )}
 
+          {/* Initial-sync progress — occupies the infobox slot until done */}
+          {syncProgress && (
+            <div className="nav-infobox-wrapper" style={{ flex: 1, maxWidth: "600px" }}>
+              <div
+                className="info-box"
+                role="status"
+                aria-live="polite"
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  backgroundColor: toneBg(syncProgress.error ? "critical" : "info"),
+                  border: `1px solid ${toneColor(syncProgress.error ? "critical" : "info")}`,
+                  fontSize: "14px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.35rem",
+                }}
+              >
+                <span style={{ color: "#202223" }}>
+                  {syncProgress.error
+                    ? `${t.settings?.syncingContent || "Sync"}: ${syncProgress.error}`
+                    : `${t.settings?.syncingContent || "Setting up your store"}${
+                        syncProgress.phase
+                          ? ` — ${
+                              (t.settings as unknown as Record<string, string>)[
+                                `phase${syncProgress.phase.charAt(0).toUpperCase()}${syncProgress.phase.slice(1)}`
+                              ] || syncProgress.phase
+                            }`
+                          : ""
+                      } (${syncProgress.percent}%)`}
+                </span>
+                {!syncProgress.error && (() => {
+                  const order = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects", "menus"];
+                  const idx = syncProgress.phase ? order.indexOf(syncProgress.phase) : -1;
+                  const overall = syncProgress.phase === "done"
+                    ? 100
+                    : Math.max(0, Math.min(100, idx >= 0
+                        ? Math.round((idx / order.length) * 100 + syncProgress.percent / order.length)
+                        : syncProgress.percent));
+                  const Bar = ({ value }: { value: number }) => (
+                    <div
+                      style={{
+                        height: "4px",
+                        borderRadius: "2px",
+                        backgroundColor: "rgba(0,0,0,0.1)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${value}%`,
+                          backgroundColor: toneColor("info"),
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+                  );
+                  const phaseLabel = (p: string) =>
+                    (t.settings as unknown as Record<string, string>)[
+                      `phase${p.charAt(0).toUpperCase()}${p.slice(1)}`
+                    ] || p;
+                  const synced = order
+                    .filter((p) => (syncProgress.stats?.[p] ?? 0) > 0)
+                    .map((p) => `${phaseLabel(p)}: ${syncProgress.stats![p]}`);
+                  return (
+                    <>
+                      <Bar value={syncProgress.percent} />
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.15rem" }}>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {t.settings?.syncTotalLabel || "Total"}
+                        </Text>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {overall}%
+                        </Text>
+                      </div>
+                      <Bar value={overall} />
+                      {synced.length > 0 && (
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {synced.join(" · ")}
+                        </Text>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
           {/* InfoBox with Popover History */}
-          {(infoBox || messageHistory.length > 0) && (
+          {!syncProgress && (infoBox || messageHistory.length > 0) && (
             <div className="nav-infobox-wrapper" style={{ flex: 1, maxWidth: "600px" }}>
               <Popover
                 active={popoverActive}
@@ -432,6 +529,22 @@ export function MainNavigation() {
                         >
                           <span style={{ flex: 1, color: "#202223" }}>
                             {infoBox.message}
+                            {infoBox.link && (
+                              <>
+                                {" "}
+                                <a
+                                  href={infoBox.link.url}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleInfoBoxLink(infoBox.link!.url);
+                                  }}
+                                  style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600 }}
+                                >
+                                  {infoBox.link.label}
+                                </a>
+                              </>
+                            )}
                           </span>
                           {messageHistory.length > 1 && (
                             <span style={{
@@ -558,6 +671,19 @@ export function MainNavigation() {
                             <Text as="p" variant="bodySm">
                               {entry.message}
                             </Text>
+                            {entry.link && (
+                              <a
+                                href={entry.link.url}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  closePopover();
+                                  handleInfoBoxLink(entry.link!.url);
+                                }}
+                                style={{ color: "#005bd3", textDecoration: "underline", fontWeight: 600, fontSize: "13px" }}
+                              >
+                                {entry.link.label}
+                              </a>
+                            )}
                           </div>
                           <Text as="span" variant="bodySm" tone="subdued">
                             {formatTime(entry.timestamp)}

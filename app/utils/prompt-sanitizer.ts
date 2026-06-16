@@ -80,12 +80,31 @@ export function sanitizePromptInput(
   }
 
   // 3. Normalize whitespace
-  sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  // NOTE: `\s` matches `\n`/`\t`, so a blanket /\s+/g -> ' ' would destroy every
+  // newline even when allowNewlines is true, silently flattening multi-line
+  // descriptions/policies/T&C into one run-on line. To honor the allowNewlines
+  // contract we must only collapse horizontal whitespace in that branch.
+  if (options.allowNewlines) {
+    sanitized = sanitized
+      .replace(/[^\S\r\n]+/g, ' ') // collapse spaces/tabs only, keep newlines
+      .replace(/ *\n */g, '\n')    // trim spaces around line breaks
+      .replace(/\n{3,}/g, '\n\n')  // re-cap blank lines after collapsing
+      .trim();
+  } else {
+    sanitized = sanitized.replace(/\s+/g, ' ').trim();
+  }
 
-  // 4. Escape backticks and special characters that could break JSON
-  sanitized = sanitized
-    .replace(/`{3,}/g, '```')  // Limit consecutive backticks
-    .replace(/\${/g, '$ {');    // Prevent template literal injection
+  // 4. Cap runs of backticks so a merchant code sample can't blow open a
+  //    fenced block in the prompt structure.
+  // R5-L4: the previous `.replace(/\${/g, '$ {')` ("prevent template literal
+  // injection") was useless AND corrupting. The sanitized text is passed as
+  // an interpolated VALUE into a prompt template literal
+  // (`...${sanitizedContent}...`); JS does not recursively re-evaluate the
+  // contents of an interpolated string, so `${` is never an injection vector
+  // here. The replacement only mutated legitimate merchant content (CSS
+  // custom-property usage, shell `${VAR}`, JS/TS samples) into `$ {`, which
+  // the model then reproduced verbatim. Removed.
+  sanitized = sanitized.replace(/`{3,}/g, '```');
 
   return sanitized;
 }

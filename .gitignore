@@ -47,3 +47,8 @@ Videos/
 
 # Test coverage
 coverage/
+
+# BFG history-rewrite reports (operational artifacts, may reference removed blobs)
+.bfg-report/
+..bfg-report/
+*.bfg-report/

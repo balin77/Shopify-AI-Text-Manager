@@ -1,32 +1,24 @@
 /**
  * Unit Tests for BackgroundSyncService.syncAll()
  *
- * Focus: The Promise.all() + per-type .catch() error isolation pattern.
- * A single failing content-type must return 0 and not throw — the overall
- * syncAll() should still resolve with stats from the other types.
+ * Focus: The Promise.all() + per-type .catch() error isolation pattern, now
+ * plan-aware. A single failing content-type must return 0 and not throw — the
+ * overall syncAll() should still resolve with stats from the other types.
+ * Disabled phases (per plan scope) resolve to 0 without being called.
  *
  * ✅ No real Shopify needed (admin + gateway are mocked)
- * ✅ No real database needed (Prisma not used in syncAll itself)
- * ✅ Fast (private methods are spied on directly)
+ * ✅ DB is mocked (syncAll now reads the plan from aISettings)
+ * ✅ ContentSyncService is mocked (articles + menus phases)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BackgroundSyncService } from '~/services/background-sync.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('~/utils/logger.server', () => ({
-  logger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// ShopifyApiGateway is constructed inside BackgroundSyncService — mock it to
-// avoid network/rate-limit logic being exercised in these unit tests.
-// Must use a real class (not an arrow function) so `new ShopifyApiGateway()` works.
 vi.mock('~/services/shopify-api-gateway.service', () => {
   class ShopifyApiGateway {
     graphql = vi.fn();
@@ -35,6 +27,25 @@ vi.mock('~/services/shopify-api-gateway.service', () => {
   }
   return { ShopifyApiGateway };
 });
+
+// syncAll() now resolves the plan from aISettings — default to "pro" so every
+// phase is entitled and the spied methods actually run.
+const mockFindUnique = vi.fn().mockResolvedValue({ subscriptionPlan: 'pro' });
+vi.mock('~/db.server', () => ({
+  db: { aISettings: { findUnique: (...a: unknown[]) => mockFindUnique(...a) } },
+}));
+
+// Articles + Menus run through ContentSyncService.
+const mockSyncAllArticles = vi.fn().mockResolvedValue(0);
+const mockSyncAllMenus = vi.fn().mockResolvedValue(0);
+vi.mock('~/services/content-sync.service', () => ({
+  ContentSyncService: class {
+    syncAllArticles = (...a: unknown[]) => mockSyncAllArticles(...a);
+    syncAllMenus = (...a: unknown[]) => mockSyncAllMenus(...a);
+  },
+}));
+
+import { BackgroundSyncService } from '~/services/background-sync.service';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,22 +58,25 @@ function makeService(): BackgroundSyncService {
 
 type SyncResult = number | Error;
 
-// Helper to spy on all four private sync methods at once
 function spyAllMethods(
   service: BackgroundSyncService,
   {
-    pages = 0,
-    policies = 0,
-    themes = 0,
-    metaobjects = 0,
-  }: { pages?: SyncResult; policies?: SyncResult; themes?: SyncResult; metaobjects?: SyncResult } = {},
+    pages = 0, policies = 0, themes = 0, metaobjects = 0, articles = 0, menus = 0,
+  }: {
+    pages?: SyncResult; policies?: SyncResult; themes?: SyncResult;
+    metaobjects?: SyncResult; articles?: SyncResult; menus?: SyncResult;
+  } = {},
 ) {
   function mockMethod(name: string, value: SyncResult) {
     return value instanceof Error
       ? vi.spyOn(service as any, name as any).mockRejectedValue(value)
       : vi.spyOn(service as any, name as any).mockResolvedValue(value);
   }
+  const setCs = (fn: ReturnType<typeof vi.fn>, value: SyncResult) =>
+    value instanceof Error ? fn.mockRejectedValue(value) : fn.mockResolvedValue(value);
 
+  setCs(mockSyncAllArticles, articles);
+  setCs(mockSyncAllMenus, menus);
   return {
     spyPages: mockMethod('syncAllPages', pages),
     spyPolicies: mockMethod('syncAllPolicies', policies),
@@ -76,11 +90,12 @@ function spyAllMethods(
 describe('BackgroundSyncService.syncAll()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({ subscriptionPlan: 'pro' });
   });
 
   it('aggregates counts correctly when all content types succeed', async () => {
     const service = makeService();
-    spyAllMethods(service, { pages: 10, policies: 2, themes: 5, metaobjects: 3 });
+    spyAllMethods(service, { pages: 10, policies: 2, themes: 5, metaobjects: 3, articles: 8, menus: 1 });
 
     const stats = await service.syncAll();
 
@@ -88,25 +103,27 @@ describe('BackgroundSyncService.syncAll()', () => {
     expect(stats.policies).toBe(2);
     expect(stats.themes).toBe(5);
     expect(stats.metaobjects).toBe(3);
-    expect(stats.total).toBe(20);
+    expect(stats.articles).toBe(8);
+    expect(stats.menus).toBe(1);
+    expect(stats.total).toBe(29);
   });
 
   it('returns 0 for a failing type and still resolves with the rest', async () => {
     const service = makeService();
     spyAllMethods(service, {
       pages: new Error('DB connection failed'),
-      policies: 4,
-      themes: 7,
-      metaobjects: 1,
+      policies: 4, themes: 7, metaobjects: 1, articles: 3, menus: 2,
     });
 
     const stats = await service.syncAll();
 
-    expect(stats.pages).toBe(0);        // failed → isolated to 0
+    expect(stats.pages).toBe(0); // failed → isolated to 0
     expect(stats.policies).toBe(4);
     expect(stats.themes).toBe(7);
     expect(stats.metaobjects).toBe(1);
-    expect(stats.total).toBe(12);
+    expect(stats.articles).toBe(3);
+    expect(stats.menus).toBe(2);
+    expect(stats.total).toBe(17);
   });
 
   it('does NOT throw when multiple content types fail simultaneously', async () => {
@@ -116,20 +133,36 @@ describe('BackgroundSyncService.syncAll()', () => {
       policies: new Error('policies error'),
       themes: 6,
       metaobjects: new Error('metaobjects error'),
+      articles: new Error('articles error'),
+      menus: 4,
     });
 
     await expect(service.syncAll()).resolves.toMatchObject({
-      pages: 0,
-      policies: 0,
-      themes: 6,
-      metaobjects: 0,
-      total: 6,
+      pages: 0, policies: 0, themes: 6, metaobjects: 0, articles: 0, menus: 4, total: 10,
     });
+  });
+
+  it('skips disabled phases on a lower plan (free → only entitled types)', async () => {
+    mockFindUnique.mockResolvedValue({ subscriptionPlan: 'free' });
+    const service = makeService();
+    const { spyPages, spyPolicies, spyThemes, spyMetaobjects } =
+      spyAllMethods(service, { pages: 9, policies: 9, themes: 9, metaobjects: 9, articles: 9, menus: 9 });
+
+    const stats = await service.syncAll();
+
+    // free entitles none of these webhook-less types.
+    expect(spyPages).not.toHaveBeenCalled();
+    expect(spyPolicies).not.toHaveBeenCalled();
+    expect(spyThemes).not.toHaveBeenCalled();
+    expect(spyMetaobjects).not.toHaveBeenCalled();
+    expect(mockSyncAllArticles).not.toHaveBeenCalled();
+    expect(mockSyncAllMenus).not.toHaveBeenCalled();
+    expect(stats.total).toBe(0);
   });
 
   it('includes a non-negative duration in the returned stats', async () => {
     const service = makeService();
-    spyAllMethods(service, { pages: 0, policies: 0, themes: 0, metaobjects: 0 });
+    spyAllMethods(service, {});
 
     const stats = await service.syncAll();
 

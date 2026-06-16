@@ -2,7 +2,7 @@ import { json } from "@remix-run/node";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
 import { errorMessage, errorStack, createAIService } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
+import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -25,6 +25,10 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
 
   if (!sourceText) {
     return json({ success: false, error: "No source text available" }, { status: 400 });
+  }
+
+  if (!isValidLocale(targetLocale)) {
+    return json({ success: false, error: `Invalid target locale: ${targetLocale}` }, { status: 400 });
   }
 
   // Check if this is a URL slug/handle field
@@ -129,6 +133,37 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
         original: originalValue,
         sanitized: translatedValue
       });
+
+      // R5-H3: sanitizeSlug strips non-Latin chars; a CJK/Cyrillic/Arabic
+      // handle can collapse to '' (or hyphens-only -> ''). Writing an empty
+      // handle to Shopify produces a broken/404 URL + SEO loss. Fail loudly:
+      // never persist an unusable handle (mirrors the !batchValue guard,
+      // moved to AFTER sanitization).
+      if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+        logger.warn("[API-AI] Slug collapsed to empty after sanitization — rejecting (not writing broken handle)", {
+          context: "AI",
+          fieldType,
+          targetLocale,
+          original: originalValue,
+        });
+        await db.task.update({
+          where: { id: task.id },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            error: `Slug for locale ${targetLocale} collapsed to an empty/unusable handle after sanitization`,
+          },
+        });
+        return json(
+          {
+            success: false,
+            error: `Translated handle is empty/unusable after sanitization for locale ${targetLocale}`,
+            fieldType,
+            targetLocale,
+          },
+          { status: 422 },
+        );
+      }
     }
 
     // Update task to completed with full AI response
@@ -177,6 +212,22 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
   const targetLocales = targetLocalesJson ? safeJsonParse<string[]>(targetLocalesJson, []) : [];
   if (targetLocales.length === 0) {
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
+  }
+
+  const MAX_TARGET_LOCALES = 50;
+  if (targetLocales.length > MAX_TARGET_LOCALES) {
+    return json(
+      { success: false, error: `Too many target locales (max ${MAX_TARGET_LOCALES}, got ${targetLocales.length})` },
+      { status: 413 },
+    );
+  }
+
+  const invalidLocales = targetLocales.filter((l) => !isValidLocale(l));
+  if (invalidLocales.length > 0) {
+    return json(
+      { success: false, error: `Invalid target locale(s): ${invalidLocales.join(", ")}` },
+      { status: 400 },
+    );
   }
 
   // Check if this is a URL slug/handle field
@@ -384,7 +435,26 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
         // Process batch results and save to Shopify
         for (let i = 0; i < targetLocales.length; i++) {
           const locale = targetLocales[i];
-          let translatedValue = batchResults[locale] || sourceText;
+
+          // R3-H10 / N-H3: a missing/empty batch result means this locale was
+          // NOT translated (model dropped it, parse failure, etc.).
+          // Substituting `sourceText` here would write the untranslated
+          // source to Shopify + DB as if it were a real translation — the
+          // exact silent-corruption class as N-H3. Skip the locale and
+          // surface it as rejected, consistent with the digest/userError
+          // failure branches below; never persist source-as-translation.
+          const batchValue = batchResults[locale];
+          if (!batchValue || !batchValue.trim()) {
+            logger.warn("[API-AI] Batch: no translation returned for locale — skipping (not writing source)", {
+              context: "AI",
+              locale,
+              fieldType,
+            });
+            if (!rejectedFields[locale]) rejectedFields[locale] = [];
+            rejectedFields[locale].push(fieldType);
+            continue;
+          }
+          let translatedValue = batchValue;
 
           // For URL slugs: ensure the result is a valid slug (post-process as safety net)
           if (isSlugField) {
@@ -396,6 +466,22 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               original: originalValue,
               sanitized: translatedValue
             });
+
+            // R5-H3: an empty (or hyphens-only) sanitized handle is unusable
+            // and would produce a broken/404 storefront URL. Reject this
+            // locale and skip — same fail-loudly contract as the !batchValue
+            // guard above, but applied AFTER sanitization.
+            if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+              logger.warn("[API-AI] Batch: slug collapsed to empty after sanitization — skipping (not writing broken handle)", {
+                context: "AI",
+                locale,
+                fieldType,
+                original: originalValue,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              continue;
+            }
           }
 
           translations[locale] = translatedValue;
@@ -541,6 +627,34 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
             try {
               const digest = await getCachedDigest(itemId, shopifyKey);
+
+              // R5-C2: getCachedDigest returns "" on a cache miss / key-name
+              // mismatch (metaDescription↔meta_description etc.) / transient
+              // empty GraphQL response. Shopify's translationsRegister
+              // SILENTLY no-ops on an empty digest, but the local
+              // contentTranslation upsert below would still run — making the
+              // UI claim "translated" while the storefront stays in the
+              // source language (stale-digest divergence). Fail loudly:
+              // skip Shopify + skip the local upsert, mark rejected. Mirrors
+              // the templates branch `if (!digest)` guard for uniformity.
+              if (!digest) {
+                logger.warn("[API-AI] Batch: No digest for content field — skipping Shopify save AND local upsert", {
+                  context: "AI",
+                  fieldType,
+                  shopifyKey,
+                  locale,
+                  resourceId: itemId,
+                });
+                if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                rejectedFields[locale].push(fieldType);
+                // Update progress and move on, consistent with other skips.
+                const skipProgress = Math.round(10 + ((i + 1) / targetLocales.length) * 80);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress: skipProgress },
+                });
+                continue;
+              }
 
               const translationInput = [{
                 key: shopifyKey,
@@ -789,6 +903,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               original: originalValue,
               sanitized: translatedValue
             });
+
+            // R5-H3: empty/hyphens-only sanitized handle is unusable (broken
+            // 404 URL + SEO loss). Reject this locale and skip rather than
+            // persisting a broken handle — fail loudly, same contract as the
+            // batch path and the !batchValue guard.
+            if (!translatedValue || !translatedValue.replace(/-/g, '').trim()) {
+              logger.warn("[API-AI] Slug collapsed to empty after sanitization — skipping locale (not writing broken handle)", {
+                context: "AI",
+                locale,
+                fieldType,
+                original: originalValue,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              aiResponses.push({ locale, response: `REJECTED: handle empty after sanitization` });
+              continue;
+            }
           }
 
           translations[locale] = translatedValue;
@@ -941,6 +1072,30 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
             try {
               const digest = await getCachedDigest(itemId, shopifyKey);
+
+              // R5-C2: empty digest -> Shopify translationsRegister silently
+              // no-ops while the local contentTranslation upsert below would
+              // still mark the field "translated" (stale-digest divergence:
+              // UI says done, storefront still source language). Fail loudly:
+              // skip Shopify + skip the local upsert and mark rejected.
+              // Mirrors the templates branch `if (!digest)` guard.
+              if (!digest) {
+                logger.warn("[API-AI] No digest for content field — skipping Shopify save AND local upsert", {
+                  context: "AI",
+                  fieldType,
+                  shopifyKey,
+                  locale,
+                  resourceId: itemId,
+                });
+                if (!rejectedFields[locale]) rejectedFields[locale] = [];
+                rejectedFields[locale].push(fieldType);
+                const skipProgress = Math.round(10 + ((i + 1) / totalLocales) * 80);
+                await db.task.update({
+                  where: { id: task.id },
+                  data: { progress: skipProgress },
+                });
+                continue;
+              }
 
               const translationInput = [{
                 key: shopifyKey,
@@ -1168,7 +1323,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             locale,
             error: errorMessage(error)
           });
-          translations[locale] = sourceText; // Fallback to original
+          // R3-H10 / N-H3 audited-safe: this sourceText assignment is
+          // RESPONSE-MAP ONLY. The Shopify translationsRegister + DB upsert
+          // for this locale live inside the try above, BEFORE this catch, so
+          // a translation failure writes NOTHING to Shopify/DB for it. The
+          // persisted artifact (task.result = aiResponses) records an
+          // explicit `ERROR:` for the locale, never the source. Do NOT start
+          // persisting `translations` without re-introducing an N-H3 guard.
+          translations[locale] = sourceText; // response map only — see note
           aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
         }
       }

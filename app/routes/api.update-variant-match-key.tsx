@@ -16,6 +16,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (!updates?.length) return json({ ok: true });
 
+  // Shop-isolation: resolve which of the requested variants actually belong to
+  // this shop (ProductVariant has no shop column — scope via the product
+  // relation). All local writes below are restricted to this owned set so an
+  // enumerable shopifyGid can't overwrite another tenant's sku/imageKey.
+  const requestedGids = updates.map((u) => u.variantId);
+  const ownedVariants = await db.productVariant.findMany({
+    where: { shopifyGid: { in: requestedGids }, product: { shop } },
+    select: { shopifyGid: true, productId: true },
+  });
+  const ownedGids = new Set(ownedVariants.map((v) => v.shopifyGid));
+  const ownedUpdates = updates.filter((u) => ownedGids.has(u.variantId));
+
+  if (ownedUpdates.length === 0) {
+    return json({ ok: false, errors: ["Product not found — please reload the product first."] }, { status: 404 });
+  }
+
   const errors: string[] = [];
 
   const collectErrors = (d: any, dataKey: string): string[] => [
@@ -24,13 +40,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   ];
 
   if (mode === "sku") {
-    const dbVariant = await db.productVariant.findFirst({
-      where: { shopifyGid: updates[0].variantId },
-      select: { productId: true },
-    });
-    const productId = dbVariant?.productId;
+    const productId = ownedVariants.find((v) => v.shopifyGid === ownedUpdates[0].variantId)?.productId;
     if (!productId) {
-      return json({ ok: false, errors: ["Product not found — please reload the product first."] }, { status: 400 });
+      return json({ ok: false, errors: ["Product not found — please reload the product first."] }, { status: 404 });
     }
 
     try {
@@ -43,7 +55,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       `, {
         variables: {
           productId,
-          variants: updates.map(({ variantId, value }) => ({ id: variantId, inventoryItem: { sku: value } })),
+          variants: ownedUpdates.map(({ variantId, value }) => ({ id: variantId, inventoryItem: { sku: value } })),
         },
       });
       const d = await r.json();
@@ -51,7 +63,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (errs.length > 0) {
         errors.push(...errs);
       } else {
-        await Promise.all(updates.map(({ variantId, value }) =>
+        await Promise.all(ownedUpdates.map(({ variantId, value }) =>
           db.productVariant.updateMany({ where: { shopifyGid: variantId }, data: { sku: value } })
         ));
       }
@@ -68,7 +80,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       `, {
         variables: {
-          metafields: updates.map(({ variantId, value }) => ({
+          metafields: ownedUpdates.map(({ variantId, value }) => ({
             ownerId: variantId,
             namespace: "custom",
             key: "image_key",
@@ -82,7 +94,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (errs.length > 0) {
         errors.push(...errs);
       } else {
-        await Promise.all(updates.map(({ variantId, value }) =>
+        await Promise.all(ownedUpdates.map(({ variantId, value }) =>
           db.productVariant.updateMany({ where: { shopifyGid: variantId }, data: { imageKey: value } })
         ));
       }

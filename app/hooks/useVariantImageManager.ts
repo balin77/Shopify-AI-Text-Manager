@@ -1,5 +1,17 @@
-import { useState, useCallback } from "react";
-import type { StagedItem, VariantWithGallery } from "../components/image-manager/types";
+import { useState, useCallback, useRef } from "react";
+import type { StagedItem, VariantWithGallery, MediaKind } from "../components/image-manager/types";
+
+/** Resource URL + the kind it was uploaded as. The kind is needed at save
+ *  time so productCreateMedia.mediaContentType maps correctly — without it
+ *  every video / 3D file would be created as IMAGE and reject. previewUrl
+ *  drives the optimistic gallery tile that appears the moment a merchant
+ *  hits "Add" in the picker modal, so the change feels instant instead of
+ *  having to wait for a server roundtrip. */
+export interface PendingProductNewMedia {
+  resourceUrl: string;
+  kind: MediaKind;
+  previewUrl?: string;
+}
 
 export interface VariantGalleryUpdate {
   variantId: string;
@@ -24,8 +36,37 @@ export function useVariantImageManager() {
   const reloadVariants = useCallback(() => setVariantReloadCounter(c => c + 1), []);
   const [pendingVariantGalleries, setPendingVariantGalleries] = useState<VariantGalleryUpdate[]>([]);
   const [pendingMediaOrder, setPendingMediaOrder] = useState<MediaOrderUpdate[]>([]);
-  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<string[]>([]);
+  const [pendingProductNewMedia, setPendingProductNewMedia] = useState<PendingProductNewMedia[]>([]);
   const [pendingClearVariantMainImages, setPendingClearVariantMainImages] = useState<string[]>([]);
+  // Per-variant YouTube / Vimeo URLs that the merchant has added via the URL
+  // input inside each VariantGallerySection. variantId → canonical URLs.
+  // Empty array is meaningful: it means "the merchant cleared this variant's
+  // external videos" and the metafield value should be persisted as `[]`.
+  const [pendingExternalVideos, setPendingExternalVideos] = useState<Record<string, string[]>>({});
+  // Per-variant GLB CDN URLs. Mirrors pendingExternalVideos exactly (variant_3d_models
+  // is a list.url metafield too) — same empty-array-means-cleared contract.
+  const [pendingVariant3dModels, setPendingVariant3dModels] = useState<Record<string, string[]>>({});
+  // Parallel preview URLs per variant — same index as pendingVariant3dModels.
+  // An empty string at a slot means "this model has no preview yet" (legacy
+  // entries from before variant_3d_previews existed, or library-picked models
+  // we haven't snapshotted on the admin side). Persisted to
+  // custom.variant_3d_previews (list.url). Add/remove handlers in
+  // VariantImageManager keep both arrays in lockstep.
+  const [pendingVariant3dPreviews, setPendingVariant3dPreviews] = useState<Record<string, string[]>>({});
+  // Carry-over for Model3d uploads that didn't finish processing within the
+  // backend's bounded polling window. Maps each still-staging URL onto its
+  // Model3d GID (returned by the prior productCreateMedia call). The next
+  // save sends this map as `knownModelGids` so the backend can poll the
+  // GID directly instead of re-uploading the same .glb → no duplicate
+  // product media. Cleared selectively after a save: only entries whose
+  // staging URL came back resolved (i.e. NOT in the new "processing" drop
+  // list) are removed.
+  const [pendingKnownModelGids, setPendingKnownModelGids] = useState<Record<string, string>>({});
+  // Combined order (file GIDs + external URLs + 3D model URLs) per variant.
+  // Stringified JSON array of { kind: "file" | "url" | "model", value }.
+  // Updated whenever the merchant reorders a gallery that mixes kinds; only
+  // emitted to the backend when non-empty so legacy save flows stay byte-identical.
+  const [pendingGalleryOrder, setPendingGalleryOrder] = useState<Record<string, string>>({});
   const [resetCounter, setResetCounter] = useState(0);
   const [hasAltTextEdits, setHasAltTextEdits] = useState(false);
   // Variants exposed to BulkImageUploadPanel for auto-assignment
@@ -33,8 +74,63 @@ export function useVariantImageManager() {
   const [missingMainImageProductIds, setMissingMainImageProductIds] = useState<Set<string>>(new Set());
   const [selectedGalleryGids, setSelectedGalleryGids] = useState<string[]>([]);
 
+  // Holds the per-variant pending state we WOULD clear at save-success time
+  // if we wanted no flicker. handleApply sets this; handleVariantsLoaded
+  // (which fires once the post-save /api/product-variants refetch lands)
+  // applies it. The interleaving keeps the optimistic tiles visible until
+  // the real product.media entries are in the local cache → seamless
+  // transition instead of "image disappears for 500ms".
+  const postSaveDeferredClearRef = useRef<null | {
+    carryOverModels: Record<string, string[]>;
+    carryOverPreviews: Record<string, string[]>;
+    carryOverGids: Record<string, string>;
+  }>(null);
+
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
+    const deferred = postSaveDeferredClearRef.current;
+    if (deferred) {
+      postSaveDeferredClearRef.current = null;
+      // The refetch has landed and shopifyMediaMap / refreshedProductImages
+      // now contain the new MediaImage entries. Safe to drop the optimistic
+      // staging tiles — what remains in pendingVariant3dModels /
+      // pendingKnownModelGids is the "still-processing" carry-over (3D model
+      // uploads whose Shopify-side processing hadn't finished by the time
+      // the bounded polling window timed out).
+      setPendingVariantGalleries([]);
+      setPendingMediaOrder([]);
+      setPendingProductNewMedia([]);
+      setPendingClearVariantMainImages([]);
+      setPendingExternalVideos({});
+      // Merge the still-processing staging URLs with the variant's freshly-
+      // fetched saved metafield URLs. Without the merge, pendingVariant3dModels
+      // contains only the staging URL — and because the variant gallery's
+      // render uses `pendingVariant3dModels[v.id] ?? variant.threeDModelUrls`
+      // (override semantics), the override hides the saved models from the
+      // gallery view. The merchant sees only the new (still-processing) model
+      // until the next save, even though saved models are intact on Shopify.
+      const mergedModels: Record<string, string[]> = {};
+      const mergedPreviews: Record<string, string[]> = {};
+      for (const [variantId, processingUrls] of Object.entries(deferred.carryOverModels)) {
+        const v = variants.find((x) => x.id === variantId);
+        const savedModels = v?.threeDModelUrls ?? [];
+        const savedPreviews = v?.threeDPreviewUrls ?? [];
+        const carryPreviews = deferred.carryOverPreviews[variantId] ?? [];
+        mergedModels[variantId] = [...savedModels, ...processingUrls];
+        mergedPreviews[variantId] = [
+          ...savedPreviews,
+          // Pad to length match: if the saved array is shorter than its
+          // models, fill with "" so indices stay aligned.
+          ...Array(Math.max(0, savedModels.length - savedPreviews.length)).fill(""),
+          ...carryPreviews,
+        ];
+      }
+      setPendingVariant3dModels(mergedModels);
+      setPendingVariant3dPreviews(mergedPreviews);
+      setPendingKnownModelGids(deferred.carryOverGids);
+      setPendingGalleryOrder({});
+      setResetCounter(c => c + 1);
+    }
   }, []);
 
   const handleGallerySelectionGidsChange = useCallback((gids: string[]) => {
@@ -43,6 +139,12 @@ export function useVariantImageManager() {
 
   const handleMissingMainImageChange = useCallback((productId: string, hasMissing: boolean) => {
     setMissingMainImageProductIds(prev => {
+      // Bail-out when membership wouldn't change. Without this, callers that
+      // fire the same value on every render (e.g. an unmemoised parent prop
+      // feeding a useEffect inside VariantImageManager) would still receive a
+      // new Set instance from this setter → React commits the "change" → loop.
+      const has = prev.has(productId);
+      if (hasMissing === has) return prev;
       const next = new Set(prev);
       if (hasMissing) next.add(productId);
       else next.delete(productId);
@@ -72,7 +174,7 @@ export function useVariantImageManager() {
   }, []);
 
   const handlePendingChange = useCallback(
-    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: string[], clearVariantMainImages?: string[]) => {
+    (galleries: VariantGalleryUpdate[], mediaOrder: MediaOrderUpdate[], productNewMedia?: PendingProductNewMedia[], clearVariantMainImages?: string[]) => {
       setPendingVariantGalleries(galleries);
       setPendingMediaOrder(mediaOrder);
       if (productNewMedia) setPendingProductNewMedia(productNewMedia);
@@ -86,8 +188,11 @@ export function useVariantImageManager() {
     try {
       const readyItems = bulkItems.filter(i => i.status === "ready");
       const allNewMedia = [
-        ...readyItems.map(i => ({ resourceUrl: i.resourceUrl })),
-        ...pendingProductNewMedia.map(r => ({ resourceUrl: r })),
+        // Forward each item's media kind to the backend so productCreateMedia
+        // gets the right mediaContentType (IMAGE / VIDEO / MODEL_3D). Older
+        // items without `kind` fall back to "image" server-side.
+        ...readyItems.map(i => ({ resourceUrl: i.resourceUrl, kind: i.kind ?? "image" as const })),
+        ...pendingProductNewMedia.map(m => ({ resourceUrl: m.resourceUrl, kind: m.kind })),
       ];
 
       // Merge auto-assigned bulk items into pendingVariantGalleries.
@@ -131,6 +236,26 @@ export function useVariantImageManager() {
         }
       }
 
+      // External-video URLs and combined gallery order live on their own
+      // metafields, so the backend route can persist them in a single
+      // metafieldsSet without crowding the productVariantsBulkUpdate payload.
+      const variantExternalVideos = Object.entries(pendingExternalVideos).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
+      const variant3dModels = Object.entries(pendingVariant3dModels).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
+      const variant3dPreviews = Object.entries(pendingVariant3dPreviews).map(([variantId, urls]) => ({
+        variantId,
+        urls,
+      }));
+      const variantGalleryOrder = Object.entries(pendingGalleryOrder).map(([variantId, orderJson]) => ({
+        variantId,
+        orderJson,
+      }));
+
       const res = await fetch("/api/update-variant-galleries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -140,25 +265,120 @@ export function useVariantImageManager() {
           variantGalleries: mergedVariantGalleries,
           mediaOrder: pendingMediaOrder,
           clearVariantMainImages: pendingClearVariantMainImages,
+          variantExternalVideos,
+          variant3dModels,
+          variant3dPreviews,
+          // Carry-over from prior processing drops: lets the backend poll
+          // pre-existing Model3d GIDs directly without re-running
+          // productCreateMedia on the same staging URL.
+          knownModelGids: pendingKnownModelGids,
+          variantGalleryOrder,
         }),
       });
       const data = await res.json();
       if (!data.success) {
         return (data.errors as string[]).join(", ");
       }
+      // Server may have rejected a subset of external-video URLs (client and
+      // server validation can drift on edge cases — whitespace, trailing
+      // slashes, browser-corrected URLs). Loud-log them so a divergence
+      // surfaces during QA instead of silently dropping the merchant's input.
+      if (Array.isArray(data.droppedExternalUrls) && data.droppedExternalUrls.length > 0) {
+        console.warn("[useVariantImageManager] server dropped external video URLs", data.droppedExternalUrls);
+      }
+      // Group dropped 3D URLs by reason. The bucket determines:
+      //   • console feedback (informational vs error)
+      //   • whether the staging URL + Model3d GID must be carried over
+      //     to the next save so we can substitute it without re-running
+      //     productCreateMedia (which would create a duplicate Media3d)
+      type Drop3D = { variantId: string; url: string; reason?: string; gid?: string };
+      const drops: Drop3D[] = Array.isArray(data.dropped3dModelUrls) ? data.dropped3dModelUrls : [];
+      const processing = drops.filter(d => d.reason === "processing");
+      const failed = drops.filter(d => d.reason === "invalid_glb");
+      const orphaned = drops.filter(d => d.reason === "orphaned");
+      const invalid = drops.filter(d => !d.reason || d.reason === "invalid_url");
+      if (orphaned.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${orphaned.length} variant 3D model URL(s) cleaned up — ` +
+          `the underlying file was deleted from this product's media.`,
+          orphaned,
+        );
+      }
+      if (processing.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${processing.length} 3D model upload(s) still processing on Shopify — ` +
+          `the model is uploaded and on product.media; click Save again in ~10–30 seconds and the variant ` +
+          `binding will land automatically (no duplicate media will be created).`,
+          processing,
+        );
+      }
+      if (failed.length > 0) {
+        console.error(
+          `[useVariantImageManager] ${failed.length} 3D model upload(s) rejected by Shopify (invalid .glb)`,
+          failed,
+        );
+      }
+      if (invalid.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${invalid.length} 3D model URL(s) failed isValid3dModelUrl validation`,
+          invalid,
+        );
+      }
+      // Carry-over: build the surviving pendingVariant3dModels (only the
+      // still-processing staging URLs) and the staging→GID map for the
+      // next save. Everything else gets cleared as usual.
+      const carryOverModels: Record<string, string[]> = {};
+      const carryOverGids: Record<string, string> = {};
+      for (const d of processing) {
+        if (!d.gid) continue; // skip drops without a GID — can't carry over
+        if (!carryOverModels[d.variantId]) carryOverModels[d.variantId] = [];
+        carryOverModels[d.variantId].push(d.url);
+        carryOverGids[d.url] = d.gid;
+      }
+      // Parallel carry-over for the previews: same indices as
+      // carryOverModels. Look up each surviving URL's old index in the
+      // pre-save pendingVariant3dModels to find its preview, so a
+      // still-processing model keeps its already-uploaded preview JPEG
+      // (we do not want the merchant to re-snapshot on the next save).
+      const carryOverPreviews: Record<string, string[]> = {};
+      for (const variantId of Object.keys(carryOverModels)) {
+        const oldModels = pendingVariant3dModels[variantId] ?? [];
+        const oldPreviews = pendingVariant3dPreviews[variantId] ?? [];
+        carryOverPreviews[variantId] = carryOverModels[variantId].map((url) => {
+          const idx = oldModels.indexOf(url);
+          return idx >= 0 ? (oldPreviews[idx] ?? "") : "";
+        });
+      }
+
+      // Defer the per-variant + per-product pending clears until the
+      // post-save refetch lands (see handleVariantsLoaded). Eager clearing
+      // produced a visible flicker: pendingProductNewMedia dropped → tile
+      // gone → refetch ~300-800ms later → tile re-appeared. By keeping the
+      // optimistic staging tiles in state while the refetch is in flight,
+      // the merchant sees a continuous image — the optimistic blob:URL
+      // version + the real CDN-URL version coexist for one render tick at
+      // most, then the deferred clear runs and only the real tile remains.
+      postSaveDeferredClearRef.current = {
+        carryOverModels,
+        carryOverPreviews,
+        carryOverGids,
+      };
+      // bulkItems / hasAltTextEdits aren't tied to the gallery render in the
+      // same way (no optimistic-tile flicker risk) so clear them now.
       setBulkItems([]);
       setSelectedBulkIds(new Set());
-      setPendingVariantGalleries([]);
-      setPendingMediaOrder([]);
-      setPendingProductNewMedia([]);
-      setPendingClearVariantMainImages([]);
       setHasAltTextEdits(false);
-      setResetCounter(c => c + 1);
+      // Trigger the /api/product-variants refetch. When it returns,
+      // handleVariantsLoaded reads postSaveDeferredClearRef and applies the
+      // pending clears — at which point the new media is already on
+      // shopifyMediaMap + refreshedProductImages so the visual transition
+      // is seamless.
+      setVariantReloadCounter(c => c + 1);
       return null;
     } finally {
       setIsApplying(false);
     }
-  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages]);
+  }, [bulkItems, pendingVariantGalleries, pendingMediaOrder, pendingProductNewMedia, pendingClearVariantMainImages, pendingExternalVideos, pendingVariant3dModels, pendingVariant3dPreviews, pendingKnownModelGids, pendingGalleryOrder]);
 
   // Beim Produktwechsel: State zurücksetzen
   const resetForProduct = useCallback(() => {
@@ -169,7 +389,18 @@ export function useVariantImageManager() {
     setPendingMediaOrder([]);
     setPendingProductNewMedia([]);
     setPendingClearVariantMainImages([]);
+    setPendingExternalVideos({});
+    setPendingVariant3dModels({});
+    setPendingVariant3dPreviews({});
+    setPendingKnownModelGids({});
+    setPendingGalleryOrder({});
     setHasAltTextEdits(false);
+    // Clear data derived from the previous product so the bulk panels never match
+    // against stale variants/selection during the load window of the new product.
+    // missingMainImageProductIds is intentionally NOT reset — it is cross-product
+    // sidebar state; clearing it would drop markers for all other products.
+    setVariantsForBulk([]);
+    setSelectedGalleryGids([]);
     setResetCounter(c => c + 1);
   }, []);
 
@@ -188,12 +419,23 @@ export function useVariantImageManager() {
     pendingVariantGalleries,
     pendingMediaOrder,
     pendingProductNewMedia,
+    pendingClearVariantMainImages,
     resetCounter,
     hasAltTextEdits,
     setHasAltTextEdits,
     variantsForBulk,
     missingMainImageProductIds,
     selectedGalleryGids,
+    pendingExternalVideos,
+    setPendingExternalVideos,
+    pendingVariant3dModels,
+    setPendingVariant3dModels,
+    pendingVariant3dPreviews,
+    setPendingVariant3dPreviews,
+    pendingKnownModelGids,
+    setPendingKnownModelGids,
+    pendingGalleryOrder,
+    setPendingGalleryOrder,
     handleVariantsLoaded,
     handleGallerySelectionGidsChange,
     handleMissingMainImageChange,

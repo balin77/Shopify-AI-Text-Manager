@@ -142,14 +142,16 @@ export class ContentSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.collection.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: collectionId,
-        },
-      },
-    });
+    // Also remove polymorphic ContentTranslation rows (no FK/cascade —
+    // resourceId is polymorphic). Atomic + idempotent: see deleteProduct.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: collectionId },
+      }),
+      db.collection.deleteMany({
+        where: { shop: this.shop, id: collectionId },
+      }),
+    ]);
 
     logger.debug(`[ContentSync] Successfully deleted collection: ${collectionId}`);
   }
@@ -225,14 +227,16 @@ export class ContentSyncService {
 
     const { db } = await import("../db.server");
 
-    await db.article.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: articleId,
-        },
-      },
-    });
+    // Also remove polymorphic ContentTranslation rows (no FK/cascade —
+    // resourceId is polymorphic). Atomic + idempotent: see deleteProduct.
+    await db.$transaction([
+      db.contentTranslation.deleteMany({
+        where: { shop: this.shop, resourceId: articleId },
+      }),
+      db.article.deleteMany({
+        where: { shop: this.shop, id: articleId },
+      }),
+    ]);
 
     logger.debug(`[ContentSync] Successfully deleted article: ${articleId}`);
   }
@@ -744,17 +748,59 @@ export class ContentSyncService {
     if (blogsData.errors?.length > 0) {
       throw new Error(`GraphQL error in syncAllArticles: ${blogsData.errors[0].message}`);
     }
+    const blogEdges = blogsData.data?.blogs?.edges || [];
     const blogs: Array<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }> =
-      blogsData.data?.blogs?.edges?.map((e: GraphQLEdge<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }>) => e.node) || [];
+      blogEdges.map((e: GraphQLEdge<{ id: string; articles?: { edges: GraphQLEdge<{ id: string }>[] } }>) => e.node);
 
-    // Collect all articles
-    let allArticles: Array<{ id: string }> = [];
+    // Collect ALL Shopify article ids (before applying the plan cap — the cap
+    // must not drive stale-deletes; over-cap pruning is planCacheCleanup's job).
+    const allShopifyArticles: Array<{ id: string }> = [];
+    let possiblyTruncated = blogEdges.length >= 250; // un-paginated blogs query
     for (const blog of blogs) {
-      const articles: Array<{ id: string }> = blog.articles?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
-      allArticles.push(...articles);
+      const edges = blog.articles?.edges || [];
+      if (edges.length >= 250) possiblyTruncated = true; // un-paginated articles
+      allShopifyArticles.push(...edges.map((e: GraphQLEdge<{ id: string }>) => e.node));
     }
 
-    // Apply plan limit if specified
+    const { db } = await import("../db.server");
+
+    // Stale-delete: articles deleted in Shopify have no webhook, so without
+    // this they would linger forever. Skip when the query may be truncated
+    // (>=250 blogs or any blog with >=250 articles) to avoid deleting real
+    // articles we simply did not page through.
+    if (possiblyTruncated) {
+      logger.warn(`[ContentSync] Skipping article stale-delete: Shopify result possibly truncated (>=250)`);
+    } else if (allShopifyArticles.length === 0) {
+      // Health check: refuse to wipe local data on an empty/outage response.
+      const localCount = await db.article.count({ where: { shop: this.shop } });
+      if (localCount > 0) {
+        throw new Error(`Shopify returned 0 articles but ${localCount} exist locally - aborting to prevent data loss`);
+      }
+    } else {
+      const shopifyArticleIds = allShopifyArticles.map((a) => a.id);
+      const { deleted } = await db.$transaction(async (tx) => {
+        const stale = await tx.article.findMany({
+          where: { shop: this.shop, id: { notIn: shopifyArticleIds } },
+          select: { id: true },
+        });
+        const staleIds = stale.map((s) => s.id);
+        const del = await tx.article.deleteMany({
+          where: { shop: this.shop, id: { notIn: shopifyArticleIds } },
+        });
+        if (staleIds.length > 0) {
+          await tx.contentTranslation.deleteMany({
+            where: { shop: this.shop, resourceType: "Article", resourceId: { in: staleIds } },
+          });
+        }
+        return { deleted: del.count };
+      });
+      if (deleted > 0) {
+        logger.debug(`[ContentSync] 🗑️ Deleted ${deleted} articles that no longer exist in Shopify`);
+      }
+    }
+
+    // Apply plan limit if specified (AFTER stale-delete, BEFORE syncing)
+    let allArticles: Array<{ id: string }> = allShopifyArticles;
     if (maxCount !== undefined && maxCount > 0 && allArticles.length > maxCount) {
       logger.debug(`[ContentSync] Limiting to ${maxCount} articles (found ${allArticles.length})`);
       allArticles = allArticles.slice(0, maxCount);
@@ -801,9 +847,30 @@ export class ContentSyncService {
     if (data.errors?.length > 0) {
       throw new Error(`GraphQL error in syncAllMenus: ${data.errors[0].message}`);
     }
-    const menus: Array<{ id: string }> = data.data?.menus?.edges?.map((e: GraphQLEdge<{ id: string }>) => e.node) || [];
+    const menuEdges = data.data?.menus?.edges || [];
+    const menus: Array<{ id: string }> = menuEdges.map((e: GraphQLEdge<{ id: string }>) => e.node);
 
     logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
+
+    // Stale-delete: menus deleted in Shopify have no webhook. Skip when the
+    // query may be truncated (>=250) to avoid deleting unseen menus.
+    const { db } = await import("../db.server");
+    if (menuEdges.length >= 250) {
+      logger.warn(`[ContentSync] Skipping menu stale-delete: Shopify result possibly truncated (>=250)`);
+    } else if (menus.length === 0) {
+      const localCount = await db.menu.count({ where: { shop: this.shop } });
+      if (localCount > 0) {
+        throw new Error(`Shopify returned 0 menus but ${localCount} exist locally - aborting to prevent data loss`);
+      }
+    } else {
+      const shopifyMenuIds = menus.map((m) => m.id);
+      const del = await db.menu.deleteMany({
+        where: { shop: this.shop, id: { notIn: shopifyMenuIds } },
+      });
+      if (del.count > 0) {
+        logger.debug(`[ContentSync] 🗑️ Deleted ${del.count} menus that no longer exist in Shopify`);
+      }
+    }
 
     for (const menu of menus) {
       try {

@@ -9,6 +9,8 @@
 import { PrismaClient } from "@prisma/client";
 import sharp from "sharp";
 import crypto from "crypto";
+import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
+import { refundImageOperations } from "./image-op-refund.js";
 
 function isEncryptedToken(data) {
   if (!data) return false;
@@ -41,8 +43,30 @@ const DOWNLOAD_BASE_DELAY_MS = 1000;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
+// Hard cap for an entire task (download + convert + several Shopify calls).
+// Each fetch already has its own 30s timeout, but a wedged sequence (or a
+// hung sharp conversion) could otherwise keep a task "running" indefinitely
+// and never trip the recovery threshold reliably.
+const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// R3-M9: String(err) on a thrown object yields "[object Object]" and drops
+// the message + stack, so the task `error` column (the only post-mortem we
+// have for a failed conversion) became useless. Preserve message + stack for
+// real Errors; JSON-stringify anything else. Bounded so a pathological error
+// can't bloat the row.
+function describeError(err) {
+  if (err instanceof Error) {
+    return `${err.message}${err.stack ? `\n${err.stack}` : ""}`.slice(0, 2000);
+  }
+  if (typeof err === "string") return err.slice(0, 2000);
+  try {
+    return JSON.stringify(err).slice(0, 2000);
+  } catch {
+    return String(err).slice(0, 2000);
+  }
+}
 
 // Single-shot fetch with abort timeout — used for all Shopify GraphQL/CDN calls
 // so a hanging request can't keep a running task alive past the stuck-task threshold.
@@ -131,14 +155,18 @@ async function convertToWebP(sourceBuffer, originalUrl, quality = 85) {
   return { buffer, filename };
 }
 
-const db = new PrismaClient();
+// Reuse the global PrismaClient shared with the Remix app (db.server.ts) and
+// the other standalone services. Creating a separate client here leaked a
+// connection pool on every restart (it was never $disconnect()-ed); the
+// shared instance is closed exactly once by server.js gracefulShutdown.
+const db = globalThis.__db ?? new PrismaClient();
+if (!globalThis.__db) globalThis.__db = db;
 
 const POLL_INTERVAL_MS = 10000; // 10 seconds
 const GLOBAL_MAX_CONCURRENT = 8;
-// Mirror of PLAN_CONFIG[*].maxConcurrentWebpConversions in app/config/plans.ts.
-// Keep in sync — plans.ts is the source of truth for the UI/billing side.
-const PLAN_WEBP_CONCURRENCY = { free: 2, basic: 2, pro: 2, max: 4 };
-const DEFAULT_WEBP_CONCURRENCY = 2;
+// Per-plan concurrency comes from app/config/webp-concurrency.js — the single
+// source of truth shared with app/config/plans.ts (PlanLimits
+// .maxConcurrentWebpConversions). No more hardcoded mirror to keep in sync.
 
 export class WebPProcessorService {
   static instance = null;
@@ -237,12 +265,33 @@ export class WebPProcessorService {
       return;
     }
 
-    const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
+    const { sourceUrl, productId } = taskData;
     if (!sourceUrl || !productId) {
       await this.failTask(task.id, "Missing sourceUrl or productId");
       return;
     }
 
+    let timeoutTimer;
+    try {
+      await Promise.race([
+        this._runWebpSteps(task, taskData),
+        new Promise((_, reject) => {
+          timeoutTimer = setTimeout(
+            () => reject(new Error(`WebP task timed out after ${WEBP_TASK_TIMEOUT_MS}ms`)),
+            WEBP_TASK_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (err) {
+      console.error(`[WebPProcessor] Task ${task.id} timed out / failed:`, err);
+      await this.failTask(task.id, describeError(err));
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
+  }
+
+  async _runWebpSteps(task, taskData) {
+    const { sourceUrl, mediaId, productImageId, productId, altText: taskAltText } = taskData;
     try {
       // Mark as running
       await db.task.update({
@@ -410,6 +459,20 @@ export class WebPProcessorService {
         }
       }
 
+      // 6.6. COMPENSATION ORDERING: point the DB row at the new MediaImage
+      // BEFORE we destructively delete the old media from Shopify. If the
+      // process crashes anywhere between the delete and the old step-9 DB
+      // write, the DB would otherwise still reference a now-deleted mediaId
+      // (broken image, not reliably caught by recovery). Worst case after
+      // this reorder is a surviving duplicate old media — visible and
+      // self-healing on the next sync, far preferable to a dangling pointer.
+      if (mediaId && newMediaId) {
+        await db.productImage.updateMany({
+          where: { mediaId: mediaId },
+          data: { mediaId: newMediaId },
+        }).catch(() => {});
+      }
+
       // 7. Delete old media from Shopify (if mediaId available)
       if (mediaId) {
         await fetchWithTimeout(shopifyApiUrl, {
@@ -535,21 +598,21 @@ export class WebPProcessorService {
 
       await db.task.update({ where: { id: task.id }, data: { progress: 90 } });
 
-      // 9. Update DB: swap mediaId to new GID + set CDN URL.
-      //    target.resourceUrl is the staged-upload storage URL and must NEVER be
-      //    persisted. We query Shopify once for the real CDN URL; if Shopify is
-      //    still PROCESSING the new MediaImage, we update mediaId but keep the
-      //    existing url (column is non-nullable). A subsequent /api/product-images
-      //    upsert reconciles the URL once Shopify finishes processing.
+      // 9. Reconcile the CDN URL. The mediaId pointer was already swapped in
+      //    step 6.6, so here we only resolve and persist the real URL, keyed
+      //    by the NEW mediaId. target.resourceUrl is the staged-upload storage
+      //    URL and must NEVER be persisted. If Shopify is still PROCESSING the
+      //    new MediaImage, url stays as-is (column is non-nullable) and a
+      //    later /api/product-images upsert reconciles it.
       let resolvedUrl = null;
       if (mediaId && newMediaId) {
         resolvedUrl = await fetchNewMediaUrl(shopifyApiUrl, headers, newMediaId);
-        await db.productImage.updateMany({
-          where: { mediaId: mediaId },
-          data: resolvedUrl
-            ? { mediaId: newMediaId, url: resolvedUrl }
-            : { mediaId: newMediaId },
-        }).catch(() => {});
+        if (resolvedUrl) {
+          await db.productImage.updateMany({
+            where: { mediaId: newMediaId },
+            data: { url: resolvedUrl },
+          }).catch(() => {});
+        }
       }
 
       // 10. Mark task as completed
@@ -569,14 +632,38 @@ export class WebPProcessorService {
       console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
-      await this.failTask(task.id, String(err));
+      await this.failTask(task.id, describeError(err));
     }
   }
 
   async failTask(taskId, error) {
-    await db.task.update({
-      where: { id: taskId },
-      data: { status: "failed", completedAt: new Date(), error },
-    }).catch(() => {});
+    // Only the FIRST transition into "failed" should refund: updateMany with a
+    // non-terminal status guard makes the refund idempotent even if failTask
+    // runs twice for the same task.
+    let shop = null;
+    try {
+      const before = await db.task.findUnique({
+        where: { id: taskId },
+        select: { shop: true, status: true },
+      });
+      const res = await db.task.updateMany({
+        where: { id: taskId, status: { notIn: ["failed", "completed"] } },
+        data: { status: "failed", completedAt: new Date(), error },
+      });
+      if (res.count > 0 && before?.shop) shop = before.shop;
+    } catch {
+      // Fall back to a best-effort status write without the guard.
+      await db.task
+        .update({ where: { id: taskId }, data: { status: "failed", completedAt: new Date(), error } })
+        .catch(() => {});
+    }
+
+    // Each imageWebpConversion task consumed exactly one image operation at
+    // batch-creation time; a failed conversion produced no result, so give
+    // the op back (N-H4). The `shop` guard above (set only when this call
+    // performed the first failed-transition) keeps the refund idempotent.
+    if (shop) {
+      await refundImageOperations(db, shop, 1);
+    }
   }
 }

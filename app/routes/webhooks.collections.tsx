@@ -30,7 +30,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
   });
 
-  // Process webhook asynchronously (don't block Shopify's response)
+  // Process webhook asynchronously (don't block Shopify's response).
+  // Review LOW ("returns 200 on internal error"): intentional and now safe.
+  // We must ack fast (Shopify's webhook timeout is short) and a non-2xx would
+  // eventually make Shopify disable the subscription. Durability no longer
+  // relies on the HTTP status: processing failures persist to webhookLog AND
+  // schedule a real retry via webhookRetryService (see processWebhookAsync /
+  // N-H7), so a transient error is recovered rather than lost.
   processWebhookAsync(webhookLog.id, shop, collectionId, topic).catch((err) => {
     logger.error("[WEBHOOK] Background processing error", { context: "Webhook", error: err.message });
   });
@@ -48,6 +54,7 @@ async function processWebhookAsync(
   topic: string
 ) {
   const { db } = await import("../db.server");
+  const { webhookRetryService } = await import("../services/webhook-retry.service");
 
   try {
     const { createAdminClientFromShop } = await import("../utils/admin-client.server");
@@ -80,6 +87,15 @@ async function processWebhookAsync(
         error: msg,
       },
     });
+
+    // Schedule retry for failed webhook — parity with webhooks.products so a
+    // transient error no longer permanently loses the collection update (N-H7).
+    await webhookRetryService.scheduleRetry(
+      shop,
+      topic,
+      { collectionId, logId },
+      error instanceof Error ? error : undefined
+    );
 
     throw error;
   }

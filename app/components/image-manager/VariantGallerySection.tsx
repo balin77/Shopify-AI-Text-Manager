@@ -5,6 +5,7 @@ import { useI18n } from "../../contexts/I18nContext";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
+import { parseExternalVideoUrl } from "../../utils/mediaKind";
 import type { VariantWithGallery, ImageMeta } from "./types";
 
 interface VariantGallerySectionProps {
@@ -33,6 +34,20 @@ interface VariantGallerySectionProps {
   enabledLanguages?: string[];
   currentLanguage?: string;
   primaryLocale?: string;
+  /** Effective YouTube/Vimeo URLs for this variant (server-loaded + local
+   *  pending edits). Undefined falls back to `variant.externalVideoUrls`. */
+  externalVideoUrls?: string[];
+  onAddExternalVideoUrl?: (variantId: string, url: string) => void;
+  onRemoveExternalVideoUrl?: (variantId: string, url: string) => void;
+  /** Effective 3D model URLs (.glb) for this variant — same contract as
+   *  externalVideoUrls. Models are rendered inside the sortable grid with a
+   *  3D badge; the SortableImageGrid resolves the right thumbnail variant. */
+  threeDModelUrls?: string[];
+  onRemoveThreeDModelUrl?: (variantId: string, url: string) => void;
+  /** Opens the parent's Browse-Files modal targeted at this variant. The
+   *  parent owns the modal so its selection callback can update pending
+   *  gallery state without re-mounting on every variant. */
+  onBrowseLibrary?: () => void;
 }
 
 export function VariantGallerySection({
@@ -61,20 +76,134 @@ export function VariantGallerySection({
   enabledLanguages = [],
   currentLanguage,
   primaryLocale,
+  externalVideoUrls,
+  // onAddExternalVideoUrl / onRemoveExternalVideoUrl are kept on the
+  // interface for backward compatibility but no longer used inside this
+  // component: the URL row was moved into the central add-media modal,
+  // which routes additions/removals through the parent's pending state
+  // via its own callbacks. They survive in the props so any consumer that
+  // still passes them compiles unchanged.
+  threeDModelUrls,
+  // onRemoveThreeDModelUrl is kept on the interface but unused here —
+  // removal flows through onRemoveFromGallery, same as files and external
+  // videos. Parent inspects the URL pattern (.glb) to route to the right
+  // metafield.
+  onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
+  const effectiveExternalVideoUrls = externalVideoUrls ?? variant.externalVideoUrls ?? [];
+  const effectiveThreeDModelUrls = threeDModelUrls ?? variant.threeDModelUrls ?? [];
+  // Parallel array to effectiveThreeDModelUrls: index N is the preview JPG
+  // URL for the model at index N. Comes from custom.variant_3d_previews.
+  const effectiveThreeDPreviewUrls = variant.threeDPreviewUrls ?? [];
   const skipNextBlurRef = useRef(false);
 
   const urls = variant.galleryFileGids
     .map(gid => fileUrlMap[gid])
     .filter(Boolean) as string[];
 
-  const displayUrls = urls.length > 0 ? urls : variant.galleryFileGids
+  // Voll-mix: external video URLs render as additional tiles inside the same
+  // sortable grid as file-backed items, so the merchant can drag-reorder
+  // across both kinds. variant_gallery_order (json) holds the persisted
+  // sequence; the parent reorder handler splits the dropped result back into
+  // the per-kind pending state slots. URLs always sort after files on first
+  // paint — the order metafield can move them anywhere except position 0.
+  const fileUrlList = urls.length > 0 ? urls : variant.galleryFileGids
     .filter(gid => gid.startsWith("http"))
     .slice(0, 10);
+  const orderedUrls = useMemo(() => {
+    // If the variant has a saved order, honour it: emit items in the saved
+    // sequence, skipping any references that no longer resolve (file deleted
+    // / URL removed). Falls back to "files first, then URLs, then models"
+    // when missing.
+    const knownFileSet = new Set(fileUrlList);
+    const knownUrlSet = new Set(effectiveExternalVideoUrls);
+    const knownModelSet = new Set(effectiveThreeDModelUrls);
+    const raw = variant.galleryOrderJson;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Array<{ kind: string; value: string }>;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const out: string[] = [];
+          const seenFiles = new Set<string>();
+          const seenUrls = new Set<string>();
+          const seenModels = new Set<string>();
+          for (const entry of parsed) {
+            if (entry?.kind === "file") {
+              const fileUrl = fileUrlMap[entry.value];
+              if (fileUrl && knownFileSet.has(fileUrl) && !seenFiles.has(fileUrl)) {
+                out.push(fileUrl);
+                seenFiles.add(fileUrl);
+              }
+            } else if (entry?.kind === "url") {
+              if (knownUrlSet.has(entry.value) && !seenUrls.has(entry.value)) {
+                out.push(entry.value);
+                seenUrls.add(entry.value);
+              }
+            } else if (entry?.kind === "model") {
+              if (knownModelSet.has(entry.value) && !seenModels.has(entry.value)) {
+                out.push(entry.value);
+                seenModels.add(entry.value);
+              }
+            }
+          }
+          // Append anything the order JSON didn't cover (new uploads / URLs /
+          // models added since the last save) so they're still visible.
+          for (const u of fileUrlList) if (!seenFiles.has(u)) out.push(u);
+          for (const u of effectiveExternalVideoUrls) if (!seenUrls.has(u)) out.push(u);
+          for (const u of effectiveThreeDModelUrls) if (!seenModels.has(u)) out.push(u);
+          return out;
+        }
+      } catch { /* fall through to default */ }
+    }
+    return [...fileUrlList, ...effectiveExternalVideoUrls, ...effectiveThreeDModelUrls];
+    // effective*Urls are referenced via closure; we recompute when any of
+    // these inputs change so the merchant sees the latest mix.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant.galleryOrderJson, fileUrlList.join("|"), effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), fileUrlMap]);
+
+  const displayUrls = orderedUrls;
+
+  // Augment the parent's imageMetas with synthetic entries for external
+  // video URLs and 3D model URLs — the parent only populates entries for
+  // product images, so without this the SortableThumbnail dispatch would
+  // fall back to <img> and try to load a YouTube watch-page URL or a .glb
+  // binary as an image (broken icon).
+  const enrichedImageMetas = useMemo(() => {
+    if (effectiveExternalVideoUrls.length === 0 && effectiveThreeDModelUrls.length === 0) return imageMetas;
+    const out: Record<string, ImageMeta> = { ...imageMetas };
+    for (const u of effectiveExternalVideoUrls) {
+      if (out[u]?.kind === "external_video") continue;
+      const parsed = parseExternalVideoUrl(u);
+      out[u] = {
+        ...(out[u] ?? {}),
+        kind: "external_video",
+        externalHost: parsed?.host === "youtube" ? "YouTube" : parsed?.host === "vimeo" ? "Vimeo" : undefined,
+        altText: (out[u]?.altText ?? variant.title),
+      };
+    }
+    for (let i = 0; i < effectiveThreeDModelUrls.length; i++) {
+      const u = effectiveThreeDModelUrls[i];
+      // Forward the parallel preview JPG URL (Shopify's auto-generated
+      // Model3d.preview.image.url, persisted to custom.variant_3d_previews).
+      // Without it the SortableThumbnail renderer rendered just the "3D"
+      // placeholder for variant 3D models even after the metafield was
+      // populated with real thumbnails.
+      const previewUrl = effectiveThreeDPreviewUrls[i];
+      if (out[u]?.kind === "model" && out[u]?.previewUrl) continue;
+      out[u] = {
+        ...(out[u] ?? {}),
+        kind: "model",
+        previewUrl: previewUrl && previewUrl.trim() !== "" ? previewUrl : (out[u]?.previewUrl),
+        altText: (out[u]?.altText ?? variant.title),
+      };
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageMetas, effectiveExternalVideoUrls.join("|"), effectiveThreeDModelUrls.join("|"), effectiveThreeDPreviewUrls.join("|"), variant.title]);
 
   const urlToGid = Object.fromEntries(
     Object.entries(fileUrlMap).map(([gid, url]) => [url, gid])
@@ -154,7 +283,7 @@ export function VariantGallerySection({
           <SortableImageGrid
             containerId={variant.id}
             imageUrls={displayUrls}
-            imageMetas={imageMetas}
+            imageMetas={enrichedImageMetas}
             onReorder={(newUrls) => {
               const newGids = newUrls.map(u => urlToGid[u] ?? u).filter(Boolean);
               onReorder(variant.id, newGids);
@@ -165,6 +294,7 @@ export function VariantGallerySection({
             activeAction={activeAction}
             onDropToPlaceholder={() => onDrop(variant.id, true)}
             onUploadToGallery={(files) => onUploadToGallery(variant.id, files)}
+            onOpenPicker={onBrowseLibrary}
             thumbSize={thumbSize}
             skipDndContext={skipDndContext}
             hasMainImage={hasMainImage}
@@ -183,6 +313,11 @@ export function VariantGallerySection({
                 {t.imageManager.remove.replace("{count}", String(localSelectedUrls.length))}
               </Button>
             )}
+            {/* The standalone "Browse existing files" button and the
+                YouTube/Vimeo URL row used to live here. Both have moved
+                into the central add-media modal — opened by clicking the
+                placeholder tile in the gallery grid above (onOpenPicker on
+                the SortableImageGrid). One entry point, one mental model. */}
           </div>
 
           {/* Alt text editor — only when exactly 1 image is selected */}

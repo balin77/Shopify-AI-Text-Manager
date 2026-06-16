@@ -93,24 +93,28 @@ async function main() {
     runSilent(`npx prisma migrate resolve --applied ${name}`);
   }
 
-  // Direct SQL fallback: clear only "failed" rows (finished_at IS NULL AND rolled_back_at IS NULL)
-  // NOTE: Do NOT touch rows where rolled_back_at IS NOT NULL — those are intentionally rolled back
-  // and must be re-applied by prisma migrate deploy, not silently marked as done.
+  // Diagnostic only: report (do NOT mutate) any migration rows still in a
+  // failed/in-progress state. Blanket-marking them "finished" via raw SQL masks
+  // genuine migration failures and lets a broken deploy proceed silently.
+  // Known legacy rows are handled explicitly via `migrate resolve` above.
   try {
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
-    const fixed = await prisma.$executeRawUnsafe(`
-      UPDATE "_prisma_migrations"
-      SET "finished_at" = NOW(),
-          "logs" = 'Resolved by migration runner'
+    const stuck = await prisma.$queryRawUnsafe(`
+      SELECT "migration_name"
+      FROM "_prisma_migrations"
       WHERE "finished_at" IS NULL
         AND "rolled_back_at" IS NULL
         AND "started_at" IS NOT NULL
     `);
-    if (fixed > 0) log(`  ↳ Fixed ${fixed} stuck migration rows via SQL`, 'green');
+    if (Array.isArray(stuck) && stuck.length > 0) {
+      log(`  ↳ ${stuck.length} migration row(s) in a failed/in-progress state — NOT auto-resolving:`, 'yellow');
+      for (const row of stuck) log(`     • ${row.migration_name}`, 'yellow');
+      log('     Resolve explicitly with `prisma migrate resolve` if these are known-applied.', 'yellow');
+    }
     await prisma.$disconnect();
   } catch (e) {
-    log(`  ↳ Direct SQL fix skipped: ${e.message?.substring(0, 80)}`, 'yellow');
+    log(`  ↳ Migration-state check skipped: ${e.message?.substring(0, 80)}`, 'yellow');
   }
 
   // 3. Run Prisma Schema Migrations
@@ -122,8 +126,10 @@ async function main() {
 
   if (!migrateSuccess) {
     log('⚠️  prisma migrate deploy failed, trying db push as fallback...', 'yellow');
+    // No --accept-data-loss: db push still applies additive changes, but aborts
+    // (non-zero) instead of silently DROPping columns/tables in production.
     const pushSuccess = runCommand(
-      'npx prisma db push --skip-generate --accept-data-loss',
+      'npx prisma db push --skip-generate',
       'Prisma DB Push (Fallback)'
     );
 
@@ -131,14 +137,13 @@ async function main() {
       log('❌ Both migrate deploy and db push failed!', 'red');
       process.exit(1);
     }
-  } else {
-    // Always run db push after successful migrate deploy to sync schema-only changes
-    // (models added via prisma db push without migration files, e.g. ProductVariant, ImageManagerSettings)
-    runCommand(
-      'npx prisma db push --skip-generate --accept-data-loss',
-      'Prisma DB Push (schema sync)'
-    );
   }
+  // No post-success `db push`: the migration history is now complete. The
+  // tables historically created only via db push (ImageManagerSettings,
+  // ProductVariant, AltTextTemplate) now have idempotent CREATE TABLE
+  // migrations dated before their dependent ALTERs, so `migrate deploy` alone
+  // reproduces the full schema on a fresh database. Running an unconditional
+  // db push here previously masked incomplete migration history.
 
   // 3. Run API Key encryption migration (if ENCRYPTION_KEY is set)
   if (process.env.ENCRYPTION_KEY) {

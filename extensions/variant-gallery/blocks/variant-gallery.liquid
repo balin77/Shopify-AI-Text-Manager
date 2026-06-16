@@ -2,10 +2,9 @@
   assign current_variant = product.selected_or_first_available_variant
   assign gallery_mf      = current_variant.metafields.custom.variant_gallery
   assign has_gallery     = false
-  if gallery_mf != blank and gallery_mf.value != blank and gallery_mf.value.size > 0
+  if gallery_mf != blank and gallery_mf.value != blank
     assign has_gallery = true
   endif
-
   assign fallback_image = current_variant.featured_image | default: product.featured_image
 -%}
 
@@ -14,99 +13,160 @@
 
 {%- comment -%}
   Embed ALL variant gallery data as JSON so the JS can switch galleries
-  client-side without any additional HTTP requests.
-  Section Rendering API cannot re-render app blocks, so this is the correct
-  approach for theme app extensions.
+  client-side without extra HTTP requests. The wrapper is ALWAYS rendered
+  (never empty) and always carries block.shopify_attributes so the theme
+  editor can register/position the app block.
 {%- endcomment -%}
-<script type="application/json" id="cp-gallery-data-{{ section.id }}">
+{%- comment -%}
+  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  variant.title containing `</script><script>…` would break out of this
+  JSON island and inject script regardless of the JS-side _esc(). Every
+  free-text value interpolated below MUST additionally neutralise `<`/`>`
+  by replacing them with their \uXXXX JSON escapes (JSON.parse restores
+  them, so data is unchanged). Image URLs are Shopify CDN and
+  IDs/dimensions are numeric, so only variant.title needs this.
+{%- endcomment -%}
+<script type="application/json" id="cp-gallery-data-{{ block.id }}">
   {
-    {%- for variant in product.variants -%}
-      {%- assign vg = variant.metafields.custom.variant_gallery -%}
-      {{ variant.id | json }}: [
-        {%- if vg != blank and vg.value != blank and vg.value.size > 0 -%}
-          {%- for img in vg.value -%}
+    {%- if product != blank -%}
+      {%- for variant in product.variants -%}
+        {%- assign vg = variant.metafields.custom.variant_gallery -%}
+        "{{ variant.id }}": [
+          {%- assign cp_has_any = false -%}
+          {%- if variant.featured_image != blank -%}
+            {%- assign vfi = variant.featured_image -%}
             {
-              "src_400":  {{ img | image_url: width: 400  | json }},
-              "src_800":  {{ img | image_url: width: 800  | json }},
-              "src_1200": {{ img | image_url: width: 1200 | json }},
-              "thumb":    {{ img | image_url: width: 160  | json }},
-              "alt":      {{ variant.title | json }}
-            }{% unless forloop.last %},{% endunless %}
-          {%- endfor -%}
-        {%- endif -%}
-      ]{% unless forloop.last %},{% endunless %}
-    {%- endfor -%}
+              "src_400":  {{ vfi | image_url: width: 400  | json }},
+              "src_800":  {{ vfi | image_url: width: 800  | json }},
+              "src_1200": {{ vfi | image_url: width: 1200 | json }},
+              "thumb":    {{ vfi | image_url: width: 160  | json }},
+              "w":        {{ vfi.width  | json }},
+              "h":        {{ vfi.height | json }},
+              "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+            }
+            {%- assign cp_has_any = true -%}
+          {%- endif -%}
+          {%- if vg != blank and vg.value != blank -%}
+            {%- for img in vg.value -%}
+              {%- assign cp_src = img | image_url: width: 800 -%}
+              {%- if cp_src != blank -%}
+                {%- if cp_has_any %},{% endif -%}
+                {%- assign cp_w = img.preview_image.width  | default: img.width -%}
+                {%- assign cp_h = img.preview_image.height | default: img.height -%}
+                {
+                  "src_400":  {{ img | image_url: width: 400  | json }},
+                  "src_800":  {{ cp_src | json }},
+                  "src_1200": {{ img | image_url: width: 1200 | json }},
+                  "thumb":    {{ img | image_url: width: 160  | json }},
+                  "w":        {{ cp_w | json }},
+                  "h":        {{ cp_h | json }},
+                  "alt":      {{ variant.title | json | replace: "<", "\u003c" | replace: ">", "\u003e" }}
+                }
+                {%- assign cp_has_any = true -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        ]{% unless forloop.last %},{% endunless %}
+      {%- endfor -%}
+    {%- endif -%}
   }
 </script>
 
 <cp-variant-gallery
+  {{ block.shopify_attributes }}
   class="cp-variant-gallery"
   style="--cp-thumb-size: {{ block.settings.thumbnail_size }}px;"
-  data-section-id="{{ section.id }}"
+  data-block-id="{{ block.id }}"
   data-current-variant="{{ current_variant.id }}"
+  data-debug="{% if block.settings.debug_logs %}1{% endif %}"
 >
   <div class="cp-gallery__inner">
-    {%- if has_gallery -%}
+    {%- if product == blank -%}
 
-      <div class="cp-gallery__main">
-        {%- assign first_img = gallery_mf.value | first -%}
-        <img
-          class="cp-gallery__main-image"
-          src="{{ first_img | image_url: width: 800 }}"
-          srcset="
-            {{ first_img | image_url: width: 400 }}  400w,
-            {{ first_img | image_url: width: 800 }}  800w,
-            {{ first_img | image_url: width: 1200 }} 1200w
-          "
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="{{ current_variant.title | escape }}"
-          loading="eager"
-          width="{{ first_img.width }}"
-          height="{{ first_img.height }}"
-        >
+      <p class="cp-gallery__placeholder">Variant Image Gallery — preview on a product page to see variant images.</p>
+
+    {%- elsif has_gallery or current_variant.featured_image != blank -%}
+
+      {%- if current_variant.featured_image != blank -%}
+        {%- assign main_img = current_variant.featured_image -%}
+        {%- assign main_w = current_variant.featured_image.width -%}
+        {%- assign main_h = current_variant.featured_image.height -%}
+      {%- else -%}
+        {%- assign main_img = gallery_mf.value | first -%}
+        {%- assign main_w = main_img.preview_image.width  | default: main_img.width -%}
+        {%- assign main_h = main_img.preview_image.height | default: main_img.height -%}
+      {%- endif -%}
+
+      <div class="cp-gallery__main"{% if main_w and main_h %} style="aspect-ratio: {{ main_w }} / {{ main_h }};"{% endif %}>
+        {{
+          main_img
+          | image_url: width: 800
+          | image_tag:
+            class: 'cp-gallery__main-image',
+            loading: 'eager',
+            sizes: '(min-width: 1024px) 50vw, 100vw',
+            widths: '400, 800, 1200',
+            alt: current_variant.title
+        }}
       </div>
 
-      {%- if gallery_mf.value.size > 1 -%}
-        <div class="cp-gallery__thumbs">
+      <div class="cp-gallery__thumbs">
+        {%- if current_variant.featured_image != blank -%}
+          {%- assign vfi = current_variant.featured_image -%}
+          <button
+            class="cp-gallery__thumb is-active"
+            type="button"
+            data-src-sm="{{ vfi | image_url: width: 400 | escape }}"
+            data-src-md="{{ vfi | image_url: width: 800 | escape }}"
+            data-src-lg="{{ vfi | image_url: width: 1200 | escape }}"
+            data-w="{{ vfi.width }}"
+            data-h="{{ vfi.height }}"
+            aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: 1 }}"
+          >
+            {{ vfi | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
+          </button>
+        {%- endif -%}
+        {%- if has_gallery -%}
           {%- for img in gallery_mf.value -%}
-            <button
-              class="cp-gallery__thumb{% if forloop.first %} is-active{% endif %}"
-              type="button"
-              data-src-400="{{ img | image_url: width: 400 }}"
-              data-src-800="{{ img | image_url: width: 800 }}"
-              data-src-1200="{{ img | image_url: width: 1200 }}"
-              aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
-            >
-              <img
-                src="{{ img | image_url: width: 160 }}"
-                alt="{{ current_variant.title | escape }} {{ forloop.index }}"
-                loading="lazy"
-                width="160"
-                height="160"
+            {%- assign cp_src = img | image_url: width: 800 -%}
+            {%- if cp_src != blank -%}
+              {%- assign cp_w = img.preview_image.width  | default: img.width -%}
+              {%- assign cp_h = img.preview_image.height | default: img.height -%}
+              <button
+                class="cp-gallery__thumb{% if forloop.first and current_variant.featured_image == blank %} is-active{% endif %}"
+                type="button"
+                data-src-sm="{{ img | image_url: width: 400 | escape }}"
+                data-src-md="{{ cp_src | escape }}"
+                data-src-lg="{{ img | image_url: width: 1200 | escape }}"
+                data-w="{{ cp_w }}"
+                data-h="{{ cp_h }}"
+                aria-label="{{ 'blocks.variant_gallery.thumbnail_label' | t: index: forloop.index }}"
               >
-            </button>
+                {{ img | image_url: width: 160 | image_tag: loading: 'lazy', width: 160, height: 160, alt: current_variant.title }}
+              </button>
+            {%- endif -%}
           {%- endfor -%}
-        </div>
-      {%- endif -%}
+        {%- endif -%}
+      </div>
 
     {%- elsif fallback_image -%}
 
       <div class="cp-gallery__main cp-gallery__main--fallback">
-        <img
-          class="cp-gallery__main-image"
-          src="{{ fallback_image | image_url: width: 800 }}"
-          srcset="
-            {{ fallback_image | image_url: width: 400 }}  400w,
-            {{ fallback_image | image_url: width: 800 }}  800w,
-            {{ fallback_image | image_url: width: 1200 }} 1200w
-          "
-          sizes="(min-width: 1024px) 50vw, 100vw"
-          alt="{{ product.title | escape }}"
-          loading="eager"
-          width="{{ fallback_image.width }}"
-          height="{{ fallback_image.height }}"
-        >
+        {{
+          fallback_image
+          | image_url: width: 800
+          | image_tag:
+            class: 'cp-gallery__main-image',
+            loading: 'eager',
+            sizes: '(min-width: 1024px) 50vw, 100vw',
+            widths: '400, 800, 1200',
+            alt: product.title
+        }}
       </div>
+
+    {%- else -%}
+
+      <p class="cp-gallery__placeholder">No variant images found for this product.</p>
 
     {%- endif -%}
   </div>
@@ -125,6 +185,12 @@
       "max": 160,
       "step": 10,
       "default": 80
+    },
+    {
+      "type": "checkbox",
+      "id": "debug_logs",
+      "label": "Enable debug logging in browser console",
+      "default": false
     },
     {
       "type": "paragraph",
