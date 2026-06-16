@@ -127,6 +127,44 @@ Alle API-Routen sollten Zod-Schemas für Input-Validierung erhalten.
 
 ---
 
+### 4. Variant 3D Save ↔ Refresh Race Condition
+
+**Priorität:** Niedrig (Single-Merchant unwahrscheinlich, relevant bei Multi-User-Shops)
+**Aufwand:** ~4–6 Stunden
+**Files:** [app/routes/api.update-variant-galleries.tsx](../app/routes/api.update-variant-galleries.tsx), [app/routes/api.refresh-3d-previews.tsx](../app/routes/api.refresh-3d-previews.tsx)
+
+Beide Endpoints schreiben die parallelen `variant_3d_models` + `variant_3d_previews` Metafields mit Read-Modify-Write ohne Versionsschutz. Wenn beide innerhalb hunderter Millisekunden den gleichen Variant berühren, gewinnt der spätere Write basierend auf einem veralteten Read — der frühere Write geht verloren.
+
+**Wann kann es auftreten:**
+
+| Zeit | Event |
+|------|-------|
+| `t=0s` | Merchant lädt 3D-Modell A hoch + klickt Save. Save returnt nach ~2s mit "processing"-Carry-Over (Modell auf Shopify, Source-URL noch nicht fertig). |
+| `t=10s` | Background-Polling Tick liest `variant_3d_models = [savedA, savedB]`, plant `[savedA, savedB, newA_cdn]`. |
+| `t=10.5s` | **Bevor** Tick committed: Merchant löst zweiten Save aus (z.B. neues Bild in anderer Variante). Save liest noch `[savedA, savedB]`, plant `[savedA, savedB, newImg]`. |
+| `t=10.7s` | Tick schreibt `[savedA, savedB, newA_cdn]` → `newImg` fehlt. |
+| `t=10.8s` | Save schreibt `[savedA, savedB, newImg]` → `newA_cdn` weg. |
+
+→ Last-Write-Wins, ein Write geht verloren.
+
+**Warum unwahrscheinlich in Praxis:**
+
+- Solo-Merchant macht selten zwei Saves innerhalb von 10–60s
+- Race-Window ist nur hunderte Millisekunden (HTTP-Roundtrip-Dauer beider Endpoints)
+- Beide müssen das gleiche Variant-Metafield anfassen
+
+**Fix-Pattern (wenn nötig):**
+
+Optimistic Concurrency via `MetafieldsSetInput`'s `updatedAt` Vergleich oder Custom Version-Token im Metafield-Wert. Beide Endpoints:
+
+1. Read Metafield **mit** `updatedAt`-Snapshot
+2. Read-Modify-Write
+3. Im `metafieldsSet`-Call: wenn aktueller `updatedAt` !== Snapshot → 409 Conflict, Retry mit fresh Read
+
+Alternativ: ein gemeinsames Write-Lock im DB-Layer (z.B. Redis advisory lock per `variantId`).
+
+---
+
 ## Changelog
 
 | Datum | Änderung |
@@ -134,4 +172,5 @@ Alle API-Routen sollten Zod-Schemas für Input-Validierung erhalten.
 | 2026-02-15 | Initiales Dokument aus Code Reviews #1–#4 erstellt |
 | 2026-04-05 | Items 1, 3, 4, 5 (Review #5) abgeschlossen; Sub-Hooks extrahiert; Integrationsplan dokumentiert |
 | 2026-04-05 | CODE_IMPROVEMENTS.md zusammengeführt; Review #5 Items in Erledigte-Tabelle aufgenommen |
+| 2026-06-16 | Variant 3D Save↔Refresh Race Condition (B6/B7 aus Multi-Agent-Review) als Ausstehendes Item #4 dokumentiert |
 | 2026-04-06 | `useEditorAutoSave` und `useEditorAltText` in `useUnifiedContentEditor` integriert (Ref-Forwarding-Pattern) |
