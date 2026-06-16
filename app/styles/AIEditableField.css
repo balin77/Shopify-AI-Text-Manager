@@ -54,10 +54,16 @@
   font-style: italic !important;
 }
 
-/* Character counter and helpText positioning - right aligned */
-.ai-editable-field-wrapper .Polaris-TextField__CharacterCount,
-.ai-editable-field-wrapper .Polaris-Text--subdued {
+/* Character counter - right aligned (Polaris default) */
+.ai-editable-field-wrapper .Polaris-TextField__CharacterCount {
   text-align: right !important;
+  display: block !important;
+  margin-top: 4px !important;
+}
+
+/* helpText - left aligned, sits full-width directly under the input */
+.ai-editable-field-wrapper .Polaris-Text--subdued {
+  text-align: left !important;
   display: block !important;
   margin-top: 4px !important;
 }
