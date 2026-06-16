@@ -324,31 +324,6 @@ export function getTrialInfo(input: {
 }
 
 /**
- * Pure, testable trial detection. Shopify has NO TRIAL status: during the
- * trial, status === 'ACTIVE' and currentPeriodEnd == trial end (<= trialDays
- * away). After the trial ends, currentPeriodEnd jumps to the next paid period
- * (> trialDays away) -> the condition becomes false automatically
- * (self-correcting). Fail-safe: when uncertain, do NOT show.
- */
-export function getTrialInfo(input: {
-  subscriptionStatus: string | null;
-  trialDays: number;
-  currentPeriodEnd: string | null;
-  now?: Date;
-}): { inTrial: boolean; remainingDays: number } {
-  const { subscriptionStatus, trialDays, currentPeriodEnd } = input;
-  const now = input.now ?? new Date();
-  if (subscriptionStatus !== 'ACTIVE' || trialDays <= 0 || !currentPeriodEnd) {
-    return { inTrial: false, remainingDays: 0 };
-  }
-  const end = new Date(currentPeriodEnd).getTime();
-  if (Number.isNaN(end)) return { inTrial: false, remainingDays: 0 };
-  const remainingDays = Math.ceil((end - now.getTime()) / 86_400_000);
-  const inTrial = remainingDays >= 1 && remainingDays <= trialDays;
-  return { inTrial, remainingDays: inTrial ? remainingDays : 0 };
-}
-
-/**
  * Resolves the plan from a Shopify subscription deterministically.
  *
  * H4 fix: the previous `name.includes('pro'|'basic'|...)` substring heuristic
