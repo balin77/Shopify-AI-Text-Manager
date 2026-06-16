@@ -23,17 +23,30 @@ function getSaveBar() {
  * or when App Bridge is unavailable (e.g. local dev outside the Admin). When
  * the save bar IS visible, this displays the native "unsaved changes"
  * confirmation dialog and shakes/re-focuses the bar; it resolves only if the
- * merchant confirms leaving. If the merchant cancels, the returned promise
+ * merchant confirms leaving. If the merchant cancels (stays), the native promise
  * never resolves — so simply `await` this before navigating and navigation is
  * skipped when the merchant chooses to stay.
+ *
+ * Latest-intent guard: each call takes a token. If several confirmation promises
+ * are outstanding and resolve together (e.g. the merchant clicked multiple
+ * targets before confirming), only the most recent call proceeds; older ones are
+ * abandoned so we never fire stale/duplicate navigations.
  *
  * This replaces the custom NavigationGuard + highlightSaveButton mechanism.
  * Docs: https://shopify.dev/docs/api/app-bridge-library/apis/save-bar
  */
+let navigationToken = 0;
+
 export async function confirmNavigation(): Promise<void> {
   const saveBar = getSaveBar();
   if (!saveBar) return;
+  const myToken = ++navigationToken;
   await saveBar.leaveConfirmation();
+  // A newer confirmNavigation() was started after this one — abandon this stale
+  // resolution (never resolve) so the caller does not navigate to an old target.
+  if (myToken !== navigationToken) {
+    return new Promise<void>(() => {});
+  }
 }
 
 export function useSaveBar(id: string) {

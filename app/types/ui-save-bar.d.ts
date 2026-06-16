@@ -11,9 +11,13 @@
  */
 import "react";
 
-type UiSaveBarElement = {
+type UiSaveBarElement = React.DetailedHTMLProps<
+  React.HTMLAttributes<HTMLElement>,
+  HTMLElement
+> & {
   id: string;
-  children?: React.ReactNode;
+  /** When set, App Bridge shows a confirmation dialog before discarding. */
+  discardConfirmation?: boolean;
 };
 
 declare module "react" {

@@ -26,34 +26,21 @@ interface MobileToolbarProps {
   primaryLocale: string;
   selectedItem: TranslatableItem | null;
   contentType: ContentType;
-  hasChanges: boolean;
   onLanguageChange: (locale: string) => void;
   enabledLanguages?: string[];
   isLoadingData?: boolean;
   validationOverlays?: ValidationOverlays;
   validationVersion?: number;
 
-  // Operation handlers
+  // Operation handlers (Save/Discard are handled by the native save bar)
   onTranslateAll: () => void;
   onClearAll: () => void;
-  onSave: () => void;
-  onDiscard: () => void;
   onToggleSendImageToAI?: () => void;
 
   // Send image to AI feature
   sendImageToAI?: boolean;
   images?: ContentImage[];
   featuredImage?: ContentImage;
-
-  // Fetcher state for loading indicators
-  fetcherState: string;
-  fetcherFormData: FormData | undefined;
-
-  // Item-scoped saving state (true only when saving the currently-selected item)
-  isSavingCurrentItem?: boolean;
-
-  // Sub-resource saving state (separate fetcher)
-  isSubResourceSaving?: boolean;
 
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
@@ -70,8 +57,6 @@ interface MobileToolbarProps {
     translateAll?: string;
     translating?: string;
     clearAll?: string;
-    save?: string;
-    discardChanges?: string;
     sendImageToAI?: string;
   };
 }
@@ -82,7 +67,6 @@ export function MobileToolbar({
   primaryLocale,
   selectedItem,
   contentType,
-  hasChanges,
   onLanguageChange,
   enabledLanguages,
   isLoadingData = false,
@@ -90,16 +74,10 @@ export function MobileToolbar({
   validationVersion,
   onTranslateAll,
   onClearAll,
-  onSave,
-  onDiscard,
   onToggleSendImageToAI,
   sendImageToAI = false,
   images = [],
   featuredImage,
-  fetcherState,
-  fetcherFormData,
-  isSavingCurrentItem,
-  isSubResourceSaving = false,
   isTranslatingGlobal = false,
   reloadResourceId,
   reloadResourceType,
@@ -119,15 +97,8 @@ export function MobileToolbar({
   const togglePopover = useCallback(() => setPopoverActive((prev) => !prev), []);
   const closePopover = useCallback(() => setPopoverActive(false), []);
 
-  const currentAction = fetcherFormData?.get("action");
-  // Use global store state for translation (persists across navigation), fall back to fetcher state
+  // Global store state for translation (persists across navigation)
   const isTranslating = isTranslatingGlobal;
-  // Use item-scoped saving state when available to prevent spinner leaking across items
-  const isSaving = isSubResourceSaving || (isSavingCurrentItem ?? (fetcherState !== "idle" && (
-    currentAction === "updateContent" ||
-    currentAction === "savePrimarySubResources" ||
-    currentAction === "saveSubResourceTranslations"
-  )));
 
   const popoverActivator = (
     <Button icon={MenuHorizontalIcon} size="slim" onClick={togglePopover} accessibilityLabel="More actions" />

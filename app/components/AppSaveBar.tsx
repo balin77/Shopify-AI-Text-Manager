@@ -59,7 +59,12 @@ export function AppSaveBar({
     variant: "primary",
     onClick: onSave,
   };
-  if (loading) saveProps.loading = "";
+  // While submitting, show the spinner AND disable Save so a second click can't
+  // fire a duplicate submit.
+  if (loading) {
+    saveProps.loading = "";
+    saveProps.disabled = true;
+  }
 
   const discardProps: Record<string, unknown> = {
     onClick: onDiscard,
