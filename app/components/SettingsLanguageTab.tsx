@@ -53,31 +53,13 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
   const handleSave = () => {
     if (!languageChanged) return;
 
+    // Narrow submit: action `saveAppLanguage` only touches the appLanguage
+    // column. Previously this resent every AI setting from the loader, which
+    // could (a) wipe values not in props (selectedModel, SEO suffix) and
+    // (b) be blocked by Zod if any *stored* key didn't match the current
+    // regex.
     fetcher.submit(
-      {
-        actionType: "saveSettings",
-        // We need to pass all settings, not just appLanguage
-        huggingfaceApiKey: settings.huggingfaceApiKey || "",
-        geminiApiKey: settings.geminiApiKey || "",
-        claudeApiKey: settings.claudeApiKey || "",
-        openaiApiKey: settings.openaiApiKey || "",
-        grokApiKey: settings.grokApiKey || "",
-        deepseekApiKey: settings.deepseekApiKey || "",
-        preferredProvider: settings.preferredProvider,
-        appLanguage: appLanguage,
-        hfMaxTokensPerMinute: String(settings.hfMaxTokensPerMinute || 1000000),
-        hfMaxRequestsPerMinute: String(settings.hfMaxRequestsPerMinute || 100),
-        geminiMaxTokensPerMinute: String(settings.geminiMaxTokensPerMinute || 1000000),
-        geminiMaxRequestsPerMinute: String(settings.geminiMaxRequestsPerMinute || 15),
-        claudeMaxTokensPerMinute: String(settings.claudeMaxTokensPerMinute || 40000),
-        claudeMaxRequestsPerMinute: String(settings.claudeMaxRequestsPerMinute || 5),
-        openaiMaxTokensPerMinute: String(settings.openaiMaxTokensPerMinute || 200000),
-        openaiMaxRequestsPerMinute: String(settings.openaiMaxRequestsPerMinute || 500),
-        grokMaxTokensPerMinute: String(settings.grokMaxTokensPerMinute || 100000),
-        grokMaxRequestsPerMinute: String(settings.grokMaxRequestsPerMinute || 60),
-        deepseekMaxTokensPerMinute: String(settings.deepseekMaxTokensPerMinute || 100000),
-        deepseekMaxRequestsPerMinute: String(settings.deepseekMaxRequestsPerMinute || 60),
-      },
+      { actionType: "saveAppLanguage", appLanguage },
       { method: "POST" }
     );
   };

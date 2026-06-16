@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { Card, BlockStack, Text, InlineStack, Divider, Button, Box } from "@shopify/polaris";
+import { Card, BlockStack, Text, InlineStack, Divider, Button, Box, Banner } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 
 /*
  * Theme app extension UUID used for the theme-editor deep links. This is the
@@ -35,7 +36,9 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
   const [enabled, setEnabled] = useState(settings.enabled);
   const [autoAltText, setAutoAltText] = useState(settings.autoAltText);
   const [committed, setCommitted] = useState({ enabled: settings.enabled, autoAltText: settings.autoAltText });
-  const fetcher = useFetcher<{ settings: { enabled: boolean; autoAltText: boolean } }>();
+  const fetcher = useFetcher<{ success?: boolean; settings?: { enabled: boolean; autoAltText: boolean }; error?: string }>();
+  const { showInfoBox } = useInfoBox();
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const hasChanges = enabled !== committed.enabled || autoAltText !== committed.autoAltText;
 
@@ -44,10 +47,24 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
   }, [hasChanges, onHasChangesChange]);
 
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.settings != null) {
-      setCommitted({ enabled: fetcher.data.settings.enabled, autoAltText: fetcher.data.settings.autoAltText });
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    const data = fetcher.data;
+    if (data.success && data.settings != null) {
+      setCommitted({ enabled: data.settings.enabled, autoAltText: data.settings.autoAltText });
+      setSaveError(null);
+    } else if (data.success === false) {
+      // Previously errors here were silently swallowed — no banner, no toast,
+      // just the unsaved local state. Surface both inline and in the global
+      // toast so the merchant can't miss it. Use an i18n string instead of
+      // data.error — the server-side message is English-only and can leak
+      // backend wording (e.g. raw Prisma errors).
+      const msg = (t.settings as unknown as Record<string, string>)?.imageManagerSaveError
+        || t.products?.saveFailed
+        || "Save failed";
+      setSaveError(msg);
+      showInfoBox(msg, "critical", t.common?.error || "Error");
     }
-  }, [fetcher.state, fetcher.data]);
+  }, [fetcher.state, fetcher.data, showInfoBox, t]);
 
   const handleSave = () => {
     fetcher.submit(
@@ -81,6 +98,12 @@ export function SettingsImageManagerTab({ settings, shop, extensionUid, onHasCha
         <Text as="p" variant="bodySm" tone="subdued">
           {t.settings.imageManagerDescription}
         </Text>
+
+        {saveError && (
+          <Banner tone="critical" title={t.products?.saveFailed || "Save failed"} onDismiss={() => setSaveError(null)}>
+            <Text as="p" variant="bodySm">{saveError}</Text>
+          </Banner>
+        )}
 
         <Divider />
 

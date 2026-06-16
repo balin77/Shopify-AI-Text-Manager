@@ -369,12 +369,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       grokApiKey: "",
       deepseekApiKey: "",
     };
-    const corruptedApiKeys: string[] = [];
+    // Provider IDs (not display names) — the UI needs the id to build the
+     // InfoBox `dedupeKey` so it can clear a specific provider's warning
+     // when the merchant re-enters that key. Display name is derived at
+     // render time.
+    const corruptedApiKeys: AIProvider[] = [];
     for (const { field, provider } of keyFields) {
       const { value, corrupted } = decryptApiKeyChecked(settings[field] as string | null | undefined);
       decryptedKeys[field] = value || "";
       if (corrupted) {
-        corruptedApiKeys.push(getProviderDisplayName(provider));
+        corruptedApiKeys.push(provider);
         logger.error("[SETTINGS LOADER] Decryption error", { context: "Settings", provider });
       }
     }
@@ -538,7 +542,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const validationResult = parseFormData(formData, AIInstructionsSchema);
 
       if (!validationResult.success) {
-        return json({ success: false, error: validationResult.error }, { status: 400 });
+        return json({ success: false, error: validationResult.error, fieldErrors: validationResult.fieldErrors, actionType }, { status: 400 });
       }
 
       const data = validationResult.data;
@@ -616,7 +620,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
+    } else if (actionType === "saveAppLanguage") {
+      // Narrow update: only touch `appLanguage`. The legacy LanguageTab used to
+      // resend every other AI setting from the (decrypted) loader payload,
+      // which had two failure modes:
+      //   - fields not in the payload (selectedModel, SEO suffix) got wiped.
+      //   - any out-of-format stored key would re-fail the full-form Zod check
+      //     and block changing the language.
+      const appLanguage = String(formData.get("appLanguage") || "");
+      if (!["de", "en", "es"].includes(appLanguage)) {
+        return json({ success: false, error: "Invalid language", fieldErrors: { appLanguage: "Invalid language" }, actionType }, { status: 400 });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { appLanguage },
+        create: { shop: session.shop, appLanguage, preferredProvider: "claude" },
+      });
+
+      return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
@@ -627,13 +650,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
 
       if (!validationResult.success) {
-        return json({ success: false, error: validationResult.error }, { status: 400 });
+        return json({ success: false, error: validationResult.error, fieldErrors: validationResult.fieldErrors, actionType }, { status: 400 });
       }
 
       const data = validationResult.data;
@@ -693,7 +716,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
     }
   } catch (error: unknown) {
     // Use safe error handler to prevent information leakage
@@ -771,18 +794,24 @@ export default function SettingsPage() {
 
   // Surface which stored API key(s) could not be decrypted (e.g. after an
   // ENCRYPTION_KEY change). The key was reset to empty — the merchant must
-  // re-enter and save it. Show once when the page loads.
+  // re-enter and save it. One warning per provider, each tagged with a
+  // dedupeKey so SettingsAITab can dismiss only the provider the merchant
+  // is currently retyping (instead of all of them at once).
   useEffect(() => {
     if (corruptedApiKeys.length === 0) return;
-    const providers = corruptedApiKeys.join(", ");
     const template =
       t.settings?.corruptedApiKeyWarning ||
       "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
-    showInfoBox(
-      template.replace("{provider}", providers),
-      "critical",
-      t.settings?.corruptedApiKeyTitle || "API key error"
-    );
+    const title = t.settings?.corruptedApiKeyTitle || "API key error";
+    for (const provider of corruptedApiKeys) {
+      showInfoBox(
+        template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),
+        "critical",
+        title,
+        undefined,
+        `corrupted-api-key:${provider}`,
+      );
+    }
   }, [corruptedApiKeys, showInfoBox, t]);
 
   // Register settings sections in item selector context (for mobile header dropdown)
