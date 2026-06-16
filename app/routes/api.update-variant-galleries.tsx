@@ -76,16 +76,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     variantGalleryOrder = [],
   } = body;
 
-  console.log("[update-variant-galleries] incoming", {
-    productId,
-    newMediaCount: newMedia.length,
-    newMediaUrls: newMedia.map(m => m.resourceUrl),
-    variantGalleriesCount: variantGalleries.length,
-    variantGalleries,
-    mediaOrderCount: mediaOrder.length,
-    clearVariantMainImages,
-  });
-
   const errors: string[] = [];
   // Steps that already mutated Shopify, so a partial failure is traceable.
   // Shopify offers no transaction across productCreateMedia / productReorderMedia /
@@ -141,7 +131,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // the .glb (invalid file).
   const modelResolutionStatus: Record<string, "ready" | "processing" | "failed"> = {};
   if (newMedia.length > 0) {
-    console.log("[update-variant-galleries] calling productCreateMedia with", newMedia.length, "items");
     const r = await admin.graphql(`
       mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
         productCreateMedia(productId: $productId, media: $media) {
@@ -159,12 +148,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     const d = await r.json();
-    console.log("[update-variant-galleries] productCreateMedia response", JSON.stringify(d, null, 2));
     const ue = d.data?.productCreateMedia?.mediaUserErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `createMedia: ${e.message}`));
 
     const createdMedia: { id: string }[] = d.data?.productCreateMedia?.media ?? [];
-    console.log("[update-variant-galleries] createdMedia", createdMedia);
     if (createdMedia.length > 0) completedSteps.push("productCreateMedia");
 
     // The resourceUrl→GID map below relies on response order matching input order.
@@ -182,13 +169,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     newMedia.forEach((m, i) => {
       if (createdMedia[i]?.id) {
         resourceUrlToGid[m.resourceUrl] = createdMedia[i].id;
-        console.log("[update-variant-galleries] mapped", m.resourceUrl, "→", createdMedia[i].id);
       } else {
         console.warn("[update-variant-galleries] no GID for index", i, "resourceUrl", m.resourceUrl);
       }
     });
-    console.log("[update-variant-galleries] resourceUrlToGid", resourceUrlToGid);
-
   }
 
   // Post-create resolution for Model3d uploads: Shopify processes .glb
@@ -258,11 +242,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
   }
-  if (cdnUrlsNeedingPreview.size > 0) {
+  // Set of every CDN URL Shopify currently exposes on product.media for
+  // any Model3d on this product. Used for (a) backfill (matching the URL
+  // back to its Model3d GID so we can poll the preview) and (b) orphan
+  // detection (drop variant_3d_models entries whose underlying Model3d
+  // has been deleted from product.media — without this the metafield
+  // would carry a dead URL forever and the storefront would 404 on it).
+  const knownProductModelUrls = new Set<string>();
+  // Build a separate map: variant URL (whatever we have in the metafield,
+  // possibly stale) → currently-known canonical sources for its Model3d.
+  // Lets us check "is this URL one of the sources of any current Model3d?".
+  // Only fire the query when we actually have variant_3d_models data to
+  // validate — saves a roundtrip for products with no 3D.
+  const anyCdnLikeUrl = variant3dModels.some(m => m.urls.some(u =>
+    u.startsWith("https://") && !freshUploadStagingUrls.has(u)
+  ));
+  if (anyCdnLikeUrl || cdnUrlsNeedingPreview.size > 0) {
     try {
-      // product.media gives us every Model3d on this product with its
-      // sources.url — match URL → GID, then append to modelResources so
-      // the polling loop below picks them up alongside fresh uploads.
       const pmRes = await admin.graphql(`
         query ProductMedia3D($id: ID!) {
           product(id: $id) {
@@ -282,18 +278,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       for (const n of nodes) {
         if (!n?.id || !n.sources) continue;
         for (const s of n.sources) {
+          knownProductModelUrls.add(s.url);
           if (cdnUrlsNeedingPreview.has(s.url)) {
             modelResources.push({ gid: n.id, resourceUrl: s.url });
           }
         }
       }
     } catch (err) {
-      console.warn("[update-variant-galleries] backfill product.media query failed:", err);
+      console.warn("[update-variant-galleries] product.media query failed:", err);
     }
   }
   if (modelResources.length > 0) {
-    const gidToResourceUrl = new Map(modelResources.map(m => [m.gid, m.resourceUrl]));
-    const pending = new Set(modelResources.map(m => m.gid));
+    // Multiple entries can share the same Model3d GID — e.g. the merchant
+    // uploads the same .glb twice in the same save (carry-over staging URL
+    // from a previous save + a fresh upload), or a backfill candidate's
+    // CDN URL maps to a Model3d whose other source URL is also in
+    // newMedia. Track resourceUrls per GID as a Set so polling can apply
+    // the resolution to every variant slot pointing at that Model3d, not
+    // just the last one inserted.
+    const gidToResourceUrls = new Map<string, Set<string>>();
+    for (const r of modelResources) {
+      const set = gidToResourceUrls.get(r.gid) ?? new Set();
+      set.add(r.resourceUrl);
+      gidToResourceUrls.set(r.gid, set);
+    }
+    const pending = new Set(gidToResourceUrls.keys());
     // Minimal sync polling: one immediate query, one quick retry. Source
     // URL resolution for small .glb files often lands within ~1.5s; if
     // it doesn't, we don't block the save — fall through to "processing",
@@ -321,17 +330,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const qd = await q.json();
         for (const node of (qd.data?.nodes ?? []) as Array<{ id: string; status: string; sources?: { url: string; format?: string; mimeType?: string }[]; preview?: { image?: { url?: string } | null; status?: string } | null }>) {
           if (!node?.id) continue;
-          const resourceUrl = gidToResourceUrl.get(node.id);
-          if (!resourceUrl) continue;
-          // Capture the auto-generated preview URL whenever Shopify has it.
-          if (node.preview?.image?.url) {
-            resourceUrlToShopifyPreviewUrl[resourceUrl] = node.preview.image.url;
-          }
-          if (node.status === "FAILED") {
-            modelResolutionStatus[resourceUrl] = "failed";
-            pending.delete(node.id);
-            continue;
-          }
+          const resourceUrls = gidToResourceUrls.get(node.id);
+          if (!resourceUrls || resourceUrls.size === 0) continue;
           // Pick the GLB source explicitly. Shopify exposes multiple sources
           // per Model3d (.glb + .usdz at minimum). The storefront's
           // <model-viewer> only renders glTF — .usdz in the metafield would
@@ -342,22 +342,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             s.mimeType === "model/gltf-binary" ||
             /\.glb(\?|$)/i.test(s.url),
           );
-          const isBackfill = cdnUrlsNeedingPreview.has(resourceUrl);
-          if (glbSource?.url && !isBackfill && !resourceUrlToModelUrl[resourceUrl]) {
-            resourceUrlToModelUrl[resourceUrl] = glbSource.url;
-            modelResolutionStatus[resourceUrl] = "ready";
+          let allDone = true;
+          for (const resourceUrl of resourceUrls) {
+            // Capture the auto-generated preview URL whenever Shopify has it.
+            if (node.preview?.image?.url) {
+              resourceUrlToShopifyPreviewUrl[resourceUrl] = node.preview.image.url;
+            }
+            if (node.status === "FAILED") {
+              modelResolutionStatus[resourceUrl] = "failed";
+              continue;
+            }
+            const isBackfill = cdnUrlsNeedingPreview.has(resourceUrl);
+            if (glbSource?.url && !isBackfill && !resourceUrlToModelUrl[resourceUrl]) {
+              resourceUrlToModelUrl[resourceUrl] = glbSource.url;
+              modelResolutionStatus[resourceUrl] = "ready";
+            }
+            // Stop polling this entry once the source URL is resolved (or it's
+            // already resolved for backfill candidates). Preview readiness is
+            // deferred to the /api/refresh-3d-previews background path so the
+            // save doesn't block on it. For backfill candidates we still
+            // require the preview because backfill IS the preview poll —
+            // there's nothing else to wait for.
+            const sourceDone = isBackfill || !!resourceUrlToModelUrl[resourceUrl];
+            const previewDone = !!resourceUrlToShopifyPreviewUrl[resourceUrl];
+            if (!(isBackfill ? previewDone : sourceDone)) allDone = false;
           }
-          // Stop polling this entry once the source URL is resolved (or it's
-          // already resolved for backfill candidates). Preview readiness is
-          // deferred to the /api/refresh-3d-previews background path so the
-          // save doesn't block on it. For backfill candidates we still
-          // require the preview because backfill IS the preview poll —
-          // there's nothing else to wait for.
-          const sourceDone = isBackfill || !!resourceUrlToModelUrl[resourceUrl];
-          const previewDone = !!resourceUrlToShopifyPreviewUrl[resourceUrl];
-          if (isBackfill ? previewDone : sourceDone) {
-            pending.delete(node.id);
-          }
+          if (allDone || node.status === "FAILED") pending.delete(node.id);
         }
       } catch (err) {
         console.warn("[update-variant-galleries] Model3d polling iteration failed:", err);
@@ -381,21 +391,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     //     usable. Keep "ready" and let the model land on the metafield;
     //     the preview backfill on the next save fills the preview slot.
     for (const gid of pending) {
-      const resourceUrl = gidToResourceUrl.get(gid);
-      if (!resourceUrl) continue;
-      if (cdnUrlsNeedingPreview.has(resourceUrl)) continue;
-      if (modelResolutionStatus[resourceUrl] === "ready") continue;
-      modelResolutionStatus[resourceUrl] = "processing";
+      const resourceUrls = gidToResourceUrls.get(gid);
+      if (!resourceUrls) continue;
+      for (const resourceUrl of resourceUrls) {
+        if (cdnUrlsNeedingPreview.has(resourceUrl)) continue;
+        if (modelResolutionStatus[resourceUrl] === "ready") continue;
+        modelResolutionStatus[resourceUrl] = "processing";
+      }
     }
-    // Diagnostic so we can see exactly what happened for slow / oversized models.
-    console.log("[update-variant-galleries] 3D polling final state",
-      "modelResolutionStatus=" + JSON.stringify(modelResolutionStatus),
-      "resourceUrlToModelUrl=" + JSON.stringify(resourceUrlToModelUrl),
-      "resourceUrlToShopifyPreviewUrl=" + JSON.stringify(resourceUrlToShopifyPreviewUrl),
-      "stillPendingGids=" + JSON.stringify([...pending]),
-    );
-    console.log("[update-variant-galleries] resourceUrlToModelUrl", resourceUrlToModelUrl,
-      "| modelResolutionStatus", modelResolutionStatus);
   }
   // Expose the staging-URL → Model3d-GID mapping so the variant3dModels loop
   // can attach it to "processing" drops, letting the client carry it across
@@ -487,12 +490,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (errors.length > 0) return fail();
   }
 
-  console.log("[update-variant-galleries] resolvedVariantGalleries", resolvedVariantGalleries);
-
   // 3. Variant-Galerien (Metafelder) updaten + Hauptbilder ggf. löschen
   const clearSet = new Set(clearVariantMainImages);
   const hasVariantChanges = resolvedVariantGalleries.length > 0 || clearSet.size > 0;
-  console.log("[update-variant-galleries] hasVariantChanges", hasVariantChanges);
   if (hasVariantChanges) {
     // Build variant update objects:
     //  - Normal variants: fileGids[0] is the main image GID, fileGids[1..] are gallery.
@@ -548,7 +548,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const variantPayload = [...variantMap.values()];
-    console.log("[update-variant-galleries] productVariantsBulkUpdate payload", JSON.stringify(variantPayload, null, 2));
     const r = await admin.graphql(`
       mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
         productVariantsBulkUpdate(productId: $productId, variants: $variants) {
@@ -563,7 +562,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
     const d = await r.json();
-    console.log("[update-variant-galleries] productVariantsBulkUpdate response", JSON.stringify(d, null, 2));
     const ue = d.data?.productVariantsBulkUpdate?.userErrors ?? [];
     if (ue.length > 0) errors.push(...ue.map((e: { message: string }) => `variantsBulkUpdate: ${e.message}`));
     else completedSteps.push("productVariantsBulkUpdate");
@@ -618,7 +616,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   //                   file, unsupported format inside the GLB container).
   //   "invalid_url" — anything else that doesn't pass isValid3dModelUrl
   //                   (typo, non-`.glb` URL, malformed).
-  const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url"; gid?: string }> = [];
+  //   "orphaned"    — URL no longer matches any Model3d on product.media
+  //                   (the merchant deleted the file). Drop it so the
+  //                   metafield doesn't carry a dead reference indefinitely.
+  const dropped3dModelUrls: Array<{ variantId: string; url: string; reason: "processing" | "invalid_glb" | "invalid_url" | "orphaned"; gid?: string }> = [];
   // Look up parallel previews per variant. Same-index pairing with the
   // model urls array — when a model gets dropped (processing / invalid /
   // failed) its preview at the same index is dropped too so the persisted
@@ -652,6 +653,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // entries land here). Library-picked URLs are not in the map and pass
       // through unchanged.
       const resolved = resourceUrlToModelUrl[u] ?? u;
+      // Orphan check: a CDN URL the merchant has in their metafield but
+      // that no longer matches any Model3d on product.media (file was
+      // deleted in Shopify, or the URL came from a different product).
+      // Skip the orphan check for staging URLs (knownProductModelUrls is
+      // built from CDN sources only) and for entries we resolved via
+      // resourceUrlToModelUrl (those came from product.media this call).
+      if (
+        knownProductModelUrls.size > 0 &&
+        resolved === u && // unchanged → not a fresh-upload resolution
+        !freshUploadStagingUrls.has(u) &&
+        !knownProductModelUrls.has(u)
+      ) {
+        dropped3dModelUrls.push({ variantId: m.variantId, url: u, reason: "orphaned" });
+        continue;
+      }
       if (isValid3dModelUrl(resolved)) {
         sanitized.push(resolved);
         // Prefer the client's WebGL snapshot when present (handles existing
@@ -679,14 +695,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: "list.url",
       value: JSON.stringify(sanitizedPreviews),
     });
-    console.log("[update-variant-galleries] variant3dModels write",
-      "variantId=" + m.variantId.slice(-12),
-      "inputCount=" + m.urls.length,
-      "sanitizedCount=" + sanitized.length,
-      "sanitized=" + JSON.stringify(sanitized.map(u => u.split("/").pop()?.split("?")[0])),
-      "previews=" + JSON.stringify(sanitizedPreviews.map(u => u ? u.split("/").pop()?.split("?")[0] : "")),
-      "droppedThisVariant=" + dropped3dModelUrls.filter(d => d.variantId === m.variantId).length,
-    );
   }
 
   for (const vo of variantGalleryOrder) {

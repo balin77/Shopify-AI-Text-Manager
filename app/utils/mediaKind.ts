@@ -205,6 +205,15 @@ export function isValid3dModelUrl(input: string): boolean {
     return false;
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  // Storefront <model-viewer> renders glTF only — .usdz can't be rendered
+  // there even though Shopify serves it under the same /3d/models/ path
+  // as the .glb sibling. Reject explicitly at write time so a buggy save
+  // can't persist a .usdz URL into variant_3d_models. (Reads are tolerant:
+  // legacy data already in the metafield still passes the cdn/3d/models/
+  // branch below — the merchant has to re-save or pick the correct source
+  // to flip it. The Model3d-polling/backfill paths now explicitly select
+  // the model/gltf-binary source so future writes are .glb.)
+  if (/\.usdz(\?|$)/i.test(u.pathname)) return false;
   if (/\.(glb|gltf)$/i.test(u.pathname)) return true;
   // Shopify-served Model3d sources live under /3d/models/ on cdn.shopify.com
   // (and a couple of variants like shopifycdn.com). Accept those even

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
@@ -222,29 +222,7 @@ export function VariantImageManager({
   // `${galleryId}::${url}` → sourceVariantId (null = product gallery)
   // Compound keys ensure same image URL selected in gallery A doesn't affect gallery B
   const [selectedGalleryItems, setSelectedGalleryItems] = useState<Map<string, string | null>>(new Map());
-  const [pendingVariantGalleries, _setPendingVariantGalleriesRaw] = useState<Record<string, string[]>>({});
-  // Wrap the setter so every write is logged with a stack trace — we have a
-  // bug where storedGids shrinks from N to N-1 across renders without any
-  // explicit user action, and we need to find the caller that's writing the
-  // shrunken value.
-  const lastSetPVGLabelRef = useRef<string>("(unlabeled)");
-  const setPendingVariantGalleries: typeof _setPendingVariantGalleriesRaw = useCallback((updater) => {
-    const label = lastSetPVGLabelRef.current;
-    lastSetPVGLabelRef.current = "(unlabeled)";
-    _setPendingVariantGalleriesRaw((prev) => {
-      const next = typeof updater === "function" ? (updater as (p: Record<string, string[]>) => Record<string, string[]>)(prev) : updater;
-      const targetVid = 'gid://shopify/ProductVariant/50164323451208';
-      if (next[targetVid] !== prev[targetVid]) {
-        console.log("[setPVG]",
-          "label=" + label,
-          "prev=" + JSON.stringify(prev[targetVid] ?? null),
-          "next=" + JSON.stringify(next[targetVid] ?? null),
-        );
-      }
-      return next;
-    });
-  }, []);
-  const __pvgLabel = (label: string) => { lastSetPVGLabelRef.current = label; };
+  const [pendingVariantGalleries, setPendingVariantGalleries] = useState<Record<string, string[]>>({});
   // Variant IDs whose injected main image was dragged to the product gallery this session
   const [locallyExcludedMainGids, setLocallyExcludedMainGids] = useState<Set<string>>(new Set());
   const [pendingProductNewMedia, setPendingProductNewMedia] = useState<Array<{ resourceUrl: string; kind: MediaKind; previewUrl?: string }>>([]);
@@ -323,7 +301,6 @@ export function VariantImageManager({
 
   useEffect(() => {
     if (!resetKey) return;
-    __pvgLabel("resetKey-effect");
     setPendingVariantGalleries({});
     setPendingProductNewMedia([]);
     setPendingProductImageOrder(null);
@@ -350,7 +327,6 @@ export function VariantImageManager({
   // Reload variant data (e.g. after alt text templates are applied) without clearing pending state
   useEffect(() => {
     if (!variantReloadKey || !productId) return;
-    console.log("[fetchVariantsForProduct] triggered by variantReloadKey", { variantReloadKey });
     fetchVariantsForProduct(productId, false);
   }, [variantReloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -390,7 +366,6 @@ export function VariantImageManager({
     setIsLoadingVariants(true);
     setVariantError(null);
     if (resetState) {
-      __pvgLabel("fetchVariants-reset");
       setPendingVariantGalleries({});
       setSelectedGalleryItems(new Map());
       setLocallyExcludedMainGids(new Set());
@@ -520,7 +495,6 @@ export function VariantImageManager({
             }
           }
           if (Object.keys(autoFixes).length > 0) {
-            __pvgLabel("autoFix");
             setPendingVariantGalleries(autoFixes);
           }
         }
@@ -682,7 +656,6 @@ export function VariantImageManager({
                   setPendingProductImageOrder(curr =>
                     curr ? curr.map(url => urlRemap[url] ?? url) : null
                   );
-                  __pvgLabel("webp-remap");
                   setPendingVariantGalleries(curr => {
                     const next: Record<string, string[]> = {};
                     for (const [variantId, gids] of Object.entries(curr)) {
@@ -879,11 +852,6 @@ export function VariantImageManager({
     const prev = prevProductImagesKeyRef.current;
     prevProductImagesKeyRef.current = productImagesKey;
     if (prev !== "" && prev !== productImagesKey && !isConvertingWebPRef.current) {
-      console.log("[productImagesKey effect] productImages changed → re-fetching", {
-        prevKey: prev,
-        newKey: productImagesKey,
-        productImagesLength: productImages.length,
-      });
       setRefreshedProductImages(null);
       if (productId) fetchVariantsForProduct(productId, false);
     }
@@ -1164,7 +1132,6 @@ export function VariantImageManager({
         orderEntries.push({ kind: "file", value: it });
       }
     }
-    __pvgLabel("handleVariantReorder");
     setPendingVariantGalleries(p => ({ ...p, [variantId]: fileEntries }));
     setPendingGalleryOrder(p => ({ ...p, [variantId]: JSON.stringify(orderEntries) }));
     onGalleryOrderChange?.({ ...pendingGalleryOrderRef.current, [variantId]: JSON.stringify(orderEntries) });
@@ -1240,28 +1207,6 @@ export function VariantImageManager({
     const rawOverUrl = sepIdx !== -1 ? overStr.slice(sepIdx + 2) : null;
     const isEndDrop = rawOverUrl === "__end__";
     const overUrl = isEndDrop ? null : rawOverUrl;
-
-    {
-      const exact = urlToGid[url];
-      const base = url.split("?")[0];
-      const fallback = exact ? null : Object.entries(urlToGid).find(([k]) => k.split("?")[0] === base)?.[1];
-      const resolves = exact ? "exact" : (fallback ? "fallback" : "no");
-      const resolvedGid = exact ?? fallback ?? null;
-      const fileUrlForGid = resolvedGid ? (fileUrlMap[resolvedGid] ?? null) : null;
-      let branch: string;
-      if (sourceContainerId === targetContainerId) branch = !overUrl || url === overUrl ? "same-gallery-noop" : "same-gallery-reorder";
-      else if (targetContainerId === "product") branch = sourceContainerId === "product" ? "noop-product-to-product" : !isCtrlHeldRef.current ? "variant-to-product-no-ctrl" : !overUrl ? "variant-to-product-no-overUrl" : "variant-to-product";
-      else if (!exact && !fallback) branch = "early-return-no-gid";
-      else if (sourceContainerId !== "product") branch = isCtrlHeldRef.current ? "variant-to-variant-ctrl-copy" : "variant-to-variant-move";
-      else branch = "product-to-variant";
-      console.log("[dnd]", JSON.stringify({
-        src: sourceContainerId, tgt: targetContainerId,
-        overUrl: overUrl ?? "null",
-        dragged: url.split("/").pop()?.split("?")[0],
-        resolves, resolvedGid, fileUrlForGid: fileUrlForGid?.split("/").pop()?.split("?")[0] ?? null,
-        branch,
-      }));
-    }
 
     if (sourceContainerId === targetContainerId) {
       // Same gallery — reorder (only when dropping on a sibling item, not on the container itself)
@@ -1425,7 +1370,6 @@ export function VariantImageManager({
       const sourceCurrent = pendingVariantGalleries[sourceContainerId] ?? sourceVariant?.galleryFileGids ?? [];
       const gidToRemove = sourceCurrent.find(g => fileUrlMap[g] === url);
       if (!gidToRemove) return;
-      __pvgLabel("variant-to-product-drag");
       setPendingVariantGalleries(p => ({
         ...p,
         [sourceContainerId]: sourceCurrent.filter(g => g !== gidToRemove),
@@ -1446,7 +1390,6 @@ export function VariantImageManager({
     if (sourceContainerId !== "product") {
       if (isCtrlHeldRef.current) {
         // Variant → Variant + Ctrl: copy (keep in source)
-        __pvgLabel("variant-to-variant-ctrl-copy");
         setPendingVariantGalleries(p => {
           const targetVariant = variants.find(v => v.id === targetContainerId);
           const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
@@ -1462,7 +1405,6 @@ export function VariantImageManager({
         });
       } else {
         // Variant → Variant: move (remove from source, add to target) in single update
-        __pvgLabel("variant-to-variant-move");
         setPendingVariantGalleries(p => {
           const targetVariant = variants.find(v => v.id === targetContainerId);
           const sourceVariant = variants.find(v => v.id === sourceContainerId);
@@ -1481,7 +1423,6 @@ export function VariantImageManager({
             result[targetContainerId] = noMain ? [gid, ...targetExisting] : insertGidAtPosition(targetExisting, gid, overUrl, fileUrlMap);
           }
           result[sourceContainerId] = sourceCurrent.filter(g => g !== gid);
-          console.log("[v2v-move]", JSON.stringify({ src: sourceContainerId, tgt: targetContainerId, gid, srcBefore: sourceCurrent, srcAfter: result[sourceContainerId], tgtBefore: targetExisting, tgtAfter: result[targetContainerId] }));
           return result;
         });
       }
@@ -1502,13 +1443,9 @@ export function VariantImageManager({
           return;
         }
       }
-      __pvgLabel("product-to-variant-copy");
       setPendingVariantGalleries(p => {
         const existing = p[targetContainerId] ?? targetVariant?.galleryFileGids ?? [];
-        if (existing.includes(gid)) {
-          console.log("[p2v-copy]", JSON.stringify({ skipped: "already-in-target", existing, gid }));
-          return p;
-        }
+        if (existing.includes(gid)) return p;
         const targetMainGid = targetVariant?.defaultImageUrl
           ? (urlToGid[targetVariant.defaultImageUrl] ??
              Object.entries(urlToGid).find(([u]) =>
@@ -1517,7 +1454,6 @@ export function VariantImageManager({
           : undefined;
         const noMain = (!targetMainGid || locallyExcludedMainGids.has(targetContainerId)) && existing.length === 0;
         const next = noMain ? [gid, ...existing] : insertGidAtPosition(existing, gid, overUrl, fileUrlMap);
-        console.log("[p2v-copy]", JSON.stringify({ tgt: targetContainerId, gid, existing, next, isMainEqualsGid: targetMainGid === gid, isEndDrop }));
         return { ...p, [targetContainerId]: next };
       });
       // When the drop lands on the end-placeholder, also update the gallery
@@ -1580,8 +1516,6 @@ export function VariantImageManager({
 
     const newGids = [...bulkGids, ...galleryGids];
     if (newGids.length === 0) return;
-
-    __pvgLabel("handleDropToVariant");
     setPendingVariantGalleries(p => {
       const targetVariant = variants.find(v => v.id === targetVariantId);
       const existing = p[targetVariantId] ?? targetVariant?.galleryFileGids ?? [];
@@ -1611,7 +1545,6 @@ export function VariantImageManager({
       }
       for (const [srcVariantId, urls] of bySource.entries()) {
         if (srcVariantId === targetVariantId) continue;
-        __pvgLabel("handleDropToVariant-removeFromSource");
         setPendingVariantGalleries(p => {
           const srcVariant = variants.find(v => v.id === srcVariantId);
           const current = p[srcVariantId] ?? srcVariant?.galleryFileGids ?? [];
@@ -1740,7 +1673,6 @@ export function VariantImageManager({
         });
       }
       if (refsForGallery.length > 0) {
-        __pvgLabel("handleModalAdd-variant");
         setPendingVariantGalleries(prev => {
           const variant = variants.find(v => v.id === variantId);
           const current = prev[variantId] ?? variant?.galleryFileGids ?? [];
@@ -1934,8 +1866,6 @@ export function VariantImageManager({
         return next;
       });
     }
-
-    __pvgLabel("handleRemoveFromVariant");
     setPendingVariantGalleries(p => {
       const current = p[variantId] ?? variant?.galleryFileGids ?? [];
       return { ...p, [variantId]: current.filter(gid => !urlSet.has(fileUrlMap[gid] ?? "")) };
@@ -1968,7 +1898,6 @@ export function VariantImageManager({
     setDeleteConfirm(null);
 
     // Optimistically remove from local state
-    __pvgLabel("handleConfirmDelete");
     setPendingVariantGalleries(p => {
       const next = { ...p };
       for (const v of variants) {
@@ -2118,7 +2047,6 @@ export function VariantImageManager({
         });
 
         if (resourceUrl) {
-          __pvgLabel("handleUploadToVariantGallery");
           setPendingVariantGalleries(p => {
             const variant = variants.find(v => v.id === variantId);
             const current = p[variantId] ?? variant?.galleryFileGids ?? [];
@@ -2939,3 +2867,4 @@ export function VariantImageManager({
     </DndContext>
   );
 }
+

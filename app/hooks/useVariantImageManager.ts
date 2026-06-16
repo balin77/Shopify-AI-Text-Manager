@@ -89,10 +89,8 @@ export function useVariantImageManager() {
   const handleVariantsLoaded = useCallback((variants: VariantWithGallery[]) => {
     setVariantsForBulk(variants);
     const deferred = postSaveDeferredClearRef.current;
-    console.log("[handleVariantsLoaded] called", { variantCount: variants.length, hasDeferredClear: !!deferred });
     if (deferred) {
       postSaveDeferredClearRef.current = null;
-      console.warn("[handleVariantsLoaded] CLEARING pending state via deferred-clear");
       // The refetch has landed and shopifyMediaMap / refreshedProductImages
       // now contain the new MediaImage entries. Safe to drop the optimistic
       // staging tiles — what remains in pendingVariant3dModels /
@@ -126,12 +124,6 @@ export function useVariantImageManager() {
           ...Array(Math.max(0, savedModels.length - savedPreviews.length)).fill(""),
           ...carryPreviews,
         ];
-        console.log("[deferred-clear merge]",
-          "variantId=" + variantId.slice(-12),
-          "saved=" + JSON.stringify(savedModels.map(u => u.split("/").pop()?.split("?")[0])),
-          "processing=" + JSON.stringify(processingUrls.map(u => u.split("/").pop()?.split("?")[0])),
-          "merged=" + JSON.stringify(mergedModels[variantId].map(u => u.split("/").pop()?.split("?")[0])),
-        );
       }
       setPendingVariant3dModels(mergedModels);
       setPendingVariant3dPreviews(mergedPreviews);
@@ -303,7 +295,15 @@ export function useVariantImageManager() {
       const drops: Drop3D[] = Array.isArray(data.dropped3dModelUrls) ? data.dropped3dModelUrls : [];
       const processing = drops.filter(d => d.reason === "processing");
       const failed = drops.filter(d => d.reason === "invalid_glb");
+      const orphaned = drops.filter(d => d.reason === "orphaned");
       const invalid = drops.filter(d => !d.reason || d.reason === "invalid_url");
+      if (orphaned.length > 0) {
+        console.warn(
+          `[useVariantImageManager] ${orphaned.length} variant 3D model URL(s) cleaned up — ` +
+          `the underlying file was deleted from this product's media.`,
+          orphaned,
+        );
+      }
       if (processing.length > 0) {
         console.warn(
           `[useVariantImageManager] ${processing.length} 3D model upload(s) still processing on Shopify — ` +
