@@ -58,9 +58,6 @@ interface MobileToolbarProps {
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
 
-  // Save button highlight
-  highlightSaveButton?: boolean;
-
   // Reload button props
   reloadResourceId: string;
   reloadResourceType: "product" | "collection" | "page" | "article" | "policy" | "templates";
@@ -104,7 +101,6 @@ export function MobileToolbar({
   isSavingCurrentItem,
   isSubResourceSaving = false,
   isTranslatingGlobal = false,
-  highlightSaveButton = false,
   reloadResourceId,
   reloadResourceType,
   reloadLocale,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import {
@@ -25,7 +25,7 @@ import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
-import { useNavigationGuard } from "../contexts/NavigationGuardContext";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { sanitizeHTML } from "../utils/sanitizer";
 import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
@@ -698,7 +698,6 @@ export default function SettingsPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
-  const { registerGuard, unregisterGuard } = useNavigationGuard();
   const isFreePlan = subscriptionPlan === "free";
   const isBasicPlan = subscriptionPlan === "basic";
   const aiInstructionsReadOnly = isFreePlan || isBasicPlan;
@@ -722,40 +721,12 @@ export default function SettingsPage() {
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
-  const [highlightSaveButton, setHighlightSaveButton] = useState(false);
-  // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
 
-  const triggerSaveButtonHighlight = useCallback(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    setHighlightSaveButton(true);
-    showInfoBox(
-      t.settings?.unsavedChangesMessage || "You have unsaved changes. Please save before navigating away.",
-      "warning",
-      t.common?.unsavedChanges || "Unsaved Changes"
-    );
-    setTimeout(() => setHighlightSaveButton(false), 3000);
-  }, [showInfoBox, t]);
-
-  // Register navigation guard while there are unsaved changes
-  useEffect(() => {
-    if (hasUnsavedChanges) {
-      registerGuard(() => {
-        triggerSaveButtonHighlight();
-        return false;
-      });
-    } else {
-      unregisterGuard();
-    }
-    return () => unregisterGuard();
-  }, [hasUnsavedChanges, registerGuard, unregisterGuard, triggerSaveButtonHighlight]);
-
-  // Handle section navigation with unsaved changes warning
-  const handleSectionChange = (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
-    if (hasUnsavedChanges) {
-      triggerSaveButtonHighlight();
-      return;
-    }
+  // Handle section (tab) navigation. The native Shopify save bar guards against
+  // unsaved changes: confirmNavigation() shows the native confirmation dialog
+  // and resolves only when it is safe to switch tabs.
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+    await confirmNavigation();
     setSelectedSection(newSection);
   };
 
@@ -765,7 +736,6 @@ export default function SettingsPage() {
       setHasAIChanges(false);
       setHasLanguageChanges(false);
       setHasInstructionsChanges(false);
-      setHighlightSaveButton(false);
     }
   }, [fetcher.data]);
 
@@ -1061,7 +1031,6 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasAIChanges}
-                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -1083,7 +1052,6 @@ export default function SettingsPage() {
                     fetcher={fetcher}
                     readOnly={aiInstructionsReadOnly}
                     onHasChangesChange={setHasInstructionsChanges}
-                    highlightSaveButton={highlightSaveButton}
                   />
                 </>
               )}
@@ -1095,7 +1063,6 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   onHasChangesChange={setHasLanguageChanges}
-                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -1124,7 +1091,6 @@ export default function SettingsPage() {
                   t={t}
                   shopDisplayName={shopDisplayName}
                   onHasChangesChange={setHasAIChanges}
-                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 
@@ -1181,7 +1147,6 @@ export default function SettingsPage() {
                   settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
                   shop={shop}
                   onHasChangesChange={setHasImageManagerChanges}
-                  highlightSaveButton={highlightSaveButton}
                 />
               )}
 

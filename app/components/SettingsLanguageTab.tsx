@@ -18,10 +18,9 @@ interface SettingsLanguageTabProps {
   fetcher: FetcherWithComponents<any>;
   t: I18nTranslation;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, highlightSaveButton = false }: SettingsLanguageTabProps) {
+export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }: SettingsLanguageTabProps) {
   const APP_LANGUAGES = [
     { label: t.settings.languages.de, value: "de" },
     { label: t.settings.languages.en, value: "en" },
@@ -103,7 +102,6 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, 
             action="saveSettings"
             fetcherState={fetcher.state}
             fetcherFormData={fetcher.formData}
-            highlightSaveButton={highlightSaveButton}
           />
         </InlineStack>
 

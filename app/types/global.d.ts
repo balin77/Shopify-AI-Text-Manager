@@ -15,7 +15,7 @@ interface Window {
     saveBar?: {
       show: (id: string) => Promise<void> | void;
       hide: (id: string) => Promise<void> | void;
-      leaveConfirmation: (id?: string) => Promise<void>;
+      leaveConfirmation: () => Promise<void>;
     };
     [key: string]: any;
   };

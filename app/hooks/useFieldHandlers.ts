@@ -7,6 +7,7 @@
  */
 
 import { useCallback } from "react";
+import { confirmNavigation } from "./useSaveBar";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -93,8 +94,6 @@ export interface FieldHandlerProps {
   getChangedAltTextIndices: () => number[];
   resolveFieldLabel: (fieldKey: string) => string;
   showInfoBox: (message: string, tone: InfoBoxTone, title?: string) => void;
-  handleNavigationAttempt: (navigate: () => void, hasChanges: boolean) => void;
-  clearPendingNavigation: () => void;
   dataLoader: {
     onTranslateFieldComplete: (
       fieldKey: string,
@@ -212,8 +211,6 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     getChangedAltTextIndices,
     resolveFieldLabel,
     showInfoBox,
-    handleNavigationAttempt,
-    clearPendingNavigation,
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
@@ -330,9 +327,6 @@ const handleSave = () => {
   isSavePendingRef.current = true; // Track that a save was initiated
   setIsSaving(true); // Drive spinner — fetcher.state is unreliable due to React 18 batching
   safeSubmit(formDataObj, { method: "POST" });
-  // NOTE: clearPendingNavigation is NOT called here — it is deferred to the
-  // response handler in useUnifiedContentEditor, which checks that the saved
-  // item is still the currently-selected item before unblocking navigation.
 };
 
 const handleDiscard = () => {
@@ -360,7 +354,6 @@ const handleDiscard = () => {
   }
 
   setEditableValues(newValues);
-  clearPendingNavigation();
 };
 
 const handleGenerateAI = (fieldKey: string) => {
@@ -962,8 +955,12 @@ const handleRejectSuggestion = useCallback((fieldKey: string) => {
   });
 }, []);
 
-const handleLanguageChange = (locale: string) => {
-  handleNavigationAttempt(() => setCurrentLanguage(locale), hasChanges || isSavingCurrentItem);
+const handleLanguageChange = async (locale: string) => {
+  // The native Shopify save bar guards unsaved changes: confirmNavigation()
+  // shows the native confirmation dialog and resolves only when it is safe to
+  // switch the editing locale.
+  await confirmNavigation();
+  setCurrentLanguage(locale);
 };
 
 const handleToggleLanguage = (locale: string) => {
@@ -981,8 +978,9 @@ const handleToggleLanguage = (locale: string) => {
   });
 };
 
-const handleItemSelect = (itemId: string) => {
-  handleNavigationAttempt(() => setSelectedItemId(itemId), hasChanges || isSavingCurrentItem);
+const handleItemSelect = async (itemId: string) => {
+  await confirmNavigation();
+  setSelectedItemId(itemId);
 };
 
 const handleValueChange = useCallback((fieldKey: string, value: string) => {

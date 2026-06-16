@@ -4,8 +4,6 @@ interface SaveDiscardButtonsProps {
   hasChanges: boolean;
   onSave: () => void;
   onDiscard: () => void;
-  /** @deprecated The native save bar handles attention itself; kept for API compatibility. */
-  highlightSaveButton?: boolean;
   saveText?: string;
   discardText?: string;
   action?: string;

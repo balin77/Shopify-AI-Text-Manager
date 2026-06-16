@@ -16,6 +16,26 @@ function getSaveBar() {
   return window.shopify?.saveBar;
 }
 
+/**
+ * Gate programmatic navigation on the native save bar.
+ *
+ * Resolves immediately when there are no unsaved changes (no save bar visible)
+ * or when App Bridge is unavailable (e.g. local dev outside the Admin). When
+ * the save bar IS visible, this displays the native "unsaved changes"
+ * confirmation dialog and shakes/re-focuses the bar; it resolves only if the
+ * merchant confirms leaving. If the merchant cancels, the returned promise
+ * never resolves — so simply `await` this before navigating and navigation is
+ * skipped when the merchant chooses to stay.
+ *
+ * This replaces the custom NavigationGuard + highlightSaveButton mechanism.
+ * Docs: https://shopify.dev/docs/api/app-bridge-library/apis/save-bar
+ */
+export async function confirmNavigation(): Promise<void> {
+  const saveBar = getSaveBar();
+  if (!saveBar) return;
+  await saveBar.leaveConfirmation();
+}
+
 export function useSaveBar(id: string) {
   const show = useCallback(() => {
     getSaveBar()?.show(id);
@@ -25,18 +45,7 @@ export function useSaveBar(id: string) {
     getSaveBar()?.hide(id);
   }, [id]);
 
-  /**
-   * Prompts the merchant to confirm before leaving when there are unsaved
-   * changes (re-focuses / shakes the save bar). Resolves immediately when no
-   * save bar is visible. Use this to replace custom navigation guards.
-   */
-  const leaveConfirmation = useCallback(async () => {
-    const saveBar = getSaveBar();
-    if (!saveBar) return;
-    await saveBar.leaveConfirmation(id);
-  }, [id]);
-
-  return { show, hide, leaveConfirmation };
+  return { show, hide, leaveConfirmation: confirmNavigation };
 }
 
 /**

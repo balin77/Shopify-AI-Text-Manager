@@ -219,7 +219,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     }
   }, [fieldPagination?.search]);
 
-  const { state, handlers, selectedItem, navigationGuard, helpers, effectiveFieldDefinitions } = editor;
+  const { state, handlers, selectedItem, helpers, effectiveFieldDefinitions } = editor;
 
   // Overlay-aware snapshot: re-derived whenever baselineVersion ticks (overlays changed)
   const validationOverlays = useMemo(
@@ -534,7 +534,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   isSavingCurrentItem={state.isSavingCurrentItem}
                   isSubResourceSaving={subResourceState?.isSaving ?? false}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
-                  highlightSaveButton={navigationGuard.highlightSaveButton}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getResourceType(config.contentType)}
                   reloadLocale={state.currentLanguage}

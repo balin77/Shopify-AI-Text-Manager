@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator } from "@remix-run/react";
-import { useNavigationGuard, getTranslatedValue } from "../utils/contentEditor.utils";
+import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
@@ -389,14 +389,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     return fieldKey;
   }, [effectiveFieldDefinitions]);
 
-  // Navigation guard
-  const {
-    pendingNavigation,
-    highlightSaveButton,
-    saveButtonRef,
-    handleNavigationAttempt,
-    clearPendingNavigation,
-  } = useNavigationGuard();
+  // Unsaved-change guarding is handled by the native Shopify save bar
+  // (confirmNavigation) at the point of locale/item switching in useFieldHandlers.
 
   // ============================================================================
   // LOAD ITEM DATA (when item or language changes)
@@ -1501,9 +1495,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         return;
       }
 
-      // Only unblock deferred navigation now that the correct item's save succeeded
-      clearPendingNavigation();
-
       // Update unified baseline to the saved values so hasChanges resets correctly.
       // The data-loading effect only fires when selectedItemTranslationSignal changes;
       // without this update, hasChanges stays true and navigation stays blocked after
@@ -1800,7 +1791,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedItemIdRef.current = null;
 
       if (isSavedItemCurrent) {
-        clearPendingNavigation();
         const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
         showInfoBox(translatedError, "critical", t.common?.error || "Error");
       }
@@ -1823,8 +1813,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       savedItemIdRef.current = null;
 
       if (isSavedItemCurrent) {
-        clearPendingNavigation();
-
         const errorKey = String((fetcher.data as { errorKey?: string }).errorKey);
         const errorMessage =
           (t.content as Record<string, string>)?.[errorKey] ||
@@ -2014,8 +2002,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     getChangedAltTextIndices,
     resolveFieldLabel,
     showInfoBox,
-    handleNavigationAttempt,
-    clearPendingNavigation,
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
@@ -2230,13 +2216,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     state,
     handlers,
     selectedItem: selectedItem || null,
-    navigationGuard: {
-      pendingNavigation,
-      highlightSaveButton,
-      saveButtonRef,
-      handleNavigationAttempt,
-      clearPendingNavigation,
-    },
     helpers: {
       getFieldBackgroundColor,
       isFieldTranslated,

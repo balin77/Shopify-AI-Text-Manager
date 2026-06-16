@@ -12,7 +12,6 @@ import { SeoSettingsProvider } from "../contexts/SeoSettingsContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
-import { NavigationGuardProvider } from "../contexts/NavigationGuardContext";
 import { useEffect } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -202,7 +201,6 @@ export default function App() {
         <PlanProvider plan={subscriptionPlan} newFeaturesEnabled={newFeaturesEnabled}>
           <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""}>
           <InfoBoxProvider>
-            <NavigationGuardProvider>
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
@@ -210,7 +208,6 @@ export default function App() {
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>
-            </NavigationGuardProvider>
           </InfoBoxProvider>
           </SeoSettingsProvider>
         </PlanProvider>

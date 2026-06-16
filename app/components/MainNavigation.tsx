@@ -7,7 +7,7 @@ import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
-import { useNavigationGuard } from "../contexts/NavigationGuardContext";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
@@ -29,7 +29,6 @@ export function MainNavigation() {
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
-  const { checkGuard } = useNavigationGuard();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const [navHeight, setNavHeight] = useState(73);
@@ -224,14 +223,16 @@ export function MainNavigation() {
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
 
-  const handleClick = (path: string, tabId: string) => {
-    if (!checkGuard()) return;
+  const handleClick = async (path: string, tabId: string) => {
+    // Gate navigation on the native save bar: prompts for unsaved changes and
+    // resolves only when it is safe to leave.
+    await confirmNavigation();
     handleNavigate(path);
   };
 
   // Navigate to settings/plan page when any plan button is clicked
-  const handlePlanNavigation = () => {
-    if (!checkGuard()) return;
+  const handlePlanNavigation = async () => {
+    await confirmNavigation();
     const searchParams = new URLSearchParams();
     searchParams.set("tab", "plan");
     handleNavigate("/app/settings", { searchParams });

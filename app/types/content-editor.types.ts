@@ -430,15 +430,6 @@ export interface UseContentEditorReturn {
   /** Currently selected item */
   selectedItem: ContentItem | null;
 
-  /** Navigation guard utilities */
-  navigationGuard: {
-    pendingNavigation: (() => void) | null;
-    highlightSaveButton: boolean;
-    saveButtonRef: React.RefObject<HTMLDivElement | null>;
-    handleNavigationAttempt: (callback: () => void, hasChanges: boolean) => void;
-    clearPendingNavigation: () => void;
-  };
-
   /** Helper functions */
   helpers: {
     getFieldBackgroundColor: (fieldKey: string) => string;

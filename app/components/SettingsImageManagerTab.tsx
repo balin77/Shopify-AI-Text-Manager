@@ -16,10 +16,9 @@ interface Props {
   settings: ImageManagerSettings;
   shop: string;
   onHasChangesChange?: (hasChanges: boolean) => void;
-  highlightSaveButton?: boolean;
 }
 
-export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, highlightSaveButton = false }: Props) {
+export function SettingsImageManagerTab({ settings, shop, onHasChangesChange }: Props) {
   const { t } = useI18n();
   const embedUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_UID}/variant-gallery-embed`;
   const blockUrl = `https://${shop}/admin/themes/current/editor?template=product&addAppBlockId=${EXTENSION_UID}/variant-gallery&target=mainSection`;
@@ -64,7 +63,6 @@ export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, hi
             saveText={t.common.save}
             discardText={t.content?.discardChanges ?? "Verwerfen"}
             isSavingCurrentItem={fetcher.state !== "idle"}
-            highlightSaveButton={highlightSaveButton}
           />
         </InlineStack>
 
