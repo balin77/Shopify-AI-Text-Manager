@@ -1,3 +1,21 @@
+// Initialize the Shopify Node platform adapter BEFORE the Remix build is
+// loaded. The build's module body calls shopifyApp({...}) at top level, which
+// reads abstractRuntimeString — if no adapter has registered a runtime string
+// yet, the call throws "Missing adapter implementation for 'abstractRuntimeString'"
+// and the entire build module fails to load (health check stays at 503 →
+// Railway healthcheck retries exhaust → deploy fails).
+//
+// Why here, not in shopify.server.ts: the side-effect-only import in
+// shopify.server.ts gets dropped from the Vite SSR bundle by Rollup
+// (@shopify/shopify-app-remix declares no "sideEffects" field), and even an
+// explicit setAbstractRuntimeString call at module top-level was observed to
+// be ineffective in the production bundle (Rollup reordering / dual module
+// instance suspected). server.js is NOT bundled — Node executes it raw, so
+// the side effects always run. The nodeAdapterInitialized binding is used
+// below to force-keep this import even if anything ever does bundle this file.
+import { nodeAdapterInitialized } from "@shopify/shopify-api/adapters/node";
+void nodeAdapterInitialized;
+
 import { createRequestHandler } from "@remix-run/express";
 import { installGlobals } from "@remix-run/node";
 import compression from "compression";
