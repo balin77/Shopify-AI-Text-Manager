@@ -86,6 +86,10 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   const [selectedModel, setSelectedModel] = useState(settings.selectedModel || '');
   const [availableModels, setAvailableModels] = useState<Array<{ label: string; value: string }>>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  // null = live list from provider API; otherwise the reason we are showing
+  // the curated fallback list. Surfaced as a subtle hint under the model
+  // dropdown so the merchant understands why the choices are limited.
+  const [modelsFallbackReason, setModelsFallbackReason] = useState<null | 'no_api_key' | 'api_error' | 'invalid_key' | 'network'>(null);
 
   // Fetch available models when provider changes
   const fetchModels = useCallback(async (providerToFetch: string) => {
@@ -99,21 +103,23 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
           value: m.id,
         }));
         setAvailableModels(options);
+        setModelsFallbackReason(data.fromFallback ? (data.reason || 'api_error') : null);
         // If current model is not in the new list, reset to default
         const modelIds = data.models.map((m: { id: string }) => m.id);
         if (selectedModel && !modelIds.includes(selectedModel)) {
           setSelectedModel(data.defaultModel || '');
         }
       } else {
-        // Couldn't reach the API route (bad provider / auth). Fall back to the
-        // built-in curated model list — no user-facing error: the dropdown
-        // still works and the distinction is an internal detail.
+        // Endpoint responded with success=false (bad provider / auth). Use
+        // built-in curated list and tell the merchant why.
         const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
         setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+        setModelsFallbackReason('invalid_key');
       }
     } catch {
       const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
       setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+      setModelsFallbackReason('network');
     } finally {
       setModelsLoading(false);
     }
@@ -147,6 +153,24 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   const [showDeepseekKey, setShowDeepseekKey] = useState(false);
 
   const [hasChanges, setHasChanges] = useState(false);
+
+  // Field-level validation errors returned from the action. Surfacing them
+  // inline next to the offending input is the load-bearing UX fix — the
+  // global toast in the top nav was easy to miss, especially when a warn
+  // banner stayed visible inside the card.
+  const fieldErrors: Record<string, string> =
+    fetcher.data && !fetcher.data.success && fetcher.data.actionType === "saveSettings" && fetcher.data.fieldErrors
+      ? (fetcher.data.fieldErrors as Record<string, string>)
+      : {};
+  const hasFieldErrors = Object.keys(fieldErrors).length > 0;
+
+  // Translate the Zod messages into something a merchant can act on.
+  // The format-error string from Zod is generic ("Invalid X API key format");
+  // the merchant needs to know it's the *format* that's off (not e.g. wrong key).
+  const translateFieldError = (raw: string | undefined): string | undefined => {
+    if (!raw) return undefined;
+    return (t.settings as unknown as Record<string, string>)?.apiKeyFormatError || raw;
+  };
 
   useEffect(() => {
     const changed =
@@ -281,7 +305,15 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
           </Link>
         </Text>
 
-        {!preferredProviderHasKey && (
+        {hasFieldErrors && (
+          <Banner tone="critical" title={t.products?.saveFailed || "Save failed"}>
+            <Text as="p" variant="bodySm">
+              {(t.settings as unknown as Record<string, string>)?.apiKeySaveErrorIntro || "Some entries are not in the expected format. The fields with problems are highlighted below — fix them and click Save again."}
+            </Text>
+          </Banner>
+        )}
+
+        {!preferredProviderHasKey && !hasFieldErrors && (
           <Banner tone="warning">
             <Text as="p" fontWeight="semibold">
               {t.settings.preferredProviderNoKey?.replace("{provider}", getProviderDisplayName(provider as AIProvider))}
@@ -319,7 +351,13 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
               value={selectedModel}
               onChange={setSelectedModel}
               disabled={modelsLoading}
-              helpText={modelsLoading ? t.settings.loadingModels : t.settings.modelHelp}
+              helpText={
+                modelsLoading
+                  ? t.settings.loadingModels
+                  : modelsFallbackReason
+                  ? (t.settings as unknown as Record<string, string>)?.[`modelsFallback_${modelsFallbackReason}`] || t.settings.modelHelp
+                  : t.settings.modelHelp
+              }
             />
           </div>
         </InlineStack>
@@ -344,6 +382,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setOpenaiKey}
                   type={showOpenaiKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.openaiApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowOpenaiKey(!showOpenaiKey)}
@@ -419,6 +458,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setGeminiKey}
                   type={showGeminiKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.geminiApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowGeminiKey(!showGeminiKey)}
@@ -494,6 +534,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setClaudeKey}
                   type={showClaudeKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.claudeApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowClaudeKey(!showClaudeKey)}
@@ -569,6 +610,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setHuggingfaceKey}
                   type={showHuggingfaceKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.huggingfaceApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowHuggingfaceKey(!showHuggingfaceKey)}
@@ -644,6 +686,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setGrokKey}
                   type={showGrokKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.grokApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowGrokKey(!showGrokKey)}
@@ -719,6 +762,7 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
                   onChange={setDeepseekKey}
                   type={showDeepseekKey ? "text" : "password"}
                   autoComplete="off"
+                  error={translateFieldError(fieldErrors.deepseekApiKey)}
                   suffix={
                     <button
                       onClick={() => setShowDeepseekKey(!showDeepseekKey)}

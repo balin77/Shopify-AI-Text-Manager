@@ -7,15 +7,28 @@
 import { z } from 'zod';
 
 /**
- * API Key validation patterns
+ * API Key validation patterns.
+ *
+ * These are intentionally permissive — they exist to catch obvious typos
+ * (wrong prefix, wildly wrong length, random characters), NOT to enforce
+ * exact upstream formats. Providers change key shapes frequently
+ * (e.g. OpenAI added sk-proj-/sk-svcacct-, DeepSeek shifted away from
+ * strict hex). The real validity check is the first AI call that uses the
+ * key; a too-strict regex here just blocks valid keys at save time.
  */
 const API_KEY_PATTERNS = {
-  huggingface: /^hf_[A-Za-z0-9]{32,}$/,
-  gemini: /^AIzaSy[A-Za-z0-9_-]{33}$/,
-  claude: /^sk-ant-[A-Za-z0-9_-]{95,}$/,
+  huggingface: /^hf_[A-Za-z0-9]{20,}$/,
+  // Google API keys start with AIzaSy and are 39 chars total in practice,
+  // but tolerate length drift.
+  gemini: /^AIzaSy[A-Za-z0-9_-]{20,}$/,
+  // Anthropic keys are sk-ant-… and typically 100+ chars; keep a generous floor.
+  claude: /^sk-ant-[A-Za-z0-9_-]{20,}$/,
   openai: /^sk-[A-Za-z0-9_-]{20,}$/,
-  grok: /^xai-[A-Za-z0-9]{40,}$/,
-  deepseek: /^sk-[a-f0-9]{32}$/,
+  // xAI keys may contain _/- in the body; was previously alphanumeric-only.
+  grok: /^xai-[A-Za-z0-9_-]{20,}$/,
+  // DeepSeek used to ship strict 32-hex keys but new keys are wider; accept
+  // any sk-… of reasonable length so valid keys aren't rejected at save.
+  deepseek: /^sk-[A-Za-z0-9_-]{20,}$/,
 };
 
 /**
@@ -158,7 +171,7 @@ export const AIInstructionsSchema = z.object({
 export function parseFormData<T>(
   formData: FormData,
   schema: z.ZodSchema<T>
-): { success: true; data: T } | { success: false; error: string } {
+): { success: true; data: T } | { success: false; error: string; fieldErrors: Record<string, string> } {
   try {
     // Convert FormData to object
     const obj: Record<string, any> = {};
@@ -181,14 +194,22 @@ export function parseFormData<T>(
     return { success: true, data: validated };
   } catch (error) {
     if (error instanceof z.ZodError) {
+      // Build per-field map so the UI can render the message under the
+      // exact TextField that failed (instead of just a toast far from
+      // the input).
+      const fieldErrors: Record<string, string> = {};
+      for (const issue of error.issues) {
+        const key = issue.path.join('.') || '_form';
+        if (!fieldErrors[key]) fieldErrors[key] = issue.message;
+      }
       const issues = error.issues.map(issue =>
         `${issue.path.join('.')}: ${issue.message}`
       ).join(', ');
 
-      return { success: false, error: `Validation failed: ${issues}` };
+      return { success: false, error: `Validation failed: ${issues}`, fieldErrors };
     }
 
-    return { success: false, error: 'Unknown validation error' };
+    return { success: false, error: 'Unknown validation error', fieldErrors: {} };
   }
 }
 

@@ -538,7 +538,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const validationResult = parseFormData(formData, AIInstructionsSchema);
 
       if (!validationResult.success) {
-        return json({ success: false, error: validationResult.error }, { status: 400 });
+        return json({ success: false, error: validationResult.error, fieldErrors: validationResult.fieldErrors, actionType }, { status: 400 });
       }
 
       const data = validationResult.data;
@@ -616,7 +616,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
+    } else if (actionType === "saveAppLanguage") {
+      // Narrow update: only touch `appLanguage`. The legacy LanguageTab used to
+      // resend every other AI setting from the (decrypted) loader payload,
+      // which had two failure modes:
+      //   - fields not in the payload (selectedModel, SEO suffix) got wiped.
+      //   - any out-of-format stored key would re-fail the full-form Zod check
+      //     and block changing the language.
+      const appLanguage = String(formData.get("appLanguage") || "");
+      if (!["de", "en", "es"].includes(appLanguage)) {
+        return json({ success: false, error: "Invalid language", fieldErrors: { appLanguage: "Invalid language" }, actionType }, { status: 400 });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { appLanguage },
+        create: { shop: session.shop, appLanguage, preferredProvider: "claude" },
+      });
+
+      return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
@@ -627,13 +646,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
 
       if (!validationResult.success) {
-        return json({ success: false, error: validationResult.error }, { status: 400 });
+        return json({ success: false, error: validationResult.error, fieldErrors: validationResult.fieldErrors, actionType }, { status: 400 });
       }
 
       const data = validationResult.data;
@@ -693,7 +712,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      return json({ success: true });
+      return json({ success: true, actionType });
     }
   } catch (error: unknown) {
     // Use safe error handler to prevent information leakage

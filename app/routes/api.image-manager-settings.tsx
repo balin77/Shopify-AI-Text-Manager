@@ -14,19 +14,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const { enabled, autoAltText, firstImageBig, showAltTags, thumbSize } = await request.json();
+  try {
+    const { enabled, autoAltText, firstImageBig, showAltTags, thumbSize } = await request.json();
 
-  const settings = await db.imageManagerSettings.upsert({
-    where: { shopId: session.shop },
-    create: { shopId: session.shop, enabled: enabled ?? true, firstImageBig: firstImageBig ?? false, showAltTags: showAltTags ?? false, autoAltText: autoAltText ?? false, thumbSize: thumbSize ?? 80 },
-    update: {
-      ...(enabled !== undefined && { enabled }),
-      ...(autoAltText !== undefined && { autoAltText }),
-      ...(firstImageBig !== undefined && { firstImageBig }),
-      ...(showAltTags !== undefined && { showAltTags }),
-      ...(thumbSize !== undefined && { thumbSize }),
-    },
-  });
+    const settings = await db.imageManagerSettings.upsert({
+      where: { shopId: session.shop },
+      create: { shopId: session.shop, enabled: enabled ?? true, firstImageBig: firstImageBig ?? false, showAltTags: showAltTags ?? false, autoAltText: autoAltText ?? false, thumbSize: thumbSize ?? 80 },
+      update: {
+        ...(enabled !== undefined && { enabled }),
+        ...(autoAltText !== undefined && { autoAltText }),
+        ...(firstImageBig !== undefined && { firstImageBig }),
+        ...(showAltTags !== undefined && { showAltTags }),
+        ...(thumbSize !== undefined && { thumbSize }),
+      },
+    });
 
-  return json({ settings });
+    return json({ success: true, settings });
+  } catch (error: unknown) {
+    // The UI consumes `success === false` to render an inline error banner.
+    // Previously this route had no catch, so any DB hiccup would throw,
+    // return a 500 HTML page into the fetcher, and the UI silently kept
+    // the unsaved state as if nothing happened.
+    return json(
+      { success: false, error: error instanceof Error ? error.message : "Failed to save image manager settings" },
+      { status: 500 }
+    );
+  }
 };
