@@ -37,21 +37,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     : undefined;
 
-  // Hard gate: the Sentry DSN reaches the browser ONLY in real production
-  // (APP_ENV === "production" + SENTRY_DSN set). In dev/staging window.ENV
-  // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
-  const sentryActive =
-    process.env.APP_ENV === "production" && !!process.env.SENTRY_DSN;
-  const ENV = {
-    SENTRY_DSN: sentryActive ? process.env.SENTRY_DSN : undefined,
-    SENTRY_CLIENT_SAMPLE_RATE: process.env.SENTRY_CLIENT_SAMPLE_RATE,
-    SENTRY_TRACES_SAMPLE_RATE: process.env.SENTRY_TRACES_SAMPLE_RATE,
-    SENTRY_ENVIRONMENT:
-      process.env.SENTRY_ENVIRONMENT || process.env.APP_ENV || process.env.NODE_ENV,
-    SENTRY_RELEASE:
-      process.env.SENTRY_RELEASE || process.env.RAILWAY_GIT_COMMIT_SHA,
-  };
-
   return json({
     apiKey,
     ENV,
