@@ -146,6 +146,7 @@ export function AIEditableField({
           onChange={onChange}
           disabled={readOnly}
           autoComplete="off"
+          helpText={helpText}
           multiline={multiline}
           maxLength={maxLength}
           placeholder={placeholder}
@@ -173,13 +174,6 @@ export function AIEditableField({
       )}
 
       <div className="ai-field-footer">
-        <div className="ai-field-footer-left">
-          {helpText && (
-            <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
-              {helpText}
-            </span>
-          )}
-        </div>
         <div className="ai-field-footer-right">
           {onGenerateAI && (
             <Button
