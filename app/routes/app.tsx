@@ -190,7 +190,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 function AppContent() {
   const { aiSettings, extensionSetupHint } = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const { showInfoBox, infoBox } = useInfoBox();
+  const { showInfoBox, infoBox, dismissByKey } = useInfoBox();
   const hintFetcher = useFetcher();
   const extensionHintRequested = useRef(false);
   const extensionHintPersisted = useRef(false);
@@ -238,7 +238,12 @@ function AppContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [infoBox, extensionSetupHint]);
 
-  // Check API key on mount and show warning in InfoBox if missing
+  // Check API key on mount and show warning in InfoBox if missing.
+  // After a successful save in the Settings tab the loader re-runs and
+  // `aiSettings` updates; this effect must therefore also *clear* any
+  // warning it previously showed when the underlying condition is gone
+  // (the early returns alone don't remove the entry from the message
+  // bell). Both warnings carry a stable dedupeKey for that.
   useEffect(() => {
     if (!aiSettings) return;
 
@@ -261,10 +266,21 @@ function AppContent() {
       case 'deepseek': hasPreferredKey = aiSettings.hasDeepseekApiKey; break;
     }
 
+    const NO_KEY_AT_ALL = "missing-api-key:any";
+    const NO_PREFERRED_KEY = "missing-api-key:preferred";
+
     // Nothing to warn about: the selected provider has a key. (When no
     // provider is selected we still warn iff there is no key at all.)
-    if (aiSettings.preferredProvider && hasPreferredKey) return;
-    if (!aiSettings.preferredProvider && hasAnyKey) return;
+    if (aiSettings.preferredProvider && hasPreferredKey) {
+      dismissByKey(NO_KEY_AT_ALL);
+      dismissByKey(NO_PREFERRED_KEY);
+      return;
+    }
+    if (!aiSettings.preferredProvider && hasAnyKey) {
+      dismissByKey(NO_KEY_AT_ALL);
+      dismissByKey(NO_PREFERRED_KEY);
+      return;
+    }
 
     const link = {
       url: "/app/settings?tab=ai",
@@ -273,21 +289,25 @@ function AppContent() {
 
     if (!hasAnyKey) {
       // No key anywhere — the merchant must set one up first.
+      // Clear the more specific warning if it was previously shown.
+      dismissByKey(NO_PREFERRED_KEY);
       showInfoBox(
         t.settings?.noApiKeyAtAllDescription ||
           "To use AI features, you first need to add an API key for an AI provider.",
         "warning",
         t.settings?.noApiKeyAtAll || "No AI API key set up yet",
-        link
+        link,
+        NO_KEY_AT_ALL,
       );
     } else {
       // Keys exist, just not for the preferred provider.
+      dismissByKey(NO_KEY_AT_ALL);
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
       const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
-      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link);
+      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link, NO_PREFERRED_KEY);
     }
-  }, [aiSettings, t, showInfoBox]);
+  }, [aiSettings, t, showInfoBox, dismissByKey]);
 
   return (
     <AppErrorBoundary>
