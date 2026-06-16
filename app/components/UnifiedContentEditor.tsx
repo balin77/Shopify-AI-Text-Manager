@@ -17,6 +17,7 @@ import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
+import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
@@ -492,6 +493,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           {selectedItem ? (
             <>
 
+              {/* Native Shopify save bar (Built for Shopify). Rendered ONCE for
+                  the editor — shared by the mobile + desktop toolbars, which are
+                  both mounted and only toggled via CSS. */}
+              <AppSaveBar
+                id="unified-content-editor-save-bar"
+                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
+                loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
+                onSave={() => {
+                  // Guard against double-submit: a long-running image save
+                  // (up to ~38s for big 3D models) must not fire a duplicate
+                  // /api/update-variant-galleries POST (→ Shopify 422 on the
+                  // duplicate productCreateMedia for the same staging URL).
+                  if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
+                  handlers.handleSave();
+                  subResourceHandlers?.saveSubResources?.();
+                }}
+                onDiscard={() => {
+                  handlers.handleDiscard();
+                  subResourceHandlers?.resetChanges?.();
+                }}
+                saveText={t.content?.save || "Save"}
+                discardText={t.content?.discardChanges || "Discard"}
+              />
+
               {/* Mobile: Compact single-row toolbar (< 768px) */}
               <div className="toolbar-mobile-only">
                 <MobileToolbar
@@ -620,40 +645,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       )}
                     </InlineStack>
 
-                    {/* Right: Save/Discard + Reload Buttons - nowrap to stay together */}
+                    {/* Right: Reload Button (Save/Discard handled by the native
+                        Shopify save bar — see AppSaveBar above) */}
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
-                      <Button
-                        onClick={() => {
-                          handlers.handleDiscard();
-                          subResourceHandlers?.resetChanges?.();
-                        }}
-                        disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem}
-                        size="slim"
-                      >
-                        {t.content?.discardChanges || "Discard"}
-                      </Button>
-                      <div style={{ borderRadius: "8px" }}>
-                        <Button
-                          variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
-                          onClick={() => {
-                            // Guard against double-click: Polaris's `loading`
-                            // prop shows the spinner but does not block clicks.
-                            // Without this guard, a long-running image save
-                            // (up to ~38s for big 3D models) lets the merchant
-                            // re-click and fire a duplicate /api/update-variant-
-                            // galleries POST → Shopify 422 on the duplicate
-                            // productCreateMedia for the same staging URL.
-                            if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
-                            handlers.handleSave();
-                            subResourceHandlers?.saveSubResources?.();
-                          }}
-                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
-                          loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
-                          size="slim"
-                        >
-                          {t.content?.save || "Save"}
-                        </Button>
-                      </div>
                       <ReloadButton
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}
