@@ -17,6 +17,7 @@ import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
 import { MetafieldsField } from "./unified/MetafieldsField";
 import { ReloadButton } from "./ReloadButton";
+import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
@@ -481,6 +482,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           {selectedItem ? (
             <>
 
+              {/* Native Shopify save bar (Built for Shopify). Rendered ONCE for
+                  the editor — shared by the mobile + desktop toolbars, which are
+                  both mounted and only toggled via CSS. */}
+              <AppSaveBar
+                id="unified-content-editor-save-bar"
+                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
+                loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
+                onSave={() => {
+                  handlers.handleSave();
+                  subResourceHandlers?.saveSubResources?.();
+                }}
+                onDiscard={() => {
+                  handlers.handleDiscard();
+                  subResourceHandlers?.resetChanges?.();
+                }}
+                saveText={t.content?.save || "Save"}
+                discardText={t.content?.discardChanges || "Discard"}
+              />
+
               {/* Mobile: Compact single-row toolbar (< 768px) */}
               <div className="toolbar-mobile-only">
                 <MobileToolbar
@@ -625,37 +645,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       )}
                     </InlineStack>
 
-                    {/* Right: Save/Discard + Reload Buttons - nowrap to stay together */}
+                    {/* Right: Reload Button (Save/Discard handled by the native
+                        Shopify save bar — see AppSaveBar above) */}
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
-                      <Button
-                        onClick={() => {
-                          handlers.handleDiscard();
-                          subResourceHandlers?.resetChanges?.();
-                        }}
-                        disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false)) || state.isSavingCurrentItem}
-                        size="slim"
-                      >
-                        {t.content?.discardChanges || "Discard"}
-                      </Button>
-                      <div
-                        style={{
-                          animation: navigationGuard.highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-                          borderRadius: "8px",
-                        }}
-                      >
-                        <Button
-                          variant={(state.hasChanges || (subResourceState?.hasChanges ?? false)) ? "primary" : undefined}
-                          onClick={() => {
-                            handlers.handleSave();
-                            subResourceHandlers?.saveSubResources?.();
-                          }}
-                          disabled={!(state.hasChanges || (subResourceState?.hasChanges ?? false))}
-                          loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
-                          size="slim"
-                        >
-                          {t.content?.save || "Save"}
-                        </Button>
-                      </div>
                       <ReloadButton
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}

@@ -185,24 +185,9 @@ export function MobileToolbar({
           })}
         </div>
 
-        {/* Right: Save + Reload icon + More Actions Popover */}
+        {/* Right: Reload icon + More Actions Popover. Save/Discard are handled
+            by the native Shopify save bar (AppSaveBar in UnifiedContentEditor). */}
         <div style={{ flexShrink: 0, display: "flex", gap: "0.25rem", alignItems: "center" }}>
-          <div
-            style={{
-              animation: highlightSaveButton ? "pulse 1.5s ease-in-out infinite" : "none",
-              borderRadius: "8px",
-            }}
-          >
-            <Button
-              variant={hasChanges ? "primary" : undefined}
-              onClick={onSave}
-              disabled={!hasChanges}
-              loading={isSaving}
-              size="slim"
-            >
-              {t.save || "Save"}
-            </Button>
-          </div>
           <ReloadButton
             resourceId={reloadResourceId}
             resourceType={reloadResourceType}
@@ -236,14 +221,6 @@ export function MobileToolbar({
                     closePopover();
                   },
                   destructive: true,
-                },
-                {
-                  content: t.discardChanges || "Discard Changes",
-                  onAction: () => {
-                    onDiscard();
-                    closePopover();
-                  },
-                  disabled: !hasChanges || isSaving,
                 },
                 // Send image to AI checkbox (only in main language for products/collections/blogs with images)
                 ...((currentLanguage === primaryLocale &&

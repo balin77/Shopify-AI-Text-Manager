@@ -57,17 +57,15 @@ export function SettingsImageManagerTab({ settings, shop, onHasChangesChange, hi
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center" wrap={false}>
           <Text as="h2" variant="headingMd">{t.settings.imageManagerTitle}</Text>
-          <div style={{ marginLeft: "auto" }}>
-            <SaveDiscardButtons
-              hasChanges={hasChanges}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.common.save}
-              discardText={t.content?.discardChanges ?? "Verwerfen"}
-              isSavingCurrentItem={fetcher.state !== "idle"}
-              highlightSaveButton={highlightSaveButton}
-            />
-          </div>
+          <SaveDiscardButtons
+            hasChanges={hasChanges}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.common.save}
+            discardText={t.content?.discardChanges ?? "Verwerfen"}
+            isSavingCurrentItem={fetcher.state !== "idle"}
+            highlightSaveButton={highlightSaveButton}
+          />
         </InlineStack>
 
         <Text as="p" variant="bodySm" tone="subdued">

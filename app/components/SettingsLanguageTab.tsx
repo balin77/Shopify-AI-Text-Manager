@@ -94,19 +94,17 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange, 
           <Text as="h2" variant="headingLg">
             {t.settings.appLanguage}
           </Text>
-          <div style={{ marginLeft: "auto" }}>
-            <SaveDiscardButtons
-              hasChanges={languageChanged}
-              onSave={handleSave}
-              onDiscard={handleDiscard}
-              saveText={t.products.saveChanges}
-              discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveSettings"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
-              highlightSaveButton={highlightSaveButton}
-            />
-          </div>
+          <SaveDiscardButtons
+            hasChanges={languageChanged}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            saveText={t.products.saveChanges}
+            discardText={t.content?.discardChanges || "Verwerfen"}
+            action="saveSettings"
+            fetcherState={fetcher.state}
+            fetcherFormData={fetcher.formData}
+            highlightSaveButton={highlightSaveButton}
+          />
         </InlineStack>
 
         <Text as="p" variant="bodyMd" tone="subdued">

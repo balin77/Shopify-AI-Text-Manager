@@ -202,19 +202,17 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             {t.settings.aiInstructions}
           </Text>
           {!readOnly && (
-            <div style={{ marginLeft: "auto" }}>
-              <SaveDiscardButtons
-                hasChanges={hasChanges}
-                onSave={handleSave}
-                onDiscard={handleDiscard}
-                saveText={t.products?.saveChanges || "Änderungen speichern"}
-                discardText={t.content?.discardChanges || "Verwerfen"}
-                action="saveInstructions"
-                fetcherState={fetcher.state}
-                fetcherFormData={fetcher.formData}
-                highlightSaveButton={highlightSaveButton}
-              />
-            </div>
+            <SaveDiscardButtons
+              hasChanges={hasChanges}
+              onSave={handleSave}
+              onDiscard={handleDiscard}
+              saveText={t.products?.saveChanges || "Änderungen speichern"}
+              discardText={t.content?.discardChanges || "Verwerfen"}
+              action="saveInstructions"
+              fetcherState={fetcher.state}
+              fetcherFormData={fetcher.formData}
+              highlightSaveButton={highlightSaveButton}
+            />
           )}
         </InlineStack>
 

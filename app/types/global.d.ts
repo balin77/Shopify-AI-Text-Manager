@@ -7,6 +7,16 @@ interface Window {
   shopify?: {
     navigate: (path: string) => void;
     idToken?: string;
+    /**
+     * Native App Bridge Save Bar API. Controls the `ui-save-bar` web component
+     * rendered above the embedded app. Required for "Built for Shopify".
+     * See https://shopify.dev/docs/api/app-bridge-library/apis/save-bar
+     */
+    saveBar?: {
+      show: (id: string) => Promise<void> | void;
+      hide: (id: string) => Promise<void> | void;
+      leaveConfirmation: (id?: string) => Promise<void>;
+    };
     [key: string]: any;
   };
   /**
