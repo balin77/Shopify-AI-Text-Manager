@@ -247,8 +247,7 @@ export function MainNavigation() {
     location.pathname.startsWith("/app/pages") ||
     location.pathname.startsWith("/app/policies") ||
     location.pathname.startsWith("/app/menus") ||
-    location.pathname.startsWith("/app/templates") ||
-    location.pathname.startsWith("/app/content");
+    location.pathname.startsWith("/app/templates");
 
   const contentTypes = [
     { id: "collections", label: t.content.collections, icon: "📂", path: "/app/collections" },
