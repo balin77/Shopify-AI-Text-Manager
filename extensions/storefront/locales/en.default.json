@@ -1,5 +1,8 @@
 {
   "blocks": {
+    "variant_gallery": {
+      "thumbnail_label": "Image {{index}}"
+    },
     "locale_switcher": {
       "language": "Language",
       "country": "Country / currency",

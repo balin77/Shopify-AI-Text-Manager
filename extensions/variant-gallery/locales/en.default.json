@@ -1,7 +1,0 @@
-{
-  "blocks": {
-    "variant_gallery": {
-      "thumbnail_label": "Image {{index}}"
-    }
-  }
-}

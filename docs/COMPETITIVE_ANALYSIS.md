@@ -388,8 +388,8 @@ Komponente (Dropdown/Flaggen), mit der der *Endkunde* Sprache/Währung wählt.
 Ohne sie sieht der Besucher die Übersetzung gar nicht (Shopify zeigt sonst nur
 die Primärsprache) → ohne Widget sind alle Übersetzungen für Kunden faktisch
 unsichtbar. Umsetzung = **Theme App Extension** (Pattern existiert bereits:
-`extensions/variant-gallery`). Höchster Aufwand, aber einzige *echte
-Funktionslücke*.
+`extensions/storefront` — bündelt variant-gallery + locale-switcher).
+Höchster Aufwand, aber einzige *echte Funktionslücke*.
 
 **2. Glossar/Terminologie-Management.** Begriffsdatenbank pro Shop: „nie
 übersetzen" / „immer exakt so übersetzen". Verhindert inkonsistente AI-

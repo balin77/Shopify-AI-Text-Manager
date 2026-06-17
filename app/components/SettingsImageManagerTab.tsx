@@ -8,9 +8,11 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 
 /*
  * Theme app extension UUID used for the theme-editor deep links. This is the
- * `uid` from extensions/variant-gallery/shopify.extension.toml. It is a single
- * source of truth committed in this repo, so it is identical for the dev and
- * prod Shopify apps (both deploy the same extension source). If that ever
+ * `uid` from extensions/storefront/shopify.extension.toml — the umbrella
+ * theme extension that bundles variant-gallery and locale-switcher blocks
+ * (Shopify allows only one theme extension per app). It is a single source
+ * of truth committed in this repo, so it is identical for the dev and prod
+ * Shopify apps (both deploy the same extension source). If that ever
  * changes (e.g. the extension is re-registered), pass the correct value via
  * the optional `extensionUid` prop from a loader/env instead of editing this.
  */

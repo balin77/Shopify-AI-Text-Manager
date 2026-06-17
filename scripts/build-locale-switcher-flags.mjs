@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * Builds extensions/locale-switcher/assets/flags.svg — an SVG sprite of
+ * Builds extensions/storefront/assets/flags.svg — an SVG sprite of
  * country flags used by the storefront language/currency switcher.
  *
  * Source: flag-icons (MIT) under node_modules/flag-icons/flags/4x3/*.svg.
@@ -21,7 +21,7 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 const FLAG_SRC_DIR = resolve(ROOT, 'node_modules/flag-icons/flags/4x3');
-const OUT_FILE = resolve(ROOT, 'extensions/locale-switcher/assets/flags.svg');
+const OUT_FILE = resolve(ROOT, 'extensions/storefront/assets/flags.svg');
 
 // Curated set: countries that show up in Shopify Markets configurations most
 // often + the EU symbol. Kept lean to bound storefront payload.
