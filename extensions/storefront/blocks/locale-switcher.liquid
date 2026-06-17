@@ -68,10 +68,13 @@
   data-floating-corner="{{ floating_corner | escape }}"
   data-mount-header="{% if mount_header %}1{% else %}0{% endif %}"
   data-header-selector="{{ block.settings.header_selector | strip | escape }}"
+  data-header-position="{{ block.settings.header_position | default: 'append' | escape }}"
   data-mount-footer="{% if mount_footer %}1{% else %}0{% endif %}"
   data-footer-selector="{{ block.settings.footer_selector | strip | escape }}"
+  data-footer-position="{{ block.settings.footer_position | default: 'append' | escape }}"
   data-mount-custom="{% if mount_custom %}1{% else %}0{% endif %}"
   data-custom-selector="{{ block.settings.custom_selector | strip | escape }}"
+  data-custom-position="{{ block.settings.custom_position | default: 'append' | escape }}"
   data-sprite-url="{{ sprite_url | escape }}"
   data-show-flag="{% if show_flag %}1{% else %}0{% endif %}"
   data-label-format="{{ label_format | escape }}"
@@ -283,6 +286,16 @@
       "label": "Header CSS selector (optional)",
       "info": "Leave empty to auto-detect <header>. For Dawn-style themes, .header__icons--localization drops the switcher into the existing language wrapper."
     },
+    {
+      "type": "select",
+      "id": "header_position",
+      "label": "Header insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
+    },
     { "type": "checkbox", "id": "mount_footer", "label": "Show in site footer", "default": false },
     {
       "type": "text",
@@ -290,12 +303,32 @@
       "label": "Footer CSS selector (optional)",
       "info": "Leave empty to auto-detect <footer>."
     },
+    {
+      "type": "select",
+      "id": "footer_position",
+      "label": "Footer insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
+    },
     { "type": "checkbox", "id": "mount_custom", "label": "Show at custom location", "default": false },
     {
       "type": "text",
       "id": "custom_selector",
       "label": "Custom CSS selector",
       "info": "Required if 'Show at custom location' is enabled. Mounts the widget into the first matching element."
+    },
+    {
+      "type": "select",
+      "id": "custom_position",
+      "label": "Custom insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
     },
     {
       "type": "select",

@@ -397,13 +397,25 @@ class CpLocaleSwitcher extends HTMLElement {
       out.push({ kind: 'floating', corner: (this.dataset.floatingCorner || 'bottom-right') });
     }
     if (this.dataset.mountHeader === '1') {
-      out.push({ kind: 'header', selector: (this.dataset.headerSelector || '').trim() });
+      out.push({
+        kind: 'header',
+        selector: (this.dataset.headerSelector || '').trim(),
+        position: (this.dataset.headerPosition || 'append'),
+      });
     }
     if (this.dataset.mountFooter === '1') {
-      out.push({ kind: 'footer', selector: (this.dataset.footerSelector || '').trim() });
+      out.push({
+        kind: 'footer',
+        selector: (this.dataset.footerSelector || '').trim(),
+        position: (this.dataset.footerPosition || 'append'),
+      });
     }
     if (this.dataset.mountCustom === '1') {
-      out.push({ kind: 'custom', selector: (this.dataset.customSelector || '').trim() });
+      out.push({
+        kind: 'custom',
+        selector: (this.dataset.customSelector || '').trim(),
+        position: (this.dataset.customPosition || 'append'),
+      });
     }
     return out;
   }
@@ -466,7 +478,13 @@ class CpLocaleSwitcher extends HTMLElement {
       return;
     }
     el.classList.add('cp-locale-switcher--' + mount.kind);
-    if (el.parentNode !== target) target.appendChild(el);
+    if (mount.position === 'prepend' && target.firstChild) {
+      // Re-parenting via insertBefore handles both "already a child of
+      // target" (moves to head) and "in another parent" (re-homes here).
+      target.insertBefore(el, target.firstChild);
+    } else if (el.parentNode !== target) {
+      target.appendChild(el);
+    }
   }
 }
 
