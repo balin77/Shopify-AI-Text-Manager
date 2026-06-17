@@ -270,10 +270,15 @@ cp-locale-switcher.cp-locale-switcher--header,
 cp-locale-switcher.cp-locale-switcher--footer,
 cp-locale-switcher.cp-locale-switcher--custom {
   position: static;
-  /* Breathing room when the widget lands among other header/footer icons
-     (e.g. inside Dawn's .header__icons row, where icons are tightly packed
-     with no gap on outside siblings). */
-  margin: 0 8px;
+  /* Breathing room when the widget lands among other header/footer icons.
+     Dawn's .header__icons row sets column-gap: 0 — siblings only space via
+     each icon's own internal padding (typically 1rem). With margin-only on
+     us we still butt up to the inner padding edge of the neighbour. Use
+     logical margins + matching internal padding so we space out the same
+     way Dawn's own icons do, in both directions of the row. */
+  margin-inline: 12px;
+  display: inline-flex;
+  align-items: center;
 }
 
 cp-locale-switcher.cp-locale-switcher--header .cp-locale-switcher__inner,
@@ -311,7 +316,13 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
 /* The trigger button keeps a *visible* dropdown box (subtle border + radius)
    so users still see it is a control — only the background and font come
    from the theme. Previously we stripped the border too, which made the
-   widget look like static text. */
+   widget look like static text.
+
+   Border-radius inherits through a chain of common theme CSS variables —
+   Dawn uses --inputs-radius for its disclosure buttons; some other themes
+   expose --buttons-radius / --border-radius / --radius. Each var() returns
+   undefined if the var isn't set, falling through to the next, so themes
+   without any of these names just get our default 6px. */
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--header .cp-locale-switcher__select,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--footer .cp-locale-switcher__select,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-locale-switcher__select,
@@ -321,7 +332,7 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
   color: inherit;
   background: transparent;
   border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-  border-radius: 6px;
+  border-radius: var(--inputs-radius, var(--buttons-radius, var(--border-radius, var(--radius, 6px))));
   padding: 6px 10px;
   font: inherit;
   min-width: 0;
@@ -336,6 +347,7 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
   background: color-mix(in srgb, currentColor 12%, Canvas);
   color: inherit;
   border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: var(--popup-radius, var(--inputs-radius, var(--border-radius, var(--radius, 6px))));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
 }
 
