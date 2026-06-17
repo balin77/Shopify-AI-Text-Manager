@@ -1,0 +1,12 @@
+{
+  "blocks": {
+    "variant_gallery": {
+      "thumbnail_label": "Imagen {{index}}"
+    },
+    "locale_switcher": {
+      "language": "Idioma",
+      "country": "País / divisa",
+      "update": "Actualizar"
+    }
+  }
+}
