@@ -21,10 +21,15 @@
  *     document so <use href="#xx"> references resolve same-document. This
  *     dodges any cross-origin <use> quirks (Shopify CDN ≠ shop origin).
  *
- * Relocation:
- *   - For position=header/footer, the custom element is appended into the
- *     theme's container after init. Delegated listeners on `this` survive
- *     the move; disconnectedCallback is intentionally a no-op.
+ * Mounting:
+ *   - Merchants pick one or more mount points via checkboxes (floating
+ *     corner, site header, site footer, custom CSS selector). The original
+ *     element handles the first enabled mount; for each additional one we
+ *     clone the element + place it into the target. Each clone runs through
+ *     its own connectedCallback path but is short-circuited by the
+ *     `cp-locale-switcher--clone` marker so it does not clone again.
+ *   - Delegated listeners on `this` survive any element move;
+ *     disconnectedCallback is intentionally a no-op.
  */
 class CpLocaleSwitcher extends HTMLElement {
   connectedCallback() {
@@ -59,7 +64,12 @@ class CpLocaleSwitcher extends HTMLElement {
       return;
     }
 
-    this._relocate();
+    // Clones skip mount logic entirely (the original placed them already).
+    // Without this guard a clone would recursively clone itself.
+    if (!this.classList.contains('cp-locale-switcher--clone')) {
+      this._renderAllMounts();
+    }
+
     if (this._showFlag) {
       this._ensureSprite().then(() => this._upgradeAll(selects)).catch((err) => {
         this._warn('sprite fetch failed; flags disabled', err);
@@ -380,30 +390,83 @@ class CpLocaleSwitcher extends HTMLElement {
     } catch (_) { /* storage may be unavailable */ }
   }
 
-  /* For header/footer placement, move the widget into the theme's container.
-     Floating positions are handled purely by CSS and need no relocation. */
-  _relocate() {
-    const pos = this.dataset.position || 'floating-bottom-right';
-    if (pos !== 'header' && pos !== 'footer') return;
+  /* Reads the data-mount-* flags into an ordered list of mount targets. */
+  _readMounts() {
+    const out = [];
+    if (this.dataset.mountFloating === '1') {
+      out.push({ kind: 'floating', corner: (this.dataset.floatingCorner || 'bottom-right') });
+    }
+    if (this.dataset.mountHeader === '1') {
+      out.push({ kind: 'header', selector: (this.dataset.headerSelector || '').trim() });
+    }
+    if (this.dataset.mountFooter === '1') {
+      out.push({ kind: 'footer', selector: (this.dataset.footerSelector || '').trim() });
+    }
+    if (this.dataset.mountCustom === '1') {
+      out.push({ kind: 'custom', selector: (this.dataset.customSelector || '').trim() });
+    }
+    return out;
+  }
 
-    const configured = (this.dataset.container || '').trim();
-    let target = null;
-    if (configured) {
-      try { target = document.querySelector(configured); } catch (_) { target = null; }
+  /* Place `this` at the first enabled mount, then clone for each additional
+     mount. Clones get a `--clone` class so their own _init skips remounting. */
+  _renderAllMounts() {
+    const mounts = this._readMounts();
+    if (mounts.length === 0) {
+      mounts.push({ kind: 'floating', corner: 'bottom-right' });
     }
-    if (!target) {
-      target = document.querySelector(pos === 'header' ? 'header' : 'footer');
+
+    this._applyMount(this, mounts[0]);
+
+    for (let i = 1; i < mounts.length; i++) {
+      const clone = this.cloneNode(true);
+      clone.classList.add('cp-locale-switcher--clone');
+      // De-dupe ids so labels / aria refs / form submissions don't collide.
+      // Each subtree id gets a -cN suffix; original is left untouched.
+      const suffix = '-c' + i;
+      if (clone.id) clone.id = clone.id + suffix;
+      clone.querySelectorAll('[id]').forEach((el) => {
+        if (el.id) el.id = el.id + suffix;
+      });
+      this._applyMount(clone, mounts[i]);
+      this._log('cloned into', mounts[i].kind);
     }
-    if (!target) {
-      this._warn(pos, 'container not found; falling back to floating');
-      this.classList.remove('cp-locale-switcher--header', 'cp-locale-switcher--footer');
-      this.classList.add('cp-locale-switcher--floating-bottom-right');
+  }
+
+  _applyMount(el, mount) {
+    // Drop any prior placement class — the original element may have had
+    // one from a previous mount applied (the first iteration sets the base
+    // class on `this`, and any clone-source class needs scrubbing too).
+    el.classList.remove(
+      'cp-locale-switcher--floating-bottom-right',
+      'cp-locale-switcher--floating-bottom-left',
+      'cp-locale-switcher--floating-top-right',
+      'cp-locale-switcher--header',
+      'cp-locale-switcher--footer',
+      'cp-locale-switcher--custom'
+    );
+
+    if (mount.kind === 'floating') {
+      el.classList.add('cp-locale-switcher--floating-' + (mount.corner || 'bottom-right'));
+      if (el.parentNode !== document.body) document.body.appendChild(el);
       return;
     }
-    if (this.parentNode !== target) {
-      target.appendChild(this);
-      this._log('relocated into', pos, 'container');
+
+    let target = null;
+    if (mount.selector) {
+      try { target = document.querySelector(mount.selector); } catch (_) { target = null; }
     }
+    if (!target && mount.kind === 'header') target = document.querySelector('header');
+    if (!target && mount.kind === 'footer') target = document.querySelector('footer');
+
+    if (!target) {
+      this._warn(mount.kind, 'container not found; falling back to floating');
+      el.classList.add('cp-locale-switcher--floating-bottom-right');
+      if (!el.parentNode) document.body.appendChild(el);
+      return;
+    }
+    el.classList.add('cp-locale-switcher--' + mount.kind);
+    if (el.parentNode !== target) target.appendChild(el);
   }
 }
 

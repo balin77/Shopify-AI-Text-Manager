@@ -267,15 +267,64 @@ cp-locale-switcher.cp-locale-switcher--floating-top-right {
 }
 
 cp-locale-switcher.cp-locale-switcher--header,
-cp-locale-switcher.cp-locale-switcher--footer {
+cp-locale-switcher.cp-locale-switcher--footer,
+cp-locale-switcher.cp-locale-switcher--custom {
   position: static;
 }
 
 cp-locale-switcher.cp-locale-switcher--header .cp-locale-switcher__inner,
-cp-locale-switcher.cp-locale-switcher--footer .cp-locale-switcher__inner {
+cp-locale-switcher.cp-locale-switcher--footer .cp-locale-switcher__inner,
+cp-locale-switcher.cp-locale-switcher--custom .cp-locale-switcher__inner {
   box-shadow: none;
   background: transparent;
   border-color: transparent;
+}
+
+/* ----------------------------------------------- inherit-theme appearance */
+
+/* When the merchant ticks "Inherit theme dropdown styles", we strip every
+   visual chrome (background, border, shadow, padding) and fall back to the
+   container's typography. The dropdown list keeps a subtle surface so it
+   stays readable on light AND dark headers. */
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-switcher__inner {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  gap: 6px;
+}
+
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-switcher__label {
+  display: none;
+}
+
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-switcher__select,
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-field__button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  font: inherit;
+  min-width: 0;
+}
+
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-field__list {
+  /* Use a neutral surface so the list remains legible on dark headers.
+     color-mix lets us fall back to white when the inherited fg is dark
+     and to near-black when it's light, without hard-coding either. */
+  background: color-mix(in srgb, currentColor 12%, Canvas);
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+}
+
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-field__option--focus,
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-field__option:hover {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+cp-locale-switcher.cp-locale-switcher--inherit .cp-locale-field__caret {
+  opacity: 0.5;
 }
 
 @media (max-width: 600px) {

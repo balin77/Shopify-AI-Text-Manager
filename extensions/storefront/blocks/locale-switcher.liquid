@@ -16,7 +16,7 @@
   Flag icon resolution per language, in priority order:
     1. Per-language image_picker upload (image_X_*)        → custom <img>
     2. Per-language ISO country override (country_overrides textarea, e.g.
-       `de=ch` to use the Swiss flag for German)            → bundled sprite
+       `en=gb` to use the UK flag for English)              → bundled sprite
     3. Region in the language code itself (e.g. "de-CH")    → bundled sprite
     4. Default language→country mapping (e.g. en→us, ja→jp) → bundled sprite
     5. Language ISO used as-is (last resort, may not exist) → bundled sprite
@@ -30,11 +30,16 @@
 {%- endcomment -%}
 
 {%- liquid
-  assign pos = block.settings.position | default: 'floating-bottom-right'
   assign style = block.settings.display_style | default: 'dropdown'
   assign show_flag = block.settings.show_flag
   assign label_format = block.settings.label_format | default: 'endonym'
   assign flag_size = block.settings.flag_size | default: 18
+  assign inherit_theme = block.settings.inherit_theme_styles
+  assign mount_floating = block.settings.mount_floating
+  assign mount_header = block.settings.mount_header
+  assign mount_footer = block.settings.mount_footer
+  assign mount_custom = block.settings.mount_custom
+  assign floating_corner = block.settings.floating_corner | default: 'bottom-right'
   assign lang_count = localization.available_languages.size
   assign country_count = localization.available_countries.size
 
@@ -57,10 +62,16 @@
 {%- if show_lang_block or show_country_block -%}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
-  class="cp-locale-switcher cp-locale-switcher--{{ pos }} cp-locale-switcher--{{ style }}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}"
   data-block-id="{{ block.id }}"
-  data-position="{{ pos }}"
-  data-container="{{ block.settings.container_selector | strip | escape }}"
+  data-mount-floating="{% if mount_floating %}1{% else %}0{% endif %}"
+  data-floating-corner="{{ floating_corner | escape }}"
+  data-mount-header="{% if mount_header %}1{% else %}0{% endif %}"
+  data-header-selector="{{ block.settings.header_selector | strip | escape }}"
+  data-mount-footer="{% if mount_footer %}1{% else %}0{% endif %}"
+  data-footer-selector="{{ block.settings.footer_selector | strip | escape }}"
+  data-mount-custom="{% if mount_custom %}1{% else %}0{% endif %}"
+  data-custom-selector="{{ block.settings.custom_selector | strip | escape }}"
   data-sprite-url="{{ sprite_url | escape }}"
   data-show-flag="{% if show_flag %}1{% else %}0{% endif %}"
   data-label-format="{{ label_format | escape }}"
@@ -251,34 +262,57 @@
     { "type": "checkbox", "id": "show_country", "label": "Show country / currency selector", "default": true },
 
     { "type": "header", "content": "Placement" },
+    { "type": "paragraph", "content": "Pick one or more locations. The widget will be cloned into every enabled spot — e.g. one in the site header AND one floating in the corner." },
+    { "type": "checkbox", "id": "mount_floating", "label": "Show as floating widget", "default": true },
     {
       "type": "select",
-      "id": "position",
-      "label": "Position",
+      "id": "floating_corner",
+      "label": "Floating corner",
+      "info": "Only used when 'Show as floating widget' is enabled.",
       "options": [
-        { "value": "floating-bottom-right", "label": "Floating — bottom right" },
-        { "value": "floating-bottom-left", "label": "Floating — bottom left" },
-        { "value": "floating-top-right", "label": "Floating — top right" },
-        { "value": "header", "label": "Inside header" },
-        { "value": "footer", "label": "Inside footer" }
+        { "value": "bottom-right", "label": "Bottom right" },
+        { "value": "bottom-left", "label": "Bottom left" },
+        { "value": "top-right", "label": "Top right" }
       ],
-      "default": "floating-bottom-right"
+      "default": "bottom-right"
     },
+    { "type": "checkbox", "id": "mount_header", "label": "Show in site header", "default": false },
     {
       "type": "text",
-      "id": "container_selector",
-      "label": "Header/footer container selector (optional)",
-      "info": "CSS selector of the element to mount into when position is 'Inside header/footer'. Leave empty to auto-detect (<header> / <footer>)."
+      "id": "header_selector",
+      "label": "Header CSS selector (optional)",
+      "info": "Leave empty to auto-detect <header>. For Dawn-style themes, .header__icons--localization drops the switcher into the existing language wrapper."
+    },
+    { "type": "checkbox", "id": "mount_footer", "label": "Show in site footer", "default": false },
+    {
+      "type": "text",
+      "id": "footer_selector",
+      "label": "Footer CSS selector (optional)",
+      "info": "Leave empty to auto-detect <footer>."
+    },
+    { "type": "checkbox", "id": "mount_custom", "label": "Show at custom location", "default": false },
+    {
+      "type": "text",
+      "id": "custom_selector",
+      "label": "Custom CSS selector",
+      "info": "Required if 'Show at custom location' is enabled. Mounts the widget into the first matching element."
     },
     {
       "type": "select",
       "id": "display_style",
-      "label": "Style",
+      "label": "Layout",
       "options": [
         { "value": "dropdown", "label": "Dropdowns" },
         { "value": "compact", "label": "Compact (inline)" }
       ],
       "default": "dropdown"
+    },
+    {
+      "type": "checkbox",
+      "id": "inherit_theme_styles",
+      "label": "Inherit theme dropdown styles",
+      "info": "Strips our own background, border and shadow so the switcher blends with the theme's design (recommended when mounted into header/footer).",
+      "default": false
     },
 
     { "type": "header", "content": "Icons" },
@@ -308,7 +342,7 @@
       "type": "textarea",
       "id": "country_overrides",
       "label": "Flag overrides (per language)",
-      "info": "One per line in the form lang=country (lowercase ISO codes). Example: de=ch shows the Swiss flag for German. Browse available codes at flagicons.lipis.dev."
+      "info": "One per line in the form lang=country (lowercase ISO codes). Example: en=gb shows the UK flag for English. Browse available codes at flagicons.lipis.dev."
     },
 
     { "type": "header", "content": "Custom uploaded flags" },
