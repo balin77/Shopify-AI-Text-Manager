@@ -685,7 +685,7 @@ export function FilePickerModal({
               <Spinner size="large" />
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))", gap: 8, maxHeight: "clamp(180px, 45vh, 400px)", overflowY: "auto", padding: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(108px, 1fr))", gap: 8, maxHeight: "clamp(160px, calc(100vh - 520px), 400px)", overflowY: "auto", padding: 4 }}>
               {pendingUploads.map(u => (
                 // Constrain the wrapper to the tile's 108px so the absolutely
                 // positioned progress + error overlays line up. Without this

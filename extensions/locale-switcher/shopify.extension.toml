@@ -1,0 +1,7 @@
+api_version = "2025-10"
+uid = "bd476f3d-dff4-4c61-9fc2-8537ce26860a5e46e342"
+
+[[extensions]]
+  type = "theme"
+  name = "Language & Currency Switcher"
+  handle = "locale-switcher"

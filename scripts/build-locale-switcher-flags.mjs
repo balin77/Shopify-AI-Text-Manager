@@ -5,16 +5,16 @@
  *
  * Source: flag-icons (MIT) under node_modules/flag-icons/flags/4x3/*.svg.
  * Output: a single <svg><symbol id="xx">...</symbol>...</svg> referenced
- * by the Liquid template via <use href="...#xx">.
+ * by the JS via <use href="#xx"> after the sprite is injected into the DOM.
  *
- * Curated to ~80 country codes to keep storefront payload small. Merchants
+ * Curated to ~65 country codes to keep storefront payload small. Merchants
  * can still upload custom flags for any language via the block's image_picker
  * settings; this sprite only powers the defaults.
  *
  * Regenerate after editing COUNTRY_CODES below:
- *   node scripts/build-locale-switcher-flags.mjs
+ *   npm run build:flags
  */
-import { readFile, writeFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, stat, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -24,17 +24,14 @@ const FLAG_SRC_DIR = resolve(ROOT, 'node_modules/flag-icons/flags/4x3');
 const OUT_FILE = resolve(ROOT, 'extensions/locale-switcher/assets/flags.svg');
 
 // Curated set: countries that show up in Shopify Markets configurations most
-// often + the EU symbol. Kept lean (~70 codes) to bound storefront payload.
-// Flags with very detailed crests (BO, RS, MX, SV, GT, BZ, DO, TM, etc.) are
-// excluded; merchants can upload custom images for those languages via the
-// block's image_picker settings.
+// often + the EU symbol. Kept lean to bound storefront payload.
 const COUNTRY_CODES = [
   // Europe
   'at','be','bg','ch','cy','cz','de','dk','ee','es','eu','fi','fr','gb',
-  'gr','hu','ie','is','it','lt','lu','lv','mt','nl','no','pl','pt','ro',
-  'se','si','sk','tr','ua',
+  'gr','hr','hu','ie','is','it','lt','lu','lv','mt','nl','no','pl','pt',
+  'ro','rs','ru','se','si','sk','tr','ua',
   // Americas
-  'ar','br','ca','cl','co','pe','us','uy',
+  'ar','br','ca','cl','co','mx','pe','us','uy',
   // Asia / Middle East
   'ae','cn','hk','id','il','in','jp','kr','my','ph','qa','sa','sg','th','tw','vn',
   // Oceania
@@ -42,6 +39,41 @@ const COUNTRY_CODES = [
   // Africa
   'eg','ma','ng','za',
 ];
+
+// Simplified hand-authored flags. Used INSTEAD of the flag-icons source for
+// the listed codes. The original SVGs include detailed coats of arms / seals
+// (ES eagle+pillars, MX golden eagle on cactus, RS double-headed eagle, HR
+// chequy shield) that bloat the sprite by hundreds of KB total — at the
+// 14-28px display size the storefront uses, none of that detail is visible
+// anyway. Merchants who want the official crested version can upload it via
+// the per-language image_picker setting.
+//
+// Format: inner SVG content only (no <svg> wrapper); viewBox is 0 0 640 480.
+const SIMPLIFIED_FLAGS = {
+  // Mexico — 3 equal vertical stripes (green / white / red). Crested original
+  // is 84 KB → simplified is < 250 bytes.
+  mx:
+    '<path fill="#006847" d="M0 0h213v480H0z"/>' +
+    '<path fill="#fff" d="M213 0h214v480H213z"/>' +
+    '<path fill="#ce1126" d="M427 0h213v480H427z"/>',
+  // Serbia — 3 equal horizontal stripes (red / blue / white). Crested
+  // original is 181 KB.
+  rs:
+    '<path fill="#c6363c" d="M0 0h640v160H0z"/>' +
+    '<path fill="#0c4076" d="M0 160h640v160H0z"/>' +
+    '<path fill="#fff" d="M0 320h640v160H0z"/>',
+  // Croatia — 3 equal horizontal stripes (red / white / blue). Chequy-crested
+  // original is 30 KB.
+  hr:
+    '<path fill="#ff0000" d="M0 0h640v160H0z"/>' +
+    '<path fill="#fff" d="M0 160h640v160H0z"/>' +
+    '<path fill="#171796" d="M0 320h640v160H0z"/>',
+  // Spain — 3 horizontal bands, red/yellow/red in 1:2:1 ratio. Coat-of-arms
+  // version is 80 KB; this is < 200 bytes.
+  es:
+    '<path fill="#aa151b" d="M0 0h640v480H0z"/>' +
+    '<path fill="#f1bf00" d="M0 120h640v240H0z"/>',
+};
 
 const dedupedCodes = Array.from(new Set(COUNTRY_CODES)).sort();
 
@@ -62,13 +94,18 @@ async function build() {
   const symbols = [];
 
   for (const code of dedupedCodes) {
-    const path = resolve(FLAG_SRC_DIR, `${code}.svg`);
-    if (!(await fileExists(path))) {
-      missing.push(code);
-      continue;
+    let inner;
+    if (SIMPLIFIED_FLAGS[code]) {
+      inner = SIMPLIFIED_FLAGS[code];
+    } else {
+      const path = resolve(FLAG_SRC_DIR, `${code}.svg`);
+      if (!(await fileExists(path))) {
+        missing.push(code);
+        continue;
+      }
+      const raw = await readFile(path, 'utf8');
+      inner = stripSvgWrapper(raw);
     }
-    const raw = await readFile(path, 'utf8');
-    const inner = stripSvgWrapper(raw);
     symbols.push(
       `<symbol id="${code}" viewBox="0 0 640 480" preserveAspectRatio="xMidYMid slice">${inner}</symbol>`
     );
@@ -86,6 +123,7 @@ async function build() {
     symbols.join('\n') +
     `\n</svg>\n`;
 
+  await mkdir(dirname(OUT_FILE), { recursive: true });
   await writeFile(OUT_FILE, sprite, 'utf8');
   const { size } = await stat(OUT_FILE);
   console.log(
