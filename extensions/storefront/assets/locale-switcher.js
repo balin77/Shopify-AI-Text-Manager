@@ -39,6 +39,8 @@ class CpLocaleSwitcher extends HTMLElement {
     this._debug = this.dataset.debug === '1';
     this._showFlag = this.dataset.showFlag === '1';
     this._labelFormat = this.dataset.labelFormat || 'endonym';
+    this._countryDisplay = this.dataset.countryDisplay || 'flag_and_name';
+    this._currencyFormat = this.dataset.currencyFormat || 'both';
     this._spriteUrl = this.dataset.spriteUrl || '';
 
     if (document.readyState === 'loading') {
@@ -127,6 +129,9 @@ class CpLocaleSwitcher extends HTMLElement {
       image: o.dataset.flagImage || '',
       endonym: o.dataset.endonym || o.textContent.trim(),
       iso: o.dataset.iso || o.value.toUpperCase(),
+      name: o.dataset.name || '',
+      currencyCode: o.dataset.currencyCode || '',
+      currencySymbol: o.dataset.currencySymbol || '',
       selected: o.selected,
     }));
     if (!options.length) return;
@@ -174,27 +179,30 @@ class CpLocaleSwitcher extends HTMLElement {
       li.setAttribute('aria-selected', opt.selected ? 'true' : 'false');
       li.dataset.value = opt.value;
       li.dataset.index = String(i);
-      li.appendChild(this._renderFlag(opt));
-      li.appendChild(this._renderLabel(opt));
+      li.appendChild(this._renderFlag(opt, kind));
+      li.appendChild(this._renderLabel(opt, kind));
       list.appendChild(li);
     });
 
     const selected = options.find((o) => o.selected) || options[0];
-    this._fillButton(button, selected);
+    this._fillButton(button, selected, kind);
 
     select.parentNode.insertBefore(root, select);
     root.appendChild(button);
     root.appendChild(list);
     root.appendChild(select); // keep <select> inside the field for form ctx
 
-    this._bindField({ root, button, list, select, options });
+    this._bindField({ root, button, list, select, options, kind });
   }
 
-  _renderFlag(opt) {
+  _renderFlag(opt, kind) {
     const wrap = document.createElement('span');
     wrap.className = 'cp-locale-field__flag';
     wrap.setAttribute('aria-hidden', 'true');
-    if (!this._showFlag) {
+    const showFlag = kind === 'country'
+      ? (this._countryDisplay === 'flag_and_name' || this._countryDisplay === 'flag_only')
+      : this._showFlag;
+    if (!showFlag) {
       wrap.classList.add('cp-locale-field__flag--off');
       return wrap;
     }
@@ -223,9 +231,22 @@ class CpLocaleSwitcher extends HTMLElement {
     return wrap;
   }
 
-  _renderLabel(opt) {
+  _renderLabel(opt, kind) {
     const span = document.createElement('span');
     span.className = 'cp-locale-field__text';
+
+    if (kind === 'country') {
+      // Country uses its own display setting + currency-format; opt.endonym
+      // was already rendered server-side per those rules, so reuse it. For
+      // flag_only we still keep the text in the DOM (just visually hidden)
+      // so screen readers announce the country.
+      const visible = this._countryDisplay !== 'flag_only';
+      if (!visible) span.classList.add('cp-locale-field__text--sr');
+      span.textContent = opt.endonym;
+      return span;
+    }
+
+    // Language dropdown — unchanged behaviour.
     if (this._labelFormat === 'none') {
       span.classList.add('cp-locale-field__text--sr');
       span.textContent = opt.endonym;
@@ -237,10 +258,10 @@ class CpLocaleSwitcher extends HTMLElement {
     return span;
   }
 
-  _fillButton(button, opt) {
+  _fillButton(button, opt, kind) {
     button.textContent = '';
-    button.appendChild(this._renderFlag(opt));
-    button.appendChild(this._renderLabel(opt));
+    button.appendChild(this._renderFlag(opt, kind));
+    button.appendChild(this._renderLabel(opt, kind));
     const caret = document.createElement('span');
     caret.className = 'cp-locale-field__caret';
     caret.setAttribute('aria-hidden', 'true');
@@ -251,7 +272,7 @@ class CpLocaleSwitcher extends HTMLElement {
   /* ------------------------------------------------------------ behaviour */
 
   _bindField(ctx) {
-    const { root, button, list, select, options } = ctx;
+    const { root, button, list, select, options, kind } = ctx;
     let openIndex = options.findIndex((o) => o.selected);
     if (openIndex < 0) openIndex = 0;
 
@@ -291,7 +312,7 @@ class CpLocaleSwitcher extends HTMLElement {
       const opt = options[index];
       if (!opt) return;
       // Update visual button
-      this._fillButton(button, opt);
+      this._fillButton(button, opt, kind);
       // Update aria-selected on all options
       Array.from(list.children).forEach((el, i) => {
         el.setAttribute('aria-selected', i === index ? 'true' : 'false');

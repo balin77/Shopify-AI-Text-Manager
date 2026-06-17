@@ -33,6 +33,9 @@
   assign style = block.settings.display_style | default: 'dropdown'
   assign show_flag = block.settings.show_flag
   assign label_format = block.settings.label_format | default: 'endonym'
+  assign country_display = block.settings.country_display | default: 'flag_and_name'
+  assign currency_format = block.settings.currency_format | default: 'both'
+  assign selectors_layout = block.settings.selectors_layout | default: 'horizontal'
   assign flag_size = block.settings.flag_size | default: 18
   assign inherit_theme = block.settings.inherit_theme_styles
   assign mount_floating = block.settings.mount_floating
@@ -62,8 +65,10 @@
 {%- if show_lang_block or show_country_block -%}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
-  class="cp-locale-switcher cp-locale-switcher--{{ style }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}"
   data-block-id="{{ block.id }}"
+  data-country-display="{{ country_display | escape }}"
+  data-currency-format="{{ currency_format | escape }}"
   data-mount-floating="{% if mount_floating %}1{% else %}0{% endif %}"
   data-floating-corner="{{ floating_corner | escape }}"
   data-mount-header="{% if mount_header %}1{% else %}0{% endif %}"
@@ -227,8 +232,43 @@
                 assign c_iso_upper = c.iso_code | upcase
                 assign c_currency = c.currency.iso_code
                 assign c_symbol = c.currency.symbol
-                assign c_label_full = c_name | append: ' (' | append: c_currency | append: ' ' | append: c_symbol | append: ')'
-                assign c_label_iso = c_iso_upper | append: ' (' | append: c_currency | append: ' ' | append: c_symbol | append: ')'
+
+                # Currency notation per merchant choice.
+                case currency_format
+                  when 'symbol'
+                    assign currency_part = c_symbol
+                  when 'code'
+                    assign currency_part = c_currency
+                  when 'none'
+                    assign currency_part = ''
+                  else
+                    assign currency_part = c_currency | append: ' ' | append: c_symbol
+                endcase
+
+                # The visible <option> text — also used as the JS button label
+                # (data-endonym). For flag_only we still emit the full text so
+                # the screen-reader path remains informative.
+                if country_display == 'flag_only'
+                  if currency_part != ''
+                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
+                  else
+                    assign c_label_full = c_name
+                  endif
+                else
+                  if currency_part != ''
+                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
+                  else
+                    assign c_label_full = c_name
+                  endif
+                endif
+
+                # data-iso variant used when label_format=iso. Keep currency
+                # appended for the no-JS fallback's clarity.
+                if currency_part != ''
+                  assign c_label_iso = c_iso_upper | append: ' (' | append: currency_part | append: ')'
+                else
+                  assign c_label_iso = c_iso_upper
+                endif
               -%}
               <option
                 value="{{ c.iso_code }}"
@@ -236,6 +276,9 @@
                 data-flag-image=""
                 data-endonym="{{ c_label_full | escape }}"
                 data-iso="{{ c_label_iso | escape }}"
+                data-name="{{ c_name | escape }}"
+                data-currency-code="{{ c_currency | escape }}"
+                data-currency-symbol="{{ c_symbol | escape }}"
                 {% if c.iso_code == localization.country.iso_code %}selected{% endif %}
               >{{ c_label_full }}</option>
             {%- endfor -%}
@@ -265,8 +308,7 @@
     { "type": "checkbox", "id": "show_country", "label": "Show country / currency selector", "default": true },
 
     { "type": "header", "content": "Placement" },
-    { "type": "paragraph", "content": "Pick one or more locations. The widget will be cloned into every enabled spot — e.g. one in the site header AND one floating in the corner." },
-    { "type": "checkbox", "id": "mount_floating", "label": "Show as floating widget", "default": true },
+    { "type": "checkbox", "id": "mount_floating", "label": "Show as floating widget", "default": true, "info": "Pick one or more locations. The widget is cloned into every enabled spot — e.g. floating AND in the site header." },
     {
       "type": "select",
       "id": "floating_corner",
@@ -348,12 +390,23 @@
       "default": false
     },
 
-    { "type": "header", "content": "Icons" },
-    { "type": "checkbox", "id": "show_flag", "label": "Show flag icons", "default": true },
+    { "type": "header", "content": "Dropdowns" },
+    {
+      "type": "select",
+      "id": "selectors_layout",
+      "label": "Layout",
+      "info": "How the language and country dropdowns are arranged relative to each other.",
+      "options": [
+        { "value": "horizontal", "label": "Horizontal — side by side" },
+        { "value": "stacked", "label": "Vertical — stacked" }
+      ],
+      "default": "horizontal"
+    },
+    { "type": "checkbox", "id": "show_flag", "label": "Show flag in language dropdown", "default": true },
     {
       "type": "select",
       "id": "label_format",
-      "label": "Label next to flag",
+      "label": "Language label",
       "options": [
         { "value": "endonym", "label": "Native name (Deutsch, English, ...)" },
         { "value": "iso", "label": "ISO code (DE, EN, ...)" },
@@ -361,6 +414,31 @@
       ],
       "default": "endonym"
     },
+    {
+      "type": "select",
+      "id": "country_display",
+      "label": "Country display",
+      "options": [
+        { "value": "flag_and_name", "label": "Flag + name" },
+        { "value": "name_only", "label": "Name only" },
+        { "value": "flag_only", "label": "Flag only" }
+      ],
+      "default": "flag_and_name"
+    },
+    {
+      "type": "select",
+      "id": "currency_format",
+      "label": "Currency notation",
+      "options": [
+        { "value": "symbol", "label": "Symbol only ($)" },
+        { "value": "code", "label": "Code only (USD)" },
+        { "value": "both", "label": "Code + symbol (USD $)" },
+        { "value": "none", "label": "Hide currency" }
+      ],
+      "default": "both"
+    },
+
+    { "type": "header", "content": "Flag icons" },
     {
       "type": "range",
       "id": "flag_size",
