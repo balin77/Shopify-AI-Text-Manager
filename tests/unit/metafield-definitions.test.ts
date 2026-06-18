@@ -31,8 +31,20 @@ describe("categorizeMetafieldOwner()", () => {
     expect(categorizeMetafieldOwner("judgeme.widget").category).toBe("third-party");
   });
 
-  it("classifies Shopify app-reserved namespaces as third-party", () => {
+  it("classifies real-world app namespaces (Google, Okendo) as third-party", () => {
+    expect(categorizeMetafieldOwner("google")).toEqual({ category: "third-party", appName: "Google & YouTube" });
+    expect(categorizeMetafieldOwner("mm-google-shopping")).toEqual({ category: "third-party", appName: "Google Shopping" });
+    expect(categorizeMetafieldOwner("okendo")).toEqual({ category: "third-party", appName: "Okendo" });
+  });
+
+  it("classifies reserved '--' namespaces (app-- and shopify--) as third-party", () => {
     expect(categorizeMetafieldOwner("app--1234567--reviews").category).toBe("third-party");
+    expect(categorizeMetafieldOwner("shopify--discovery--product_recommendation")).toEqual({
+      category: "third-party",
+      appName: "Shopify Search & Discovery",
+    });
+    // unknown shopify-- app still resolves to a generic Shopify label
+    expect(categorizeMetafieldOwner("shopify--something--x")).toEqual({ category: "third-party", appName: "Shopify" });
   });
 
   it("classifies everything else as shop-owned", () => {
