@@ -219,13 +219,17 @@ export const METAFIELDS_SET = `#graphql
 `;
 
 /**
- * METAFIELD DEFINITION UPDATE (translatable) — flip a definition's
- * `translatable` capability so its metafields appear in `translatableContent`
- * (with a digest) and can be registered via `translationsRegister`.
+ * METAFIELD DEFINITION UPDATE (translatable) — make a definition translatable by
+ * setting its STOREFRONT ACCESS to PUBLIC_READ.
  *
- * Only works for definitions OWNED by this shop (or by this app). Shopify
- * rejects updates to definitions owned by a different app with a userError —
- * which is exactly how we detect/skip third-party-owned definitions.
+ * A product metafield is translatable iff it is publicly accessible
+ * (`access.storefront == PUBLIC_READ`); there is no `capabilities.translatable`
+ * for metafields. Setting this exposes the metafield's values on the public
+ * Storefront API — a deliberate, merchant-initiated side effect.
+ *
+ * Only works for definitions OWNED by this shop. Shopify rejects updates to
+ * definitions owned by a different app with a userError — which is exactly how
+ * we detect/skip third-party-owned definitions.
  *
  * REQUIREMENTS:
  *   - The metafield definition must be shop-owned (not owned by another app).
@@ -235,10 +239,8 @@ export const METAFIELD_DEFINITION_UPDATE_TRANSLATABLE = `#graphql
     metafieldDefinitionUpdate(definition: $definition) {
       updatedDefinition {
         id
-        capabilities {
-          translatable {
-            enabled
-          }
+        access {
+          storefront
         }
       }
       userErrors {

@@ -261,7 +261,7 @@ export class ContentService {
               name: string;
               description: string | null;
               type: { name: string };
-              capabilities?: { translatable?: { enabled?: boolean } };
+              access?: { storefront?: string | null };
             } }>;
             pageInfo?: { hasNextPage: boolean; endCursor?: string | null };
           };
@@ -286,7 +286,8 @@ export class ContentService {
           name: node.name,
           description: node.description ?? null,
           type: node.type?.name ?? "",
-          translatable: !!node.capabilities?.translatable?.enabled,
+          // Translatable iff publicly readable on the storefront.
+          translatable: node.access?.storefront === "PUBLIC_READ",
           ownerCategory: owner.category,
           appName: owner.appName,
         });
@@ -302,10 +303,12 @@ export class ContentService {
   }
 
   /**
-   * Flip a product metafield definition's `translatable` capability to true so
-   * its values become registerable translations. Returns ok:false (with the
-   * Shopify error) for definitions owned by another app — the caller treats
-   * that as "cannot enable" rather than throwing.
+   * Make a product metafield definition translatable by setting its storefront
+   * access to PUBLIC_READ (the only lever Shopify exposes for metafield
+   * translatability). NOTE: this publishes the metafield's values to the public
+   * Storefront API. Returns ok:false (with the Shopify error) for definitions
+   * owned by another app — the caller treats that as "cannot enable" rather
+   * than throwing.
    */
   async updateMetafieldDefinitionTranslatable(
     namespace: string,
@@ -318,7 +321,7 @@ export class ContentService {
             namespace,
             key,
             ownerType: "PRODUCT",
-            capabilities: { translatable: { enabled: true } },
+            access: { storefront: "PUBLIC_READ" },
           },
         },
       });

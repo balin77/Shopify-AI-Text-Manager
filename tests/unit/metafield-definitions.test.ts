@@ -74,7 +74,7 @@ describe("ContentService.getProductMetafieldDefinitions()", () => {
             name: "Care instructions",
             description: null,
             type: { name: "single_line_text_field" },
-            capabilities: { translatable: { enabled: false } },
+            access: { storefront: "NONE" },
           },
         ],
         hasNextPage: true,
@@ -89,7 +89,7 @@ describe("ContentService.getProductMetafieldDefinitions()", () => {
             name: "Reviews",
             description: "Judge.me reviews",
             type: { name: "multi_line_text_field" },
-            capabilities: { translatable: { enabled: true } },
+            access: { storefront: "PUBLIC_READ" },
           },
         ],
         hasNextPage: false,
@@ -142,6 +142,15 @@ describe("ContentService.updateMetafieldDefinitionTranslatable()", () => {
     const service = new ContentService(admin as never);
     const res = await service.updateMetafieldDefinitionTranslatable("custom", "care_instructions");
     expect(res.ok).toBe(true);
+    // Lock the correct activation shape: storefront access PUBLIC_READ, not a
+    // (non-existent) translatable capability.
+    const [, opts] = admin.graphql.mock.calls[0];
+    expect(opts.variables.definition).toMatchObject({
+      namespace: "custom",
+      key: "care_instructions",
+      ownerType: "PRODUCT",
+      access: { storefront: "PUBLIC_READ" },
+    });
   });
 
   it("returns ok:false with the message on a userError (app-owned definition)", async () => {
