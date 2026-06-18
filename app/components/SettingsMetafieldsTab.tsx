@@ -71,8 +71,6 @@ interface SaveResult {
   error?: string;
 }
 
-const STALE_MS = 24 * 60 * 60 * 1000; // auto-scan if last scan older than 24h
-
 const GROUP_ORDER: MetafieldOwnerCategory[] = ["shop", "contentpilot", "third-party"];
 
 export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsLastScanAt, t }: Props) {
@@ -92,13 +90,15 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
   const ms = (t.settings ?? {}) as unknown as Record<string, string>;
   const tr = (key: string, fallback: string) => ms[key] ?? fallback;
 
-  // Auto-scan on first open when never scanned or stale (>24h).
+  // Scan whenever we have no list yet. `definitions` lives only in component
+  // state and the tab unmounts on tab switch, so a merchant returning to the
+  // tab would otherwise see the empty state until a manual re-scan. The 24h
+  // staleness no longer gates the trigger (it only ever affected the timestamp
+  // display); a settings tab is low-traffic so scanning on open is fine.
   const autoScanned = useRef(false);
   useEffect(() => {
     if (autoScanned.current) return;
-    const stale =
-      !lastScanAt || Date.now() - new Date(lastScanAt).getTime() > STALE_MS;
-    if (stale && scanFetcher.state === "idle" && definitions.length === 0) {
+    if (scanFetcher.state === "idle" && definitions.length === 0) {
       autoScanned.current = true;
       scanFetcher.submit({ actionType: "scanProductMetafieldDefinitions" }, { method: "post" });
     }
@@ -115,6 +115,22 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
       setSelected((prev) => new Set([...prev].filter((id) => ids.has(id))));
     }
   }, [scanFetcher.state, scanFetcher.data]);
+
+  // Reconcile checkbox state after a save: uncheck any definition that could
+  // not be persisted (e.g. an app-owned one Shopify refused to patch), so the
+  // UI matches what was actually saved instead of showing a stuck checkmark.
+  useEffect(() => {
+    if (saveFetcher.state !== "idle" || !saveFetcher.data?.success) return;
+    const failedKeys = new Set((saveFetcher.data.failed ?? []).map((f) => `${f.namespace}.${f.key}`));
+    if (failedKeys.size === 0) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const def of definitions) {
+        if (failedKeys.has(`${def.namespace}.${def.key}`)) next.delete(def.id);
+      }
+      return next;
+    });
+  }, [saveFetcher.state, saveFetcher.data, definitions]);
 
   const isScanning = scanFetcher.state !== "idle";
   const isSaving = saveFetcher.state !== "idle";

@@ -694,6 +694,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // not yet translatable (requiresPatch), flip its translatable capability
       // first; third-party-owned definitions are not sent here (UI disables
       // them). Successful selections fully replace the prior set for the shop.
+      //
+      // Note: the Shopify capability patch is a non-transactional side effect
+      // applied BEFORE the DB transaction. This is deliberate and tolerable —
+      // the patch is idempotent (re-enabling re-derives requiresPatch=false) and
+      // we never revert it (reverting would break other tools relying on the
+      // translatable definition), so a crash mid-loop is self-healing.
       const payload = getFormString(formData, "definitions");
       let incoming: Array<{ definitionId: string; namespace: string; key: string; requiresPatch?: boolean }> = [];
       try {
@@ -703,12 +709,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const { ContentService } = await import("../services/content.service");
+      const { categorizeMetafieldOwner } = await import("../config/known-third-party-apps");
       const service = new ContentService(admin);
+
+      // Preserve the patchedTranslatable history across the destructive
+      // delete+reinsert below: once we have flipped a definition's capability,
+      // a later scan reports translatable:true so requiresPatch becomes false —
+      // we must not regress the persisted flag back to false.
+      const priorRows = await db.enabledMetafieldDefinition.findMany({
+        where: { shop: session.shop, ownerType: "PRODUCT" },
+        select: { definitionId: true, patchedTranslatable: true },
+      });
+      const priorPatched = new Map(priorRows.map((r) => [r.definitionId, r.patchedTranslatable]));
+
       const toInsert: Array<{ shop: string; definitionId: string; namespace: string; key: string; ownerType: string; patchedTranslatable: boolean }> = [];
       const failed: Array<{ namespace: string; key: string; error?: string }> = [];
 
       for (const def of incoming) {
         if (!def?.definitionId || !def.namespace || !def.key) continue;
+        // Defense in depth: the UI never sends app-owned definitions (Shopify
+        // would reject the patch anyway), but reject them server-side too rather
+        // than waste a mutation round-trip.
+        if (categorizeMetafieldOwner(def.namespace).category === "third-party") {
+          failed.push({ namespace: def.namespace, key: def.key, error: "App-owned definition cannot be enabled" });
+          continue;
+        }
         let patched = false;
         if (def.requiresPatch) {
           const res = await service.updateMetafieldDefinitionTranslatable(def.namespace, def.key);
@@ -724,7 +749,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           namespace: def.namespace,
           key: def.key,
           ownerType: "PRODUCT",
-          patchedTranslatable: patched,
+          patchedTranslatable: patched || (priorPatched.get(def.definitionId) ?? false),
         });
       }
 
