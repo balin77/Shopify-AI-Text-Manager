@@ -898,8 +898,9 @@ export default function SettingsPage() {
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
+  const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
@@ -1283,6 +1284,7 @@ export default function SettingsPage() {
                   enabledMetafieldDefinitions={enabledMetafieldDefinitions}
                   metafieldsLastScanAt={metafieldsLastScanAt}
                   t={t}
+                  onHasChangesChange={setHasMetafieldChanges}
                 />
               )}
 
