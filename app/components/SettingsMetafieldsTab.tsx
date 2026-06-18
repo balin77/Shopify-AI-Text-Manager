@@ -287,6 +287,9 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
                 <BlockStack gap="200">
                   {defs.map((def) => {
                     const disabled = def.ownerCategory === "third-party";
+                    // Enabling a not-yet-public def flips its storefront access
+                    // to PUBLIC_READ (the only translatability lever) — warn.
+                    const activatable = !def.translatable && !disabled;
                     const statusBadge = def.translatable
                       ? <Badge tone="success">{tr("metafieldsBadgeTranslatable", "translatable")}</Badge>
                       : disabled
@@ -312,12 +315,19 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
                               </Text>
                               <Badge>{def.type || "—"}</Badge>
                               {statusBadge}
-                              {disabled && (
+                              {(disabled || activatable) && (
                                 <Tooltip
-                                  content={tr(
-                                    "metafieldsThirdPartyHelp",
-                                    "Owned by another app and cannot be made translatable by ContentPilot (planned for Phase 2).",
-                                  )}
+                                  content={
+                                    disabled
+                                      ? tr(
+                                          "metafieldsThirdPartyHelp",
+                                          "Owned by another app and cannot be made translatable by ContentPilot (planned for Phase 2).",
+                                        )
+                                      : tr(
+                                          "metafieldsActivatableHelp",
+                                          "Enabling makes this metafield publicly readable on the Storefront API — Shopify requires this for translation.",
+                                        )
+                                  }
                                 >
                                   <span
                                     style={{ cursor: "help", color: "#6d7175", fontWeight: 600 }}

@@ -111,8 +111,8 @@ model AISettings {
 // ContentPilot translation pipeline (Metafields settings tab). A metafield is
 // shown/translated in the product editor only when its definition is BOTH
 // translatable AND present here (decided design point 1). Removing a row hides
-// the field from the editor again WITHOUT reverting the Shopify-side
-// `translatable` patch (that would be destructive for other tools).
+// the field from the editor again WITHOUT reverting the Shopify-side storefront
+// access change (that would be destructive for the storefront/other tools).
 model EnabledMetafieldDefinition {
   id        String @id @default(cuid())
   shop      String
@@ -122,9 +122,10 @@ model EnabledMetafieldDefinition {
   key       String
   // "PRODUCT" for now — column exists so later owner types can reuse the model.
   ownerType String @default("PRODUCT")
-  // True when ContentPilot had to flip the definition's translatable capability
-  // (i.e. it was translatable:false and shop-owned). False for definitions that
-  // were already translatable (incl. backfilled ones).
+  // True when ContentPilot had to set the definition's storefront access to
+  // PUBLIC_READ to make it translatable (i.e. it was not publicly accessible and
+  // shop-owned). False for definitions that were already translatable/public
+  // (incl. backfilled ones).
   patchedTranslatable Boolean  @default(false)
   enabledAt           DateTime @default(now())
 

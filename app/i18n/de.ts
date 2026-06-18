@@ -343,6 +343,7 @@ export const de = {
     metafieldsGroupThirdParty: "Drittanbieter-Apps",
     metafieldsBadgeTranslatable: "übersetzbar",
     metafieldsBadgeActivatable: "aktivierbar",
+    metafieldsActivatableHelp: "Beim Aktivieren wird dieses Metafield öffentlich auf der Storefront-API lesbar gemacht — Shopify setzt das für Übersetzungen voraus.",
     metafieldsThirdPartyHelp: "Wird von einer anderen App verwaltet und kann von ContentPilot nicht übersetzbar gemacht werden (geplant für Phase 2).",
     metafieldsSaveChanges: "Änderungen speichern",
     metafieldsSaved: "Metafields gespeichert",

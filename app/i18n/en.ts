@@ -346,6 +346,7 @@ export const en: Translation = {
     metafieldsGroupThirdParty: "Third-party apps",
     metafieldsBadgeTranslatable: "translatable",
     metafieldsBadgeActivatable: "activatable",
+    metafieldsActivatableHelp: "Enabling makes this metafield publicly readable on the Storefront API — Shopify requires this for translation.",
     metafieldsThirdPartyHelp: "Owned by another app and cannot be made translatable by ContentPilot (planned for Phase 2).",
     metafieldsSaveChanges: "Save changes",
     metafieldsSaved: "Metafields saved",

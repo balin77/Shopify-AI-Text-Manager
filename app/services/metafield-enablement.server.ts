@@ -46,12 +46,23 @@ export async function getEnabledMetafieldKeySet(
  * Idempotent: the metafieldsLastScanAt timestamp is set even when zero
  * definitions are translatable, so a shop with no translatable metafields does
  * not re-scan on every load. Safe to call from multiple loaders.
+ *
+ * Resilience: this runs in the products loader, which fires on EVERY navigation
+ * and prefetch. A per-process in-memory guard ensures we attempt the backfill
+ * at most once per shop per process — so a persistently failing scan (e.g. a
+ * Shopify API/schema error) cannot spam the logs or add a failing round-trip to
+ * every page load. The guard is set BEFORE the await, which also collapses
+ * concurrent loaders for the same shop into a single scan. A process restart
+ * (deploy) clears it, and the manual "Scan now" button is a separate path.
  */
+const backfillAttempted = new Set<string>();
+
 export async function backfillEnabledMetafieldDefinitionsIfNeeded(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
 ): Promise<void> {
+  if (backfillAttempted.has(shop)) return;
   try {
     const settings = await db.aISettings.findUnique({
       where: { shop },
@@ -59,7 +70,14 @@ export async function backfillEnabledMetafieldDefinitionsIfNeeded(
     });
 
     // Already scanned/backfilled once → nothing to do.
-    if (settings?.metafieldsLastScanAt) return;
+    if (settings?.metafieldsLastScanAt) {
+      backfillAttempted.add(shop);
+      return;
+    }
+
+    // Mark attempted up front so concurrent loaders and subsequent requests in
+    // this process don't re-run (even if the scan below throws).
+    backfillAttempted.add(shop);
 
     const service = new ContentService(admin);
     const definitions = await service.getProductMetafieldDefinitions();
