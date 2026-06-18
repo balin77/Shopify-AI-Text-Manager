@@ -407,34 +407,31 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
 
 /* ------------------------------------------------------ auto-compact mode */
 
-/* "Shorten on narrow screens" — turn the host into a CSS Container so we
-   can react to the widget's actual available width (not the viewport).
-   That matters because the same widget may sit in a wide footer column on
-   one page and inside a cramped header icon row on another. */
-cp-locale-switcher.cp-locale-switcher--auto-compact {
-  container-type: inline-size;
-  container-name: cp-ls;
-}
-
 /* The short button text is always present in the DOM (so the swap is free
    of JS work) but hidden by default. */
 cp-locale-switcher .cp-locale-field__short {
   display: none;
 }
 
-/* Threshold tuned so a single 140-px button still has its label, but two
-   dropdowns side by side collapse cleanly. */
-@container cp-ls (max-width: 360px) {
-  /* Drop the long label *only inside the trigger button* — the open list
-     keeps full names so users still see what they're picking. */
-  cp-locale-switcher .cp-locale-field__button > .cp-locale-field__text {
+/* Earlier attempt used a CSS Container Query on the host so we could react
+   to the widget's *actual* available width — but the host is
+   display: inline-flex when mounted into header/footer, so its inline-size
+   tracks the widget's own intrinsic content, not the available space in
+   the surrounding row. The query then fired on a 1920-px desktop too,
+   shortening labels even when there was plenty of room. A plain viewport
+   media query is honest about what we can measure: "narrow screen" =
+   small viewport, the common mobile case. Mounting in a cramped header
+   icon row on a desktop is rare; merchants who really need that case can
+   keep the labels by configuring the layout differently. */
+@media (max-width: 600px) {
+  cp-locale-switcher.cp-locale-switcher--auto-compact .cp-locale-field__button > .cp-locale-field__text {
     display: none;
   }
-  cp-locale-switcher .cp-locale-field__button > .cp-locale-field__short {
+  cp-locale-switcher.cp-locale-switcher--auto-compact .cp-locale-field__button > .cp-locale-field__short {
     display: inline;
   }
-  cp-locale-switcher .cp-locale-field__button,
-  cp-locale-switcher .cp-locale-switcher__select {
+  cp-locale-switcher.cp-locale-switcher--auto-compact .cp-locale-field__button,
+  cp-locale-switcher.cp-locale-switcher--auto-compact .cp-locale-switcher__select {
     min-width: 0;
     padding: 4px 8px;
     gap: 6px;
