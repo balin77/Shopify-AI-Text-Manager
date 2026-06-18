@@ -413,6 +413,50 @@ cp-locale-switcher .cp-locale-field__short {
   display: none;
 }
 
+/* ------------------------- super-narrow merged-dropdown mode (mergeable) */
+
+/* Merged-mode injections live in the language list at all times but only
+   render at super-narrow. Keep them invisible elsewhere so the regular
+   language dropdown stays clean. */
+cp-locale-switcher .cp-locale-merged-divider,
+cp-locale-switcher .cp-locale-field__option[data-merged="1"] {
+  display: none;
+}
+
+cp-locale-switcher .cp-locale-merged-divider {
+  padding: 8px 10px 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  list-style: none;
+  pointer-events: none;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+
+cp-locale-switcher .cp-locale-merged-divider:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+
+@media (max-width: 480px) {
+  /* Country field becomes invisible — its options now live inside the
+     language list. */
+  cp-locale-switcher.cp-locale-switcher--mergeable .cp-locale-field[data-kind="country"] {
+    display: none;
+  }
+  /* Reveal the injected dividers + country options inside the language
+     list. */
+  cp-locale-switcher.cp-locale-switcher--mergeable .cp-locale-merged-divider {
+    display: list-item;
+  }
+  cp-locale-switcher.cp-locale-switcher--mergeable .cp-locale-field__option[data-merged="1"] {
+    display: flex;
+  }
+}
+
 /* Earlier attempt used a CSS Container Query on the host so we could react
    to the widget's *actual* available width — but the host is
    display: inline-flex when mounted into header/footer, so its inline-size

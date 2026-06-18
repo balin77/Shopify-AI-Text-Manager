@@ -41,6 +41,7 @@ class CpLocaleSwitcher extends HTMLElement {
     this._labelFormat = this.dataset.labelFormat || 'endonym';
     this._countryDisplay = this.dataset.countryDisplay || 'flag_and_name';
     this._currencyFormat = this.dataset.currencyFormat || 'both';
+    this._mergeOnSupernarrow = this.dataset.mergeOnSupernarrow === '1';
     this._spriteUrl = this.dataset.spriteUrl || '';
 
     if (document.readyState === 'loading') {
@@ -86,6 +87,65 @@ class CpLocaleSwitcher extends HTMLElement {
   _upgradeAll(selects) {
     this.classList.add('cp-locale-switcher--js');
     selects.forEach((sel) => this._upgrade(sel));
+    // After every field is upgraded, set up the super-narrow merge if the
+    // merchant enabled it AND both language and country forms exist.
+    if (this._mergeOnSupernarrow && !this.classList.contains('cp-locale-switcher--clone')) {
+      this._setupMergedMode();
+    }
+  }
+
+  _findFieldByKind(kind) {
+    for (const root of this.querySelectorAll('.cp-locale-field')) {
+      if (root._cpFieldState && root._cpFieldState.kind === kind) {
+        return root._cpFieldState;
+      }
+    }
+    return null;
+  }
+
+  /* Append a divider + country options into the language list so they can
+     surface inside one combined dropdown at super-narrow widths. CSS hides
+     both the divider rows and the injected country options at normal width;
+     a single @media rule reveals them and hides the country field entirely.
+     Click routing in _bindField checks the data-target-kind attr and
+     dispatches to the right field's choose() so the correct Shopify
+     localization form gets submitted. */
+  _setupMergedMode() {
+    const lang = this._findFieldByKind('language');
+    const country = this._findFieldByKind('country');
+    if (!lang || !country) return;
+
+    // Language section divider (rendered first; the existing lang options
+    // sit between this and the country divider below).
+    const langDivider = document.createElement('li');
+    langDivider.className = 'cp-locale-merged-divider';
+    langDivider.dataset.merged = '1';
+    langDivider.setAttribute('role', 'presentation');
+    langDivider.textContent = lang.label || 'Language';
+    lang.list.insertBefore(langDivider, lang.list.firstChild);
+
+    // Country section divider — appended at the tail before the country
+    // options so the visual order is: [Language] lang opts [Currency] ctry opts.
+    const countryDivider = document.createElement('li');
+    countryDivider.className = 'cp-locale-merged-divider';
+    countryDivider.dataset.merged = '1';
+    countryDivider.setAttribute('role', 'presentation');
+    countryDivider.textContent = country.label || 'Currency';
+    lang.list.appendChild(countryDivider);
+
+    country.options.forEach((opt, i) => {
+      const li = document.createElement('li');
+      li.className = 'cp-locale-field__option';
+      li.dataset.merged = '1';
+      li.dataset.targetKind = 'country';
+      li.dataset.targetIndex = String(i);
+      li.dataset.value = opt.value;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', opt.selected ? 'true' : 'false');
+      li.appendChild(this._renderFlag(opt, 'country'));
+      li.appendChild(this._renderLabel(opt, 'country'));
+      lang.list.appendChild(li);
+    });
   }
 
   /* ---------------------------------------------------------------- sprite */
@@ -352,6 +412,17 @@ class CpLocaleSwitcher extends HTMLElement {
       }
     };
 
+    // Expose state for cross-field coordination (merged super-narrow mode
+    // appends country options into the language list and routes clicks
+    // through here). The label is read from the sibling
+    // .cp-locale-switcher__label inside the wrapping <label> element.
+    let labelText = '';
+    const labelSpan = root.parentNode && root.parentNode.querySelector
+      ? root.parentNode.querySelector('.cp-locale-switcher__label')
+      : null;
+    if (labelSpan) labelText = labelSpan.textContent.trim();
+    root._cpFieldState = { kind, options, choose, label: labelText, list };
+
     button.addEventListener('click', (e) => {
       e.preventDefault();
       toggle();
@@ -389,6 +460,15 @@ class CpLocaleSwitcher extends HTMLElement {
     list.addEventListener('click', (e) => {
       const li = e.target.closest('.cp-locale-field__option');
       if (!li) return;
+      // Merged super-narrow mode: country options live in the language list
+      // and carry data-target-kind="country". Route to the right field's
+      // choose() so the correct Shopify localization form submits.
+      const targetKind = li.dataset.targetKind;
+      if (targetKind && targetKind !== kind) {
+        const target = this._findFieldByKind(targetKind);
+        if (target) target.choose(Number(li.dataset.targetIndex || 0));
+        return;
+      }
       choose(Number(li.dataset.index));
     });
 

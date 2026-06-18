@@ -39,6 +39,7 @@
   assign flag_size = block.settings.flag_size | default: 18
   assign inherit_theme = block.settings.inherit_theme_styles
   assign compact_on_narrow = block.settings.compact_on_narrow
+  assign merge_on_supernarrow = block.settings.merge_on_supernarrow
   assign mount_floating = block.settings.mount_floating
   assign mount_header = block.settings.mount_header
   assign mount_footer = block.settings.mount_footer
@@ -66,7 +67,8 @@
 {%- if show_lang_block or show_country_block -%}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
-  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}{% if merge_on_supernarrow %} cp-locale-switcher--mergeable{% endif %}"
+  data-merge-on-supernarrow="{% if merge_on_supernarrow %}1{% else %}0{% endif %}"
   data-block-id="{{ block.id }}"
   data-country-display="{{ country_display | escape }}"
   data-currency-format="{{ currency_format | escape }}"
@@ -473,6 +475,13 @@
       "id": "compact_on_narrow",
       "label": "Auto-shorten on narrow screens",
       "info": "When the widget's available width gets tight, drops the language label (flag only) and replaces the country name with the currency symbol / code. Keeps the dropdown out of the way in cramped headers and on mobile.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "merge_on_supernarrow",
+      "label": "Merge into one dropdown on very narrow screens",
+      "info": "On phones in portrait, hide the country dropdown and put its options inside the language dropdown instead — clicking the single trigger opens a list with both Language and Currency sections.",
       "default": true
     },
     { "type": "color", "id": "bg_color", "label": "Background", "default": "#ffffff" },
