@@ -165,12 +165,14 @@ cp-locale-switcher .cp-locale-field__list {
   z-index: 1;
 }
 
-/* When the host floats at the BOTTOM of the viewport, a downward-opening
-   list would clip off-screen (review B1). Flip it upward. Mobile floats
-   to bottom regardless of left/right config, so include all bottom-* and
-   the mobile fullscreen-bottom collapse. */
+/* When the host floats at the BOTTOM of the viewport — or is mounted into
+   the site footer — a downward-opening list would clip off-screen
+   (review B1). Flip it upward. Mobile floats to bottom regardless of
+   left/right config, so include all bottom-* and the mobile fullscreen-
+   bottom collapse. */
 cp-locale-switcher.cp-locale-switcher--floating-bottom-right .cp-locale-field__list,
-cp-locale-switcher.cp-locale-switcher--floating-bottom-left .cp-locale-field__list {
+cp-locale-switcher.cp-locale-switcher--floating-bottom-left .cp-locale-field__list,
+cp-locale-switcher.cp-locale-switcher--footer .cp-locale-field__list {
   top: auto;
   bottom: calc(100% + 4px);
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
@@ -376,14 +378,16 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--header .cp-locale-field__list,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--footer .cp-locale-field__list,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-locale-field__list {
-  /* Neutral surface so the list reads on dark AND light headers. color-mix
-     with currentColor + Canvas falls back to a near-white panel when text
-     is dark and a near-black one when text is light. */
-  background: color-mix(in srgb, currentColor 12%, Canvas);
-  color: inherit;
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  /* Always a white panel with dark text — matches the floating instance
+     and reads consistently regardless of the theme's text color. (Earlier
+     color-mix(currentColor, Canvas) attempted to adapt but produced gray
+     on light headers, which clashed with the floating clone next to it.)
+     box-shadow is intentionally NOT overridden here so the placement-
+     specific flip rules above (footer / floating-bottom open upward) win. */
+  background: #fff;
+  color: #1a1a1a;
+  border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: var(--popup-radius, var(--inputs-radius, var(--border-radius, var(--radius, 6px))));
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
 }
 
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--header .cp-locale-field__option--focus,
@@ -392,7 +396,7 @@ cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-lo
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--header .cp-locale-field__option:hover,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--footer .cp-locale-field__option:hover,
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--custom .cp-locale-field__option:hover {
-  background: color-mix(in srgb, currentColor 16%, transparent);
+  background: rgba(0, 0, 0, 0.06);
 }
 
 cp-locale-switcher.cp-locale-switcher--inherit.cp-locale-switcher--header .cp-locale-field__caret,
