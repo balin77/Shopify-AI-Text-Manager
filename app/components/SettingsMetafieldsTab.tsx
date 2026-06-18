@@ -27,6 +27,7 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
+import { SaveDiscardButtons } from "./SaveDiscardButtons";
 
 type MetafieldOwnerCategory = "shop" | "third-party" | "contentpilot";
 
@@ -54,6 +55,8 @@ interface Props {
   enabledMetafieldDefinitions: EnabledDef[];
   metafieldsLastScanAt: string | null;
   t: I18nTranslation;
+  /** Reports unsaved-changes state to the parent (drives the native save bar + nav guard). */
+  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
 interface ScanResult {
@@ -74,7 +77,7 @@ interface SaveResult {
 
 const GROUP_ORDER: MetafieldOwnerCategory[] = ["shop", "contentpilot", "third-party"];
 
-export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsLastScanAt, t }: Props) {
+export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsLastScanAt, t, onHasChangesChange }: Props) {
   const scanFetcher = useFetcher<ScanResult>();
   const saveFetcher = useFetcher<SaveResult>();
 
@@ -156,6 +159,15 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
     [selected],
   );
   const isDirty = currentSelectedKey !== initialSelectedKey;
+
+  // Drive the native App Bridge save bar + the parent's navigation guard.
+  useEffect(() => {
+    onHasChangesChange?.(isDirty);
+  }, [isDirty, onHasChangesChange]);
+
+  function handleDiscard() {
+    setSelected(new Set(enabledMetafieldDefinitions.map((d) => d.definitionId)));
+  }
 
   // Blocked = app-owned AND not already translatable (we can't patch/create in
   // another app's namespace). App-owned but already-translatable (e.g.
@@ -376,18 +388,17 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
         })
       )}
 
-      {definitions.length > 0 && (
-        <InlineStack align="end">
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            loading={isSaving}
-            disabled={!isDirty || isScanning}
-          >
-            {tr("metafieldsSaveChanges", "Save changes")}
-          </Button>
-        </InlineStack>
-      )}
+      {/* Native App Bridge save bar (shown automatically while there are unsaved
+          changes) — replaces the in-page Save button, consistent with the other
+          settings tabs. */}
+      <SaveDiscardButtons
+        hasChanges={isDirty}
+        onSave={handleSave}
+        onDiscard={handleDiscard}
+        saveText={t.products.saveChanges}
+        discardText={t.content?.discardChanges || "Verwerfen"}
+        isSavingCurrentItem={isSaving}
+      />
     </BlockStack>
   );
 }
