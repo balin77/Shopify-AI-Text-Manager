@@ -97,8 +97,39 @@ model AISettings {
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
 
+  // Metafields settings tab: timestamp of the last product metafield-definition
+  // scan. Also doubles as the lazy-backfill guard — when null, the loaders run
+  // a one-time backfill of already-translatable definitions into
+  // EnabledMetafieldDefinition so existing merchants' editors stay populated.
+  metafieldsLastScanAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Product metafield definitions a merchant has explicitly enabled for the
+// ContentPilot translation pipeline (Metafields settings tab). A metafield is
+// shown/translated in the product editor only when its definition is BOTH
+// translatable AND present here (decided design point 1). Removing a row hides
+// the field from the editor again WITHOUT reverting the Shopify-side
+// `translatable` patch (that would be destructive for other tools).
+model EnabledMetafieldDefinition {
+  id        String @id @default(cuid())
+  shop      String
+  // Shopify GID of the MetafieldDefinition.
+  definitionId String
+  namespace String
+  key       String
+  // "PRODUCT" for now — column exists so later owner types can reuse the model.
+  ownerType String @default("PRODUCT")
+  // True when ContentPilot had to flip the definition's translatable capability
+  // (i.e. it was translatable:false and shop-owned). False for definitions that
+  // were already translatable (incl. backfilled ones).
+  patchedTranslatable Boolean  @default(false)
+  enabledAt           DateTime @default(now())
+
+  @@unique([shop, definitionId])
+  @@index([shop, ownerType])
 }
 
 model AIInstructions {

@@ -219,6 +219,38 @@ export const METAFIELDS_SET = `#graphql
 `;
 
 /**
+ * METAFIELD DEFINITION UPDATE (translatable) — flip a definition's
+ * `translatable` capability so its metafields appear in `translatableContent`
+ * (with a digest) and can be registered via `translationsRegister`.
+ *
+ * Only works for definitions OWNED by this shop (or by this app). Shopify
+ * rejects updates to definitions owned by a different app with a userError —
+ * which is exactly how we detect/skip third-party-owned definitions.
+ *
+ * REQUIREMENTS:
+ *   - The metafield definition must be shop-owned (not owned by another app).
+ */
+export const METAFIELD_DEFINITION_UPDATE_TRANSLATABLE = `#graphql
+  mutation metafieldDefinitionUpdateTranslatable($definition: MetafieldDefinitionUpdateInput!) {
+    metafieldDefinitionUpdate(definition: $definition) {
+      updatedDefinition {
+        id
+        capabilities {
+          translatable {
+            enabled
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/**
  * METAOBJECT UPDATE — Update metaobject field values in primary locale
  *
  * This mutation updates metaobject field values directly (not translations).

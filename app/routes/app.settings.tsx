@@ -17,6 +17,7 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
+import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
@@ -400,6 +401,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       orderBy: { optionValue: "asc" },
     });
 
+    // Metafields tab: run the one-time lazy backfill (so existing shops keep
+    // their already-translatable metafields visible), then load the enabled set
+    // and last-scan timestamp.
+    const { backfillEnabledMetafieldDefinitionsIfNeeded } = await import("../services/metafield-enablement.server");
+    await backfillEnabledMetafieldDefinitionsIfNeeded(admin, db, session.shop);
+    const enabledMetafieldDefs = await db.enabledMetafieldDefinition.findMany({
+      where: { shop: session.shop, ownerType: "PRODUCT" },
+      orderBy: [{ namespace: "asc" }, { key: "asc" }],
+    });
+    const metafieldScanState = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { metafieldsLastScanAt: true },
+    });
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -426,6 +441,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       optionValueMemory,
       primaryShopLocale,
       corruptedApiKeys,
+      enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
+        definitionId: d.definitionId,
+        namespace: d.namespace,
+        key: d.key,
+        patchedTranslatable: d.patchedTranslatable,
+      })),
+      metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
+        ? metafieldScanState.metafieldsLastScanAt.toISOString()
+        : null,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -530,7 +554,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = getFormString(formData, "actionType");
   if (!actionType) {
@@ -652,6 +676,66 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "scanProductMetafieldDefinitions") {
+      // Scan ALL product metafield definitions (incl. third-party app ones) and
+      // return them to the client, categorized. Records the scan timestamp.
+      const { ContentService } = await import("../services/content.service");
+      const service = new ContentService(admin);
+      const definitions = await service.getProductMetafieldDefinitions();
+      const scannedAt = new Date();
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { metafieldsLastScanAt: scannedAt },
+        create: { shop: session.shop, metafieldsLastScanAt: scannedAt, preferredProvider: "claude" },
+      });
+      return json({ success: true, actionType, definitions, metafieldsLastScanAt: scannedAt.toISOString() });
+    } else if (actionType === "saveEnabledMetafieldDefinitions") {
+      // Persist the merchant's selection. For each enabled definition that is
+      // not yet translatable (requiresPatch), flip its translatable capability
+      // first; third-party-owned definitions are not sent here (UI disables
+      // them). Successful selections fully replace the prior set for the shop.
+      const payload = getFormString(formData, "definitions");
+      let incoming: Array<{ definitionId: string; namespace: string; key: string; requiresPatch?: boolean }> = [];
+      try {
+        incoming = payload ? JSON.parse(payload) : [];
+      } catch {
+        return json({ success: false, error: "Invalid definitions payload", actionType }, { status: 400 });
+      }
+
+      const { ContentService } = await import("../services/content.service");
+      const service = new ContentService(admin);
+      const toInsert: Array<{ shop: string; definitionId: string; namespace: string; key: string; ownerType: string; patchedTranslatable: boolean }> = [];
+      const failed: Array<{ namespace: string; key: string; error?: string }> = [];
+
+      for (const def of incoming) {
+        if (!def?.definitionId || !def.namespace || !def.key) continue;
+        let patched = false;
+        if (def.requiresPatch) {
+          const res = await service.updateMetafieldDefinitionTranslatable(def.namespace, def.key);
+          if (!res.ok) {
+            failed.push({ namespace: def.namespace, key: def.key, error: res.error });
+            continue;
+          }
+          patched = true;
+        }
+        toInsert.push({
+          shop: session.shop,
+          definitionId: def.definitionId,
+          namespace: def.namespace,
+          key: def.key,
+          ownerType: "PRODUCT",
+          patchedTranslatable: patched,
+        });
+      }
+
+      await db.$transaction(async (tx) => {
+        await tx.enabledMetafieldDefinition.deleteMany({ where: { shop: session.shop, ownerType: "PRODUCT" } });
+        if (toInsert.length > 0) {
+          await tx.enabledMetafieldDefinition.createMany({ data: toInsert });
+        }
+      });
+
+      return json({ success: true, actionType, enabledCount: toInsert.length, failed });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
@@ -730,7 +814,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -743,7 +827,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -752,13 +836,13 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -768,7 +852,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -823,6 +907,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
+      { id: "metafields", title: t.settings.metafields || "Metafields" },
       ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
@@ -955,6 +1040,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              <button
+                onClick={() => handleSectionChange("metafields")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "metafields" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "metafields" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
+                  {t.settings.metafields || "Metafields"}
+                </Text>
+              </button>
               {showSkuTab && (
               <button
                 onClick={() => handleSectionChange("sku")}
@@ -1118,6 +1222,15 @@ export default function SettingsPage() {
                 <SettingsTranslationsTab
                   groupedFieldTranslations={groupedFieldTranslations}
                   primaryShopLocale={primaryShopLocale}
+                  t={t}
+                />
+              )}
+
+              {/* Metafields — enable third-party / shop metafields for translation */}
+              {selectedSection === "metafields" && (
+                <SettingsMetafieldsTab
+                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
+                  metafieldsLastScanAt={metafieldsLastScanAt}
                   t={t}
                 />
               )}
