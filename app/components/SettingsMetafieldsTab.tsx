@@ -40,6 +40,7 @@ interface ScannedDefinition {
   translatable: boolean;
   ownerCategory: MetafieldOwnerCategory;
   appName?: string;
+  hasDefinition: boolean;
 }
 
 interface EnabledDef {
@@ -156,8 +157,15 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
   );
   const isDirty = currentSelectedKey !== initialSelectedKey;
 
+  // Blocked = app-owned AND not already translatable (we can't patch/create in
+  // another app's namespace). App-owned but already-translatable (e.g.
+  // Judge.me) IS selectable — we just record it for the editor.
+  function isBlocked(def: ScannedDefinition): boolean {
+    return def.ownerCategory === "third-party" && !def.translatable;
+  }
+
   function toggle(def: ScannedDefinition, checked: boolean) {
-    if (def.ownerCategory === "third-party") return; // not selectable
+    if (isBlocked(def)) return; // not selectable
     setSelected((prev) => {
       const next = new Set(prev);
       if (checked) next.add(def.id);
@@ -172,15 +180,28 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
 
   function handleSave() {
     const byId = new Map(definitions.map((d) => [d.id, d]));
-    const payload: Array<{ definitionId: string; namespace: string; key: string; requiresPatch: boolean }> = [];
+    const payload: Array<{
+      id: string;
+      namespace: string;
+      key: string;
+      type: string;
+      name: string;
+      translatable: boolean;
+      hasDefinition: boolean;
+      ownerCategory: MetafieldOwnerCategory;
+    }> = [];
     for (const id of selected) {
       const def = byId.get(id);
-      if (!def || def.ownerCategory === "third-party") continue;
+      if (!def || isBlocked(def)) continue;
       payload.push({
-        definitionId: def.id,
+        id: def.id,
         namespace: def.namespace,
         key: def.key,
-        requiresPatch: !def.translatable,
+        type: def.type,
+        name: def.name,
+        translatable: def.translatable,
+        hasDefinition: def.hasDefinition,
+        ownerCategory: def.ownerCategory,
       });
     }
     saveFetcher.submit(
@@ -286,9 +307,9 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
                 </InlineStack>
                 <BlockStack gap="200">
                   {defs.map((def) => {
-                    const disabled = def.ownerCategory === "third-party";
-                    // Enabling a not-yet-public def flips its storefront access
-                    // to PUBLIC_READ (the only translatability lever) — warn.
+                    const disabled = isBlocked(def);
+                    // Enabling a not-yet-translatable shop field makes it public
+                    // on the storefront (the only translatability lever) — warn.
                     const activatable = !def.translatable && !disabled;
                     const statusBadge = def.translatable
                       ? <Badge tone="success">{tr("metafieldsBadgeTranslatable", "translatable")}</Badge>

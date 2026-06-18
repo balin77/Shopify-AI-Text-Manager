@@ -677,11 +677,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       return json({ success: true, actionType });
     } else if (actionType === "scanProductMetafieldDefinitions") {
-      // Scan ALL product metafield definitions (incl. third-party app ones) and
-      // return them to the client, categorized. Records the scan timestamp.
-      const { ContentService } = await import("../services/content.service");
-      const service = new ContentService(admin);
-      const definitions = await service.getProductMetafieldDefinitions();
+      // Data-driven scan: sources from the actual product metafields (incl.
+      // third-party / definition-less ones like Google & Judge.me), enriched
+      // with definitions and per-key translatability probes. Records timestamp.
+      const { scanProductMetafields } = await import("../services/metafield-enablement.server");
+      const definitions = await scanProductMetafields(admin, db, session.shop);
       const scannedAt = new Date();
       await db.aISettings.upsert({
         where: { shop: session.shop },
@@ -690,18 +690,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       return json({ success: true, actionType, definitions, metafieldsLastScanAt: scannedAt.toISOString() });
     } else if (actionType === "saveEnabledMetafieldDefinitions") {
-      // Persist the merchant's selection. For each enabled definition that is
-      // not yet translatable (requiresPatch), flip its translatable capability
-      // first; third-party-owned definitions are not sent here (UI disables
-      // them). Successful selections fully replace the prior set for the shop.
+      // Persist the merchant's selection. Per item, the server picks the right
+      // action: already translatable → just persist; shop-owned with a
+      // definition → set storefront access PUBLIC_READ; shop-owned WITHOUT a
+      // definition → create a public definition; third-party + not translatable
+      // → reject (the UI also blocks these). Successful selections fully replace
+      // the prior set for the shop.
       //
-      // Note: the Shopify capability patch is a non-transactional side effect
-      // applied BEFORE the DB transaction. This is deliberate and tolerable —
-      // the patch is idempotent (re-enabling re-derives requiresPatch=false) and
-      // we never revert it (reverting would break other tools relying on the
-      // translatable definition), so a crash mid-loop is self-healing.
+      // Note: the Shopify-side change (access patch / definition create) is a
+      // non-transactional side effect applied BEFORE the DB transaction. This is
+      // deliberate and tolerable — it is idempotent (a re-save of an
+      // already-translatable field does nothing) and we never revert it
+      // (reverting would break the storefront/other tools), so a crash mid-loop
+      // is self-healing.
       const payload = getFormString(formData, "definitions");
-      let incoming: Array<{ definitionId: string; namespace: string; key: string; requiresPatch?: boolean }> = [];
+      let incoming: Array<{
+        id: string;
+        namespace: string;
+        key: string;
+        type?: string;
+        name?: string;
+        translatable?: boolean;
+        hasDefinition?: boolean;
+        ownerCategory?: string;
+      }> = [];
       try {
         incoming = payload ? JSON.parse(payload) : [];
       } catch {
@@ -709,13 +721,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       const { ContentService } = await import("../services/content.service");
-      const { categorizeMetafieldOwner } = await import("../config/known-third-party-apps");
       const service = new ContentService(admin);
 
       // Preserve the patchedTranslatable history across the destructive
-      // delete+reinsert below: once we have flipped a definition's capability,
-      // a later scan reports translatable:true so requiresPatch becomes false —
-      // we must not regress the persisted flag back to false.
+      // delete+reinsert below: once we have made a field translatable, a later
+      // scan reports translatable:true — we must not regress the flag to false.
       const priorRows = await db.enabledMetafieldDefinition.findMany({
         where: { shop: session.shop, ownerType: "PRODUCT" },
         select: { definitionId: true, patchedTranslatable: true },
@@ -726,30 +736,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const failed: Array<{ namespace: string; key: string; error?: string }> = [];
 
       for (const def of incoming) {
-        if (!def?.definitionId || !def.namespace || !def.key) continue;
-        // Defense in depth: the UI never sends app-owned definitions (Shopify
-        // would reject the patch anyway), but reject them server-side too rather
-        // than waste a mutation round-trip.
-        if (categorizeMetafieldOwner(def.namespace).category === "third-party") {
-          failed.push({ namespace: def.namespace, key: def.key, error: "App-owned definition cannot be enabled" });
-          continue;
-        }
+        if (!def?.id || !def.namespace || !def.key) continue;
+        const isThirdParty = def.ownerCategory === "third-party";
         let patched = false;
-        if (def.requiresPatch) {
+
+        if (def.translatable) {
+          // Already translatable (incl. app-owned like Judge.me) — nothing to
+          // change on Shopify, just record it so the editor shows it.
+        } else if (isThirdParty) {
+          // Not translatable AND app-owned — we cannot patch/create here.
+          failed.push({ namespace: def.namespace, key: def.key, error: "App-owned metafield cannot be made translatable" });
+          continue;
+        } else if (def.hasDefinition) {
           const res = await service.updateMetafieldDefinitionTranslatable(def.namespace, def.key);
           if (!res.ok) {
             failed.push({ namespace: def.namespace, key: def.key, error: res.error });
             continue;
           }
           patched = true;
+        } else {
+          // Shop-owned but definition-less → create a public definition.
+          const res = await service.createTranslatableMetafieldDefinition(
+            def.namespace,
+            def.key,
+            def.type || "single_line_text_field",
+            def.name || def.key,
+          );
+          if (!res.ok) {
+            failed.push({ namespace: def.namespace, key: def.key, error: res.error });
+            continue;
+          }
+          patched = true;
         }
+
         toInsert.push({
           shop: session.shop,
-          definitionId: def.definitionId,
+          definitionId: def.id,
           namespace: def.namespace,
           key: def.key,
           ownerType: "PRODUCT",
-          patchedTranslatable: patched || (priorPatched.get(def.definitionId) ?? false),
+          patchedTranslatable: patched || (priorPatched.get(def.id) ?? false),
         });
       }
 

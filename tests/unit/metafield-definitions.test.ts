@@ -12,6 +12,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { categorizeMetafieldOwner } from "~/config/known-third-party-apps";
 import { ContentService } from "~/services/content.service";
+import { scanProductMetafields } from "~/services/metafield-enablement.server";
 
 vi.mock("~/utils/logger.server", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -169,5 +170,110 @@ describe("ContentService.updateMetafieldDefinitionTranslatable()", () => {
     const res = await service.updateMetafieldDefinitionTranslatable("judgeme", "product_review_html");
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/another app/);
+  });
+});
+
+describe("scanProductMetafields() — data-driven", () => {
+  /**
+   * Admin mock that routes by query: the definitions query returns a page; the
+   * translatableResource probe returns content per resourceId.
+   */
+  function makeScanAdmin(opts: {
+    definitions: Array<Record<string, unknown>>;
+    translatableGids: Set<string>;
+  }) {
+    return {
+      graphql: vi.fn().mockImplementation(async (query: string, options?: { variables?: Record<string, unknown> }) => {
+        if (query.includes("metafieldDefinitions(ownerType")) {
+          return {
+            json: async () => ({
+              data: {
+                metafieldDefinitions: {
+                  edges: opts.definitions.map((node) => ({ node })),
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            }),
+          };
+        }
+        // translatableResource probe
+        const rid = String(options?.variables?.resourceId ?? "");
+        const content = opts.translatableGids.has(rid) ? [{ key: "value" }] : [];
+        return { json: async () => ({ data: { translatableResource: { translatableContent: content } } }) };
+      }),
+    };
+  }
+
+  it("surfaces definition-less third-party metafields and probes translatability", async () => {
+    const admin = makeScanAdmin({
+      definitions: [], // no merchant-visible definitions (app-owned / none)
+      translatableGids: new Set(["gid://shopify/Metafield/2"]), // judgeme is translatable
+    });
+    const db = {
+      productMetafield: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "gid://shopify/Metafield/1", namespace: "custom", key: "care", type: "single_line_text_field" },
+          { id: "gid://shopify/Metafield/2", namespace: "judgeme", key: "reviews", type: "multi_line_text_field" },
+          { id: "gid://shopify/Metafield/3", namespace: "custom", key: "specs", type: "json" }, // non-text → skipped
+        ]),
+      },
+    };
+
+    const scanned = await scanProductMetafields(admin as never, db as never, "shop.myshopify.com");
+
+    // json type excluded
+    expect(scanned).toHaveLength(2);
+
+    const care = scanned.find((d) => d.key === "care")!;
+    expect(care).toMatchObject({
+      id: "custom.care", // synthetic id (no definition)
+      ownerCategory: "shop",
+      hasDefinition: false,
+      translatable: false,
+    });
+
+    const reviews = scanned.find((d) => d.key === "reviews")!;
+    expect(reviews).toMatchObject({
+      id: "judgeme.reviews",
+      ownerCategory: "third-party",
+      appName: "Judge.me",
+      hasDefinition: false,
+      translatable: true, // confirmed via probe
+    });
+  });
+
+  it("marks a public shop definition as translatable without probing", async () => {
+    const admin = makeScanAdmin({
+      definitions: [
+        {
+          id: "gid://shopify/MetafieldDefinition/9",
+          namespace: "custom",
+          key: "care",
+          name: "Care",
+          description: null,
+          type: { name: "single_line_text_field" },
+          access: { storefront: "PUBLIC_READ" },
+        },
+      ],
+      translatableGids: new Set(),
+    });
+    const db = {
+      productMetafield: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "gid://shopify/Metafield/1", namespace: "custom", key: "care", type: "single_line_text_field" },
+        ]),
+      },
+    };
+
+    const scanned = await scanProductMetafields(admin as never, db as never, "shop.myshopify.com");
+    expect(scanned).toHaveLength(1);
+    expect(scanned[0]).toMatchObject({
+      id: "gid://shopify/MetafieldDefinition/9", // definition GID
+      hasDefinition: true,
+      translatable: true,
+    });
+    // The probe must NOT run for an already-public definition.
+    const probeCalls = (admin.graphql.mock.calls as Array<[string]>).filter(([q]) => q.includes("translatableResource"));
+    expect(probeCalls).toHaveLength(0);
   });
 });

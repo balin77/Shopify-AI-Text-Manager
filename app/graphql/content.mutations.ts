@@ -253,6 +253,31 @@ export const METAFIELD_DEFINITION_UPDATE_TRANSLATABLE = `#graphql
 `;
 
 /**
+ * METAFIELD DEFINITION CREATE (translatable) — create a shop-owned definition
+ * for an existing definition-less metafield and make it translatable.
+ *
+ * Some metafields (esp. raw values written by apps/imports) have no definition,
+ * so they can't be made translatable by updating one. Creating a definition for
+ * the existing namespace/key/type (with PUBLIC_READ storefront access) adopts
+ * the existing values and makes them translatable. Only works in shop-owned
+ * namespaces; reserved/app namespaces are rejected with a userError.
+ */
+export const METAFIELD_DEFINITION_CREATE_TRANSLATABLE = `#graphql
+  mutation metafieldDefinitionCreateTranslatable($definition: MetafieldDefinitionInput!) {
+    metafieldDefinitionCreate(definition: $definition) {
+      createdDefinition {
+        id
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/**
  * METAOBJECT UPDATE — Update metaobject field values in primary locale
  *
  * This mutation updates metaobject field values directly (not translations).
