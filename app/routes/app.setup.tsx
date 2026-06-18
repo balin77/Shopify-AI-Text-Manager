@@ -14,7 +14,10 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
-const EXTENSION_HANDLE = "variant-gallery";
+// Block handle inside the storefront theme extension. The extension itself
+// is identified in Shopify deep links by the app's api_key (client_id), not
+// by the local toml UID or handle.
+const BLOCK_HANDLE = "variant-gallery";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -33,7 +36,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirect(`/app/products${search}`);
   }
 
-  return json({ shop: session.shop });
+  return json({
+    shop: session.shop,
+    shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
+  });
 };
 
 function StepRow({ number, title, description }: { number: number; title: string; description: string }) {
@@ -65,10 +71,10 @@ function StepRow({ number, title, description }: { number: number; title: string
 }
 
 export default function SetupPage() {
-  const { shop } = useLoaderData<typeof loader>();
+  const { shop, shopifyApiKey } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
-  const themeEditorUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${EXTENSION_HANDLE}`;
+  const themeEditorUrl = `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${shopifyApiKey}/${BLOCK_HANDLE}`;
 
   return (
     <Page

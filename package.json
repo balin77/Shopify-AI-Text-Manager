@@ -29,7 +29,8 @@
     "deploy": "shopify app deploy",
     "web:old": "tsx web-app/server.ts",
     "oauth:old": "tsx src/oauth-setup.ts",
-    "validate:env": "node scripts/validate-env.js"
+    "validate:env": "node scripts/validate-env.js",
+    "build:flags": "node scripts/build-storefront-flags.mjs"
   },
   "keywords": [],
   "author": "",

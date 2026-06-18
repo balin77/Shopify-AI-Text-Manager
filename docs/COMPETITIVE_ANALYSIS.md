@@ -98,13 +98,22 @@
 | Multi-Language | ✅ | ✅ 111 | ✅ | ✅ | ✅ |
 | Theme-Übersetzung | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Custom AI-Anweisungen | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Währungsumrechnung** | ❌ | ✅ 167 | ❌ | ✅ | ✅ |
+| **Währungsumrechnung** ¹ | ❌ | ✅ 167 | ❌ | ✅ | ✅ |
 | **Geolocation Auto-Detect** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Glossar/Terminologie** | ❌ | ✅ | ✅ | ✅ | ✅ |
-| **Language Switcher Widget** | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Language/Currency Switcher Widget** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Third-Party-App-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **Checkout-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
+
+> ¹ **Währungsumrechnung ist kein echter Gap** (Stand 2026-06): Shopify
+> rechnet seit Markets + Shopify Payments **nativ** mit aktuellen
+> Marktwechselkursen um — Storefront-Anzeige, Checkout und Refunds. Die
+> ✅ der Konkurrenz duplizieren in den meisten Fällen Shopify-Bordmittel.
+> Eigener Konverter ist nur in Edge-Cases relevant (Händler ohne Shopify
+> Payments, reiner Display-Switcher für nicht konfigurierte Märkte,
+> Custom-Rundung wie 9,99). Details + Entscheidung →
+> [ROADMAP.md](ROADMAP.md) §4.3 Localization.
 
 **Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
 
@@ -189,7 +198,7 @@ Diese Features haben die meisten Wettbewerber und Kunden erwarten sie:
 | 1 | **JSON-LD Structured Data** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
 | 2 | **Rich Snippets (Product, Review, Breadcrumb)** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
 | 3 | **Glossar/Terminologie-Management** | Hoch | Mittel | Transcy, Weglot, LangShop, T Lab |
-| 4 | **Language/Currency Switcher Widget** | Hoch | Hoch | Alle Translation-Apps |
+| ~~4~~ | ~~**Language/Currency Switcher Widget**~~ ✅ erledigt (2026-06, `extensions/storefront/blocks/locale-switcher.liquid`) | — | — | — |
 | 5 | **Content-Templates/Vorlagen** | Hoch | Niedrig | ChatGPT-AI, WritePilot, SEO On |
 
 #### Details:
@@ -383,13 +392,13 @@ Warum wichtig:
 
 ### 🔴 Kritisch
 
-**1. Language/Currency-Switcher-Widget (Storefront).** Sichtbare Theme-
-Komponente (Dropdown/Flaggen), mit der der *Endkunde* Sprache/Währung wählt.
-Ohne sie sieht der Besucher die Übersetzung gar nicht (Shopify zeigt sonst nur
-die Primärsprache) → ohne Widget sind alle Übersetzungen für Kunden faktisch
-unsichtbar. Umsetzung = **Theme App Extension** (Pattern existiert bereits:
-`extensions/variant-gallery`). Höchster Aufwand, aber einzige *echte
-Funktionslücke*.
+**1. Language/Currency-Switcher-Widget (Storefront).** ✅ **ERLEDIGT (2026-06).**
+Theme App Extension `extensions/storefront/blocks/locale-switcher.liquid`
+(+ `assets/locale-switcher.{js,css}`, `assets/flags.svg`, Locales) liefert
+einen sichtbaren Sprach-/Währungs-Switcher (Dropdown mit Flaggen, Header-/
+Footer-Position, Auto-Compact ab schmalem Viewport, Merged-Mode für Mobile,
+konfigurierbare Settings). Damit ist die einzige echte Funktionslücke
+geschlossen — Übersetzungen sind für Endkunden ohne Theme-Editing sichtbar.
 
 **2. Glossar/Terminologie-Management.** Begriffsdatenbank pro Shop: „nie
 übersetzen" / „immer exakt so übersetzen". Verhindert inkonsistente AI-
@@ -414,9 +423,16 @@ optional obendrauf, z. B. erst ab Pro).
 
 - **Geolocation Auto-Detect** — IP-basierte Auto-Sprach-/Währungswahl;
   funktioniert nur sinnvoll *mit* #1 gekoppelt. Mittlerer Aufwand.
-- **Währungsumrechnung** — lokale Preise + Wechselkurse/Rundung. Hoher Aufwand,
-  eher Commodity; verschiebt Positionierung Richtung „Internationalisierungs-
-  Suite" (strategische Entscheidung, nicht nur Feature).
+- **Währungsumrechnung** — ⚠️ **kein echter Gap mehr** (Stand 2026-06):
+  Shopify Markets + Shopify Payments rechnet **nativ** mit aktuellen
+  Marktwechselkursen um — Anzeige, Checkout *und* Refunds. Conversion-Fee
+  Shopify-seitig (0,5–2 % je nach Plan). Eigene Umsetzung würde Shopify-
+  Bordmittel duplizieren. Restwert nur in Edge-Cases: Händler **ohne**
+  Shopify Payments (PayPal-only, nicht unterstützte Länder), reiner
+  Display-Switcher für Märkte ohne Markets-Konfig, Custom-Rundung
+  (9,99 statt 9,87). Empfehlung: **nicht als Vollfeature bauen**, ggf.
+  schmaler Display-Switcher + Rundungsregeln als Pro-Add-on. Details →
+  [ROADMAP.md](ROADMAP.md) §4.3.
 - **AI Blog-Post-Generator** — ganze Artikel statt nur Beschreibungen. Niedriger
   Aufwand (AI-Infra steht), guter Marketing-Hebel.
 - **Google Search Console Integration** — Indexierung/Klicks/Impressionen in der
@@ -437,10 +453,9 @@ Instructions, Bild-Tools, viele Content-Typen). → Kritische Lücken schließen
 damit man nicht an Basis-Erwartungen scheitert; *vermarkten* aber die Stärken,
 die kein Übersetzungs-Konkurrent hat.
 
-**Empfohlene Reihenfolge (wenn Bugs erledigt):** #4 Templates (billig, nutzt
-vorhandene Infra, zusätzliches Pro/Max-Differenzial) → #1 Switcher-Widget
-(einzige echte Funktionslücke, Extension-Pattern existiert) → #2 Glossar +
-#3 JSON-LD parallel.
+**Empfohlene Reihenfolge (wenn Bugs erledigt):** ~~#1 Switcher-Widget~~ ✅
+erledigt → #4 Templates (billig, nutzt vorhandene Infra, zusätzliches
+Pro/Max-Differenzial) → #2 Glossar + #3 JSON-LD parallel.
 
 ---
 
@@ -520,13 +535,13 @@ model ContentTemplate {
 
 ### Phase 2: Wettbewerbsfähigkeit stärken
 
-#### 2.1 Language Switcher Widget
-- [ ] Embeddable Widget entwickeln
-- [ ] Theme App Extension oder Script Tag
-- [ ] Konfigurierbare Styles (Dropdown, Flags, etc.)
-- [ ] Position wählbar (Header, Footer, Floating)
-- [ ] Locale-Cookie setzen
-- [ ] Installation-Anleitung
+#### 2.1 Language/Currency Switcher Widget ✅ ERLEDIGT (2026-06)
+- [x] Embeddable Widget entwickeln — `extensions/storefront/blocks/locale-switcher.liquid`
+- [x] Theme App Extension — als App Block in `extensions/storefront`
+- [x] Konfigurierbare Styles (Dropdown, Flags) — `assets/flags.svg`, Settings im Liquid-Block
+- [x] Position wählbar (Header, Footer) — Footer als Default, Auto-Compact ab schmalem Viewport
+- [x] Sprache **und** Währung im selben Switcher — Merged-Mode für sehr schmale Viewports
+- [x] Installation: Standard-Shopify-App-Block-Workflow (kein eigener Guide nötig)
 
 #### 2.2 AI Blog-Post-Generator
 - [ ] Neuer Content-Typ "Blog Post" in AI-Generierung

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, Text, BlockStack, Button, Banner } from "@shopify/polaris";
+import { Card, Text, BlockStack, Button, Banner, Box, Divider } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 
 interface WebhookEntry {
@@ -9,6 +9,7 @@ interface WebhookEntry {
 
 interface SettingsSetupTabProps {
   shop: string;
+  shopifyApiKey: string;
   productCount: number;
   collectionCount: number;
   articleCount: number;
@@ -19,6 +20,7 @@ interface SettingsSetupTabProps {
 
 export function SettingsSetupTab({
   shop,
+  shopifyApiKey,
   productCount,
   collectionCount,
   articleCount,
@@ -26,6 +28,14 @@ export function SettingsSetupTab({
   webhookCount,
   t,
 }: SettingsSetupTabProps) {
+  // Theme-editor deep links must use the app's api_key (Shopify client_id),
+  // NOT the extension UID. The uuid form has been deprecated and Shopify
+  // responds with "app embed doesn't exist" for those URLs.
+  const buildEmbedUrl = (blockHandle: string) =>
+    `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${shopifyApiKey}/${blockHandle}`;
+  const variantGalleryEmbedUrl = buildEmbedUrl("variant-gallery-embed");
+  const localeSwitcherEmbedUrl = buildEmbedUrl("locale-switcher");
+  const ts = t.settings as unknown as Record<string, string>;
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookData, setWebhookData] = useState<any>(null);
@@ -195,6 +205,60 @@ export function SettingsSetupTab({
               {syncTriggerError}
             </Banner>
           )}
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingMd">
+            3. {t.settings.themeSetupTitle}
+          </Text>
+          <Text as="p" tone="subdued">
+            {t.settings.themeSetupDescription}
+          </Text>
+
+          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                {t.settings.themeSetupOptionATitle}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.themeSetupOptionADescription}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {ts.themeSetupSelectorHint ??
+                  "If your theme's product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme's product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."}
+              </Text>
+              <div>
+                <Button url={variantGalleryEmbedUrl} external variant="primary" size="slim">
+                  {t.settings.themeSetupOptionAButton}
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+
+          <Divider />
+
+          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                {ts.themeSetupOptionBTitle ?? "Language & Currency switcher"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {ts.themeSetupOptionBDescription ??
+                  "Lets customers pick the storefront language and country/currency. Uses Shopify's native localization API — no extra setup beyond activating the embed."}
+              </Text>
+              <div>
+                <Button url={localeSwitcherEmbedUrl} external variant="primary" size="slim">
+                  {ts.themeSetupOptionBButton ?? "Activate switcher"}
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+
+          <Text as="p" variant="bodySm" tone="subdued">
+            {t.settings.themeSetupNote}
+          </Text>
         </BlockStack>
       </Card>
 

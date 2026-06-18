@@ -1,0 +1,500 @@
+{%- comment -%}
+  App Embed Block (target: body) — storefront language & currency switcher.
+
+  Uses Shopify's NATIVE `localization` object + the built-in `localization`
+  form so the customer's choice is applied and persisted by Shopify exactly
+  like the theme's own country/language selector (no admin API, no custom
+  scope). The control works WITHOUT JavaScript (plain <select> + submit
+  button); the accompanying JS upgrades it to a custom dropdown that shows
+  flag icons inside the option list (a native <select> cannot render <img>
+  or <svg> inside <option> — that is a browser limitation, not ours).
+
+  Language and country are TWO SEPARATE `{% form 'localization' %}` forms —
+  that is Shopify's contract (mirrors Dawn). Each submission changes exactly
+  one dimension; currency follows the selected country (Shopify Markets).
+
+  Flag icon resolution per language, in priority order:
+    1. Per-language image_picker upload (image_X_*)        → custom <img>
+    2. Per-language ISO country override (country_overrides textarea, e.g.
+       `en=gb` to use the UK flag for English)              → bundled sprite
+    3. Region in the language code itself (e.g. "de-CH")    → bundled sprite
+    4. Default language→country mapping (e.g. en→us, ja→jp) → bundled sprite
+    5. Language ISO used as-is (last resort, may not exist) → bundled sprite
+
+  Country selector flags always use the country's own ISO code — no override
+  needed (each country IS its own flag).
+
+  Note: the Liquid `request` object exposes no query string, so `return_to`
+  is `request.path` (same as Shopify's own Dawn theme — query params are not
+  recoverable in Liquid).
+{%- endcomment -%}
+
+{%- liquid
+  assign style = block.settings.display_style | default: 'dropdown'
+  assign show_flag = block.settings.show_flag
+  assign label_format = block.settings.label_format | default: 'endonym'
+  assign country_display = block.settings.country_display | default: 'flag_and_name'
+  assign currency_format = block.settings.currency_format | default: 'both'
+  assign selectors_layout = block.settings.selectors_layout | default: 'horizontal'
+  assign flag_size = block.settings.flag_size | default: 18
+  assign inherit_theme = block.settings.inherit_theme_styles
+  assign compact_on_narrow = block.settings.compact_on_narrow
+  assign merge_on_supernarrow = block.settings.merge_on_supernarrow
+  assign mount_floating = block.settings.mount_floating
+  assign mount_header = block.settings.mount_header
+  assign mount_footer = block.settings.mount_footer
+  assign mount_custom = block.settings.mount_custom
+  assign floating_corner = block.settings.floating_corner | default: 'bottom-right'
+  assign lang_count = localization.available_languages.size
+  assign country_count = localization.available_countries.size
+
+  assign show_lang_block = false
+  if block.settings.show_language and lang_count > 1
+    assign show_lang_block = true
+  endif
+
+  assign show_country_block = false
+  if block.settings.show_country and country_count > 1
+    assign show_country_block = true
+  endif
+
+  assign lang_form_id = 'cp-locale-lang-' | append: block.id
+  assign country_form_id = 'cp-locale-country-' | append: block.id
+
+  assign sprite_url = 'flags.svg' | asset_url
+-%}
+
+{%- if show_lang_block or show_country_block -%}
+<cp-locale-switcher
+  id="cp-locale-switcher-{{ block.id }}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}{% if merge_on_supernarrow %} cp-locale-switcher--mergeable{% endif %}"
+  data-merge-on-supernarrow="{% if merge_on_supernarrow %}1{% else %}0{% endif %}"
+  data-block-id="{{ block.id }}"
+  data-country-display="{{ country_display | escape }}"
+  data-currency-format="{{ currency_format | escape }}"
+  data-mount-floating="{% if mount_floating %}1{% else %}0{% endif %}"
+  data-floating-corner="{{ floating_corner | escape }}"
+  data-mount-header="{% if mount_header %}1{% else %}0{% endif %}"
+  data-header-selector="{{ block.settings.header_selector | strip | escape }}"
+  data-header-position="{{ block.settings.header_position | default: 'append' | escape }}"
+  data-mount-footer="{% if mount_footer %}1{% else %}0{% endif %}"
+  data-footer-selector="{{ block.settings.footer_selector | strip | escape }}"
+  data-footer-position="{{ block.settings.footer_position | default: 'append' | escape }}"
+  data-mount-custom="{% if mount_custom %}1{% else %}0{% endif %}"
+  data-custom-selector="{{ block.settings.custom_selector | strip | escape }}"
+  data-custom-position="{{ block.settings.custom_position | default: 'append' | escape }}"
+  data-sprite-url="{{ sprite_url | escape }}"
+  data-show-flag="{% if show_flag %}1{% else %}0{% endif %}"
+  data-label-format="{{ label_format | escape }}"
+  data-flag-size="{{ flag_size }}"
+  data-debug="{% if block.settings.debug_logs %}1{% endif %}"
+  style="--cp-ls-bg: {{ block.settings.bg_color | escape }}; --cp-ls-fg: {{ block.settings.text_color | escape }}; --cp-ls-accent: {{ block.settings.accent_color | escape }}; --cp-ls-flag-size: {{ flag_size }}px;"
+>
+  <div class="cp-locale-switcher__inner">
+    {%- if show_lang_block -%}
+      {%- form 'localization', id: lang_form_id, class: 'cp-locale-switcher__form' -%}
+        <input type="hidden" name="return_to" value="{{ request.path | escape }}">
+        <label class="cp-locale-switcher__group">
+          <span class="cp-locale-switcher__label">{{ 'blocks.locale_switcher.language' | t }}</span>
+          <select
+            name="locale_code"
+            class="cp-locale-switcher__select"
+            data-kind="language"
+            aria-label="{{ 'blocks.locale_switcher.language' | t }}"
+          >
+            {%- for lang in localization.available_languages -%}
+              {%- liquid
+                assign iso_lower = lang.iso_code | downcase
+
+                # 1) image_picker overrides
+                assign override_img = ''
+                if block.settings.image_1 != blank and block.settings.lang_1 != blank
+                  assign t = block.settings.lang_1 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_1 | image_url: width: 60
+                  endif
+                endif
+                if override_img == '' and block.settings.image_2 != blank and block.settings.lang_2 != blank
+                  assign t = block.settings.lang_2 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_2 | image_url: width: 60
+                  endif
+                endif
+                if override_img == '' and block.settings.image_3 != blank and block.settings.lang_3 != blank
+                  assign t = block.settings.lang_3 | strip | downcase
+                  if t == iso_lower
+                    assign override_img = block.settings.image_3 | image_url: width: 60
+                  endif
+                endif
+
+                # 2) country_overrides textarea (de=ch, fr=ca, ...)
+                assign flag_country = ''
+                assign overrides_raw = block.settings.country_overrides | default: ''
+                assign overrides_norm = overrides_raw | replace: ',', '|' | replace: ';', '|' | newline_to_br | replace: '<br />', '|' | replace: '<br/>', '|' | replace: '<br>', '|'
+                assign override_lines = overrides_norm | split: '|'
+                for line in override_lines
+                  assign pair = line | strip | split: '='
+                  if pair.size == 2
+                    assign p_lang = pair[0] | strip | downcase
+                    assign p_country = pair[1] | strip | downcase
+                    if p_lang == iso_lower
+                      assign flag_country = p_country
+                    endif
+                  endif
+                endfor
+
+                # 3) region embedded in the language code (e.g. de-CH)
+                if flag_country == ''
+                  assign code_parts = iso_lower | split: '-'
+                  if code_parts.size > 1
+                    assign flag_country = code_parts | last
+                  endif
+                endif
+
+                # 4) default language → country mapping
+                if flag_country == ''
+                  case iso_lower
+                    when 'en'
+                      assign flag_country = 'us'
+                    when 'sv'
+                      assign flag_country = 'se'
+                    when 'da'
+                      assign flag_country = 'dk'
+                    when 'el'
+                      assign flag_country = 'gr'
+                    when 'cs'
+                      assign flag_country = 'cz'
+                    when 'ja'
+                      assign flag_country = 'jp'
+                    when 'ko'
+                      assign flag_country = 'kr'
+                    when 'zh'
+                      assign flag_country = 'cn'
+                    when 'ar'
+                      assign flag_country = 'ae'
+                    when 'he'
+                      assign flag_country = 'il'
+                    when 'hi'
+                      assign flag_country = 'in'
+                    when 'vi'
+                      assign flag_country = 'vn'
+                    when 'uk'
+                      assign flag_country = 'ua'
+                    when 'ms'
+                      assign flag_country = 'my'
+                    when 'fil'
+                      assign flag_country = 'ph'
+                    when 'tl'
+                      assign flag_country = 'ph'
+                    when 'nb'
+                      assign flag_country = 'no'
+                    when 'nn'
+                      assign flag_country = 'no'
+                    else
+                      assign flag_country = iso_lower
+                  endcase
+                endif
+
+                assign endonym = lang.endonym_name | capitalize
+                assign iso_upper = lang.iso_code | upcase
+              -%}
+              <option
+                value="{{ lang.iso_code }}"
+                data-flag-country="{{ flag_country | escape }}"
+                data-flag-image="{{ override_img | escape }}"
+                data-endonym="{{ endonym | escape }}"
+                data-iso="{{ iso_upper | escape }}"
+                {% if lang.iso_code == localization.language.iso_code %}selected{% endif %}
+              >{{ endonym }}</option>
+            {%- endfor -%}
+          </select>
+        </label>
+        <noscript>
+          <button type="submit" class="cp-locale-switcher__submit">
+            {{ 'blocks.locale_switcher.update' | t }}
+          </button>
+        </noscript>
+      {%- endform -%}
+    {%- endif -%}
+
+    {%- if show_country_block -%}
+      {%- form 'localization', id: country_form_id, class: 'cp-locale-switcher__form' -%}
+        <input type="hidden" name="return_to" value="{{ request.path | escape }}">
+        <label class="cp-locale-switcher__group">
+          <span class="cp-locale-switcher__label">{{ 'blocks.locale_switcher.country' | t }}</span>
+          <select
+            name="country_code"
+            class="cp-locale-switcher__select"
+            data-kind="country"
+            aria-label="{{ 'blocks.locale_switcher.country' | t }}"
+          >
+            {%- for c in localization.available_countries -%}
+              {%- liquid
+                assign c_iso = c.iso_code | downcase
+                assign c_name = c.name
+                assign c_iso_upper = c.iso_code | upcase
+                assign c_currency = c.currency.iso_code
+                assign c_symbol = c.currency.symbol
+
+                # Currency notation per merchant choice. When Shopify returns
+                # the same value for symbol and iso_code (some currencies have
+                # no distinct glyph and fall back to the code, e.g. CHF/CHF)
+                # we drop the duplicate to avoid rendering "CHF CHF".
+                case currency_format
+                  when 'symbol'
+                    assign currency_part = c_symbol
+                  when 'code'
+                    assign currency_part = c_currency
+                  when 'none'
+                    assign currency_part = ''
+                  else
+                    if c_symbol == c_currency
+                      assign currency_part = c_currency
+                    else
+                      assign currency_part = c_currency | append: ' ' | append: c_symbol
+                    endif
+                endcase
+
+                # The visible <option> text — also used as the JS button label
+                # (data-endonym). For flag_only we still emit the full text so
+                # the screen-reader path remains informative.
+                if country_display == 'flag_only'
+                  if currency_part != ''
+                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
+                  else
+                    assign c_label_full = c_name
+                  endif
+                else
+                  if currency_part != ''
+                    assign c_label_full = c_name | append: ' (' | append: currency_part | append: ')'
+                  else
+                    assign c_label_full = c_name
+                  endif
+                endif
+
+                # data-iso variant used when label_format=iso. Keep currency
+                # appended for the no-JS fallback's clarity.
+                if currency_part != ''
+                  assign c_label_iso = c_iso_upper | append: ' (' | append: currency_part | append: ')'
+                else
+                  assign c_label_iso = c_iso_upper
+                endif
+              -%}
+              <option
+                value="{{ c.iso_code }}"
+                data-flag-country="{{ c_iso | escape }}"
+                data-flag-image=""
+                data-endonym="{{ c_label_full | escape }}"
+                data-iso="{{ c_label_iso | escape }}"
+                data-name="{{ c_name | escape }}"
+                data-currency-code="{{ c_currency | escape }}"
+                data-currency-symbol="{{ c_symbol | escape }}"
+                {% if c.iso_code == localization.country.iso_code %}selected{% endif %}
+              >{{ c_label_full }}</option>
+            {%- endfor -%}
+          </select>
+        </label>
+        <noscript>
+          <button type="submit" class="cp-locale-switcher__submit">
+            {{ 'blocks.locale_switcher.update' | t }}
+          </button>
+        </noscript>
+      {%- endform -%}
+    {%- endif -%}
+  </div>
+</cp-locale-switcher>
+
+{{ 'locale-switcher.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'locale-switcher.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Language & Currency",
+  "target": "body",
+  "settings": [
+    { "type": "header", "content": "Visibility" },
+    { "type": "checkbox", "id": "show_language", "label": "Show language selector", "default": true },
+    { "type": "checkbox", "id": "show_country", "label": "Show country / currency selector", "default": true },
+
+    { "type": "header", "content": "Placement" },
+    { "type": "checkbox", "id": "mount_floating", "label": "Show as floating widget", "default": true, "info": "Pick one or more locations. The widget is cloned into every enabled spot — e.g. floating AND in the site header." },
+    {
+      "type": "select",
+      "id": "floating_corner",
+      "label": "Floating corner",
+      "info": "Only used when 'Show as floating widget' is enabled.",
+      "options": [
+        { "value": "bottom-right", "label": "Bottom right" },
+        { "value": "bottom-left", "label": "Bottom left" },
+        { "value": "top-right", "label": "Top right" }
+      ],
+      "default": "bottom-right"
+    },
+    { "type": "checkbox", "id": "mount_header", "label": "Show in site header", "default": false },
+    {
+      "type": "text",
+      "id": "header_selector",
+      "label": "Header CSS selector (optional)",
+      "info": "Default works for Dawn-style themes — drops the switcher into the icon row next to search/account/cart. Clear or override to target a different element; the auto-detect fallback is the <header> tag.",
+      "default": ".header__icons"
+    },
+    {
+      "type": "select",
+      "id": "header_position",
+      "label": "Header insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
+    },
+    { "type": "checkbox", "id": "mount_footer", "label": "Show in site footer", "default": false },
+    {
+      "type": "text",
+      "id": "footer_selector",
+      "label": "Footer CSS selector (optional)",
+      "info": "Default works for Dawn-style themes. Clear or override to target a different element; the auto-detect fallback is the <footer> tag.",
+      "default": ".footer__localization"
+    },
+    {
+      "type": "select",
+      "id": "footer_position",
+      "label": "Footer insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
+    },
+    { "type": "checkbox", "id": "mount_custom", "label": "Show at custom location", "default": false },
+    {
+      "type": "text",
+      "id": "custom_selector",
+      "label": "Custom CSS selector",
+      "info": "Required if 'Show at custom location' is enabled. Mounts the widget into the first matching element."
+    },
+    {
+      "type": "select",
+      "id": "custom_position",
+      "label": "Custom insert position",
+      "options": [
+        { "value": "append", "label": "End of container" },
+        { "value": "prepend", "label": "Start of container" }
+      ],
+      "default": "append"
+    },
+    {
+      "type": "select",
+      "id": "display_style",
+      "label": "Layout",
+      "options": [
+        { "value": "dropdown", "label": "Dropdowns" },
+        { "value": "compact", "label": "Compact (inline)" }
+      ],
+      "default": "dropdown"
+    },
+
+    { "type": "header", "content": "Dropdowns" },
+    {
+      "type": "select",
+      "id": "selectors_layout",
+      "label": "Layout",
+      "info": "How the language and country dropdowns are arranged relative to each other.",
+      "options": [
+        { "value": "horizontal", "label": "Horizontal — side by side" },
+        { "value": "stacked", "label": "Vertical — stacked" }
+      ],
+      "default": "horizontal"
+    },
+    { "type": "checkbox", "id": "show_flag", "label": "Show flag in language dropdown", "default": true },
+    {
+      "type": "select",
+      "id": "label_format",
+      "label": "Language label",
+      "options": [
+        { "value": "endonym", "label": "Native name (Deutsch, English, ...)" },
+        { "value": "iso", "label": "ISO code (DE, EN, ...)" },
+        { "value": "none", "label": "Hide label (icon only)" }
+      ],
+      "default": "endonym"
+    },
+    {
+      "type": "select",
+      "id": "country_display",
+      "label": "Country display",
+      "options": [
+        { "value": "flag_and_name", "label": "Flag + name" },
+        { "value": "name_only", "label": "Name only" },
+        { "value": "flag_only", "label": "Flag only" }
+      ],
+      "default": "flag_and_name"
+    },
+    {
+      "type": "select",
+      "id": "currency_format",
+      "label": "Currency notation",
+      "options": [
+        { "value": "symbol", "label": "Symbol only ($)" },
+        { "value": "code", "label": "Code only (USD)" },
+        { "value": "both", "label": "Code + symbol (USD $)" },
+        { "value": "none", "label": "Hide currency" }
+      ],
+      "default": "both"
+    },
+
+    { "type": "header", "content": "Flag icons" },
+    {
+      "type": "range",
+      "id": "flag_size",
+      "label": "Flag size",
+      "min": 14,
+      "max": 28,
+      "step": 1,
+      "unit": "px",
+      "default": 18
+    },
+    {
+      "type": "textarea",
+      "id": "country_overrides",
+      "label": "Flag overrides (per language)",
+      "info": "One per line in the form lang=country (lowercase ISO codes). Example: en=gb shows the UK flag for English. Browse available codes at flagicons.lipis.dev."
+    },
+
+    { "type": "header", "content": "Custom uploaded flags" },
+    { "type": "text", "id": "lang_1", "label": "Slot 1 — language code", "info": "e.g. de, fr, en-US" },
+    { "type": "image_picker", "id": "image_1", "label": "Slot 1 — image" },
+    { "type": "text", "id": "lang_2", "label": "Slot 2 — language code" },
+    { "type": "image_picker", "id": "image_2", "label": "Slot 2 — image" },
+    { "type": "text", "id": "lang_3", "label": "Slot 3 — language code" },
+    { "type": "image_picker", "id": "image_3", "label": "Slot 3 — image" },
+
+    { "type": "header", "content": "Appearance" },
+    {
+      "type": "checkbox",
+      "id": "inherit_theme_styles",
+      "label": "Inherit theme dropdown styles",
+      "info": "Strips our own background, border and shadow so the switcher blends with the theme's design (recommended when mounted into header/footer). Floating instances keep their full chrome regardless.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "compact_on_narrow",
+      "label": "Auto-shorten on narrow screens",
+      "info": "When the widget's available width gets tight, drops the language label (flag only) and replaces the country name with the currency symbol / code. Keeps the dropdown out of the way in cramped headers and on mobile.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "merge_on_supernarrow",
+      "label": "Merge into one dropdown on very narrow screens",
+      "info": "On phones in portrait, hide the country dropdown and put its options inside the language dropdown instead — clicking the single trigger opens a list with both Language and Currency sections.",
+      "default": true
+    },
+    { "type": "color", "id": "bg_color", "label": "Background", "default": "#ffffff" },
+    { "type": "color", "id": "text_color", "label": "Text", "default": "#1a1a1a" },
+    { "type": "color", "id": "accent_color", "label": "Accent / border", "default": "#008060" },
+    { "type": "checkbox", "id": "debug_logs", "label": "Enable debug logging in browser console", "default": false }
+  ]
+}
+{% endschema %}
