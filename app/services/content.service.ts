@@ -13,9 +13,13 @@ import {
   GET_METAOBJECTS,
   GET_THEME_TRANSLATABLE_RESOURCES,
   GET_THEME_TRANSLATIONS,
-  GET_PRODUCT_METAFIELD_DEFINITIONS
+  GET_PRODUCT_METAFIELD_DEFINITIONS,
+  GET_TRANSLATABLE_CONTENT
 } from "../graphql/content.queries";
-import { METAFIELD_DEFINITION_UPDATE_TRANSLATABLE } from "../graphql/content.mutations";
+import {
+  METAFIELD_DEFINITION_UPDATE_TRANSLATABLE,
+  METAFIELD_DEFINITION_CREATE_TRANSLATABLE,
+} from "../graphql/content.mutations";
 import {
   categorizeMetafieldOwner,
   type MetafieldOwnerCategory,
@@ -342,6 +346,62 @@ export class ContentService {
       logger.error("Error updating metafield definition translatable", { context: "ContentService", namespace, key, error });
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * Create a shop-owned, translatable (PUBLIC_READ) definition for an existing
+   * definition-less metafield so its values become registerable translations.
+   * Graceful: returns ok:false on userError (e.g. reserved/app namespace).
+   */
+  async createTranslatableMetafieldDefinition(
+    namespace: string,
+    key: string,
+    type: string,
+    name: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const response = await this.admin.graphql(METAFIELD_DEFINITION_CREATE_TRANSLATABLE, {
+        variables: {
+          definition: {
+            name: name || key,
+            namespace,
+            key,
+            type,
+            ownerType: "PRODUCT",
+            access: { storefront: "PUBLIC_READ" },
+          },
+        },
+      });
+      const data = await response.json() as {
+        data?: { metafieldDefinitionCreate?: { userErrors?: Array<{ message: string }> } };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) return { ok: false, error: data.errors[0].message };
+      const userErrors = data.data?.metafieldDefinitionCreate?.userErrors ?? [];
+      if (userErrors.length > 0) return { ok: false, error: userErrors[0].message };
+      return { ok: true };
+    } catch (error) {
+      logger.error("Error creating translatable metafield definition", { context: "ContentService", namespace, key, error });
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * Probe whether a specific metafield is translatable: a metafield is
+   * translatable iff `translatableResource(<metafieldGID>).translatableContent`
+   * returns at least one entry. This is the definitive, app-visibility-
+   * independent signal — it works even for app-owned definitions we can't see
+   * via `metafieldDefinitions` (e.g. Judge.me).
+   */
+  async isMetafieldTranslatable(metafieldGid: string): Promise<boolean> {
+    const response = await this.admin.graphql(GET_TRANSLATABLE_CONTENT, {
+      variables: { resourceId: metafieldGid },
+    });
+    const data = await response.json() as {
+      data?: { translatableResource?: { translatableContent?: Array<{ key: string }> } };
+    };
+    const content = data.data?.translatableResource?.translatableContent ?? [];
+    return Array.isArray(content) && content.length > 0;
   }
 
   async getMenus(first: number = 50) {
