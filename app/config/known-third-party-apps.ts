@@ -30,8 +30,12 @@ export const CONTENTPILOT_NAMESPACE = "contentpilot";
 export const KNOWN_THIRD_PARTY_APPS: Record<string, ThirdPartyAppInfo> = {
   judgeme: { displayName: "Judge.me" },
   loox: { displayName: "Loox" },
+  okendo: { displayName: "Okendo" },
   "yotpo-reviews": { displayName: "Yotpo Reviews" },
   yotpo: { displayName: "Yotpo" },
+  stamped: { displayName: "Stamped" },
+  google: { displayName: "Google & YouTube" },
+  "mm-google-shopping": { displayName: "Google Shopping" },
   pagefly: { displayName: "PageFly" },
   shogun: { displayName: "Shogun" },
   gempages: { displayName: "GemPages" },
@@ -40,6 +44,14 @@ export const KNOWN_THIRD_PARTY_APPS: Record<string, ThirdPartyAppInfo> = {
   growave: { displayName: "Growave" },
   "bold-bundles": { displayName: "Bold Bundles" },
   klaviyo: { displayName: "Klaviyo" },
+};
+
+/**
+ * Friendly names for Shopify's own apps that use the reserved
+ * `shopify--<handle>--<namespace>` metafield namespace pattern.
+ */
+const SHOPIFY_RESERVED_APPS: Record<string, string> = {
+  discovery: "Shopify Search & Discovery",
 };
 
 export type MetafieldOwnerCategory = "shop" | "third-party" | "contentpilot";
@@ -55,7 +67,9 @@ export interface MetafieldOwnerResult {
  *
  * Order of precedence:
  *  1. Our own namespace → "contentpilot".
- *  2. Shopify app-reserved namespaces (`app--<id>--…`) → "third-party".
+ *  2. Reserved namespaces containing "--" (`app--<id>--…` for third-party apps,
+ *     `shopify--<handle>--…` for Shopify's own apps) → "third-party". These are
+ *     app-owned and never patchable by us.
  *  3. Curated allowlist match → "third-party" (with displayName).
  *  4. Everything else → "shop" (shop-owned, patchable).
  */
@@ -66,9 +80,15 @@ export function categorizeMetafieldOwner(namespace: string): MetafieldOwnerResul
     return { category: "contentpilot" };
   }
 
-  // Shopify reserves the `app--<app-id>--<namespace>` prefix for app-owned
-  // metafields. These are never patchable by another app.
-  if (ns.startsWith("app--")) {
+  // Shopify uses "--" to mark RESERVED, app-owned namespaces:
+  //   - `app--<app-id>--<namespace>`        → a third-party app
+  //   - `shopify--<app-handle>--<namespace>` → one of Shopify's own apps
+  // Both are owned by another app and cannot be made translatable by us.
+  if (ns.includes("--")) {
+    const shopifyApp = ns.match(/^shopify--([a-z0-9_-]+?)--/);
+    if (shopifyApp) {
+      return { category: "third-party", appName: SHOPIFY_RESERVED_APPS[shopifyApp[1]] ?? "Shopify" };
+    }
     return { category: "third-party" };
   }
 
