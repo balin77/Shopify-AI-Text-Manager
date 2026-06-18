@@ -38,6 +38,7 @@
   assign selectors_layout = block.settings.selectors_layout | default: 'horizontal'
   assign flag_size = block.settings.flag_size | default: 18
   assign inherit_theme = block.settings.inherit_theme_styles
+  assign compact_on_narrow = block.settings.compact_on_narrow
   assign mount_floating = block.settings.mount_floating
   assign mount_header = block.settings.mount_header
   assign mount_footer = block.settings.mount_footer
@@ -65,7 +66,7 @@
 {%- if show_lang_block or show_country_block -%}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
-  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}"
+  class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}"
   data-block-id="{{ block.id }}"
   data-country-display="{{ country_display | escape }}"
   data-currency-format="{{ currency_format | escape }}"
@@ -344,7 +345,8 @@
       "type": "text",
       "id": "footer_selector",
       "label": "Footer CSS selector (optional)",
-      "info": "Leave empty to auto-detect <footer>."
+      "info": "Default works for Dawn-style themes. Clear or override to target a different element; the auto-detect fallback is the <footer> tag.",
+      "default": ".footer__localization"
     },
     {
       "type": "select",
@@ -382,13 +384,6 @@
         { "value": "compact", "label": "Compact (inline)" }
       ],
       "default": "dropdown"
-    },
-    {
-      "type": "checkbox",
-      "id": "inherit_theme_styles",
-      "label": "Inherit theme dropdown styles",
-      "info": "Strips our own background, border and shadow so the switcher blends with the theme's design (recommended when mounted into header/footer).",
-      "default": false
     },
 
     { "type": "header", "content": "Dropdowns" },
@@ -466,6 +461,20 @@
     { "type": "image_picker", "id": "image_3", "label": "Slot 3 — image" },
 
     { "type": "header", "content": "Appearance" },
+    {
+      "type": "checkbox",
+      "id": "inherit_theme_styles",
+      "label": "Inherit theme dropdown styles",
+      "info": "Strips our own background, border and shadow so the switcher blends with the theme's design (recommended when mounted into header/footer). Floating instances keep their full chrome regardless.",
+      "default": false
+    },
+    {
+      "type": "checkbox",
+      "id": "compact_on_narrow",
+      "label": "Auto-shorten on narrow screens",
+      "info": "When the widget's available width gets tight, drops the language label (flag only) and replaces the country name with the currency symbol / code. Keeps the dropdown out of the way in cramped headers and on mobile.",
+      "default": true
+    },
     { "type": "color", "id": "bg_color", "label": "Background", "default": "#ffffff" },
     { "type": "color", "id": "text_color", "label": "Text", "default": "#1a1a1a" },
     { "type": "color", "id": "accent_color", "label": "Accent / border", "default": "#008060" },

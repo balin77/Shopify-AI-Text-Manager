@@ -262,6 +262,27 @@ class CpLocaleSwitcher extends HTMLElement {
     button.textContent = '';
     button.appendChild(this._renderFlag(opt, kind));
     button.appendChild(this._renderLabel(opt, kind));
+    // Auto-compact: for the country trigger we also stash a short variant
+    // (currency symbol / code, or country ISO when currency is hidden). CSS
+    // shows the long label by default and swaps to this one inside a
+    // container query when the host's inline size gets tight. Language has
+    // no short variant — the flag alone is enough at narrow widths.
+    if (kind === 'country' && this._countryDisplay !== 'flag_only') {
+      const short = document.createElement('span');
+      short.className = 'cp-locale-field__short';
+      short.setAttribute('aria-hidden', 'true');
+      let shortText;
+      if (this._currencyFormat === 'none') {
+        shortText = (opt.value || '').toUpperCase();
+      } else if (this._currencyFormat === 'code') {
+        shortText = opt.currencyCode || (opt.value || '').toUpperCase();
+      } else {
+        // 'symbol' or 'both' — symbol is the most compact, fall back to code
+        shortText = opt.currencySymbol || opt.currencyCode || (opt.value || '').toUpperCase();
+      }
+      short.textContent = shortText;
+      button.appendChild(short);
+    }
     const caret = document.createElement('span');
     caret.className = 'cp-locale-field__caret';
     caret.setAttribute('aria-hidden', 'true');
