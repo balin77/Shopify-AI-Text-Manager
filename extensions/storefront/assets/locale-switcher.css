@@ -176,6 +176,15 @@ cp-locale-switcher.cp-locale-switcher--floating-bottom-left .cp-locale-field__li
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.12);
 }
 
+/* JS toggles this class on open() when the list would otherwise clip past
+   the right edge of the viewport — anchor to the trigger's right edge so
+   the list opens leftward. Same trick the Dawn theme uses on its own
+   localization disclosure when it sits in the rightmost icon slot. */
+cp-locale-switcher .cp-locale-field__list--align-right {
+  left: auto;
+  right: 0;
+}
+
 cp-locale-switcher .cp-locale-field__option {
   display: flex;
   align-items: center;

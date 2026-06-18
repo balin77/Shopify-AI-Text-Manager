@@ -88,8 +88,12 @@ class CpLocaleSwitcher extends HTMLElement {
     this.classList.add('cp-locale-switcher--js');
     selects.forEach((sel) => this._upgrade(sel));
     // After every field is upgraded, set up the super-narrow merge if the
-    // merchant enabled it AND both language and country forms exist.
-    if (this._mergeOnSupernarrow && !this.classList.contains('cp-locale-switcher--clone')) {
+    // merchant enabled it AND both language and country forms exist. Run
+    // per-instance (including clones in header / footer / custom mounts)
+    // since each carries its own language list that needs the country
+    // options injected — without this, only the canonical mount got the
+    // merged list and merging silently failed for all other placements.
+    if (this._mergeOnSupernarrow) {
       this._setupMergedMode();
     }
   }
@@ -360,6 +364,15 @@ class CpLocaleSwitcher extends HTMLElement {
     const open = () => {
       list.hidden = false;
       button.setAttribute('aria-expanded', 'true');
+      // Horizontal overflow guard: if anchoring to the trigger's LEFT edge
+      // pushes the list past the right edge of the viewport (common when
+      // the widget sits in the right-side icon row of a header), flip to
+      // right-edge anchoring so the list opens leftward instead.
+      list.classList.remove('cp-locale-field__list--align-right');
+      const rect = list.getBoundingClientRect();
+      if (rect.right > window.innerWidth - 8) {
+        list.classList.add('cp-locale-field__list--align-right');
+      }
       const active = list.children[openIndex];
       if (active) {
         button.setAttribute('aria-activedescendant', active.id);
@@ -475,11 +488,27 @@ class CpLocaleSwitcher extends HTMLElement {
     list.addEventListener('mousemove', (e) => {
       const li = e.target.closest('.cp-locale-field__option');
       if (!li) return;
-      const idx = Number(li.dataset.index);
-      if (idx === openIndex) return;
-      list.children[openIndex]?.classList.remove('cp-locale-field__option--focus');
-      openIndex = idx;
+      if (li.classList.contains('cp-locale-field__option--focus')) return;
+      // Use a query instead of list.children[openIndex] so we also clear
+      // the focus class off MERGED country options (which have
+      // data-target-index, not data-index — openIndex tracks language opts
+      // only and would have pointed at a stale language row, leaving the
+      // country row tagged forever).
+      list.querySelectorAll('.cp-locale-field__option--focus').forEach((el) => {
+        if (el !== li) el.classList.remove('cp-locale-field__option--focus');
+      });
       li.classList.add('cp-locale-field__option--focus');
+      const idx = Number(li.dataset.index);
+      if (!Number.isNaN(idx)) openIndex = idx;
+    });
+
+    // Also clear when the mouse leaves the list entirely — without this,
+    // the row the mouse last hovered keeps its highlight after pointing
+    // away from the dropdown.
+    list.addEventListener('mouseleave', () => {
+      list.querySelectorAll('.cp-locale-field__option--focus').forEach((el) =>
+        el.classList.remove('cp-locale-field__option--focus')
+      );
     });
 
     // Outside-click close is handled by a SINGLE document-level listener
