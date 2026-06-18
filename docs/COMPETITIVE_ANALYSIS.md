@@ -102,7 +102,7 @@
 | **Geolocation Auto-Detect** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Glossar/Terminologie** | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **Language/Currency Switcher Widget** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Third-Party-App-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Third-Party-App-Übersetzung** ² | 🟡 | ✅ | ✅ | ✅ | ✅ |
 | **Checkout-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
 
@@ -114,6 +114,15 @@
 > Payments, reiner Display-Switcher für nicht konfigurierte Märkte,
 > Custom-Rundung wie 9,99). Details + Entscheidung →
 > [ROADMAP.md](ROADMAP.md) §4.3 Localization.
+>
+> ² **Third-Party-App-Übersetzung — Phase 1 ausgeliefert** (🟡 Teil-Lücke
+> geschlossen): Der Metafield-Scanner (Settings → Metafields) entdeckt jetzt
+> alle Produkt-Metafield-Definitionen — auch die von Drittapps (Judge.me,
+> Loox, PageFly …), die `translatableContent` sonst nie zurückgibt. Shop-
+> eigene Definitionen lassen sich per Klick übersetzbar machen und fließen in
+> die Produktübersetzung ein. App-eigene Definitionen sind sichtbar, aber
+> noch nicht aktivierbar (Shopify lehnt den `metafieldDefinitionUpdate`
+> fremder Apps ab) — Mirror-Workaround ist Phase 2.
 
 **Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
 

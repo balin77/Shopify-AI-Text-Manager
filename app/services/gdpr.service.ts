@@ -369,6 +369,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${imageOperationCountersDeleted.count} image operation counters`);
+
+    // 25. Delete enabled metafield-definition selections — shop-scoped config
+    //     (which product metafields the merchant enabled for translation).
+    const enabledMetafieldDefsDeleted = await tx.enabledMetafieldDefinition.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${enabledMetafieldDefsDeleted.count} enabled metafield definitions`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

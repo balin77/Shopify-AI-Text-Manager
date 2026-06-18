@@ -125,6 +125,16 @@ export const loader = createContentLoader({
       take: effectiveTake,
     });
 
+    // Metafields settings tab gate: the product editor shows a metafield only
+    // when its definition is BOTH translatable AND enabled by the merchant
+    // (decided design point 1). Run the one-time lazy backfill first so
+    // existing shops keep their already-translatable metafields, then load the
+    // enabled set used to filter below.
+    const { backfillEnabledMetafieldDefinitionsIfNeeded, getEnabledMetafieldKeySet, metafieldEnableKey } =
+      await import("../services/metafield-enablement.server");
+    await backfillEnabledMetafieldDefinitionsIfNeeded(ctx.admin as never, ctx.db as never, ctx.session.shop);
+    const enabledMetafieldKeys = await getEnabledMetafieldKeySet(ctx.db, ctx.session.shop);
+
     // Load sub-resource translations (options, option values, metafields) from DB
     // Uses the same ContentTranslation pipeline as main product translations
     const allSubResourceIds: string[] = [];
@@ -203,6 +213,7 @@ export const loader = createContentLoader({
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)
+        && enabledMetafieldKeys.has(metafieldEnableKey(mf.namespace, mf.key))
       ).map((mf: any) => ({
         id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
       })) || [],

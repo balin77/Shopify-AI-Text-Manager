@@ -147,6 +147,44 @@ export const GET_SHOP_METADATA = `#graphql
   }
 `;
 
+/**
+ * PRODUCT METAFIELD DEFINITIONS — discover all product metafield definitions.
+ *
+ * Unlike `translatableResource.translatableContent` (which only surfaces
+ * metafields whose definition is already `translatable`), this lists EVERY
+ * product metafield definition in the shop, including third-party app ones.
+ * `capabilities.translatable.enabled` tells us whether a definition is already
+ * translatable; `metafieldDefinitionUpdate` can flip it for shop-owned ones.
+ */
+export const GET_PRODUCT_METAFIELD_DEFINITIONS = `#graphql
+  query getProductMetafieldDefinitions($first: Int!, $after: String) {
+    metafieldDefinitions(ownerType: PRODUCT, first: $first, after: $after) {
+      edges {
+        node {
+          id
+          namespace
+          key
+          name
+          description
+          ownerType
+          type {
+            name
+          }
+          capabilities {
+            translatable {
+              enabled
+            }
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
 export const GET_MENUS = `#graphql
   query getMenus($first: Int!) {
     menus(first: $first) {
