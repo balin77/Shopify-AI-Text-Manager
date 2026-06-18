@@ -171,6 +171,27 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 #### 4.3 Localization
 - [ ] **Regional Variants** - DE-DE vs DE-AT vs DE-CH
 - [ ] **Currency Localization** - Preise in lokaler Währung
+  - ⚠️ **Vor Umsetzung prüfen, ob überhaupt nötig** (Stand 2026-06-18).
+  - Shopify rechnet **nativ und automatisch** in Lokalwährung um, sobald
+    der Händler **Shopify Markets + Shopify Payments** nutzt: aktuelle
+    Marktwechselkurse (Update alle paar Stunden), Anzeige im Storefront,
+    Umrechnung an der Kasse **und** bei Refunds. Optional manuelle Kurse
+    pro Markt via Managed Markets. Conversion Fee (0,5–2 % je nach Plan,
+    ab 2026-04-06 auf Bruttobetrag berechnet) ist Shopify-seitig.
+    Voraussetzungen: aktivierte Local Currency pro Markt, Country/Currency
+    Selector im Theme, One-Page Checkout.
+  - **Restlücke, in der ein eigener Converter Mehrwert hätte:**
+    - Händler **ohne Shopify Payments** (PayPal-only, nicht unterstützte
+      Länder) → bekommen keine native Checkout-Umrechnung.
+    - Reine **Display-Anzeige** für Märkte, die der Händler in Shopify
+      Markets (noch) nicht konfiguriert hat.
+    - **Custom-Logik**: psychologische Preise (9,99 statt 9,87),
+      eigene Rundungsregeln, mehrere Anzeige-Währungen gleichzeitig.
+  - **Empfehlung:** Feature streichen oder auf **reinen Display-Switcher
+    + Rundungsregeln** reduzieren, klar kommuniziert als „nur Anzeige,
+    Abrechnung in Shop-Währung". Keine Doppelung von Shopify-Markets-
+    Funktionalität bauen. Siehe auch Hinweise in
+    [docs/COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) §Switcher-Widget.
 - [ ] **Cultural Adaptation** - Kulturspezifische Anpassungen
 - [ ] **RTL Support** - Arabisch, Hebräisch
 

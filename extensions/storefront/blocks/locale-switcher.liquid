@@ -236,7 +236,10 @@
                 assign c_currency = c.currency.iso_code
                 assign c_symbol = c.currency.symbol
 
-                # Currency notation per merchant choice.
+                # Currency notation per merchant choice. When Shopify returns
+                # the same value for symbol and iso_code (some currencies have
+                # no distinct glyph and fall back to the code, e.g. CHF/CHF)
+                # we drop the duplicate to avoid rendering "CHF CHF".
                 case currency_format
                   when 'symbol'
                     assign currency_part = c_symbol
@@ -245,7 +248,11 @@
                   when 'none'
                     assign currency_part = ''
                   else
-                    assign currency_part = c_currency | append: ' ' | append: c_symbol
+                    if c_symbol == c_currency
+                      assign currency_part = c_currency
+                    else
+                      assign currency_part = c_currency | append: ' ' | append: c_symbol
+                    endif
                 endcase
 
                 # The visible <option> text — also used as the JS button label
