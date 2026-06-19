@@ -67,6 +67,7 @@ interface AiResult {
   actionType?: string;
   rows?: Pair[];
   taskId?: string;
+  truncated?: boolean;
   error?: string;
 }
 
@@ -78,6 +79,13 @@ export function SettingsAppTranslationsTab({ t }: Props) {
   const loadFetcher = useFetcher<LoadResult>();
   const mutateFetcher = useFetcher<MutateResult>();
   const aiFetcher = useFetcher<AiResult>();
+  const settingsFetcher = useFetcher<MutateResult>();
+
+  // Last server-confirmed toggle values + the in-flight toggle, so a failed
+  // save rolls the optimistic checkbox back instead of lying to the merchant.
+  const serverEnabledRef = useRef(false);
+  const serverCollectRef = useRef(false);
+  const pendingToggleRef = useRef<{ field: "enabled" | "collect"; value: boolean } | null>(null);
 
   const [enabled, setEnabled] = useState(false);
   const [collect, setCollect] = useState(false);
@@ -109,6 +117,8 @@ export function SettingsAppTranslationsTab({ t }: Props) {
     if (d.actionType !== "loadAppTranslations") return;
     setEnabled(!!d.enabled);
     setCollect(!!d.collect);
+    serverEnabledRef.current = !!d.enabled;
+    serverCollectRef.current = !!d.collect;
     setPairs(d.translations ?? []);
     setCandidates(d.candidates ?? []);
     const locales = d.targetLocales ?? [];
@@ -163,17 +173,34 @@ export function SettingsAppTranslationsTab({ t }: Props) {
     );
   }
 
+  // Commit confirmed toggle saves to the server-value refs; roll back on failure.
+  useEffect(() => {
+    if (settingsFetcher.state !== "idle" || !settingsFetcher.data) return;
+    const pending = pendingToggleRef.current;
+    if (!pending) return;
+    pendingToggleRef.current = null;
+    if (settingsFetcher.data.success) {
+      if (pending.field === "enabled") serverEnabledRef.current = pending.value;
+      else serverCollectRef.current = pending.value;
+    } else {
+      if (pending.field === "enabled") setEnabled(serverEnabledRef.current);
+      else setCollect(serverCollectRef.current);
+    }
+  }, [settingsFetcher.state, settingsFetcher.data]);
+
   function toggleEnabled(value: boolean) {
+    pendingToggleRef.current = { field: "enabled", value };
     setEnabled(value);
-    mutateFetcher.submit(
+    settingsFetcher.submit(
       { actionType: "saveAppTranslationEnabled", enabled: String(value) },
       { method: "post" },
     );
   }
 
   function toggleCollect(value: boolean) {
+    pendingToggleRef.current = { field: "collect", value };
     setCollect(value);
-    mutateFetcher.submit(
+    settingsFetcher.submit(
       { actionType: "saveAppTranslationCollect", collect: String(value) },
       { method: "post" },
     );
@@ -225,6 +252,7 @@ export function SettingsAppTranslationsTab({ t }: Props) {
 
   const isLoading = loadFetcher.state !== "idle" && pairs.length === 0 && !loadFetcher.data;
   const isMutating = mutateFetcher.state !== "idle";
+  const isSettingsSaving = settingsFetcher.state !== "idle";
 
   return (
     <BlockStack gap="400">
@@ -249,7 +277,7 @@ export function SettingsAppTranslationsTab({ t }: Props) {
             label={tr("appTranslationsEnable", "Enable dynamic storefront translation")}
             checked={enabled}
             onChange={toggleEnabled}
-            disabled={isMutating}
+            disabled={isSettingsSaving}
           />
           <Checkbox
             label={tr("appTranslationsCollect", "Collect untranslated strings from the storefront")}
@@ -259,20 +287,31 @@ export function SettingsAppTranslationsTab({ t }: Props) {
             )}
             checked={collect}
             onChange={toggleCollect}
-            disabled={isMutating}
+            disabled={isSettingsSaving}
           />
         </BlockStack>
       </Card>
 
-      {mutateFetcher.data && mutateFetcher.data.success === false && (
+      {((mutateFetcher.data && mutateFetcher.data.success === false) ||
+        (settingsFetcher.state === "idle" && settingsFetcher.data && settingsFetcher.data.success === false)) && (
         <Banner tone="critical">
-          <Text as="p" variant="bodyMd">{mutateFetcher.data.error ?? t.common.error}</Text>
+          <Text as="p" variant="bodyMd">
+            {mutateFetcher.data?.error ?? settingsFetcher.data?.error ?? t.common.error}
+          </Text>
         </Banner>
       )}
 
       {aiFetcher.state === "idle" && aiFetcher.data && aiFetcher.data.success === false && (
         <Banner tone="critical">
           <Text as="p" variant="bodyMd">{aiFetcher.data.error ?? t.common.error}</Text>
+        </Banner>
+      )}
+
+      {aiFetcher.state === "idle" && aiFetcher.data?.success && aiFetcher.data.truncated && (
+        <Banner tone="info">
+          <Text as="p" variant="bodyMd">
+            {tr("appTranslationsAiTruncated", "Translated the first batch — click again to continue with the rest.")}
+          </Text>
         </Banner>
       )}
 

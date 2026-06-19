@@ -73,12 +73,13 @@
   // Conservative heuristic — mirrors server isCollectibleString(). Reduces noise
   // and the chance of capturing PII / dynamic data. The merchant reviews anyway.
   function isCollectible(s) {
+    // Mirrors server isCollectibleString() (same order + ranges).
     if (s.length < 2 || s.length > 100) return false;
-    if (!/[a-zA-ZÀ-ÿ]/.test(s)) return false;
+    if (!/[a-zA-ZÀ-ɏ]/.test(s)) return false;
+    if (/^\d/.test(s) && /\d/.test(s) && !/[a-zA-Z]{3,}/.test(s)) return false;
+    if (/^[$€£¥]|\d[.,]\d{2}\s*[$€£¥%]?$/.test(s)) return false;
     if (/@|https?:\/\/|www\./i.test(s)) return false;
-    if (/^[$€£¥]/.test(s) || /\d[.,]\d{2}\s*[$€£¥%]?$/.test(s)) return false;
     if (/^[+]?[\d\s().-]{6,}$/.test(s)) return false;
-    if (/^\d/.test(s) && !/[a-zA-Z]{3,}/.test(s)) return false;
     return true;
   }
 

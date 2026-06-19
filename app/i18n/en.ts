@@ -371,6 +371,7 @@ export const en: Translation = {
     appTranslationsAiSources: "Source strings (one per line)",
     appTranslationsAiHelp: "Each line is translated into the selected language and added below. You can edit the results afterwards.",
     appTranslationsAiButton: "Translate with AI",
+    appTranslationsAiTruncated: "Translated the first batch — click again to continue with the rest.",
     appTranslationsCollect: "Collect untranslated strings from the storefront",
     appTranslationsCollectHelp: "When on, your storefront reports short untranslated UI strings it renders (filtered, never prices/emails) so you can review and translate them below. Off by default.",
     appTranslationsDiscovered: "Discovered strings",

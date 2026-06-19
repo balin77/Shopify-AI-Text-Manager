@@ -370,6 +370,7 @@ export const es: Translation = {
     appTranslationsAiSources: "Textos originales (uno por línea)",
     appTranslationsAiHelp: "Cada línea se traduce al idioma seleccionado y se añade abajo. Puedes editar los resultados después.",
     appTranslationsAiButton: "Traducir con IA",
+    appTranslationsAiTruncated: "Se tradujo el primer lote: haz clic de nuevo para continuar con el resto.",
     appTranslationsCollect: "Recopilar textos sin traducir del escaparate",
     appTranslationsCollectHelp: "Si está activo, tu escaparate informa de textos de interfaz cortos sin traducir que muestra (filtrados, nunca precios/correos) para que los revises y traduzcas abajo. Desactivado por defecto.",
     appTranslationsDiscovered: "Textos detectados",

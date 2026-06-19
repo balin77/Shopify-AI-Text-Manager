@@ -15,7 +15,7 @@ import { db } from "../db.server";
 import { getDictionary } from "../services/dynamic-translation.server";
 import { isValidLocale } from "../utils/validation";
 
-const EMPTY = { enabled: false, version: 0, entries: {} as Record<string, Record<string, string>> };
+const EMPTY = { enabled: false, collect: false, version: 0, entries: {} as Record<string, Record<string, string>> };
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);

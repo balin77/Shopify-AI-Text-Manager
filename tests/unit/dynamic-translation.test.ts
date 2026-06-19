@@ -122,6 +122,41 @@ describe("aiAutoTranslate()", () => {
     expect(rows).toEqual([]);
     expect(translateBatch).not.toHaveBeenCalled();
   });
+
+  it("skips the AI call entirely when source language == target language", async () => {
+    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() }, dynamicTranslationCandidate: { deleteMany: vi.fn() } } as never;
+    const translateBatch = vi.fn();
+    const rows = await aiAutoTranslate(db, "s", { locale: "en", fromLang: "en", sources: ["Write a review"] }, translateBatch);
+    expect(rows).toEqual([]);
+    expect(translateBatch).not.toHaveBeenCalled();
+  });
+
+  it("chunks large inputs into multiple AI prompts and reports progress", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => Promise.resolve({ id: create.sourceText, ...create }));
+    const db = {
+      dynamicTranslation: { upsert },
+      dynamicTranslationSettings: { upsert: vi.fn() },
+      dynamicTranslationCandidate: { deleteMany: vi.fn() },
+    } as never;
+    // 120 unique sources → 3 chunks of 50/50/20.
+    const sources = Array.from({ length: 120 }, (_v, i) => "label-" + i);
+    const translateBatch = vi.fn().mockImplementation((vals: string[]) => Promise.resolve(vals.map((v) => v + "-de")));
+    const progress: number[] = [];
+
+    const rows = await aiAutoTranslate(
+      db,
+      "s",
+      { locale: "de", fromLang: "en", sources },
+      translateBatch,
+      (done) => { progress.push(done); },
+    );
+
+    expect(translateBatch).toHaveBeenCalledTimes(3);
+    expect(translateBatch.mock.calls[0][0]).toHaveLength(50);
+    expect(translateBatch.mock.calls[2][0]).toHaveLength(20);
+    expect(rows).toHaveLength(120);
+    expect(progress).toEqual([50, 100, 120]);
+  });
 });
 
 describe("isCollectibleString()", () => {

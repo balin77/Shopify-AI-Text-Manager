@@ -868,6 +868,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!locale || !isValidLocale(locale) || sources.length === 0) {
         return json({ success: false, error: "Locale and at least one source string are required", actionType }, { status: 400 });
       }
+      // Cap per request to bound request time (the AIService chunks internally
+      // at AI_BATCH_SIZE; the UI re-submits the rest — translated ones drop off
+      // the candidate list so repeated clicks drain it).
+      const MAX_AI_PER_REQUEST = 100;
+      const truncated = sources.length > MAX_AI_PER_REQUEST;
+      if (truncated) sources = sources.slice(0, MAX_AI_PER_REQUEST);
 
       // Resolve provider + decrypted keys (mirrors prepareActionContext).
       const aiSettings = await db.aISettings.findUnique({ where: { shop: session.shop } });
@@ -911,6 +917,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           session.shop,
           { locale, fromLang, scope, sources },
           (values, from, to, context) => aiService.translateBatchValues(values, from, to, context),
+          // Advance task progress per chunk (10% → 100% over the chunks).
+          async (done, total) => {
+            await db.task.update({
+              where: { id: task.id },
+              data: { processed: done, progress: total > 0 ? Math.min(99, 10 + Math.round((done / total) * 89)) : 100 },
+            });
+          },
         );
 
         await db.task.update({
@@ -922,6 +935,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           success: true,
           actionType,
           taskId: task.id,
+          truncated,
           rows: rows.map((r) => ({ id: r.id, locale: r.locale, scope: r.scope, sourceText: r.sourceText, targetText: r.targetText, source: r.source })),
         });
       } catch (err) {

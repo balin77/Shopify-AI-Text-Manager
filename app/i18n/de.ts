@@ -368,6 +368,7 @@ export const de = {
     appTranslationsAiSources: "Originaltexte (einer pro Zeile)",
     appTranslationsAiHelp: "Jede Zeile wird in die gewählte Sprache übersetzt und unten hinzugefügt. Die Ergebnisse kannst du danach bearbeiten.",
     appTranslationsAiButton: "Mit KI übersetzen",
+    appTranslationsAiTruncated: "Erste Charge übersetzt — klicke erneut, um mit dem Rest fortzufahren.",
     appTranslationsCollect: "Untranslatierte Texte von der Storefront sammeln",
     appTranslationsCollectHelp: "Wenn aktiv, meldet deine Storefront kurze, untranslatierte UI-Texte (gefiltert, niemals Preise/E-Mails), damit du sie unten prüfen und übersetzen kannst. Standardmäßig aus.",
     appTranslationsDiscovered: "Gefundene Texte",
