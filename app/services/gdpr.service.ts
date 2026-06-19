@@ -189,12 +189,15 @@ export async function redactCustomerData(
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
- *      ImageOperationCounter                     (all scoped by `shop`)
+ *      ImageOperationCounter, EnabledMetafieldDefinition,
+ *      DirectTranslationItem, DirectTranslationCandidate,
+ *      DirectTranslationSettings                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
- *  • Removed transitively via Product `onDelete: Cascade` — do NOT delete
- *    explicitly: ProductImage, ProductImageAltTranslation (cascade through
- *    ProductImage), ProductOption, ProductMetafield, ProductVariant.
+ *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
+ *      through Product: ProductImage, ProductImageAltTranslation (cascade
+ *      through ProductImage), ProductOption, ProductMetafield, ProductVariant;
+ *      through DirectTranslationItem: DirectTranslation.
  *
  *  • Deliberately RETAINED: GdprAuditLog — mandatory 3-year retention
  *    (Art. 5(2) GDPR). Its time-based upper bound is enforced by
@@ -377,22 +380,23 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${enabledMetafieldDefsDeleted.count} enabled metafield definitions`);
 
-    // 26. Delete dynamic storefront translations + settings — shop-scoped
-    //     merchant-authored content for the client-side translation layer.
-    const dynamicTranslationsDeleted = await tx.dynamicTranslation.deleteMany({
+    // 26. Delete direct translations ("Direktübersetzungen") + settings —
+    //     shop-scoped merchant-authored content for the client-side translation
+    //     layer. DirectTranslation rows cascade via DirectTranslationItem.
+    const directTranslationItemsDeleted = await tx.directTranslationItem.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug(`[GDPR] Deleted ${dynamicTranslationsDeleted.count} dynamic translations`);
+    logger.debug(`[GDPR] Deleted ${directTranslationItemsDeleted.count} direct translation items (with cascading translations)`);
 
-    const dynamicTranslationSettingsDeleted = await tx.dynamicTranslationSettings.deleteMany({
+    const directTranslationSettingsDeleted = await tx.directTranslationSettings.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug(`[GDPR] Deleted ${dynamicTranslationSettingsDeleted.count} dynamic translation settings`);
+    logger.debug(`[GDPR] Deleted ${directTranslationSettingsDeleted.count} direct translation settings`);
 
-    const dynamicTranslationCandidatesDeleted = await tx.dynamicTranslationCandidate.deleteMany({
+    const directTranslationCandidatesDeleted = await tx.directTranslationCandidate.deleteMany({
       where: { shop: shop_domain },
     });
-    logger.debug(`[GDPR] Deleted ${dynamicTranslationCandidatesDeleted.count} dynamic translation candidates`);
+    logger.debug(`[GDPR] Deleted ${directTranslationCandidatesDeleted.count} direct translation candidates`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

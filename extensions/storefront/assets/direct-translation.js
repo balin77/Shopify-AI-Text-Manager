@@ -1,14 +1,21 @@
 /**
- * ContentPilot — dynamic storefront translation (+ optional string collector).
+ * ContentPilot — direct storefront translation ("Direktübersetzungen")
+ * (+ optional string collector + optional visual capture mode).
  *
  * Replaces rendered text nodes on the storefront with merchant-defined
- * translations for the active (non-primary) locale. Covers content not stored
- * in translatable Shopify fields (e.g. third-party app widgets).
+ * translations for the active (non-primary) locale. Covers content not stored in
+ * translatable Shopify fields (e.g. third-party app widgets). The theme app
+ * embed being active is the on/off switch — there is no separate enable flag.
+ * Direct translations are global (no scope).
  *
  * When the merchant has enabled collection (opt-in), strings that are rendered
  * but NOT yet translated are reported (heuristically filtered, de-duped, capped)
- * to the app so the merchant can review + translate them in the admin. Nothing
- * is ever auto-applied.
+ * to the app so the merchant can review them in the admin. Nothing is ever
+ * auto-applied.
+ *
+ * In the theme editor (Shopify.designMode) — or on the live page with
+ * ?cp-translate=1 — a visual capture mode lets the merchant click rendered text
+ * to add it directly as an item (+ optional translation).
  *
  * Limitations: client-side only (no SEO); cannot reach cross-origin iframes.
  */
@@ -32,16 +39,22 @@
     ? function () { try { console.log.apply(console, ["[ContentPilot DT]"].concat([].slice.call(arguments))); } catch (e) {} }
     : function () {};
 
-  if (!locale || (primary && locale === primary)) {
-    log("inactive (primary or no locale)", locale, primary);
-    return;
-  }
-
   var endpoint = cfg.endpoint || "/apps/contentpilot/dynamic-translations";
   var collectEndpoint = cfg.collectEndpoint || "/apps/contentpilot/collect-strings";
-  var template = cfg.template || "";
+  var addEndpoint = cfg.addEndpoint || "/apps/contentpilot/direct-add";
   var cacheKey = "contentpilot_dt_" + locale;
   var reportedKey = "contentpilot_dt_reported_" + locale;
+
+  // Visual capture mode: only in the theme editor, or explicit ?cp-translate=1.
+  var designMode = !!(window.Shopify && window.Shopify.designMode);
+  var forceCapture = /[?&]cp-translate=1\b/.test(window.location.search);
+  var captureEnabled = designMode || forceCapture;
+
+  // Translation is inactive on the primary locale (or no locale), but the
+  // visual capture mode may still run (to add source strings while previewing
+  // the primary language).
+  var translateActive = !!locale && !(primary && locale === primary);
+  if (!translateActive) log("translation inactive (primary or no locale)", locale, primary);
 
   var dictMap = new Map();      // normalizedSource → target
   var targetValues = new Set(); // known targets (never collect our own output)
@@ -56,24 +69,18 @@
     var map = new Map();
     targetValues = new Set();
     if (!entries) return map;
-    var add = function (obj) {
-      if (!obj) return;
-      for (var src in obj) {
-        if (Object.prototype.hasOwnProperty.call(obj, src)) {
-          map.set(src, obj[src]);
-          targetValues.add(normalize(obj[src]));
-        }
+    for (var src in entries) {
+      if (Object.prototype.hasOwnProperty.call(entries, src)) {
+        map.set(src, entries[src]);
+        targetValues.add(normalize(entries[src]));
       }
-    };
-    add(entries.global);
-    if (template) add(entries["template:" + template]);
+    }
     return map;
   }
 
   // Conservative heuristic — mirrors server isCollectibleString(). Reduces noise
   // and the chance of capturing PII / dynamic data. The merchant reviews anyway.
   function isCollectible(s) {
-    // Mirrors server isCollectibleString() (same order + ranges).
     if (s.length < 2 || s.length > 100) return false;
     if (!/[a-zA-ZÀ-ɏ]/.test(s)) return false;
     if (/^\d/.test(s) && /\d/.test(s) && !/[a-zA-Z]{3,}/.test(s)) return false;
@@ -90,6 +97,7 @@
       if (SKIP_TAGS[parent.tagName]) return true;
       if (parent.isContentEditable) return true;
       if (parent.getAttribute && parent.getAttribute("translate") === "no") return true;
+      if (parent.id === "contentpilot-capture-panel" || parent.closest && parent.closest("#contentpilot-capture-panel")) return true;
       parent = parent.parentNode;
     }
     return false;
@@ -122,7 +130,7 @@
     if (pendingCandidates.size === 0) return;
     var items = [];
     pendingCandidates.forEach(function (_v, k) {
-      if (items.length < 50) { items.push({ text: k, scope: "global" }); reported.add(k); }
+      if (items.length < 50) { items.push({ text: k }); reported.add(k); }
     });
     pendingCandidates.clear();
     persistReported();
@@ -131,7 +139,7 @@
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         credentials: "omit",
-        body: JSON.stringify({ locale: locale, items: items }),
+        body: JSON.stringify({ items: items }),
         keepalive: true,
       }).catch(function () {});
     } catch (e) {}
@@ -237,13 +245,14 @@
   function apply(data) {
     if (!data) return;
     collect = !!data.collect;
-    dictMap = data.enabled === false ? new Map() : buildMap(data.entries);
+    dictMap = translateActive ? buildMap(data.entries) : new Map();
     log("applied", dictMap.size, "entries; collect", collect, "version", data.version);
     if (document.body) applyAll();
   }
 
   function fetchDict() {
-    return fetch(endpoint + "?locale=" + encodeURIComponent(locale), {
+    if (!translateActive && !captureEnabled) return Promise.resolve(null);
+    return fetch(endpoint + "?locale=" + encodeURIComponent(locale || primary), {
       headers: { Accept: "application/json" },
       credentials: "omit",
     })
@@ -251,16 +260,123 @@
       .catch(function () { return null; });
   }
 
+  // ---- Visual capture mode (theme editor) ---------------------------------
+  function applyOneTranslation(source, target) {
+    if (!target) return;
+    dictMap.set(normalize(source), target);
+    targetValues.add(normalize(target));
+    applyAll();
+  }
+
+  function postAdd(sourceText, captureLocale, targetText) {
+    return fetch(addEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      credentials: "omit",
+      body: JSON.stringify({ sourceText: sourceText, locale: captureLocale, targetText: targetText }),
+    }).then(function (r) { return r.ok ? r.json() : null; });
+  }
+
+  function initCaptureMode() {
+    if (!captureEnabled) return;
+
+    var panel = document.createElement("div");
+    panel.id = "contentpilot-capture-panel";
+    panel.setAttribute("translate", "no");
+    panel.style.cssText = [
+      "position:fixed", "bottom:16px", "right:16px", "z-index:2147483646",
+      "background:#1a1a1a", "color:#fff", "font:13px/1.4 -apple-system,system-ui,sans-serif",
+      "border-radius:10px", "box-shadow:0 4px 20px rgba(0,0,0,.35)", "padding:12px",
+      "width:300px", "box-sizing:border-box",
+    ].join(";");
+
+    var selecting = false;
+    panel.innerHTML =
+      '<div style="font-weight:600;margin-bottom:8px">ContentPilot — Direktübersetzungen</div>' +
+      '<button id="cp-cap-toggle" style="width:100%;padding:8px;border:0;border-radius:6px;cursor:pointer;background:#008060;color:#fff;font-weight:600">Auswahlmodus starten</button>' +
+      '<div id="cp-cap-hint" style="margin-top:8px;opacity:.7;font-size:12px">Klicke einen Text auf der Seite, um ihn zu erfassen.</div>' +
+      '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
+
+    document.body.appendChild(panel);
+
+    var toggleBtn = panel.querySelector("#cp-cap-toggle");
+    var hint = panel.querySelector("#cp-cap-hint");
+    var formEl = panel.querySelector("#cp-cap-form");
+
+    function setSelecting(on) {
+      selecting = on;
+      toggleBtn.textContent = on ? "Auswahlmodus stoppen" : "Auswahlmodus starten";
+      toggleBtn.style.background = on ? "#bf0711" : "#008060";
+      hint.style.display = on ? "block" : "none";
+      document.documentElement.style.cursor = on ? "crosshair" : "";
+    }
+
+    toggleBtn.addEventListener("click", function () { setSelecting(!selecting); });
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function showForm(source) {
+      setSelecting(false);
+      formEl.style.display = "block";
+      formEl.innerHTML =
+        '<label style="display:block;opacity:.7;margin-bottom:4px">Quelle</label>' +
+        '<textarea id="cp-cap-src" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px">' + escapeHtml(source) + "</textarea>" +
+        '<label style="display:block;opacity:.7;margin:8px 0 4px">Übersetzung (' + escapeHtml(locale || primary) + ")</label>" +
+        '<textarea id="cp-cap-tgt" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px"></textarea>' +
+        '<button id="cp-cap-save" style="width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;cursor:pointer;background:#008060;color:#fff;font-weight:600">Zur Übersetzung hinzufügen</button>' +
+        '<div id="cp-cap-status" style="margin-top:6px;font-size:12px;opacity:.8"></div>';
+
+      var saveBtn = formEl.querySelector("#cp-cap-save");
+      var statusEl = formEl.querySelector("#cp-cap-status");
+      saveBtn.addEventListener("click", function () {
+        var src = formEl.querySelector("#cp-cap-src").value;
+        var tgt = formEl.querySelector("#cp-cap-tgt").value;
+        statusEl.textContent = "Speichern …";
+        postAdd(src, locale, tgt)
+          .then(function (res) {
+            if (res && res.ok) {
+              statusEl.textContent = "✓ Hinzugefügt";
+              if (tgt) applyOneTranslation(src, tgt);
+            } else {
+              statusEl.textContent = "Fehler beim Speichern";
+            }
+          })
+          .catch(function () { statusEl.textContent = "Fehler beim Speichern"; });
+      });
+    }
+
+    document.addEventListener(
+      "click",
+      function (e) {
+        if (!selecting) return;
+        if (panel.contains(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var text = normalize(e.target.textContent || "");
+        if (text) showForm(text);
+      },
+      true,
+    );
+
+    log("capture mode ready");
+  }
+
   function start() {
     var cached = readCache();
     if (cached) apply(cached);
 
     fetchDict().then(function (fresh) {
-      if (!fresh) return;
-      if (!cached || cached.version !== fresh.version || cached.enabled !== fresh.enabled || cached.collect !== fresh.collect) {
-        writeCache(fresh);
-        apply(fresh);
+      if (fresh) {
+        if (!cached || cached.version !== fresh.version || cached.collect !== fresh.collect) {
+          writeCache(fresh);
+          apply(fresh);
+        }
       }
+      initCaptureMode();
     });
 
     // Best-effort flush of anything still pending when the page is hidden.

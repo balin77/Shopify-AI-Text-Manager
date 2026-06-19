@@ -1,9 +1,12 @@
 /**
- * App Proxy endpoint: serves the dynamic-translation dictionary to the
- * storefront for the active locale.
+ * App Proxy endpoint: serves the direct-translation dictionary to the storefront
+ * for the active locale.
  *
  * Storefront URL: /apps/contentpilot/dynamic-translations?locale=<iso>
- * (configured via [app_proxy] in shopify.app.*.toml → forwarded here).
+ * (configured via [app_proxy] in shopify.app.*.toml → forwarded here). The URL
+ * keeps the historical `dynamic-translations` path; the feature is now
+ * "Direktübersetzungen". There is no `enabled` gate — the theme app embed being
+ * active is the on/off switch.
  *
  * `authenticate.public.appProxy` validates the Shopify proxy HMAC signature and
  * resolves the shop's offline session, so the shop is trusted (not client
@@ -12,10 +15,10 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { getDictionary } from "../services/dynamic-translation.server";
+import { getDictionary } from "../services/direct-translation.server";
 import { isValidLocale } from "../utils/validation";
 
-const EMPTY = { enabled: false, collect: false, version: 0, entries: {} as Record<string, Record<string, string>> };
+const EMPTY = { collect: false, version: 0, entries: {} as Record<string, string> };
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);

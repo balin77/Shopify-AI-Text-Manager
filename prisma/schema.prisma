@@ -133,60 +133,77 @@ model EnabledMetafieldDefinition {
   @@index([shop, ownerType])
 }
 
-// Dynamic storefront translations (Phase 2): merchant-managed source→target
-// string pairs applied client-side by a theme app embed, for content that is
-// NOT in translatable Shopify fields (e.g. third-party app widgets rendered in
-// the theme). Complements the native metafield/resource translation pipeline.
+// Direct translations ("Direktübersetzungen"): merchant-managed storefront text
+// that is NOT in translatable Shopify fields (e.g. third-party app widgets:
+// review widgets, badges, page builders). A theme app embed replaces this text
+// client-side using a merchant-curated dictionary. A first-class content type in
+// the admin (consistent with products/collections/templates).
+//
+// An item is the IDENTITY (one rendered source string); its translations hang
+// off it by FK (not by text), so editing the source text keeps the translations.
+// Matching is exact on the normalized source — no fuzzy/partial matching.
 // SEO caveat: client-side DOM replacement is not server-rendered.
-model DynamicTranslation {
+model DirectTranslationItem {
   id         String   @id @default(cuid())
   shop       String
-  locale     String   // target language ISO, e.g. "fr"
-  // Stable hash of the normalized source string (+scope) — the storefront and
-  // admin both key on this so lookups are O(1) and whitespace-insensitive.
+  // Stable hash of the normalized source string — identity of the item. The
+  // storefront and admin both normalize identically so lookups are O(1).
   sourceHash String
   sourceText String   @db.Text
-  targetText String   @db.Text
-  // "global" (any page) or a template scope like "template:product".
-  scope      String   @default("global")
-  // "user" (manually entered) or "ai" (auto-translated).
-  source     String   @default("user")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@unique([shop, locale, scope, sourceHash])
-  @@index([shop, locale])
+  translations DirectTranslation[]
+
+  @@unique([shop, sourceHash])
+  @@index([shop])
 }
 
-// Per-shop settings + cache-busting version for the dynamic translation layer.
-model DynamicTranslationSettings {
+// One translation of a DirectTranslationItem into one locale. Cascade-deleted
+// with its item; the source attaches translations by item FK, never by text.
+model DirectTranslation {
+  id         String   @id @default(cuid())
+  itemId     String
+  item       DirectTranslationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  locale     String   // target language ISO, e.g. "fr"
+  targetText String   @db.Text
+  // "user" (manually entered / transferred) or "ai" (auto-translated).
+  source     String   @default("user")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([itemId, locale])
+}
+
+// Untranslated strings discovered on the storefront (opt-in collector), pending
+// merchant review. "Hinzufügen" promotes one to a DirectTranslationItem (and
+// deletes the candidate); "Ablehnen" sets status `rejected` (kept, but never
+// re-raises a notification). Strings that already exist as items are skipped.
+model DirectTranslationCandidate {
+  id          String   @id @default(cuid())
+  shop        String
+  sourceHash  String
+  sourceText  String   @db.Text
+  count       Int      @default(1)   // times seen across visitors/pages
+  status      String   @default("new") // "new" | "rejected"
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, sourceHash])
+  @@index([shop, status])
+}
+
+// Per-shop settings + cache-busting version for the direct translation layer.
+// NOTE: `enabled` is gone — the theme app embed is the on/off switch. Scope is
+// gone — direct translations are global (apply on all pages).
+model DirectTranslationSettings {
   shop      String   @id
-  enabled   Boolean  @default(false)
   // Opt-in: when true, the storefront reports untranslated strings it renders
-  // (heuristically filtered, capped) so the merchant can review + translate
-  // them in the admin. Off by default (privacy/noise). Never auto-applied.
+  // (heuristically filtered, capped) so the merchant can review them in the
+  // admin. Off by default (privacy/noise). Never auto-applied.
   collect   Boolean  @default(false)
   // Bumped on every dictionary change so the storefront cache invalidates.
   version   Int      @default(1)
   updatedAt DateTime @updatedAt
-}
-
-// Untranslated strings discovered on the storefront (Phase 2b collector),
-// pending merchant review. Promoting one (manual/AI) creates a
-// DynamicTranslation and removes the candidate.
-model DynamicTranslationCandidate {
-  id          String   @id @default(cuid())
-  shop        String
-  locale      String
-  scope       String   @default("global")
-  sourceHash  String
-  sourceText  String   @db.Text
-  count       Int      @default(1)   // times seen across visitors/pages
-  firstSeenAt DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
-
-  @@unique([shop, locale, scope, sourceHash])
-  @@index([shop, locale])
 }
 
 model AIInstructions {
