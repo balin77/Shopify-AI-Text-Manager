@@ -96,8 +96,8 @@ export const loader = createContentLoader({
 // ACTION
 // ============================================================================
 
-/** Build a bound AIService.translateBatchValues for this shop (or null on error). */
-async function buildTranslateBatch(shop: string) {
+/** Build a bound AIService.translateBatchValues for this shop, plus the provider. */
+async function buildTranslateBatch(shop: string, taskId?: string) {
   const { db } = await import("../db.server");
   const { AIService, toValidProvider } = await import("../../src/services/ai.service");
   const { tryDecryptApiKey } = await import("../utils/encryption.server");
@@ -112,9 +112,87 @@ async function buildTranslateBatch(shop: string) {
     deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
     selectedModel: aiSettings?.selectedModel || undefined,
   };
-  const service = new AIService(provider, config, shop);
-  return (values: string[], from: string, to: string, context: string) =>
+  const service = new AIService(provider, config, shop, taskId);
+  const translateBatch = (values: string[], from: string, to: string, context: string) =>
     service.translateBatchValues(values, from, to, context);
+  return { translateBatch, provider };
+}
+
+/**
+ * Run an AI translation pass with Task tracking (same pattern as the product
+ * sub-resource translator): create a queued Task, advance progress per chunk via
+ * onProgress, mark it completed/failed. The TaskCountContext poller surfaces the
+ * running count + completion toast in the main navigation.
+ */
+async function runAiTask(
+  shop: string,
+  params: {
+    items: Array<{ id: string; sourceText: string }>;
+    fromLang: string;
+    locales: string[];
+    targetLocaleLabel: string;
+    resourceTitle: string;
+  },
+): Promise<number> {
+  const { db } = await import("../db.server");
+  const dt = await import("../services/direct-translation.server");
+  const { toValidProvider } = await import("../../src/services/ai.service");
+  const { getTaskExpirationDate } = await import("../config/constants");
+
+  const total = params.items.length * params.locales.length;
+  const aiSettings = await db.aISettings.findUnique({ where: { shop }, select: { preferredProvider: true } });
+  const provider = toValidProvider(aiSettings?.preferredProvider);
+
+  const task = await db.task.create({
+    data: {
+      shop,
+      type: "translation",
+      status: "queued",
+      fieldType: "direct-translations",
+      resourceTitle: params.resourceTitle,
+      targetLocale: params.targetLocaleLabel,
+      provider,
+      progress: 10,
+      total,
+      expiresAt: getTaskExpirationDate(),
+    },
+  });
+
+  // Build the AI client bound to this task so token usage is attributed to it.
+  const { translateBatch } = await buildTranslateBatch(shop, task.id);
+
+  try {
+    const rows = await dt.aiAutoTranslateItems(
+      db,
+      shop,
+      { items: params.items, fromLang: params.fromLang, locales: params.locales },
+      translateBatch,
+      async (done, t) => {
+        await db.task.update({
+          where: { id: task.id },
+          data: { processed: done, progress: t > 0 ? Math.min(99, 10 + Math.round((done / t) * 89)) : 100 },
+        });
+      },
+    );
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status: "completed",
+        progress: 100,
+        processed: rows.length,
+        completedAt: new Date(),
+        result: JSON.stringify({ translated: rows.length, total }),
+      },
+    });
+    return rows.length;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await db.task.update({
+      where: { id: task.id },
+      data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
+    });
+    throw err;
+  }
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -202,14 +280,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const locales = scope === "all" ? targets : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
-        const translateBatch = await buildTranslateBatch(session.shop);
-        const rows = await dt.aiAutoTranslateItems(
-          db,
-          session.shop,
-          { items: [{ id, sourceText }], fromLang: primary, locales },
-          translateBatch,
-        );
-        return json({ success: true, actionType, itemId: id, translated: rows.length });
+        const translated = await runAiTask(session.shop, {
+          items: [{ id, sourceText }],
+          fromLang: primary,
+          locales,
+          targetLocaleLabel: scope === "all" ? "all" : locale,
+          resourceTitle: dt.normalizeSource(sourceText).slice(0, 80),
+        });
+        return json({ success: true, actionType, itemId: id, translated });
       }
 
       case "aiAll": {
@@ -218,9 +296,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (targets.length === 0) return json({ success: true, actionType, translated: 0 });
         const items = (await dt.listItems(db, session.shop)).map((r) => ({ id: r.id, sourceText: r.sourceText }));
         if (items.length === 0) return json({ success: true, actionType, translated: 0 });
-        const translateBatch = await buildTranslateBatch(session.shop);
-        const rows = await dt.aiAutoTranslateItems(db, session.shop, { items, fromLang: primary, locales: targets }, translateBatch);
-        return json({ success: true, actionType, translated: rows.length });
+        const translated = await runAiTask(session.shop, {
+          items,
+          fromLang: primary,
+          locales: targets,
+          targetLocaleLabel: "all",
+          resourceTitle: `Direktübersetzungen (${items.length})`,
+        });
+        return json({ success: true, actionType, translated });
       }
 
       case "loadCandidates": {
@@ -239,13 +322,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (withAi && created.length > 0) {
           const { primary, targets } = await resolveLocales();
           if (targets.length > 0) {
-            const translateBatch = await buildTranslateBatch(session.shop);
-            await dt.aiAutoTranslateItems(
-              db,
-              session.shop,
-              { items: created.map((c) => ({ id: c.id, sourceText: c.sourceText })), fromLang: primary, locales: targets },
-              translateBatch,
-            );
+            await runAiTask(session.shop, {
+              items: created.map((c) => ({ id: c.id, sourceText: c.sourceText })),
+              fromLang: primary,
+              locales: targets,
+              targetLocaleLabel: "all",
+              resourceTitle: `Direktübersetzungen (${created.length})`,
+            });
           }
         }
         return json({ success: true, actionType, added: created.length });
