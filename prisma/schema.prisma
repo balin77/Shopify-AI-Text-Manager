@@ -133,6 +133,62 @@ model EnabledMetafieldDefinition {
   @@index([shop, ownerType])
 }
 
+// Dynamic storefront translations (Phase 2): merchant-managed source→target
+// string pairs applied client-side by a theme app embed, for content that is
+// NOT in translatable Shopify fields (e.g. third-party app widgets rendered in
+// the theme). Complements the native metafield/resource translation pipeline.
+// SEO caveat: client-side DOM replacement is not server-rendered.
+model DynamicTranslation {
+  id         String   @id @default(cuid())
+  shop       String
+  locale     String   // target language ISO, e.g. "fr"
+  // Stable hash of the normalized source string (+scope) — the storefront and
+  // admin both key on this so lookups are O(1) and whitespace-insensitive.
+  sourceHash String
+  sourceText String   @db.Text
+  targetText String   @db.Text
+  // "global" (any page) or a template scope like "template:product".
+  scope      String   @default("global")
+  // "user" (manually entered) or "ai" (auto-translated).
+  source     String   @default("user")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shop, locale, scope, sourceHash])
+  @@index([shop, locale])
+}
+
+// Per-shop settings + cache-busting version for the dynamic translation layer.
+model DynamicTranslationSettings {
+  shop      String   @id
+  enabled   Boolean  @default(false)
+  // Opt-in: when true, the storefront reports untranslated strings it renders
+  // (heuristically filtered, capped) so the merchant can review + translate
+  // them in the admin. Off by default (privacy/noise). Never auto-applied.
+  collect   Boolean  @default(false)
+  // Bumped on every dictionary change so the storefront cache invalidates.
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}
+
+// Untranslated strings discovered on the storefront (Phase 2b collector),
+// pending merchant review. Promoting one (manual/AI) creates a
+// DynamicTranslation and removes the candidate.
+model DynamicTranslationCandidate {
+  id          String   @id @default(cuid())
+  shop        String
+  locale      String
+  scope       String   @default("global")
+  sourceHash  String
+  sourceText  String   @db.Text
+  count       Int      @default(1)   // times seen across visitors/pages
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, locale, scope, sourceHash])
+  @@index([shop, locale])
+}
+
 model AIInstructions {
   id   String @id @default(cuid())
   shop String @unique

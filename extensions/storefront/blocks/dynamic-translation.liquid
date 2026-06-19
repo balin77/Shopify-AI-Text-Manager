@@ -1,0 +1,44 @@
+{%- comment -%}
+  App Embed Block (target: body) — dynamic storefront translation loader.
+
+  Loads a small client-side script that replaces rendered text on the storefront
+  using merchant-defined source→target pairs (managed in ContentPilot → Settings
+  → App translations). This covers content that is NOT in translatable Shopify
+  fields — e.g. third-party app widgets rendered in the theme (reviews, badges).
+
+  The dictionary is fetched per locale from the app proxy
+  (/apps/contentpilot/dynamic-translations) and cached in localStorage with a
+  version (stale-while-revalidate). A MutationObserver re-applies translations to
+  content injected after load (e.g. review widgets).
+
+  Limitations (intentional, same as competing apps):
+   - Client-side only → NOT indexed by search engines (use Shopify field
+     translations for SEO-relevant content).
+   - Cannot reach cross-origin iframe apps (e.g. Loox).
+{%- endcomment -%}
+
+<script type="application/json" id="contentpilot-dt-config">
+{
+  "endpoint": "/apps/contentpilot/dynamic-translations",
+  "collectEndpoint": "/apps/contentpilot/collect-strings",
+  "locale": {{ request.locale.iso_code | json }},
+  "primaryLocale": {{ shop.locale | json }},
+  "template": {{ template.name | json }},
+  "debug": {{ block.settings.debug | default: false | json }}
+}
+</script>
+<script src="{{ 'dynamic-translation.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Dynamic translation",
+  "target": "body",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Translates third-party app text rendered on your storefront using the pairs you define in ContentPilot → Settings → App translations. Client-side only (not indexed by search engines); iframe-based apps cannot be translated."
+    },
+    { "type": "checkbox", "id": "debug", "label": "Console debug logging", "default": false }
+  ]
+}
+{% endschema %}
