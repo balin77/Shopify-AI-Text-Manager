@@ -18,7 +18,6 @@ import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
-import { SettingsAppTranslationsTab } from "../components/SettingsAppTranslationsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
@@ -30,7 +29,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { sanitizeHTML } from "../utils/sanitizer";
-import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } from "../utils/validation";
+import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
@@ -788,164 +787,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
-    } else if (actionType === "loadAppTranslations") {
-      // Dynamic storefront translation tab: load settings + pairs + the shop's
-      // non-primary published languages (target locales).
-      const dt = await import("../services/dynamic-translation.server");
-      const { ContentService } = await import("../services/content.service");
-      const [settings, translations, candidates, locales] = await Promise.all([
-        dt.getDynamicTranslationSettings(db, session.shop),
-        dt.listDynamicTranslations(db, session.shop),
-        dt.listCandidates(db, session.shop),
-        new ContentService(admin).getShopLocales().catch(() => []),
-      ]);
-      const targetLocales = (locales as Array<{ locale: string; name?: string; primary: boolean; published: boolean }>)
-        .filter((l) => !l.primary && l.published)
-        .map((l) => ({ locale: l.locale, name: l.name }));
-      return json({
-        success: true,
-        actionType,
-        enabled: settings.enabled,
-        collect: settings.collect,
-        translations: translations.map((t) => ({
-          id: t.id, locale: t.locale, scope: t.scope, sourceText: t.sourceText, targetText: t.targetText, source: t.source,
-        })),
-        candidates: candidates.map((c) => ({
-          id: c.id, locale: c.locale, scope: c.scope, sourceText: c.sourceText, count: c.count,
-        })),
-        targetLocales,
-      });
-    } else if (actionType === "saveAppTranslationEnabled") {
-      const dt = await import("../services/dynamic-translation.server");
-      await dt.setDynamicTranslationEnabled(db, session.shop, formData.get("enabled") === "true");
-      return json({ success: true, actionType });
-    } else if (actionType === "saveAppTranslationCollect") {
-      const dt = await import("../services/dynamic-translation.server");
-      await dt.setDynamicTranslationCollect(db, session.shop, formData.get("collect") === "true");
-      return json({ success: true, actionType });
-    } else if (actionType === "dismissAppTranslationCandidate") {
-      const dt = await import("../services/dynamic-translation.server");
-      const id = String(formData.get("id") || "");
-      if (!id) return json({ success: false, error: "Missing id", actionType }, { status: 400 });
-      await dt.dismissCandidate(db, session.shop, id);
-      return json({ success: true, actionType, id });
-    } else if (actionType === "upsertAppTranslation") {
-      const dt = await import("../services/dynamic-translation.server");
-      const locale = String(formData.get("locale") || "").trim();
-      const sourceText = String(formData.get("sourceText") || "");
-      const targetText = String(formData.get("targetText") || "");
-      const scope = String(formData.get("scope") || "global").trim() || "global";
-      if (!locale || !sourceText.trim() || !targetText.trim()) {
-        return json({ success: false, error: "Locale, source and target are required", actionType }, { status: 400 });
-      }
-      const row = await dt.upsertDynamicTranslation(db, session.shop, { locale, sourceText, targetText, scope });
-      return json({ success: true, actionType, row: { id: row.id, locale: row.locale, scope: row.scope, sourceText: row.sourceText, targetText: row.targetText, source: row.source } });
-    } else if (actionType === "deleteAppTranslation") {
-      const dt = await import("../services/dynamic-translation.server");
-      const id = String(formData.get("id") || "");
-      if (!id) return json({ success: false, error: "Missing id", actionType }, { status: 400 });
-      await dt.deleteDynamicTranslation(db, session.shop, id);
-      return json({ success: true, actionType, id });
-    } else if (actionType === "aiTranslateAppTranslations") {
-      // AI-translate a batch of source strings into one locale, persisting each
-      // as a source:"ai" pair. Uses the same AIService + Task tracking pattern
-      // as the product sub-resource translator (handleTranslateSubResources).
-      const dt = await import("../services/dynamic-translation.server");
-      const { AIService, toValidProvider } = await import("../../src/services/ai.service");
-      const { tryDecryptApiKey } = await import("../utils/encryption.server");
-      const { getTaskExpirationDate } = await import("../config/constants");
-      const { ContentService } = await import("../services/content.service");
-
-      const locale = String(formData.get("locale") || "").trim();
-      const scope = String(formData.get("scope") || "global").trim() || "global";
-      let sources: string[] = [];
-      try {
-        sources = JSON.parse(String(formData.get("sources") || "[]"));
-      } catch {
-        return json({ success: false, error: "Invalid sources payload", actionType }, { status: 400 });
-      }
-      sources = (Array.isArray(sources) ? sources : []).map((s) => String(s)).filter((s) => s.trim());
-      if (!locale || !isValidLocale(locale) || sources.length === 0) {
-        return json({ success: false, error: "Locale and at least one source string are required", actionType }, { status: 400 });
-      }
-      // Cap per request to bound request time (the AIService chunks internally
-      // at AI_BATCH_SIZE; the UI re-submits the rest — translated ones drop off
-      // the candidate list so repeated clicks drain it).
-      const MAX_AI_PER_REQUEST = 100;
-      const truncated = sources.length > MAX_AI_PER_REQUEST;
-      if (truncated) sources = sources.slice(0, MAX_AI_PER_REQUEST);
-
-      // Resolve provider + decrypted keys (mirrors prepareActionContext).
-      const aiSettings = await db.aISettings.findUnique({ where: { shop: session.shop } });
-      const provider = toValidProvider(aiSettings?.preferredProvider);
-      const config = {
-        huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-        geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-        claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-        openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-        grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-        deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-        selectedModel: aiSettings?.selectedModel || undefined,
-      };
-
-      // Source language = shop primary locale (best-effort; default "en").
-      let fromLang = "en";
-      try {
-        const locales = await new ContentService(admin).getShopLocales();
-        fromLang = locales.find((l) => l.primary)?.locale || "en";
-      } catch { /* keep default */ }
-
-      const task = await db.task.create({
-        data: {
-          shop: session.shop,
-          type: "translation",
-          status: "queued",
-          fieldType: "app-translations",
-          resourceTitle: `App translations (${sources.length})`,
-          targetLocale: locale,
-          provider,
-          progress: 10,
-          total: sources.length,
-          expiresAt: getTaskExpirationDate(),
-        },
-      });
-
-      try {
-        const aiService = new AIService(provider, config, session.shop, task.id);
-        const rows = await dt.aiAutoTranslate(
-          db,
-          session.shop,
-          { locale, fromLang, scope, sources },
-          (values, from, to, context) => aiService.translateBatchValues(values, from, to, context),
-          // Advance task progress per chunk (10% → 100% over the chunks).
-          async (done, total) => {
-            await db.task.update({
-              where: { id: task.id },
-              data: { processed: done, progress: total > 0 ? Math.min(99, 10 + Math.round((done / total) * 89)) : 100 },
-            });
-          },
-        );
-
-        await db.task.update({
-          where: { id: task.id },
-          data: { status: "completed", progress: 100, processed: rows.length, completedAt: new Date(), result: JSON.stringify({ translated: rows.length, total: sources.length }) },
-        });
-
-        return json({
-          success: true,
-          actionType,
-          taskId: task.id,
-          truncated,
-          rows: rows.map((r) => ({ id: r.id, locale: r.locale, scope: r.scope, sourceText: r.sourceText, targetText: r.targetText, source: r.source })),
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await db.task.update({
-          where: { id: task.id },
-          data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
-        });
-        return json({ success: false, error: msg, actionType }, { status: 500 });
-      }
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
@@ -1037,7 +878,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -1046,13 +887,13 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "apptranslations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -1063,7 +904,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -1118,9 +959,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
-      { id: "metafields", title: t.settings.metafields || "Metafields" },
-      { id: "apptranslations", title: t.settings.appTranslations || "App translations" },
-      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
+      { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
@@ -1269,25 +1108,6 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
                   {t.settings.metafields || "Metafields"}
-                </Text>
-              </button>
-              <button
-                onClick={() => handleSectionChange("apptranslations")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "apptranslations" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "apptranslations" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "apptranslations" ? "semibold" : "regular"}>
-                  {t.settings.appTranslations || "App translations"}
                 </Text>
               </button>
               {showSkuTab && (
@@ -1465,11 +1285,6 @@ export default function SettingsPage() {
                   t={t}
                   onHasChangesChange={setHasMetafieldChanges}
                 />
-              )}
-
-              {/* App translations — dynamic storefront (client-side) translation */}
-              {selectedSection === "apptranslations" && (
-                <SettingsAppTranslationsTab t={t} />
               )}
 
               {/* SKU / variant match keys */}

@@ -29,7 +29,7 @@ import {
   ActionList,
   Tooltip,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, PlusIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -112,6 +112,15 @@ interface UnifiedItemListProps {
   /** Optional: Sort options to show in the sort dropdown */
   sortOptions?: SortOption[];
 
+  /** Optional: Show a "+" add button before the search field (default: false) */
+  showAddButton?: boolean;
+
+  /** Optional: Callback when the "+" add button is clicked */
+  onAddItem?: () => void;
+
+  /** Optional: Accessible label / tooltip for the add button */
+  addButtonLabel?: string;
+
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -143,6 +152,9 @@ export function UnifiedItemList({
   onSyncAll,
   isSyncing = false,
   sortOptions,
+  showAddButton = false,
+  onAddItem,
+  addButtonLabel,
   t = {},
 }: UnifiedItemListProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -482,6 +494,15 @@ export function UnifiedItemList({
                 {resourceName.plural} ({items.length})
               </Text>
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                {showAddButton && onAddItem && (
+                  <Button
+                    icon={PlusIcon}
+                    variant="primary"
+                    onClick={onAddItem}
+                    accessibilityLabel={addButtonLabel || "Add"}
+                    size="slim"
+                  />
+                )}
                 {sortOptions && sortOptions.length > 0 && (
                   <Popover
                     active={sortPopoverActive}

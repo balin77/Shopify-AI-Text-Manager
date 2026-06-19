@@ -14,7 +14,7 @@ import { type ContentType as PlanContentType } from "../config/plans";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useState, useEffect, useRef } from "react";
 
-type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "menus" | "templates";
+type ContentType = "collections" | "blogs" | "metaobjects" | "pages" | "policies" | "menus" | "templates" | "directTranslations";
 
 interface ContentTypeConfig {
   id: ContentType;
@@ -44,6 +44,7 @@ export function ContentTypeNavigation() {
     { id: "policies", label: t.content.policies, icon: "📋", description: t.content.policiesDescription, path: "/app/policies", planContentType: "policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", description: t.content.menusDescription, path: "/app/menus", planContentType: "menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", description: "Theme translatable resources...", path: "/app/templates", planContentType: "templates" },
+    { id: "directTranslations", label: t.content.directTranslations || "Direct translations", icon: "🌐", description: t.content.directTranslationsDescription || "", path: "/app/direct-translations", planContentType: "directTranslations" },
   ];
 
   // Determine which tab is currently active based on the location
@@ -55,6 +56,7 @@ export function ContentTypeNavigation() {
     if (location.pathname === "/app/policies") return "policies";
     if (location.pathname === "/app/menus") return "menus";
     if (location.pathname === "/app/templates") return "templates";
+    if (location.pathname === "/app/direct-translations") return "directTranslations";
     return null;
   };
 
