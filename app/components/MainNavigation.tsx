@@ -255,7 +255,8 @@ export function MainNavigation() {
     location.pathname.startsWith("/app/pages") ||
     location.pathname.startsWith("/app/policies") ||
     location.pathname.startsWith("/app/menus") ||
-    location.pathname.startsWith("/app/templates");
+    location.pathname.startsWith("/app/templates") ||
+    location.pathname.startsWith("/app/direct-translations");
 
   const contentTypes = [
     { id: "collections", label: t.content.collections, icon: "📂", path: "/app/collections" },
@@ -265,6 +266,7 @@ export function MainNavigation() {
     { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
     { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/menus" },
     { id: "templates", label: t.content.templates, icon: "🧪", path: "/app/templates" },
+    { id: "directTranslations", label: t.content.directTranslations || "Direct translations", icon: "🌐", path: "/app/direct-translations" },
   ];
 
   return (

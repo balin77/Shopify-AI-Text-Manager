@@ -16,7 +16,8 @@ export type ContentType =
   | "policies"
   | "templates"
   | "menus"
-  | "metaobjects";
+  | "metaobjects"
+  | "directTranslations";
 
 export interface PlanLimits {
   maxProducts: number;
@@ -118,7 +119,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {
@@ -143,7 +144,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.max,
     monthlyImageOperations: 10000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {

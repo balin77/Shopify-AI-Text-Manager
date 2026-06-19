@@ -1,6 +1,6 @@
 # Plan: „Direktübersetzungen" — eigener Content-Tab
 
-Status: geplant (noch nicht umgesetzt). Branch: `claude/dynamic-storefront-translation`.
+Status: umgesetzt. Branch: `claude/dynamic-storefront-translation`.
 
 Dieser Plan löst die bisherige Admin-Settings-Variante der dynamischen
 Storefront-Übersetzung ab und überführt sie in einen vollwertigen Content-Typ
