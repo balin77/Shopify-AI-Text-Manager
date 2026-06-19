@@ -8,6 +8,7 @@ import {
   sourceHash,
   getDictionary,
   upsertDynamicTranslation,
+  aiAutoTranslate,
 } from "~/services/dynamic-translation.server";
 
 describe("normalizeSource()", () => {
@@ -76,5 +77,45 @@ describe("upsertDynamicTranslation()", () => {
     await expect(
       upsertDynamicTranslation(db, "s", { locale: "de", sourceText: "   ", targetText: "x" }),
     ).rejects.toThrow(/empty/i);
+  });
+});
+
+describe("aiAutoTranslate()", () => {
+  it("normalizes + de-dupes sources, batches once, persists AI pairs, skips no-ops", async () => {
+    const upsert = vi.fn().mockImplementation(({ create }) => Promise.resolve({ id: create.sourceText, ...create }));
+    const db = {
+      dynamicTranslation: { upsert },
+      dynamicTranslationSettings: { upsert: vi.fn() },
+    } as never;
+
+    // "Add to cart" duplicated (raw + whitespace variant) → one source.
+    // Third source comes back empty from the model → skipped.
+    const translateBatch = vi.fn().mockResolvedValue(["Bewertung schreiben", "In den Warenkorb", ""]);
+
+    const rows = await aiAutoTranslate(
+      db,
+      "s",
+      { locale: "de", fromLang: "en", sources: ["Write a review", "Add  to cart", "Add to cart", "Unrendered"] },
+      translateBatch,
+    );
+
+    // de-duped to 3 unique normalized sources
+    expect(translateBatch).toHaveBeenCalledTimes(1);
+    expect(translateBatch.mock.calls[0][0]).toEqual(["Write a review", "Add to cart", "Unrendered"]);
+    expect(translateBatch.mock.calls[0][1]).toBe("en");
+    expect(translateBatch.mock.calls[0][2]).toBe("de");
+
+    // empty translation skipped → 2 persisted, all source:"ai"
+    expect(rows).toHaveLength(2);
+    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(upsert.mock.calls.every((c) => c[0].create.source === "ai")).toBe(true);
+  });
+
+  it("returns nothing when there are no usable sources", async () => {
+    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() } } as never;
+    const translateBatch = vi.fn();
+    const rows = await aiAutoTranslate(db, "s", { locale: "de", fromLang: "en", sources: ["   ", ""] }, translateBatch);
+    expect(rows).toEqual([]);
+    expect(translateBatch).not.toHaveBeenCalled();
   });
 });

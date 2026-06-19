@@ -52,6 +52,14 @@ interface MutateResult {
   error?: string;
 }
 
+interface AiResult {
+  success: boolean;
+  actionType?: string;
+  rows?: Pair[];
+  taskId?: string;
+  error?: string;
+}
+
 interface Props {
   t: I18nTranslation;
 }
@@ -59,6 +67,7 @@ interface Props {
 export function SettingsAppTranslationsTab({ t }: Props) {
   const loadFetcher = useFetcher<LoadResult>();
   const mutateFetcher = useFetcher<MutateResult>();
+  const aiFetcher = useFetcher<AiResult>();
 
   const [enabled, setEnabled] = useState(false);
   const [pairs, setPairs] = useState<Pair[]>([]);
@@ -66,6 +75,8 @@ export function SettingsAppTranslationsTab({ t }: Props) {
   const [activeLocale, setActiveLocale] = useState("");
   const [newSource, setNewSource] = useState("");
   const [newTarget, setNewTarget] = useState("");
+  const [aiSources, setAiSources] = useState("");
+  const isAiTranslating = aiFetcher.state !== "idle";
 
   const ms = (t.settings ?? {}) as unknown as Record<string, string>;
   const tr = (key: string, fallback: string) => ms[key] ?? fallback;
@@ -107,6 +118,30 @@ export function SettingsAppTranslationsTab({ t }: Props) {
       setPairs((prev) => prev.filter((p) => p.id !== d.id));
     }
   }, [mutateFetcher.state, mutateFetcher.data]);
+
+  // Merge AI-translated rows into local state.
+  useEffect(() => {
+    if (aiFetcher.state !== "idle" || !aiFetcher.data?.success) return;
+    if (aiFetcher.data.actionType !== "aiTranslateAppTranslations") return;
+    const rows = aiFetcher.data.rows ?? [];
+    if (rows.length) {
+      setPairs((prev) => {
+        const map = new Map(prev.map((p) => [p.id, p]));
+        for (const r of rows) map.set(r.id, r);
+        return Array.from(map.values());
+      });
+    }
+    setAiSources("");
+  }, [aiFetcher.state, aiFetcher.data]);
+
+  function aiTranslate() {
+    const lines = aiSources.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!activeLocale || lines.length === 0) return;
+    aiFetcher.submit(
+      { actionType: "aiTranslateAppTranslations", locale: activeLocale, scope: "global", sources: JSON.stringify(lines) },
+      { method: "post" },
+    );
+  }
 
   function toggleEnabled(value: boolean) {
     setEnabled(value);
@@ -175,6 +210,12 @@ export function SettingsAppTranslationsTab({ t }: Props) {
         </Banner>
       )}
 
+      {aiFetcher.state === "idle" && aiFetcher.data && aiFetcher.data.success === false && (
+        <Banner tone="critical">
+          <Text as="p" variant="bodyMd">{aiFetcher.data.error ?? t.common.error}</Text>
+        </Banner>
+      )}
+
       {isLoading ? (
         <Card>
           <InlineStack gap="200" blockAlign="center">
@@ -225,6 +266,28 @@ export function SettingsAppTranslationsTab({ t }: Props) {
                   disabled={!newSource.trim() || !newTarget.trim() || !activeLocale}
                 >
                   {tr("appTranslationsAdd", "Add")}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingMd">{tr("appTranslationsAiHeading", "Translate with AI")}</Text>
+              <TextField
+                label={tr("appTranslationsAiSources", "Source strings (one per line)")}
+                value={aiSources}
+                onChange={setAiSources}
+                autoComplete="off"
+                multiline={4}
+                helpText={tr("appTranslationsAiHelp", "Each line is translated into the selected language and added below. You can edit the results afterwards.")}
+                placeholder={"Write a review\nAdd to cart\nVerified buyer"}
+              />
+              <InlineStack align="end">
+                <Button
+                  onClick={aiTranslate}
+                  loading={isAiTranslating}
+                  disabled={!aiSources.trim() || !activeLocale || isAiTranslating}
+                >
+                  ✨ {tr("appTranslationsAiButton", "Translate with AI")}
                 </Button>
               </InlineStack>
             </BlockStack>

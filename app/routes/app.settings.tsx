@@ -30,7 +30,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { sanitizeHTML } from "../utils/sanitizer";
-import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
+import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
@@ -831,6 +831,92 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!id) return json({ success: false, error: "Missing id", actionType }, { status: 400 });
       await dt.deleteDynamicTranslation(db, session.shop, id);
       return json({ success: true, actionType, id });
+    } else if (actionType === "aiTranslateAppTranslations") {
+      // AI-translate a batch of source strings into one locale, persisting each
+      // as a source:"ai" pair. Uses the same AIService + Task tracking pattern
+      // as the product sub-resource translator (handleTranslateSubResources).
+      const dt = await import("../services/dynamic-translation.server");
+      const { AIService, toValidProvider } = await import("../../src/services/ai.service");
+      const { tryDecryptApiKey } = await import("../utils/encryption.server");
+      const { getTaskExpirationDate } = await import("../config/constants");
+      const { ContentService } = await import("../services/content.service");
+
+      const locale = String(formData.get("locale") || "").trim();
+      const scope = String(formData.get("scope") || "global").trim() || "global";
+      let sources: string[] = [];
+      try {
+        sources = JSON.parse(String(formData.get("sources") || "[]"));
+      } catch {
+        return json({ success: false, error: "Invalid sources payload", actionType }, { status: 400 });
+      }
+      sources = (Array.isArray(sources) ? sources : []).map((s) => String(s)).filter((s) => s.trim());
+      if (!locale || !isValidLocale(locale) || sources.length === 0) {
+        return json({ success: false, error: "Locale and at least one source string are required", actionType }, { status: 400 });
+      }
+
+      // Resolve provider + decrypted keys (mirrors prepareActionContext).
+      const aiSettings = await db.aISettings.findUnique({ where: { shop: session.shop } });
+      const provider = toValidProvider(aiSettings?.preferredProvider);
+      const config = {
+        huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
+        geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
+        claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
+        openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
+        grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
+        deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
+        selectedModel: aiSettings?.selectedModel || undefined,
+      };
+
+      // Source language = shop primary locale (best-effort; default "en").
+      let fromLang = "en";
+      try {
+        const locales = await new ContentService(admin).getShopLocales();
+        fromLang = locales.find((l) => l.primary)?.locale || "en";
+      } catch { /* keep default */ }
+
+      const task = await db.task.create({
+        data: {
+          shop: session.shop,
+          type: "translation",
+          status: "queued",
+          fieldType: "app-translations",
+          resourceTitle: `App translations (${sources.length})`,
+          targetLocale: locale,
+          provider,
+          progress: 10,
+          total: sources.length,
+          expiresAt: getTaskExpirationDate(),
+        },
+      });
+
+      try {
+        const aiService = new AIService(provider, config, session.shop, task.id);
+        const rows = await dt.aiAutoTranslate(
+          db,
+          session.shop,
+          { locale, fromLang, scope, sources },
+          (values, from, to, context) => aiService.translateBatchValues(values, from, to, context),
+        );
+
+        await db.task.update({
+          where: { id: task.id },
+          data: { status: "completed", progress: 100, processed: rows.length, completedAt: new Date(), result: JSON.stringify({ translated: rows.length, total: sources.length }) },
+        });
+
+        return json({
+          success: true,
+          actionType,
+          taskId: task.id,
+          rows: rows.map((r) => ({ id: r.id, locale: r.locale, scope: r.scope, sourceText: r.sourceText, targetText: r.targetText, source: r.source })),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await db.task.update({
+          where: { id: task.id },
+          data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
+        });
+        return json({ success: false, error: msg, actionType }, { status: 500 });
+      }
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
