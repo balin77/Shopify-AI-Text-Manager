@@ -793,9 +793,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // non-primary published languages (target locales).
       const dt = await import("../services/dynamic-translation.server");
       const { ContentService } = await import("../services/content.service");
-      const [settings, translations, locales] = await Promise.all([
+      const [settings, translations, candidates, locales] = await Promise.all([
         dt.getDynamicTranslationSettings(db, session.shop),
         dt.listDynamicTranslations(db, session.shop),
+        dt.listCandidates(db, session.shop),
         new ContentService(admin).getShopLocales().catch(() => []),
       ]);
       const targetLocales = (locales as Array<{ locale: string; name?: string; primary: boolean; published: boolean }>)
@@ -805,8 +806,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         success: true,
         actionType,
         enabled: settings.enabled,
+        collect: settings.collect,
         translations: translations.map((t) => ({
           id: t.id, locale: t.locale, scope: t.scope, sourceText: t.sourceText, targetText: t.targetText, source: t.source,
+        })),
+        candidates: candidates.map((c) => ({
+          id: c.id, locale: c.locale, scope: c.scope, sourceText: c.sourceText, count: c.count,
         })),
         targetLocales,
       });
@@ -814,6 +819,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const dt = await import("../services/dynamic-translation.server");
       await dt.setDynamicTranslationEnabled(db, session.shop, formData.get("enabled") === "true");
       return json({ success: true, actionType });
+    } else if (actionType === "saveAppTranslationCollect") {
+      const dt = await import("../services/dynamic-translation.server");
+      await dt.setDynamicTranslationCollect(db, session.shop, formData.get("collect") === "true");
+      return json({ success: true, actionType });
+    } else if (actionType === "dismissAppTranslationCandidate") {
+      const dt = await import("../services/dynamic-translation.server");
+      const id = String(formData.get("id") || "");
+      if (!id) return json({ success: false, error: "Missing id", actionType }, { status: 400 });
+      await dt.dismissCandidate(db, session.shop, id);
+      return json({ success: true, actionType, id });
     } else if (actionType === "upsertAppTranslation") {
       const dt = await import("../services/dynamic-translation.server");
       const locale = String(formData.get("locale") || "").trim();

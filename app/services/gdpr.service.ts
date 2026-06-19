@@ -388,6 +388,11 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${dynamicTranslationSettingsDeleted.count} dynamic translation settings`);
+
+    const dynamicTranslationCandidatesDeleted = await tx.dynamicTranslationCandidate.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${dynamicTranslationCandidatesDeleted.count} dynamic translation candidates`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

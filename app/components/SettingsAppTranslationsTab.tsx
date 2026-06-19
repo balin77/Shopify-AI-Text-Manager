@@ -36,11 +36,21 @@ interface Pair {
   source: string;
 }
 
+interface Candidate {
+  id: string;
+  locale: string;
+  scope: string;
+  sourceText: string;
+  count: number;
+}
+
 interface LoadResult {
   success: boolean;
   actionType?: string;
   enabled?: boolean;
+  collect?: boolean;
   translations?: Pair[];
+  candidates?: Candidate[];
   targetLocales?: Array<{ locale: string; name?: string }>;
 }
 
@@ -70,7 +80,9 @@ export function SettingsAppTranslationsTab({ t }: Props) {
   const aiFetcher = useFetcher<AiResult>();
 
   const [enabled, setEnabled] = useState(false);
+  const [collect, setCollect] = useState(false);
   const [pairs, setPairs] = useState<Pair[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [targetLocales, setTargetLocales] = useState<Array<{ locale: string; name?: string }>>([]);
   const [activeLocale, setActiveLocale] = useState("");
   const [newSource, setNewSource] = useState("");
@@ -96,7 +108,9 @@ export function SettingsAppTranslationsTab({ t }: Props) {
     const d = loadFetcher.data;
     if (d.actionType !== "loadAppTranslations") return;
     setEnabled(!!d.enabled);
+    setCollect(!!d.collect);
     setPairs(d.translations ?? []);
+    setCandidates(d.candidates ?? []);
     const locales = d.targetLocales ?? [];
     setTargetLocales(locales);
     setActiveLocale((prev) => prev || (locales[0]?.locale ?? ""));
@@ -112,14 +126,18 @@ export function SettingsAppTranslationsTab({ t }: Props) {
         const rest = prev.filter((p) => p.id !== row.id);
         return [row, ...rest];
       });
+      // A translated string is no longer a candidate.
+      setCandidates((prev) => prev.filter((c) => !(c.locale === row.locale && c.sourceText === row.sourceText)));
       setNewSource("");
       setNewTarget("");
     } else if (d.actionType === "deleteAppTranslation" && d.id) {
       setPairs((prev) => prev.filter((p) => p.id !== d.id));
+    } else if (d.actionType === "dismissAppTranslationCandidate" && d.id) {
+      setCandidates((prev) => prev.filter((c) => c.id !== d.id));
     }
   }, [mutateFetcher.state, mutateFetcher.data]);
 
-  // Merge AI-translated rows into local state.
+  // Merge AI-translated rows into local state + drop the candidates they cover.
   useEffect(() => {
     if (aiFetcher.state !== "idle" || !aiFetcher.data?.success) return;
     if (aiFetcher.data.actionType !== "aiTranslateAppTranslations") return;
@@ -130,6 +148,8 @@ export function SettingsAppTranslationsTab({ t }: Props) {
         for (const r of rows) map.set(r.id, r);
         return Array.from(map.values());
       });
+      const translated = new Set(rows.map((r) => `${r.locale}::${r.sourceText}`));
+      setCandidates((prev) => prev.filter((c) => !translated.has(`${c.locale}::${c.sourceText}`)));
     }
     setAiSources("");
   }, [aiFetcher.state, aiFetcher.data]);
@@ -147,6 +167,31 @@ export function SettingsAppTranslationsTab({ t }: Props) {
     setEnabled(value);
     mutateFetcher.submit(
       { actionType: "saveAppTranslationEnabled", enabled: String(value) },
+      { method: "post" },
+    );
+  }
+
+  function toggleCollect(value: boolean) {
+    setCollect(value);
+    mutateFetcher.submit(
+      { actionType: "saveAppTranslationCollect", collect: String(value) },
+      { method: "post" },
+    );
+  }
+
+  function dismissCandidate(id: string) {
+    mutateFetcher.submit({ actionType: "dismissAppTranslationCandidate", id }, { method: "post" });
+  }
+
+  function useCandidate(text: string) {
+    setNewSource(text);
+    setNewTarget("");
+  }
+
+  function aiTranslateCandidates(sources: string[]) {
+    if (!activeLocale || sources.length === 0) return;
+    aiFetcher.submit(
+      { actionType: "aiTranslateAppTranslations", locale: activeLocale, scope: "global", sources: JSON.stringify(sources) },
       { method: "post" },
     );
   }
@@ -171,6 +216,11 @@ export function SettingsAppTranslationsTab({ t }: Props) {
   const visiblePairs = useMemo(
     () => pairs.filter((p) => p.locale === activeLocale).sort((a, b) => a.sourceText.localeCompare(b.sourceText)),
     [pairs, activeLocale],
+  );
+
+  const visibleCandidates = useMemo(
+    () => candidates.filter((c) => c.locale === activeLocale).sort((a, b) => b.count - a.count),
+    [candidates, activeLocale],
   );
 
   const isLoading = loadFetcher.state !== "idle" && pairs.length === 0 && !loadFetcher.data;
@@ -199,6 +249,16 @@ export function SettingsAppTranslationsTab({ t }: Props) {
             label={tr("appTranslationsEnable", "Enable dynamic storefront translation")}
             checked={enabled}
             onChange={toggleEnabled}
+            disabled={isMutating}
+          />
+          <Checkbox
+            label={tr("appTranslationsCollect", "Collect untranslated strings from the storefront")}
+            helpText={tr(
+              "appTranslationsCollectHelp",
+              "When on, your storefront reports short untranslated UI strings it renders (filtered, never prices/emails) so you can review and translate them below. Off by default.",
+            )}
+            checked={collect}
+            onChange={toggleCollect}
             disabled={isMutating}
           />
         </BlockStack>
@@ -291,6 +351,53 @@ export function SettingsAppTranslationsTab({ t }: Props) {
                 </Button>
               </InlineStack>
             </BlockStack>
+
+            {visibleCandidates.length > 0 && (
+              <BlockStack gap="200">
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h3" variant="headingMd">{tr("appTranslationsDiscovered", "Discovered strings")}</Text>
+                    <Badge tone="attention">{`${visibleCandidates.length}`}</Badge>
+                  </InlineStack>
+                  <Button
+                    onClick={() => aiTranslateCandidates(visibleCandidates.map((c) => c.sourceText))}
+                    loading={isAiTranslating}
+                    disabled={isAiTranslating}
+                  >
+                    ✨ {tr("appTranslationsTranslateAllAi", "Translate all with AI")}
+                  </Button>
+                </InlineStack>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid #e1e3e5" }}>
+                        <th style={thStyle}>{tr("appTranslationsSource", "Original text")}</th>
+                        <th style={{ ...thStyle, width: 70 }}>{tr("appTranslationsSeen", "Seen")}</th>
+                        <th style={{ ...thStyle, width: 170 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleCandidates.map((c) => (
+                        <tr key={c.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
+                          <td style={tdStyle}><Text as="span" variant="bodyMd">{c.sourceText}</Text></td>
+                          <td style={tdStyle}><Text as="span" tone="subdued" variant="bodySm">{`${c.count}×`}</Text></td>
+                          <td style={tdStyle}>
+                            <InlineStack gap="100">
+                              <Button size="micro" onClick={() => useCandidate(c.sourceText)} disabled={isMutating}>
+                                {tr("appTranslationsUse", "Translate")}
+                              </Button>
+                              <Button size="micro" variant="tertiary" tone="critical" onClick={() => dismissCandidate(c.id)} disabled={isMutating}>
+                                {tr("appTranslationsDismiss", "Dismiss")}
+                              </Button>
+                            </InlineStack>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </BlockStack>
+            )}
 
             {visiblePairs.length === 0 ? (
               <Text as="p" tone="subdued">{tr("appTranslationsEmpty", "No entries yet for this language.")}</Text>

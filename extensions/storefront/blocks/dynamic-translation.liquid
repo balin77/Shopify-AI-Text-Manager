@@ -20,6 +20,7 @@
 <script type="application/json" id="contentpilot-dt-config">
 {
   "endpoint": "/apps/contentpilot/dynamic-translations",
+  "collectEndpoint": "/apps/contentpilot/collect-strings",
   "locale": {{ request.locale.iso_code | json }},
   "primaryLocale": {{ shop.locale | json }},
   "template": {{ template.name | json }},

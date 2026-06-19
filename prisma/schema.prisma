@@ -162,9 +162,31 @@ model DynamicTranslation {
 model DynamicTranslationSettings {
   shop      String   @id
   enabled   Boolean  @default(false)
+  // Opt-in: when true, the storefront reports untranslated strings it renders
+  // (heuristically filtered, capped) so the merchant can review + translate
+  // them in the admin. Off by default (privacy/noise). Never auto-applied.
+  collect   Boolean  @default(false)
   // Bumped on every dictionary change so the storefront cache invalidates.
   version   Int      @default(1)
   updatedAt DateTime @updatedAt
+}
+
+// Untranslated strings discovered on the storefront (Phase 2b collector),
+// pending merchant review. Promoting one (manual/AI) creates a
+// DynamicTranslation and removes the candidate.
+model DynamicTranslationCandidate {
+  id          String   @id @default(cuid())
+  shop        String
+  locale      String
+  scope       String   @default("global")
+  sourceHash  String
+  sourceText  String   @db.Text
+  count       Int      @default(1)   // times seen across visitors/pages
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, locale, scope, sourceHash])
+  @@index([shop, locale])
 }
 
 model AIInstructions {

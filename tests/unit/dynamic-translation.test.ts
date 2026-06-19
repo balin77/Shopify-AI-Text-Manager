@@ -9,6 +9,8 @@ import {
   getDictionary,
   upsertDynamicTranslation,
   aiAutoTranslate,
+  isCollectibleString,
+  recordCandidates,
 } from "~/services/dynamic-translation.server";
 
 describe("normalizeSource()", () => {
@@ -60,6 +62,7 @@ describe("upsertDynamicTranslation()", () => {
     const db = {
       dynamicTranslation: { upsert },
       dynamicTranslationSettings: { upsert: settingsUpsert },
+      dynamicTranslationCandidate: { deleteMany: vi.fn() },
     } as never;
 
     await upsertDynamicTranslation(db, "s", { locale: "de", sourceText: "  Write   a review  ", targetText: "Bewertung schreiben" });
@@ -73,7 +76,7 @@ describe("upsertDynamicTranslation()", () => {
   });
 
   it("rejects empty source", async () => {
-    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() } } as never;
+    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() }, dynamicTranslationCandidate: { deleteMany: vi.fn() } } as never;
     await expect(
       upsertDynamicTranslation(db, "s", { locale: "de", sourceText: "   ", targetText: "x" }),
     ).rejects.toThrow(/empty/i);
@@ -86,6 +89,7 @@ describe("aiAutoTranslate()", () => {
     const db = {
       dynamicTranslation: { upsert },
       dynamicTranslationSettings: { upsert: vi.fn() },
+      dynamicTranslationCandidate: { deleteMany: vi.fn() },
     } as never;
 
     // "Add to cart" duplicated (raw + whitespace variant) → one source.
@@ -112,10 +116,47 @@ describe("aiAutoTranslate()", () => {
   });
 
   it("returns nothing when there are no usable sources", async () => {
-    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() } } as never;
+    const db = { dynamicTranslation: { upsert: vi.fn() }, dynamicTranslationSettings: { upsert: vi.fn() }, dynamicTranslationCandidate: { deleteMany: vi.fn() } } as never;
     const translateBatch = vi.fn();
     const rows = await aiAutoTranslate(db, "s", { locale: "de", fromLang: "en", sources: ["   ", ""] }, translateBatch);
     expect(rows).toEqual([]);
     expect(translateBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("isCollectibleString()", () => {
+  it("accepts short UI labels", () => {
+    expect(isCollectibleString("Write a review")).toBe(true);
+    expect(isCollectibleString("Verified buyer")).toBe(true);
+  });
+  it("rejects prices, emails, urls, phone, numeric and too-long strings", () => {
+    expect(isCollectibleString("$19.99")).toBe(false);
+    expect(isCollectibleString("19,99 €")).toBe(false);
+    expect(isCollectibleString("john@example.com")).toBe(false);
+    expect(isCollectibleString("https://example.com")).toBe(false);
+    expect(isCollectibleString("+1 (555) 123-4567")).toBe(false);
+    expect(isCollectibleString("12345")).toBe(false);
+    expect(isCollectibleString("a")).toBe(false);
+    expect(isCollectibleString("x".repeat(101))).toBe(false);
+  });
+});
+
+describe("recordCandidates()", () => {
+  it("filters non-collectible, upserts collectible, caps the batch", async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const count = vi.fn().mockResolvedValue(0);
+    const db = {
+      dynamicTranslationCandidate: { upsert, count, findMany: vi.fn(), deleteMany: vi.fn() },
+    } as never;
+
+    const recorded = await recordCandidates(db, "s", "de", [
+      { text: "Write a review" },
+      { text: "$19.99" },        // filtered
+      { text: "Add to cart" },
+      { text: "  " },             // filtered
+    ]);
+
+    expect(recorded).toBe(2);
+    expect(upsert).toHaveBeenCalledTimes(2);
   });
 });
