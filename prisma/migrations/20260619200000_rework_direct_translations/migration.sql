@@ -33,10 +33,17 @@ CREATE TABLE IF NOT EXISTS "DirectTranslation" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "DirectTranslation_itemId_locale_key" ON "DirectTranslation"("itemId", "locale");
 
-ALTER TABLE "DirectTranslation"
-    ADD CONSTRAINT "DirectTranslation_itemId_fkey"
-    FOREIGN KEY ("itemId") REFERENCES "DirectTranslationItem"("id")
-    ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'DirectTranslation_itemId_fkey'
+  ) THEN
+    ALTER TABLE "DirectTranslation"
+      ADD CONSTRAINT "DirectTranslation_itemId_fkey"
+      FOREIGN KEY ("itemId") REFERENCES "DirectTranslationItem"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "DirectTranslationCandidate" (
     "id" TEXT NOT NULL,

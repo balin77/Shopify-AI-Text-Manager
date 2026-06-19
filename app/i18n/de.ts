@@ -892,6 +892,7 @@ export const de = {
   // Common
   common: {
     save: "Speichern",
+    discard: "Verwerfen",
     cancel: "Abbrechen",
     delete: "Löschen",
     edit: "Bearbeiten",

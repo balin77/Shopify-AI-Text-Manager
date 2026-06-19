@@ -894,6 +894,7 @@ export const es: Translation = {
   // Common
   common: {
     save: "Guardar",
+    discard: "Descartar",
     cancel: "Cancelar",
     delete: "Eliminar",
     edit: "Editar",

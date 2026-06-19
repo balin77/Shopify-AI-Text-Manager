@@ -39,6 +39,8 @@ import { AppSaveBar } from "../components/AppSaveBar";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useTaskCount } from "../contexts/TaskCountContext";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { getFormString } from "../utils/form-data.utils";
 import { isValidLocale } from "../utils/validation";
@@ -168,9 +170,11 @@ async function runAiTask(
       { items: params.items, fromLang: params.fromLang, locales: params.locales },
       translateBatch,
       async (done, t) => {
+        // `t` is the post-dedupe total from the service — keep the Task in sync
+        // so processed never exceeds total on full success.
         await db.task.update({
           where: { id: task.id },
-          data: { processed: done, progress: t > 0 ? Math.min(99, 10 + Math.round((done / t) * 89)) : 100 },
+          data: { total: t, processed: done, progress: t > 0 ? Math.min(99, 10 + Math.round((done / t) * 89)) : 100 },
         });
       },
     );
@@ -280,14 +284,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const locales = scope === "all" ? targets : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
-        const translated = await runAiTask(session.shop, {
+        // Run in the background — the Task poller surfaces progress/completion
+        // and the page revalidates when the running count drops to zero.
+        void runAiTask(session.shop, {
           items: [{ id, sourceText }],
           fromLang: primary,
           locales,
           targetLocaleLabel: scope === "all" ? "all" : locale,
           resourceTitle: dt.normalizeSource(sourceText).slice(0, 80),
-        });
-        return json({ success: true, actionType, itemId: id, translated });
+        }).catch(() => {});
+        return json({ success: true, actionType, itemId: id, started: true });
       }
 
       case "aiAll": {
@@ -296,14 +302,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (targets.length === 0) return json({ success: true, actionType, translated: 0 });
         const items = (await dt.listItems(db, session.shop)).map((r) => ({ id: r.id, sourceText: r.sourceText }));
         if (items.length === 0) return json({ success: true, actionType, translated: 0 });
-        const translated = await runAiTask(session.shop, {
+        void runAiTask(session.shop, {
           items,
           fromLang: primary,
           locales: targets,
           targetLocaleLabel: "all",
           resourceTitle: `Direktübersetzungen (${items.length})`,
-        });
-        return json({ success: true, actionType, translated });
+        }).catch(() => {});
+        return json({ success: true, actionType, started: true });
       }
 
       case "loadCandidates": {
@@ -322,13 +328,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (withAi && created.length > 0) {
           const { primary, targets } = await resolveLocales();
           if (targets.length > 0) {
-            await runAiTask(session.shop, {
+            void runAiTask(session.shop, {
               items: created.map((c) => ({ id: c.id, sourceText: c.sourceText })),
               fromLang: primary,
               locales: targets,
               targetLocaleLabel: "all",
               resourceTitle: `Direktübersetzungen (${created.length})`,
-            });
+            }).catch(() => {});
           }
         }
         return json({ success: true, actionType, added: created.length });
@@ -363,7 +369,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, collect, newCandidateCount, error } =
+  const { items, targetLocales, collect, newCandidateCount, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -375,7 +381,8 @@ export default function DirectTranslationsPage() {
     };
   const { t, locale: appLocale } = useI18n();
   const { showInfoBox } = useInfoBox();
-  const fetcher = useFetcher<{ success?: boolean; error?: string; actionType?: string; itemId?: string; translated?: number; added?: number }>();
+  const { runningTaskCount } = useTaskCount();
+  const fetcher = useFetcher<{ success?: boolean; error?: string; actionType?: string; itemId?: string; translated?: number; added?: number; started?: boolean }>();
   const candidatesFetcher = useFetcher<{ success?: boolean; newItems?: Array<{ id: string; sourceText: string; count: number }>; rejectedItems?: Array<{ id: string; sourceText: string; count: number }> }>();
   const revalidator = useRevalidator();
   const tt = t.directTranslations;
@@ -449,7 +456,11 @@ export default function DirectTranslationsPage() {
   }, []);
 
   const handleLanguageChange = useCallback(
-    (language: string) => {
+    async (language: string) => {
+      if (language === currentLanguage) return;
+      // Prompt via the native save bar if there are unsaved edits (resolves
+      // immediately when nothing is dirty / App Bridge is unavailable).
+      await confirmNavigation();
       setCurrentLanguage(language);
       if (!isNew && selectedItem) {
         const tr = selectedItem.translations.find((x) => x.locale === language);
@@ -457,7 +468,7 @@ export default function DirectTranslationsPage() {
         setBaseTarget(tr?.targetText || "");
       }
     },
-    [isNew, selectedItem],
+    [currentLanguage, isNew, selectedItem],
   );
 
   const hasChanges =
@@ -532,6 +543,12 @@ export default function DirectTranslationsPage() {
     submit({ action: "deleteItem", itemId: selectedId });
   }, [isNew, selectedId, submit, handleDiscard]);
 
+  const reloadCandidates = useCallback(() => {
+    const fd = new FormData();
+    fd.append("action", "loadCandidates");
+    candidatesFetcher.submit(fd, { method: "POST" });
+  }, [candidatesFetcher]);
+
   // React to action responses: revalidate + adopt new item id + toast.
   const processedRef = useRef<unknown>(null);
   useEffect(() => {
@@ -551,8 +568,21 @@ export default function DirectTranslationsPage() {
       setSelectedId(fetcher.data.itemId);
       setIsNew(false);
     }
+    // Candidate mutations already committed server-side → refresh the modal list.
+    if ((at === "addCandidates" || at === "rejectCandidates") && candidatesOpen) reloadCandidates();
     revalidator.revalidate();
-  }, [fetcher.data, revalidator, showInfoBox]);
+  }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates]);
+
+  // Background AI tasks: when the running-task count drops to zero, pull fresh
+  // data (and refresh the candidate modal) so completed translations show up.
+  const prevRunning = useRef(runningTaskCount);
+  useEffect(() => {
+    if (prevRunning.current > 0 && runningTaskCount === 0) {
+      revalidator.revalidate();
+      if (candidatesOpen) reloadCandidates();
+    }
+    prevRunning.current = runningTaskCount;
+  }, [runningTaskCount, revalidator, candidatesOpen, reloadCandidates]);
 
   // After revalidation completes, refresh the editor baseline from fresh data.
   const prevRevState = useRef(revalidator.state);
@@ -599,8 +629,7 @@ export default function DirectTranslationsPage() {
                 {newCandidateCount > 0 && (
                   <Banner
                     tone="info"
-                    onDismiss={() => setCandidatesOpen(true)}
-                    action={{ content: tt.foundTexts, onAction: () => setCandidatesOpen(true) }}
+                    action={{ content: tt.foundTexts, onAction: () => { setCandidatesOpen(true); reloadCandidates(); } }}
                   >
                     {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
                   </Banner>
@@ -624,12 +653,7 @@ export default function DirectTranslationsPage() {
                       </InlineStack>
                       <InlineStack gap="200" blockAlign="center">
                         <Button
-                          onClick={() => {
-                            setCandidatesOpen(true);
-                            const fd = new FormData();
-                            fd.append("action", "loadCandidates");
-                            candidatesFetcher.submit(fd, { method: "POST" });
-                          }}
+                          onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}
                         >
                           {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
                         </Button>
@@ -731,7 +755,14 @@ export default function DirectTranslationsPage() {
           </div>
         </div>
 
-        <AppSaveBar hasChanges={hasChanges} onSave={handleSave} onDiscard={handleDiscard} loading={isBusy} />
+        <AppSaveBar
+          hasChanges={hasChanges}
+          onSave={handleSave}
+          onDiscard={handleDiscard}
+          loading={isBusy}
+          saveText={t.common?.save}
+          discardText={t.common?.discard}
+        />
 
         <FoundTextsModal
           open={candidatesOpen}
@@ -740,16 +771,12 @@ export default function DirectTranslationsPage() {
           collect={collect}
           fetcher={candidatesFetcher}
           onAction={(action, payload) => {
+            // The candidate list is reloaded by the parent effect once this
+            // mutation settles (and again when any background AI task finishes).
             const fd = new FormData();
             fd.append("action", action);
             for (const [k, v] of Object.entries(payload)) fd.append(k, v);
             fetcher.submit(fd, { method: "POST" });
-            // Reload the candidate list after the mutation.
-            setTimeout(() => {
-              const reload = new FormData();
-              reload.append("action", "loadCandidates");
-              candidatesFetcher.submit(reload, { method: "POST" });
-            }, 400);
           }}
         />
       </div>
@@ -760,6 +787,36 @@ export default function DirectTranslationsPage() {
 // ============================================================================
 // "Found texts" modal
 // ============================================================================
+
+function CandidatePill({
+  item,
+  checked,
+  onToggle,
+  seenLabel,
+}: {
+  item: { id: string; sourceText: string; count: number };
+  checked: boolean;
+  onToggle: () => void;
+  seenLabel: string;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 10px",
+        border: `1px solid ${checked ? "#008060" : "#c9cccf"}`,
+        borderRadius: "16px",
+        background: checked ? "#f1f8f5" : "white",
+      }}
+    >
+      <Checkbox label="" labelHidden checked={checked} onChange={onToggle} />
+      <Text as="span" variant="bodySm">{item.sourceText}</Text>
+      <Badge tone="info">{seenLabel.replace("{n}", String(item.count))}</Badge>
+    </div>
+  );
+}
 
 function FoundTextsModal({
   open,
@@ -793,23 +850,7 @@ function FoundTextsModal({
     setSet(next);
   };
 
-  const Pill = ({ item, checked, onToggle }: { item: { id: string; sourceText: string; count: number }; checked: boolean; onToggle: () => void }) => (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "8px",
-        padding: "6px 10px",
-        border: `1px solid ${checked ? "#008060" : "#c9cccf"}`,
-        borderRadius: "16px",
-        background: checked ? "#f1f8f5" : "white",
-      }}
-    >
-      <Checkbox label="" labelHidden checked={checked} onChange={onToggle} />
-      <Text as="span" variant="bodySm">{item.sourceText}</Text>
-      <Badge tone="info">{(tt.modalSeen || "{n}").replace("{n}", String(item.count))}</Badge>
-    </div>
-  );
+  const seenLabel = tt.modalSeen || "{n}";
 
   return (
     <Modal open={open} onClose={onClose} title={tt.modalTitle} size="large">
@@ -837,7 +878,7 @@ function FoundTextsModal({
               <>
                 <InlineStack gap="200" wrap>
                   {newItems.map((it) => (
-                    <Pill key={it.id} item={it} checked={selectedNew.has(it.id)} onToggle={() => toggle(selectedNew, setSelectedNew, it.id)} />
+                    <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedNew.has(it.id)} onToggle={() => toggle(selectedNew, setSelectedNew, it.id)} />
                   ))}
                 </InlineStack>
                 <InlineStack gap="200">
@@ -876,7 +917,7 @@ function FoundTextsModal({
               <>
                 <InlineStack gap="200" wrap>
                   {rejectedItems.map((it) => (
-                    <Pill key={it.id} item={it} checked={selectedRejected.has(it.id)} onToggle={() => toggle(selectedRejected, setSelectedRejected, it.id)} />
+                    <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedRejected.has(it.id)} onToggle={() => toggle(selectedRejected, setSelectedRejected, it.id)} />
                   ))}
                 </InlineStack>
                 <InlineStack gap="200">

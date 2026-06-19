@@ -32,8 +32,14 @@
     return;
   }
 
-  var locale = (cfg.locale || "").toLowerCase();
-  var primary = (cfg.primaryLocale || "").toLowerCase();
+  // Keep the CANONICAL Shopify casing (e.g. "pt-BR", "zh-CN") for everything
+  // sent to / matched on the server — the admin stores translations under the
+  // canonical locale and the proxy's isValidLocale() requires the uppercase
+  // region subtag. Only a lower-cased copy is used for client storage keys.
+  var locale = cfg.locale || "";
+  var primary = cfg.primaryLocale || "";
+  var localeKey = locale.toLowerCase();
+  var isPrimaryLocale = !!locale && !!primary && localeKey === primary.toLowerCase();
   var debug = !!cfg.debug;
   var log = debug
     ? function () { try { console.log.apply(console, ["[ContentPilot DT]"].concat([].slice.call(arguments))); } catch (e) {} }
@@ -42,8 +48,8 @@
   var endpoint = cfg.endpoint || "/apps/contentpilot/dynamic-translations";
   var collectEndpoint = cfg.collectEndpoint || "/apps/contentpilot/collect-strings";
   var addEndpoint = cfg.addEndpoint || "/apps/contentpilot/direct-add";
-  var cacheKey = "contentpilot_dt_" + locale;
-  var reportedKey = "contentpilot_dt_reported_" + locale;
+  var cacheKey = "contentpilot_dt_" + localeKey;
+  var reportedKey = "contentpilot_dt_reported_" + localeKey;
 
   // Visual capture mode: only in the theme editor, or explicit ?cp-translate=1.
   var designMode = !!(window.Shopify && window.Shopify.designMode);
@@ -53,7 +59,7 @@
   // Translation is inactive on the primary locale (or no locale), but the
   // visual capture mode may still run (to add source strings while previewing
   // the primary language).
-  var translateActive = !!locale && !(primary && locale === primary);
+  var translateActive = !!locale && !isPrimaryLocale;
   if (!translateActive) log("translation inactive (primary or no locale)", locale, primary);
 
   var dictMap = new Map();      // normalizedSource → target

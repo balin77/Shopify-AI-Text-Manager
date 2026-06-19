@@ -895,6 +895,7 @@ export const en: Translation = {
   // Common
   common: {
     save: "Save",
+    discard: "Discard",
     cancel: "Cancel",
     delete: "Delete",
     edit: "Edit",
