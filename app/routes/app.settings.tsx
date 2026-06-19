@@ -18,6 +18,7 @@ import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
+import { SettingsAppTranslationsTab } from "../components/SettingsAppTranslationsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
@@ -787,6 +788,49 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType, enabledCount: toInsert.length, failed });
+    } else if (actionType === "loadAppTranslations") {
+      // Dynamic storefront translation tab: load settings + pairs + the shop's
+      // non-primary published languages (target locales).
+      const dt = await import("../services/dynamic-translation.server");
+      const { ContentService } = await import("../services/content.service");
+      const [settings, translations, locales] = await Promise.all([
+        dt.getDynamicTranslationSettings(db, session.shop),
+        dt.listDynamicTranslations(db, session.shop),
+        new ContentService(admin).getShopLocales().catch(() => []),
+      ]);
+      const targetLocales = (locales as Array<{ locale: string; name?: string; primary: boolean; published: boolean }>)
+        .filter((l) => !l.primary && l.published)
+        .map((l) => ({ locale: l.locale, name: l.name }));
+      return json({
+        success: true,
+        actionType,
+        enabled: settings.enabled,
+        translations: translations.map((t) => ({
+          id: t.id, locale: t.locale, scope: t.scope, sourceText: t.sourceText, targetText: t.targetText, source: t.source,
+        })),
+        targetLocales,
+      });
+    } else if (actionType === "saveAppTranslationEnabled") {
+      const dt = await import("../services/dynamic-translation.server");
+      await dt.setDynamicTranslationEnabled(db, session.shop, formData.get("enabled") === "true");
+      return json({ success: true, actionType });
+    } else if (actionType === "upsertAppTranslation") {
+      const dt = await import("../services/dynamic-translation.server");
+      const locale = String(formData.get("locale") || "").trim();
+      const sourceText = String(formData.get("sourceText") || "");
+      const targetText = String(formData.get("targetText") || "");
+      const scope = String(formData.get("scope") || "global").trim() || "global";
+      if (!locale || !sourceText.trim() || !targetText.trim()) {
+        return json({ success: false, error: "Locale, source and target are required", actionType }, { status: 400 });
+      }
+      const row = await dt.upsertDynamicTranslation(db, session.shop, { locale, sourceText, targetText, scope });
+      return json({ success: true, actionType, row: { id: row.id, locale: row.locale, scope: row.scope, sourceText: row.sourceText, targetText: row.targetText, source: row.source } });
+    } else if (actionType === "deleteAppTranslation") {
+      const dt = await import("../services/dynamic-translation.server");
+      const id = String(formData.get("id") || "");
+      if (!id) return json({ success: false, error: "Missing id", actionType }, { status: 400 });
+      await dt.deleteDynamicTranslation(db, session.shop, id);
+      return json({ success: true, actionType, id });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
@@ -878,7 +922,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -887,13 +931,13 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "apptranslations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -904,7 +948,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "apptranslations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -960,6 +1004,7 @@ export default function SettingsPage() {
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
       { id: "metafields", title: t.settings.metafields || "Metafields" },
+      { id: "apptranslations", title: t.settings.appTranslations || "App translations" },
       ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
@@ -1109,6 +1154,25 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
                   {t.settings.metafields || "Metafields"}
+                </Text>
+              </button>
+              <button
+                onClick={() => handleSectionChange("apptranslations")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "apptranslations" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "apptranslations" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "apptranslations" ? "semibold" : "regular"}>
+                  {t.settings.appTranslations || "App translations"}
                 </Text>
               </button>
               {showSkuTab && (
@@ -1286,6 +1350,11 @@ export default function SettingsPage() {
                   t={t}
                   onHasChangesChange={setHasMetafieldChanges}
                 />
+              )}
+
+              {/* App translations — dynamic storefront (client-side) translation */}
+              {selectedSection === "apptranslations" && (
+                <SettingsAppTranslationsTab t={t} />
               )}
 
               {/* SKU / variant match keys */}

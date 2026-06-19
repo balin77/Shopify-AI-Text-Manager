@@ -376,6 +376,18 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${enabledMetafieldDefsDeleted.count} enabled metafield definitions`);
+
+    // 26. Delete dynamic storefront translations + settings — shop-scoped
+    //     merchant-authored content for the client-side translation layer.
+    const dynamicTranslationsDeleted = await tx.dynamicTranslation.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${dynamicTranslationsDeleted.count} dynamic translations`);
+
+    const dynamicTranslationSettingsDeleted = await tx.dynamicTranslationSettings.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${dynamicTranslationSettingsDeleted.count} dynamic translation settings`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
