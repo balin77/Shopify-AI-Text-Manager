@@ -35,10 +35,12 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
+import { HelpTooltip } from "../components/HelpTooltip";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { getFormString } from "../utils/form-data.utils";
@@ -121,6 +123,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return created.id;
   };
 
+  // Restrict a bulk "all languages" request to the locales the merchant left
+  // enabled in the language bar (intersected with the published targets). Falls
+  // back to all published targets when the client sent nothing.
+  const enabledTargets = (targets: string[]) => {
+    let requested: string[] | null = null;
+    try {
+      const parsed = JSON.parse(getFormString(formData, "locales") || "null");
+      if (Array.isArray(parsed)) requested = parsed.map(String);
+    } catch { /* ignore */ }
+    if (!requested) return targets;
+    const allow = new Set(targets);
+    return requested.filter((l) => allow.has(l));
+  };
+
   try {
     switch (actionType) {
       case "save": {
@@ -154,7 +170,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         const id = await ensureItem(itemId, sourceText);
         const { targets } = await resolveLocales();
-        const locales = scope === "all" ? targets : locale ? [locale] : [];
+        const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         const normalized = dt.normalizeSource(sourceText);
         for (const l of locales) {
           if (isValidLocale(l)) await dt.setTranslation(db, session.shop, id, l, normalized, "user");
@@ -172,7 +188,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         const id = await ensureItem(itemId, sourceText);
         const { primary, targets } = await resolveLocales();
-        const locales = scope === "all" ? targets : locale ? [locale] : [];
+        const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
         // Run in the background — the Task poller surfaces progress/completion
@@ -188,15 +204,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       case "aiAll": {
-        // AI-translate ALL items into all target locales.
+        // AI-translate ALL items into the enabled target locales.
         const { primary, targets } = await resolveLocales();
-        if (targets.length === 0) return json({ success: true, actionType, translated: 0 });
+        const locales = enabledTargets(targets);
+        if (locales.length === 0) return json({ success: true, actionType, translated: 0 });
         const items = (await dt.listItems(db, session.shop)).map((r) => ({ id: r.id, sourceText: r.sourceText }));
         if (items.length === 0) return json({ success: true, actionType, translated: 0 });
         void runAiTask(session.shop, {
           items,
           fromLang: primary,
-          locales: targets,
+          locales,
           targetLocaleLabel: "all",
           resourceTitle: `Direktübersetzungen (${items.length})`,
         }).catch(() => {});
@@ -273,13 +290,29 @@ export default function DirectTranslationsPage() {
   const { t, locale: appLocale } = useI18n();
   const { showInfoBox } = useInfoBox();
   const { runningTaskCount } = useTaskCount();
+  const { registerItems, clearItems } = useItemSelector();
   const fetcher = useFetcher<{ success?: boolean; error?: string; actionType?: string; itemId?: string; translated?: number; added?: number; started?: boolean }>();
   const candidatesFetcher = useFetcher<{ success?: boolean; newItems?: Array<{ id: string; sourceText: string; count: number }>; rejectedItems?: Array<{ id: string; sourceText: string; count: number }> }>();
   const revalidator = useRevalidator();
   const tt = t.directTranslations;
 
   const hasTargets = targetLocales.length > 0;
-  const [currentLanguage, setCurrentLanguage] = useState<string>(targetLocales[0]?.locale || "");
+  // Target locales sorted by their localized name (matches UnifiedLanguageBar).
+  const sortedTargets = useMemo(
+    () => [...targetLocales].sort((a, b) =>
+      getLocalizedLanguageName(a.locale, appLocale, a.name).localeCompare(
+        getLocalizedLanguageName(b.locale, appLocale, b.name),
+      ),
+    ),
+    [targetLocales, appLocale],
+  );
+  const [currentLanguage, setCurrentLanguage] = useState<string>(sortedTargets[0]?.locale || "");
+  // Ctrl/Cmd-click toggles a language off (excluded from "translate all" + shown
+  // critical), mirroring the other tabs' UnifiedLanguageBar behavior.
+  const [enabledLanguages, setEnabledLanguages] = useState<Set<string>>(
+    () => new Set(targetLocales.map((l) => l.locale)),
+  );
+  const ctrlPressedRef = useRef<Record<string, boolean>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [draftSource, setDraftSource] = useState("");
@@ -327,16 +360,20 @@ export default function DirectTranslationsPage() {
   }, [items, currentLanguage, loadEditor]);
 
   const handleSelect = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (id === (isNew ? NEW_ID : selectedId)) return;
+      // Guard unsaved edits (same as switching languages / the other tabs).
+      await confirmNavigation();
       const item = items.find((i) => i.id === id) || null;
       setSelectedId(id);
       setIsNew(false);
       loadEditor(item, currentLanguage);
     },
-    [items, currentLanguage, loadEditor],
+    [items, currentLanguage, loadEditor, isNew, selectedId],
   );
 
-  const handleAddNew = useCallback(() => {
+  const handleAddNew = useCallback(async () => {
+    await confirmNavigation();
     setSelectedId(NEW_ID);
     setIsNew(true);
     setDraftSource("");
@@ -344,6 +381,17 @@ export default function DirectTranslationsPage() {
     setBaseSource("");
     setBaseTarget("");
     setEditingSource(true);
+  }, []);
+
+  // Plain click switches language; Ctrl/Cmd-click toggles it on/off (primary
+  // can't be toggled). The pointerdown flag prevents the click from also firing.
+  const toggleLanguage = useCallback((locale: string) => {
+    setEnabledLanguages((prev) => {
+      const next = new Set(prev);
+      if (next.has(locale)) next.delete(locale);
+      else next.add(locale);
+      return next;
+    });
   }, []);
 
   const handleLanguageChange = useCallback(
@@ -369,6 +417,7 @@ export default function DirectTranslationsPage() {
   const isBusy = fetcher.state !== "idle";
 
   // Build UnifiedItemList items (title = source, subtitle = "n/m languages").
+  // The blue "missing translations" dot mirrors the other content tabs.
   const listItems = useMemo(
     () =>
       items.map((i) => {
@@ -378,10 +427,25 @@ export default function DirectTranslationsPage() {
           id: i.id,
           title: i.sourceText,
           subtitle: (tt.subtitleTranslated || "{n}/{m}").replace("{n}", String(n)).replace("{m}", String(m)),
+          hasMissingTranslations: m > 0 && n < m,
+          missingTranslationsTooltip: t.common?.missingTranslations,
         };
       }),
-    [items, targetLocales.length, tt.subtitleTranslated],
+    [items, targetLocales.length, tt.subtitleTranslated, t.common?.missingTranslations],
   );
+
+  // Register items for the mobile navbar's compact selector (the left list is
+  // desktop-only, like every other content tab).
+  useEffect(() => {
+    registerItems({
+      items: listItems,
+      selectedItemId: isNew ? NEW_ID : selectedId,
+      onItemSelect: (id: string) => { void handleSelect(id); },
+      resourceName: { singular: tt.resourceSingular, plural: tt.resourcePlural },
+      t: { searchPlaceholder: tt.searchPlaceholder },
+    });
+  }, [listItems, selectedId, isNew, registerItems, handleSelect, tt.resourceSingular, tt.resourcePlural, tt.searchPlaceholder]);
+  useEffect(() => () => clearItems(), [clearItems]);
 
   const submit = useCallback(
     (fields: Record<string, string>) => {
@@ -412,18 +476,20 @@ export default function DirectTranslationsPage() {
     }
   }, [isNew, items, selectedItem, currentLanguage, loadEditor]);
 
+  const enabledList = useMemo(() => JSON.stringify([...enabledLanguages]), [enabledLanguages]);
+
   const handleAi = useCallback(
     (scope: "this" | "all") => {
-      submit({ action: "ai", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage });
+      submit({ action: "ai", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
     },
-    [submit, isNew, selectedId, draftSource, currentLanguage],
+    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
   );
 
   const handleTransfer = useCallback(
     (scope: "this" | "all") => {
-      submit({ action: "transfer", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage });
+      submit({ action: "transfer", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
     },
-    [submit, isNew, selectedId, draftSource, currentLanguage],
+    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
   );
 
   const handleDelete = useCallback(() => {
@@ -446,7 +512,7 @@ export default function DirectTranslationsPage() {
     if (!fetcher.data || processedRef.current === fetcher.data) return;
     processedRef.current = fetcher.data;
     if (!fetcher.data.success) {
-      showInfoBox(fetcher.data.error || "Error", "critical");
+      showInfoBox(fetcher.data.error || t.common?.error || "Error", "critical");
       return;
     }
     const at = fetcher.data.actionType;
@@ -462,7 +528,7 @@ export default function DirectTranslationsPage() {
     // Candidate mutations already committed server-side → refresh the modal list.
     if ((at === "addCandidates" || at === "rejectCandidates") && candidatesOpen) reloadCandidates();
     revalidator.revalidate();
-  }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates]);
+  }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates, t]);
 
   // Background AI tasks: when the running-task count drops to zero, pull fresh
   // data (and refresh the candidate modal) so completed translations show up.
@@ -493,31 +559,45 @@ export default function DirectTranslationsPage() {
 
   const langName = (loc: string) => getLocalizedLanguageName(loc, appLocale, targetLocales.find((l) => l.locale === loc)?.name);
 
-  // Locale bar: primary first (source language), then the published targets.
+  // Locale bar: primary first (source language), then the published targets
+  // (sorted by localized name, like UnifiedLanguageBar).
   const localeButtons: Array<{ locale: string; primary: boolean }> = [
     { locale: primaryLocale, primary: true },
-    ...targetLocales.map((l) => ({ locale: l.locale, primary: false })),
+    ...sortedTargets.map((l) => ({ locale: l.locale, primary: false })),
   ];
   const isPrimarySelected = currentLanguage === primaryLocale;
+  const localeHasTranslation = (loc: string) =>
+    !!selectedItem?.translations.find((tr) => tr.locale === loc && tr.targetText.trim());
 
   return (
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
         <MainNavigation />
         <ContentTypeNavigation />
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "1rem", padding: "1rem" }}>
-          <UnifiedItemList
-            items={listItems}
-            selectedItemId={isNew ? NEW_ID : selectedId}
-            onItemSelect={handleSelect}
-            resourceName={{ singular: tt.resourceSingular, plural: tt.resourcePlural }}
-            searchPlaceholder={tt.searchPlaceholder}
-            showAddButton
-            onAddItem={handleAddNew}
-            addButtonLabel={tt.addItem}
-            sortOptions={[{ field: "title", label: tt.sourceLabel }]}
-            t={{ searchPlaceholder: tt.searchPlaceholder }}
-          />
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "16px", padding: "16px", boxSizing: "border-box" }}>
+          {/* Left list is desktop-only; on mobile the navbar compact selector
+              (fed via registerItems) takes over, like the other content tabs. */}
+          <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>
+            <UnifiedItemList
+              items={listItems}
+              selectedItemId={isNew ? NEW_ID : selectedId}
+              onItemSelect={handleSelect}
+              resourceName={{ singular: tt.resourceSingular, plural: tt.resourcePlural }}
+              searchPlaceholder={tt.searchPlaceholder}
+              showAddButton
+              onAddItem={handleAddNew}
+              addButtonLabel={tt.addItem}
+              onSyncAll={() => revalidator.revalidate()}
+              isSyncing={revalidator.state === "loading"}
+              sortOptions={[{ field: "title", label: tt.sourceLabel }]}
+              t={{
+                searchPlaceholder: tt.searchPlaceholder,
+                paginationOf: t.content?.paginationOf || "of",
+                paginationPrevious: t.content?.paginationPrevious || "Previous",
+                paginationNext: t.content?.paginationNext || "Next",
+              }}
+            />
+          </div>
 
           <div style={{ flex: 1, minWidth: 0, overflowY: "auto", paddingRight: "0.25rem" }}>
             <BlockStack gap="400">
@@ -532,42 +612,59 @@ export default function DirectTranslationsPage() {
                 </Banner>
               )}
 
-              {/* Section 1 — locale buttons (primary first) */}
+              {/* Language bar — plain click switches, Ctrl/Cmd-click toggles a
+                  language off (excluded from "translate all", shown critical). */}
               <Card>
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingSm" tone="subdued">{tt.languagesHeading}</Text>
-                  <InlineStack gap="200" blockAlign="center" wrap>
-                    {localeButtons.map((l) => (
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  {localeButtons.map((l) => {
+                    const enabled = l.primary || enabledLanguages.has(l.locale);
+                    const missing = !l.primary && enabled && selectedItem != null && !localeHasTranslation(l.locale);
+                    return (
                       <Button
                         key={l.locale}
+                        size="slim"
                         variant={currentLanguage === l.locale ? "primary" : undefined}
-                        onClick={() => handleLanguageChange(l.locale)}
+                        tone={!enabled ? "critical" : undefined}
+                        onPointerDown={(e: React.PointerEvent) => {
+                          if ((e.ctrlKey || e.metaKey) && !l.primary) {
+                            ctrlPressedRef.current[l.locale] = true;
+                            e.preventDefault();
+                            toggleLanguage(l.locale);
+                          }
+                        }}
+                        onClick={() => {
+                          if (ctrlPressedRef.current[l.locale]) {
+                            ctrlPressedRef.current[l.locale] = false;
+                            return;
+                          }
+                          void handleLanguageChange(l.locale);
+                        }}
                       >
-                        {l.primary ? `${langName(l.locale)} (${tt.primarySuffix})` : langName(l.locale)}
+                        {(l.primary ? `${langName(l.locale)} (${tt.primarySuffix})` : langName(l.locale)) + (missing ? " •" : "")}
                       </Button>
-                    ))}
-                  </InlineStack>
-                </BlockStack>
+                    );
+                  })}
+                  <div style={{ marginLeft: "auto" }}>
+                    <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
+                  </div>
+                </InlineStack>
               </Card>
 
-              {/* Section 2 — operation buttons */}
+              {/* Operations */}
               <Card>
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingSm" tone="subdued">{tt.operationsHeading}</Text>
-                  <InlineStack gap="200" blockAlign="center" wrap>
-                    <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
-                      {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
-                    </Button>
-                    <Button
-                      variant="primary"
-                      disabled={!hasTargets || items.length === 0 || isBusy}
-                      loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
-                      onClick={() => submit({ action: "aiAll" })}
-                    >
-                      {tt.translateAllItems}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
+                    {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!hasTargets || items.length === 0 || isBusy}
+                    loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
+                    onClick={() => submit({ action: "aiAll", locales: enabledList })}
+                  >
+                    {tt.translateAllItems}
+                  </Button>
+                </InlineStack>
               </Card>
 
               {/* Editor */}
@@ -663,8 +760,8 @@ export default function DirectTranslationsPage() {
           onSave={handleSave}
           onDiscard={handleDiscard}
           loading={isBusy}
-          saveText={t.common?.save}
-          discardText={t.common?.discard}
+          saveText={t.content?.save}
+          discardText={t.content?.discardChanges}
         />
 
         <FoundTextsModal
