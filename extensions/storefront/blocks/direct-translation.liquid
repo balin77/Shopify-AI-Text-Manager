@@ -27,7 +27,7 @@
   "addEndpoint": "/apps/contentpilot/direct-add",
   "locale": {{ request.locale.iso_code | json }},
   "primaryLocale": {{ shop.locale | json }},
-  "captureTool": {{ block.settings.capture_tool | default: true | json }},
+  "captureTool": {{ block.settings.capture_tool | json }},
   "debug": {{ block.settings.debug | default: false | json }}
 }
 </script>

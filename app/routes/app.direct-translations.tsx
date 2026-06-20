@@ -640,34 +640,32 @@ export default function DirectTranslationsPage() {
                 />
               </Card>
 
-              {/* Operations */}
+              {/* Editor — global operations (Gefundene Texte / Alle übersetzen)
+                  live at the top of the same card; no separate operations card. */}
               <Card>
-                <InlineStack gap="200" blockAlign="center" wrap>
-                  <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
-                    {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    disabled={!hasTargets || items.length === 0 || isBusy}
-                    loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
-                    onClick={() => submit({ action: "aiAll", locales: enabledList })}
-                  >
-                    {tt.translateAllItems}
-                  </Button>
-                </InlineStack>
-              </Card>
+                <BlockStack gap="400">
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
+                      {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={!hasTargets || items.length === 0 || isBusy}
+                      loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
+                      onClick={() => submit({ action: "aiAll", locales: enabledList })}
+                    >
+                      {tt.translateAllItems}
+                    </Button>
+                  </InlineStack>
 
-              {/* Editor */}
-              {selectedId == null && !isNew ? (
-                <Card>
-                  <Box padding="400">
-                    <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
-                  </Box>
-                </Card>
-              ) : (
-                <Card>
-                  <BlockStack gap="400">
-                    {/* Source */}
+                  {selectedId == null && !isNew ? (
+                    <Box padding="400">
+                      <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
+                    </Box>
+                  ) : (
+                    <>
+                      <Divider />
+                      {/* Source */}
                     <BlockStack gap="200">
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="h3" variant="headingSm">{tt.sourceLabel}</Text>
@@ -737,10 +735,11 @@ export default function DirectTranslationsPage() {
                       )}
                     </InlineStack>
 
-                    <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
-                  </BlockStack>
-                </Card>
-              )}
+                      <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
+                    </>
+                  )}
+                </BlockStack>
+              </Card>
             </BlockStack>
           </div>
         </div>
