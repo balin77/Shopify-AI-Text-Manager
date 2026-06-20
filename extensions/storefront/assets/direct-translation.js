@@ -51,10 +51,14 @@
   var cacheKey = "contentpilot_dt_" + localeKey;
   var reportedKey = "contentpilot_dt_reported_" + localeKey;
 
-  // Visual capture mode: only in the theme editor, or explicit ?cp-translate=1.
+  // Visual capture tool: shown in the theme editor (or explicitly via
+  // ?cp-translate=1) ONLY when the merchant left the embed's "capture tool"
+  // checkbox on. It is immediately active — no extra start step — and is never
+  // shown to real customers.
+  var captureTool = cfg.captureTool !== false; // default on
   var designMode = !!(window.Shopify && window.Shopify.designMode);
   var forceCapture = /[?&]cp-translate=1\b/.test(window.location.search);
-  var captureEnabled = designMode || forceCapture;
+  var captureEnabled = captureTool && (designMode || forceCapture);
 
   // Translation is inactive on the primary locale (or no locale), but the
   // visual capture mode may still run (to add source strings while previewing
@@ -267,19 +271,12 @@
   }
 
   // ---- Visual capture mode (theme editor) ---------------------------------
-  function applyOneTranslation(source, target) {
-    if (!target) return;
-    dictMap.set(normalize(source), target);
-    targetValues.add(normalize(target));
-    applyAll();
-  }
-
-  function postAdd(sourceText, captureLocale, targetText) {
+  function postAdd(sourceText, translateAll) {
     return fetch(addEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       credentials: "omit",
-      body: JSON.stringify({ sourceText: sourceText, locale: captureLocale, targetText: targetText }),
+      body: JSON.stringify({ sourceText: sourceText, translateAll: !!translateAll }),
     }).then(function (r) { return r.ok ? r.json() : null; });
   }
 
@@ -296,28 +293,18 @@
       "width:300px", "box-sizing:border-box",
     ].join(";");
 
-    var selecting = false;
+    // Always-on selection: no start step. Clicking any text on the page captures
+    // it. The merchant turns the whole tool off via the embed checkbox.
     panel.innerHTML =
-      '<div style="font-weight:600;margin-bottom:8px">ContentPilot — Direktübersetzungen</div>' +
-      '<button id="cp-cap-toggle" style="width:100%;padding:8px;border:0;border-radius:6px;cursor:pointer;background:#008060;color:#fff;font-weight:600">Auswahlmodus starten</button>' +
-      '<div id="cp-cap-hint" style="margin-top:8px;opacity:.7;font-size:12px">Klicke einen Text auf der Seite, um ihn zu erfassen.</div>' +
+      '<div style="font-weight:600;margin-bottom:6px">ContentPilot — Direktübersetzungen</div>' +
+      '<div id="cp-cap-hint" style="opacity:.7;font-size:12px">Klicke einen beliebigen Text auf der Seite, um ihn zu erfassen.</div>' +
       '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
 
     document.body.appendChild(panel);
+    document.documentElement.style.cursor = "crosshair";
 
-    var toggleBtn = panel.querySelector("#cp-cap-toggle");
     var hint = panel.querySelector("#cp-cap-hint");
     var formEl = panel.querySelector("#cp-cap-form");
-
-    function setSelecting(on) {
-      selecting = on;
-      toggleBtn.textContent = on ? "Auswahlmodus stoppen" : "Auswahlmodus starten";
-      toggleBtn.style.background = on ? "#bf0711" : "#008060";
-      hint.style.display = on ? "block" : "none";
-      document.documentElement.style.cursor = on ? "crosshair" : "";
-    }
-
-    toggleBtn.addEventListener("click", function () { setSelecting(!selecting); });
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, function (c) {
@@ -325,40 +312,43 @@
       });
     }
 
+    function btn(id, label, primaryStyle) {
+      return '<button id="' + id + '" style="display:block;width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;cursor:pointer;font-weight:600;background:' +
+        (primaryStyle ? "#008060" : "#3a3a3a") + ';color:#fff">' + label + "</button>";
+    }
+
     function showForm(source) {
-      setSelecting(false);
+      hint.style.display = "none";
       formEl.style.display = "block";
       formEl.innerHTML =
         '<label style="display:block;opacity:.7;margin-bottom:4px">Quelle</label>' +
-        '<textarea id="cp-cap-src" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px">' + escapeHtml(source) + "</textarea>" +
-        '<label style="display:block;opacity:.7;margin:8px 0 4px">Übersetzung (' + escapeHtml(locale || primary) + ")</label>" +
-        '<textarea id="cp-cap-tgt" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px"></textarea>' +
-        '<button id="cp-cap-save" style="width:100%;margin-top:8px;padding:8px;border:0;border-radius:6px;cursor:pointer;background:#008060;color:#fff;font-weight:600">Zur Übersetzung hinzufügen</button>' +
-        '<div id="cp-cap-status" style="margin-top:6px;font-size:12px;opacity:.8"></div>';
+        '<textarea id="cp-cap-src" rows="2" style="width:100%;box-sizing:border-box;border-radius:6px;border:0;padding:6px;color:#111">' + escapeHtml(source) + "</textarea>" +
+        btn("cp-cap-add", "Zur Übersetzungsliste hinzufügen", true) +
+        btn("cp-cap-add-all", "Hinzufügen und in alle Sprachen übersetzen", false) +
+        '<div id="cp-cap-status" style="margin-top:8px;font-size:12px;opacity:.85"></div>';
 
-      var saveBtn = formEl.querySelector("#cp-cap-save");
       var statusEl = formEl.querySelector("#cp-cap-status");
-      saveBtn.addEventListener("click", function () {
+
+      function run(translateAll) {
         var src = formEl.querySelector("#cp-cap-src").value;
-        var tgt = formEl.querySelector("#cp-cap-tgt").value;
+        if (!normalize(src)) { statusEl.textContent = "Quelle ist leer"; return; }
         statusEl.textContent = "Speichern …";
-        postAdd(src, locale, tgt)
+        postAdd(src, translateAll)
           .then(function (res) {
-            if (res && res.ok) {
-              statusEl.textContent = "✓ Hinzugefügt";
-              if (tgt) applyOneTranslation(src, tgt);
-            } else {
-              statusEl.textContent = "Fehler beim Speichern";
-            }
+            statusEl.textContent = res && res.ok
+              ? (translateAll ? "✓ Hinzugefügt — Übersetzung in alle Sprachen läuft …" : "✓ Hinzugefügt")
+              : "Fehler beim Speichern";
           })
           .catch(function () { statusEl.textContent = "Fehler beim Speichern"; });
-      });
+      }
+
+      formEl.querySelector("#cp-cap-add").addEventListener("click", function () { run(false); });
+      formEl.querySelector("#cp-cap-add-all").addEventListener("click", function () { run(true); });
     }
 
     document.addEventListener(
       "click",
       function (e) {
-        if (!selecting) return;
         if (panel.contains(e.target)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -368,7 +358,7 @@
       true,
     );
 
-    log("capture mode ready");
+    log("capture mode ready (always-on selection)");
   }
 
   function start() {

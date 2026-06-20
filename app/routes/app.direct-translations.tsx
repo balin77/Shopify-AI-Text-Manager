@@ -14,7 +14,6 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import {
-  Page,
   Card,
   BlockStack,
   InlineStack,
@@ -98,124 +97,16 @@ export const loader = createContentLoader({
 // ACTION
 // ============================================================================
 
-/** Build a bound AIService.translateBatchValues for this shop, plus the provider. */
-async function buildTranslateBatch(shop: string, taskId?: string) {
-  const { db } = await import("../db.server");
-  const { AIService, toValidProvider } = await import("../../src/services/ai.service");
-  const { tryDecryptApiKey } = await import("../utils/encryption.server");
-  const aiSettings = await db.aISettings.findUnique({ where: { shop } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-  const config = {
-    huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
-    geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
-    claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
-    openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
-    grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
-    deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
-    selectedModel: aiSettings?.selectedModel || undefined,
-  };
-  const service = new AIService(provider, config, shop, taskId);
-  const translateBatch = (values: string[], from: string, to: string, context: string) =>
-    service.translateBatchValues(values, from, to, context);
-  return { translateBatch, provider };
-}
-
-/**
- * Run an AI translation pass with Task tracking (same pattern as the product
- * sub-resource translator): create a queued Task, advance progress per chunk via
- * onProgress, mark it completed/failed. The TaskCountContext poller surfaces the
- * running count + completion toast in the main navigation.
- */
-async function runAiTask(
-  shop: string,
-  params: {
-    items: Array<{ id: string; sourceText: string }>;
-    fromLang: string;
-    locales: string[];
-    targetLocaleLabel: string;
-    resourceTitle: string;
-  },
-): Promise<number> {
-  const { db } = await import("../db.server");
-  const dt = await import("../services/direct-translation.server");
-  const { toValidProvider } = await import("../../src/services/ai.service");
-  const { getTaskExpirationDate } = await import("../config/constants");
-
-  const total = params.items.length * params.locales.length;
-  const aiSettings = await db.aISettings.findUnique({ where: { shop }, select: { preferredProvider: true } });
-  const provider = toValidProvider(aiSettings?.preferredProvider);
-
-  const task = await db.task.create({
-    data: {
-      shop,
-      type: "translation",
-      status: "queued",
-      fieldType: "direct-translations",
-      resourceTitle: params.resourceTitle,
-      targetLocale: params.targetLocaleLabel,
-      provider,
-      progress: 10,
-      total,
-      expiresAt: getTaskExpirationDate(),
-    },
-  });
-
-  // Build the AI client bound to this task so token usage is attributed to it.
-  const { translateBatch } = await buildTranslateBatch(shop, task.id);
-
-  try {
-    const rows = await dt.aiAutoTranslateItems(
-      db,
-      shop,
-      { items: params.items, fromLang: params.fromLang, locales: params.locales },
-      translateBatch,
-      async (done, t) => {
-        // `t` is the post-dedupe total from the service — keep the Task in sync
-        // so processed never exceeds total on full success.
-        await db.task.update({
-          where: { id: task.id },
-          data: { total: t, processed: done, progress: t > 0 ? Math.min(99, 10 + Math.round((done / t) * 89)) : 100 },
-        });
-      },
-    );
-    await db.task.update({
-      where: { id: task.id },
-      data: {
-        status: "completed",
-        progress: 100,
-        processed: rows.length,
-        completedAt: new Date(),
-        result: JSON.stringify({ translated: rows.length, total }),
-      },
-    });
-    return rows.length;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await db.task.update({
-      where: { id: task.id },
-      data: { status: "failed", completedAt: new Date(), error: msg.substring(0, 1000) },
-    });
-    throw err;
-  }
-}
-
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = getFormString(formData, "action");
   const { db } = await import("../db.server");
   const dt = await import("../services/direct-translation.server");
-  const { ContentService } = await import("../services/content.service");
+  const { runAiTask, resolvePrimaryAndTargets } = await import("../services/direct-translation-ai.server");
 
   // Resolve published, non-primary target locales + the primary (source) locale.
-  const resolveLocales = async () => {
-    const locales = await new ContentService(admin).getShopLocales().catch(() => []);
-    const primary = (locales as Array<{ locale: string; primary: boolean }>).find((l) => l.primary)?.locale || "en";
-    const targets = (locales as Array<{ locale: string; primary: boolean; published: boolean }>)
-      .filter((l) => !l.primary && l.published)
-      .map((l) => l.locale);
-    return { primary, targets };
-  };
+  const resolveLocales = () => resolvePrimaryAndTargets(admin);
 
   /** Ensure an item exists for the given (possibly edited) source; returns its id. */
   const ensureItem = async (itemId: string, sourceText: string) => {
@@ -369,7 +260,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, targetLocales, collect, newCandidateCount, error } =
+  const { items, primaryLocale, targetLocales, collect, newCandidateCount, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -602,6 +493,13 @@ export default function DirectTranslationsPage() {
 
   const langName = (loc: string) => getLocalizedLanguageName(loc, appLocale, targetLocales.find((l) => l.locale === loc)?.name);
 
+  // Locale bar: primary first (source language), then the published targets.
+  const localeButtons: Array<{ locale: string; primary: boolean }> = [
+    { locale: primaryLocale, primary: true },
+    ...targetLocales.map((l) => ({ locale: l.locale, primary: false })),
+  ];
+  const isPrimarySelected = currentLanguage === primaryLocale;
+
   return (
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
@@ -621,108 +519,113 @@ export default function DirectTranslationsPage() {
             t={{ searchPlaceholder: tt.searchPlaceholder }}
           />
 
-          <div style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
-            <Page>
-              <BlockStack gap="400">
-                {!hasTargets && <Banner tone="warning">{tt.noTargetLocales}</Banner>}
+          <div style={{ flex: 1, minWidth: 0, overflowY: "auto", paddingRight: "0.25rem" }}>
+            <BlockStack gap="400">
+              {!hasTargets && <Banner tone="warning">{tt.noTargetLocales}</Banner>}
 
-                {newCandidateCount > 0 && (
-                  <Banner
-                    tone="info"
-                    action={{ content: tt.foundTexts, onAction: () => { setCandidatesOpen(true); reloadCandidates(); } }}
-                  >
-                    {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
-                  </Banner>
-                )}
+              {newCandidateCount > 0 && (
+                <Banner
+                  tone="info"
+                  action={{ content: tt.foundTexts, onAction: () => { setCandidatesOpen(true); reloadCandidates(); } }}
+                >
+                  {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
+                </Banner>
+              )}
 
-                {/* Toolbar: language bar + found-texts + translate-all */}
+              {/* Section 1 — locale buttons (primary first) */}
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">{tt.languagesHeading}</Text>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    {localeButtons.map((l) => (
+                      <Button
+                        key={l.locale}
+                        variant={currentLanguage === l.locale ? "primary" : undefined}
+                        onClick={() => handleLanguageChange(l.locale)}
+                      >
+                        {l.primary ? `${langName(l.locale)} (${tt.primarySuffix})` : langName(l.locale)}
+                      </Button>
+                    ))}
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+
+              {/* Section 2 — operation buttons */}
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="subdued">{tt.operationsHeading}</Text>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
+                      {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={!hasTargets || items.length === 0 || isBusy}
+                      loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
+                      onClick={() => submit({ action: "aiAll" })}
+                    >
+                      {tt.translateAllItems}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+
+              {/* Editor */}
+              {selectedId == null && !isNew ? (
                 <Card>
-                  <BlockStack gap="300">
-                    <InlineStack align="space-between" blockAlign="center" gap="200">
-                      <InlineStack gap="200" blockAlign="center">
-                        {targetLocales.map((l) => (
-                          <Button
-                            key={l.locale}
-                            size="slim"
-                            variant={currentLanguage === l.locale ? "primary" : undefined}
-                            onClick={() => handleLanguageChange(l.locale)}
-                          >
-                            {langName(l.locale)}
-                          </Button>
-                        ))}
-                      </InlineStack>
-                      <InlineStack gap="200" blockAlign="center">
-                        <Button
-                          onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}
-                        >
-                          {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
-                        </Button>
-                        <Button
-                          variant="primary"
-                          disabled={!hasTargets || items.length === 0 || isBusy}
-                          loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
-                          onClick={() => submit({ action: "aiAll" })}
-                        >
-                          {tt.translateAllItems}
-                        </Button>
-                      </InlineStack>
-                    </InlineStack>
-                  </BlockStack>
+                  <Box padding="400">
+                    <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
+                  </Box>
                 </Card>
-
-                {/* Editor */}
-                {selectedId == null && !isNew ? (
-                  <Card>
-                    <Box padding="400">
-                      <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
-                    </Box>
-                  </Card>
-                ) : (
-                  <Card>
-                    <BlockStack gap="400">
-                      {/* Source */}
-                      <BlockStack gap="200">
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Text as="h3" variant="headingSm">{tt.sourceLabel}</Text>
-                          {!isNew && !editingSource && (
-                            <Button variant="plain" onClick={() => setEditingSource(true)}>{tt.editSource}</Button>
-                          )}
-                        </InlineStack>
-                        <TextField
-                          label=""
-                          labelHidden
-                          value={draftSource}
-                          onChange={setDraftSource}
-                          placeholder={tt.sourcePlaceholder}
-                          autoComplete="off"
-                          multiline={2}
-                          readOnly={!isNew && !editingSource}
-                        />
-                      </BlockStack>
-
-                      {/* 4 action buttons */}
-                      <InlineStack gap="200" wrap>
-                        <ButtonGroup>
-                          <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
-                            {tt.translateAllLangs}
-                          </Button>
-                          <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
-                            {tt.translateThisLang}
-                          </Button>
-                        </ButtonGroup>
-                        <ButtonGroup>
-                          <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("all")}>
-                            {tt.transferAllLangs}
-                          </Button>
-                          <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("this")}>
-                            {tt.transferThisLang}
-                          </Button>
-                        </ButtonGroup>
+              ) : (
+                <Card>
+                  <BlockStack gap="400">
+                    {/* Source */}
+                    <BlockStack gap="200">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="h3" variant="headingSm">{tt.sourceLabel}</Text>
+                        {!isNew && !editingSource && (
+                          <Button variant="plain" onClick={() => setEditingSource(true)}>{tt.editSource}</Button>
+                        )}
                       </InlineStack>
+                      <TextField
+                        label=""
+                        labelHidden
+                        value={draftSource}
+                        onChange={setDraftSource}
+                        placeholder={tt.sourcePlaceholder}
+                        autoComplete="off"
+                        multiline={3}
+                        readOnly={!isNew && !editingSource}
+                      />
+                    </BlockStack>
 
-                      <Divider />
+                    {/* 4 action buttons */}
+                    <InlineStack gap="200" wrap>
+                      <ButtonGroup>
+                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
+                          {tt.translateAllLangs}
+                        </Button>
+                        <Button disabled={!hasTargets || isPrimarySelected || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
+                          {tt.translateThisLang}
+                        </Button>
+                      </ButtonGroup>
+                      <ButtonGroup>
+                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("all")}>
+                          {tt.transferAllLangs}
+                        </Button>
+                        <Button disabled={!hasTargets || isPrimarySelected || !draftSource.trim() || isBusy} onClick={() => handleTransfer("this")}>
+                          {tt.transferThisLang}
+                        </Button>
+                      </ButtonGroup>
+                    </InlineStack>
 
-                      {/* Current-language translation */}
+                    <Divider />
+
+                    {/* Current-language translation (or a note when primary is selected) */}
+                    {isPrimarySelected ? (
+                      <Text as="p" tone="subdued">{tt.primaryNote}</Text>
+                    ) : (
                       <BlockStack gap="200">
                         <Text as="h3" variant="headingSm">
                           {(tt.translationLabel || "{lang}").replace("{lang}", currentLanguage ? langName(currentLanguage) : "")}
@@ -733,25 +636,25 @@ export default function DirectTranslationsPage() {
                           value={draftTarget}
                           onChange={setDraftTarget}
                           autoComplete="off"
-                          multiline={2}
+                          multiline={3}
                           disabled={!hasTargets}
                         />
                       </BlockStack>
+                    )}
 
-                      <InlineStack align="end">
-                        {!isNew && (
-                          <Button tone="critical" variant="plain" onClick={handleDelete} disabled={isBusy}>
-                            {tt.deleteItem}
-                          </Button>
-                        )}
-                      </InlineStack>
+                    <InlineStack align="end">
+                      {!isNew && (
+                        <Button tone="critical" variant="plain" onClick={handleDelete} disabled={isBusy}>
+                          {tt.deleteItem}
+                        </Button>
+                      )}
+                    </InlineStack>
 
-                      <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
-                    </BlockStack>
-                  </Card>
-                )}
-              </BlockStack>
-            </Page>
+                    <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
+                  </BlockStack>
+                </Card>
+              )}
+            </BlockStack>
           </div>
         </div>
 

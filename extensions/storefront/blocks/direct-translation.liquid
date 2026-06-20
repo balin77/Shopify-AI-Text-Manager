@@ -27,6 +27,7 @@
   "addEndpoint": "/apps/contentpilot/direct-add",
   "locale": {{ request.locale.iso_code | json }},
   "primaryLocale": {{ shop.locale | json }},
+  "captureTool": {{ block.settings.capture_tool | default: true | json }},
   "debug": {{ block.settings.debug | default: false | json }}
 }
 </script>
@@ -40,6 +41,13 @@
     {
       "type": "paragraph",
       "content": "Translates third-party app text rendered on your storefront using the items you define in ContentPilot → Direct translations. Client-side only (not indexed by search engines); iframe-based apps cannot be translated."
+    },
+    {
+      "type": "checkbox",
+      "id": "capture_tool",
+      "label": "Show translation capture tool in the theme editor",
+      "info": "When on, you can click any rendered text in the theme editor preview to add it to your direct translations (optionally translated into all languages right away). Customers never see this tool.",
+      "default": true
     },
     { "type": "checkbox", "id": "debug", "label": "Console debug logging", "default": false }
   ]
