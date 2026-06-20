@@ -611,15 +611,6 @@ export default function DirectTranslationsPage() {
             <BlockStack gap="400">
               {!hasTargets && <Banner tone="warning">{tt.noTargetLocales}</Banner>}
 
-              {newCandidateCount > 0 && (
-                <Banner
-                  tone="info"
-                  action={{ content: tt.foundTexts, onAction: () => { setCandidatesOpen(true); reloadCandidates(); } }}
-                >
-                  {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
-                </Banner>
-              )}
-
               {/* Language bar — shared component for uniformity with the other
                   content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
               <Card>
@@ -639,10 +630,16 @@ export default function DirectTranslationsPage() {
                 />
               </Card>
 
-              {/* Editor — global operations (Gefundene Texte / Alle übersetzen)
-                  live at the top of the same card; no separate operations card. */}
+              {/* Global operations: candidate review + bulk translate. The
+                  "n new texts found" line replaces the old info banner — same
+                  info, no second card. */}
               <Card>
-                <BlockStack gap="400">
+                <BlockStack gap="200">
+                  {newCandidateCount > 0 && (
+                    <Text as="p" tone="subdued">
+                      {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
+                    </Text>
+                  )}
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
                       {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
@@ -656,15 +653,20 @@ export default function DirectTranslationsPage() {
                       {tt.translateAllItems}
                     </Button>
                   </InlineStack>
+                </BlockStack>
+              </Card>
 
-                  {selectedId == null && !isNew ? (
-                    <Box padding="400">
-                      <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
-                    </Box>
-                  ) : (
-                    <>
-                      <Divider />
-                      {/* Source */}
+              {/* Editor */}
+              {selectedId == null && !isNew ? (
+                <Card>
+                  <Box padding="400">
+                    <Text as="p" tone="subdued">{tt.emptyEditor}</Text>
+                  </Box>
+                </Card>
+              ) : (
+                <Card>
+                  <BlockStack gap="400">
+                    {/* Source */}
                     <BlockStack gap="200">
                       <InlineStack align="space-between" blockAlign="center">
                         <Text as="h3" variant="headingSm">{tt.sourceLabel}</Text>
@@ -733,11 +735,10 @@ export default function DirectTranslationsPage() {
                       )}
                     </InlineStack>
 
-                      <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
-                    </>
-                  )}
-                </BlockStack>
-              </Card>
+                    <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
+                  </BlockStack>
+                </Card>
+              )}
             </BlockStack>
           </div>
         </div>
