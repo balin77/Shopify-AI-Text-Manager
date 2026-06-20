@@ -94,7 +94,13 @@ export const loader = createContentLoader({
     const targetLocales: TargetLocale[] = (ctx.shopLocales as Array<{ locale: string; name?: string; primary: boolean; published?: boolean }>)
       .filter((l) => l.published !== false)
       .map((l) => ({ locale: l.locale, name: l.name }));
-    return { collect: settings.collect, newCandidateCount, targetLocales };
+    return {
+      collect: settings.collect,
+      ignoreTranslateNo: settings.ignoreTranslateNo,
+      filterByLanguage: settings.filterByLanguage,
+      newCandidateCount,
+      targetLocales,
+    };
   },
 });
 
@@ -275,6 +281,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: true, actionType });
       }
 
+      case "setCollectorSettings": {
+        // Patch any subset of { collect, ignoreTranslateNo, filterByLanguage }
+        // — the modal's three checkboxes all use this case.
+        const patch: { collect?: boolean; ignoreTranslateNo?: boolean; filterByLanguage?: boolean } = {};
+        const c = getFormString(formData, "collect");
+        const i = getFormString(formData, "ignoreTranslateNo");
+        const f = getFormString(formData, "filterByLanguage");
+        if (c === "true" || c === "false") patch.collect = c === "true";
+        if (i === "true" || i === "false") patch.ignoreTranslateNo = i === "true";
+        if (f === "true" || f === "false") patch.filterByLanguage = f === "true";
+        await dt.updateSettings(db, session.shop, patch);
+        return json({ success: true, actionType });
+      }
+
       default:
         return json({ success: false, error: "Unknown action", actionType }, { status: 400 });
     }
@@ -293,13 +313,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, collect, newCandidateCount, error } =
+  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
       primaryLocale: string;
       targetLocales: TargetLocale[];
       collect: boolean;
+      ignoreTranslateNo: boolean;
+      filterByLanguage: boolean;
       newCandidateCount: number;
       error: string | null;
     };
@@ -789,6 +811,8 @@ export default function DirectTranslationsPage() {
           onClose={() => setCandidatesOpen(false)}
           tt={tt}
           collect={collect}
+          ignoreTranslateNo={ignoreTranslateNo}
+          filterByLanguage={filterByLanguage}
           fetcher={candidatesFetcher}
           onAction={(action, payload) => {
             // The candidate list is reloaded by the parent effect once this
@@ -843,6 +867,8 @@ function FoundTextsModal({
   onClose,
   tt,
   collect,
+  ignoreTranslateNo,
+  filterByLanguage,
   fetcher,
   onAction,
 }: {
@@ -850,13 +876,19 @@ function FoundTextsModal({
   onClose: () => void;
   tt: ReturnType<typeof useI18n>["t"]["directTranslations"];
   collect: boolean;
+  ignoreTranslateNo: boolean;
+  filterByLanguage: boolean;
   fetcher: ReturnType<typeof useFetcher<{ success?: boolean; newItems?: Array<{ id: string; sourceText: string; count: number }>; rejectedItems?: Array<{ id: string; sourceText: string; count: number }> }>>;
   onAction: (action: string, payload: Record<string, string>) => void;
 }) {
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
   const [selectedRejected, setSelectedRejected] = useState<Set<string>>(new Set());
   const [collectOn, setCollectOn] = useState(collect);
+  const [ignoreOn, setIgnoreOn] = useState(ignoreTranslateNo);
+  const [filterOn, setFilterOn] = useState(filterByLanguage);
   useEffect(() => setCollectOn(collect), [collect]);
+  useEffect(() => setIgnoreOn(ignoreTranslateNo), [ignoreTranslateNo]);
+  useEffect(() => setFilterOn(filterByLanguage), [filterByLanguage]);
 
   const data = fetcher.data;
   const newItems = data?.newItems || [];
@@ -887,15 +919,18 @@ function FoundTextsModal({
       onClose={onClose}
       title={tt.modalTitle}
       size="large"
-      primaryAction={{
-        content: tt.modalAdd,
-        disabled: !hasAnySelection,
-        onAction: () => {
-          onAction("addCandidates", { ids: JSON.stringify(allSelectedIds), withAi: "false" });
-          clearSelections();
-        },
-      }}
+      // Order left → right: Hinzufügen, Hinzufügen+KI, Ablehnen, Kandidaten löschen.
+      // (No primaryAction — Polaris would push it to the far right, breaking
+      // that order; the consistent secondary row keeps the user-requested flow.)
       secondaryActions={[
+        {
+          content: tt.modalAdd,
+          disabled: !hasAnySelection,
+          onAction: () => {
+            onAction("addCandidates", { ids: JSON.stringify(allSelectedIds), withAi: "false" });
+            clearSelections();
+          },
+        },
         {
           content: tt.modalAddWithAi,
           disabled: !hasAnySelection,
@@ -927,15 +962,35 @@ function FoundTextsModal({
     >
       <Modal.Section>
         <BlockStack gap="400">
-          <Checkbox
-            label={tt.collectToggle}
-            helpText={tt.collectHelp}
-            checked={collectOn}
-            onChange={(v) => {
-              setCollectOn(v);
-              onAction("setCollect", { collect: String(v) });
-            }}
-          />
+          <BlockStack gap="200">
+            <Checkbox
+              label={tt.collectToggle}
+              helpText={tt.collectHelp}
+              checked={collectOn}
+              onChange={(v) => {
+                setCollectOn(v);
+                onAction("setCollectorSettings", { collect: String(v) });
+              }}
+            />
+            <Checkbox
+              label={tt.ignoreTranslateNoToggle}
+              helpText={tt.ignoreTranslateNoHelp}
+              checked={ignoreOn}
+              onChange={(v) => {
+                setIgnoreOn(v);
+                onAction("setCollectorSettings", { ignoreTranslateNo: String(v) });
+              }}
+            />
+            <Checkbox
+              label={tt.filterByLanguageToggle}
+              helpText={tt.filterByLanguageHelp}
+              checked={filterOn}
+              onChange={(v) => {
+                setFilterOn(v);
+                onAction("setCollectorSettings", { filterByLanguage: String(v) });
+              }}
+            />
+          </BlockStack>
 
           <Divider />
 

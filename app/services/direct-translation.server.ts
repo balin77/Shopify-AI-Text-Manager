@@ -64,13 +64,29 @@ export const AI_BATCH_SIZE = 50;
  */
 export function isCollectibleString(text: string): boolean {
   const s = normalizeSource(text);
-  if (s.length < 2 || s.length > 100) return false; // UI labels are short
+  if (s.length < 2 || s.length > 1500) return false; // long enough for widget paragraphs
   if (!/[a-zA-ZÀ-ɏ]/.test(s)) return false; // must contain a letter
   if (/^\d/.test(s) && /\d/.test(s) && !/[a-zA-Z]{3,}/.test(s)) return false; // mostly numeric
   if (/^[$€£¥]|\d[.,]\d{2}\s*[$€£¥%]?$/.test(s)) return false; // prices
   if (/@|https?:\/\/|www\./i.test(s)) return false; // emails / urls
   if (/^[+]?[\d\s().-]{6,}$/.test(s)) return false; // phone-like
   return true;
+}
+
+// BCP-47 (Shopify locale) → ISO 639-3 (franc) mapping for the languages we
+// realistically see on Shopify storefronts. franc returns ISO 639-3; everything
+// outside this map falls through as "unknown" → we don't filter (safer to keep
+// a candidate than to drop a real one).
+const BCP47_TO_ISO639_3: Record<string, string> = {
+  de: "deu", en: "eng", es: "spa", fr: "fra", it: "ita", pt: "por",
+  nl: "nld", pl: "pol", ru: "rus", tr: "tur", cs: "ces", da: "dan",
+  sv: "swe", no: "nor", fi: "fin", el: "ell", hu: "hun", ro: "ron",
+  bg: "bul", uk: "ukr", he: "heb", ar: "arb", ja: "jpn", ko: "kor",
+  zh: "cmn", th: "tha", vi: "vie", id: "ind", ms: "msa", hi: "hin",
+};
+function bcp47ToIso6393(locale: string): string | null {
+  const base = locale.toLowerCase().split(/[-_]/)[0];
+  return BCP47_TO_ISO639_3[base] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,18 +107,38 @@ export async function getSettings(db: Db, shop: string) {
     (await db.directTranslationSettings.findUnique({ where: { shop } })) ?? {
       shop,
       collect: false,
+      ignoreTranslateNo: false,
+      filterByLanguage: false,
       version: 1,
       updatedAt: new Date(0),
     }
   );
 }
 
-export async function setCollect(db: Db, shop: string, collect: boolean) {
+/** Partial update on the boolean settings; only the passed keys are touched. */
+export async function updateSettings(
+  db: Db,
+  shop: string,
+  patch: { collect?: boolean; ignoreTranslateNo?: boolean; filterByLanguage?: boolean },
+) {
+  const cleaned: Record<string, boolean> = {};
+  if (typeof patch.collect === "boolean") cleaned.collect = patch.collect;
+  if (typeof patch.ignoreTranslateNo === "boolean") cleaned.ignoreTranslateNo = patch.ignoreTranslateNo;
+  if (typeof patch.filterByLanguage === "boolean") cleaned.filterByLanguage = patch.filterByLanguage;
+  if (Object.keys(cleaned).length === 0) return;
   await db.directTranslationSettings.upsert({
     where: { shop },
-    create: { shop, collect },
-    update: { collect },
+    create: { shop, ...cleaned },
+    update: cleaned,
   });
+  // `ignoreTranslateNo` changes what the storefront walks → bump the cache
+  // version so embedded clients refetch the dictionary (which carries the flag).
+  if ("ignoreTranslateNo" in cleaned) await bumpVersion(db, shop);
+}
+
+/** @deprecated — kept so callers that just toggle `collect` keep working. */
+export async function setCollect(db: Db, shop: string, collect: boolean) {
+  return updateSettings(db, shop, { collect });
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +265,12 @@ export async function getDictionary(db: Db, shop: string, locale: string) {
     if (tr) entries[it.sourceText] = tr.targetText;
   }
 
-  return { version: settings.version, collect: settings.collect, entries };
+  return {
+    version: settings.version,
+    collect: settings.collect,
+    ignoreTranslateNo: settings.ignoreTranslateNo,
+    entries,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +360,7 @@ export async function recordCandidates(
   db: Db,
   shop: string,
   items: Array<{ text: string }>,
+  options: { visitorLocale?: string; filterByLanguage?: boolean } = {},
 ): Promise<number> {
   const batch = items.slice(0, MAX_CANDIDATES_PER_REQUEST);
 
@@ -330,6 +372,22 @@ export async function recordCandidates(
     byHash.set(sourceHash(normalized), normalized);
   }
   if (byHash.size === 0) return 0;
+
+  // Optional: drop strings whose detected language already matches the visitor
+  // locale (they're served correctly → no direct translation needed). franc
+  // returns "und" for too-short / undetectable input; we keep those as-is
+  // because dropping a real candidate is worse than carrying one noisy row.
+  if (options.filterByLanguage && options.visitorLocale) {
+    const visitorIso = bcp47ToIso6393(options.visitorLocale);
+    if (visitorIso) {
+      const { franc } = await import("franc-min");
+      for (const [hash, normalized] of byHash) {
+        const detected = franc(normalized, { minLength: 10 });
+        if (detected === visitorIso) byHash.delete(hash);
+      }
+      if (byHash.size === 0) return 0;
+    }
+  }
 
   const hashes = Array.from(byHash.keys());
   // Skip strings that already exist as items.

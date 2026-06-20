@@ -350,6 +350,10 @@ export const es: Translation = {
     modalSeen: "Visto {n}×",
     collectToggle: "Recopilar textos del escaparate",
     collectHelp: "Si está activo, tu escaparate informa de textos de interfaz cortos sin traducir (filtrados, nunca precios/correos) para que los revises aquí. Desactivado por defecto.",
+    ignoreTranslateNoToggle: "Capturar también widgets de terceros (ignorar translate=\"no\")",
+    ignoreTranslateNoHelp: "Las apps de reseñas como Judge.me usan translate=\"no\" para bloquear la traducción automática del navegador. Actívalo para que ContentPilot escanee y traduzca también esas zonas.",
+    filterByLanguageToggle: "Recopilar solo textos que aún no estén en el idioma visitado",
+    filterByLanguageHelp: "Detección de idioma en el servidor: descarta cadenas cuyo idioma ya coincide con la localización visitada del escaparate. Reduce el ruido en tiendas con varios idiomas.",
   },
 
   // Settings Page

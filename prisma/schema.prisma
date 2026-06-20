@@ -201,6 +201,16 @@ model DirectTranslationSettings {
   // (heuristically filtered, capped) so the merchant can review them in the
   // admin. Off by default (privacy/noise). Never auto-applied.
   collect   Boolean  @default(false)
+  // Opt-in: when true, the storefront walks AND replaces text even inside
+  // elements marked `translate="no"`. 3rd-party review/widget apps (Judge.me
+  // etc.) set that attribute to fence off browser auto-translate; for direct
+  // translations the merchant is in control and usually wants those reached.
+  ignoreTranslateNo Boolean @default(false)
+  // Opt-in: when true, server-side language detection (franc) drops collected
+  // candidates whose language matches the locale they were reported from —
+  // i.e. strings that the storefront already serves in the right language and
+  // therefore don't need a direct translation.
+  filterByLanguage  Boolean @default(false)
   // Bumped on every dictionary change so the storefront cache invalidates.
   version   Int      @default(1)
   updatedAt DateTime @updatedAt

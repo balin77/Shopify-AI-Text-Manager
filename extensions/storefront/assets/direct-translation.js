@@ -72,6 +72,7 @@
   var dictMap = new Map();      // normalizedSource → target
   var targetValues = new Set(); // known targets (never collect our own output)
   var collect = false;          // set from the fetched dictionary (opt-in)
+  var ignoreTranslateNo = false; // set from the fetched dictionary (opt-in)
 
   // Whitespace-collapse + trim. MUST match server normalizeSource().
   function normalize(text) {
@@ -94,7 +95,7 @@
   // Conservative heuristic — mirrors server isCollectibleString(). Reduces noise
   // and the chance of capturing PII / dynamic data. The merchant reviews anyway.
   function isCollectible(s) {
-    if (s.length < 2 || s.length > 100) return false;
+    if (s.length < 2 || s.length > 1500) return false;
     if (!/[a-zA-ZÀ-ɏ]/.test(s)) return false;
     if (/^\d/.test(s) && /\d/.test(s) && !/[a-zA-Z]{3,}/.test(s)) return false;
     if (/^[$€£¥]|\d[.,]\d{2}\s*[$€£¥%]?$/.test(s)) return false;
@@ -109,7 +110,10 @@
     while (parent && parent.nodeType === 1) {
       if (SKIP_TAGS[parent.tagName]) return true;
       if (parent.isContentEditable) return true;
-      if (parent.getAttribute && parent.getAttribute("translate") === "no") return true;
+      // translate="no" is normally respected (3rd-party widgets use it to
+      // fence off browser auto-translate). The merchant can opt-in via the
+      // admin to walk into those subtrees anyway — needed for Judge.me etc.
+      if (!ignoreTranslateNo && parent.getAttribute && parent.getAttribute("translate") === "no") return true;
       if (parent.id === "contentpilot-capture-panel" || parent.closest && parent.closest("#contentpilot-capture-panel")) return true;
       parent = parent.parentNode;
     }
@@ -152,7 +156,10 @@
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         credentials: "omit",
-        body: JSON.stringify({ items: items }),
+        // `locale` lets the server-side language filter drop candidates whose
+        // detected language already matches the visitor locale (= no
+        // translation needed). Server ignores it unless the filter is enabled.
+        body: JSON.stringify({ items: items, locale: locale }),
         keepalive: true,
       }).catch(function () {});
     } catch (e) {}
@@ -267,8 +274,9 @@
   function apply(data) {
     if (!data) return;
     collect = !!data.collect;
+    ignoreTranslateNo = !!data.ignoreTranslateNo;
     dictMap = translateActive ? buildMap(data.entries) : new Map();
-    log("applied", dictMap.size, "entries; collect", collect, "version", data.version);
+    log("applied", dictMap.size, "entries; collect", collect, "ignoreTranslateNo", ignoreTranslateNo, "version", data.version);
     if (document.body) applyAll();
   }
 

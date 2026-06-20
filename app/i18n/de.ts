@@ -348,6 +348,10 @@ export const de = {
     modalSeen: "Gesehen {n}×",
     collectToggle: "Texte von der Storefront sammeln",
     collectHelp: "Wenn aktiv, meldet deine Storefront kurze, untranslatierte UI-Texte (gefiltert, niemals Preise/E-Mails), damit du sie hier prüfen kannst. Standardmäßig aus.",
+    ignoreTranslateNoToggle: "Auch 3rd-party-Widgets erfassen (translate=\"no\" ignorieren)",
+    ignoreTranslateNoHelp: "Review-Apps wie Judge.me setzen translate=\"no\", um Browser-Auto-Translate zu blockieren. Aktiviere diese Option, damit ContentPilot diese Bereiche trotzdem erfasst und übersetzt.",
+    filterByLanguageToggle: "Nur Texte sammeln, die noch nicht in der besuchten Sprache sind",
+    filterByLanguageHelp: "Erkennt serverseitig die Sprache jedes gefundenen Strings und verwirft diejenigen, die bereits zur gerade besuchten Storefront-Sprache passen. Reduziert Rauschen, besonders bei mehreren Locales.",
   },
 
   // Settings Page

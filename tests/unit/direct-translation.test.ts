@@ -232,7 +232,7 @@ describe("isCollectibleString()", () => {
     expect(isCollectibleString("+1 (555) 123-4567")).toBe(false);
     expect(isCollectibleString("12345")).toBe(false);
     expect(isCollectibleString("a")).toBe(false);
-    expect(isCollectibleString("x".repeat(101))).toBe(false);
+    expect(isCollectibleString("x".repeat(1501))).toBe(false);
   });
 });
 

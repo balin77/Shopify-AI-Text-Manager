@@ -31,7 +31,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const settings = await getSettings(db, session.shop);
   if (!settings.collect) return json({ ok: true, recorded: 0 });
 
-  let body: { items?: Array<{ text?: string }> };
+  let body: { items?: Array<{ text?: string }>; locale?: string };
   try {
     body = await request.json();
   } catch {
@@ -44,6 +44,11 @@ export async function action({ request }: ActionFunctionArgs) {
     .map((i) => ({ text: String(i?.text ?? "") }))
     .filter((i) => i.text);
 
-  const recorded = clean.length > 0 ? await recordCandidates(db, session.shop, clean) : 0;
+  const recorded = clean.length > 0
+    ? await recordCandidates(db, session.shop, clean, {
+        visitorLocale: typeof body.locale === "string" ? body.locale : undefined,
+        filterByLanguage: settings.filterByLanguage,
+      })
+    : 0;
   return json({ ok: true, recorded }, { headers: { "Cache-Control": "no-store" } });
 }
