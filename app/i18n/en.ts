@@ -330,7 +330,6 @@ export const en: Translation = {
     transferAllLangs: "Copy into all languages",
     transferThisLang: "Copy into this language",
     foundTexts: "Found texts",
-    translateAllItems: "Translate all with AI",
     deleteItem: "Delete entry",
     emptyEditor: "Select a text on the left, or add one with “+”.",
     noTargetLocales: "Add more published languages to your Shopify store first.",

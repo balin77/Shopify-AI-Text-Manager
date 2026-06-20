@@ -327,7 +327,6 @@ export const de = {
     transferAllLangs: "Übertragen in alle Sprachen",
     transferThisLang: "Übertragen in diese Sprache",
     foundTexts: "Gefundene Texte",
-    translateAllItems: "Alle mit KI übersetzen",
     deleteItem: "Eintrag löschen",
     emptyEditor: "Wähle links einen Text oder lege mit „+“ einen neuen an.",
     noTargetLocales: "Füge zuerst weitere veröffentlichte Sprachen in deinem Shopify-Shop hinzu.",

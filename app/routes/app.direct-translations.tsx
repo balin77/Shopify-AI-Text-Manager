@@ -221,22 +221,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: true, actionType, itemId: id, started: true });
       }
 
-      case "aiAll": {
-        // AI-translate ALL items into the enabled target locales.
-        const { targets } = await resolveLocales();
-        const locales = enabledTargets(targets);
-        if (locales.length === 0) return json({ success: true, actionType, translated: 0 });
-        const items = (await dt.listItems(db, session.shop)).map((r) => ({ id: r.id, sourceText: r.sourceText }));
-        if (items.length === 0) return json({ success: true, actionType, translated: 0 });
-        void runAiTask(session.shop, {
-          items,
-          locales,
-          targetLocaleLabel: "all",
-          resourceTitle: `Direktübersetzungen (${items.length})`,
-        }).catch(() => {});
-        return json({ success: true, actionType, started: true });
-      }
-
       case "loadCandidates": {
         const [newItems, rejectedItems] = await Promise.all([
           dt.listCandidates(db, session.shop, "new"),
@@ -709,14 +693,6 @@ export default function DirectTranslationsPage() {
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
                       {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
-                    </Button>
-                    <Button
-                      variant="primary"
-                      disabled={!hasTargets || items.length === 0 || isBusy}
-                      loading={isBusy && fetcher.formData?.get("action") === "aiAll"}
-                      onClick={() => submit({ action: "aiAll", locales: enabledList })}
-                    >
-                      {tt.translateAllItems}
                     </Button>
                   </InlineStack>
                 </BlockStack>

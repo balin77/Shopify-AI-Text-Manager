@@ -329,7 +329,6 @@ export const es: Translation = {
     transferAllLangs: "Copiar a todos los idiomas",
     transferThisLang: "Copiar a este idioma",
     foundTexts: "Textos detectados",
-    translateAllItems: "Traducir todo con IA",
     deleteItem: "Eliminar entrada",
     emptyEditor: "Selecciona un texto a la izquierda o añade uno con «+».",
     noTargetLocales: "Primero añade más idiomas publicados en tu tienda Shopify.",
