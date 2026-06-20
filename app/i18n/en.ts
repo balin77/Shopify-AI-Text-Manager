@@ -332,7 +332,6 @@ export const en: Translation = {
     foundTexts: "Found texts",
     translateAllItems: "Translate all with AI",
     deleteItem: "Delete entry",
-    deleteTranslation: "Delete translation",
     emptyEditor: "Select a text on the left, or add one with “+”.",
     noTargetLocales: "Add more published languages to your Shopify store first.",
     seoNote: "Direct translations are applied in the browser and are NOT indexed by search engines. Use Shopify field translations for SEO-relevant content. Apps rendered inside iframes (e.g. Loox) cannot be translated.",

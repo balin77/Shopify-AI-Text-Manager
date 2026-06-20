@@ -161,6 +161,10 @@
 
   function maybeCollect(norm) {
     if (!collect) return;
+    // Never collect inside the theme editor / forced-capture preview: that
+    // page renders our own admin-side UI overlays which would otherwise leak
+    // into the merchant's candidate list as noise.
+    if (designMode || forceCapture) return;
     if (reported.has(norm) || pendingCandidates.has(norm)) return;
     if (targetValues.has(norm)) return; // never collect our own translation output
     if (!isCollectible(norm)) return;
@@ -176,10 +180,15 @@
     if (!norm) return;
     if (shouldSkip(node.parentNode)) return;
     var target = dictMap.get(norm);
-    if (target !== undefined && target !== norm) {
-      var lead = raw.match(/^\s*/)[0];
-      var trail = raw.match(/\s*$/)[0];
-      node.nodeValue = lead + target + trail;
+    if (target !== undefined) {
+      // Any dictionary hit (incl. an intentional 1:1 entry for the locale that
+      // matches the source language) means this string is known/translated —
+      // never collect it again. Only rewrite the DOM when the value differs.
+      if (target !== norm) {
+        var lead = raw.match(/^\s*/)[0];
+        var trail = raw.match(/\s*$/)[0];
+        node.nodeValue = lead + target + trail;
+      }
       return;
     }
     maybeCollect(norm);

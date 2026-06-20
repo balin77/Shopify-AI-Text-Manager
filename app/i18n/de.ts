@@ -329,7 +329,6 @@ export const de = {
     foundTexts: "Gefundene Texte",
     translateAllItems: "Alle mit KI übersetzen",
     deleteItem: "Eintrag löschen",
-    deleteTranslation: "Übersetzung löschen",
     emptyEditor: "Wähle links einen Text oder lege mit „+“ einen neuen an.",
     noTargetLocales: "Füge zuerst weitere veröffentlichte Sprachen in deinem Shopify-Shop hinzu.",
     seoNote: "Direktübersetzungen werden im Browser angewendet und sind NICHT von Suchmaschinen indexierbar. Nutze für SEO-relevante Inhalte die Shopify-Feldübersetzungen. Apps in iframes (z. B. Loox) können nicht übersetzt werden.",

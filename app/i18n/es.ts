@@ -331,7 +331,6 @@ export const es: Translation = {
     foundTexts: "Textos detectados",
     translateAllItems: "Traducir todo con IA",
     deleteItem: "Eliminar entrada",
-    deleteTranslation: "Eliminar traducción",
     emptyEditor: "Selecciona un texto a la izquierda o añade uno con «+».",
     noTargetLocales: "Primero añade más idiomas publicados en tu tienda Shopify.",
     seoNote: "Las traducciones directas se aplican en el navegador y NO son indexadas por los buscadores. Usa las traducciones de campos de Shopify para contenido relevante para SEO. Las apps dentro de iframes (p. ej. Loox) no se pueden traducir.",

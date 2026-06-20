@@ -756,7 +756,7 @@ export default function DirectTranslationsPage() {
                     <InlineStack align="end">
                       {!isNew && (
                         <Button tone="critical" variant="plain" onClick={handleDeleteTranslation} disabled={isBusy || !draftTarget}>
-                          {tt.deleteTranslation}
+                          {t.common?.clear || "Clear"}
                         </Button>
                       )}
                     </InlineStack>
