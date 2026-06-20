@@ -692,11 +692,12 @@ export default function DirectTranslationsPage() {
             <BlockStack gap="400">
               {!hasTargets && <Banner tone="warning">{tt.noTargetLocales}</Banner>}
 
-              {/* About / context card. Short intro always visible, the long
-                  explanation lives behind a Collapsible so it doesn't push
-                  the rest of the page down. */}
+              {/* Merged About + Collector card. Intro + collapsible long-form
+                  explanation, then the storefront collector toggle and its
+                  secondary settings (gated on the toggle being on). */}
               <Card>
-                <BlockStack gap="200">
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">{tt.resourcePlural}</Text>
                   <Text as="p">{tt.aboutIntro}</Text>
                   <InlineStack align="start">
                     <Button
@@ -717,32 +718,9 @@ export default function DirectTranslationsPage() {
                       <Text as="p" tone="subdued">{tt.aboutDetails}</Text>
                     </Box>
                   </Collapsible>
-                </BlockStack>
-              </Card>
 
-              {/* Language bar — shared component for uniformity with the other
-                  content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
-              <Card>
-                <UnifiedLanguageBar
-                  shopLocales={barLocales}
-                  currentLanguage={currentLanguage}
-                  primaryLocale={primaryLocale}
-                  selectedItem={languageBarItem}
-                  contentType={"directTranslations" as ContentType}
-                  hasChanges={hasChanges}
-                  onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
-                  enabledLanguages={[primaryLocale, ...enabledLanguages]}
-                  onToggleLanguage={toggleLanguage}
-                  showTranslateAll={false}
-                  showReloadButton={false}
-                  t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
-                />
-              </Card>
+                  <Divider />
 
-              {/* Operations: collector toggle at the top, secondary options +
-                  storefront link + "Found texts" gated on it being enabled. */}
-              <Card>
-                <BlockStack gap="300">
                   <SettingRow
                     label={tt.collectToggle}
                     help={tt.collectHelp}
@@ -755,8 +733,6 @@ export default function DirectTranslationsPage() {
 
                   {collectOn && (
                     <>
-                      <Divider />
-
                       <SettingRow
                         label={tt.ignoreTranslateNoToggle}
                         help={tt.ignoreTranslateNoHelp}
@@ -784,7 +760,7 @@ export default function DirectTranslationsPage() {
                           <Button url={shopUrl} target="_blank" external>
                             {tt.visitStorefront}
                           </Button>
-                          <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
+                          <Button variant="primary" onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
                             {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
                           </Button>
                         </InlineStack>
@@ -792,6 +768,25 @@ export default function DirectTranslationsPage() {
                     </>
                   )}
                 </BlockStack>
+              </Card>
+
+              {/* Language bar — shared component for uniformity with the other
+                  content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
+              <Card>
+                <UnifiedLanguageBar
+                  shopLocales={barLocales}
+                  currentLanguage={currentLanguage}
+                  primaryLocale={primaryLocale}
+                  selectedItem={languageBarItem}
+                  contentType={"directTranslations" as ContentType}
+                  hasChanges={hasChanges}
+                  onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
+                  enabledLanguages={[primaryLocale, ...enabledLanguages]}
+                  onToggleLanguage={toggleLanguage}
+                  showTranslateAll={false}
+                  showReloadButton={false}
+                  t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
+                />
               </Card>
 
               {/* Editor */}
@@ -824,23 +819,25 @@ export default function DirectTranslationsPage() {
                       />
                     </BlockStack>
 
-                    {/* 4 action buttons — primary is a legitimate target now
-                        (source can be in any language), so no isPrimary disable. */}
+                    {/* 4 action buttons — same iconography as Products
+                        (🌍 translate, 📋 transfer). The "in alle Sprachen"
+                        variants are variant=primary (dark) so the merchant
+                        can tell them apart from the single-language ones. */}
                     <InlineStack gap="200" wrap>
                       <ButtonGroup>
-                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
-                          {tt.translateAllLangs}
+                        <Button variant="primary" disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
+                          {`🌍 ${tt.translateAllLangs}`}
                         </Button>
                         <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
-                          {tt.translateThisLang}
+                          {`🌍 ${tt.translateThisLang}`}
                         </Button>
                       </ButtonGroup>
                       <ButtonGroup>
-                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("all")}>
-                          {tt.transferAllLangs}
+                        <Button variant="primary" disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("all")}>
+                          {`📋 ${tt.transferAllLangs}`}
                         </Button>
                         <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("this")}>
-                          {tt.transferThisLang}
+                          {`📋 ${tt.transferThisLang}`}
                         </Button>
                       </ButtonGroup>
                     </InlineStack>
