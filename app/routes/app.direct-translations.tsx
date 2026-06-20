@@ -35,8 +35,9 @@ import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
-import { HelpTooltip } from "../components/HelpTooltip";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
+import { UnifiedLanguageBar } from "../components/unified/UnifiedLanguageBar";
+import type { ShopLocale, TranslatableItem, ContentType } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
@@ -308,11 +309,10 @@ export default function DirectTranslationsPage() {
   );
   const [currentLanguage, setCurrentLanguage] = useState<string>(sortedTargets[0]?.locale || "");
   // Ctrl/Cmd-click toggles a language off (excluded from "translate all" + shown
-  // critical), mirroring the other tabs' UnifiedLanguageBar behavior.
+  // critical) — handled by the shared UnifiedLanguageBar.
   const [enabledLanguages, setEnabledLanguages] = useState<Set<string>>(
     () => new Set(targetLocales.map((l) => l.locale)),
   );
-  const ctrlPressedRef = useRef<Record<string, boolean>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [draftSource, setDraftSource] = useState("");
@@ -559,15 +559,24 @@ export default function DirectTranslationsPage() {
 
   const langName = (loc: string) => getLocalizedLanguageName(loc, appLocale, targetLocales.find((l) => l.locale === loc)?.name);
 
-  // Locale bar: primary first (source language), then the published targets
-  // (sorted by localized name, like UnifiedLanguageBar).
-  const localeButtons: Array<{ locale: string; primary: boolean }> = [
-    { locale: primaryLocale, primary: true },
-    ...sortedTargets.map((l) => ({ locale: l.locale, primary: false })),
-  ];
   const isPrimarySelected = currentLanguage === primaryLocale;
-  const localeHasTranslation = (loc: string) =>
-    !!selectedItem?.translations.find((tr) => tr.locale === loc && tr.targetText.trim());
+
+  // Locales for the shared UnifiedLanguageBar (it sorts internally).
+  const barLocales: ShopLocale[] = [
+    { locale: primaryLocale, primary: true },
+    ...targetLocales.map((l) => ({ locale: l.locale, primary: false, name: l.name })),
+  ];
+  // Shape the selected item so the bar's status helpers (field-validation's
+  // `directTranslations` branch) can read one translation per locale.
+  const languageBarItem = useMemo<TranslatableItem | null>(() => {
+    if (isNew || !selectedItem) return null;
+    return {
+      id: selectedItem.id,
+      title: selectedItem.sourceText,
+      sourceText: selectedItem.sourceText,
+      translations: selectedItem.translations.map((tr) => ({ key: "__source__", locale: tr.locale, value: tr.targetText })),
+    } as unknown as TranslatableItem;
+  }, [isNew, selectedItem]);
 
   return (
     <PlanAccessGate contentType="directTranslations">
@@ -612,42 +621,23 @@ export default function DirectTranslationsPage() {
                 </Banner>
               )}
 
-              {/* Language bar — plain click switches, Ctrl/Cmd-click toggles a
-                  language off (excluded from "translate all", shown critical). */}
+              {/* Language bar — shared component for uniformity with the other
+                  content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
               <Card>
-                <InlineStack gap="200" blockAlign="center" wrap>
-                  {localeButtons.map((l) => {
-                    const enabled = l.primary || enabledLanguages.has(l.locale);
-                    const missing = !l.primary && enabled && selectedItem != null && !localeHasTranslation(l.locale);
-                    return (
-                      <Button
-                        key={l.locale}
-                        size="slim"
-                        variant={currentLanguage === l.locale ? "primary" : undefined}
-                        tone={!enabled ? "critical" : undefined}
-                        onPointerDown={(e: React.PointerEvent) => {
-                          if ((e.ctrlKey || e.metaKey) && !l.primary) {
-                            ctrlPressedRef.current[l.locale] = true;
-                            e.preventDefault();
-                            toggleLanguage(l.locale);
-                          }
-                        }}
-                        onClick={() => {
-                          if (ctrlPressedRef.current[l.locale]) {
-                            ctrlPressedRef.current[l.locale] = false;
-                            return;
-                          }
-                          void handleLanguageChange(l.locale);
-                        }}
-                      >
-                        {(l.primary ? `${langName(l.locale)} (${tt.primarySuffix})` : langName(l.locale)) + (missing ? " •" : "")}
-                      </Button>
-                    );
-                  })}
-                  <div style={{ marginLeft: "auto" }}>
-                    <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
-                  </div>
-                </InlineStack>
+                <UnifiedLanguageBar
+                  shopLocales={barLocales}
+                  currentLanguage={currentLanguage}
+                  primaryLocale={primaryLocale}
+                  selectedItem={languageBarItem}
+                  contentType={"directTranslations" as ContentType}
+                  hasChanges={hasChanges}
+                  onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
+                  enabledLanguages={[primaryLocale, ...enabledLanguages]}
+                  onToggleLanguage={toggleLanguage}
+                  showTranslateAll={false}
+                  showReloadButton={false}
+                  t={{ primaryLocaleSuffix: tt.primarySuffix }}
+                />
               </Card>
 
               {/* Operations */}
