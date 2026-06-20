@@ -873,6 +873,13 @@ function FoundTextsModal({
   const seenLabel = tt.modalSeen || "{n}";
 
   const totalCount = newItems.length + rejectedItems.length;
+  // All actions operate on the union of both selection sets so the merchant
+  // can mix-and-match across the "new" / "rejected" sections without losing
+  // a selection when switching focus. Reject is the one exception: rejected
+  // candidates can't be rejected again, so it only ever sees the "new" set.
+  const allSelectedIds = [...selectedNew, ...selectedRejected];
+  const hasAnySelection = allSelectedIds.length > 0;
+  const clearSelections = () => { setSelectedNew(new Set()); setSelectedRejected(new Set()); };
 
   return (
     <Modal
@@ -880,15 +887,39 @@ function FoundTextsModal({
       onClose={onClose}
       title={tt.modalTitle}
       size="large"
+      primaryAction={{
+        content: tt.modalAdd,
+        disabled: !hasAnySelection,
+        onAction: () => {
+          onAction("addCandidates", { ids: JSON.stringify(allSelectedIds), withAi: "false" });
+          clearSelections();
+        },
+      }}
       secondaryActions={[
+        {
+          content: tt.modalAddWithAi,
+          disabled: !hasAnySelection,
+          onAction: () => {
+            onAction("addCandidates", { ids: JSON.stringify(allSelectedIds), withAi: "true" });
+            clearSelections();
+          },
+        },
+        {
+          content: tt.modalReject,
+          destructive: true,
+          disabled: selectedNew.size === 0,
+          onAction: () => {
+            onAction("rejectCandidates", { ids: JSON.stringify([...selectedNew]) });
+            setSelectedNew(new Set());
+          },
+        },
         {
           content: tt.modalClearAll,
           destructive: true,
           disabled: totalCount === 0,
           onAction: () => {
             if (typeof window !== "undefined" && !window.confirm(tt.modalClearAllConfirm)) return;
-            setSelectedNew(new Set());
-            setSelectedRejected(new Set());
+            clearSelections();
             onAction("clearCandidates", {});
           },
         },
@@ -915,35 +946,11 @@ function FoundTextsModal({
             ) : newItems.length === 0 ? (
               <Text as="p" tone="subdued">{tt.modalEmpty}</Text>
             ) : (
-              <>
-                <InlineStack gap="200" wrap>
-                  {newItems.map((it) => (
-                    <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedNew.has(it.id)} onToggle={() => toggle(selectedNew, setSelectedNew, it.id)} />
-                  ))}
-                </InlineStack>
-                <InlineStack gap="200">
-                  <Button
-                    variant="primary"
-                    disabled={selectedNew.size === 0}
-                    onClick={() => { onAction("addCandidates", { ids: JSON.stringify([...selectedNew]), withAi: "false" }); setSelectedNew(new Set()); }}
-                  >
-                    {tt.modalAdd}
-                  </Button>
-                  <Button
-                    disabled={selectedNew.size === 0}
-                    onClick={() => { onAction("addCandidates", { ids: JSON.stringify([...selectedNew]), withAi: "true" }); setSelectedNew(new Set()); }}
-                  >
-                    {tt.modalAddWithAi}
-                  </Button>
-                  <Button
-                    tone="critical"
-                    disabled={selectedNew.size === 0}
-                    onClick={() => { onAction("rejectCandidates", { ids: JSON.stringify([...selectedNew]) }); setSelectedNew(new Set()); }}
-                  >
-                    {tt.modalReject}
-                  </Button>
-                </InlineStack>
-              </>
+              <InlineStack gap="200" wrap>
+                {newItems.map((it) => (
+                  <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedNew.has(it.id)} onToggle={() => toggle(selectedNew, setSelectedNew, it.id)} />
+                ))}
+              </InlineStack>
             )}
           </BlockStack>
 
@@ -954,28 +961,11 @@ function FoundTextsModal({
             {rejectedItems.length === 0 ? (
               <Text as="p" tone="subdued">{tt.modalRejectedEmpty}</Text>
             ) : (
-              <>
-                <InlineStack gap="200" wrap>
-                  {rejectedItems.map((it) => (
-                    <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedRejected.has(it.id)} onToggle={() => toggle(selectedRejected, setSelectedRejected, it.id)} />
-                  ))}
-                </InlineStack>
-                <InlineStack gap="200">
-                  <Button
-                    variant="primary"
-                    disabled={selectedRejected.size === 0}
-                    onClick={() => { onAction("addCandidates", { ids: JSON.stringify([...selectedRejected]), withAi: "false" }); setSelectedRejected(new Set()); }}
-                  >
-                    {tt.modalAdd}
-                  </Button>
-                  <Button
-                    disabled={selectedRejected.size === 0}
-                    onClick={() => { onAction("addCandidates", { ids: JSON.stringify([...selectedRejected]), withAi: "true" }); setSelectedRejected(new Set()); }}
-                  >
-                    {tt.modalAddWithAi}
-                  </Button>
-                </InlineStack>
-              </>
+              <InlineStack gap="200" wrap>
+                {rejectedItems.map((it) => (
+                  <CandidatePill key={it.id} item={it} seenLabel={seenLabel} checked={selectedRejected.has(it.id)} onToggle={() => toggle(selectedRejected, setSelectedRejected, it.id)} />
+                ))}
+              </InlineStack>
             )}
           </BlockStack>
         </BlockStack>
