@@ -121,70 +121,144 @@ export function UnifiedLanguageBar({
         if (a.primary) return -1;
         if (b.primary) return 1;
         return (a.name || a.locale).localeCompare(b.name || b.locale);
-      }).map((locale) => {
-        const buttonStyle = useLocaleButtonStyle(
-          locale,
-          selectedItem,
-          primaryLocale,
-          contentType,
-          isLoadingData,
-          validationOverlays,
-          validationVersion
-        );
-
-        const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
-        const isPrimary = locale.primary;
-        const isCurrentLanguage = currentLanguage === locale.locale;
-
-        const buttonProps = {
-          variant: isCurrentLanguage ? "primary" as const : undefined,
-          onClick: () => {
-            if (ctrlPressedRef.current[locale.locale]) {
-              ctrlPressedRef.current[locale.locale] = false;
-              return;
-            }
-            onLanguageChange(locale.locale);
-          },
-          onPointerDown: (event: React.PointerEvent) => {
-            if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-              ctrlPressedRef.current[locale.locale] = true;
-              event.preventDefault();
-              onToggleLanguage(locale.locale);
-            }
-          },
-          size: "slim" as const,
-          tone: (!isEnabled && !isPrimary ? "critical" as const : undefined),
-        };
-
-        const fullLabel = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${locale.primary ? ` (${t.primaryLocaleSuffix || "Primary"})` : ""}`;
-        const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
-
-        const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n, validationOverlays);
-
-        const buttonContent = (
-          <div key={locale.locale} style={buttonStyle}>
-            <div className="lang-full">
-              <Button {...buttonProps}>{fullLabel}</Button>
-            </div>
-            <div className="lang-short">
-              <Button {...buttonProps}>{shortLabel}</Button>
-            </div>
-          </div>
-        );
-
-        if (tooltip) {
-          return (
-            <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut preferredPosition="below">
-              {buttonContent}
-            </Tooltip>
-          );
-        }
-
-        return buttonContent;
-      })}
+      }).map((locale) => (
+        <LocaleButton
+          key={locale.locale}
+          locale={locale}
+          selectedItem={selectedItem}
+          primaryLocale={primaryLocale}
+          contentType={contentType}
+          isLoadingData={isLoadingData}
+          validationOverlays={validationOverlays}
+          validationVersion={validationVersion}
+          enabledLanguages={enabledLanguages}
+          currentLanguage={currentLanguage}
+          onLanguageChange={onLanguageChange}
+          onToggleLanguage={onToggleLanguage}
+          ctrlPressedRef={ctrlPressedRef}
+          appLocale={appLocale}
+          tooltipI18n={tooltipI18n}
+          primaryLocaleSuffix={t.primaryLocaleSuffix}
+        />
+      ))}
       <div style={{ marginLeft: "auto" }}>
         <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
       </div>
     </div>
   );
+}
+
+/**
+ * One locale button — extracted as a component so the `useLocaleButtonStyle`
+ * hook isn't called inside a `.map()` callback (would violate React's Rules of
+ * Hooks; the previous inline call only worked because the locale list happens
+ * to be stable per render).
+ */
+interface LocaleButtonProps {
+  locale: ShopLocale;
+  selectedItem: TranslatableItem | null;
+  primaryLocale: string;
+  contentType: ContentType;
+  isLoadingData: boolean;
+  validationOverlays?: ValidationOverlays;
+  validationVersion?: number;
+  enabledLanguages?: string[];
+  currentLanguage: string;
+  onLanguageChange: (locale: string) => void;
+  onToggleLanguage?: (locale: string) => void;
+  ctrlPressedRef: React.MutableRefObject<Record<string, boolean>>;
+  appLocale: string;
+  tooltipI18n: {
+    missingContent: string;
+    missingTranslations: string;
+    fieldLabels: Record<string, string>;
+  };
+  primaryLocaleSuffix?: string;
+}
+
+function LocaleButton({
+  locale,
+  selectedItem,
+  primaryLocale,
+  contentType,
+  isLoadingData,
+  validationOverlays,
+  validationVersion,
+  enabledLanguages,
+  currentLanguage,
+  onLanguageChange,
+  onToggleLanguage,
+  ctrlPressedRef,
+  appLocale,
+  tooltipI18n,
+  primaryLocaleSuffix,
+}: LocaleButtonProps) {
+  const buttonStyle = useLocaleButtonStyle(
+    locale,
+    selectedItem,
+    primaryLocale,
+    contentType,
+    isLoadingData,
+    validationOverlays,
+    validationVersion,
+  );
+
+  const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
+  const isPrimary = locale.primary;
+  const isCurrentLanguage = currentLanguage === locale.locale;
+
+  const buttonProps = {
+    variant: isCurrentLanguage ? ("primary" as const) : undefined,
+    onClick: () => {
+      if (ctrlPressedRef.current[locale.locale]) {
+        ctrlPressedRef.current[locale.locale] = false;
+        return;
+      }
+      onLanguageChange(locale.locale);
+    },
+    onPointerDown: (event: React.PointerEvent) => {
+      if (event.ctrlKey && onToggleLanguage && !isPrimary) {
+        ctrlPressedRef.current[locale.locale] = true;
+        event.preventDefault();
+        onToggleLanguage(locale.locale);
+      }
+    },
+    size: "slim" as const,
+    tone: (!isEnabled && !isPrimary ? ("critical" as const) : undefined),
+  };
+
+  const fullLabel = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${
+    locale.primary ? ` (${primaryLocaleSuffix || "Primary"})` : ""
+  }`;
+  const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+
+  const tooltip = getLocaleButtonTooltip(
+    locale,
+    selectedItem,
+    primaryLocale,
+    contentType,
+    isLoadingData,
+    tooltipI18n,
+    validationOverlays,
+  );
+
+  const buttonContent = (
+    <div style={buttonStyle}>
+      <div className="lang-full">
+        <Button {...buttonProps}>{fullLabel}</Button>
+      </div>
+      <div className="lang-short">
+        <Button {...buttonProps}>{shortLabel}</Button>
+      </div>
+    </div>
+  );
+
+  if (tooltip) {
+    return (
+      <Tooltip content={tooltip} dismissOnMouseOut preferredPosition="below">
+        {buttonContent}
+      </Tooltip>
+    );
+  }
+  return buttonContent;
 }

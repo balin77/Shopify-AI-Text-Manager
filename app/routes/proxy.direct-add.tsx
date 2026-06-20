@@ -38,13 +38,18 @@ export async function action({ request }: ActionFunctionArgs) {
   const sourceText = normalizeSource(String(body.sourceText ?? ""));
   if (!sourceText) return json({ ok: false, error: "Empty source" }, { status: 400 });
 
-  const item = await createItem(db, session.shop, sourceText);
-
-  // Optional: a single explicit translation (kept for completeness).
+  // Validate the optional translation pair UP FRONT — previously an invalid
+  // locale rejected the request AFTER createItem ran, leaving an orphan item
+  // in the DB with no way to undo it server-side.
   const locale = String(body.locale ?? "").trim();
   const targetText = String(body.targetText ?? "");
-  if (locale && targetText.trim()) {
-    if (!isValidLocale(locale)) return json({ ok: false, error: "Invalid locale" }, { status: 400 });
+  const hasExplicitTranslation = locale.length > 0 && targetText.trim().length > 0;
+  if (hasExplicitTranslation && !isValidLocale(locale)) {
+    return json({ ok: false, error: "Invalid locale" }, { status: 400 });
+  }
+
+  const item = await createItem(db, session.shop, sourceText);
+  if (hasExplicitTranslation) {
     await setTranslation(db, session.shop, item.id, locale, targetText, "user");
   }
 

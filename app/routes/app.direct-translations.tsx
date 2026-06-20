@@ -361,6 +361,10 @@ export default function DirectTranslationsPage() {
   const [baseTarget, setBaseTarget] = useState("");
   const [candidatesOpen, setCandidatesOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  // Bumped whenever a translation row is added/edited/deleted so the language
+  // bar's pulse memo (keyed on validationVersion) re-runs even when the
+  // translations-array length is unchanged (e.g. edit-in-place).
+  const [validationVersion, setValidationVersion] = useState(0);
   // Mirror the three persisted booleans locally so the toggles feel snappy
   // (toggling fires an action; we update the UI immediately and let the
   // revalidator reconcile if it bounces). Synced when the loader reports
@@ -593,6 +597,12 @@ export default function DirectTranslationsPage() {
       return;
     }
     const at = fetcher.data.actionType;
+    // Anything that touches the translation set on the server should bump the
+    // validationVersion so the language-bar pulse memo re-runs (the array
+    // length alone doesn't always change — e.g. user-edit in place).
+    if (at === "save" || at === "ai" || at === "transfer" || at === "deleteTranslation" || at === "addCandidates") {
+      setValidationVersion((v) => v + 1);
+    }
     if (at === "deleteItem") {
       setSelectedId(null);
       setIsNew(false);
@@ -794,10 +804,11 @@ export default function DirectTranslationsPage() {
                   contentType={"directTranslations" as ContentType}
                   hasChanges={hasChanges}
                   onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
-                  enabledLanguages={[primaryLocale, ...enabledLanguages]}
+                  enabledLanguages={Array.from(new Set([primaryLocale, ...enabledLanguages]))}
                   onToggleLanguage={toggleLanguage}
                   showTranslateAll={false}
                   showReloadButton={false}
+                  validationVersion={validationVersion}
                   t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
                 />
               </Card>

@@ -275,6 +275,10 @@
     if (!data) return;
     collect = !!data.collect;
     ignoreTranslateNo = !!data.ignoreTranslateNo;
+    // Hydrate `featureAvailable` from cached payloads too — otherwise a
+    // network-failing first request leaves the capture tool dead on every
+    // subsequent page load even though the dictionary itself is cached.
+    if (typeof data.available === "boolean") featureAvailable = data.available;
     dictMap = translateActive ? buildMap(data.entries) : new Map();
     log("applied", dictMap.size, "entries; collect", collect, "ignoreTranslateNo", ignoreTranslateNo, "version", data.version);
     if (document.body) applyAll();

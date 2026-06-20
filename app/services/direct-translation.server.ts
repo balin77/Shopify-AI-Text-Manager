@@ -131,9 +131,12 @@ export async function updateSettings(
     create: { shop, ...cleaned },
     update: cleaned,
   });
-  // `ignoreTranslateNo` changes what the storefront walks → bump the cache
-  // version so embedded clients refetch the dictionary (which carries the flag).
-  if ("ignoreTranslateNo" in cleaned) await bumpVersion(db, shop);
+  // `collect` and `ignoreTranslateNo` both change storefront behaviour and
+  // travel in the dictionary payload — bump the cache version so cached
+  // clients refetch instead of waiting for the 60s edge TTL. `filterByLanguage`
+  // is server-only (storefront posts the same payload either way) so no bump
+  // needed for that one.
+  if ("collect" in cleaned || "ignoreTranslateNo" in cleaned) await bumpVersion(db, shop);
 }
 
 /** @deprecated — kept so callers that just toggle `collect` keep working. */

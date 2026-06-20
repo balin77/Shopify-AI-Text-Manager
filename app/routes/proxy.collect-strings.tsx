@@ -19,6 +19,7 @@ import {
   isDirectTranslationsAvailable,
   MAX_CANDIDATES_PER_REQUEST,
 } from "../services/direct-translation.server";
+import { isValidLocale } from "../utils/validation";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);
@@ -44,9 +45,16 @@ export async function action({ request }: ActionFunctionArgs) {
     .map((i) => ({ text: String(i?.text ?? "") }))
     .filter((i) => i.text);
 
+  // Only forward the visitor locale when it's a syntactically valid Shopify
+  // locale string (e.g. "de" / "pt-BR"). Without this an attacker could send
+  // a megabyte-long string straight into franc and the BCP-47 mapper.
+  const visitorLocale =
+    typeof body.locale === "string" && body.locale.length < 16 && isValidLocale(body.locale)
+      ? body.locale
+      : undefined;
   const recorded = clean.length > 0
     ? await recordCandidates(db, session.shop, clean, {
-        visitorLocale: typeof body.locale === "string" ? body.locale : undefined,
+        visitorLocale,
         filterByLanguage: settings.filterByLanguage,
       })
     : 0;
