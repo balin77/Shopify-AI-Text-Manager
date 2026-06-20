@@ -121,17 +121,40 @@
   }
 
   // ---- Collector state ----------------------------------------------------
+  // The "already reported" set is keyed by string AND piggy-backed on the
+  // dictionary's `version`. Whenever the server bumps the version (item added,
+  // deleted, settings changed) we throw the local set away — otherwise a
+  // string we collected before the merchant deleted its item would never be
+  // re-reported, and the merchant would think the collector is broken.
+  var reportedVersion = 0;
   function loadReported() {
-    try { return new Set(JSON.parse(localStorage.getItem(reportedKey) || "[]")); }
-    catch (e) { return new Set(); }
+    try {
+      var raw = JSON.parse(localStorage.getItem(reportedKey) || "{}");
+      if (raw && typeof raw === "object" && Array.isArray(raw.items)) {
+        reportedVersion = Number(raw.version) || 0;
+        return new Set(raw.items);
+      }
+      // Legacy format (plain array) — keep it for one session, will be
+      // overwritten on the next persist with the new shape.
+      if (Array.isArray(raw)) return new Set(raw);
+    } catch (e) {}
+    return new Set();
   }
   var reported = loadReported();
   function persistReported() {
     try {
       var arr = Array.from(reported);
       if (arr.length > 2000) arr = arr.slice(arr.length - 2000);
-      localStorage.setItem(reportedKey, JSON.stringify(arr));
+      localStorage.setItem(reportedKey, JSON.stringify({ version: reportedVersion, items: arr }));
     } catch (e) {}
+  }
+  function maybeResetReportedForVersion(v) {
+    var nextVersion = Number(v) || 0;
+    if (nextVersion && reportedVersion && nextVersion !== reportedVersion) {
+      reported = new Set();
+    }
+    reportedVersion = nextVersion || reportedVersion;
+    persistReported();
   }
 
   var pendingCandidates = new Map();
@@ -280,6 +303,10 @@
     // subsequent page load even though the dictionary itself is cached.
     if (typeof data.available === "boolean") featureAvailable = data.available;
     dictMap = translateActive ? buildMap(data.entries) : new Map();
+    // A version change means the merchant changed items/settings — discard
+    // the local "reported" cache so freshly-relevant strings can be reported
+    // again (e.g. after an item was deleted and the string reappears).
+    maybeResetReportedForVersion(data.version);
     log("applied", dictMap.size, "entries; collect", collect, "ignoreTranslateNo", ignoreTranslateNo, "version", data.version);
     if (document.body) applyAll();
   }
@@ -325,7 +352,20 @@
       '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
 
     document.body.appendChild(panel);
-    document.documentElement.style.cursor = "crosshair";
+    // Only hijack the cursor + clicks inside the actual theme-editor preview.
+    // The ?cp-translate=1 path may be hit on a live storefront by a regular
+    // visitor (shared/bookmarked link) — there it must NOT intercept clicks
+    // or change the cursor, or the whole site is unusable for them.
+    var interceptClicks = designMode;
+    if (interceptClicks) {
+      document.documentElement.style.cursor = "crosshair";
+    } else {
+      // On forceCapture (live storefront with ?cp-translate=1) show a clear
+      // hint that capturing requires the theme-editor preview, and hide the
+      // panel after a short delay so it doesn't blanket the page.
+      var hintEl = panel.querySelector("#cp-cap-hint");
+      if (hintEl) hintEl.textContent = "Capture-Tool ist nur im Theme-Editor aktiv. Schließe dieses Panel oder öffne die Seite im Theme-Editor.";
+    }
 
     var hint = panel.querySelector("#cp-cap-hint");
     var formEl = panel.querySelector("#cp-cap-form");
@@ -370,19 +410,21 @@
       formEl.querySelector("#cp-cap-add-all").addEventListener("click", function () { run(true); });
     }
 
-    document.addEventListener(
-      "click",
-      function (e) {
-        if (panel.contains(e.target)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        var text = normalize(e.target.textContent || "");
-        if (text) showForm(text);
-      },
-      true,
-    );
+    if (interceptClicks) {
+      document.addEventListener(
+        "click",
+        function (e) {
+          if (panel.contains(e.target)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          var text = normalize(e.target.textContent || "");
+          if (text) showForm(text);
+        },
+        true,
+      );
+    }
 
-    log("capture mode ready (always-on selection)");
+    log("capture mode ready; intercept=", interceptClicks);
   }
 
   function start() {

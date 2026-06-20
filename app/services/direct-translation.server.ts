@@ -321,7 +321,15 @@ export async function aiAutoTranslateItems(
   let done = 0;
   const rows: Array<Awaited<ReturnType<typeof setTranslation>>> = [];
 
+  // Quality gate for the same-as-source case: with fromLang="auto" the model
+  // is supposed to return the input unchanged ONLY when the source is already
+  // in the target locale. A refused or echoed prompt looks identical, so we
+  // verify with franc when we can (and accept it when detection is uncertain).
+  // Loaded lazily because franc-min adds ~500 KB to the import graph.
+  const { franc } = await import("franc-min");
+
   for (const locale of locales) {
+    const targetLangIso = bcp47ToIso6393(locale);
     for (let start = 0; start < items.length; start += AI_BATCH_SIZE) {
       const chunk = items.slice(start, start + AI_BATCH_SIZE);
       const targets = await translateBatch(
@@ -333,9 +341,18 @@ export async function aiAutoTranslateItems(
       for (let i = 0; i < chunk.length; i++) {
         const target = targets[i];
         // Empty/missing model output → skip (would otherwise wipe an existing
-        // translation). Same-as-source is a deliberate 1:1 from the model
-        // (target locale matches detected source) and IS persisted.
+        // translation).
         if (!target) continue;
+        // Same-as-source quality gate: when the model returns the input
+        // unchanged, only refuse to persist if franc CONFIDENTLY disagrees
+        // (input long enough for a reliable detection AND detected language
+        // differs from the target). minLength 30 is the threshold below
+        // which franc becomes a coin-flip; we'd rather trust the AI's 1:1
+        // than reject a legitimate UI label that just happens to be short.
+        if (normalizeSource(target) === chunk[i].source && targetLangIso) {
+          const detected = franc(chunk[i].source, { minLength: 30 });
+          if (detected !== "und" && detected !== targetLangIso) continue;
+        }
         rows.push(await setTranslation(db, shop, chunk[i].id, locale, target, "ai"));
       }
       done += chunk.length;

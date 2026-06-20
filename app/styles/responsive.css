@@ -86,6 +86,18 @@
   z-index: 1100 !important;
 }
 
+/* Nested Polaris modals (e.g. a Confirm dialog opened from inside the
+   FoundTexts modal): the later sibling needs to stack above the earlier
+   one, otherwise they share z-index 1100 and the user can't reach the
+   newer dialog. The general sibling selector targets every modal that
+   appears AFTER an earlier one in the portal stack. */
+.Polaris-Modal-Dialog__Container ~ .Polaris-Modal-Dialog__Container {
+  z-index: 1200 !important;
+}
+.Polaris-Backdrop ~ .Polaris-Backdrop {
+  z-index: 1150 !important;
+}
+
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */
 .image-preview-large > div {
   padding-bottom: 100% !important; /* Always maintain square aspect ratio */

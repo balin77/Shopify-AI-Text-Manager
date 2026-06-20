@@ -190,6 +190,10 @@ model DirectTranslationCandidate {
 
   @@unique([shop, sourceHash])
   @@index([shop, status])
+  // Backs the FIFO-prune query (delete oldest when a shop's candidate count
+  // exceeds MAX_CANDIDATES_PER_SHOP). Without this Postgres falls back to a
+  // table scan + sort once a shop accumulates a few hundred candidates.
+  @@index([shop, lastSeenAt])
 }
 
 // Per-shop settings + cache-busting version for the direct translation layer.
