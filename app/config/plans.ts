@@ -119,7 +119,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {

@@ -16,12 +16,16 @@ import { db } from "../db.server";
 import {
   getSettings,
   recordCandidates,
+  isDirectTranslationsAvailable,
   MAX_CANDIDATES_PER_REQUEST,
 } from "../services/direct-translation.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
+
+  // Max-plan only.
+  if (!(await isDirectTranslationsAvailable(db, session.shop))) return json({ ok: true, recorded: 0 });
 
   // Opt-in gate: do nothing unless the merchant enabled collection.
   const settings = await getSettings(db, session.shop);

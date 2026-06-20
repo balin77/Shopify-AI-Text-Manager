@@ -53,12 +53,15 @@
 
   // Visual capture tool: shown in the theme editor (or explicitly via
   // ?cp-translate=1) ONLY when the merchant left the embed's "capture tool"
-  // checkbox on. It is immediately active — no extra start step — and is never
-  // shown to real customers.
+  // checkbox on, AND the shop is on a plan where the feature is available
+  // (Max). Availability is reported by the dictionary endpoint (`available`).
+  // It is immediately active — no extra start step — and never shown to real
+  // customers.
   var captureTool = cfg.captureTool !== false; // default on
   var designMode = !!(window.Shopify && window.Shopify.designMode);
   var forceCapture = /[?&]cp-translate=1\b/.test(window.location.search);
-  var captureEnabled = captureTool && (designMode || forceCapture);
+  var captureRequested = captureTool && (designMode || forceCapture);
+  var featureAvailable = false; // set from the fetched dictionary
 
   // Translation is inactive on the primary locale (or no locale), but the
   // visual capture mode may still run (to add source strings while previewing
@@ -261,7 +264,7 @@
   }
 
   function fetchDict() {
-    if (!translateActive && !captureEnabled) return Promise.resolve(null);
+    if (!translateActive && !captureRequested) return Promise.resolve(null);
     return fetch(endpoint + "?locale=" + encodeURIComponent(locale || primary), {
       headers: { Accept: "application/json" },
       credentials: "omit",
@@ -281,7 +284,7 @@
   }
 
   function initCaptureMode() {
-    if (!captureEnabled) return;
+    if (!captureRequested || !featureAvailable) return;
 
     var panel = document.createElement("div");
     panel.id = "contentpilot-capture-panel";
@@ -367,6 +370,7 @@
 
     fetchDict().then(function (fresh) {
       if (fresh) {
+        featureAvailable = !!fresh.available;
         if (!cached || cached.version !== fresh.version || cached.collect !== fresh.collect) {
           writeCache(fresh);
           apply(fresh);

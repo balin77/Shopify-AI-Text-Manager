@@ -15,13 +15,18 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { createItem, setTranslation, normalizeSource } from "../services/direct-translation.server";
+import { createItem, setTranslation, normalizeSource, isDirectTranslationsAvailable } from "../services/direct-translation.server";
 import { translateItemsIntoAllLocales } from "../services/direct-translation-ai.server";
 import { isValidLocale } from "../utils/validation";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session, admin } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
+
+  // Max-plan only.
+  if (!(await isDirectTranslationsAvailable(db, session.shop))) {
+    return json({ ok: false, error: "Not available on this plan" }, { status: 200 });
+  }
 
   let body: { sourceText?: string; translateAll?: boolean; locale?: string; targetText?: string };
   try {
