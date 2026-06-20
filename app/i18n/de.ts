@@ -343,6 +343,8 @@ export const de = {
     modalReject: "Ablehnen",
     modalEmpty: "Keine neuen Texte gefunden.",
     modalRejectedEmpty: "Keine abgelehnten Texte.",
+    modalClearAll: "Alle Kandidaten löschen",
+    modalClearAllConfirm: "Alle gesammelten Kandidaten (neu + abgelehnt) endgültig löschen?",
     modalSeen: "Gesehen {n}×",
     collectToggle: "Texte von der Storefront sammeln",
     collectHelp: "Wenn aktiv, meldet deine Storefront kurze, untranslatierte UI-Texte (gefiltert, niemals Preise/E-Mails), damit du sie hier prüfen kannst. Standardmäßig aus.",

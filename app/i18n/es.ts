@@ -345,6 +345,8 @@ export const es: Translation = {
     modalReject: "Descartar",
     modalEmpty: "No se han detectado textos nuevos.",
     modalRejectedEmpty: "No hay textos descartados.",
+    modalClearAll: "Eliminar todos los candidatos",
+    modalClearAllConfirm: "¿Eliminar definitivamente todos los candidatos recopilados (nuevos + descartados)?",
     modalSeen: "Visto {n}×",
     collectToggle: "Recopilar textos del escaparate",
     collectHelp: "Si está activo, tu escaparate informa de textos de interfaz cortos sin traducir (filtrados, nunca precios/correos) para que los revises aquí. Desactivado por defecto.",

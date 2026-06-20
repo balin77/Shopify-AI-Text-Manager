@@ -346,6 +346,8 @@ export const en: Translation = {
     modalReject: "Reject",
     modalEmpty: "No new texts found.",
     modalRejectedEmpty: "No rejected texts.",
+    modalClearAll: "Delete all candidates",
+    modalClearAllConfirm: "Permanently delete all collected candidates (new + rejected)?",
     modalSeen: "Seen {n}×",
     collectToggle: "Collect texts from the storefront",
     collectHelp: "When on, your storefront reports short untranslated UI strings it renders (filtered, never prices/emails) so you can review them here. Off by default.",

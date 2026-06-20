@@ -264,6 +264,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: true, actionType, rejected: (ids as string[]).length });
       }
 
+      case "clearCandidates": {
+        // Drop every candidate (new + rejected) for this shop.
+        const deleted = await dt.deleteAllCandidates(db, session.shop);
+        return json({ success: true, actionType, deleted });
+      }
+
       case "setCollect": {
         await dt.setCollect(db, session.shop, getFormString(formData, "collect") === "true");
         return json({ success: true, actionType });
@@ -548,7 +554,7 @@ export default function DirectTranslationsPage() {
       setIsNew(false);
     }
     // Candidate mutations already committed server-side → refresh the modal list.
-    if ((at === "addCandidates" || at === "rejectCandidates") && candidatesOpen) reloadCandidates();
+    if ((at === "addCandidates" || at === "rejectCandidates" || at === "clearCandidates") && candidatesOpen) reloadCandidates();
     revalidator.revalidate();
   }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates, t]);
 
@@ -866,8 +872,28 @@ function FoundTextsModal({
 
   const seenLabel = tt.modalSeen || "{n}";
 
+  const totalCount = newItems.length + rejectedItems.length;
+
   return (
-    <Modal open={open} onClose={onClose} title={tt.modalTitle} size="large">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={tt.modalTitle}
+      size="large"
+      secondaryActions={[
+        {
+          content: tt.modalClearAll,
+          destructive: true,
+          disabled: totalCount === 0,
+          onAction: () => {
+            if (typeof window !== "undefined" && !window.confirm(tt.modalClearAllConfirm)) return;
+            setSelectedNew(new Set());
+            setSelectedRejected(new Set());
+            onAction("clearCandidates", {});
+          },
+        },
+      ]}
+    >
       <Modal.Section>
         <BlockStack gap="400">
           <Checkbox

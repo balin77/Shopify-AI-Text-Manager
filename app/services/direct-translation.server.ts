@@ -368,6 +368,12 @@ export async function recordCandidates(
   return recorded;
 }
 
+/** Wipe every candidate (new + rejected) for the shop. */
+export async function deleteAllCandidates(db: Db, shop: string): Promise<number> {
+  const { count } = await db.directTranslationCandidate.deleteMany({ where: { shop } });
+  return count;
+}
+
 export async function listCandidates(db: Db, shop: string, status?: "new" | "rejected") {
   return db.directTranslationCandidate.findMany({
     where: { shop, ...(status ? { status } : {}) },
