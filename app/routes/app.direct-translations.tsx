@@ -40,6 +40,7 @@ import { UnifiedLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import type { ShopLocale, TranslatableItem, ContentType } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
@@ -311,6 +312,7 @@ export default function DirectTranslationsPage() {
     };
   const { t, locale: appLocale } = useI18n();
   const { showInfoBox } = useInfoBox();
+  const confirm = useConfirm();
   const { runningTaskCount } = useTaskCount();
   const { registerItems, clearItems } = useItemSelector();
   const fetcher = useFetcher<{ success?: boolean; error?: string; actionType?: string; itemId?: string; translated?: number; added?: number; started?: boolean }>();
@@ -537,9 +539,16 @@ export default function DirectTranslationsPage() {
 
   // Sidebar trash button: removes the WHOLE item (all locales). Used by the
   // shared UnifiedItemList; only enabled when an item is selected.
-  const handleDeleteItem = useCallback((itemId: string) => {
+  const handleDeleteItem = useCallback(async (itemId: string) => {
+    const ok = await confirm({
+      title: tt.deleteItem,
+      message: tt.deleteItemConfirm,
+      confirmLabel: tt.deleteItem,
+      destructive: true,
+    });
+    if (!ok) return;
     submit({ action: "deleteItem", itemId });
-  }, [submit]);
+  }, [confirm, submit, tt.deleteItem, tt.deleteItemConfirm]);
 
   const reloadCandidates = useCallback(() => {
     const fd = new FormData();
@@ -869,6 +878,7 @@ function FoundTextsModal({
   fetcher: ReturnType<typeof useFetcher<{ success?: boolean; newItems?: Array<{ id: string; sourceText: string; count: number }>; rejectedItems?: Array<{ id: string; sourceText: string; count: number }> }>>;
   onAction: (action: string, payload: Record<string, string>) => void;
 }) {
+  const confirm = useConfirm();
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
   const [selectedRejected, setSelectedRejected] = useState<Set<string>>(new Set());
   const [collectOn, setCollectOn] = useState(collect);
@@ -940,8 +950,14 @@ function FoundTextsModal({
           content: tt.modalClearAll,
           destructive: true,
           disabled: totalCount === 0,
-          onAction: () => {
-            if (typeof window !== "undefined" && !window.confirm(tt.modalClearAllConfirm)) return;
+          onAction: async () => {
+            const ok = await confirm({
+              title: tt.modalClearAll,
+              message: tt.modalClearAllConfirm,
+              confirmLabel: tt.modalClearAll,
+              destructive: true,
+            });
+            if (!ok) return;
             clearSelections();
             onAction("clearCandidates", {});
           },
