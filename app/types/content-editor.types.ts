@@ -201,7 +201,7 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 

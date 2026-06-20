@@ -35,6 +35,20 @@ type Db = Pick<
   | "directTranslationCandidate"
 >;
 
+/**
+ * Direct translations are a Max-plan feature — admin tab AND the whole storefront
+ * layer (dictionary, collector, theme-editor capture). The effective plan lives
+ * on AISettings.subscriptionPlan (kept in sync by billing). Used to gate the
+ * app-proxy endpoints server-side so non-Max shops get nothing.
+ */
+export async function isDirectTranslationsAvailable(
+  db: Pick<PrismaClient, "aISettings">,
+  shop: string,
+): Promise<boolean> {
+  const s = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
+  return (s?.subscriptionPlan || "free") === "max";
+}
+
 /** Max candidate strings accepted per collect request (defense against abuse). */
 export const MAX_CANDIDATES_PER_REQUEST = 100;
 /** Max distinct candidate rows kept per shop (oldest-untouched pruned). */

@@ -15,10 +15,12 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { getDictionary } from "../services/direct-translation.server";
+import { getDictionary, isDirectTranslationsAvailable } from "../services/direct-translation.server";
 import { isValidLocale } from "../utils/validation";
 
-const EMPTY = { collect: false, version: 0, entries: {} as Record<string, string> };
+// `available` tells the storefront whether the Max-plan feature is active (it
+// gates the theme-editor capture tool). Translations/collector are also gated.
+const EMPTY = { available: false, collect: false, version: 0, entries: {} as Record<string, string> };
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);
@@ -28,16 +30,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json(EMPTY, { headers: { "Cache-Control": "no-store" } });
   }
 
+  // Max-plan only: non-Max shops get an empty, unavailable dictionary.
+  if (!(await isDirectTranslationsAvailable(db, session.shop))) {
+    return json(EMPTY, { headers: { "Cache-Control": "no-store" } });
+  }
+
   const locale = new URL(request.url).searchParams.get("locale")?.trim() ?? "";
   if (!locale || !isValidLocale(locale)) {
-    return json(EMPTY, { headers: { "Cache-Control": "no-store" } });
+    return json({ ...EMPTY, available: true }, { headers: { "Cache-Control": "no-store" } });
   }
 
   const dict = await getDictionary(db, session.shop, locale);
 
   // Short edge/browser cache; the storefront JS additionally caches in
   // localStorage and revalidates against `version` (stale-while-revalidate).
-  return json(dict, {
+  return json({ ...dict, available: true }, {
     headers: { "Cache-Control": "public, max-age=60, stale-while-revalidate=600" },
   });
 }

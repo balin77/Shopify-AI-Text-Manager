@@ -317,8 +317,7 @@ export const es: Translation = {
     resourceSingular: "Traducción directa",
     resourcePlural: "Traducciones directas",
     searchPlaceholder: "Buscar textos …",
-    languagesHeading: "Idiomas",
-    operationsHeading: "Acciones",
+
     primarySuffix: "Principal",
     primaryNote: "Idioma principal — edita el texto original arriba. Las traducciones se gestionan en los demás idiomas.",
     addItem: "Nuevo texto",
