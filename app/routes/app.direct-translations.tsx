@@ -454,21 +454,33 @@ export default function DirectTranslationsPage() {
   const isBusy = fetcher.state !== "idle";
 
   // Build UnifiedItemList items (title = source, subtitle = "n/m languages").
-  // The blue "missing translations" dot mirrors the other content tabs.
+  // The blue "missing translations" dot mirrors the other content tabs and
+  // its tooltip lists the actual locales that are still missing — matching
+  // the per-locale field tooltips you get on Products/Collections.
   const listItems = useMemo(
     () =>
       items.map((i) => {
-        const n = i.translations.filter((tr) => tr.targetText.trim()).length;
+        const presentLocales = new Set(
+          i.translations.filter((tr) => tr.targetText.trim()).map((tr) => tr.locale),
+        );
+        const missingLocales = targetLocales.filter((l) => !presentLocales.has(l.locale));
+        const n = presentLocales.size;
         const m = targetLocales.length;
+        const hasMissing = m > 0 && missingLocales.length > 0;
+        const tooltip = hasMissing
+          ? `${t.common?.missingTranslations ?? "Missing translations:"} ${missingLocales
+              .map((l) => getLocalizedLanguageName(l.locale, appLocale, l.name))
+              .join(", ")}`
+          : undefined;
         return {
           id: i.id,
           title: i.sourceText,
           subtitle: (tt.subtitleTranslated || "{n}/{m}").replace("{n}", String(n)).replace("{m}", String(m)),
-          hasMissingTranslations: m > 0 && n < m,
-          missingTranslationsTooltip: t.common?.missingTranslations,
+          hasMissingTranslations: hasMissing,
+          missingTranslationsTooltip: tooltip,
         };
       }),
-    [items, targetLocales.length, tt.subtitleTranslated, t.common?.missingTranslations],
+    [items, targetLocales, tt.subtitleTranslated, t.common?.missingTranslations, appLocale],
   );
 
   // Register items for the mobile navbar's compact selector (the left list is

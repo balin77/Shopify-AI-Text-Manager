@@ -311,7 +311,10 @@ export function getLocaleButtonTooltip(
   let missingFields: string[];
   let prefix: string;
 
-  if (locale.primary) {
+  // For directTranslations primary is a regular translation target (source can
+  // be in any language), so even on the primary tab we report missing
+  // translations rather than missing source content.
+  if (locale.primary && contentType !== 'directTranslations') {
     missingFields = getMissingPrimaryFields(selectedItem, contentType, overlays);
     prefix = i18n?.missingContent ?? 'Missing content:';
   } else {
@@ -394,7 +397,11 @@ export function useLocaleButtonStyle(
     }
 
     const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType, overlays);
-    const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType, overlays);
+    // For directTranslations the source is detected per item (any language), so
+    // the primary locale is itself a regular translation target — also pulse it
+    // when its translation is missing.
+    const checkAsTarget = !locale.primary || contentType === 'directTranslations';
+    const foreignTranslationMissing = checkAsTarget && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType, overlays);
 
     if (primaryContentMissing || foreignTranslationMissing) {
       // Synchronize all pulse animations to a shared reference point (PULSE_SYNC_EPOCH).
