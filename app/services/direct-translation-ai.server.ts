@@ -32,13 +32,19 @@ export async function buildTranslateBatch(shop: string, taskId?: string) {
   return { translateBatch, provider };
 }
 
-/** The shop's primary (source) locale + its published, non-primary target locales. */
+/**
+ * The shop's primary locale + ALL published locales (incl. primary) as valid
+ * translation targets. Primary is a legitimate target because the source string
+ * is not assumed to be in the primary language (auto-detect handles that) —
+ * e.g. an English widget label on a German-primary store still needs a German
+ * translation for the German storefront.
+ */
 export async function resolvePrimaryAndTargets(admin: AdminApiContext) {
   const { ContentService } = await import("./content.service");
   const locales = await new ContentService(admin).getShopLocales().catch(() => []);
   const primary = (locales as Array<{ locale: string; primary: boolean }>).find((l) => l.primary)?.locale || "en";
   const targets = (locales as Array<{ locale: string; primary: boolean; published: boolean }>)
-    .filter((l) => !l.primary && l.published)
+    .filter((l) => l.published)
     .map((l) => l.locale);
   return { primary, targets };
 }
@@ -53,7 +59,6 @@ export async function runAiTask(
   shop: string,
   params: {
     items: Array<{ id: string; sourceText: string }>;
-    fromLang: string;
     locales: string[];
     targetLocaleLabel: string;
     resourceTitle: string;
@@ -90,7 +95,7 @@ export async function runAiTask(
     const rows = await dt.aiAutoTranslateItems(
       db,
       shop,
-      { items: params.items, fromLang: params.fromLang, locales: params.locales },
+      { items: params.items, locales: params.locales },
       translateBatch,
       async (done, t) => {
         // `t` is the post-dedupe total from the service — keep the Task in sync
@@ -132,7 +137,7 @@ export async function translateItemsIntoAllLocales(
   items: Array<{ id: string; sourceText: string }>,
   resourceTitle: string,
 ): Promise<number> {
-  const { primary, targets } = await resolvePrimaryAndTargets(admin);
+  const { targets } = await resolvePrimaryAndTargets(admin);
   if (targets.length === 0 || items.length === 0) return 0;
-  return runAiTask(shop, { items, fromLang: primary, locales: targets, targetLocaleLabel: "all", resourceTitle });
+  return runAiTask(shop, { items, locales: targets, targetLocaleLabel: "all", resourceTitle });
 }

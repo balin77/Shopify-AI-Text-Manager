@@ -316,7 +316,6 @@ export const de = {
     resourcePlural: "Direktübersetzungen",
     searchPlaceholder: "Texte durchsuchen …",
 
-    primaryNote: "Primärsprache — bearbeite den Quelltext oben. Übersetzungen werden in den anderen Sprachen gepflegt.",
     addItem: "Neuer Text",
     newItem: "Neuer Text",
     sourceLabel: "Originaltext",

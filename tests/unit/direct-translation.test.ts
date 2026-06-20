@@ -140,9 +140,9 @@ describe("aiAutoTranslateItems()", () => {
     };
   }
 
-  it("translates each item into one locale, persists source:'ai', skips no-ops", async () => {
+  it("translates each item into one locale, persists source:'ai', skips empties", async () => {
     const { db, upsert } = mkDb();
-    // third source comes back empty → skipped
+    // third source comes back empty → skipped (would otherwise wipe a row)
     const translateBatch = vi.fn().mockResolvedValue(["Bewertung schreiben", "In den Warenkorb", ""]);
 
     const rows = await aiAutoTranslateItems(
@@ -154,7 +154,6 @@ describe("aiAutoTranslateItems()", () => {
           { id: "i2", sourceText: "Add  to cart" },
           { id: "i3", sourceText: "Unrendered" },
         ],
-        fromLang: "en",
         locales: ["de"],
       },
       translateBatch,
@@ -162,21 +161,26 @@ describe("aiAutoTranslateItems()", () => {
 
     expect(translateBatch).toHaveBeenCalledTimes(1);
     expect(translateBatch.mock.calls[0][0]).toEqual(["Write a review", "Add to cart", "Unrendered"]);
+    expect(translateBatch.mock.calls[0][1]).toBe("auto"); // auto-detect mode
     expect(rows).toHaveLength(2);
     expect(upsert.mock.calls.every((c) => c[0].create.source === "ai")).toBe(true);
   });
 
-  it("skips locales equal to the source language", async () => {
-    const { db } = mkDb();
-    const translateBatch = vi.fn();
+  it("persists same-as-source 1:1 when target locale matches detected source", async () => {
+    const { db, upsert } = mkDb();
+    // AI returns source unchanged (target locale = detected source language).
+    const translateBatch = vi.fn().mockResolvedValue(["Write a review"]);
+
     const rows = await aiAutoTranslateItems(
       db,
       "s",
-      { items: [{ id: "i1", sourceText: "Write a review" }], fromLang: "en", locales: ["en"] },
+      { items: [{ id: "i1", sourceText: "Write a review" }], locales: ["en"] },
       translateBatch,
     );
-    expect(rows).toEqual([]);
-    expect(translateBatch).not.toHaveBeenCalled();
+
+    expect(rows).toHaveLength(1);
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(upsert.mock.calls[0][0].create.targetText).toBe("Write a review");
   });
 
   it("chunks large inputs per locale and reports progress", async () => {
@@ -188,7 +192,7 @@ describe("aiAutoTranslateItems()", () => {
     const rows = await aiAutoTranslateItems(
       db,
       "s",
-      { items, fromLang: "en", locales: ["de"] },
+      { items, locales: ["de"] },
       translateBatch,
       (done) => { progress.push(done); },
     );
@@ -207,7 +211,7 @@ describe("aiAutoTranslateItems()", () => {
     const rows = await aiAutoTranslateItems(
       db,
       "s",
-      { items: [{ id: "i1", sourceText: "Hi" }], fromLang: "en", locales: ["de", "fr"] },
+      { items: [{ id: "i1", sourceText: "Hi" }], locales: ["de", "fr"] },
       translateBatch,
     );
     expect(rows).toHaveLength(2);

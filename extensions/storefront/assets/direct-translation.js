@@ -39,7 +39,6 @@
   var locale = cfg.locale || "";
   var primary = cfg.primaryLocale || "";
   var localeKey = locale.toLowerCase();
-  var isPrimaryLocale = !!locale && !!primary && localeKey === primary.toLowerCase();
   var debug = !!cfg.debug;
   var log = debug
     ? function () { try { console.log.apply(console, ["[ContentPilot DT]"].concat([].slice.call(arguments))); } catch (e) {} }
@@ -63,11 +62,12 @@
   var captureRequested = captureTool && (designMode || forceCapture);
   var featureAvailable = false; // set from the fetched dictionary
 
-  // Translation is inactive on the primary locale (or no locale), but the
-  // visual capture mode may still run (to add source strings while previewing
-  // the primary language).
-  var translateActive = !!locale && !isPrimaryLocale;
-  if (!translateActive) log("translation inactive (primary or no locale)", locale, primary);
+  // Translation runs on every locale (incl. primary): the source string is
+  // auto-detected per item, so an EN widget label on a DE-primary store needs
+  // a DE entry served on the German storefront. Only "no locale at all" turns
+  // translation off (the capture mode may still run on top of that).
+  var translateActive = !!locale;
+  if (!translateActive) log("translation inactive (no locale)", locale, primary);
 
   var dictMap = new Map();      // normalizedSource → target
   var targetValues = new Set(); // known targets (never collect our own output)

@@ -237,11 +237,16 @@ export async function getDictionary(db: Db, shop: string, locale: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * AI-translate a batch of items into one or more target locales and persist each
- * as a `source: "ai"` translation. The AI call is injected (a thin wrapper
- * around AIService.translateBatchValues) so this stays unit-testable without the
- * AI stack. Skips values the model didn't return (never stores the source as its
- * own translation) and skips locale == fromLang.
+ * AI-translate a batch of items into one or more locales and persist each as a
+ * `source: "ai"` translation. The AI call is injected (a thin wrapper around
+ * AIService.translateBatchValues) so this stays unit-testable without the AI
+ * stack.
+ *
+ * Source-language is auto-detected per value (the merchant's "source" can be in
+ * any language — e.g. a 3rd-party widget label written in English on a
+ * German-primary store). When the detected source matches the target locale,
+ * the AI returns a 1:1 copy and we persist it as such (so the storefront has a
+ * concrete entry for every configured locale, not a silent fallback).
  *
  * Large inputs are split into fixed-size chunks (one AI prompt each) per locale
  * and persisted incrementally, so a big "translate all" never produces one giant
@@ -251,7 +256,7 @@ export async function getDictionary(db: Db, shop: string, locale: string) {
 export async function aiAutoTranslateItems(
   db: Db,
   shop: string,
-  params: { items: Array<{ id: string; sourceText: string }>; fromLang: string; locales: string[] },
+  params: { items: Array<{ id: string; sourceText: string }>; locales: string[] },
   translateBatch: (values: string[], from: string, to: string, context: string) => Promise<string[]>,
   onProgress?: (done: number, total: number) => void | Promise<void>,
 ): Promise<Array<Awaited<ReturnType<typeof setTranslation>>>> {
@@ -265,7 +270,7 @@ export async function aiAutoTranslateItems(
       items.push({ id: it.id, source: norm });
     }
   }
-  const locales = params.locales.filter((l) => l && l !== params.fromLang);
+  const locales = params.locales.filter((l) => !!l);
   if (items.length === 0 || locales.length === 0) return [];
 
   const total = items.length * locales.length;
@@ -277,14 +282,16 @@ export async function aiAutoTranslateItems(
       const chunk = items.slice(start, start + AI_BATCH_SIZE);
       const targets = await translateBatch(
         chunk.map((c) => c.source),
-        params.fromLang,
+        "auto",
         locale,
         "storefront UI strings",
       );
       for (let i = 0; i < chunk.length; i++) {
         const target = targets[i];
-        // Skip missing / no-op translations (never persist source as its target).
-        if (!target || normalizeSource(target) === chunk[i].source) continue;
+        // Empty/missing model output → skip (would otherwise wipe an existing
+        // translation). Same-as-source is a deliberate 1:1 from the model
+        // (target locale matches detected source) and IS persisted.
+        if (!target) continue;
         rows.push(await setTranslation(db, shop, chunk[i].id, locale, target, "ai"));
       }
       done += chunk.length;

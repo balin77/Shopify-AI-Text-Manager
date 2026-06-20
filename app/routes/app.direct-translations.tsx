@@ -88,9 +88,11 @@ export const loader = createContentLoader({
       dt.getSettings(ctx.db, ctx.session.shop),
       dt.countNewCandidates(ctx.db, ctx.session.shop),
     ]);
-    // Published, non-primary locales are the valid translation targets.
+    // All published locales (incl. primary) are valid translation targets:
+    // the source text is auto-detected per item, so an EN string on a
+    // DE-primary store needs a DE translation for the German storefront.
     const targetLocales: TargetLocale[] = (ctx.shopLocales as Array<{ locale: string; name?: string; primary: boolean; published?: boolean }>)
-      .filter((l) => !l.primary && l.published !== false)
+      .filter((l) => l.published !== false)
       .map((l) => ({ locale: l.locale, name: l.name }));
     return { collect: settings.collect, newCandidateCount, targetLocales };
   },
@@ -188,7 +190,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (!sourceText.trim()) return json({ success: false, error: "Source is required", actionType }, { status: 400 });
 
         const id = await ensureItem(itemId, sourceText);
-        const { primary, targets } = await resolveLocales();
+        const { targets } = await resolveLocales();
         const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         if (locales.length === 0) return json({ success: true, actionType, itemId: id, translated: 0 });
 
@@ -196,7 +198,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // and the page revalidates when the running count drops to zero.
         void runAiTask(session.shop, {
           items: [{ id, sourceText }],
-          fromLang: primary,
           locales,
           targetLocaleLabel: scope === "all" ? "all" : locale,
           resourceTitle: dt.normalizeSource(sourceText).slice(0, 80),
@@ -206,14 +207,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       case "aiAll": {
         // AI-translate ALL items into the enabled target locales.
-        const { primary, targets } = await resolveLocales();
+        const { targets } = await resolveLocales();
         const locales = enabledTargets(targets);
         if (locales.length === 0) return json({ success: true, actionType, translated: 0 });
         const items = (await dt.listItems(db, session.shop)).map((r) => ({ id: r.id, sourceText: r.sourceText }));
         if (items.length === 0) return json({ success: true, actionType, translated: 0 });
         void runAiTask(session.shop, {
           items,
-          fromLang: primary,
           locales,
           targetLocaleLabel: "all",
           resourceTitle: `Direktübersetzungen (${items.length})`,
@@ -235,11 +235,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const withAi = getFormString(formData, "withAi") === "true";
         const created = await dt.addCandidatesAsItems(db, session.shop, Array.isArray(ids) ? ids : []);
         if (withAi && created.length > 0) {
-          const { primary, targets } = await resolveLocales();
+          const { targets } = await resolveLocales();
           if (targets.length > 0) {
             void runAiTask(session.shop, {
               items: created.map((c) => ({ id: c.id, sourceText: c.sourceText })),
-              fromLang: primary,
               locales: targets,
               targetLocaleLabel: "all",
               resourceTitle: `Direktübersetzungen (${created.length})`,
@@ -559,13 +558,13 @@ export default function DirectTranslationsPage() {
 
   const langName = (loc: string) => getLocalizedLanguageName(loc, appLocale, targetLocales.find((l) => l.locale === loc)?.name);
 
-  const isPrimarySelected = currentLanguage === primaryLocale;
-
   // Locales for the shared UnifiedLanguageBar (it sorts internally).
-  const barLocales: ShopLocale[] = [
-    { locale: primaryLocale, primary: true },
-    ...targetLocales.map((l) => ({ locale: l.locale, primary: false, name: l.name })),
-  ];
+  // `targetLocales` now includes the primary, so we just map and mark it.
+  const barLocales: ShopLocale[] = targetLocales.map((l) => ({
+    locale: l.locale,
+    primary: l.locale === primaryLocale,
+    name: l.name,
+  }));
   // Shape the selected item so the bar's status helpers (field-validation's
   // `directTranslations` branch) can read one translation per locale.
   const languageBarItem = useMemo<TranslatableItem | null>(() => {
@@ -685,13 +684,14 @@ export default function DirectTranslationsPage() {
                       />
                     </BlockStack>
 
-                    {/* 4 action buttons */}
+                    {/* 4 action buttons — primary is a legitimate target now
+                        (source can be in any language), so no isPrimary disable. */}
                     <InlineStack gap="200" wrap>
                       <ButtonGroup>
                         <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
                           {tt.translateAllLangs}
                         </Button>
-                        <Button disabled={!hasTargets || isPrimarySelected || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
+                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
                           {tt.translateThisLang}
                         </Button>
                       </ButtonGroup>
@@ -699,7 +699,7 @@ export default function DirectTranslationsPage() {
                         <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("all")}>
                           {tt.transferAllLangs}
                         </Button>
-                        <Button disabled={!hasTargets || isPrimarySelected || !draftSource.trim() || isBusy} onClick={() => handleTransfer("this")}>
+                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleTransfer("this")}>
                           {tt.transferThisLang}
                         </Button>
                       </ButtonGroup>
@@ -707,25 +707,23 @@ export default function DirectTranslationsPage() {
 
                     <Divider />
 
-                    {/* Current-language translation (or a note when primary is selected) */}
-                    {isPrimarySelected ? (
-                      <Text as="p" tone="subdued">{tt.primaryNote}</Text>
-                    ) : (
-                      <BlockStack gap="200">
-                        <Text as="h3" variant="headingSm">
-                          {(tt.translationLabel || "{lang}").replace("{lang}", currentLanguage ? langName(currentLanguage) : "")}
-                        </Text>
-                        <TextField
-                          label=""
-                          labelHidden
-                          value={draftTarget}
-                          onChange={setDraftTarget}
-                          autoComplete="off"
-                          multiline={3}
-                          disabled={!hasTargets}
-                        />
-                      </BlockStack>
-                    )}
+                    {/* Current-language translation field — shown for every
+                        locale (incl. primary). The storefront serves whatever
+                        is here; leaving it blank falls back to the source. */}
+                    <BlockStack gap="200">
+                      <Text as="h3" variant="headingSm">
+                        {(tt.translationLabel || "{lang}").replace("{lang}", currentLanguage ? langName(currentLanguage) : "")}
+                      </Text>
+                      <TextField
+                        label=""
+                        labelHidden
+                        value={draftTarget}
+                        onChange={setDraftTarget}
+                        autoComplete="off"
+                        multiline={3}
+                        disabled={!hasTargets}
+                      />
+                    </BlockStack>
 
                     <InlineStack align="end">
                       {!isNew && (
