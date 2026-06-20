@@ -319,7 +319,6 @@ export const en: Translation = {
     resourcePlural: "Direct translations",
     searchPlaceholder: "Search texts …",
 
-    primarySuffix: "Primary",
     primaryNote: "Primary language — edit the source text above. Translations are kept in the other languages.",
     addItem: "New text",
     newItem: "New text",

@@ -23,6 +23,22 @@
   display: none;
 }
 
+/* UnifiedLanguageBar: full name on desktop, abbreviation on mobile.
+   Lives here (not in UnifiedContentEditor.css) so the shared bar renders
+   correctly on every page that uses it, not only inside UnifiedContentEditor. */
+.lang-short {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .lang-full {
+    display: none;
+  }
+  .lang-short {
+    display: block;
+  }
+}
+
 @media (min-width: 900px) and (max-width: 1279px) {
   .mobile-only {
     display: none;

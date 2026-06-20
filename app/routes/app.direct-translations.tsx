@@ -636,7 +636,7 @@ export default function DirectTranslationsPage() {
                   onToggleLanguage={toggleLanguage}
                   showTranslateAll={false}
                   showReloadButton={false}
-                  t={{ primaryLocaleSuffix: tt.primarySuffix }}
+                  t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
                 />
               </Card>
 

@@ -16,20 +16,8 @@
   display: block;
 }
 
-/* Language buttons: full name on desktop, abbreviation on mobile */
-.lang-short {
-  display: none;
-}
-
-/* Switch to abbreviated language names 1px before Polaris button size change (48em = 768px) */
-@media (max-width: 768px) {
-  .lang-full {
-    display: none;
-  }
-  .lang-short {
-    display: block;
-  }
-}
+/* .lang-full / .lang-short live in responsive.css (global), so the shared
+   UnifiedLanguageBar works on every page — not only inside this editor. */
 
 /* Toolbar-specific mobile/desktop toggle at 768px (separate from item list at 900px) */
 .toolbar-desktop-only {
