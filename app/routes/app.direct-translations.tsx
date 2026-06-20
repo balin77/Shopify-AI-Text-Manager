@@ -28,7 +28,12 @@ import {
   Box,
   Divider,
   Spinner,
+  Collapsible,
+  Popover,
+  Icon,
 } from "@shopify/polaris";
+import { QuestionCircleIcon } from "@shopify/polaris-icons";
+import { ToggleSwitch } from "../components/ToggleSwitch";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
 import { MainNavigation } from "../components/MainNavigation";
@@ -101,6 +106,11 @@ export const loader = createContentLoader({
       filterByLanguage: settings.filterByLanguage,
       newCandidateCount,
       targetLocales,
+      // The myshopify.com URL — "Visit storefront" deep-links to it so the
+      // merchant can surf the shop to trigger the collector. Custom primary
+      // domains aren't fetched (extra round-trip not worth it; the .myshopify
+      // domain works on every shop).
+      shopUrl: `https://${ctx.session.shop}`,
     };
   },
 });
@@ -298,7 +308,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, error } =
+  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -308,6 +318,7 @@ export default function DirectTranslationsPage() {
       ignoreTranslateNo: boolean;
       filterByLanguage: boolean;
       newCandidateCount: number;
+      shopUrl: string;
       error: string | null;
     };
   const { t, locale: appLocale } = useI18n();
@@ -344,6 +355,17 @@ export default function DirectTranslationsPage() {
   const [baseSource, setBaseSource] = useState("");
   const [baseTarget, setBaseTarget] = useState("");
   const [candidatesOpen, setCandidatesOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  // Mirror the three persisted booleans locally so the toggles feel snappy
+  // (toggling fires an action; we update the UI immediately and let the
+  // revalidator reconcile if it bounces). Synced when the loader reports
+  // fresh values.
+  const [collectOn, setCollectOn] = useState(collect);
+  const [ignoreOn, setIgnoreOn] = useState(ignoreTranslateNo);
+  const [filterOn, setFilterOn] = useState(filterByLanguage);
+  useEffect(() => setCollectOn(collect), [collect]);
+  useEffect(() => setIgnoreOn(ignoreTranslateNo), [ignoreTranslateNo]);
+  useEffect(() => setFilterOn(filterByLanguage), [filterByLanguage]);
 
   const selectedItem = useMemo(
     () => (isNew ? null : items.find((i) => i.id === selectedId) || null),
@@ -670,6 +692,34 @@ export default function DirectTranslationsPage() {
             <BlockStack gap="400">
               {!hasTargets && <Banner tone="warning">{tt.noTargetLocales}</Banner>}
 
+              {/* About / context card. Short intro always visible, the long
+                  explanation lives behind a Collapsible so it doesn't push
+                  the rest of the page down. */}
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="p">{tt.aboutIntro}</Text>
+                  <InlineStack align="start">
+                    <Button
+                      variant="plain"
+                      onClick={() => setAboutOpen((v) => !v)}
+                      ariaExpanded={aboutOpen}
+                      ariaControls="dt-about-details"
+                    >
+                      {tt.aboutLearnMore}
+                    </Button>
+                  </InlineStack>
+                  <Collapsible
+                    id="dt-about-details"
+                    open={aboutOpen}
+                    transition={{ duration: "200ms", timingFunction: "ease-in-out" }}
+                  >
+                    <Box paddingBlockStart="200">
+                      <Text as="p" tone="subdued">{tt.aboutDetails}</Text>
+                    </Box>
+                  </Collapsible>
+                </BlockStack>
+              </Card>
+
               {/* Language bar — shared component for uniformity with the other
                   content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
               <Card>
@@ -689,21 +739,58 @@ export default function DirectTranslationsPage() {
                 />
               </Card>
 
-              {/* Global operations: candidate review + bulk translate. The
-                  "n new texts found" line replaces the old info banner — same
-                  info, no second card. */}
+              {/* Operations: collector toggle at the top, secondary options +
+                  storefront link + "Found texts" gated on it being enabled. */}
               <Card>
-                <BlockStack gap="200">
-                  {newCandidateCount > 0 && (
-                    <Text as="p" tone="subdued">
-                      {(tt.banner || "{n}").replace("{n}", String(newCandidateCount))}
-                    </Text>
+                <BlockStack gap="300">
+                  <SettingRow
+                    label={tt.collectToggle}
+                    help={tt.collectHelp}
+                    checked={collectOn}
+                    onChange={(v) => {
+                      setCollectOn(v);
+                      submit({ action: "setCollectorSettings", collect: String(v) });
+                    }}
+                  />
+
+                  {collectOn && (
+                    <>
+                      <Divider />
+
+                      <SettingRow
+                        label={tt.ignoreTranslateNoToggle}
+                        help={tt.ignoreTranslateNoHelp}
+                        checked={ignoreOn}
+                        onChange={(v) => {
+                          setIgnoreOn(v);
+                          submit({ action: "setCollectorSettings", ignoreTranslateNo: String(v) });
+                        }}
+                      />
+                      <SettingRow
+                        label={tt.filterByLanguageToggle}
+                        help={tt.filterByLanguageHelp}
+                        checked={filterOn}
+                        onChange={(v) => {
+                          setFilterOn(v);
+                          submit({ action: "setCollectorSettings", filterByLanguage: String(v) });
+                        }}
+                      />
+
+                      <Divider />
+
+                      <BlockStack gap="200">
+                        <Text as="p" tone="subdued" variant="bodySm">{tt.visitStorefrontExplain}</Text>
+                        <InlineStack gap="200" wrap>
+                          <Button url={shopUrl} target="_blank" external>
+                            {tt.visitStorefront}
+                          </Button>
+                          <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
+                            {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </>
                   )}
-                  <InlineStack gap="200" blockAlign="center" wrap>
-                    <Button onClick={() => { setCandidatesOpen(true); reloadCandidates(); }}>
-                      {newCandidateCount > 0 ? `${tt.foundTexts} (${newCandidateCount})` : tt.foundTexts}
-                    </Button>
-                  </InlineStack>
                 </BlockStack>
               </Card>
 
@@ -785,8 +872,6 @@ export default function DirectTranslationsPage() {
                         </Button>
                       )}
                     </InlineStack>
-
-                    <Text as="p" tone="subdued" variant="bodySm">{tt.seoNote}</Text>
                   </BlockStack>
                 </Card>
               )}
@@ -807,9 +892,6 @@ export default function DirectTranslationsPage() {
           open={candidatesOpen}
           onClose={() => setCandidatesOpen(false)}
           tt={tt}
-          collect={collect}
-          ignoreTranslateNo={ignoreTranslateNo}
-          filterByLanguage={filterByLanguage}
           fetcher={candidatesFetcher}
           onAction={(action, payload) => {
             // The candidate list is reloaded by the parent effect once this
@@ -828,6 +910,61 @@ export default function DirectTranslationsPage() {
 // ============================================================================
 // "Found texts" modal
 // ============================================================================
+
+/**
+ * Toggle + label + question-mark popover that holds the explanation. Same
+ * visual pattern as the help icons on the language bar; replaces the inline
+ * helpText that used to sit below the old checkboxes.
+ */
+function SettingRow({
+  label,
+  help,
+  checked,
+  onChange,
+}: {
+  label: string;
+  help: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const [helpOpen, setHelpOpen] = useState(false);
+  const activator = (
+    <button
+      type="button"
+      onClick={() => setHelpOpen((v) => !v)}
+      aria-label={label}
+      style={{
+        background: "none",
+        border: 0,
+        padding: 0,
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
+    >
+      <Icon source={QuestionCircleIcon} tone="interactive" />
+    </button>
+  );
+  return (
+    <InlineStack align="space-between" blockAlign="center" gap="200">
+      <InlineStack gap="100" blockAlign="center">
+        <Text as="p" variant="bodyMd">{label}</Text>
+        <Popover
+          active={helpOpen}
+          activator={activator}
+          onClose={() => setHelpOpen(false)}
+          preferredPosition="below"
+          sectioned
+        >
+          <Box maxWidth="320px">
+            <Text as="p" variant="bodySm">{help}</Text>
+          </Box>
+        </Popover>
+      </InlineStack>
+      <ToggleSwitch checked={checked} onChange={onChange} />
+    </InlineStack>
+  );
+}
 
 function CandidatePill({
   item,
@@ -863,30 +1000,18 @@ function FoundTextsModal({
   open,
   onClose,
   tt,
-  collect,
-  ignoreTranslateNo,
-  filterByLanguage,
   fetcher,
   onAction,
 }: {
   open: boolean;
   onClose: () => void;
   tt: ReturnType<typeof useI18n>["t"]["directTranslations"];
-  collect: boolean;
-  ignoreTranslateNo: boolean;
-  filterByLanguage: boolean;
   fetcher: ReturnType<typeof useFetcher<{ success?: boolean; newItems?: Array<{ id: string; sourceText: string; count: number }>; rejectedItems?: Array<{ id: string; sourceText: string; count: number }> }>>;
   onAction: (action: string, payload: Record<string, string>) => void;
 }) {
   const confirm = useConfirm();
   const [selectedNew, setSelectedNew] = useState<Set<string>>(new Set());
   const [selectedRejected, setSelectedRejected] = useState<Set<string>>(new Set());
-  const [collectOn, setCollectOn] = useState(collect);
-  const [ignoreOn, setIgnoreOn] = useState(ignoreTranslateNo);
-  const [filterOn, setFilterOn] = useState(filterByLanguage);
-  useEffect(() => setCollectOn(collect), [collect]);
-  useEffect(() => setIgnoreOn(ignoreTranslateNo), [ignoreTranslateNo]);
-  useEffect(() => setFilterOn(filterByLanguage), [filterByLanguage]);
 
   const data = fetcher.data;
   const newItems = data?.newItems || [];
@@ -966,38 +1091,6 @@ function FoundTextsModal({
     >
       <Modal.Section>
         <BlockStack gap="400">
-          <BlockStack gap="200">
-            <Checkbox
-              label={tt.collectToggle}
-              helpText={tt.collectHelp}
-              checked={collectOn}
-              onChange={(v) => {
-                setCollectOn(v);
-                onAction("setCollectorSettings", { collect: String(v) });
-              }}
-            />
-            <Checkbox
-              label={tt.ignoreTranslateNoToggle}
-              helpText={tt.ignoreTranslateNoHelp}
-              checked={ignoreOn}
-              onChange={(v) => {
-                setIgnoreOn(v);
-                onAction("setCollectorSettings", { ignoreTranslateNo: String(v) });
-              }}
-            />
-            <Checkbox
-              label={tt.filterByLanguageToggle}
-              helpText={tt.filterByLanguageHelp}
-              checked={filterOn}
-              onChange={(v) => {
-                setFilterOn(v);
-                onAction("setCollectorSettings", { filterByLanguage: String(v) });
-              }}
-            />
-          </BlockStack>
-
-          <Divider />
-
           <BlockStack gap="200">
             <Text as="h3" variant="headingSm">{tt.modalNewHeading}</Text>
             {loading && newItems.length === 0 ? (
