@@ -163,6 +163,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: true, actionType, itemId });
       }
 
+      case "deleteTranslation": {
+        // Remove ONE locale's translation; the item itself stays.
+        const itemId = getFormString(formData, "itemId") || "";
+        const locale = (getFormString(formData, "locale") || "").trim();
+        if (itemId && locale && isValidLocale(locale)) {
+          await dt.deleteTranslation(db, session.shop, itemId, locale);
+        }
+        return json({ success: true, actionType, itemId });
+      }
+
       case "transfer": {
         // Copy the source 1:1 into the given locales (brand names etc.).
         const itemId = getFormString(formData, "itemId") || "";
@@ -491,13 +501,21 @@ export default function DirectTranslationsPage() {
     [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
   );
 
-  const handleDelete = useCallback(() => {
-    if (isNew || !selectedId) {
+  // Inline button under the translation field: removes ONLY the currently
+  // displayed locale's translation. The item itself + its other languages stay.
+  const handleDeleteTranslation = useCallback(() => {
+    if (isNew || !selectedId || !currentLanguage) {
       handleDiscard();
       return;
     }
-    submit({ action: "deleteItem", itemId: selectedId });
-  }, [isNew, selectedId, submit, handleDiscard]);
+    submit({ action: "deleteTranslation", itemId: selectedId, locale: currentLanguage });
+  }, [isNew, selectedId, currentLanguage, submit, handleDiscard]);
+
+  // Sidebar trash button: removes the WHOLE item (all locales). Used by the
+  // shared UnifiedItemList; only enabled when an item is selected.
+  const handleDeleteItem = useCallback((itemId: string) => {
+    submit({ action: "deleteItem", itemId });
+  }, [submit]);
 
   const reloadCandidates = useCallback(() => {
     const fd = new FormData();
@@ -519,6 +537,11 @@ export default function DirectTranslationsPage() {
       setSelectedId(null);
       setIsNew(false);
       didInit.current = false; // let auto-select pick the next first item
+    } else if (at === "deleteTranslation") {
+      // Item stays selected; just clear the current-language draft so the
+      // editor reflects the removed translation immediately.
+      setDraftTarget("");
+      setBaseTarget("");
     } else if (fetcher.data.itemId) {
       // save / ai / transfer — adopt the (possibly newly created) item id.
       setSelectedId(fetcher.data.itemId);
@@ -595,6 +618,9 @@ export default function DirectTranslationsPage() {
               showAddButton
               onAddItem={handleAddNew}
               addButtonLabel={tt.addItem}
+              showDeleteButton
+              onDeleteItem={handleDeleteItem}
+              deleteButtonLabel={tt.deleteItem}
               onSyncAll={() => revalidator.revalidate()}
               isSyncing={revalidator.state === "loading"}
               sortOptions={[{ field: "title", label: tt.sourceLabel }]}
@@ -729,8 +755,8 @@ export default function DirectTranslationsPage() {
 
                     <InlineStack align="end">
                       {!isNew && (
-                        <Button tone="critical" variant="plain" onClick={handleDelete} disabled={isBusy}>
-                          {tt.deleteItem}
+                        <Button tone="critical" variant="plain" onClick={handleDeleteTranslation} disabled={isBusy || !draftTarget}>
+                          {tt.deleteTranslation}
                         </Button>
                       )}
                     </InlineStack>
