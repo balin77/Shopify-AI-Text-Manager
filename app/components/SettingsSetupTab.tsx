@@ -35,6 +35,7 @@ export function SettingsSetupTab({
     `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${shopifyApiKey}/${blockHandle}`;
   const variantGalleryEmbedUrl = buildEmbedUrl("variant-gallery-embed");
   const localeSwitcherEmbedUrl = buildEmbedUrl("locale-switcher");
+  const directTranslationEmbedUrl = buildEmbedUrl("direct-translation");
   const ts = t.settings as unknown as Record<string, string>;
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [webhookLoading, setWebhookLoading] = useState(false);
@@ -251,6 +252,25 @@ export function SettingsSetupTab({
               <div>
                 <Button url={localeSwitcherEmbedUrl} external variant="primary" size="slim">
                   {ts.themeSetupOptionBButton ?? "Activate switcher"}
+                </Button>
+              </div>
+            </BlockStack>
+          </Box>
+
+          <Divider />
+
+          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                {ts.themeSetupOptionCTitle ?? "Direct translations"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {ts.themeSetupOptionCDescription ??
+                  "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."}
+              </Text>
+              <div>
+                <Button url={directTranslationEmbedUrl} external variant="primary" size="slim">
+                  {ts.themeSetupOptionCButton ?? "Activate direct translations"}
                 </Button>
               </div>
             </BlockStack>

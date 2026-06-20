@@ -111,6 +111,10 @@ export const loader = createContentLoader({
       // domains aren't fetched (extra round-trip not worth it; the .myshopify
       // domain works on every shop).
       shopUrl: `https://${ctx.session.shop}`,
+      // Theme-editor deep-link to the direct-translation app embed. Mirrors the
+      // builder in SettingsSetupTab — needs the SHOPIFY_API_KEY (client_id)
+      // and the block handle "direct-translation".
+      themeEditorEmbedUrl: `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${(process.env.SHOPIFY_API_KEY || "").trim()}/direct-translation`,
     };
   },
 });
@@ -308,7 +312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, error } =
+  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, themeEditorEmbedUrl, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -319,6 +323,7 @@ export default function DirectTranslationsPage() {
       filterByLanguage: boolean;
       newCandidateCount: number;
       shopUrl: string;
+      themeEditorEmbedUrl: string;
       error: string | null;
     };
   const { t, locale: appLocale } = useI18n();
@@ -715,7 +720,15 @@ export default function DirectTranslationsPage() {
                     transition={{ duration: "200ms", timingFunction: "ease-in-out" }}
                   >
                     <Box paddingBlockStart="200">
-                      <Text as="p" tone="subdued">{tt.aboutDetails}</Text>
+                      <BlockStack gap="300">
+                        <Text as="p" tone="subdued">{tt.aboutDetails}</Text>
+                        <Text as="p" tone="subdued">{tt.aboutWorkflow}</Text>
+                        <InlineStack align="start">
+                          <Button url={themeEditorEmbedUrl} external variant="primary" size="slim">
+                            {tt.openThemeEditor}
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
                     </Box>
                   </Collapsible>
 
