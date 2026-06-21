@@ -13,9 +13,9 @@
  * to the app so the merchant can review them in the admin. Nothing is ever
  * auto-applied.
  *
- * In the theme editor (Shopify.designMode) — or on the live page with
- * ?cp-translate=1 — a visual capture mode lets the merchant click rendered text
- * to add it directly as an item (+ optional translation).
+ * In the theme editor (Shopify.designMode) a visual capture mode lets the
+ * merchant click rendered text to add it directly as an item. It is NEVER
+ * shown on a live storefront — real visitors must not see the panel.
  *
  * Limitations: client-side only (no SEO); cannot reach cross-origin iframes.
  */
@@ -50,16 +50,13 @@
   var cacheKey = "contentpilot_dt_" + localeKey;
   var reportedKey = "contentpilot_dt_reported_" + localeKey;
 
-  // Visual capture tool: shown in the theme editor (or explicitly via
-  // ?cp-translate=1) ONLY when the merchant left the embed's "capture tool"
-  // checkbox on, AND the shop is on a plan where the feature is available
-  // (Max). Availability is reported by the dictionary endpoint (`available`).
-  // It is immediately active — no extra start step — and never shown to real
-  // customers.
+  // Visual capture tool: shown ONLY in the theme editor preview
+  // (Shopify.designMode), gated by the embed's "capture tool" checkbox AND
+  // the Max-plan availability reported by the dictionary endpoint. Real
+  // storefront visitors never see it.
   var captureTool = cfg.captureTool !== false; // default on
   var designMode = !!(window.Shopify && window.Shopify.designMode);
-  var forceCapture = /[?&]cp-translate=1\b/.test(window.location.search);
-  var captureRequested = captureTool && (designMode || forceCapture);
+  var captureRequested = captureTool && designMode;
   var featureAvailable = false; // set from the fetched dictionary
 
   // Translation runs on every locale (incl. primary): the source string is
@@ -191,10 +188,10 @@
 
   function maybeCollect(norm) {
     if (!collect) return;
-    // Never collect inside the theme editor / forced-capture preview: that
-    // page renders our own admin-side UI overlays which would otherwise leak
-    // into the merchant's candidate list as noise.
-    if (designMode || forceCapture) return;
+    // Never collect inside the theme editor: that page renders our own
+    // admin-side UI overlays which would otherwise leak into the merchant's
+    // candidate list as noise.
+    if (designMode) return;
     if (reported.has(norm) || pendingCandidates.has(norm)) return;
     if (targetValues.has(norm)) return; // never collect our own translation output
     if (!isCollectible(norm)) return;
@@ -352,20 +349,9 @@
       '<div id="cp-cap-form" style="display:none;margin-top:10px"></div>';
 
     document.body.appendChild(panel);
-    // Only hijack the cursor + clicks inside the actual theme-editor preview.
-    // The ?cp-translate=1 path may be hit on a live storefront by a regular
-    // visitor (shared/bookmarked link) — there it must NOT intercept clicks
-    // or change the cursor, or the whole site is unusable for them.
-    var interceptClicks = designMode;
-    if (interceptClicks) {
-      document.documentElement.style.cursor = "crosshair";
-    } else {
-      // On forceCapture (live storefront with ?cp-translate=1) show a clear
-      // hint that capturing requires the theme-editor preview, and hide the
-      // panel after a short delay so it doesn't blanket the page.
-      var hintEl = panel.querySelector("#cp-cap-hint");
-      if (hintEl) hintEl.textContent = "Capture-Tool ist nur im Theme-Editor aktiv. Schließe dieses Panel oder öffne die Seite im Theme-Editor.";
-    }
+    // designMode is already enforced by the captureRequested gate above; the
+    // panel + cursor + click interception only ever run in the theme editor.
+    document.documentElement.style.cursor = "crosshair";
 
     var hint = panel.querySelector("#cp-cap-hint");
     var formEl = panel.querySelector("#cp-cap-form");
@@ -410,21 +396,19 @@
       formEl.querySelector("#cp-cap-add-all").addEventListener("click", function () { run(true); });
     }
 
-    if (interceptClicks) {
-      document.addEventListener(
-        "click",
-        function (e) {
-          if (panel.contains(e.target)) return;
-          e.preventDefault();
-          e.stopPropagation();
-          var text = normalize(e.target.textContent || "");
-          if (text) showForm(text);
-        },
-        true,
-      );
-    }
+    document.addEventListener(
+      "click",
+      function (e) {
+        if (panel.contains(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var text = normalize(e.target.textContent || "");
+        if (text) showForm(text);
+      },
+      true,
+    );
 
-    log("capture mode ready; intercept=", interceptClicks);
+    log("capture mode ready (designMode)");
   }
 
   function start() {
