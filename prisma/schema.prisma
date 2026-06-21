@@ -97,7 +97,126 @@ model AISettings {
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
 
+  // Metafields settings tab: timestamp of the last product metafield-definition
+  // scan. Also doubles as the lazy-backfill guard — when null, the loaders run
+  // a one-time backfill of already-translatable definitions into
+  // EnabledMetafieldDefinition so existing merchants' editors stay populated.
+  metafieldsLastScanAt DateTime?
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Product metafield definitions a merchant has explicitly enabled for the
+// ContentPilot translation pipeline (Metafields settings tab). A metafield is
+// shown/translated in the product editor only when its definition is BOTH
+// translatable AND present here (decided design point 1). Removing a row hides
+// the field from the editor again WITHOUT reverting the Shopify-side storefront
+// access change (that would be destructive for the storefront/other tools).
+model EnabledMetafieldDefinition {
+  id        String @id @default(cuid())
+  shop      String
+  // Shopify GID of the MetafieldDefinition.
+  definitionId String
+  namespace String
+  key       String
+  // "PRODUCT" for now — column exists so later owner types can reuse the model.
+  ownerType String @default("PRODUCT")
+  // True when ContentPilot had to set the definition's storefront access to
+  // PUBLIC_READ to make it translatable (i.e. it was not publicly accessible and
+  // shop-owned). False for definitions that were already translatable/public
+  // (incl. backfilled ones).
+  patchedTranslatable Boolean  @default(false)
+  enabledAt           DateTime @default(now())
+
+  @@unique([shop, definitionId])
+  @@index([shop, ownerType])
+}
+
+// Direct translations ("Direktübersetzungen"): merchant-managed storefront text
+// that is NOT in translatable Shopify fields (e.g. third-party app widgets:
+// review widgets, badges, page builders). A theme app embed replaces this text
+// client-side using a merchant-curated dictionary. A first-class content type in
+// the admin (consistent with products/collections/templates).
+//
+// An item is the IDENTITY (one rendered source string); its translations hang
+// off it by FK (not by text), so editing the source text keeps the translations.
+// Matching is exact on the normalized source — no fuzzy/partial matching.
+// SEO caveat: client-side DOM replacement is not server-rendered.
+model DirectTranslationItem {
+  id         String   @id @default(cuid())
+  shop       String
+  // Stable hash of the normalized source string — identity of the item. The
+  // storefront and admin both normalize identically so lookups are O(1).
+  sourceHash String
+  sourceText String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  translations DirectTranslation[]
+
+  @@unique([shop, sourceHash])
+  @@index([shop])
+}
+
+// One translation of a DirectTranslationItem into one locale. Cascade-deleted
+// with its item; the source attaches translations by item FK, never by text.
+model DirectTranslation {
+  id         String   @id @default(cuid())
+  itemId     String
+  item       DirectTranslationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  locale     String   // target language ISO, e.g. "fr"
+  targetText String   @db.Text
+  // "user" (manually entered / transferred) or "ai" (auto-translated).
+  source     String   @default("user")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([itemId, locale])
+}
+
+// Untranslated strings discovered on the storefront (opt-in collector), pending
+// merchant review. "Hinzufügen" promotes one to a DirectTranslationItem (and
+// deletes the candidate); "Ablehnen" sets status `rejected` (kept, but never
+// re-raises a notification). Strings that already exist as items are skipped.
+model DirectTranslationCandidate {
+  id          String   @id @default(cuid())
+  shop        String
+  sourceHash  String
+  sourceText  String   @db.Text
+  count       Int      @default(1)   // times seen across visitors/pages
+  status      String   @default("new") // "new" | "rejected"
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, sourceHash])
+  @@index([shop, status])
+  // Backs the FIFO-prune query (delete oldest when a shop's candidate count
+  // exceeds MAX_CANDIDATES_PER_SHOP). Without this Postgres falls back to a
+  // table scan + sort once a shop accumulates a few hundred candidates.
+  @@index([shop, lastSeenAt])
+}
+
+// Per-shop settings + cache-busting version for the direct translation layer.
+// NOTE: `enabled` is gone — the theme app embed is the on/off switch. Scope is
+// gone — direct translations are global (apply on all pages).
+model DirectTranslationSettings {
+  shop      String   @id
+  // Opt-in: when true, the storefront reports untranslated strings it renders
+  // (heuristically filtered, capped) so the merchant can review them in the
+  // admin. Off by default (privacy/noise). Never auto-applied.
+  collect   Boolean  @default(false)
+  // Opt-in: when true, the storefront walks AND replaces text even inside
+  // elements marked `translate="no"`. 3rd-party review/widget apps (Judge.me
+  // etc.) set that attribute to fence off browser auto-translate; for direct
+  // translations the merchant is in control and usually wants those reached.
+  ignoreTranslateNo Boolean @default(false)
+  // Opt-in: when true, server-side language detection (franc) drops collected
+  // candidates whose language matches the locale they were reported from —
+  // i.e. strings that the storefront already serves in the right language and
+  // therefore don't need a direct translation.
+  filterByLanguage  Boolean @default(false)
+  // Bumped on every dictionary change so the storefront cache invalidates.
+  version   Int      @default(1)
   updatedAt DateTime @updatedAt
 }
 

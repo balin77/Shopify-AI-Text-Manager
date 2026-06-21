@@ -17,11 +17,13 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
+import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
+import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -386,8 +388,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
-    const showImageManagerTab = true;
-    const showSkuTab = true;
+    // Image-Manager + SKU tabs configure features that only Pro/Max can use
+    // (variantImageManager flag + SKU/key generator listed under Pro+ features).
+    // Showing the tabs on Free/Basic let merchants flip toggles that had no
+    // effect on their plan — misleading. Gate them on the same flag as the
+    // VariantImageManager itself so UI and capability stay in lockstep.
+    // The Translations tab (merchant-curated productType mappings) stays open
+    // to every plan because it works without the image-manager surface.
+    const { canAccessVariantImageManagerInEnv, isProductionLocked } = await import("../utils/planUtils");
+    const newFeaturesEnabled = !isProductionLocked();
+    const showImageManagerTab = canAccessVariantImageManagerInEnv(
+      subscriptionPlan as Plan,
+      newFeaturesEnabled,
+    );
+    const showSkuTab = canAccessVariantImageManagerInEnv(
+      subscriptionPlan as Plan,
+      newFeaturesEnabled,
+    );
     const showTranslationsTab = true;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
@@ -398,6 +415,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const optionValueMemory = await db.optionValueMemory.findMany({
       where: { shop: session.shop },
       orderBy: { optionValue: "asc" },
+    });
+
+    // Metafields tab: run the one-time lazy backfill (so existing shops keep
+    // their already-translatable metafields visible), then load the enabled set
+    // and last-scan timestamp.
+    const { backfillEnabledMetafieldDefinitionsIfNeeded } = await import("../services/metafield-enablement.server");
+    await backfillEnabledMetafieldDefinitionsIfNeeded(admin, db, session.shop);
+    const enabledMetafieldDefs = await db.enabledMetafieldDefinition.findMany({
+      where: { shop: session.shop, ownerType: "PRODUCT" },
+      orderBy: [{ namespace: "asc" }, { key: "asc" }],
+    });
+    const metafieldScanState = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { metafieldsLastScanAt: true },
     });
 
     return json({
@@ -426,6 +457,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       optionValueMemory,
       primaryShopLocale,
       corruptedApiKeys,
+      enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
+        definitionId: d.definitionId,
+        namespace: d.namespace,
+        key: d.key,
+        patchedTranslatable: d.patchedTranslatable,
+      })),
+      metafieldsLastScanAt: metafieldScanState?.metafieldsLastScanAt
+        ? metafieldScanState.metafieldsLastScanAt.toISOString()
+        : null,
       settings: {
         ...decryptedKeys,
         preferredProvider: settings.preferredProvider,
@@ -530,7 +570,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = getFormString(formData, "actionType");
   if (!actionType) {
@@ -652,6 +692,117 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "scanProductMetafieldDefinitions") {
+      // Data-driven scan: sources from the actual product metafields (incl.
+      // third-party / definition-less ones like Google & Judge.me), enriched
+      // with definitions and per-key translatability probes. Records timestamp.
+      const { scanProductMetafields } = await import("../services/metafield-enablement.server");
+      const definitions = await scanProductMetafields(admin, db, session.shop);
+      const scannedAt = new Date();
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { metafieldsLastScanAt: scannedAt },
+        create: { shop: session.shop, metafieldsLastScanAt: scannedAt, preferredProvider: "claude" },
+      });
+      return json({ success: true, actionType, definitions, metafieldsLastScanAt: scannedAt.toISOString() });
+    } else if (actionType === "saveEnabledMetafieldDefinitions") {
+      // Persist the merchant's selection. Per item, the server picks the right
+      // action: already translatable → just persist; shop-owned with a
+      // definition → set storefront access PUBLIC_READ; shop-owned WITHOUT a
+      // definition → create a public definition; third-party + not translatable
+      // → reject (the UI also blocks these). Successful selections fully replace
+      // the prior set for the shop.
+      //
+      // Note: the Shopify-side change (access patch / definition create) is a
+      // non-transactional side effect applied BEFORE the DB transaction. This is
+      // deliberate and tolerable — it is idempotent (a re-save of an
+      // already-translatable field does nothing) and we never revert it
+      // (reverting would break the storefront/other tools), so a crash mid-loop
+      // is self-healing.
+      const payload = getFormString(formData, "definitions");
+      let incoming: Array<{
+        id: string;
+        namespace: string;
+        key: string;
+        type?: string;
+        name?: string;
+        translatable?: boolean;
+        hasDefinition?: boolean;
+        ownerCategory?: string;
+      }> = [];
+      try {
+        incoming = payload ? JSON.parse(payload) : [];
+      } catch {
+        return json({ success: false, error: "Invalid definitions payload", actionType }, { status: 400 });
+      }
+
+      const { ContentService } = await import("../services/content.service");
+      const service = new ContentService(admin);
+
+      // Preserve the patchedTranslatable history across the destructive
+      // delete+reinsert below: once we have made a field translatable, a later
+      // scan reports translatable:true — we must not regress the flag to false.
+      const priorRows = await db.enabledMetafieldDefinition.findMany({
+        where: { shop: session.shop, ownerType: "PRODUCT" },
+        select: { definitionId: true, patchedTranslatable: true },
+      });
+      const priorPatched = new Map(priorRows.map((r) => [r.definitionId, r.patchedTranslatable]));
+
+      const toInsert: Array<{ shop: string; definitionId: string; namespace: string; key: string; ownerType: string; patchedTranslatable: boolean }> = [];
+      const failed: Array<{ namespace: string; key: string; error?: string }> = [];
+
+      for (const def of incoming) {
+        if (!def?.id || !def.namespace || !def.key) continue;
+        const isThirdParty = def.ownerCategory === "third-party";
+        let patched = false;
+
+        if (def.translatable) {
+          // Already translatable (incl. app-owned like Judge.me) — nothing to
+          // change on Shopify, just record it so the editor shows it.
+        } else if (isThirdParty) {
+          // Not translatable AND app-owned — we cannot patch/create here.
+          failed.push({ namespace: def.namespace, key: def.key, error: "App-owned metafield cannot be made translatable" });
+          continue;
+        } else if (def.hasDefinition) {
+          const res = await service.updateMetafieldDefinitionTranslatable(def.namespace, def.key);
+          if (!res.ok) {
+            failed.push({ namespace: def.namespace, key: def.key, error: res.error });
+            continue;
+          }
+          patched = true;
+        } else {
+          // Shop-owned but definition-less → create a public definition.
+          const res = await service.createTranslatableMetafieldDefinition(
+            def.namespace,
+            def.key,
+            def.type || "single_line_text_field",
+            def.name || def.key,
+          );
+          if (!res.ok) {
+            failed.push({ namespace: def.namespace, key: def.key, error: res.error });
+            continue;
+          }
+          patched = true;
+        }
+
+        toInsert.push({
+          shop: session.shop,
+          definitionId: def.id,
+          namespace: def.namespace,
+          key: def.key,
+          ownerType: "PRODUCT",
+          patchedTranslatable: patched || (priorPatched.get(def.id) ?? false),
+        });
+      }
+
+      await db.$transaction(async (tx) => {
+        await tx.enabledMetafieldDefinition.deleteMany({ where: { shop: session.shop, ownerType: "PRODUCT" } });
+        if (toInsert.length > 0) {
+          await tx.enabledMetafieldDefinition.createMany({ data: toInsert });
+        }
+      });
+
+      return json({ success: true, actionType, enabledCount: toInsert.length, failed });
     } else {
       // Validate and save AI settings
       const validationResult = parseFormData(formData, AISettingsSchema);
@@ -730,7 +881,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [] } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -743,7 +894,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -752,23 +903,24 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
+  const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -823,7 +975,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
-      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
+      { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
@@ -955,6 +1107,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              <button
+                onClick={() => handleSectionChange("metafields")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "metafields" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "metafields" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
+                  {t.settings.metafields || "Metafields"}
+                </Text>
+              </button>
               {showSkuTab && (
               <button
                 onClick={() => handleSectionChange("sku")}
@@ -1065,6 +1236,7 @@ export default function SettingsPage() {
                 <SettingsSetupTab
                   shop={shop}
                   shopifyApiKey={shopifyApiKey}
+                  subscriptionPlan={subscriptionPlan as Plan}
                   productCount={productCount}
                   collectionCount={collectionCount}
                   articleCount={articleCount}
@@ -1119,6 +1291,16 @@ export default function SettingsPage() {
                   groupedFieldTranslations={groupedFieldTranslations}
                   primaryShopLocale={primaryShopLocale}
                   t={t}
+                />
+              )}
+
+              {/* Metafields — enable third-party / shop metafields for translation */}
+              {selectedSection === "metafields" && (
+                <SettingsMetafieldsTab
+                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
+                  metafieldsLastScanAt={metafieldsLastScanAt}
+                  t={t}
+                  onHasChangesChange={setHasMetafieldChanges}
                 />
               )}
 

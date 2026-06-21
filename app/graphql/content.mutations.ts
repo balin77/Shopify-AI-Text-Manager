@@ -219,6 +219,65 @@ export const METAFIELDS_SET = `#graphql
 `;
 
 /**
+ * METAFIELD DEFINITION UPDATE (translatable) — make a definition translatable by
+ * setting its STOREFRONT ACCESS to PUBLIC_READ.
+ *
+ * A product metafield is translatable iff it is publicly accessible
+ * (`access.storefront == PUBLIC_READ`); there is no `capabilities.translatable`
+ * for metafields. Setting this exposes the metafield's values on the public
+ * Storefront API — a deliberate, merchant-initiated side effect.
+ *
+ * Only works for definitions OWNED by this shop. Shopify rejects updates to
+ * definitions owned by a different app with a userError — which is exactly how
+ * we detect/skip third-party-owned definitions.
+ *
+ * REQUIREMENTS:
+ *   - The metafield definition must be shop-owned (not owned by another app).
+ */
+export const METAFIELD_DEFINITION_UPDATE_TRANSLATABLE = `#graphql
+  mutation metafieldDefinitionUpdateTranslatable($definition: MetafieldDefinitionUpdateInput!) {
+    metafieldDefinitionUpdate(definition: $definition) {
+      updatedDefinition {
+        id
+        access {
+          storefront
+        }
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/**
+ * METAFIELD DEFINITION CREATE (translatable) — create a shop-owned definition
+ * for an existing definition-less metafield and make it translatable.
+ *
+ * Some metafields (esp. raw values written by apps/imports) have no definition,
+ * so they can't be made translatable by updating one. Creating a definition for
+ * the existing namespace/key/type (with PUBLIC_READ storefront access) adopts
+ * the existing values and makes them translatable. Only works in shop-owned
+ * namespaces; reserved/app namespaces are rejected with a userError.
+ */
+export const METAFIELD_DEFINITION_CREATE_TRANSLATABLE = `#graphql
+  mutation metafieldDefinitionCreateTranslatable($definition: MetafieldDefinitionInput!) {
+    metafieldDefinitionCreate(definition: $definition) {
+      createdDefinition {
+        id
+      }
+      userErrors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/**
  * METAOBJECT UPDATE — Update metaobject field values in primary locale
  *
  * This mutation updates metaobject field values directly (not translations).

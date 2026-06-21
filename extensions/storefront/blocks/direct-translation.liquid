@@ -1,0 +1,55 @@
+{%- comment -%}
+  App Embed Block (target: body) — direct storefront translation loader
+  ("Direktübersetzungen").
+
+  Loads a small client-side script that replaces rendered text on the storefront
+  using merchant-defined source→target items (managed in ContentPilot →
+  Direktübersetzungen). This covers content that is NOT in translatable Shopify
+  fields — e.g. third-party app widgets rendered in the theme (reviews, badges,
+  page builders). The embed being active is the on/off switch.
+
+  The dictionary is fetched per locale from the app proxy
+  (/apps/contentpilot/dynamic-translations) and cached in localStorage with a
+  version (stale-while-revalidate). A MutationObserver re-applies translations to
+  content injected after load (e.g. review widgets). In the theme editor a visual
+  capture mode lets you click rendered text to add it directly.
+
+  Limitations (intentional, same as competing apps):
+   - Client-side only → NOT indexed by search engines (use Shopify field
+     translations for SEO-relevant content).
+   - Cannot reach cross-origin iframe apps (e.g. Loox).
+{%- endcomment -%}
+
+<script type="application/json" id="contentpilot-dt-config">
+{
+  "endpoint": "/apps/contentpilot/dynamic-translations",
+  "collectEndpoint": "/apps/contentpilot/collect-strings",
+  "addEndpoint": "/apps/contentpilot/direct-add",
+  "locale": {{ request.locale.iso_code | json }},
+  "primaryLocale": {{ shop.locale | json }},
+  "captureTool": {{ block.settings.capture_tool | json }},
+  "debug": {{ block.settings.debug | default: false | json }}
+}
+</script>
+<script src="{{ 'direct-translation.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Direct translation",
+  "target": "body",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Requires the Max plan. Translates third-party app text rendered on your storefront using the items you define in ContentPilot → Direct translations. Client-side only (not indexed by search engines); iframe-based apps cannot be translated."
+    },
+    {
+      "type": "checkbox",
+      "id": "capture_tool",
+      "label": "Show translation capture tool in the theme editor",
+      "info": "When on, you can click any rendered text in the theme editor preview to add it to your direct translations (optionally translated into all languages right away). Customers never see this tool.",
+      "default": true
+    },
+    { "type": "checkbox", "id": "debug", "label": "Console debug logging", "default": false }
+  ]
+}
+{% endschema %}

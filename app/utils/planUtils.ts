@@ -46,6 +46,16 @@ export function getNextPlanUpgrade(currentPlan: Plan): Plan | null {
 }
 
 /**
+ * Hierarchical plan check: does `current` rank at or above `required`?
+ * Use this to gate features that need a minimum subscription tier
+ * (e.g. Direct Translations requires "max").
+ */
+export function meetsPlan(current: Plan, required: Plan): boolean {
+  const order: Plan[] = ["free", "basic", "pro", "max"];
+  return order.indexOf(current) >= order.indexOf(required);
+}
+
+/**
  * Get the display name for a plan
  */
 export function getPlanDisplayName(plan: Plan): string {
@@ -235,27 +245,29 @@ export function isWithinImageOperationQuota(
 }
 
 // ============================================================================
-// Feature gates — fully unlocked.
-// The Image Manager, Bulk Video Upload, Bulk Alt Text, SKU modification and
-// related Settings tabs are available on every plan in every environment.
-// The functions below stay as no-op shims so existing call sites keep
-// compiling without a sweeping refactor; they always return permissive values.
+// Feature gates — image processing suite (Pro+)
+// VariantImageManager, WebP conversion, bulk image upload, bulk alt-text, and
+// the related Settings tabs are gated to Pro and Max. Free/Basic see Shopify's
+// native product gallery, untouched.
+// The `_newFeaturesEnabled` parameter is a legacy env-flag kept for the
+// production-rollout machinery (isProductionLocked); the actual gate is the
+// plan's `variantImageManager` flag.
 // ============================================================================
 
 export function isProductionLocked(): boolean {
   return false;
 }
 
-export function canAccessVariantImageManagerInEnv(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
-  return true;
+export function canAccessVariantImageManagerInEnv(plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return getPlanLimits(plan).variantImageManager;
 }
 
-export function canAccessImageProcessingTab(_newFeaturesEnabled: boolean): boolean {
-  return true;
+export function canAccessImageProcessingTab(plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return getPlanLimits(plan).variantImageManager;
 }
 
-export function canAccessImageManagerSettingsTab(_plan: Plan, _newFeaturesEnabled: boolean): boolean {
-  return true;
+export function canAccessImageManagerSettingsTab(plan: Plan, _newFeaturesEnabled: boolean): boolean {
+  return getPlanLimits(plan).variantImageManager;
 }
 
 // ---------------------------------------------------------------------------

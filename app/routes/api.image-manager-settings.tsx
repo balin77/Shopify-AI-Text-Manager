@@ -1,6 +1,21 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { canAccessVariantImageManagerInEnv, isProductionLocked, type Plan } from "../utils/planUtils";
+
+/**
+ * Plan gate: Image Manager settings only apply when the merchant's plan
+ * actually exposes the Variant Image Manager (Pro+). The Settings UI hides
+ * the tab on Free/Basic, but a direct POST here would still flip the toggle.
+ */
+async function isAllowed(shop: string): Promise<boolean> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  return canAccessVariantImageManagerInEnv(plan, !isProductionLocked());
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -14,6 +29,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  if (!(await isAllowed(session.shop))) {
+    return json({ success: false, error: "Image Manager requires the Pro plan" }, { status: 403 });
+  }
   try {
     const { enabled, autoAltText, firstImageBig, showAltTags, thumbSize } = await request.json();
 

@@ -7,6 +7,7 @@ import "../styles/responsive.css";
 import { authenticate } from "../shopify.server";
 import { I18nProvider } from "../contexts/I18nContext";
 import { InfoBoxProvider } from "../contexts/InfoBoxContext";
+import { ConfirmProvider } from "../contexts/ConfirmContext";
 import { PlanProvider } from "../contexts/PlanContext";
 import { SeoSettingsProvider } from "../contexts/SeoSettingsContext";
 import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
@@ -330,7 +331,9 @@ export default function App() {
             <NavigationHeightProvider>
               <ItemSelectorProvider>
                 <AltTextOpsProvider>
-                  <AppContent />
+                  <ConfirmProvider>
+                    <AppContent />
+                  </ConfirmProvider>
                 </AltTextOpsProvider>
               </ItemSelectorProvider>
             </NavigationHeightProvider>

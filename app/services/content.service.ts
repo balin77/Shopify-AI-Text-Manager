@@ -12,8 +12,18 @@ import {
   GET_METAOBJECT_DEFINITIONS,
   GET_METAOBJECTS,
   GET_THEME_TRANSLATABLE_RESOURCES,
-  GET_THEME_TRANSLATIONS
+  GET_THEME_TRANSLATIONS,
+  GET_PRODUCT_METAFIELD_DEFINITIONS,
+  GET_TRANSLATABLE_CONTENT
 } from "../graphql/content.queries";
+import {
+  METAFIELD_DEFINITION_UPDATE_TRANSLATABLE,
+  METAFIELD_DEFINITION_CREATE_TRANSLATABLE,
+} from "../graphql/content.mutations";
+import {
+  categorizeMetafieldOwner,
+  type MetafieldOwnerCategory,
+} from "../config/known-third-party-apps";
 
 /** Locale info returned by shopLocales query */
 interface ShopLocale {
@@ -50,6 +60,22 @@ interface ThemeResourceTestResult {
   resourceCount?: number;
   contentCount?: number;
   hasContent?: boolean;
+}
+
+/** A product metafield definition, categorized for the Metafields settings tab. */
+export interface ProductMetafieldDef {
+  id: string;
+  namespace: string;
+  key: string;
+  name: string;
+  description: string | null;
+  type: string;
+  /** Whether the definition's `translatable` capability is already enabled. */
+  translatable: boolean;
+  /** "shop" | "third-party" | "contentpilot" — drives UI grouping + patchability. */
+  ownerCategory: MetafieldOwnerCategory;
+  /** Display name of the owning app when known (third-party only). */
+  appName?: string;
 }
 
 export class ContentService {
@@ -211,6 +237,171 @@ export class ContentService {
       logger.error('Error fetching shop metadata', { context: 'ContentService', error });
       return { metafields: [], translations: [] };
     }
+  }
+
+  /**
+   * List ALL product metafield definitions in the shop (paginated), each
+   * categorized by owner. This is the scanner backing the Metafields settings
+   * tab — it surfaces third-party app definitions that `translatableContent`
+   * never returns. Pattern mirrors getShopMetadata() pagination above.
+   */
+  async getProductMetafieldDefinitions(): Promise<ProductMetafieldDef[]> {
+    const definitions: ProductMetafieldDef[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+    const pageSize = 250;
+
+    while (hasNextPage) {
+      const response = await this.admin.graphql(GET_PRODUCT_METAFIELD_DEFINITIONS, {
+        variables: { first: pageSize, after: cursor },
+      });
+      const data = await response.json() as {
+        data?: {
+          metafieldDefinitions?: {
+            edges?: Array<{ node: {
+              id: string;
+              namespace: string;
+              key: string;
+              name: string;
+              description: string | null;
+              type: { name: string };
+              access?: { storefront?: string | null };
+            } }>;
+            pageInfo?: { hasNextPage: boolean; endCursor?: string | null };
+          };
+        };
+        errors?: Array<{ message: string }>;
+      };
+
+      if (data.errors?.length) {
+        throw new Error(`GraphQL error in getProductMetafieldDefinitions: ${data.errors[0].message}`);
+      }
+
+      const connection = data.data?.metafieldDefinitions;
+      const edges = connection?.edges ?? [];
+
+      for (const edge of edges) {
+        const node = edge.node;
+        const owner = categorizeMetafieldOwner(node.namespace);
+        definitions.push({
+          id: node.id,
+          namespace: node.namespace,
+          key: node.key,
+          name: node.name,
+          description: node.description ?? null,
+          type: node.type?.name ?? "",
+          // Translatable iff publicly readable on the storefront.
+          translatable: node.access?.storefront === "PUBLIC_READ",
+          ownerCategory: owner.category,
+          appName: owner.appName,
+        });
+      }
+
+      hasNextPage = connection?.pageInfo?.hasNextPage ?? false;
+      cursor = connection?.pageInfo?.endCursor ?? null;
+      if (!hasNextPage) break;
+    }
+
+    logger.info(`Fetched ${definitions.length} product metafield definitions`, { context: "ContentService" });
+    return definitions;
+  }
+
+  /**
+   * Make a product metafield definition translatable by setting its storefront
+   * access to PUBLIC_READ (the only lever Shopify exposes for metafield
+   * translatability). NOTE: this publishes the metafield's values to the public
+   * Storefront API. Returns ok:false (with the Shopify error) for definitions
+   * owned by another app — the caller treats that as "cannot enable" rather
+   * than throwing.
+   */
+  async updateMetafieldDefinitionTranslatable(
+    namespace: string,
+    key: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const response = await this.admin.graphql(METAFIELD_DEFINITION_UPDATE_TRANSLATABLE, {
+        variables: {
+          definition: {
+            namespace,
+            key,
+            ownerType: "PRODUCT",
+            access: { storefront: "PUBLIC_READ" },
+          },
+        },
+      });
+      const data = await response.json() as {
+        data?: { metafieldDefinitionUpdate?: { userErrors?: Array<{ message: string }> } };
+        errors?: Array<{ message: string }>;
+      };
+
+      if (data.errors?.length) {
+        return { ok: false, error: data.errors[0].message };
+      }
+      const userErrors = data.data?.metafieldDefinitionUpdate?.userErrors ?? [];
+      if (userErrors.length > 0) {
+        return { ok: false, error: userErrors[0].message };
+      }
+      return { ok: true };
+    } catch (error) {
+      logger.error("Error updating metafield definition translatable", { context: "ContentService", namespace, key, error });
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * Create a shop-owned, translatable (PUBLIC_READ) definition for an existing
+   * definition-less metafield so its values become registerable translations.
+   * Graceful: returns ok:false on userError (e.g. reserved/app namespace).
+   */
+  async createTranslatableMetafieldDefinition(
+    namespace: string,
+    key: string,
+    type: string,
+    name: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const response = await this.admin.graphql(METAFIELD_DEFINITION_CREATE_TRANSLATABLE, {
+        variables: {
+          definition: {
+            name: name || key,
+            namespace,
+            key,
+            type,
+            ownerType: "PRODUCT",
+            access: { storefront: "PUBLIC_READ" },
+          },
+        },
+      });
+      const data = await response.json() as {
+        data?: { metafieldDefinitionCreate?: { userErrors?: Array<{ message: string }> } };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) return { ok: false, error: data.errors[0].message };
+      const userErrors = data.data?.metafieldDefinitionCreate?.userErrors ?? [];
+      if (userErrors.length > 0) return { ok: false, error: userErrors[0].message };
+      return { ok: true };
+    } catch (error) {
+      logger.error("Error creating translatable metafield definition", { context: "ContentService", namespace, key, error });
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * Probe whether a specific metafield is translatable: a metafield is
+   * translatable iff `translatableResource(<metafieldGID>).translatableContent`
+   * returns at least one entry. This is the definitive, app-visibility-
+   * independent signal — it works even for app-owned definitions we can't see
+   * via `metafieldDefinitions` (e.g. Judge.me).
+   */
+  async isMetafieldTranslatable(metafieldGid: string): Promise<boolean> {
+    const response = await this.admin.graphql(GET_TRANSLATABLE_CONTENT, {
+      variables: { resourceId: metafieldGid },
+    });
+    const data = await response.json() as {
+      data?: { translatableResource?: { translatableContent?: Array<{ key: string }> } };
+    };
+    const content = data.data?.translatableResource?.translatableContent ?? [];
+    return Array.isArray(content) && content.length > 0;
   }
 
   async getMenus(first: number = 50) {

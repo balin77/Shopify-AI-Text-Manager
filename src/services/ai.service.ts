@@ -737,7 +737,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   ): Promise<string[]> {
     if (values.length === 0) return [];
 
-    const fromName = localeName(fromLang);
+    // `fromLang === "auto"` lets the model detect each value's language
+    // independently — needed when the source isn't necessarily in the shop's
+    // primary locale (e.g. a 3rd-party widget label written in English on a
+    // German-primary store). When the detected source matches `toLang`, the
+    // value is returned unchanged so the caller gets a deterministic 1:1 copy.
+    const isAuto = fromLang === "auto";
+    const fromName = isAuto ? "" : localeName(fromLang);
     const toName = localeName(toLang);
 
     loggers.ai('info', `[AI-SERVICE] Translating batch of ${values.length} values`, {
@@ -747,16 +753,23 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       values: values.slice(0, 3), // Log first 3 values for debugging
     });
 
-    // Build numbered list for clear mapping
-    const numberedValues = values.map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 500, allowNewlines: false })}`).join('\n');
+    // Build numbered list for clear mapping. maxLength 2000 leaves headroom for
+    // the longer paragraphs we now collect (direct-translation candidates can
+    // be up to 1500 chars); 500 silently truncated those before reaching the AI.
+    const numberedValues = values.map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 2000, allowNewlines: false })}`).join('\n');
 
-    const prompt = `Translate these ${context} values from ${fromName} to ${toName} (${toLang}).
+    const sourceClause = isAuto
+      ? `For each ${context} value, detect its source language and translate it to ${toName} (${toLang}). If a value is already written in ${toName}, return it UNCHANGED (1:1 copy).`
+      : `Translate these ${context} values from ${fromName} to ${toName} (${toLang}).`;
+
+    const prompt = `${sourceClause}
 
 ${numberedValues}
 
 Requirements:
 - Keep translations concise and natural
 - Maintain similar character length
+- Inside translated strings, escape any straight double-quote as \\" so the JSON array stays valid
 - Return ONLY a JSON array of translated strings in the same order
 
 Respond in JSON format: ["translated1", "translated2", ...]`;
@@ -771,7 +784,20 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
 
     loggers.ai('debug', '[AI-SERVICE] Batch translation response', { response: responseText.substring(0, 500) });
 
-    const parsed = this.parseJSONResponse(responseText);
+    // Strict parse first; on failure, attempt a permissive recovery for the
+    // common case where the model emitted an unescaped " inside a value
+    // (typographic content with mixed straight + curly quotes).
+    let parsed: unknown;
+    try {
+      parsed = this.parseJSONResponse(responseText);
+    } catch (err) {
+      const recovered = AIService.recoverMalformedStringArray(responseText, values.length);
+      if (recovered) {
+        loggers.ai('info', `[AI-SERVICE] Batch translation: recovered ${recovered.length} values after JSON parse failure`);
+        return recovered;
+      }
+      throw err;
+    }
 
     // Handle both array and object responses
     if (Array.isArray(parsed)) {
@@ -797,6 +823,32 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
     // caller marks the task failed and writes nothing (N-H3).
     loggers.ai('error', '[AI-SERVICE] Batch translation response was not a JSON array', { responseLength: responseText.length });
     throw new Error('AI batch translation did not return a JSON array');
+  }
+
+  /**
+   * Permissive recovery for a malformed `["a", "b", ...]` response when the
+   * model forgot to escape a straight " inside one of the values (common with
+   * typographic content like German „Foo"). Strict JSON.parse rejects the
+   * payload; we fall back to splitting on the `","` boundary, which is stable
+   * even when individual values contain stray ASCII quotes. Returns null when
+   * the response shape is anything else — we then keep the original error
+   * (better than persisting a wrong split silently).
+   */
+  private static recoverMalformedStringArray(text: string, expectedLength: number): string[] | null {
+    // Strip code fence if any.
+    const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const body = (fenced ? fenced[1] : text).trim();
+    // Must look like an array (allow whitespace + leading/trailing junk that
+    // happens occasionally).
+    const arrMatch = body.match(/\[\s*"([\s\S]*)"\s*\]\s*$/);
+    if (!arrMatch) return null;
+    const inner = arrMatch[1];
+    // Single-element case: nothing to split — the whole inner IS the value.
+    if (expectedLength === 1) return [inner];
+    // Multi-element: split on `","` boundary (potentially with whitespace).
+    const parts = inner.split(/"\s*,\s*"/);
+    if (parts.length !== expectedLength) return null;
+    return parts;
   }
 
   async translateSEO(

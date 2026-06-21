@@ -51,43 +51,10 @@ html, body {
   padding-left: 40px;
 }
 
-/* Fade-in animations for smooth start (orange) */
-@keyframes pulseFadeIn {
-  0% {
-    box-shadow: 0 0 0 0 rgba(255, 149, 0, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
-  }
-}
-
-/* Fade-in animations for smooth start (blue) */
-@keyframes pulseBlueFadeIn {
-  0% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(255, 149, 0, 0.7);
-  }
-  50% {
-    box-shadow: 0 0 20px 10px rgba(255, 149, 0, 0.3);
-  }
-}
-
-@keyframes pulseBlue {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
-  }
-  50% {
-    box-shadow: 0 0 20px 10px rgba(59, 130, 246, 0.3);
-  }
-}
+/* Pulse keyframes (pulse / pulseBlue / pulseFadeIn / pulseBlueFadeIn) live
+   in responsive.css now so they're globally loaded — the direct-translations
+   tab uses UnifiedLanguageBar standalone (without UnifiedContentEditor) and
+   would otherwise reference undefined animation names. */
 
 @keyframes spin {
   to { transform: rotate(360deg); }

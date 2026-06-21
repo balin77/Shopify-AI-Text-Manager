@@ -223,6 +223,10 @@ export function hasPrimaryContentMissing(
 ): boolean {
   if (!selectedItem) return false;
 
+  // Direct translations: the single source string always exists once the item
+  // does, so primary content is never "missing".
+  if (contentType === 'directTranslations') return false;
+
   // Templates have dynamic fields in translatableContent
   if (contentType === 'templates') {
     const translatableContent = selectedItem.translatableContent;
@@ -301,7 +305,20 @@ export function hasLocaleMissingTranslations(
   contentType: ContentType,
   overlays?: ValidationOverlays
 ): boolean {
-  if (!selectedItem || locale === primaryLocale) return false;
+  if (!selectedItem) return false;
+
+  // Direct translations: a locale is "missing" when the item has no non-empty
+  // translation for it. The model is a single source string + one translation
+  // per locale (mapped onto Translation[] with a synthetic key). Primary IS a
+  // legitimate target here (the source can be in any language and we still
+  // need a primary-locale row to serve to primary-locale visitors), so this
+  // branch runs BEFORE the `locale === primaryLocale` short-circuit below.
+  if (contentType === 'directTranslations') {
+    const trs = selectedItem.translations || [];
+    return !trs.some((t) => t.locale === locale && !isFieldEmpty(t.value));
+  }
+
+  if (locale === primaryLocale) return false;
 
   // Templates have dynamic fields in translatableContent
   if (contentType === 'templates') {
@@ -394,6 +411,9 @@ export function getMissingPrimaryFields(
 ): string[] {
   if (!selectedItem) return [];
 
+  // Direct translations: the source string is always present.
+  if (contentType === 'directTranslations') return [];
+
   if (contentType === 'templates') {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
@@ -456,7 +476,18 @@ export function getMissingLocaleTranslationFields(
   contentType: ContentType,
   overlays?: ValidationOverlays
 ): string[] {
-  if (!selectedItem || locale === primaryLocale) return [];
+  if (!selectedItem) return [];
+
+  // Direct translations: one synthetic "field" (the source string). Same as
+  // hasLocaleMissingTranslations — primary is a legitimate target, run this
+  // branch BEFORE the locale===primary short-circuit.
+  if (contentType === 'directTranslations') {
+    const trs = selectedItem.translations || [];
+    const has = trs.some((t) => t.locale === locale && !isFieldEmpty(t.value));
+    return has ? [] : [(selectedItem as { sourceText?: string }).sourceText || 'translation'];
+  }
+
+  if (locale === primaryLocale) return [];
 
   if (contentType === 'templates') {
     const translatableContent = selectedItem.translatableContent;

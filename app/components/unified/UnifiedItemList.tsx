@@ -28,8 +28,9 @@ import {
   Popover,
   ActionList,
   Tooltip,
+  Spinner,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -112,6 +113,27 @@ interface UnifiedItemListProps {
   /** Optional: Sort options to show in the sort dropdown */
   sortOptions?: SortOption[];
 
+  /** Optional: Show a "+" add button before the search field (default: false) */
+  showAddButton?: boolean;
+
+  /** Optional: Callback when the "+" add button is clicked */
+  onAddItem?: () => void;
+
+  /** Optional: Accessible label / tooltip for the add button */
+  addButtonLabel?: string;
+
+  /** Optional: Show a trash button to delete the selected entry (default: false).
+   *  Only enabled when an item is selected — without a target there is nothing
+   *  to remove. Other content tabs can opt-in later; for now used by the
+   *  direct-translations tab only. */
+  showDeleteButton?: boolean;
+
+  /** Optional: Callback when the delete button is clicked (selected item id). */
+  onDeleteItem?: (itemId: string) => void;
+
+  /** Optional: Accessible label / tooltip for the delete button */
+  deleteButtonLabel?: string;
+
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -143,6 +165,12 @@ export function UnifiedItemList({
   onSyncAll,
   isSyncing = false,
   sortOptions,
+  showAddButton = false,
+  onAddItem,
+  addButtonLabel,
+  showDeleteButton = false,
+  onDeleteItem,
+  deleteButtonLabel,
   t = {},
 }: UnifiedItemListProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -481,6 +509,9 @@ export function UnifiedItemList({
               <Text as="h2" variant="headingMd">
                 {resourceName.plural} ({items.length})
               </Text>
+              {/* Order: Sort → Reload → Plus → Delete. Plus is variant=primary
+                  to anchor the row; Delete is tone=critical to stand out as a
+                  destructive action. */}
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                 {sortOptions && sortOptions.length > 0 && (
                   <Popover
@@ -533,6 +564,26 @@ export function UnifiedItemList({
                     onClick={onSyncAll}
                     loading={isSyncing}
                     accessibilityLabel="Sync from Shopify"
+                    size="slim"
+                  />
+                )}
+                {showAddButton && onAddItem && (
+                  <Button
+                    icon={PlusIcon}
+                    variant="primary"
+                    onClick={onAddItem}
+                    accessibilityLabel={addButtonLabel || "Add"}
+                    size="slim"
+                  />
+                )}
+                {showDeleteButton && onDeleteItem && (
+                  <Button
+                    icon={DeleteIcon}
+                    variant="plain"
+                    tone="critical"
+                    onClick={() => { if (selectedItemId) onDeleteItem(selectedItemId); }}
+                    disabled={!selectedItemId}
+                    accessibilityLabel={deleteButtonLabel || "Delete entry"}
                     size="slim"
                   />
                 )}
@@ -609,8 +660,15 @@ export function UnifiedItemList({
                       <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                         {itemRenderer(item, isSelected, isHovered)}
                       </div>
-                      {(item.hasMissingPrimary || item.hasMissingTranslations) && (
+                      {(item.isBusy || item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
+                          {item.isBusy && (
+                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut zIndexOverride={1200}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }}>
+                                <Spinner size="small" />
+                              </div>
+                            </Tooltip>
+                          )}
                           {item.hasMissingPrimary && (
                             <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
                               <div

@@ -147,6 +147,47 @@ export const GET_SHOP_METADATA = `#graphql
   }
 `;
 
+/**
+ * PRODUCT METAFIELD DEFINITIONS — discover all product metafield definitions.
+ *
+ * Unlike `translatableResource.translatableContent` (which only surfaces
+ * metafields that are translatable), this lists EVERY product metafield
+ * definition in the shop, including third-party app ones.
+ *
+ * Translatability is gated by STOREFRONT ACCESS, not a capability: a metafield
+ * is translatable iff its definition's `access.storefront == PUBLIC_READ`
+ * (Shopify: "you can translate metafields only if they are publicly
+ * accessible"). There is NO `capabilities.translatable` for metafields — that
+ * exists only for metaobjects. To make a shop-owned definition translatable we
+ * set `access.storefront = PUBLIC_READ` via `metafieldDefinitionUpdate`.
+ */
+export const GET_PRODUCT_METAFIELD_DEFINITIONS = `#graphql
+  query getProductMetafieldDefinitions($first: Int!, $after: String) {
+    metafieldDefinitions(ownerType: PRODUCT, first: $first, after: $after) {
+      edges {
+        node {
+          id
+          namespace
+          key
+          name
+          description
+          ownerType
+          type {
+            name
+          }
+          access {
+            storefront
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
 export const GET_MENUS = `#graphql
   query getMenus($first: Int!) {
     menus(first: $first) {
