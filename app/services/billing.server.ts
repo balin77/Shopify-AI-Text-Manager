@@ -245,9 +245,16 @@ export async function cancelSubscription(admin: ShopifyAdminClient, subscription
 }
 
 /**
- * Gets the current active subscription for a shop
+ * Gets the current active subscription for a shop.
+ *
+ * `shop` is optional only for legacy callers; pass it whenever available so the
+ * production test-subscription gate (below) can correctly recognise shops that
+ * are *currently* allowed to use test billing.
  */
-export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise<AppSubscription | null> {
+export async function getCurrentSubscription(
+  admin: ShopifyAdminClient,
+  shop?: string,
+): Promise<AppSubscription | null> {
   const response = await admin.graphql(
     `#graphql
       query {
@@ -283,19 +290,42 @@ export async function getCurrentSubscription(admin: ShopifyAdminClient): Promise
   const result = await response.json() as { data?: { currentAppInstallation?: { activeSubscriptions?: AppSubscription[] } } };
   const subscriptions = result.data?.currentAppInstallation?.activeSubscriptions || [];
 
-  // R5-G3: in PRODUCTION, ignore `test: true` subscriptions. A test-billing
-  // ACTIVE subscription is created while a shop is in DEV_PLAN_OVERRIDE_SHOPS
-  // (test billing). After the shop is removed from that allowlist the stale
-  // test subscription would otherwise keep granting the paid plan with no
-  // payment — a self-grant residual. A real paid customer always has a
-  // non-test subscription, so preferring/limiting to test===false closes the
-  // leak. Non-production keeps all subs so dev/test stores still resolve
-  // their plan.
+  // R5-G3: in PRODUCTION, the original rule "ignore `test: true` subscriptions"
+  // protected against a self-grant residual — a shop that was on
+  // DEV_PLAN_OVERRIDE_SHOPS, got a test subscription, and was then removed from
+  // the allowlist would otherwise keep their paid plan for free. Blanket
+  // filtering, however, also breaks shops *still* legitimately on test billing
+  // (DEV_PLAN_OVERRIDE_SHOPS or partnerDevelopment stores on the public app):
+  // their freshly-confirmed test subscription gets discarded and the billing
+  // callback renders "Subscription not activated".
+  //
+  // Refined rule: in production, prefer non-test subs unconditionally; only
+  // fall back to test subs when the shop is CURRENTLY entitled to test billing
+  // (still on the allowlist — sync check, no Shopify call — or a Shopify
+  // partnerDevelopment store, checked async). Removed-from-allowlist shops
+  // satisfy neither and still get null, so the self-grant lock holds.
   const isProd = process.env.APP_ENV === 'production';
-  const eligible = isProd ? subscriptions.filter((s) => s.test === false) : subscriptions;
+  if (!isProd) {
+    return subscriptions.length > 0 ? subscriptions[0] : null;
+  }
 
-  // Return the first eligible active subscription
-  return eligible.length > 0 ? eligible[0] : null;
+  const nonTest = subscriptions.filter((s) => s.test === false);
+  if (nonTest.length > 0) return nonTest[0];
+
+  const testSubs = subscriptions.filter((s) => s.test === true);
+  if (testSubs.length === 0) return null;
+
+  const inTestBilling = shop ? resolveDevPlanMode(shop) === 'test-billing' : false;
+  const allowTest = inTestBilling || (await isDevStore(admin));
+  if (!allowTest) {
+    logger.warn('[Billing] Ignoring test subscription in production — shop not currently entitled to test billing', {
+      shop: shop ?? '(unknown)',
+      count: testSubs.length,
+    });
+    return null;
+  }
+
+  return testSubs[0];
 }
 
 /**
@@ -463,7 +493,7 @@ export async function checkAndSyncSubscription(admin: ShopifyAdminClient, shop: 
   }
 
   try {
-    const subscription = await getCurrentSubscription(admin);
+    const subscription = await getCurrentSubscription(admin, shop);
 
     if (!subscription || subscription.status !== 'ACTIVE') {
       // No active subscription, downgrade to free

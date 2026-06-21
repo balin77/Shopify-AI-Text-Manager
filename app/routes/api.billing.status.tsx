@@ -18,7 +18,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   try {
-    const subscription = await getCurrentSubscription(admin);
+    const subscription = await getCurrentSubscription(admin, session.shop);
     const plan = getPlanFromSubscription(subscription);
 
     return json({

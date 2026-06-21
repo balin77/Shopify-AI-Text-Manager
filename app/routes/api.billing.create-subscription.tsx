@@ -48,7 +48,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Check for an existing paid subscription to enable atomic replacement (paid→paid switch).
-    const existingSubscription = await getCurrentSubscription(admin);
+    const existingSubscription = await getCurrentSubscription(admin, session.shop);
     const hasExistingSubscription = existingSubscription !== null && existingSubscription.status === 'ACTIVE';
 
     logger.info('[Billing] Creating subscription', {

@@ -136,6 +136,98 @@ describe('getCurrentSubscription()', () => {
   });
 });
 
+// ── getCurrentSubscription() – production test-subscription gate ─────────────
+describe('getCurrentSubscription() – production test-sub gate', () => {
+  let savedEnv: string | undefined;
+  let savedAllowlist: string | undefined;
+  const shop = 'devshop.myshopify.com';
+
+  const testProSubscription = {
+    ...activeProSubscription,
+    id: 'gid://shopify/AppSubscription/test-1',
+    test: true,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedEnv = process.env.APP_ENV;
+    savedAllowlist = process.env.DEV_PLAN_OVERRIDE_SHOPS;
+    process.env.APP_ENV = 'production';
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.APP_ENV;
+    else process.env.APP_ENV = savedEnv;
+    if (savedAllowlist === undefined) delete process.env.DEV_PLAN_OVERRIDE_SHOPS;
+    else process.env.DEV_PLAN_OVERRIDE_SHOPS = savedAllowlist;
+  });
+
+  /**
+   * Mock that distinguishes between the activeSubscriptions query and the
+   * shop.plan.partnerDevelopment query used by isDevStore().
+   */
+  function makeRoutedAdmin(subs: unknown[], partnerDevelopment: boolean) {
+    return {
+      graphql: vi.fn(async (query: string) => {
+        if (query.includes('partnerDevelopment')) {
+          return { json: async () => ({ data: { shop: { plan: { partnerDevelopment } } } }) };
+        }
+        return {
+          json: async () => ({
+            data: { currentAppInstallation: { activeSubscriptions: subs } },
+          }),
+        };
+      }),
+    };
+  }
+
+  it('honors a test sub in production when the shop is still on DEV_PLAN_OVERRIDE_SHOPS', async () => {
+    process.env.DEV_PLAN_OVERRIDE_SHOPS = shop;
+    const admin = makeRoutedAdmin([testProSubscription], false);
+
+    const result = await getCurrentSubscription(admin, shop);
+
+    expect(result).toEqual(testProSubscription);
+  });
+
+  it('honors a test sub in production for a Shopify partnerDevelopment store', async () => {
+    delete process.env.DEV_PLAN_OVERRIDE_SHOPS;
+    const admin = makeRoutedAdmin([testProSubscription], true);
+
+    const result = await getCurrentSubscription(admin, shop);
+
+    expect(result).toEqual(testProSubscription);
+  });
+
+  it('filters a test sub in production when the shop is NOT entitled (R5-G3 self-grant lock)', async () => {
+    delete process.env.DEV_PLAN_OVERRIDE_SHOPS;
+    const admin = makeRoutedAdmin([testProSubscription], false);
+
+    const result = await getCurrentSubscription(admin, shop);
+
+    expect(result).toBeNull();
+  });
+
+  it('prefers the non-test sub over a stale test sub in production', async () => {
+    process.env.DEV_PLAN_OVERRIDE_SHOPS = shop;
+    const admin = makeRoutedAdmin([testProSubscription, activeProSubscription], false);
+
+    const result = await getCurrentSubscription(admin, shop);
+
+    expect(result).toEqual(activeProSubscription);
+  });
+
+  it('keeps test subs unfiltered outside of production (dev/test environments)', async () => {
+    process.env.APP_ENV = 'development';
+    delete process.env.DEV_PLAN_OVERRIDE_SHOPS;
+    const admin = makeRoutedAdmin([testProSubscription], false);
+
+    const result = await getCurrentSubscription(admin, shop);
+
+    expect(result).toEqual(testProSubscription);
+  });
+});
+
 // ── checkAndSyncSubscription ─────────────────────────────────────────────────
 
 describe('checkAndSyncSubscription()', () => {

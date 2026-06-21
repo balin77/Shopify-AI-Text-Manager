@@ -314,7 +314,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let inTrial = false;
     let trialRemainingDays = 0;
     try {
-      const sub = await getCurrentSubscription(admin);
+      const sub = await getCurrentSubscription(admin, session.shop);
       const info = getTrialInfo({
         subscriptionStatus: sub?.status ?? null,
         trialDays: sub?.trialDays ?? 0,
