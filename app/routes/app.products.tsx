@@ -265,7 +265,7 @@ export const loader = createContentLoader({
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false, thumbSize: 80 };
     const newFeaturesEnabled = !isProductionLocked();
     const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
-    const showImageProcessingTab = canAccessImageProcessingTab(newFeaturesEnabled);
+    const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
     return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
   },
 });

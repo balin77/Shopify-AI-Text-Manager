@@ -80,7 +80,7 @@ export function PlanProvider({ plan, newFeaturesEnabled, children }: PlanProvide
     getResourcesApproachingLimits: (counts: Record<ResourceType, number>, threshold?: number) => getResourcesApproachingLimits(plan, counts, threshold),
     // Production-locked feature checks
     canAccessVariantImageManager: () => canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled),
-    canAccessImageProcessingTab: () => utilCanAccessImageProcessingTab(newFeaturesEnabled),
+    canAccessImageProcessingTab: () => utilCanAccessImageProcessingTab(plan, newFeaturesEnabled),
     canAccessImageManagerSettingsTab: () => utilCanAccessImageManagerSettingsTab(plan, newFeaturesEnabled),
   }), [plan, newFeaturesEnabled]);
 

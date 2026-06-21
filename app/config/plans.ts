@@ -71,7 +71,12 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "featured-only",
     contentTypes: ["products", "collections"],
     aiInstructionsEditable: false,
-    variantImageManager: true,
+    // Image processing suite (VariantImageManager, WebP conversion, bulk
+    // upload, bulk alt-text) is Pro+ only — monthlyImageOperations is 0
+    // here anyway, so without this flag the merchant saw the UI but every
+    // action hit a quota error. Free/basic shoppers see Shopify's native
+    // product gallery, unchanged.
+    variantImageManager: false,
     cacheEnabled: {
       products: true, // limited to 50
       productImages: false, // only featured image
@@ -96,7 +101,8 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies"],
     aiInstructionsEditable: false,
-    variantImageManager: true,
+    // Same Pro+ gate as free — see comment on free.variantImageManager above.
+    variantImageManager: false,
     cacheEnabled: {
       products: true,
       productImages: true,

@@ -444,6 +444,7 @@ export const en: Translation = {
     featureSkuGenerator: "SKU / Key Generator",
     featureBulkAltText: "Bulk Alt Text Templates",
     featureBulkImageUpload: "Bulk Image Upload",
+    featureNativeGalleryOnly: "Native Shopify product gallery only (no advanced image manager).",
     aiInstructionsEditable: "AI Instructions Editable",
     yes: "Yes",
     no: "No",

@@ -291,26 +291,30 @@ export function SettingsPlanTab({
                         })}
                       </BlockStack>
 
-                      {planDetails.variantImageManager && (
-                        <>
-                          <Text as="p" variant="bodyMd">
-                            <strong>{t.settings.imageFeaturesTitle}:</strong>
+                      <Text as="p" variant="bodyMd">
+                        <strong>{t.settings.imageFeaturesTitle}:</strong>
+                      </Text>
+                      <BlockStack gap="100">
+                        {planDetails.variantImageManager ? (
+                          [
+                            t.settings.featureImageManager,
+                            t.settings.featureVariantGallery,
+                            t.settings.featureSkuGenerator,
+                            t.settings.featureBulkAltText,
+                            t.settings.featureBulkImageUpload,
+                          ].map((label) => (
+                            <Text key={label} as="p" variant="bodySm" tone="success">
+                              ✓ {label}
+                            </Text>
+                          ))
+                        ) : (
+                          // Free + Basic: Shopify's native product gallery only;
+                          // tell the merchant explicitly so the gap to Pro+ is clear.
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.settings.featureNativeGalleryOnly ?? "Native Shopify product gallery only."}
                           </Text>
-                          <BlockStack gap="100">
-                            {[
-                              t.settings.featureImageManager,
-                              t.settings.featureVariantGallery,
-                              t.settings.featureSkuGenerator,
-                              t.settings.featureBulkAltText,
-                              t.settings.featureBulkImageUpload,
-                            ].map((label) => (
-                              <Text key={label} as="p" variant="bodySm" tone="success">
-                                ✓ {label}
-                              </Text>
-                            ))}
-                          </BlockStack>
-                        </>
-                      )}
+                        )}
+                      </BlockStack>
                     </BlockStack>
                   </BlockStack>
 

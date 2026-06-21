@@ -443,6 +443,7 @@ export const es: Translation = {
     featureSkuGenerator: "Generador de SKU / claves",
     featureBulkAltText: "Plantillas de texto alternativo masivo",
     featureBulkImageUpload: "Carga masiva de imágenes",
+    featureNativeGalleryOnly: "Solo la galería de productos nativa de Shopify (sin gestor avanzado de imágenes).",
     aiInstructionsEditable: "Instrucciones de IA editables",
     yes: "Sí",
     no: "No",

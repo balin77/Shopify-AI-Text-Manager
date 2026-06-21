@@ -441,6 +441,7 @@ export const de = {
     featureSkuGenerator: "SKU-/Schlüssel-Generator",
     featureBulkAltText: "Bulk Alt-Text-Vorlagen",
     featureBulkImageUpload: "Bulk-Bildupload",
+    featureNativeGalleryOnly: "Nur native Shopify-Produktgalerie (kein erweiterter Image Manager).",
     aiInstructionsEditable: "KI-Anweisungen bearbeitbar",
     yes: "Ja",
     no: "Nein",
