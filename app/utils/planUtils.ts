@@ -46,6 +46,16 @@ export function getNextPlanUpgrade(currentPlan: Plan): Plan | null {
 }
 
 /**
+ * Hierarchical plan check: does `current` rank at or above `required`?
+ * Use this to gate features that need a minimum subscription tier
+ * (e.g. Direct Translations requires "max").
+ */
+export function meetsPlan(current: Plan, required: Plan): boolean {
+  const order: Plan[] = ["free", "basic", "pro", "max"];
+  return order.indexOf(current) >= order.indexOf(required);
+}
+
+/**
  * Get the display name for a plan
  */
 export function getPlanDisplayName(plan: Plan): string {

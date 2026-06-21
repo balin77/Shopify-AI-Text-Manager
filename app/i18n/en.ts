@@ -727,6 +727,7 @@ export const en: Translation = {
     themeSetupOptionCTitle: "Direct translations (App Embed)",
     themeSetupOptionCDescription: "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront.",
     themeSetupOptionCButton: "Activate direct translations",
+    themeSetupOptionRequiresPlan: "Requires the {plan} plan.",
     themeSetupNote: "After each activation, save your theme. All blocks belong to the same ContentPilot Storefront extension.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
     extensionSetupHintTitle: "Set up the theme extension",

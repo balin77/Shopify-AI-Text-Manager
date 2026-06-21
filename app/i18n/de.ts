@@ -724,6 +724,7 @@ export const de = {
     themeSetupOptionCTitle: "Direktübersetzungen (App-Embed)",
     themeSetupOptionCDescription: "Übersetzt Text aus Drittanbieter-Apps (Reviews, Badges, Page-Builder), die Shopifys native Übersetzungen nicht erreichen können. Ohne aktiviertes Embed passiert auf der Storefront nichts.",
     themeSetupOptionCButton: "Direktübersetzungen aktivieren",
+    themeSetupOptionRequiresPlan: "Erfordert den {plan}-Plan.",
     themeSetupNote: "Nach jeder Aktivierung das Theme speichern. Alle Blöcke gehören zur gleichen ContentPilot Storefront-Extension.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
     extensionSetupHintTitle: "Theme-Extension noch einrichten",

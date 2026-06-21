@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card, Text, BlockStack, Button, Banner, Box, Divider } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
+import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 
 interface WebhookEntry {
   topic: string;
@@ -10,6 +11,7 @@ interface WebhookEntry {
 interface SettingsSetupTabProps {
   shop: string;
   shopifyApiKey: string;
+  subscriptionPlan: Plan;
   productCount: number;
   collectionCount: number;
   articleCount: number;
@@ -21,6 +23,7 @@ interface SettingsSetupTabProps {
 export function SettingsSetupTab({
   shop,
   shopifyApiKey,
+  subscriptionPlan,
   productCount,
   collectionCount,
   articleCount,
@@ -259,22 +262,41 @@ export function SettingsSetupTab({
 
           <Divider />
 
-          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {ts.themeSetupOptionCTitle ?? "Direct translations"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {ts.themeSetupOptionCDescription ??
-                  "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."}
-              </Text>
-              <div>
-                <Button url={directTranslationEmbedUrl} external variant="primary" size="slim">
-                  {ts.themeSetupOptionCButton ?? "Activate direct translations"}
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
+          {(() => {
+            const directTranslationRequiredPlan: Plan = "max";
+            const directTranslationAllowed = meetsPlan(subscriptionPlan, directTranslationRequiredPlan);
+            const planNote = (ts.themeSetupOptionRequiresPlan ?? "Requires the {plan} plan.").replace(
+              "{plan}",
+              getPlanDisplayName(directTranslationRequiredPlan),
+            );
+            return (
+              <Box background="bg-surface-secondary" borderRadius="200" padding="400">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                    {ts.themeSetupOptionCTitle ?? "Direct translations"}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {ts.themeSetupOptionCDescription ??
+                      "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."}
+                  </Text>
+                  {!directTranslationAllowed && (
+                    <Text as="p" variant="bodySm" tone="caution">{planNote}</Text>
+                  )}
+                  <div>
+                    <Button
+                      url={directTranslationAllowed ? directTranslationEmbedUrl : undefined}
+                      external={directTranslationAllowed}
+                      disabled={!directTranslationAllowed}
+                      variant="primary"
+                      size="slim"
+                    >
+                      {ts.themeSetupOptionCButton ?? "Activate direct translations"}
+                    </Button>
+                  </div>
+                </BlockStack>
+              </Box>
+            );
+          })()}
 
           <Text as="p" variant="bodySm" tone="subdued">
             {t.settings.themeSetupNote}

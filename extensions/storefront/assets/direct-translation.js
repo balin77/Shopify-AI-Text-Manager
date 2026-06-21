@@ -328,7 +328,31 @@
     }).then(function (r) { return r.ok ? r.json() : null; });
   }
 
+  // Theme-editor only: when the merchant lands on the editor but the shop
+  // isn't on the Max plan, render a one-line notice instead of silently doing
+  // nothing — otherwise the embed feels broken ("I enabled it, why does it
+  // not work?"). Customers on the live storefront never see this.
+  function maybeShowPlanGateNotice() {
+    if (!designMode || featureAvailable) return;
+    if (document.getElementById("contentpilot-plan-gate")) return;
+    var notice = document.createElement("div");
+    notice.id = "contentpilot-plan-gate";
+    notice.setAttribute("translate", "no");
+    notice.style.cssText = [
+      "position:fixed", "top:16px", "right:16px", "z-index:2147483646",
+      "background:#fff4e5", "color:#3a2d00", "border:1px solid #f0b400",
+      "font:13px/1.4 -apple-system,system-ui,sans-serif",
+      "border-radius:8px", "box-shadow:0 4px 20px rgba(0,0,0,.15)",
+      "padding:10px 12px", "max-width:320px", "box-sizing:border-box",
+    ].join(";");
+    notice.innerHTML =
+      '<div style="font-weight:600;margin-bottom:4px">ContentPilot — Direktübersetzungen</div>' +
+      '<div style="opacity:.85">Diese Funktion erfordert den Max-Plan. Im App-Admin auf einen passenden Plan upgraden, dann lädt das Embed automatisch.</div>';
+    document.body.appendChild(notice);
+  }
+
   function initCaptureMode() {
+    maybeShowPlanGateNotice();
     if (!captureRequested || !featureAvailable) return;
 
     var panel = document.createElement("div");

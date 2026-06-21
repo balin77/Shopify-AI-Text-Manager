@@ -726,6 +726,7 @@ export const es: Translation = {
     themeSetupOptionCTitle: "Traducciones directas (App Embed)",
     themeSetupOptionCDescription: "Traduce textos de apps de terceros (reseñas, sellos, page builders) que las traducciones nativas de Shopify no pueden alcanzar. Sin el embed activo, no ocurre nada en el escaparate.",
     themeSetupOptionCButton: "Activar traducciones directas",
+    themeSetupOptionRequiresPlan: "Requiere el plan {plan}.",
     themeSetupNote: "Tras cada activación, guarda tu tema. Todos los bloques pertenecen a la misma extensión Storefront de ContentPilot.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
     extensionSetupHintTitle: "Configura la extensión del tema",

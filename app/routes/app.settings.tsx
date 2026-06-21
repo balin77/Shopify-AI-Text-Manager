@@ -23,6 +23,7 @@ import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
+import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -1220,6 +1221,7 @@ export default function SettingsPage() {
                 <SettingsSetupTab
                   shop={shop}
                   shopifyApiKey={shopifyApiKey}
+                  subscriptionPlan={subscriptionPlan as Plan}
                   productCount={productCount}
                   collectionCount={collectionCount}
                   articleCount={articleCount}
