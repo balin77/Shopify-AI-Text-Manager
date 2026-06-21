@@ -43,7 +43,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Get current subscription
-    const subscription = await getCurrentSubscription(admin);
+    const subscription = await getCurrentSubscription(admin, session.shop);
 
     if (!subscription) {
       return json({ success: false, error: 'No active subscription found' }, { status: 404 });
