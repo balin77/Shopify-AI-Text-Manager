@@ -769,6 +769,7 @@ export const de = {
     variantsLoadError: "Varianten konnten nicht geladen werden.",
     webpConverting: "WebP-Konvertierung läuft…",
     webpConvertButton: "{count} Bild(er) → WebP konvertieren",
+    webpRequiresPlan: "WebP-Konvertierung erfordert den {plan}-Plan.",
     webpConvertError: "WebP-Konvertierung konnte nicht gestartet werden.",
     imageQuotaExceeded: "Monatslimit für Bild-Operationen erreicht ({limit}/Monat). Es wird zum nächsten Monatsanfang zurückgesetzt — oder upgraden Sie Ihren Plan für ein höheres Kontingent.",
     selectAllVariantLabel: "Alle Bilder von {title} auswählen",

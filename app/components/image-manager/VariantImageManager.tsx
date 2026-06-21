@@ -1,9 +1,11 @@
 ﻿import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack } from "@shopify/polaris";
+import { Text, Button, InlineStack, Spinner, Banner, Divider, Card, BlockStack, Tooltip } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { DndContext, DragOverlay, closestCenter, pointerWithin, useDroppable, MouseSensor, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragStartEvent, type DragOverEvent, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useI18n } from "../../contexts/I18nContext";
+import { usePlan } from "../../contexts/PlanContext";
+import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
@@ -186,6 +188,16 @@ export function VariantImageManager({
   onGalleryOrderChange,
 }: VariantImageManagerProps) {
   const { t } = useI18n();
+  const { plan } = usePlan();
+  // WebP conversion bills a monthly image-operation per image (Pro+ only —
+  // free/basic have monthlyImageOperations=0 which the server already
+  // rejects). Disable the button + show a plan hint so the merchant doesn't
+  // click into a server error.
+  const webpAllowed = meetsPlan(plan, "pro");
+  const webpPlanNote = (t.imageManager.webpRequiresPlan ?? "Requires the {plan} plan.").replace(
+    "{plan}",
+    getPlanDisplayName("pro"),
+  );
   const [variants, setVariants] = useState<VariantWithGallery[]>([]);
   // Per-variant overrides for external video URLs. Empty entries are kept
   // (they mean "merchant explicitly cleared this variant's videos") so
@@ -2351,11 +2363,19 @@ export function VariantImageManager({
         <InlineStack gap="400" blockAlign="center">
           {(imagesToConvert.length > 0 || isConvertingWebP) && (
             <InlineStack gap="200" blockAlign="center">
-              <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
-                {isConvertingWebP
-                  ? t.imageManager.webpConverting
-                  : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
-              </Button>
+              {webpAllowed ? (
+                <Button size="slim" onClick={() => handleConvertToWebP(imagesToConvert)} disabled={isConvertingWebP}>
+                  {isConvertingWebP
+                    ? t.imageManager.webpConverting
+                    : t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
+                </Button>
+              ) : (
+                <Tooltip content={webpPlanNote} dismissOnMouseOut>
+                  <Button size="slim" disabled>
+                    {t.imageManager.webpConvertButton.replace("{count}", String(imagesToConvert.length)) + webpFormatBreakdown}
+                  </Button>
+                </Tooltip>
+              )}
               {isConvertingWebP && <Spinner size="small" />}
             </InlineStack>
           )}

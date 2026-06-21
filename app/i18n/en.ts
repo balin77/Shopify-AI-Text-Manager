@@ -772,6 +772,7 @@ export const en: Translation = {
     variantsLoadError: "Could not load variants.",
     webpConverting: "WebP conversion running…",
     webpConvertButton: "{count} image(s) → convert to WebP",
+    webpRequiresPlan: "WebP conversion requires the {plan} plan.",
     webpConvertError: "Could not start WebP conversion.",
     imageQuotaExceeded: "Monthly image-operation limit reached ({limit}/month). It resets at the start of next month, or upgrade your plan for a higher allowance.",
     selectAllVariantLabel: "Select all images of {title}",
