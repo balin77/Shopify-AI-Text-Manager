@@ -221,82 +221,52 @@ export function SettingsSetupTab({
             {t.settings.themeSetupDescription}
           </Text>
 
-          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {t.settings.themeSetupOptionATitle}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {t.settings.themeSetupOptionADescription}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {ts.themeSetupSelectorHint ??
-                  "If your theme's product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme's product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."}
-              </Text>
-              <div>
-                <Button url={variantGalleryEmbedUrl} external variant="primary" size="slim">
-                  {t.settings.themeSetupOptionAButton}
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
+          {/* Order: Language & Currency → Variant Gallery → Direct Translations.
+              Sprache & Währung läuft auf jedem Plan, Variant Gallery braucht
+              Pro (für Bulk-Image-Upload + WebP), Direct Translations braucht
+              Max. EmbedActivateBox kapselt das Gating + Plan-Hinweis. */}
+          <EmbedActivateBox
+            title={ts.themeSetupOptionBTitle ?? "Language & Currency switcher"}
+            description={
+              ts.themeSetupOptionBDescription ??
+              "Lets customers pick the storefront language and country/currency. Uses Shopify's native localization API — no extra setup beyond activating the embed."
+            }
+            url={localeSwitcherEmbedUrl}
+            buttonLabel={ts.themeSetupOptionBButton ?? "Activate switcher"}
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
 
           <Divider />
 
-          <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                {ts.themeSetupOptionBTitle ?? "Language & Currency switcher"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {ts.themeSetupOptionBDescription ??
-                  "Lets customers pick the storefront language and country/currency. Uses Shopify's native localization API — no extra setup beyond activating the embed."}
-              </Text>
-              <div>
-                <Button url={localeSwitcherEmbedUrl} external variant="primary" size="slim">
-                  {ts.themeSetupOptionBButton ?? "Activate switcher"}
-                </Button>
-              </div>
-            </BlockStack>
-          </Box>
+          <EmbedActivateBox
+            title={t.settings.themeSetupOptionATitle}
+            description={t.settings.themeSetupOptionADescription}
+            extraDescription={
+              ts.themeSetupSelectorHint ??
+              "If your theme's product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme's product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."
+            }
+            url={variantGalleryEmbedUrl}
+            buttonLabel={t.settings.themeSetupOptionAButton}
+            requiredPlan="pro"
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
 
           <Divider />
 
-          {(() => {
-            const directTranslationRequiredPlan: Plan = "max";
-            const directTranslationAllowed = meetsPlan(subscriptionPlan, directTranslationRequiredPlan);
-            const planNote = (ts.themeSetupOptionRequiresPlan ?? "Requires the {plan} plan.").replace(
-              "{plan}",
-              getPlanDisplayName(directTranslationRequiredPlan),
-            );
-            return (
-              <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">
-                    {ts.themeSetupOptionCTitle ?? "Direct translations"}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {ts.themeSetupOptionCDescription ??
-                      "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."}
-                  </Text>
-                  {!directTranslationAllowed && (
-                    <Text as="p" variant="bodySm" tone="caution">{planNote}</Text>
-                  )}
-                  <div>
-                    <Button
-                      url={directTranslationAllowed ? directTranslationEmbedUrl : undefined}
-                      external={directTranslationAllowed}
-                      disabled={!directTranslationAllowed}
-                      variant="primary"
-                      size="slim"
-                    >
-                      {ts.themeSetupOptionCButton ?? "Activate direct translations"}
-                    </Button>
-                  </div>
-                </BlockStack>
-              </Box>
-            );
-          })()}
+          <EmbedActivateBox
+            title={ts.themeSetupOptionCTitle ?? "Direct translations"}
+            description={
+              ts.themeSetupOptionCDescription ??
+              "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."
+            }
+            url={directTranslationEmbedUrl}
+            buttonLabel={ts.themeSetupOptionCButton ?? "Activate direct translations"}
+            requiredPlan="max"
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
 
           <Text as="p" variant="bodySm" tone="subdued">
             {t.settings.themeSetupNote}
@@ -312,5 +282,68 @@ export function SettingsSetupTab({
         </Banner>
       )}
     </>
+  );
+}
+
+/**
+ * One activate box in the App-Setup card. Encapsulates the plan-gating: when
+ * the current plan doesn't meet the required tier the button is rendered but
+ * disabled, with a yellow "Requires the X plan." caption above it. Used for
+ * all three embeds (language switcher / variant gallery / direct translations)
+ * so the gating logic + visual treatment stay in lockstep.
+ */
+interface EmbedActivateBoxProps {
+  title: string;
+  description: string;
+  /** Optional second-line description (e.g. selector hint for variant gallery). */
+  extraDescription?: string;
+  url: string;
+  buttonLabel: string;
+  /** Minimum plan needed. Omit when the embed works on every plan. */
+  requiredPlan?: Plan;
+  currentPlan: Plan;
+  /** Optional override of the "Requires the {plan} plan." template. */
+  requiresPlanText?: string;
+}
+
+function EmbedActivateBox({
+  title,
+  description,
+  extraDescription,
+  url,
+  buttonLabel,
+  requiredPlan,
+  currentPlan,
+  requiresPlanText,
+}: EmbedActivateBoxProps) {
+  const allowed = !requiredPlan || meetsPlan(currentPlan, requiredPlan);
+  const planNote =
+    !allowed && requiredPlan
+      ? (requiresPlanText ?? "Requires the {plan} plan.").replace("{plan}", getPlanDisplayName(requiredPlan))
+      : null;
+  return (
+    <Box background="bg-surface-secondary" borderRadius="200" padding="400">
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd" fontWeight="semibold">{title}</Text>
+        <Text as="p" variant="bodySm" tone="subdued">{description}</Text>
+        {extraDescription && (
+          <Text as="p" variant="bodySm" tone="subdued">{extraDescription}</Text>
+        )}
+        {planNote && (
+          <Text as="p" variant="bodySm" tone="caution">{planNote}</Text>
+        )}
+        <div>
+          <Button
+            url={allowed ? url : undefined}
+            external={allowed}
+            disabled={!allowed}
+            variant="primary"
+            size="slim"
+          >
+            {buttonLabel}
+          </Button>
+        </div>
+      </BlockStack>
+    </Box>
   );
 }
