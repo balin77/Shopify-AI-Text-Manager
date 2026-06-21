@@ -102,7 +102,7 @@
 | **Geolocation Auto-Detect** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Glossar/Terminologie** | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **Language/Currency Switcher Widget** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Third-Party-App-Übersetzung** ² | 🟡 | ✅ | ✅ | ✅ | ✅ |
+| **Third-Party-App-Übersetzung** ² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Checkout-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
 
@@ -115,14 +115,19 @@
 > Custom-Rundung wie 9,99). Details + Entscheidung →
 > [ROADMAP.md](ROADMAP.md) §4.3 Localization.
 >
-> ² **Third-Party-App-Übersetzung — Phase 1 ausgeliefert** (🟡 Teil-Lücke
-> geschlossen): Der Metafield-Scanner (Settings → Metafields) entdeckt jetzt
-> alle Produkt-Metafield-Definitionen — auch die von Drittapps (Judge.me,
-> Loox, PageFly …), die `translatableContent` sonst nie zurückgibt. Shop-
-> eigene Definitionen lassen sich per Klick übersetzbar machen und fließen in
-> die Produktübersetzung ein. App-eigene Definitionen sind sichtbar, aber
-> noch nicht aktivierbar (Shopify lehnt den `metafieldDefinitionUpdate`
-> fremder Apps ab) — Mirror-Workaround ist Phase 2.
+> ² **Third-Party-App-Übersetzung — vollständig ausgeliefert** (Direct
+> Translations, Stand 2026-06): Ein Theme-App-Embed liest jeden Textknoten
+> auf der Storefront, schlägt ihn im merchant-gepflegten Item-Wörterbuch
+> nach und ersetzt ihn live für die aktuelle Locale — trifft Labels und
+> Texte von Apps wie Judge.me, Loox, PageFly und allem anderen, das im
+> Parent-DOM rendert. AI-Übersetzung mit Auto-Detect der Quellsprache,
+> Capture-Tool im Theme-Editor zum klick-basierten Hinzufügen, optionaler
+> Auto-Sammler mit Heuristik + `franc`-Sprachfilter + Opt-in für
+> `translate="no"`-Subtrees (für genau diese Apps gemacht). Ergänzend liefert
+> der Metafield-Scanner shop-eigene Definitionen direkt in die
+> Produktübersetzung. Harte Grenze (haben alle Konkurrenten ebenfalls):
+> cross-origin iframes (z. B. Loox-Reviews im Full-Widget-Modus) sind
+> per Browser-Sandbox unerreichbar.
 
 **Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
 
