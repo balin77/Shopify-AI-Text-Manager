@@ -365,6 +365,25 @@ export default function DirectTranslationsPage() {
   // bar's pulse memo (keyed on validationVersion) re-runs even when the
   // translations-array length is unchanged (e.g. edit-in-place).
   const [validationVersion, setValidationVersion] = useState(0);
+  // Per-item × per-locale spinner state for running AI translations.
+  //   itemId → Set of locales OR "*" (the "translate all languages" sentinel).
+  // The pulse-mode TaskCountContext fires us when *any* task completes (count
+  // hits 0); we use that to clear the map. Persisted in React state only —
+  // a page reload loses the spinners, by design.
+  const [pendingAi, setPendingAi] = useState<Map<string, Set<string>>>(new Map());
+  // When the user fires AI on a brand-new item, we don't have its id yet —
+  // remember the scope+locale and transfer the pending entry the moment the
+  // action response brings the new itemId back.
+  const queuedForNewRef = useRef<{ scope: "this" | "all"; locale: string } | null>(null);
+  const addPending = useCallback((itemId: string, scope: "this" | "all", locale: string) => {
+    setPendingAi((prev) => {
+      const next = new Map(prev);
+      const set = new Set(next.get(itemId) || []);
+      set.add(scope === "all" ? "*" : locale);
+      next.set(itemId, set);
+      return next;
+    });
+  }, []);
   // Mirror the three persisted booleans locally so the toggles feel snappy
   // (toggling fires an action; we update the UI immediately and let the
   // revalidator reconcile if it bounces). Synced when the loader reports
@@ -495,9 +514,10 @@ export default function DirectTranslationsPage() {
           subtitle: (tt.subtitleTranslated || "{n}/{m}").replace("{n}", String(n)).replace("{m}", String(m)),
           hasMissingTranslations: hasMissing,
           missingTranslationsTooltip: tooltip,
+          isBusy: pendingAi.has(i.id),
         };
       }),
-    [items, targetLocales, tt.subtitleTranslated, t.common?.missingTranslations, appLocale],
+    [items, targetLocales, tt.subtitleTranslated, t.common?.missingTranslations, appLocale, pendingAi],
   );
 
   // Register items for the mobile navbar's compact selector (the left list is
@@ -546,9 +566,17 @@ export default function DirectTranslationsPage() {
 
   const handleAi = useCallback(
     (scope: "this" | "all") => {
-      submit({ action: "ai", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
+      const itemId = isNew ? "" : selectedId || "";
+      if (itemId) {
+        addPending(itemId, scope, currentLanguage);
+      } else {
+        // No id yet — remember the scope+locale so we can transfer it onto
+        // the new id the moment the action response comes back (below).
+        queuedForNewRef.current = { scope, locale: currentLanguage };
+      }
+      submit({ action: "ai", itemId, sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
     },
-    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
+    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList, addPending],
   );
 
   const handleTransfer = useCallback(
@@ -557,16 +585,6 @@ export default function DirectTranslationsPage() {
     },
     [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
   );
-
-  // Inline button under the translation field: removes ONLY the currently
-  // displayed locale's translation. The item itself + its other languages stay.
-  const handleDeleteTranslation = useCallback(() => {
-    if (isNew || !selectedId || !currentLanguage) {
-      handleDiscard();
-      return;
-    }
-    submit({ action: "deleteTranslation", itemId: selectedId, locale: currentLanguage });
-  }, [isNew, selectedId, currentLanguage, submit, handleDiscard]);
 
   // Sidebar trash button: removes the WHOLE item (all locales). Used by the
   // shared UnifiedItemList; only enabled when an item is selected.
@@ -616,19 +634,29 @@ export default function DirectTranslationsPage() {
       // save / ai / transfer — adopt the (possibly newly created) item id.
       setSelectedId(fetcher.data.itemId);
       setIsNew(false);
+      // If the user fired AI on a brand-new item, transfer the queued
+      // pending entry onto the now-known id so the spinner appears.
+      if (at === "ai" && queuedForNewRef.current) {
+        const q = queuedForNewRef.current;
+        addPending(fetcher.data.itemId, q.scope, q.locale);
+        queuedForNewRef.current = null;
+      }
     }
     // Candidate mutations already committed server-side → refresh the modal list.
     if ((at === "addCandidates" || at === "rejectCandidates" || at === "clearCandidates") && candidatesOpen) reloadCandidates();
     revalidator.revalidate();
-  }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates, t]);
+  }, [fetcher.data, revalidator, showInfoBox, candidatesOpen, reloadCandidates, t, addPending]);
 
   // Background AI tasks: when the running-task count drops to zero, pull fresh
-  // data (and refresh the candidate modal) so completed translations show up.
+  // data (and refresh the candidate modal) so completed translations show up,
+  // and clear the spinner-tracking map.
   const prevRunning = useRef(runningTaskCount);
   useEffect(() => {
     if (prevRunning.current > 0 && runningTaskCount === 0) {
       revalidator.revalidate();
       if (candidatesOpen) reloadCandidates();
+      setPendingAi(new Map());
+      queuedForNewRef.current = null;
     }
     prevRunning.current = runningTaskCount;
   }, [runningTaskCount, revalidator, candidatesOpen, reloadCandidates]);
@@ -650,6 +678,13 @@ export default function DirectTranslationsPage() {
   }, [error, showInfoBox]);
 
   const langName = (loc: string) => getLocalizedLanguageName(loc, appLocale, targetLocales.find((l) => l.locale === loc)?.name);
+
+  // Per-button spinner state for the currently selected item. "*" is the
+  // sentinel for "translate all languages" — when it's pending, BOTH buttons
+  // spin (because "this" is included in "all").
+  const selectedPending = selectedId ? pendingAi.get(selectedId) : undefined;
+  const translateAllLoading = !!selectedPending?.has("*");
+  const translateThisLoading = translateAllLoading || (!!currentLanguage && !!selectedPending?.has(currentLanguage));
 
   // Locales for the shared UnifiedLanguageBar (it sorts internally).
   // `targetLocales` now includes the primary, so we just map and mark it.
@@ -846,13 +881,25 @@ export default function DirectTranslationsPage() {
                     {/* 4 action buttons — same iconography as Products
                         (🌍 translate, 📋 transfer). The "in alle Sprachen"
                         variants are variant=primary (dark) so the merchant
-                        can tell them apart from the single-language ones. */}
+                        can tell them apart from the single-language ones.
+                        Spinner+disable: translateAllLoading covers everything
+                        kicked off by "all"; translateThisLoading also fires
+                        when "all" is running (this locale is part of "all"). */}
                     <InlineStack gap="200" wrap>
                       <ButtonGroup>
-                        <Button variant="primary" disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("all")}>
+                        <Button
+                          variant="primary"
+                          loading={translateAllLoading}
+                          disabled={!hasTargets || !draftSource.trim() || isBusy || translateAllLoading}
+                          onClick={() => handleAi("all")}
+                        >
                           {`🌍 ${tt.translateAllLangs}`}
                         </Button>
-                        <Button disabled={!hasTargets || !draftSource.trim() || isBusy} onClick={() => handleAi("this")}>
+                        <Button
+                          loading={translateThisLoading}
+                          disabled={!hasTargets || !draftSource.trim() || isBusy || translateThisLoading}
+                          onClick={() => handleAi("this")}
+                        >
                           {`🌍 ${tt.translateThisLang}`}
                         </Button>
                       </ButtonGroup>
@@ -888,7 +935,7 @@ export default function DirectTranslationsPage() {
 
                     <InlineStack align="end">
                       {!isNew && (
-                        <Button tone="critical" variant="plain" onClick={handleDeleteTranslation} disabled={isBusy || !draftTarget}>
+                        <Button tone="critical" variant="plain" onClick={() => setDraftTarget("")} disabled={isBusy || !draftTarget}>
                           {t.common?.clear || "Clear"}
                         </Button>
                       )}

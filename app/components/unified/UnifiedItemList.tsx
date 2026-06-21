@@ -28,6 +28,7 @@ import {
   Popover,
   ActionList,
   Tooltip,
+  Spinner,
 } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
@@ -659,8 +660,15 @@ export function UnifiedItemList({
                       <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                         {itemRenderer(item, isSelected, isHovered)}
                       </div>
-                      {(item.hasMissingPrimary || item.hasMissingTranslations) && (
+                      {(item.isBusy || item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
+                          {item.isBusy && (
+                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut zIndexOverride={1200}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }}>
+                                <Spinner size="small" />
+                              </div>
+                            </Tooltip>
+                          )}
                           {item.hasMissingPrimary && (
                             <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
                               <div
