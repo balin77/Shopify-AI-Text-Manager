@@ -1,6 +1,22 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
+import { canAccessVariantImageManagerInEnv, isProductionLocked, type Plan } from "../utils/planUtils";
+
+/**
+ * Plan gate: the SKU / option-value memory powers the Pro+ SKU & key generator
+ * (variantImageManager flag). Loader can return the empty map for any plan, but
+ * the action must refuse writes from Free/Basic so a direct POST can't seed
+ * data that would be hidden from the merchant's own UI.
+ */
+async function canMutate(shop: string): Promise<boolean> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  return canAccessVariantImageManagerInEnv(plan, !isProductionLocked());
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -31,6 +47,9 @@ type Body = UpdateBody | DeleteBody;
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+  if (!(await canMutate(shop))) {
+    return json({ ok: false, error: "SKU generator requires the Pro plan" }, { status: 403 });
+  }
   const body = (await request.json()) as Body;
 
   if (body.intent === "delete") {

@@ -79,6 +79,13 @@ export const loader = createContentLoader({
 
   async loadData(ctx: LoaderContext) {
     const dt = await import("../services/direct-translation.server");
+    // Fail-closed plan gate: PlanAccessGate only hides the UI, so without this
+    // check the loader would still ship a non-Max merchant's direct-translation
+    // items to the client. Return an empty list — the gate then renders the
+    // upgrade message instead.
+    if (!(await dt.isDirectTranslationsAvailable(ctx.db, ctx.session.shop))) {
+      return { items: [], ids: [] };
+    }
     const rows = await dt.listItems(ctx.db, ctx.session.shop);
     const items = rows.map((r) => ({
       id: r.id,
@@ -130,6 +137,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const { db } = await import("../db.server");
   const dt = await import("../services/direct-translation.server");
   const { runAiTask, resolvePrimaryAndTargets } = await import("../services/direct-translation-ai.server");
+
+  // Server-side plan gate: PlanAccessGate is render-only — without this a
+  // non-Max merchant could POST directly to this action and create items,
+  // burning DB rows and BYO AI tokens. Loader has the matching check.
+  if (!(await dt.isDirectTranslationsAvailable(db, session.shop))) {
+    return json({ success: false, error: "Direct translations require the Max plan", actionType }, { status: 403 });
+  }
 
   // Resolve published, non-primary target locales + the primary (source) locale.
   const resolveLocales = () => resolvePrimaryAndTargets(admin);

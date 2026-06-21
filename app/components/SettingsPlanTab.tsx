@@ -248,7 +248,15 @@ export function SettingsPlanTab({
                       {planDetails.monthlyImageOperations > 0 && (
                         <Text as="p" variant="bodyMd">
                           <strong>{t.settings.monthlyImageOperations}:</strong>{" "}
-                          {formatNumber(planDetails.monthlyImageOperations, locale)}
+                          {/* Mirror the webpConversion treatment: bold the
+                              value on the highest tier (Max = 10k, Pro = 2k)
+                              so the Pro→Max image-quota jump is scannable in
+                              the same way concurrency already is. */}
+                          {planDetails.monthlyImageOperations >= 5000 ? (
+                            <strong>{formatNumber(planDetails.monthlyImageOperations, locale)}</strong>
+                          ) : (
+                            formatNumber(planDetails.monthlyImageOperations, locale)
+                          )}
                         </Text>
                       )}
                       <Text as="p" variant="bodyMd">
@@ -308,11 +316,24 @@ export function SettingsPlanTab({
                             </Text>
                           ))
                         ) : (
-                          // Free + Basic: Shopify's native product gallery only;
-                          // tell the merchant explicitly so the gap to Pro+ is clear.
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {t.settings.featureNativeGalleryOnly ?? "Native Shopify product gallery only."}
-                          </Text>
+                          // Free + Basic differ in what they actually offer for
+                          // images: Free shows only the featured image, Basic
+                          // shows ALL product images and lets the merchant
+                          // generate alt text via AI. The shared "native gallery
+                          // only" copy that used to live here was wrong on both
+                          // counts (it's the app's own simple gallery, and Basic
+                          // does more than Free) — see plans.ts `productImages`.
+                          <>
+                            <Text as="p" variant="bodySm" tone="success">
+                              ✓{" "}
+                              {planDetails.productImages === "all"
+                                ? t.settings.featureBasicImages
+                                : t.settings.featureFreeImages}
+                            </Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.settings.featureImagesProNote}
+                            </Text>
+                          </>
                         )}
                       </BlockStack>
                     </BlockStack>

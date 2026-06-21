@@ -302,7 +302,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -882,7 +882,12 @@ export default function ProductsPage() {
           fetcherFormData={fetcher.formData}
           t={t}
           planLimit={{
-            isAtLimit: products.length >= maxProducts && maxProducts !== Infinity,
+            // Use the TRUE catalog count from extraData, not products.length —
+            // the latter is capped to min(maxProducts, HARD_CAP=2000) by the
+            // loader, so on Max (maxProducts=2500) products.length tops out at
+            // 2000 and the "at limit" banner would never fire even when the
+            // merchant is genuinely over quota.
+            isAtLimit: productCount >= maxProducts && maxProducts !== Infinity,
             maxItems: maxProducts,
             currentPlan: getPlanDisplayName(plan),
             nextPlan: (() => { const n = getNextPlanUpgrade(); return n ? getPlanDisplayName(n) : undefined; })(),

@@ -388,8 +388,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const imageManagerSettings = await db.imageManagerSettings.findUnique({
       where: { shopId: session.shop },
     }) ?? { enabled: true, firstImageBig: false, showAltTags: false, autoAltText: false };
-    const showImageManagerTab = true;
-    const showSkuTab = true;
+    // Image-Manager + SKU tabs configure features that only Pro/Max can use
+    // (variantImageManager flag + SKU/key generator listed under Pro+ features).
+    // Showing the tabs on Free/Basic let merchants flip toggles that had no
+    // effect on their plan — misleading. Gate them on the same flag as the
+    // VariantImageManager itself so UI and capability stay in lockstep.
+    // The Translations tab (merchant-curated productType mappings) stays open
+    // to every plan because it works without the image-manager surface.
+    const { canAccessVariantImageManagerInEnv, isProductionLocked } = await import("../utils/planUtils");
+    const newFeaturesEnabled = !isProductionLocked();
+    const showImageManagerTab = canAccessVariantImageManagerInEnv(
+      subscriptionPlan as Plan,
+      newFeaturesEnabled,
+    );
+    const showSkuTab = canAccessVariantImageManagerInEnv(
+      subscriptionPlan as Plan,
+      newFeaturesEnabled,
+    );
     const showTranslationsTab = true;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
