@@ -40,9 +40,23 @@ const PROBE_RESOURCE_TYPES = [
   "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
 ] as const;
 
-// Substrings flagged as cookie-banner candidates — surface them in a dedicated
-// section of the report so they don't get lost in a multi-thousand-key dump.
-const COOKIE_HINTS = ["cookie", "consent", "privacy_banner", "gdpr", "tracking"];
+// Substrings flagged as cookie-banner candidates. Key-only matching (values
+// are noisy — "consent" matches subscription-buyer-consent, "tracking" matches
+// order-tracking, etc.). The first hunt confirmed the cookie-preferences
+// LINKS live in ONLINE_STORE_THEME_LOCALE_CONTENT; this widened set is meant
+// to surface the actual banner CONTENT, which we expect under shopify.consent.*
+// or shopify.cookie_banner.* (the 2590 shopify.* keys are too deep for the
+// per-prefix sample limit to show).
+const COOKIE_KEY_HINTS = [
+  "cookie",            // shopify.checkout.shop_policies.cookie_preferences
+  "consent_banner",    // possible Shopify namespace
+  "cookie_banner",
+  "privacy_banner",    // customer_accounts.privacy_banner.*
+  "consent_dialog",
+  "gdpr_compliance",
+  "shopify.consent",   // exact prefix match — most likely landing zone
+];
+const COOKIE_HUNT_LIMIT = 200;
 
 interface KeyStats {
   prefix: string;
@@ -223,12 +237,13 @@ export async function action({ request }: ActionFunctionArgs) {
       } else {
         for (const edge of data.data?.translatableResources?.edges ?? []) {
           summarize(edge.node, r);
-          // Scan for cookie-banner-related keys/values; T&A exposes them under
-          // a known rubric but the source resource type is undocumented.
+          // Scan for cookie-banner-related keys. Key-only matching (values
+          // produce too many false positives: order-tracking, email-tracking,
+          // subscription buyer-consent, etc.).
           for (const item of edge.node.translatableContent ?? []) {
-            const haystack = `${item.key} ${item.value ?? ""}`.toLowerCase();
-            if (COOKIE_HINTS.some((h) => haystack.includes(h))) {
-              if (report.cookieHints.length < 50) {
+            const keyLower = item.key.toLowerCase();
+            if (COOKIE_KEY_HINTS.some((h) => keyLower.includes(h))) {
+              if (report.cookieHints.length < COOKIE_HUNT_LIMIT) {
                 report.cookieHints.push({
                   resourceType,
                   resourceId: edge.node.resourceId,

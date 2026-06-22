@@ -114,7 +114,7 @@ function formatMarkdown(report: ProbeReport): string {
   lines.push(``);
   const hints = report.cookieHints ?? [];
   if (hints.length === 0) {
-    lines.push(`No keys or values containing cookie/consent/privacy_banner/gdpr/tracking found across the probed resource types. Cookie-Banner source remains unknown — likely lives in a resource type not currently in the probe list, or only appears after a different trigger than the merchant override we tested.`);
+    lines.push(`No keys matching cookie/consent_banner/cookie_banner/privacy_banner/consent_dialog/gdpr_compliance/shopify.consent found across the probed resource types. The cookie-banner content lives elsewhere — likely a non-public resource type, or it surfaces only under specific shop conditions (Customer Privacy region selection, banner customized via Language Editor, etc.).`);
   } else {
     lines.push(`Found ${hints.length} candidate entries:`);
     lines.push(``);
