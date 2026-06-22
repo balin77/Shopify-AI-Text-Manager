@@ -18,7 +18,16 @@ import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-r
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 
+// Probe target list. Includes resource types we already cover, so we can find
+// where Shopify hides things like Cookie-Banner (which T&A exposes but our
+// initial probe couldn't locate). The "already covered" types are listed near
+// the top so any cookie-related keys surface quickly in the report.
 const PROBE_RESOURCE_TYPES = [
+  // Hunt for Cookie-Banner — most likely candidates first
+  "SHOP_POLICY",
+  "ONLINE_STORE_THEME_LOCALE_CONTENT",
+  "ONLINE_STORE_THEME",
+  // Originally-planned new types
   "SHOP",
   "EMAIL_TEMPLATE",
   "PACKING_SLIP_TEMPLATE",
@@ -30,6 +39,10 @@ const PROBE_RESOURCE_TYPES = [
   "ONLINE_STORE_THEME_APP_EMBED",
   "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
 ] as const;
+
+// Substrings flagged as cookie-banner candidates — surface them in a dedicated
+// section of the report so they don't get lost in a multi-thousand-key dump.
+const COOKIE_HINTS = ["cookie", "consent", "privacy_banner", "gdpr", "tracking"];
 
 interface KeyStats {
   prefix: string;
@@ -60,6 +73,14 @@ interface WriteTestReport {
   note?: string;
 }
 
+interface CookieHintHit {
+  resourceType: string;
+  resourceId: string;
+  key: string;
+  value: string | null;
+  locale: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -67,6 +88,7 @@ interface ProbeReport {
   enabledLocales: string[];
   apiVersion: string;
   resources: ResourceReport[];
+  cookieHints: CookieHintHit[];
   writeTest: WriteTestReport;
 }
 
@@ -178,6 +200,7 @@ export async function action({ request }: ActionFunctionArgs) {
     enabledLocales,
     apiVersion: process.env.SHOPIFY_API_VERSION || "2025-10",
     resources: [],
+    cookieHints: [],
     writeTest: { attempted: false },
   };
 
@@ -200,6 +223,22 @@ export async function action({ request }: ActionFunctionArgs) {
       } else {
         for (const edge of data.data?.translatableResources?.edges ?? []) {
           summarize(edge.node, r);
+          // Scan for cookie-banner-related keys/values; T&A exposes them under
+          // a known rubric but the source resource type is undocumented.
+          for (const item of edge.node.translatableContent ?? []) {
+            const haystack = `${item.key} ${item.value ?? ""}`.toLowerCase();
+            if (COOKIE_HINTS.some((h) => haystack.includes(h))) {
+              if (report.cookieHints.length < 50) {
+                report.cookieHints.push({
+                  resourceType,
+                  resourceId: edge.node.resourceId,
+                  key: item.key,
+                  value: item.value ? item.value.slice(0, 200) : null,
+                  locale: item.locale,
+                });
+              }
+            }
+          }
         }
         r.keysByPrefix.sort((a, b) => b.count - a.count);
       }

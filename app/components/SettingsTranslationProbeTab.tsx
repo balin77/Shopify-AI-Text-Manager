@@ -43,6 +43,14 @@ interface WriteTestReport {
   note?: string;
 }
 
+interface CookieHintHit {
+  resourceType: string;
+  resourceId: string;
+  key: string;
+  value: string | null;
+  locale: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -50,6 +58,7 @@ interface ProbeReport {
   enabledLocales: string[];
   apiVersion: string;
   resources: ResourceReport[];
+  cookieHints?: CookieHintHit[];
   writeTest: WriteTestReport;
 }
 
@@ -100,6 +109,23 @@ function formatMarkdown(report: ProbeReport): string {
     }
     lines.push(``);
   }
+
+  lines.push(`## Cookie-banner hunt`);
+  lines.push(``);
+  const hints = report.cookieHints ?? [];
+  if (hints.length === 0) {
+    lines.push(`No keys or values containing cookie/consent/privacy_banner/gdpr/tracking found across the probed resource types. Cookie-Banner source remains unknown — likely lives in a resource type not currently in the probe list, or only appears after a different trigger than the merchant override we tested.`);
+  } else {
+    lines.push(`Found ${hints.length} candidate entries:`);
+    lines.push(``);
+    lines.push(`| Resource | Key | Value (truncated) |`);
+    lines.push(`|---|---|---|`);
+    for (const h of hints) {
+      const v = h.value === null ? "(null)" : `"${h.value.replace(/\n/g, " ⏎ ").replace(/\|/g, "\\|")}"`;
+      lines.push(`| \`${h.resourceType}\` | \`${h.key}\` | ${v} |`);
+    }
+  }
+  lines.push(``);
 
   lines.push(`## Write test (SHOP override probe)`);
   lines.push(``);
