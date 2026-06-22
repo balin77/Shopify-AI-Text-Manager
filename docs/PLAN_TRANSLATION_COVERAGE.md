@@ -71,7 +71,11 @@ For these languages the merchant gets either English fallback or the language-ed
 
 ## 6. Coverage audit — every translatable resource type
 
-Authoritative list from [TranslatableResourceType enum](https://shopify.dev/docs/api/admin-graphql/latest/enums/TranslatableResourceType) (30 values, verified 2026-06):
+Authoritative list from [TranslatableResourceType enum](https://shopify.dev/docs/api/admin-graphql/latest/enums/TranslatableResourceType) (30 values, verified 2026-06).
+
+**Key insight from Phase 0 probe + T&A nav inspection (2026-06-22):** T&A's *"Theme-Standardinhalte"* is **not** a separate resource — it is `ONLINE_STORE_THEME_LOCALE_CONTENT` re-grouped by the locale file's top-level prefix (`accessibility.*`, `accounts.*`, `announcement_bar.*`, `blogs.*`, **`checkout.*`**, `general.*`, `gift_cards.*`, `localization.*`, `newsletter.*`, `onboarding.*`, `products.*`, `recipient.*`, `sections.*`, `templates.*`). The "Checkout and system" group inside it contains **theme-side** checkout-adjacent strings (e.g. "Return to cart"), **not** the server-rendered Shopify checkout page (which lives in the un-overridable 33-language built-in pack — see §1–3).
+
+Probe also confirmed: `SHOP` exposes only `meta_title`/`meta_description` on this shop. The original plan's assumption that `SHOP` contained `checkout.*`/`notifications.*` keys was wrong.
 
 | Resource-Type | T&A | ContentPilot today | Target rubric | Notes |
 |---|---|---|---|---|
@@ -85,31 +89,30 @@ Authoritative list from [TranslatableResourceType enum](https://shopify.dev/docs
 | `PRODUCT` | ✅ | ✅ | Katalog | covered |
 | `PRODUCT_OPTION` | ✅ | ✅ | Katalog | covered |
 | `PRODUCT_OPTION_VALUE` | ✅ | ✅ | Katalog | covered |
-| `METAFIELD` | ✅ | ✅ | Katalog / Online Store | covered |
-| `METAOBJECT` | ✅ | ✅ | Katalog | covered |
+| `METAFIELD` | ✅ | ✅ | Online Store / Katalog | covered |
+| `METAOBJECT` | ✅ | ✅ | Online Store | covered (T&A places this under Onlineshop) |
 | `SHOP_POLICY` | ✅ | ✅ | Online Store | covered |
 | `MENU` | ✅ | ⚠️ | Online Store | Shopify API limitation, hint shown in UI [de.ts:219](../app/i18n/de.ts#L219) |
 | `LINK` | ✅ | ⚠️ | Online Store | same limitation as MENU |
-| `ONLINE_STORE_THEME` | ✅ | ✅ | Theme-Inhalte | covered |
-| `ONLINE_STORE_THEME_JSON_TEMPLATE` | ✅ | ✅ | Theme-Inhalte | covered |
-| `ONLINE_STORE_THEME_LOCALE_CONTENT` | ✅ | ✅ | Theme-Inhalte | covered |
-| `ONLINE_STORE_THEME_SECTION_GROUP` | ✅ | ✅ | Theme-Inhalte | covered |
-| `ONLINE_STORE_THEME_SETTINGS_CATEGORY` | ✅ | ✅ | Theme-Inhalte | covered |
-| **`ONLINE_STORE_THEME_APP_EMBED`** | ✅ | ❌ | Theme-Inhalte | **NEW** — app embed config text (previously excluded after empty test result) |
-| **`ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS`** | ✅ | ❌ | Theme-Inhalte | **NEW** — shared section content (previously excluded after empty test result) |
-| **`SHOP`** (`checkout.*`, `notifications.*`) | ✅ | ❌ | Theme-Standardinhalte | **NEW** — Checkout & System |
-| **`SHOP`** (`shop.name`, `shop.description`) | ✅ | ❌ | Online Store | **NEW** — exposed as "Shop-Metadaten" entry |
-| **`EMAIL_TEMPLATE`** | ✅ | ❌ | Theme-Standardinhalte | **NEW** |
-| **`PACKING_SLIP_TEMPLATE`** | ✅ | ❌ | Theme-Standardinhalte | **NEW** |
-| **`PAYMENT_GATEWAY`** | ✅ | ❌ | Theme-Standardinhalte | **NEW** |
-| **`DELIVERY_METHOD_DEFINITION`** | ✅ | ❌ | Theme-Standardinhalte | **NEW** |
-| **`FILTER`** | ✅ | ❌ | Theme-Standardinhalte | **NEW** |
-| **`SELLING_PLAN`** | ✅ | ❌ | Katalog | **NEW** — subscription plan names/descriptions |
-| **`SELLING_PLAN_GROUP`** | ✅ | ❌ | Katalog | **NEW** — subscription group names/descriptions |
+| `ONLINE_STORE_THEME` | ✅ | ✅ | Theme | covered |
+| `ONLINE_STORE_THEME_JSON_TEMPLATE` | ✅ | ✅ | Theme | covered — this is T&A's "Vorlagen" |
+| `ONLINE_STORE_THEME_LOCALE_CONTENT` | ✅ | 🟡 | Theme | **data already pulled** — needs better grouping by top-level prefix; this is T&A's "Theme-Standardinhalte" |
+| `ONLINE_STORE_THEME_SECTION_GROUP` | ✅ | ✅ | Theme | covered — T&A's "Abschnittsgruppen" |
+| `ONLINE_STORE_THEME_SETTINGS_CATEGORY` | ✅ | ✅ | Theme | covered — T&A's "Theme-Einstellungen" |
+| `ONLINE_STORE_THEME_APP_EMBED` | ✅ | 🟡 | Theme | data pulled (6 keys on probe), but mostly CSS selectors — display conditionally |
+| `ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS` | ✅ | 🟡 | Theme | empty on probe shop, T&A still exposes — display conditionally |
+| `SHOP` (`shop.meta_title`, `shop.meta_description`) | ✅ | ❌ | Online Store | **NEW** — Shop-Metadaten; probe-confirmed shape |
+| **`EMAIL_TEMPLATE`** | ✅ | ❌ | System | **NEW (BIG)** — 50 templates × `title`+`body_html` = 100 keys on probe shop |
+| **`DELIVERY_METHOD_DEFINITION`** | ✅ | ❌ | System | **NEW** — shipping method names; key=`name` |
+| **`FILTER`** | ✅ | ❌ | Online Store | **NEW** — storefront filter labels; key=`label` |
+| `PACKING_SLIP_TEMPLATE` | ❌ | ❌ | (skip) | T&A doesn't expose; B2B-niche; defer |
+| `PAYMENT_GATEWAY` | ❌ | ❌ | System (conditional) | T&A doesn't expose; show only if shop has manual gateways |
+| `SELLING_PLAN` / `SELLING_PLAN_GROUP` | ❌ | ❌ | Katalog (conditional) | T&A doesn't expose; show only if shop has subscriptions |
+| Cookie Banner | ✅ | ❌ | Online Store | **UNKNOWN source** — has 33 built-in translations like checkout; resource-type not yet identified, see §0.5 spike |
 
-Note: **`SMS_TEMPLATE` is NOT a member** of the enum, despite earlier internal docs ([docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md](SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md) lists it erroneously — Shopify SMS notifications don't use translatable templates). It is removed from this plan.
+Note: **`SMS_TEMPLATE` is NOT a member** of the enum, despite earlier internal docs ([docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md](SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md) lists it erroneously — Shopify SMS notifications don't use translatable templates). Removed from this plan.
 
-After this plan ships, **only `MENU`/`LINK` remain as partial-coverage items**, and that's a Shopify API limitation we can't fix.
+Coverage gap after this plan: only `MENU`/`LINK` (Shopify API limitation) and possibly Cookie-Banner (pending §0.5 spike). T&A doesn't cover `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`, `SELLING_PLAN*` either — these are optional T&A-plus features we can selectively beat them on.
 
 ## 7. Current state in ContentPilot (snapshot)
 
@@ -120,8 +123,16 @@ What we already do:
 - UI: [app/components/ThemeContentViewer.tsx](../app/components/ThemeContentViewer.tsx) inside `UnifiedContentEditor`, per-key AI translate, group-level translate-all
 - Write-back: `translationsRegister` via the `app/actions/templates/*` action handlers
 - Route: [/app/templates](../app/routes/app.templates.tsx); nav label "Vorlagen" inconsistent with second i18n key "Theme-Texte"
+- Key-pattern grouping in [content.service.ts:715](../app/services/content.service.ts#L715) `KEY_PATTERNS` recognises `section.article.*`, `section.collection.*`, `section.product.*`, `section.page.*`, `section.index.*`, `section.password.*`, `collections.json.*`, `group.json.*`, `bar.*` — unmatched content falls into `misc_<prefix>` groups with generic labels (this is where T&A's "Theme-Standardinhalte" content currently hides on our side)
 
-What we don't do: everything marked **NEW** in §6 above.
+Real gap (vs. what was assumed in earlier plan revisions):
+- 🟡 **`LOCALE_CONTENT` grouping** is weak — the data is in our DB but presentation doesn't match T&A. Fix is UX-only, no new GraphQL.
+- 🟡 **`APP_EMBED` + `SETTINGS_DATA_SECTIONS`** — we excluded them historically. Pulling them is cheap; conditional display.
+- ❌ **`EMAIL_TEMPLATE`** — 50 templates, biggest single-resource value-add.
+- ❌ **`SHOP`-as-SEO** (`meta_title`/`meta_description` only) — tiny but high-value.
+- ❌ **`DELIVERY_METHOD_DEFINITION`** — small.
+- ❌ **`FILTER`** — small.
+- ❓ **Cookie-Banner** — source unknown, mini-spike in §0.5 below.
 
 ## 8. Information architecture
 
@@ -129,8 +140,9 @@ What we don't do: everything marked **NEW** in §6 above.
 
 - Top-level rubric: **"Inhalte"** (DE) / **"Content"** (EN) — broader than "Übersetzungen" because we also do AI text generation
 - Future sibling rubric: **"SEO"**
-- Rename current `templates` nav entry: **"Vorlagen" → "Theme-Inhalte"** (frees the "Vorlagen" term for the actual alt-text-templates feature, and aligns with the existing second i18n key)
-- New section: **"Theme-Standardinhalte"** (matches Translate & Adapt's label)
+- Five sub-rubrics under "Inhalte", aligned with T&A's actual five top-level groups (Produkte, Onlineshop, Inhalt-Menü, Theme, Einstellungen) but folded under our "Inhalte" parent for the SEO sibling: **Katalog / Online Store / Theme / System / Direkte Übersetzungen**
+- T&A-aligned vocabulary inside Theme: **"Theme-Standardinhalte"** = `LOCALE_CONTENT` grouped, **"Vorlagen"** = `JSON_TEMPLATE` (NOT our generic top-nav label anymore — frees that term)
+- Top-nav `templates` route stays but is reframed: it IS the Theme rubric umbrella, gets a better label/sub-nav rather than being a single flat "Vorlagen" entry
 
 ### Three horizontal nav levels
 
@@ -140,58 +152,82 @@ LEVEL 1 — Main Navigation
 
 LEVEL 2 — Rubric bar (NEW, depends on Level 1)
    under "Inhalte":
-   [ 📦 Katalog ] [ 🌐 Online Store ] [ 🎨 Theme-Inhalte ] [ 🏛️ Theme-Standardinhalte ] [ 🌐 Direkte Übersetzungen ]
+   [ 📦 Katalog ] [ 🌐 Online Store ] [ 🎨 Theme ] [ ⚙️ System ] [ 🌐 Direkte Übersetzungen ]
 
 LEVEL 3 — Content-type bar (= existing ContentTypeNavigation, depends on Level 2)
-   under "Theme-Standardinhalte":
-   [🛒 Checkout & System] [✉️ E-Mails] [📦 Lieferschein]
-   [🚚 Versandmethoden] [💳 Zahlung] [🔍 Filter]
+   under "Theme":
+   [📄 Theme-Standardinhalte] [📋 Vorlagen] [🧩 Abschnittsgruppen]
+   [🔌 App-Einbettungen] [⚙️ Theme-Einstellungen] [🗂️ Statische Abschnitte]
+
+   under "System":
+   [✉️ Benachrichtigungen] [🚚 Versand & Zustellung]
+   [💳 Zahlung (cond.)] [📦 Lieferschein (cond.)] [🔁 Abo-Pläne (cond.)]
 ```
 
+"(cond.)" = entry hidden when the resource is empty for the shop (no manual gateways / no subscriptions / etc.).
+
 ### Full target hierarchy
+
+Mirrors T&A's five top-level rubrics, folded under our "Inhalte" parent:
 
 ```
 📚 INHALTE
 │
-├─ 📦 Katalog
-│   ├─ 🛍️ Produkte ............. PRODUCT, PRODUCT_OPTION, PRODUCT_OPTION_VALUE,
-│   │                              MEDIA_IMAGE
-│   ├─ 📂 Kollektionen ......... COLLECTION, COLLECTION_IMAGE
-│   ├─ 🔷 Metaobjekte .......... METAOBJECT, METAFIELD
-│   └─ 🔁 Abo-Pläne (NEW) ...... SELLING_PLAN, SELLING_PLAN_GROUP
+├─ 📦 Katalog                  (T&A "Produkte")
+│   ├─ 🛍️ Produkte ........... PRODUCT, PRODUCT_OPTION, PRODUCT_OPTION_VALUE,
+│   │                            MEDIA_IMAGE
+│   ├─ 📂 Kollektionen ....... COLLECTION, COLLECTION_IMAGE
+│   └─ 🔁 Abo-Pläne (cond.) .. SELLING_PLAN, SELLING_PLAN_GROUP
+│                              (hidden if no subscriptions)
 │
-├─ 🌐 Online Store
-│   ├─ 📄 Seiten ............... PAGE
-│   ├─ 📝 Blogs ................ BLOG, ARTICLE, ARTICLE_IMAGE
-│   ├─ 🍔 Menüs ................ MENU, LINK (API-limited)
-│   ├─ 📋 Richtlinien .......... SHOP_POLICY
-│   └─ 🏪 Shop-Metadaten (NEW) . SHOP (shop.name, shop.description only)
+├─ 🌐 Online Store             (T&A "Onlineshop" + "Inhalt-Menü")
+│   ├─ 📄 Seiten ............. PAGE
+│   ├─ 📝 Blog-Beiträge ...... ARTICLE, ARTICLE_IMAGE
+│   ├─ 📚 Blogs .............. BLOG
+│   ├─ 🍔 Menüs .............. MENU, LINK (API-limited)
+│   ├─ 📋 Richtlinien ........ SHOP_POLICY
+│   ├─ 🔷 Metaobjekte ........ METAOBJECT, METAFIELD
+│   ├─ 🔍 Filter (NEW) ....... FILTER
+│   ├─ 🏪 Shop-Metadaten (NEW) SHOP (meta_title, meta_description only)
+│   └─ 🍪 Cookie-Banner (NEW?) (source TBD — see §0.5 spike)
 │
-├─ 🎨 Theme-Inhalte                  ← was "Vorlagen"
-│   ├─ 📝 Article ┐
-│   ├─ 📂 Collection │
-│   ├─ 🏠 Index Page │  all 7 ONLINE_STORE_THEME_* types now:
-│   ├─ 🛍️ Product   │   ONLINE_STORE_THEME, _JSON_TEMPLATE,
-│   ├─ 📄 Pages      │   _LOCALE_CONTENT, _SECTION_GROUP,
-│   ├─ 📋 Coll. Tmpl │   _SETTINGS_CATEGORY,
-│   ├─ 🎨 Groups     │   _APP_EMBED (NEW), _SETTINGS_DATA_SECTIONS (NEW)
-│   ├─ 📢 Bars      │
-│   ├─ 🔒 Password  │
-│   └─ ⚙️ Settings  ┘
+├─ 🎨 Theme                    (T&A "Theme" — all 7 ONLINE_STORE_THEME_* types)
+│   ├─ 📄 Theme-Standardinhalte ONLINE_STORE_THEME_LOCALE_CONTENT
+│   │                            grouped by top-level prefix:
+│   │                            Accessibility, Accounts, Announcement bar,
+│   │                            Blogs, Checkout & system, General, Gift cards,
+│   │                            Localization, Newsletter, Onboarding,
+│   │                            Products, Recipient, Sections, Templates
+│   ├─ 📋 Vorlagen ........... ONLINE_STORE_THEME_JSON_TEMPLATE
+│   │                            grouped: 404, Article, Blog, Index, Index Sections,
+│   │                            List Collections, Page: <name>, Password, Product,
+│   │                            Product: <custom-name>
+│   ├─ 🧩 Abschnittsgruppen .. ONLINE_STORE_THEME_SECTION_GROUP
+│   ├─ 🗂️ Statische Abschnitte ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS
+│   │                            (display only if non-empty)
+│   ├─ 🔌 App-Einbettungen ... ONLINE_STORE_THEME_APP_EMBED
+│   │                            (display only if any keys look user-facing,
+│   │                             not just CSS selectors — see §0.5)
+│   └─ ⚙️ Theme-Einstellungen . ONLINE_STORE_THEME_SETTINGS_CATEGORY
 │
-├─ 🏛️ Theme-Standardinhalte (NEW)
-│   ├─ 🛒 Checkout & System .... SHOP (filtered to checkout.*, notifications.*)
-│   ├─ ✉️ E-Mails .............. EMAIL_TEMPLATE
-│   ├─ 📦 Lieferschein ......... PACKING_SLIP_TEMPLATE
-│   ├─ 🚚 Versandmethoden ...... DELIVERY_METHOD_DEFINITION
-│   ├─ 💳 Zahlungsanbieter ..... PAYMENT_GATEWAY
-│   └─ 🔍 Filter ............... FILTER
+├─ ⚙️ System                   (T&A "Einstellungen")
+│   ├─ ✉️ Benachrichtigungen . EMAIL_TEMPLATE (50 templates, the big win)
+│   ├─ 🚚 Versand & Zustellung DELIVERY_METHOD_DEFINITION
+│   ├─ 💳 Zahlung (cond.) .... PAYMENT_GATEWAY (hidden if empty)
+│   └─ 📦 Lieferschein (cond.) PACKING_SLIP_TEMPLATE (hidden if empty)
 │
-└─ 🌐 Direkte Übersetzungen .... existing /app/direct-translations tool
+└─ 🌐 Direkte Übersetzungen .. existing /app/direct-translations tool
 
 🔍 SEO (future)
 ⚙️ EINSTELLUNGEN (unchanged)
 ```
+
+Key differences vs. earlier revisions of this plan:
+- **"Theme-Standardinhalte" is now correctly placed under Theme** as a sub-entry (T&A vocabulary), not a separate top-rubric. It's pure UX-grouping work on data we already have.
+- **"Vorlagen" returns to its T&A meaning** (JSON_TEMPLATE), no longer used as the umbrella term.
+- **"System" replaces the old "Theme-Standardinhalte" top-rubric** since the latter was based on the wrong assumption that SHOP-checkout was a thing.
+- **Filter and Shop-Metadaten move under Online Store** (matches T&A).
+- **Cookie-Banner added as an open item** pending §0.5 spike.
 
 ## 9. Routes decision: keep flat
 
@@ -209,45 +245,41 @@ Reconsider only if we ever deep-link merchants via email/notifications and want 
 
 Re-use is ~80%. Phased so each phase is independently shippable and reviewable.
 
-### Phase 0 — Dev-store spike (1 day)
+### Phase 0 — Dev-store spike ✅ DONE
 
-Goal: kill the open questions on resource shapes and write-behavior before writing production code.
+Probe shipped as Settings → Translation Probe ([api.translation-probe.tsx](../app/routes/api.translation-probe.tsx), [SettingsTranslationProbeTab.tsx](../app/components/SettingsTranslationProbeTab.tsx)). Real results captured in §12. Key takeaways:
 
-**Tasks:**
-
-- On a dev shop with multiple enabled locales (incl. one outside the 33 built-in, e.g. Arabic, and one inside, e.g. German), run an ad-hoc GraphQL query against each new resource type:
-
-```graphql
-query probe($type: TranslatableResourceType!) {
-  translatableResources(first: 50, resourceType: $type) {
-    edges { node {
-      resourceId
-      translatableContent { key value digest locale }
-      translations(locale: "ar") { key value outdated }
-    } }
-  }
-}
-```
-
-  Iterate `$type` over the 11 new types:
-  `SHOP`, `EMAIL_TEMPLATE`, `PACKING_SLIP_TEMPLATE`, `DELIVERY_METHOD_DEFINITION`, `PAYMENT_GATEWAY`, `FILTER`, `SELLING_PLAN`, `SELLING_PLAN_GROUP`, `ONLINE_STORE_THEME_APP_EMBED`, `ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS`.
-
-- Attempt a write via `translationsRegister` against a `SHOP` key (e.g. `checkout.shipping.title`) in:
-  - **(a)** a built-in language (German) — does it override Shopify's professional translation?
-  - **(b)** an unsupported language (Arabic) — does it appear in checkout?
-  - **(c)** with `marketId` set vs. unset — what's the precedence?
-
-- Identify the actual key prefixes inside `SHOP` so we can split it into "Checkout & System" (Theme-Standardinhalte) vs. "Shop-Metadaten" (Online Store). Expected prefixes:
-  - `checkout.*`, `notifications.*` → Checkout & System
-  - `shop.name`, `shop.description`, `shop.meta_title`, `shop.meta_description` → Shop-Metadaten
-
-**Deliverables:** §12 spike findings populated, decision gate passed.
-
-Decision gate: if `SHOP` writes are silently ignored for built-in languages, Phase 1 still goes ahead but the value prop for that resource pivots to "unsupported languages only".
+- `SHOP` exposes **only** `meta_title`/`meta_description` — the original "SHOP-as-checkout" assumption was wrong
+- T&A's "Theme-Standardinhalte" is `LOCALE_CONTENT` grouped by top-level prefix — **data is already in our DB**
+- `EMAIL_TEMPLATE` is the big win: 50 templates × 2 keys
+- `FILTER`, `DELIVERY_METHOD_DEFINITION` confirmed small but writable
+- `APP_EMBED` returns CSS-selector-only content on this shop; T&A still shows it
+- `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`, `SELLING_PLAN*` empty on this shop — T&A also skips them in its nav
 
 ---
 
-### Phase 1 — Backend foundation (1.5 days)
+### Phase 0.5 — Cookie-Banner mini-spike (½ day)
+
+Cookie-Banner has 33 built-in translations (per user's T&A inspection) and appears in T&A's Onlineshop rubric. Its `TranslatableResourceType` source is unknown. Likely candidates:
+
+1. `SHOP` with keys like `cookie_banner.*`, only present after merchant first overrides
+2. A non-enumerated resource type (Shopify has some)
+3. Part of `SHOP_POLICY`
+
+**Tasks:**
+- In a dev shop: Admin → Settings → Customer privacy → enable cookie banner → translate one string via Language Editor
+- Re-run Translation Probe
+- Compare new SHOP/SHOP_POLICY results to baseline; identify where the new key landed
+- If found in SHOP → add a "cookie banner" key-filter alongside `meta_*` filter in `getShopMetadata()`
+- If found elsewhere → add new resource-type query
+
+**Deliverable:** §12 Cookie-Banner entry filled, decision on which resource type / rubric to use.
+
+---
+
+### Phase 1 — Better grouping of existing data + small new fetches (1.5 days)
+
+The big shift from the earlier plan: **most of the "missing" data is already in our DB**. Phase 1 splits into a UX-fix half (free wins) and a small backend half (4 new resource types).
 
 **1.1 Prisma migration** — `prisma/migrations/20260622000000_add_theme_content_domain/migration.sql`
 
@@ -262,15 +294,13 @@ CREATE INDEX "ThemeContent_shop_domain_idx" ON "ThemeContent"("shop", "domain");
 CREATE INDEX "ThemeTranslation_shop_domain_idx" ON "ThemeTranslation"("shop", "domain");
 ```
 
-Schema update in [prisma/schema.prisma:671](../prisma/schema.prisma#L671) — add `domain String @default("theme")` to both `ThemeContent` and `ThemeTranslation`. Existing rows back-fill to `"theme"` via the DEFAULT.
+Schema update in [prisma/schema.prisma:671](../prisma/schema.prisma#L671). Allowed domain values:
+- `"theme"` — all 7 `ONLINE_STORE_THEME_*` types (existing rows back-fill via DEFAULT)
+- `"system"` — `EMAIL_TEMPLATE`, `DELIVERY_METHOD_DEFINITION` (+ conditional: `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`)
+- `"online_store_extras"` — `FILTER`, `SHOP` (meta only), Cookie-Banner (if SHOP-based)
+- `"selling_plans"` — `SELLING_PLAN` + `SELLING_PLAN_GROUP` (conditional)
 
-Allowed domain values:
-- `"theme"` — the 7 `ONLINE_STORE_THEME_*` types
-- `"defaults"` — the 6 system types (`SHOP`-checkout, `EMAIL_TEMPLATE`, …)
-- `"shop_metadata"` — `SHOP`-name/description subset
-- `"selling_plans"` — `SELLING_PLAN` + `SELLING_PLAN_GROUP`
-
-**1.2 Service: extend `getThemes()`** — add the two previously excluded types to the working list in [content.service.ts:702](../app/services/content.service.ts#L702):
+**1.2 Improve `getThemes()` grouping** ([content.service.ts:702](../app/services/content.service.ts#L702)) — biggest single UX win, zero new GraphQL:
 
 ```diff
  const WORKING_RESOURCE_TYPES = [
@@ -284,33 +314,67 @@ Allowed domain values:
  ];
 ```
 
-(If Phase 0 confirms these are empty on Dawn but populated on other themes, keep them — empty types cost nothing.)
-
-**1.3 New service method `getThemeDefaults()`** — same shape as `getThemes()`, persisted with `domain="defaults"`:
+Then expand `KEY_PATTERNS` in [content.service.ts:715](../app/services/content.service.ts#L715) so the misc-prefix groups under `LOCALE_CONTENT` get T&A-style labels:
 
 ```typescript
-async getThemeDefaults(first: number = 250) {
+// Add named patterns for the LOCALE_CONTENT top-level groups T&A exposes
+const LOCALE_CONTENT_PATTERNS = [
+  { pattern: /^accessibility\./,    name: 'Accessibility',    groupId: 'accessibility',   icon: '♿' },
+  { pattern: /^accounts\./,         name: 'Accounts',         groupId: 'accounts',        icon: '👤' },
+  { pattern: /^announcement_bar\./, name: 'Announcement Bar', groupId: 'announcement_bar', icon: '📢' },
+  { pattern: /^blogs\./,            name: 'Blogs',            groupId: 'blogs_theme',     icon: '📝' },
+  { pattern: /^checkout\./,         name: 'Checkout & System', groupId: 'checkout_theme', icon: '🛒' },
+  { pattern: /^general\./,          name: 'General',          groupId: 'general',         icon: '🔧' },
+  { pattern: /^gift_cards?\./,      name: 'Gift Cards',       groupId: 'gift_cards',      icon: '🎁' },
+  { pattern: /^localization\./,     name: 'Localization',     groupId: 'localization',    icon: '🌍' },
+  { pattern: /^newsletter\./,       name: 'Newsletter',       groupId: 'newsletter',      icon: '📰' },
+  { pattern: /^onboarding\./,       name: 'Onboarding',       groupId: 'onboarding',      icon: '🚀' },
+  { pattern: /^products\./,         name: 'Products',         groupId: 'products_theme',  icon: '🛍️' },
+  { pattern: /^recipient\./,        name: 'Recipient',        groupId: 'recipient',       icon: '👥' },
+  { pattern: /^sections\./,         name: 'Sections',         groupId: 'sections_theme',  icon: '🧩' },
+  { pattern: /^templates\./,        name: 'Templates',        groupId: 'templates_theme', icon: '📋' },
+];
+```
+
+Also add the three missing `JSON_TEMPLATE` patterns the user identified (404 / blog / list-collections):
+
+```typescript
+{ pattern: /^templates\.404\./,                name: '404',              groupId: 'tpl_404',           icon: '🚫' },
+{ pattern: /^section\.blog\./,                 name: 'Blog',             groupId: 'blog_theme',        icon: '📝' },
+{ pattern: /^templates\.list-collections\./,   name: 'List Collections', groupId: 'tpl_list_coll',     icon: '📂' },
+```
+
+**1.3 App-Embed display rule** — when fetching `ONLINE_STORE_THEME_APP_EMBED`, check whether values look like CSS selectors (start with `.`, `#`, or contain only one-word selector-like content) and tag the group accordingly. UI shows a banner "This section contains technical configuration — translating may break embeds. Edit with care." when ≥80% of keys match the heuristic.
+
+**1.4 New service method `getOnlineStoreExtras()`** — persisted with `domain="online_store_extras"`:
+
+```typescript
+async getOnlineStoreExtras(first: number = 250) {
   const RESOURCE_TYPES = [
-    { type: 'SHOP',                         label: 'Checkout & System',         icon: '🛒',
-      groupId: 'checkout_system',
-      keyFilter: (k: string) => k.startsWith('checkout.') || k.startsWith('notifications.') },
-    { type: 'EMAIL_TEMPLATE',               label: 'E-Mail-Benachrichtigungen', icon: '✉️',
-      groupId: 'email_templates' },
-    { type: 'PACKING_SLIP_TEMPLATE',        label: 'Lieferschein',              icon: '📦',
-      groupId: 'packing_slip' },
-    { type: 'DELIVERY_METHOD_DEFINITION',   label: 'Versandmethoden',           icon: '🚚',
-      groupId: 'delivery_methods' },
-    { type: 'PAYMENT_GATEWAY',              label: 'Zahlungsanbieter',          icon: '💳',
-      groupId: 'payment_gateways' },
-    { type: 'FILTER',                       label: 'Filter',                    icon: '🔍',
-      groupId: 'filters' },
+    { type: 'FILTER',                  label: 'Filter',         icon: '🔍', groupId: 'filters' },
+    { type: 'SHOP',                    label: 'Shop-Metadaten', icon: '🏪', groupId: 'shop_metadata',
+      keyFilter: (k: string) => k.startsWith('meta_') || k.startsWith('shop.') },
+    // Cookie-Banner: added in Phase 0.5 once we know which type+filter
   ];
-  // reuse GET_THEME_TRANSLATABLE_RESOURCES exactly as getThemes() does
-  // persist rows with domain="defaults"
+  // reuse GET_THEME_TRANSLATABLE_RESOURCES, persist with domain="online_store_extras"
 }
 ```
 
-**1.4 New service method `getSellingPlans()`** — persisted with `domain="selling_plans"`:
+**1.5 New service method `getSystemContent()`** — persisted with `domain="system"`:
+
+```typescript
+async getSystemContent(first: number = 250) {
+  const RESOURCE_TYPES = [
+    { type: 'EMAIL_TEMPLATE',             label: 'Benachrichtigungen', icon: '✉️', groupId: 'email_templates' },
+    { type: 'DELIVERY_METHOD_DEFINITION', label: 'Versand & Zustellung', icon: '🚚', groupId: 'delivery_methods' },
+    // Optional / conditional types pulled if present:
+    { type: 'PAYMENT_GATEWAY',            label: 'Zahlungsanbieter',     icon: '💳', groupId: 'payment_gateways', skipIfEmpty: true },
+    { type: 'PACKING_SLIP_TEMPLATE',      label: 'Lieferschein',          icon: '📦', groupId: 'packing_slip',     skipIfEmpty: true },
+  ];
+}
+```
+
+**1.6 New service method `getSellingPlans()`** — persisted with `domain="selling_plans"`:
 
 ```typescript
 async getSellingPlans(first: number = 250) {
@@ -318,25 +382,12 @@ async getSellingPlans(first: number = 250) {
     { type: 'SELLING_PLAN_GROUP', label: 'Abo-Gruppen', icon: '📚', groupId: 'selling_plan_groups' },
     { type: 'SELLING_PLAN',       label: 'Abo-Pläne',    icon: '🔁', groupId: 'selling_plans' },
   ];
-  // same pattern as getThemeDefaults()
 }
 ```
 
-Skip silently if the shop has no `SELLING_PLAN_GROUP` (most shops don't run subscriptions). The nav entry hides itself when the loader returns zero rows.
+Skip silently if the shop has no `SELLING_PLAN_GROUP`. Nav entry hides itself when loader returns zero rows.
 
-**1.5 New service method `getShopMetadata()`** — pulls only the `SHOP` keys filtered to `shop.*` (name, description, meta-title, meta-description), persisted with `domain="shop_metadata"`:
-
-```typescript
-async getShopMetadata(first: number = 50) {
-  // single GET_THEME_TRANSLATABLE_RESOURCES with resourceType: 'SHOP'
-  // filter to keys starting with 'shop.'
-  // store under groupId='shop_metadata'
-}
-```
-
-**1.6 Sync integration** — extend `sync-scheduler.service.ts` to call `getThemeDefaults()`, `getSellingPlans()`, `getShopMetadata()` alongside `getThemes()` when the corresponding plan allowance is set.
-
-**Note on `SHOP` double-pull:** `getThemeDefaults()` and `getShopMetadata()` both query `resourceType: SHOP`. To avoid two API calls for one resource, factor into a single shared call that splits by `keyFilter` and writes two `ThemeContent` rows with different `domain`s.
+**1.7 Sync integration** — extend `sync-scheduler.service.ts` to call `getOnlineStoreExtras()`, `getSystemContent()`, `getSellingPlans()` alongside `getThemes()` when the plan allows.
 
 ---
 
@@ -344,22 +395,22 @@ async getShopMetadata(first: number = 50) {
 
 **2.1 New routes** (flat, per §9):
 
-- `app/routes/app.theme-defaults.tsx` — copy of [app.templates.tsx](../app/routes/app.templates.tsx), loads `domain="defaults"`
-- `app/routes/app.selling-plans.tsx` — same pattern, loads `domain="selling_plans"`; renders nothing meaningful if no subscription apps installed (handle the empty state cleanly)
-- `app/routes/app.shop-metadata.tsx` — same pattern, loads `domain="shop_metadata"`; only 4–6 keys, simpler layout but reuse the same editor
+- `app/routes/app.system.tsx` — covers `domain="system"` (Benachrichtigungen, Versand etc.)
+- `app/routes/app.online-store-extras.tsx` — covers `domain="online_store_extras"` (Filter, Shop-Metadaten, Cookie-Banner)
+- `app/routes/app.selling-plans.tsx` — covers `domain="selling_plans"`
 
-All three: same action switch (`loadTranslations`, `translateField`, `translateAll`, `updateContent`), same `UnifiedContentEditor` + `ThemeContentViewer`.
+All three: same action switch (`loadTranslations`, `translateField`, `translateAll`, `updateContent`), same `UnifiedContentEditor` + `ThemeContentViewer`. Each is a thin copy of [app.templates.tsx](../app/routes/app.templates.tsx) parameterised by domain.
 
-**2.2 Action sharing** — to avoid four near-duplicate route files drifting, lift the common loader and action logic into `app/actions/theme-content/` (renamed from `templates/`) with a `domain` param:
+**2.2 Action sharing** — lift the common loader and action logic into `app/actions/theme-content/` (renamed from `templates/`) with a `domain` param:
 
 ```typescript
 // app/actions/theme-content/shared.ts
 export interface ThemeContentActionContext extends TemplatesActionContext {
-  domain: 'theme' | 'defaults' | 'selling_plans' | 'shop_metadata';
+  domain: 'theme' | 'system' | 'online_store_extras' | 'selling_plans';
 }
 ```
 
-Each route passes its `domain` into the shared handlers; everything else stays the same. Tests in `tests/unit/` get parameterised over `domain`.
+Tests in `tests/unit/` get parameterised over `domain`.
 
 **2.3 Plan-gating** — wrap each new route in `PlanAccessGate` with the appropriate `contentType`.
 
@@ -373,13 +424,13 @@ Each route passes its `domain` into the shared handlers; everything else stays t
 const RUBRICS_BY_SECTION = {
   content: [
     { id: 'catalog',            label: t.rubrics.catalog,            icon: '📦',
-      paths: ['/app/products','/app/collections','/app/metaobjects','/app/selling-plans'] },
+      paths: ['/app/products','/app/collections','/app/selling-plans'] },
     { id: 'onlineStore',        label: t.rubrics.onlineStore,        icon: '🌐',
-      paths: ['/app/pages','/app/blog','/app/menus','/app/policies','/app/shop-metadata'] },
-    { id: 'themeContent',       label: t.rubrics.themeContent,       icon: '🎨',
+      paths: ['/app/pages','/app/blog','/app/menus','/app/policies','/app/metaobjects','/app/online-store-extras'] },
+    { id: 'theme',              label: t.rubrics.theme,              icon: '🎨',
       paths: ['/app/templates'] },
-    { id: 'themeDefaults',      label: t.rubrics.themeDefaults,      icon: '🏛️',
-      paths: ['/app/theme-defaults'] },
+    { id: 'system',             label: t.rubrics.system,             icon: '⚙️',
+      paths: ['/app/system'] },
     { id: 'directTranslations', label: t.rubrics.directTranslations, icon: '🌐',
       paths: ['/app/direct-translations'] },
   ],
@@ -389,16 +440,16 @@ const RUBRICS_BY_SECTION = {
 
 Sticky horizontal bar; same style pattern as `ContentTypeNavigation.tsx`. Active rubric derived from `location.pathname.startsWith(...)`.
 
-**3.2 Extend `useNavigationHeight`** — current hook tracks main + content. Add `rubricNavHeight`. Sticky offset becomes `mainNavHeight + rubricNavHeight` for `ContentTypeNavigation`, and `mainNavHeight + rubricNavHeight + contentNavHeight` for editor sticky elements.
+**3.2 Extend `useNavigationHeight`** — add `rubricNavHeight`. Sticky offsets accumulate: `main + rubric` for content-type-nav, `main + rubric + content` for editor sticky elements.
 
-**3.3 `MainNavigation` simplification** — Reduce top bar to high-level sections: Inhalte, SEO (later), Einstellungen. Move all content-type-specific entries out of [MainNavigation.tsx:261](../app/components/MainNavigation.tsx#L261) (the `contentTypes` array → goes to `RubricNavigation`).
+**3.3 `MainNavigation` simplification** — Reduce top bar to high-level sections: Inhalte, SEO (later), Einstellungen. Move all content-type-specific entries out of [MainNavigation.tsx:261](../app/components/MainNavigation.tsx#L261) into `RubricNavigation`.
 
-**3.4 `ContentTypeNavigation` filter** — only show entries whose path matches the active rubric. Already keyed by path so this is one `.filter()` call.
+**3.4 `ContentTypeNavigation` filter** — only show entries whose path matches the active rubric. One `.filter()` call.
 
 **3.5 New nav entries**:
-- `selling-plans` (Katalog, only shown when shop has subscription resources)
-- `shop-metadata` (Online Store)
-- `theme-defaults` (Theme-Standardinhalte rubric, all-in-one entry containing the 6 sub-groups)
+- `selling-plans` (Katalog, conditional)
+- `online-store-extras` (Online Store)
+- `system` (System)
 
 ---
 
@@ -409,17 +460,17 @@ Sticky horizontal bar; same style pattern as `ContentTypeNavigation.tsx`. Active
 ```diff
 - templates: "Vorlagen",
 - templatesDescription: "Verwalten Sie E-Mail- und Benachrichtigungsvorlagen",
-+ themeContent: "Theme-Inhalte",
-+ themeContentDescription: "Übersetzen Sie Theme-Texte aus dem aktiven Theme-Code",
-+ themeDefaults: "Theme-Standardinhalte",
-+ themeDefaultsDescription: "Übersetzen Sie Checkout, E-Mails und andere Shopify-Systemtexte",
++ theme: "Theme",
++ themeDescription: "Übersetzen Sie Theme-Standardinhalte, Vorlagen, Abschnittsgruppen und mehr",
++ system: "System",
++ systemDescription: "Übersetzen Sie Benachrichtigungen, Versandmethoden und andere Shopify-Systemtexte",
 + sellingPlans: "Abo-Pläne",
 + sellingPlansDescription: "Übersetzen Sie Abo-Pläne und Abo-Gruppen",
-+ shopMetadata: "Shop-Metadaten",
-+ shopMetadataDescription: "Übersetzen Sie Shop-Name und Shop-Beschreibung",
++ onlineStoreExtras: "Filter & Shop-Metadaten",
++ onlineStoreExtrasDescription: "Übersetzen Sie Filter-Labels, Shop-SEO-Felder und Cookie-Banner",
 ```
 
-The current `templatesDescription` is wrong ("E-Mail- und Benachrichtigungsvorlagen") — the page actually shows theme content. The rename fixes the lie.
+The current `templatesDescription` is wrong ("E-Mail- und Benachrichtigungsvorlagen" — the page actually shows theme content). Rename fixes the lie.
 
 Add top-level rubric labels:
 
@@ -428,8 +479,8 @@ rubrics: {
   content: "Inhalte",
   catalog: "Katalog",
   onlineStore: "Online Store",
-  themeContent: "Theme-Inhalte",
-  themeDefaults: "Theme-Standardinhalte",
+  theme: "Theme",
+  system: "System",
   directTranslations: "Direkte Übersetzungen",
   seo: "SEO",
 }
@@ -443,66 +494,68 @@ rubrics: {
    | "pages" | "policies" | "templates" | "menus"
 -  | "metaobjects" | "directTranslations";
 +  | "metaobjects" | "directTranslations"
-+  | "themeDefaults" | "sellingPlans" | "shopMetadata";
++  | "system" | "sellingPlans" | "onlineStoreExtras";
 ```
 
 Per-plan availability:
 
-| Plan | `themeDefaults` | `sellingPlans` | `shopMetadata` |
+| Plan | `system` | `sellingPlans` | `onlineStoreExtras` |
 |---|---|---|---|
-| free | ❌ | ❌ | ✅ (4 keys, no quota impact) |
+| free | ❌ | ❌ | ✅ (Shop-Metadaten only) |
 | basic | ❌ | ❌ | ✅ |
 | pro | ✅ | ✅ | ✅ |
 | max | ✅ | ✅ | ✅ |
 
-Rationale: `themeDefaults` and `sellingPlans` mirror the existing `templates` gate (Pro+). `shopMetadata` is tiny and high-value for any shop, gate it to all tiers.
+Rationale: `system` mirrors the existing `templates` Pro+ gate. `sellingPlans` same. `onlineStoreExtras` (Shop-Metadaten + Filter labels) is small and high-value → available to all.
 
-Roll all theme-related caps into the existing `maxThemeTranslations` to keep the limit story simple. Selling plans likely have <100 keys per shop — no separate cap needed.
+Roll caps into existing `maxThemeTranslations` to keep limit story simple.
 
 ---
 
 ### Phase 5 — Test plan
 
-**Unit (vitest, follow patterns in [tests/unit/](../tests/unit/)):**
-- `content.service.themeDefaults.test.ts` — mock the GraphQL admin and assert `getThemeDefaults()` calls `translatableResources` 6 times with the correct `resourceType`, applies the `SHOP` key filter
-- `content.service.sellingPlans.test.ts` — same shape, 2 calls
-- `content.service.shopMetadata.test.ts` — same shape, 1 call with `shop.*` filter
-- `theme-content-action.test.ts` — parameterised over `domain`; assert `translationsRegister` is called with the correct `translatableContentDigest`
-- `plan-gating.test.ts` — assert Free/Basic shops 403 on `/app/theme-defaults` and `/app/selling-plans`, but can access `/app/shop-metadata`
+**Unit (vitest):**
+- `content.service.systemContent.test.ts` — mock GraphQL, assert correct types queried, conditional skipping for empty PAYMENT_GATEWAY/PACKING_SLIP
+- `content.service.onlineStoreExtras.test.ts` — assert FILTER + SHOP queries, SHOP key-filter
+- `content.service.sellingPlans.test.ts` — assert 2 type queries, empty-handling
+- `content.service.localeContentGrouping.test.ts` — feed a fixture with the 14 T&A top-level prefixes; assert correct group labels/icons
+- `theme-content-action.test.ts` — parameterised over `domain`; correct `translationsRegister` digest
+- `plan-gating.test.ts` — Free/Basic shops 403 on `/app/system` and `/app/selling-plans`; can access `/app/online-store-extras`
 
 **Integration:**
-- Sync a dev store, verify `ThemeContent` rows with the four `domain` values exist; counts match the Phase 0 probe
-- Write a translation in each new section → confirm it shows in Shopify Admin → Settings → Languages → "Translate" view
+- Sync a dev store, verify `ThemeContent` rows for all four `domain` values
+- Write translations in each new section → verify in Shopify Admin → Settings → Languages → Translate view
 
 **Manual smoke tests:**
-- Enable Arabic (outside the 33), translate all checkout strings → place a test order → verify Arabic checkout
-- German (inside the 33) → verify override behaviour matches Phase 0 finding
-- A subscription shop: translate a selling plan → verify Storefront cart shows the translated name
+- Translate one EMAIL_TEMPLATE (e.g. order confirmation) into Arabic → trigger a test order → verify Arabic email
+- Translate a FILTER label → verify storefront filter shows translation
+- Translate Shop-Metadaten meta_title → check storefront `<title>` for non-primary locale
+- On a subscription shop: translate a selling plan → verify Storefront cart
 
 ---
 
 ### Phase 6 — Rollout
 
-- Ship behind a feature flag if Phase 0 shows ambiguity around `SHOP` writes vs. built-in
+- Feature flag for `system` rubric (the biggest behavioural change for merchants)
 - Internal dev shop first, 1 week soak
-- Soft launch to a beta cohort of 5–10 merchants who asked about checkout/email translations
+- Beta cohort of 5–10 merchants who asked about email/system translations
 - General availability after 2 weeks of beta feedback
-- Marketing: highlight "complete T&A parity + AI brand voice" — currently competitors either translate everything (badly) or curate but skip checkout
+- Marketing: "Full T&A parity, plus AI brand voice and content not even T&A covers" (PACKING_SLIP, PAYMENT_GATEWAY, SELLING_PLAN)
 
 ---
 
 ### File-touch list (summary)
 
 **New:**
-- `app/routes/app.theme-defaults.tsx`
+- `app/routes/app.system.tsx`
+- `app/routes/app.online-store-extras.tsx`
 - `app/routes/app.selling-plans.tsx`
-- `app/routes/app.shop-metadata.tsx`
 - `app/components/RubricNavigation.tsx`
 - `prisma/migrations/20260622000000_add_theme_content_domain/migration.sql`
 
 **Modified:**
 - `prisma/schema.prisma` (add `domain` to `ThemeContent` + `ThemeTranslation`)
-- `app/services/content.service.ts` (extend `getThemes()` working list +2; add `getThemeDefaults()`, `getSellingPlans()`, `getShopMetadata()`)
+- `app/services/content.service.ts` (expand `getThemes()` types +2; expand `KEY_PATTERNS` with 14 T&A top-level groups + 3 missing template patterns; add `getSystemContent()`, `getOnlineStoreExtras()`, `getSellingPlans()`)
 - `app/services/sync-scheduler.service.ts` (wire new sync paths)
 - `app/config/plans.ts` (+ 3 content types)
 - `app/components/MainNavigation.tsx` (slim to sections)
@@ -521,14 +574,14 @@ Roll all theme-related caps into the existing `maxThemeTranslations` to keep the
 
 | Risk | Mitigation |
 |---|---|
-| `SHOP` writes silently ignored for built-in languages | Phase 0 catches this; pivot positioning for `themeDefaults` to "unsupported languages only" |
-| Translation API rate limit hit during initial sync (15+ types × keys) | Sequential per-type sync + 500ms back-off between requests; persist progress so retries resume |
-| `digest` mismatch on `SHOP` (one shop GID, many keys, per-key digests) | Existing `keyToResourceId` map in templates action already handles per-key digests — same code path works |
-| Three-stacked sticky bars eat too much vertical space on mobile | `RubricNavigation` collapses to overflow menu under 768px; same pattern as existing `MobileMenu` |
-| Merchant confused by "Theme-Inhalte" vs. "Theme-Standardinhalte" overlap | Tooltip on each rubric explaining the distinction; help-tooltip pattern exists in `HelpTooltip.tsx` |
-| Shops without subscriptions see an empty "Abo-Pläne" entry | Loader returns empty → nav entry hidden via `contentCount === 0` filter (already a pattern in `ContentTypeNavigation`) |
-| `SHOP` resource queried twice (defaults + shop-metadata) wastes one rate-limit hit | Factor into one shared GraphQL call that splits results by key prefix |
-| Two new theme types (`APP_EMBED`, `SETTINGS_DATA_SECTIONS`) might still be empty on some themes | Acceptable — empty groups simply don't render. Re-test in Phase 0. |
+| Cookie-Banner source not findable in Phase 0.5 | Ship without it in v1; flag as known gap. T&A has it because they have privileged access. |
+| `APP_EMBED` content always CSS-selector-only → merchants might break embeds by translating | Heuristic-based "technical content" warning banner; consider opt-in display |
+| Translation API rate-limit during initial sync (10+ types) | Sequential per-type sync + 500ms back-off; persist progress so retries resume |
+| `digest` mismatch on `SHOP` (one shop GID, many keys, per-key digests) | Existing `keyToResourceId` map already handles per-key digests |
+| Three-stacked sticky bars eat vertical space on mobile | `RubricNavigation` collapses to overflow menu under 768px; pattern exists in `MobileMenu` |
+| Merchant confused by `templates` (theme) vs. T&A's `Vorlagen` (JSON templates) | T&A-aligned vocabulary in Phase 4.1 fixes this; tooltip on each section |
+| Shops without subscriptions see empty "Abo-Pläne" entry | Loader returns empty → nav hides via `contentCount === 0` (existing pattern) |
+| EMAIL_TEMPLATE body_html contains Liquid syntax — AI translation may break it | Liquid-aware prompt; pre/post-translation Liquid token preservation; smoke test before GA |
 
 ---
 
@@ -536,15 +589,19 @@ Roll all theme-related caps into the existing `maxThemeTranslations` to keep the
 
 | Phase | Time |
 |---|---|
-| 0 — Spike (now 11 types) | 1.0 d |
-| 1 — Backend (3 service methods + theme type expansion) | 1.5 d |
+| 0 — Spike | ✅ done |
+| 0.5 — Cookie-Banner spike | 0.5 d |
+| 1 — Better grouping + 4 new resource types | 1.5 d |
 | 2 — Routes + actions (3 routes + folder rename) | 1.0 d |
 | 3 — Nav restructure | 1.0 d |
 | 4 — i18n + gating | 0.5 d |
 | 5 — Tests | 1.0 d |
-| **Total** | **~6 d** |
+| **Total remaining** | **~5.5 d** |
 
-(Previous estimate was ~4 d for checkout-only; the +2 d covers SELLING_PLAN/SELLING_PLAN_GROUP routes, the SHOP split into two domains, the action-folder rename, and the broader test surface.)
+Down from ~6 d in the previous revision because:
+- Theme grouping work doesn't need new GraphQL (already in DB) — UX-only change
+- `SHOP` simplified to meta_title/description-only (no checkout split)
+- `PACKING_SLIP_TEMPLATE` + `PAYMENT_GATEWAY` demoted from primary scope to conditional within `system` rubric
 
 ---
 
@@ -563,72 +620,94 @@ Roll all theme-related caps into the existing `maxThemeTranslations` to keep the
 
 ## 12. Spike findings
 
-Two-phase fill: docs-derived expectations first (this section), real numbers second (after running the probe).
-
-### How to run the probe
+### How to (re)run the probe
 
 1. Open the app → Settings → **Translation Probe** (left sidebar)
-2. Click **Run probe** (read-only by default, hits all 11 new resource types)
-3. Optionally tick **"Also run write test"** to answer the built-in-override question — registers one tagged value (`Continue [__cp-probe-<timestamp>]`) against `checkout.general.continue_button` in the first non-primary locale. Restore via Admin → Settings → Languages → Translate when done.
-4. Click **Copy markdown report** and paste the output below (or back into the assistant chat)
-5. The probe runs sequentially with 250ms gaps to stay under the Translation API rate limit; one full run takes ~10–15s on a typical dev shop
+2. Click **Run probe** (read-only)
+3. **Copy markdown report** and paste back to the assistant or into this doc
 
 Backend: [app/routes/api.translation-probe.tsx](../app/routes/api.translation-probe.tsx)
 UI: [app/components/SettingsTranslationProbeTab.tsx](../app/components/SettingsTranslationProbeTab.tsx)
 
-### Docs-derived expectations *(high confidence, no probe needed)*
+### Docs-derived facts (validated, no probe needed)
 
-✅ **`translationsRegister` is market-aware** — `TranslationInput` accepts an optional `marketId`. When omitted, the translation applies globally within that locale; when set, only buyers in that market see it. Confirmed from [translationsRegister docs](https://shopify.dev/docs/api/admin-graphql/latest/mutations/translationsregister).
+✅ **`translationsRegister` is market-aware** — `TranslationInput` accepts an optional `marketId`. When omitted, the translation applies globally within that locale; when set, only buyers in that market see it. ([translationsRegister docs](https://shopify.dev/docs/api/admin-graphql/latest/mutations/translationsregister))
 
 ✅ **`translatableContentDigest` is mandatory** on every write — already handled by our existing templates action via `keyToResourceId` map.
 
-✅ **`SHOP` resource ID** is the shop's GID (`gid://shopify/Shop/...`), one row per shop. All checkout/notification/shop-metadata keys hang off this single resource. Implication: one digest per key, not per resource — code path identical to the existing themes flow.
+✅ **`SHOP` resource ID** is the shop's GID, one row per shop. Per-key digests handle the multi-key case identically to existing themes flow.
 
-✅ **Built-in 33-language pack is not exposed via any resource type** — confirmed in §2. Apps can only layer overrides on top via `SHOP`. The probe's `translatableContent` for `SHOP` will only show keys the merchant or app can write, not the full built-in pack.
+✅ **Built-in 33-language pack is not exposed via any resource type** — apps can only layer overrides on top.
 
-✅ **Theme types are bound to the active theme** — `ONLINE_STORE_THEME_*` resource IDs are `gid://shopify/OnlineStoreTheme/<themeId>`. On theme switch, translations must be re-registered. Already handled by our existing `getThemes()` flow.
+✅ **Theme types are bound to the active theme** — on theme switch, translations must be re-registered against the new theme GID.
 
-### Expected per resource type *(probe will refine)*
-
-| Type | Expected key prefixes | Confidence | Probe will confirm |
-|---|---|---|---|
-| `SHOP` | `checkout.*`, `notifications.*`, `shop.name`, `shop.description`, `shop.meta_title`, `shop.meta_description`, possibly `policy.*` | 🟡 | Exact prefix split → drives the `keyFilter` for Checkout & System vs. Shop-Metadaten |
-| `EMAIL_TEMPLATE` | One resource per template; keys likely `title`, `body_html` | 🟡 | Template count varies (Shopify ships ~25 templates by default) |
-| `PACKING_SLIP_TEMPLATE` | Single resource; `body` field | 🟡 | Usually one template per shop |
-| `DELIVERY_METHOD_DEFINITION` | One resource per shipping rate; key `name` | 🟡 | Count = #shipping rates on the shop |
-| `PAYMENT_GATEWAY` | One resource per enabled gateway; keys `name`, `instructions` | 🟡 | "Manual" payment methods most likely to have content |
-| `FILTER` | One resource per storefront filter; key `label` | 🟡 | Only present if shop uses storefront filters |
-| `SELLING_PLAN_GROUP` | One resource per subscription group; keys `name`, `description`, `options.*` | 🟡 | Empty on shops without subscriptions — handle empty case in UI |
-| `SELLING_PLAN` | One resource per plan; keys `name`, `description` | 🟡 | Same as above |
-| `ONLINE_STORE_THEME_APP_EMBED` | Key shape = embed handle paths | 🟡 | May be empty on Dawn — check on a populated theme |
-| `ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS` | Section-content shared across templates | 🟡 | May be empty on Dawn |
-
-🟡 = expected based on documented resource semantics; the probe will yield the actual key list per shop.
-
-### Open questions the probe MUST answer
-
-🔴 **`SHOP` write override behaviour** — when we write to `checkout.general.continue_button` in German (one of the 33 built-in languages), does Shopify show our value, or does the built-in win? The probe's write-test attempts the write; the user then verifies visually in Admin → Settings → Languages → Translate.
-
-🔴 **`SHOP` key split** — does the probe actually show both `checkout.*` AND `shop.*` keys, or are they on separate sub-resources? Drives whether `getThemeDefaults()` and `getShopMetadata()` can share one GraphQL call.
-
-🔴 **APP_EMBED / SETTINGS_DATA_SECTIONS content presence** — these two were excluded from `getThemes()` historically after `testAllThemeResourceTypes()` found them empty on the test shop. Probe will tell us if a richer theme (Dawn 12+, a paid theme) populates them. Decision: if still empty everywhere, skip them in Phase 1.2.
-
-🔴 **Total key counts** — capacity input for the `maxThemeTranslations` cap. If `EMAIL_TEMPLATE` + `SHOP` + the others together cross 10k keys per shop, we need to revisit the limit.
-
-🔴 **Translation API rate-limit headroom** — does sequential 11-type pull with 250ms gaps stay under the limit, or do we need longer pauses? Observation only; the probe will surface any rate-limit errors in the report.
-
-### Probe output  *(paste here after running)*
+### Probe results (Patis-Universe test shop, 2026-06-22, 3 runs)
 
 ```
-<paste markdown report from Settings → Translation Probe here>
+Shop: patis-universe-test-shop.myshopify.com
+Primary locale: en   Enabled: de, en, es, fr
+API version: 2025-10
 ```
 
-### Decision gate
+| Resource | Status | Resources | Total keys | Notes |
+|---|---|---:|---:|---|
+| `SHOP_POLICY` | ✅ | 1 | 1 | `body` field — already covered by our policies route |
+| `ONLINE_STORE_THEME_LOCALE_CONTENT` | ✅ | 1 | **4081** | Already pulled by `getThemes()`. Top prefixes: `shopify.*` (2590), `customer_accounts.*` (1109), `customer.*` (91), `products.*` (88), `sections.*` (73), `general.*` (38), `templates.*` (28), `accessibility.*` (14), `blogs.*` (14), `recipient.*` (13), `gift_cards.*` (11), `localization.*` (7), `newsletter.*` (3), `onboarding.*` (2). **The `shopify.*` namespace contains `shopify.checkout.*` keys** — sample: `shopify.checkout.general.page_title = "Checkout"`. |
+| `ONLINE_STORE_THEME` | ✅ | 1 | 4095 | Near-duplicate of LOCALE_CONTENT (+14 `section.*` keys = JSON-template customizations). **Dedupe target in Phase 1.** |
+| `SHOP` | ✅ | 1 | **2** | Only `meta_title`, `meta_description` — **no `checkout.*` or `notifications.*`**. The original "SHOP-as-checkout" plan-revision assumption was wrong. |
+| `EMAIL_TEMPLATE` | ✅ | 50 | **100** | One resource per template × `title` + `body_html`. The biggest single value-add. |
+| `PACKING_SLIP_TEMPLATE` | ✅ | 1 | 1 | Single `body` field. T&A doesn't expose; niche but functional. |
+| `DELIVERY_METHOD_DEFINITION` | ✅ | 2 | 2 | Key=`name`, values "Standard". |
+| `PAYMENT_GATEWAY` | ✅ | 0 | 0 | None on this shop. Conditional display only. |
+| `FILTER` | ✅ | 2 | 2 | Key=`label`, values "Availability", "Price". |
+| `SELLING_PLAN` / `SELLING_PLAN_GROUP` | ✅ | 0 | 0 | No subscriptions on this shop. Conditional display. |
+| `ONLINE_STORE_THEME_APP_EMBED` | ✅ | 4 | 6 | Keys are CSS selectors (`.header__icons`, `media-gallery`) — not user-facing on this shop. Display with "technical configuration" warning. |
+| `ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS` | ✅ | 1 | 0 | Empty on this shop; T&A still exposes the rubric. |
 
-After the probe report is pasted above, decide:
+**Write test:** Aborted — the assumed `checkout.general.continue_button` key doesn't exist in `SHOP` (which only has `meta_title`/`meta_description`). Confirms that **the `SHOP`-as-checkout-overrides path was wrong**.
 
-- [ ] Proceed with the full plan as written
-- [ ] Pivot `themeDefaults` to "unsupported languages only" if SHOP writes lose to built-in 33
-- [ ] Drop `APP_EMBED` / `SETTINGS_DATA_SECTIONS` from Phase 1.2 if always empty
-- [ ] Drop `selling-plans` route entirely if even subscription-using shops have empty resources
-- [ ] Other adjustments: …
+### Cookie-banner hunt (Phase 0.5) — DONE, gap confirmed
+
+Three iterations of the in-app probe ran with progressively narrowed hint filters:
+
+- **Run 1** (broad value + key match, hints: cookie / consent / privacy_banner / gdpr / tracking): no hits on baseline
+- **Run 2** (after merchant override of a cookie banner string): still 0 specific banner hits; identical to baseline
+- **Run 3** (key-only matching with cookie / consent_banner / cookie_banner / privacy_banner / consent_dialog / gdpr_compliance / shopify.consent): 4 hits, all duplicates of 2 unique keys:
+  - `ONLINE_STORE_THEME_LOCALE_CONTENT` → `shopify.checkout.shop_policies.cookie_preferences` = "Cookies"
+  - `ONLINE_STORE_THEME_LOCALE_CONTENT` → `customer_accounts.privacy_banner.cookie_preferences_link` = "Cookie preferences"
+
+Both hits are **labels for the *link* to the cookie-preferences modal**, not the banner content itself. No `shopify.consent.*`, no `cookie_banner.*`, no `consent_dialog.*` keys exist anywhere in the 13 probed resource types.
+
+**Conclusion:** The actual Cookie-Banner content text lives **outside the `translatableResource` API**. Likely sources (no longer worth chasing, since the gap is small and the built-in 33 languages cover it):
+1. Customer Privacy API (separate REST/GraphQL surface, not part of Translations)
+2. A non-public TranslatableResourceType available to first-party apps only (this is how T&A exposes it)
+
+**Action:** Ship without Cookie-Banner editing. Document as a known gap in the Online-Store rubric. The 33 built-in languages cover this for the vast majority of merchants; the ~10–15 unsupported languages are an accepted shortfall here.
+
+### Decision-affecting findings
+
+🔑 **T&A's "Theme-Standardinhalte" = `ONLINE_STORE_THEME_LOCALE_CONTENT` grouped by top-level prefix** — not a separate API surface. We already pull this data; the misc-prefix grouping in `content.service.ts` produces unhelpful labels. Fix is UX-only via expanded `KEY_PATTERNS` in Phase 1.2.
+
+🔑 **Shopify ships `shopify.*` strings inside LOCALE_CONTENT** — 2590 keys including `shopify.checkout.*`, `shopify.customer_accounts.*`, `shopify.sentence.*`. These are pre-translated in the 33 built-in languages; merchant overrides land here and are reachable via our existing `getThemes()` flow. Theme-side checkout-adjacent strings are therefore translatable — the earlier "checkout strings unreachable" conclusion was over-broad.
+
+🔑 **The server-rendered checkout page itself remains untouchable** for app overrides (no `checkout.*` keys in `SHOP`, no way to push past the 33 built-in for the actual checkout form). The reachable `shopify.checkout.*` keys are theme-rendered (return-to-cart links, thank-you-page elements, etc.), not the checkout form itself.
+
+🔑 **`ONLINE_STORE_THEME` ≈ `ONLINE_STORE_THEME_LOCALE_CONTENT`** — 4095 vs. 4081 keys, identical prefix distribution. The 14-key delta in `ONLINE_STORE_THEME` is the `section.*` JSON-template customizations. Phase 1 should drop `ONLINE_STORE_THEME` from the pull list (we already have it via LOCALE_CONTENT + separate JSON_TEMPLATE pulls).
+
+🔑 **`APP_EMBED` keys are CSS selectors on this Dawn-based shop** — pulling is cheap, but UI must warn against translating. T&A shows it regardless.
+
+🔑 **`SETTINGS_DATA_SECTIONS` is empty on this shop** — keep pulling, display only when non-empty.
+
+🔑 **Subscriptions and payment gateways need a different dev shop to validate**. Plan handles them as conditional rubrics — empty case already designed for.
+
+### Decision gate ✅ passed
+
+Effective decisions:
+- ✅ Proceed with revised plan
+- ✅ Drop "SHOP-as-checkout" path — `SHOP` is for shop-metadata only
+- ✅ Promote `EMAIL_TEMPLATE` as primary value driver
+- ✅ Reposition "Theme-Standardinhalte" as a UX-grouping problem on existing data
+- ✅ Demote `PACKING_SLIP_TEMPLATE` and `PAYMENT_GATEWAY` to conditional within `system` rubric
+- ✅ **Cookie-Banner: known gap, ship without** — built-in 33-language pack covers the majority
+- ✅ **Dedupe `ONLINE_STORE_THEME` in Phase 1.2** — `LOCALE_CONTENT` + `JSON_TEMPLATE` is the canonical source
+- ⏸️ Re-probe on a subscription shop to confirm `SELLING_PLAN*` shapes before Phase 1.6 ships (not blocking)
