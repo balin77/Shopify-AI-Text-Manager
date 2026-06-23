@@ -2,8 +2,10 @@ import { createContext, useContext, useState, useCallback, useMemo, ReactNode } 
 
 interface NavigationHeightContextType {
   mainNavHeight: number;
+  rubricNavHeight: number;
   contentNavHeight: number;
   setMainNavHeight: (height: number) => void;
+  setRubricNavHeight: (height: number) => void;
   setContentNavHeight: (height: number) => void;
   getTotalNavHeight: () => number;
 }
@@ -14,17 +16,24 @@ export function NavigationHeightProvider({ children }: { children: ReactNode }) 
   // Use reasonable defaults that match approximate SSR heights to prevent hydration errors
   // These will be updated to actual values once components mount on the client
   const [mainNavHeight, setMainNavHeight] = useState(73);
+  // Level 2 (rubric) bar — 0 until RubricNavigation mounts on a content page.
+  const [rubricNavHeight, setRubricNavHeight] = useState(0);
   const [contentNavHeight, setContentNavHeight] = useState(0);
 
-  const getTotalNavHeight = useCallback(() => mainNavHeight + contentNavHeight, [mainNavHeight, contentNavHeight]);
+  const getTotalNavHeight = useCallback(
+    () => mainNavHeight + rubricNavHeight + contentNavHeight,
+    [mainNavHeight, rubricNavHeight, contentNavHeight]
+  );
 
   const value = useMemo(() => ({
     mainNavHeight,
+    rubricNavHeight,
     contentNavHeight,
     setMainNavHeight,
+    setRubricNavHeight,
     setContentNavHeight,
     getTotalNavHeight
-  }), [mainNavHeight, contentNavHeight, getTotalNavHeight]);
+  }), [mainNavHeight, rubricNavHeight, contentNavHeight, getTotalNavHeight]);
 
   return (
     <NavigationHeightContext.Provider value={value}>
@@ -40,8 +49,10 @@ export function useNavigationHeight() {
   if (context === undefined) {
     return {
       mainNavHeight: 73,
+      rubricNavHeight: 0,
       contentNavHeight: 0,
       setMainNavHeight: () => {},
+      setRubricNavHeight: () => {},
       setContentNavHeight: () => {},
       getTotalNavHeight: () => 73,
     };

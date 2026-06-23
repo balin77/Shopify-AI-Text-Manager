@@ -59,9 +59,12 @@ export function MobileMenu({
     }
   }, [showContentTypes]);
 
+  // Level 1 slimmed to match desktop (Plan §3.4): a single "Inhalte" entry
+  // (lands on Produkte); the full content list lives in the expandable section
+  // below.
+  const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
-    { id: "products", label: t.nav.products, path: "/app/products" },
-    { id: "content", label: t.nav.otherContent, path: "/app/collections" },
+    { id: "content", label: navContentLabel, path: "/app/products" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];

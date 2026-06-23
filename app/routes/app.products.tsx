@@ -26,7 +26,6 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName } from "../utils/planUtils";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
@@ -311,7 +310,6 @@ export default function ProductsPage() {
   const { t } = useI18n();
   const { showInfoBox, setGlobalLoading } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
-  const { setContentNavHeight } = useNavigationHeight();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoadingTranslations, setIsLoadingTranslations] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -783,11 +781,6 @@ export default function ProductsPage() {
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 
-  // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
-  useEffect(() => {
-    setContentNavHeight(0);
-  }, [setContentNavHeight]);
-
   // Check for sync parameter and trigger background sync
   useEffect(() => {
     if (!isMountedRef.current) return;
@@ -870,6 +863,7 @@ export default function ProductsPage() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
+      <ContentTypeNavigation />
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}

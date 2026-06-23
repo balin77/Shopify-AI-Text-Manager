@@ -3,8 +3,18 @@ export const de = {
   nav: {
     products: "Produkte",
     otherContent: "Andere Inhalte",
+    content: "Inhalte",
     tasks: "Aufgaben",
     settings: "Einstellungen",
+  },
+
+  // Level-2 content rubrics (RubricNavigation)
+  rubrics: {
+    catalog: "Katalog",
+    onlineStore: "Online Store",
+    theme: "Theme",
+    system: "System",
+    directTranslations: "Direkte Übersetzungen",
   },
 
   // Products Page
@@ -173,9 +183,16 @@ export const de = {
     menus: "Menüs",
     menusDescription: "Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs",
     templates: "Vorlagen",
-    templatesDescription: "Verwalten Sie E-Mail- und Benachrichtigungsvorlagen",
+    templatesDescription: "Übersetzen Sie Theme-Standardinhalte, Vorlagen, Abschnittsgruppen und mehr",
     directTranslations: "Direktübersetzungen",
     directTranslationsDescription: "Übersetze gerenderten Storefront-Text, der nicht in übersetzbaren Shopify-Feldern liegt (z. B. Drittanbieter-Apps).",
+    products: "Produkte",
+    system: "Benachrichtigungen",
+    systemDescription: "Übersetzen Sie Benachrichtigungen, Versandmethoden und andere Shopify-Systemtexte",
+    sellingPlans: "Abo-Pläne",
+    sellingPlansDescription: "Übersetzen Sie Abo-Pläne und Abo-Gruppen",
+    onlineStoreExtras: "Filter & Shop-Metadaten",
+    onlineStoreExtrasDescription: "Übersetzen Sie Filter-Labels, Shop-SEO-Felder und Cookie-Banner",
     theme: "Theme-Texte",
     themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
     noEntries: "Keine Einträge verfügbar",

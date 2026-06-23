@@ -5,8 +5,18 @@ export const es: Translation = {
   nav: {
     products: "Productos",
     otherContent: "Otro Contenido",
+    content: "Contenido",
     tasks: "Tareas",
     settings: "Configuración",
+  },
+
+  // Level-2 content rubrics (RubricNavigation)
+  rubrics: {
+    catalog: "Catálogo",
+    onlineStore: "Tienda Online",
+    theme: "Tema",
+    system: "Sistema",
+    directTranslations: "Traducciones Directas",
   },
 
   // Products Page
@@ -175,9 +185,16 @@ export const es: Translation = {
     menus: "Menús",
     menusDescription: "Gestiona y traduce la navegación y menús de tu tienda",
     templates: "Plantillas",
-    templatesDescription: "Gestiona plantillas de correo electrónico y notificaciones",
+    templatesDescription: "Traduce contenido predeterminado del tema, plantillas, grupos de secciones y más",
     directTranslations: "Traducciones directas",
     directTranslationsDescription: "Traduce el texto del escaparate que no está en campos traducibles de Shopify (p. ej. apps de terceros).",
+    products: "Productos",
+    system: "Notificaciones",
+    systemDescription: "Traduce notificaciones, métodos de envío y otros textos del sistema de Shopify",
+    sellingPlans: "Planes de suscripción",
+    sellingPlansDescription: "Traduce planes de suscripción y grupos de planes",
+    onlineStoreExtras: "Filtros y metadatos de la tienda",
+    onlineStoreExtrasDescription: "Traduce etiquetas de filtros, campos SEO de la tienda y el banner de cookies",
     theme: "Textos del tema",
     themeDescription: "Traduce textos del tema como botones, etiquetas y mensajes",
     noEntries: "No hay entradas disponibles",
