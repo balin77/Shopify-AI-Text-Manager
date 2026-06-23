@@ -666,23 +666,51 @@ API version: 2025-10
 
 **Write test:** Aborted — the assumed `checkout.general.continue_button` key doesn't exist in `SHOP` (which only has `meta_title`/`meta_description`). Confirms that **the `SHOP`-as-checkout-overrides path was wrong**.
 
-### Cookie-banner hunt (Phase 0.5) — DONE, gap confirmed
+### Cookie-banner hunt (Phase 0.5) — RESOLVED, source found
 
-Three iterations of the in-app probe ran with progressively narrowed hint filters:
+Four iterations of the in-app probe:
 
-- **Run 1** (broad value + key match, hints: cookie / consent / privacy_banner / gdpr / tracking): no hits on baseline
-- **Run 2** (after merchant override of a cookie banner string): still 0 specific banner hits; identical to baseline
-- **Run 3** (key-only matching with cookie / consent_banner / cookie_banner / privacy_banner / consent_dialog / gdpr_compliance / shopify.consent): 4 hits, all duplicates of 2 unique keys:
-  - `ONLINE_STORE_THEME_LOCALE_CONTENT` → `shopify.checkout.shop_policies.cookie_preferences` = "Cookies"
-  - `ONLINE_STORE_THEME_LOCALE_CONTENT` → `customer_accounts.privacy_banner.cookie_preferences_link` = "Cookie preferences"
+- **Run 1** (broad value+key match): only false-positive hits on `tracking`/`consent` in unrelated keys
+- **Run 2** (after merchant override of a banner string in Language Editor): identical to baseline — confirms the override does NOT surface a new key in any of our 13 probed types
+- **Run 3** (key-only matching, narrowed hints): 2 unique hits only — `shopify.checkout.shop_policies.cookie_preferences` ("Plätzchen" / "Cookies") and `customer_accounts.privacy_banner.cookie_preferences_link` ("Cookie-Einstellungen" / "Cookie preferences") in `LOCALE_CONTENT`; both are *link labels*, not banner content
+- **Run 4** (probing the `COOKIE_BANNER` resource type via the `unstable` API endpoint): ✅ **resource found, 25 translatable keys**
 
-Both hits are **labels for the *link* to the cookie-preferences modal**, not the banner content itself. No `shopify.consent.*`, no `cookie_banner.*`, no `consent_dialog.*` keys exist anywhere in the 13 probed resource types.
+The `COOKIE_BANNER` resource type is **documented in `unstable` but not yet in `2025-10` stable** — calling it on `2025-10` returns:
+> `Variable $resourceType of type TranslatableResourceType! was provided invalid value`
 
-**Conclusion:** The actual Cookie-Banner content text lives **outside the `translatableResource` API**. Likely sources (no longer worth chasing, since the gap is small and the built-in 33 languages cover it):
-1. Customer Privacy API (separate REST/GraphQL surface, not part of Translations)
-2. A non-public TranslatableResourceType available to first-party apps only (this is how T&A exposes it)
+Routing the same query to `https://{shop}/admin/api/unstable/graphql.json` via raw fetch with the session access token succeeds.
 
-**Action:** Ship without Cookie-Banner editing. Document as a known gap in the Online-Store rubric. The 33 built-in languages cover this for the vast majority of merchants; the ~10–15 unsupported languages are an accepted shortfall here.
+Real Cookie-Banner key shape (Patis-Universe live shop, German primary):
+
+```
+policy_link_text       = "Datenschutzerklärung"
+title                  = "Cookie-Zustimmung"
+text                   = "Wir und unsere Partner, einschließlich Shopify, verwenden Cookies …"
+button_prefs_open_text = "Einstellungen verwalten"
+button_accept_text     = "Akzeptieren"
+button_decline_text    = (declined; one of the 25 total keys)
++ ~20 more preference-pane keys (preference category names, descriptions, save/cancel buttons)
+```
+
+**Implications:**
+- Cookie-Banner content IS in the Translations API, with a clean dedicated resource type
+- We can read and (with `unstable`) write it today
+- For production use we should wait until `COOKIE_BANNER` is promoted to stable (likely 2026-01 or 2026-04 release) before relying on it
+- Until then: ship with the resource type listed but disabled by default, or pin a parallel client to `unstable` strictly for this one resource
+
+### Bonus findings from production shop probe (Patis-Universe live, German primary)
+
+The second probe run on the live shop revealed numbers our test shop hid:
+
+| Type | Test shop | Live shop | Notes |
+|---|---:|---:|---|
+| `SHOP_POLICY` | 1 | **6** | All real merchant policies, in German |
+| `DELIVERY_METHOD_DEFINITION` | 2 | **18** | 16 shipping rates; names currently mixed German/Spanish ("Estándar", "Exprés") — merchant data, but worth noting that our `name` translations will need locale-aware fallback |
+| `FILTER` | 2 | **3** | "Verfügbarkeit", "Preis", "Farbe" |
+| `LOCALE_CONTENT` | 4081 | 4117 | Theme has slightly more keys (newsletter +5, sections +21, products +6) |
+| `ONLINE_STORE_THEME_APP_EMBED` | 6 | 6 | Same — still all CSS selectors |
+
+So live `SHOP_POLICY` is 6× our test-shop estimate, and `DELIVERY_METHOD_DEFINITION` is 9× larger. Worth re-sizing the rate-limit + sync-batching strategy in Phase 1.7 accordingly.
 
 ### Decision-affecting findings
 
@@ -708,6 +736,32 @@ Effective decisions:
 - ✅ Promote `EMAIL_TEMPLATE` as primary value driver
 - ✅ Reposition "Theme-Standardinhalte" as a UX-grouping problem on existing data
 - ✅ Demote `PACKING_SLIP_TEMPLATE` and `PAYMENT_GATEWAY` to conditional within `system` rubric
-- ✅ **Cookie-Banner: known gap, ship without** — built-in 33-language pack covers the majority
+- ✅ **Cookie-Banner: resource found via `unstable` API** — 25 translatable keys per shop; will be added to Phase 1 once `COOKIE_BANNER` lands in a stable API version (track via periodic re-probe). For v1: list rubric, mark "coming soon" until enum stabilises.
 - ✅ **Dedupe `ONLINE_STORE_THEME` in Phase 1.2** — `LOCALE_CONTENT` + `JSON_TEMPLATE` is the canonical source
 - ⏸️ Re-probe on a subscription shop to confirm `SELLING_PLAN*` shapes before Phase 1.6 ships (not blocking)
+- ⏸️ Track `COOKIE_BANNER` enum landing in 2026-01 / 2026-04 / 2026-07 stable releases — promote from probe-only to first-class section once stable
+
+### Coverage parity summary after Phase 1
+
+After Phase 1 ships, ContentPilot covers (or exposes a "coming soon" placeholder for) every translatable rubric T&A exposes:
+
+| T&A rubric | Resource type | Our status after Phase 1 |
+|---|---|---|
+| Produkte, Kollektionen | PRODUCT*, COLLECTION* | ✅ already covered |
+| Blog-Beiträge, Blog-Titel | ARTICLE, BLOG | ✅ already covered |
+| Seiten, Richtlinien | PAGE, SHOP_POLICY | ✅ already covered |
+| Metaobjekte | METAOBJECT | ✅ already covered |
+| Menü | MENU, LINK | ⚠️ API-limited (unchanged) |
+| Filter | FILTER | 🆕 added in Phase 1 |
+| Shop-Metadaten | SHOP (meta_*) | 🆕 added in Phase 1 |
+| Cookie-Banner | `COOKIE_BANNER` (unstable) | ⏳ tracked, ship when stable |
+| App-Einbettungen | ONLINE_STORE_THEME_APP_EMBED | 🆕 added in Phase 1 (with warning UI) |
+| Theme-Standardinhalte | ONLINE_STORE_THEME_LOCALE_CONTENT | 🟡 data already pulled, 🆕 better grouping in Phase 1.2 |
+| Abschnittsgruppen | ONLINE_STORE_THEME_SECTION_GROUP | ✅ already covered |
+| Statische Abschnitte | ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS | 🆕 added in Phase 1 (conditional) |
+| Vorlagen | ONLINE_STORE_THEME_JSON_TEMPLATE | ✅ already covered + 3 new patterns |
+| Theme-Einstellungen | ONLINE_STORE_THEME_SETTINGS_CATEGORY | ✅ already covered |
+| Benachrichtigungen | EMAIL_TEMPLATE | 🆕 added in Phase 1 (biggest single value-add) |
+| Versand & Zustellung | DELIVERY_METHOD_DEFINITION | 🆕 added in Phase 1 |
+
+**Plus content T&A doesn't expose:** `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`, `SELLING_PLAN*` — conditional opt-ins in System / Katalog rubrics for shops that have them.
