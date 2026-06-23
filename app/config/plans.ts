@@ -19,7 +19,8 @@ export type ContentType =
   | "metaobjects"
   | "directTranslations"
   // Full-translation-coverage rubrics (share the ThemeContent model):
-  | "system"             // notifications, shipping, payment, packing slips (Pro+)
+  | "system"             // notifications, payment, packing slips (Pro+)
+  | "delivery"           // shipping/delivery method names — checkout-facing (Basic+)
   | "sellingPlans"       // subscription plans (Pro+)
   | "onlineStoreExtras"; // filters + shop metadata + cookie banner (all tiers)
 
@@ -103,7 +104,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.basic,
     monthlyImageOperations: 0,
     productImages: "all",
-    contentTypes: ["products", "collections", "pages", "policies", "onlineStoreExtras"],
+    contentTypes: ["products", "collections", "pages", "policies", "delivery", "onlineStoreExtras"],
     aiInstructionsEditable: false,
     // Same Pro+ gate as free — see comment on free.variantImageManager above.
     variantImageManager: false,
@@ -129,7 +130,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "sellingPlans", "onlineStoreExtras"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {
@@ -154,7 +155,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.max,
     monthlyImageOperations: 10000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "sellingPlans", "onlineStoreExtras"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {

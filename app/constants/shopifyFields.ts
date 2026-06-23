@@ -56,6 +56,7 @@ export const FIELD_CONFIGS = {
   metaobjects: [], // Metaobjects have dynamic fields
   // ThemeContent-backed rubrics — all dynamic fields (no fixed required set).
   system: [],
+  delivery: [],
   sellingPlans: [],
   onlineStoreExtras: [],
 } as const;

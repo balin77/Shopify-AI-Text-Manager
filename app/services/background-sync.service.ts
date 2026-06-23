@@ -10,7 +10,7 @@ import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
 import { db } from '../db.server';
-import { getSyncScope, type Plan } from '../utils/planUtils';
+import { getSyncScope, meetsPlan, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
 
 /** A single translatable content item from Shopify */
@@ -148,6 +148,7 @@ export interface SyncStats {
   articles: number;
   menus: number;
   system: number;
+  delivery: number;
   onlineStoreExtras: number;
   sellingPlans: number;
   total: number;
@@ -1803,13 +1804,19 @@ export class BackgroundSyncService {
     return totalGroups;
   }
 
-  /** System rubric: notifications, shipping, payment, packing slips. */
+  /** System rubric (Pro+): notifications, payment, packing slips. */
   async syncSystemContent(onProgress?: ProgressCallback): Promise<number> {
     return this.syncFlatDomain("system", [
       { type: "EMAIL_TEMPLATE", label: "Benachrichtigung", icon: "✉️", groupPrefix: "email" },
-      { type: "DELIVERY_METHOD_DEFINITION", label: "Versandmethode", icon: "🚚", groupPrefix: "delivery" },
       { type: "PAYMENT_GATEWAY", label: "Zahlungsanbieter", icon: "💳", groupPrefix: "payment", skipIfEmpty: true },
       { type: "PACKING_SLIP_TEMPLATE", label: "Lieferschein", icon: "📦", groupPrefix: "packing", skipIfEmpty: true },
+    ], onProgress);
+  }
+
+  /** Delivery rubric (Basic+): checkout-facing shipping/delivery method names. */
+  async syncDeliveryContent(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("delivery", [
+      { type: "DELIVERY_METHOD_DEFINITION", label: "Versandmethode", icon: "🚚", groupPrefix: "delivery" },
     ], onProgress);
   }
 
@@ -1871,7 +1878,7 @@ export class BackgroundSyncService {
       // Gating for the new domains (until they get their own SyncPhase entries
       // in Phase 4): system + selling_plans mirror the themes (Pro+) entitlement;
       // online_store_extras is small + high-value and runs on every tier.
-      const [pages, policies, themes, metaobjects, articles, menus, system, onlineStoreExtras, sellingPlans] = await Promise.all([
+      const [pages, policies, themes, metaobjects, articles, menus, system, delivery, onlineStoreExtras, sellingPlans] = await Promise.all([
         scope.pages.enabled
           ? this.syncAllPages(scope.pages.max).catch(err => {
               logger.error('[BackgroundSync] Pages sync failed:', err);
@@ -1914,6 +1921,13 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
+        // Delivery (checkout shipping names) entitled Basic+.
+        meetsPlan(plan, 'basic')
+          ? this.syncDeliveryContent().catch(err => {
+              logger.error('[BackgroundSync] Delivery sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
         // Online-Store extras (Filter + Shop-Metadaten) entitled on every tier.
         this.syncOnlineStoreExtras().catch(err => {
           logger.error('[BackgroundSync] Online-Store-Extras sync failed:', err);
@@ -1936,14 +1950,15 @@ export class BackgroundSyncService {
         articles,
         menus,
         system,
+        delivery,
         onlineStoreExtras,
         sellingPlans,
-        total: pages + policies + themes + metaobjects + articles + menus + system + onlineStoreExtras + sellingPlans,
+        total: pages + policies + themes + metaobjects + articles + menus + system + delivery + onlineStoreExtras + sellingPlans,
         duration,
       };
 
       logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (plan=${plan})`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Delivery: ${delivery}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}`);
 
       return stats;
     } catch (error: unknown) {

@@ -65,6 +65,7 @@ export const CONTENT_RUBRICS: RubricDef[] = [
     icon: "⚙️",
     entries: [
       { id: "system", path: "/app/system", icon: "✉️", labelKey: "system", planContentType: "system" },
+      { id: "delivery", path: "/app/delivery", icon: "🚚", labelKey: "delivery", planContentType: "delivery" },
     ],
   },
   {

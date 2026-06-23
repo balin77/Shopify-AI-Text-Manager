@@ -15,6 +15,7 @@ import type { ContentType } from "~/types/content-editor.types";
 const THEME_CONTENT_TYPES: readonly string[] = [
   "templates",
   "system",
+  "delivery",
   "sellingPlans",
   "onlineStoreExtras",
 ];

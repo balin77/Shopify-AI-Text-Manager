@@ -114,6 +114,15 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     stats.deletedThemeTranslations = await deleteThemeTranslationsOverLimit(shop, limits.maxThemeTranslations);
   }
 
+  // 7b. Delivery domain (Basic+) — pruned only where the plan is not entitled
+  // (i.e. Free). It shares the ThemeContent tables but is NOT covered by the
+  // themes (Pro+) prune above, so it survives a Pro→Basic downgrade correctly.
+  if (!limits.contentTypes.includes("delivery")) {
+    const r = await deleteThemeDomain(shop, "delivery");
+    stats.deletedThemeContent += r.themeContent;
+    stats.deletedThemeTranslations += r.themeTranslations;
+  }
+
   // 8. Delete menus if the plan is no longer entitled (no per-item cap)
   if (!scope.menus.enabled) {
     stats.deletedMenus = await deleteMenus(shop);
@@ -505,6 +514,22 @@ async function deletePagesOverLimit(shop: string, maxPages: number): Promise<{ p
     pages: pagesCount,
     translations: translationsCount,
   };
+}
+
+/**
+ * Delete all ThemeContent + ThemeTranslation rows for one domain (used to prune
+ * a non-"theme" rubric whose entitlement the plan no longer grants).
+ */
+async function deleteThemeDomain(
+  shop: string,
+  domain: string
+): Promise<{ themeContent: number; themeTranslations: number }> {
+  const { themeTranslationsCount, themeContentCount } = await db.$transaction(async (tx) => {
+    const t = await tx.themeTranslation.deleteMany({ where: { shop, domain } });
+    const c = await tx.themeContent.deleteMany({ where: { shop, domain } });
+    return { themeTranslationsCount: t.count, themeContentCount: c.count };
+  });
+  return { themeContent: themeContentCount, themeTranslations: themeTranslationsCount };
 }
 
 /**

@@ -489,6 +489,13 @@ export const SYSTEM_CONFIG: ContentEditorConfig = {
   displayNameSingular: "System Content",
 };
 
+export const DELIVERY_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "delivery",
+  displayName: "Versand & Zustellung",
+  displayNameSingular: "Delivery Method",
+};
+
 export const ONLINE_STORE_EXTRAS_CONFIG: ContentEditorConfig = {
   ...TEMPLATES_CONFIG,
   contentType: "onlineStoreExtras",
