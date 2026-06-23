@@ -442,6 +442,78 @@ describe('AIService', () => {
     });
   });
 
+  describe('translateFieldsToLocalesBatch() / translateFieldsToLocalesChunked()', () => {
+    beforeEach(() => {
+      aiService = new AIService('claude', mockConfig);
+    });
+
+    // Build a valid response covering all locales × fields. Extra keys are
+    // tolerated by assertNestedComplete, so one comprehensive blob works for
+    // every chunk (which only requests a subset).
+    const buildResponse = (fields: Record<string, string>, locales: string[]) => {
+      const obj: Record<string, Record<string, string>> = {};
+      for (const loc of locales) {
+        obj[loc] = {};
+        for (const key of Object.keys(fields)) obj[loc][key] = `${key}-${loc}`;
+      }
+      return JSON.stringify(obj);
+    };
+
+    const mockResponse = (text: string) =>
+      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(text);
+
+    it('collapses 5 fields × 3 locales into a single AI call', async () => {
+      const fields = {
+        a: 'alpha source', b: 'bravo source', c: 'charlie source',
+        d: 'delta source', e: 'echo source',
+      };
+      const locales = ['en', 'fr', 'es'];
+      const spy = mockResponse(buildResponse(fields, locales));
+
+      const result = await aiService.translateFieldsToLocalesChunked(fields, 'de', locales);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.en.a).toBe('a-en');
+      expect(result.fr.e).toBe('e-fr');
+      expect(result.es.c).toBe('c-es');
+    });
+
+    it('splits a 50 000-char field × 5 locales into multiple chunks', async () => {
+      const fields = { big: 'X'.repeat(50_000) };
+      const locales = ['en', 'fr', 'es', 'it', 'nl'];
+      // Oversized single field falls back to translateContent per locale, so we
+      // return a plain translated string (not JSON) for each call.
+      const spy = mockResponse('translated chunk');
+
+      const result = await aiService.translateFieldsToLocalesChunked(fields, 'de', locales);
+
+      expect(spy.mock.calls.length).toBeGreaterThan(1);
+      expect(result.en.big).toBe('translated chunk');
+      expect(Object.keys(result)).toHaveLength(5);
+    });
+
+    it('throws when a requested locale is missing from the JSON', async () => {
+      const fields = { title: 'a long enough source text' };
+      const locales = ['en', 'fr'];
+      // Response omits "fr".
+      mockResponse(JSON.stringify({ en: { title: 'translated title' } }));
+
+      await expect(
+        aiService.translateFieldsToLocalesBatch(fields, 'de', locales),
+      ).rejects.toThrow();
+    });
+
+    it('throws when a translated value echoes the source verbatim', async () => {
+      const source = 'this is an untranslated source string';
+      const fields = { body: source };
+      mockResponse(JSON.stringify({ en: { body: source } }));
+
+      await expect(
+        aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']),
+      ).rejects.toThrow(/source unchanged/);
+    });
+  });
+
   describe('generateImageAltText()', () => {
     beforeEach(() => {
       aiService = new AIService('huggingface', mockConfig);

@@ -6,6 +6,7 @@ import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
+import { TRANSLATION_BATCH } from '../../app/config/constants';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -1070,6 +1071,249 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       Object.keys(fields),
     );
     return parsed;
+  }
+
+  /**
+   * Translate an arbitrary set of fields (key -> source text) into many locales
+   * in a SINGLE AI request, returning `{ locale: { key: translated } }`.
+   *
+   * Unlike translateShortFieldsBatch this imposes NO field-key allow-list and
+   * NO maxLength cap, so long HTML bodies (descriptions, legal pages, theme
+   * template content) pass through untruncated — mirroring translateContent's
+   * contract that long content must reach the model intact (the provider errors
+   * loudly if it overflows the context window rather than silently truncating).
+   *
+   * Use {@link translateFieldsToLocalesChunked} when the combined payload may be
+   * large; it splits the work across calls and falls back here for each chunk.
+   */
+  async translateFieldsToLocalesBatch(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+  ): Promise<Record<string, Record<string, string>>> {
+    const preserveHtml = options.preserveHtml ?? true;
+    const contextLabel = options.contextLabel || 'content';
+
+    const sanitizedFields: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value && value.trim().length > 0) {
+        // No maxLength: long content must pass through untruncated (see the
+        // contract note on translateContent). allowNewlines so HTML/multiline
+        // bodies survive sanitization.
+        sanitizedFields[key] = sanitizePromptInput(value, { allowNewlines: true });
+      }
+    }
+
+    const fieldKeys = Object.keys(sanitizedFields);
+    if (fieldKeys.length === 0 || targetLocales.length === 0) return {};
+
+    const targetLanguages = targetLocales
+      .map((loc) => `${localeName(loc)} (${loc})`)
+      .join(', ');
+
+    // Each field gets a "### <key>" header so the model can map source ->
+    // output unambiguously even for long multi-paragraph bodies.
+    const fieldsText = Object.entries(sanitizedFields)
+      .map(([key, value]) => `### ${key}\n${value}`)
+      .join('\n\n');
+
+    // Expected JSON skeleton: outer = locale code, inner = field key.
+    const jsonStructure: Record<string, Record<string, string>> = {};
+    for (const locale of targetLocales) {
+      jsonStructure[locale] = {};
+      for (const key of fieldKeys) jsonStructure[locale][key] = '...';
+    }
+
+    const htmlRule = preserveHtml
+      ? '\n- Keep ALL HTML tags, attributes, and structure exactly as in the source; translate only the human-readable text between the tags.'
+      : '';
+
+    const prompt = `Translate the following ${contextLabel} fields from ${localeName(fromLang)} to: ${targetLanguages}.
+
+Each field is introduced by a "### <key>" header followed by its source text.
+
+${fieldsText}
+
+Requirements:
+- Translate EVERY field into EVERY target language.
+- Keep the translation natural and faithful to the source meaning.
+- Maintain a similar length to the source.${htmlRule}
+- Do NOT add explanations or extra fields.
+
+Respond with ONLY this JSON shape (outer keys = locale codes, inner keys = field keys):
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    const parsed = this.parseJSONResponse(responseText);
+
+    // R5-H1: fail loud if any requested locale/field cell is missing or
+    // non-string (a stray `}` in a long body can truncate the JSON and silently
+    // drop later cells while the task still reports success).
+    AIService.assertNestedComplete(
+      'translateFieldsToLocalesBatch',
+      parsed,
+      targetLocales,
+      fieldKeys,
+    );
+
+    // R5-H2(b)-style echo guard: a cell equal to its source verbatim means the
+    // model echoed untranslated text. Persisting it would silently write
+    // source-as-translation, so fail loud. Conservative: only trips for
+    // non-trivial input (> 8 chars) and when source/target languages differ.
+    const result = parsed as Record<string, Record<string, string>>;
+    for (const locale of targetLocales) {
+      if (locale === fromLang) continue;
+      for (const key of fieldKeys) {
+        const src = sanitizedFields[key].trim();
+        const out = result[locale][key].trim();
+        if (src.length > 8 && out === src) {
+          throw new Error(
+            `translateFieldsToLocalesBatch: model returned the source unchanged ` +
+            `for field "${key}" (${fromLang} -> ${locale}); treating as a failed ` +
+            `translation rather than persisting untranslated source`
+          );
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Chunking wrapper around {@link translateFieldsToLocalesBatch}. Estimates the
+   * output size and, only when it would exceed CHUNK_THRESHOLD_CHARS, splits the
+   * work across multiple batch calls — locale-chunking first, then
+   * field-chunking, and finally per-field translateContent for a single field
+   * too large on its own — run with bounded concurrency. Partial results are
+   * merged back into one `{ locale: { key: translated } }` map.
+   *
+   * Resilience: a single failed chunk omits only its own cells (the caller
+   * skips the missing ones — N-H3, never source-as-translation). Only when
+   * EVERY chunk fails does it throw, so the caller's outer catch can fall back
+   * to the sequential path.
+   */
+  async translateFieldsToLocalesChunked(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+  ): Promise<Record<string, Record<string, string>>> {
+    const entries = Object.entries(fields).filter(([, v]) => v && v.trim().length > 0);
+    if (entries.length === 0 || targetLocales.length === 0) return {};
+
+    const { CHUNK_THRESHOLD_CHARS, OUTPUT_EXPANSION_FACTOR, MAX_CONCURRENCY } = TRANSLATION_BATCH;
+    const sourceChars = entries.reduce((a, [, v]) => a + v.length, 0);
+    const estimatedOutput = sourceChars * targetLocales.length * OUTPUT_EXPANSION_FACTOR;
+
+    // Fast path: the whole payload fits in one call.
+    if (estimatedOutput <= CHUNK_THRESHOLD_CHARS) {
+      loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: single batch', {
+        fields: entries.length,
+        locales: targetLocales.length,
+        chunks: 1,
+        estimatedOutput,
+      });
+      return this.translateFieldsToLocalesBatch(fields, fromLang, targetLocales, options);
+    }
+
+    // Source-char budget that keeps ONE locale's output under the threshold.
+    const perLocaleBudget = CHUNK_THRESHOLD_CHARS / OUTPUT_EXPANSION_FACTOR;
+    const byKey = new Map(entries);
+
+    // Split fields into groups that each fit one locale under budget. A single
+    // field larger than the budget becomes its own (oversized) group, handled
+    // via the translateContent fallback below.
+    const fieldGroups: string[][] = [];
+    let cur: string[] = [];
+    let curChars = 0;
+    for (const [key, val] of entries) {
+      if (val.length >= perLocaleBudget) {
+        if (cur.length) { fieldGroups.push(cur); cur = []; curChars = 0; }
+        fieldGroups.push([key]);
+        continue;
+      }
+      if (curChars + val.length > perLocaleBudget && cur.length) {
+        fieldGroups.push(cur); cur = []; curChars = 0;
+      }
+      cur.push(key);
+      curChars += val.length;
+    }
+    if (cur.length) fieldGroups.push(cur);
+
+    // Build the list of chunk jobs. Each resolves to a partial result map.
+    type Job = () => Promise<Record<string, Record<string, string>>>;
+    const jobs: Job[] = [];
+
+    for (const group of fieldGroups) {
+      const groupChars = group.reduce((a, k) => a + (byKey.get(k)?.length || 0), 0);
+
+      // Oversized single field: even one locale exceeds the threshold. There is
+      // no JSON-batching benefit, so fall back to translateContent per locale.
+      if (group.length === 1 && groupChars >= perLocaleBudget) {
+        const key = group[0];
+        const src = byKey.get(key) || '';
+        for (const locale of targetLocales) {
+          jobs.push(async () => {
+            const translated = await this.translateContent(src, fromLang, locale);
+            return { [locale]: { [key]: translated } };
+          });
+        }
+        continue;
+      }
+
+      const groupFields: Record<string, string> = {};
+      for (const k of group) groupFields[k] = byKey.get(k) || '';
+
+      const localesPerChunk = Math.max(1, Math.floor(perLocaleBudget / groupChars));
+      for (let i = 0; i < targetLocales.length; i += localesPerChunk) {
+        const localeChunk = targetLocales.slice(i, i + localesPerChunk);
+        jobs.push(() =>
+          this.translateFieldsToLocalesBatch(groupFields, fromLang, localeChunk, options)
+        );
+      }
+    }
+
+    loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: chunked', {
+      fields: entries.length,
+      locales: targetLocales.length,
+      chunks: jobs.length,
+      estimatedOutput,
+    });
+
+    // Run with bounded concurrency; collect partials and errors.
+    const merged: Record<string, Record<string, string>> = {};
+    const errors: unknown[] = [];
+    let succeeded = 0;
+    let cursor = 0;
+
+    const worker = async (): Promise<void> => {
+      while (cursor < jobs.length) {
+        const idx = cursor++;
+        try {
+          const partial = await jobs[idx]();
+          for (const [locale, cells] of Object.entries(partial)) {
+            Object.assign((merged[locale] ??= {}), cells);
+          }
+          succeeded++;
+        } catch (err) {
+          errors.push(err);
+          loggers.ai('error', '[AI-SERVICE] translateFieldsToLocalesChunked: chunk failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(MAX_CONCURRENCY, jobs.length) }, () => worker())
+    );
+
+    // Every chunk failed → throw so the caller can fall back to sequential.
+    if (succeeded === 0 && errors.length > 0) {
+      throw errors[0];
+    }
+
+    return merged;
   }
 
   private estimateTokens(prompt: string): number {

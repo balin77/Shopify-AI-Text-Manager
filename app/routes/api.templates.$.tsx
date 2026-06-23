@@ -295,20 +295,20 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           }
         );
 
-        // Translate all fields
+        // Translate all fields in one batched/chunked AI call (single target
+        // locale) instead of one translateContent round-trip per field.
+        const batchResult = await aiService.translateFieldsToLocalesChunked(
+          fieldsToTranslate,
+          primaryLocale,
+          [targetLocale],
+          { preserveHtml: true, contextLabel: "template content" }
+        );
+
         const translatedFields: Record<string, string> = {};
-        for (const [key, text] of Object.entries(fieldsToTranslate)) {
-          try {
-            const translated = await aiService.translateContent(
-              text,
-              primaryLocale,
-              targetLocale
-            );
-            translatedFields[key] = translated;
-          } catch (error) {
-            logger.error("Error translating field", { context: "Templates", key, error: error instanceof Error ? error.message : String(error) });
-            translatedFields[key] = text; // Fallback to original
-          }
+        for (const key of Object.keys(fieldsToTranslate)) {
+          const value = batchResult[targetLocale]?.[key];
+          // Missing cell → skip (N-H3: never echo source as a translation).
+          if (value) translatedFields[key] = value;
         }
 
         return json({

@@ -70,34 +70,36 @@ export async function handleTranslateAll(
     const primaryLocale = getFormString(formData, "primaryLocale") || "en";
 
     const translations: Record<string, Record<string, string>> = {};
-    const totalItems = targetLocales.length * uniqueContent.size;
-    let completedItems = 0;
     const pendingUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
+
+    // Collect every field once; one batched/chunked AI call replaces the old
+    // N-fields × M-locales nested translateContent loop.
+    const fieldsToTranslate: Record<string, string> = {};
+    for (const [key, item] of uniqueContent.entries()) {
+      if (item.value) fieldsToTranslate[key] = item.value;
+    }
+
+    const batchResult = await aiService.translateFieldsToLocalesChunked(
+      fieldsToTranslate,
+      primaryLocale,
+      targetLocales,
+      { preserveHtml: true, contextLabel: "template content" }
+    );
 
     for (const locale of targetLocales) {
       translations[locale] = {};
-
-      for (const [key, item] of uniqueContent.entries()) {
-        try {
-          const translated = await aiService.translateContent(item.value || "", primaryLocale, locale);
-          translations[locale][key] = translated;
-          const fieldResId = keyToResourceId.get(key) || resourceId;
-          pendingUpserts.push({ key, locale, value: translated, resId: fieldResId });
-
-          completedItems++;
-          const progress = Math.round(5 + (completedItems / totalItems) * 90);
-          await db.task.update({ where: { id: task.id }, data: { progress } });
-        } catch (error: unknown) {
-          logger.error("Error translating field", {
-            context: "Templates",
-            key,
-            locale,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          translations[locale][key] = item.value || "";
-        }
+      for (const key of Object.keys(fieldsToTranslate)) {
+        const value = batchResult[locale]?.[key];
+        // Missing cell → skip (N-H3: never persist source as a translation).
+        if (!value) continue;
+        translations[locale][key] = value;
+        const fieldResId = keyToResourceId.get(key) || resourceId;
+        pendingUpserts.push({ key, locale, value, resId: fieldResId });
       }
     }
+
+    // AI phase done — Shopify persistence (unchanged) finishes the task at 100%.
+    await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
     // Save to Shopify FIRST — only persist to local DB on success
     const digestMap = new Map<string, string>();

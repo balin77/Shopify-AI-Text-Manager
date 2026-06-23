@@ -211,33 +211,27 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
     );
 
     const translations: Record<string, string> = {};
-    const totalLocales = targetLocales.length;
     const pendingUpserts: Array<{ locale: string; value: string }> = [];
 
-    for (let i = 0; i < targetLocales.length; i++) {
-      const locale = targetLocales[i];
-      try {
-        const translatedValue = await aiService.translateContent(sourceText, primaryLocale, locale);
-        translations[locale] = translatedValue;
-        pendingUpserts.push({ locale, value: translatedValue });
+    // One batched/chunked AI call (1 field × M locales) replaces the old
+    // per-locale translateContent loop.
+    const batchResult = await aiService.translateFieldsToLocalesChunked(
+      { [fieldType]: sourceText },
+      primaryLocale,
+      targetLocales,
+      { preserveHtml: true, contextLabel: "template content" }
+    );
 
-        const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
-        await db.task.update({ where: { id: task.id }, data: { progress } });
-      } catch (error: unknown) {
-        logger.error("Error translating field to locale", {
-          context: "Templates",
-          fieldType,
-          locale,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        // R3-H10 / N-H3 audited-safe: RESPONSE-MAP ONLY. Persistence below is
-        // driven exclusively by `pendingUpserts`, which this catch does NOT
-        // push to — so a failed locale is skipped for Shopify + DB, never
-        // written as source-as-translation. Keep persistence keyed off
-        // pendingUpserts; do not persist `translations` without an N-H3 guard.
-        translations[locale] = sourceText; // response map only — see note
-      }
+    for (const locale of targetLocales) {
+      const value = batchResult[locale]?.[fieldType];
+      // Missing cell → skip (N-H3: never persist source as a translation).
+      // Persistence below is driven exclusively by `pendingUpserts`.
+      if (!value) continue;
+      translations[locale] = value;
+      pendingUpserts.push({ locale, value });
     }
+
+    await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
     // Save to Shopify FIRST — only persist to local DB on success
     const fieldResId2 = keyToResourceId.get(fieldType) || resourceId;
