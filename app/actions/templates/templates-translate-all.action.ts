@@ -37,7 +37,7 @@ export async function handleTranslateAll(
       shop: session.shop,
       type: "bulkTranslation",
       status: "pending",
-      resourceType: "templates",
+      resourceType: domain,
       resourceId: `group_${groupId}`,
       resourceTitle: firstGroup.groupName,
       progress: 0,

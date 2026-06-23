@@ -51,6 +51,7 @@ export const CONTENT_RUBRICS: RubricDef[] = [
       { id: "policies", path: "/app/policies", icon: "📋", labelKey: "policies", planContentType: "policies" },
       { id: "metaobjects", path: "/app/metaobjects", icon: "🔷", labelKey: "metaobjects", planContentType: "metaobjects" },
       { id: "onlineStoreExtras", path: "/app/online-store-extras", icon: "🔍", labelKey: "onlineStoreExtras", planContentType: "onlineStoreExtras" },
+      { id: "cookieBanner", path: "/app/cookie-banner", icon: "🍪", labelKey: "cookieBanner", planContentType: "onlineStoreExtras" },
     ],
   },
   {

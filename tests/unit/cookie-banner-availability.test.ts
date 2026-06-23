@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getCookieBannerAvailability,
   getCookieBannerResources,
+  writeCookieBannerTranslations,
   __clearCookieBannerCache,
 } from '~/utils/cookie-banner-availability.server';
 
@@ -118,5 +119,63 @@ describe('getCookieBannerResources', () => {
     const status = await getCookieBannerAvailability(session);
     expect(status).toBe('unavailable');
     expect(noFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('writeCookieBannerTranslations', () => {
+  beforeEach(() => {
+    __clearCookieBannerCache();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const tx = [{ key: 'title', value: 'Wir nutzen Cookies', translatableContentDigest: 'abc', locale: 'de' }];
+
+  it('no-ops (no fetch) when there is nothing to write', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', []);
+    expect(res.ok).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns ok on a clean translationsRegister', async () => {
+    global.fetch = mockFetchJson({ data: { translationsRegister: { userErrors: [] } } }) as unknown as typeof fetch;
+
+    const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', tx);
+    expect(res).toEqual({ ok: true });
+  });
+
+  it('surfaces Shopify userErrors without flipping availability', async () => {
+    global.fetch = mockFetchJson({
+      data: { translationsRegister: { userErrors: [{ message: 'Invalid locale' }] } },
+    }) as unknown as typeof fetch;
+
+    const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', tx);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('Invalid locale');
+  });
+
+  it('marks the shop unavailable on a schema-level GraphQL error', async () => {
+    global.fetch = mockFetchJson({ errors: [{ message: "Field 'translationsRegister' doesn't exist" }] }) as unknown as typeof fetch;
+
+    const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', tx);
+    expect(res.ok).toBe(false);
+
+    // Availability flipped to "unavailable" and is cached (no further fetch).
+    const noFetch = vi.fn();
+    global.fetch = noFetch as unknown as typeof fetch;
+    expect(await getCookieBannerAvailability(session)).toBe('unavailable');
+    expect(noFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns ok:false (never throws) on a network blip', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
+
+    const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', tx);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('ECONNRESET');
   });
 });

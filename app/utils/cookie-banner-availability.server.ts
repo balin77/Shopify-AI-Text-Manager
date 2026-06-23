@@ -63,7 +63,8 @@ const CONTENT_QUERY = `query cookieBannerContent {
 /** Raw POST against the unstable Admin GraphQL endpoint with the session token. */
 async function unstableGraphQL(
   session: CookieBannerSession,
-  query: string
+  query: string,
+  variables?: Record<string, unknown>
 ): Promise<{ data?: unknown; errors?: Array<{ message: string }> }> {
   if (!session.accessToken) {
     throw new Error("No access token on session — cannot reach unstable endpoint");
@@ -74,7 +75,7 @@ async function unstableGraphQL(
       "X-Shopify-Access-Token": session.accessToken,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(variables ? { query, variables } : { query }),
   });
   if (!resp.ok) {
     throw new Error(`Unstable endpoint HTTP ${resp.status}`);
@@ -156,6 +157,59 @@ export async function getCookieBannerResources(
     });
     cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
     return null;
+  }
+}
+
+const REGISTER_MUTATION = `mutation cookieBannerRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
+  translationsRegister(resourceId: $resourceId, translations: $translations) {
+    userErrors { field message }
+  }
+}`;
+
+/** One foreign-locale value to register, with the source-content digest. */
+export interface CookieBannerTranslationInput {
+  key: string;
+  value: string;
+  /** Digest of the PRIMARY-locale content for this key (from getCookieBannerResources). */
+  translatableContentDigest: string;
+  locale: string;
+}
+
+/**
+ * Register foreign-locale Cookie-Banner translations via the unstable endpoint.
+ * Returns { ok: false, error } on any failure (never throws); the caller renders
+ * a graceful message. Flips the availability cache to "unavailable" when the
+ * resource has gone away, so the rubric degrades on the next load.
+ */
+export async function writeCookieBannerTranslations(
+  session: CookieBannerSession,
+  resourceId: string,
+  translations: CookieBannerTranslationInput[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (translations.length === 0) return { ok: true };
+  try {
+    const data = (await unstableGraphQL(session, REGISTER_MUTATION, { resourceId, translations })) as {
+      data?: { translationsRegister?: { userErrors?: Array<{ message: string }> } };
+      errors?: Array<{ message: string }>;
+    };
+    if (data.errors?.length) {
+      // Schema/enum-level rejection → the resource is no longer reachable.
+      cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
+      return { ok: false, error: data.errors[0]?.message ?? "Cookie banner temporarily unavailable" };
+    }
+    const userErrors = data.data?.translationsRegister?.userErrors ?? [];
+    if (userErrors.length) {
+      return { ok: false, error: userErrors[0]?.message ?? "Translation rejected" };
+    }
+    return { ok: true };
+  } catch (e) {
+    logger.debug("[CookieBanner] register threw → unavailable", {
+      context: "CookieBanner",
+      shop: session.shop,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
