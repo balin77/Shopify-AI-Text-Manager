@@ -50,6 +50,8 @@ export const es: Translation = {
     recommended: "recomendado",
     preview: "Vista previa",
     html: "HTML",
+    liquidPreviewNotice:
+      "Esta plantilla contiene variables Liquid (p. ej. {{ shop.email_logo_url }}) que Shopify solo procesa al enviar el correo. La vista previa muestra marcadores — cambia al modo HTML para editar.",
     aiGenerate: "Generar / mejorar con IA",
     aiGenerateShort: "Generar con IA",
     aiImprove: "Mejorar con IA",

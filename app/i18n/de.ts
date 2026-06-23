@@ -48,6 +48,8 @@ export const de = {
     recommended: "empfohlen",
     preview: "Vorschau",
     html: "HTML",
+    liquidPreviewNotice:
+      "Diese Vorlage enthält Liquid-Variablen (z. B. {{ shop.email_logo_url }}), die Shopify erst beim tatsächlichen E-Mail-Versand auswertet. Die Vorschau zeigt Platzhalter — zum Bearbeiten in den HTML-Modus wechseln.",
     aiGenerate: "Mit KI generieren / verbessern",
     aiGenerateShort: "Mit KI generieren",
     aiImprove: "Mit KI verbessern",

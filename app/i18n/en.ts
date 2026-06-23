@@ -51,6 +51,8 @@ export const en: Translation = {
     recommended: "recommended",
     preview: "Preview",
     html: "HTML",
+    liquidPreviewNotice:
+      "This template contains Liquid variables (e.g. {{ shop.email_logo_url }}) that Shopify only renders when the email is actually sent. The preview shows placeholders — switch to HTML mode to edit.",
     aiGenerate: "Generate / improve with AI",
     aiGenerateShort: "Generate with AI",
     aiImprove: "Improve with AI",
