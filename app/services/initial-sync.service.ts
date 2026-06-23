@@ -16,7 +16,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { Prisma } from "@prisma/client";
 import { db } from "../db.server";
-import { getPlanLimits, getSyncScope, meetsPlan, type Plan } from "../utils/planUtils";
+import { getPlanLimits, getSyncScope, canAccessContentType, type Plan } from "../utils/planUtils";
 import { ProductSyncService } from "./product-sync.service";
 import { ContentSyncService } from "./content-sync.service";
 import { BackgroundSyncService } from "./background-sync.service";
@@ -341,8 +341,8 @@ export async function runInitialFullSync(
   }
 
   // ==========================================
-  // PHASE 6b: Sync System content (notifications, shipping, payment, packing).
-  // Same Pro+ entitlement as themes.
+  // PHASE 6b: Sync System content (notifications, payment, packing).
+  // Same Pro+ entitlement as themes. (Delivery is a separate Basic+ phase below.)
   // ==========================================
   assertNotAborted();
   if (!scope.themes.enabled) {
@@ -368,7 +368,7 @@ export async function runInitialFullSync(
   // PHASE 6b2: Sync Delivery (checkout shipping method names). Entitled Basic+.
   // ==========================================
   assertNotAborted();
-  if (!meetsPlan(plan, 'basic')) {
+  if (!canAccessContentType(plan, 'delivery')) {
     emit('delivery', 100, 'Delivery content not included in this plan, skipping...');
   } else {
     emit('delivery', 0, 'Syncing delivery content...');

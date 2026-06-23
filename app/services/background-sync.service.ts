@@ -10,7 +10,7 @@ import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
 import { db } from '../db.server';
-import { getSyncScope, meetsPlan, type Plan } from '../utils/planUtils';
+import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
 
 /** A single translatable content item from Shopify */
@@ -1694,7 +1694,9 @@ export class BackgroundSyncService {
 
           // Fetch + persist foreign-locale translations for this resource.
           const existingRows = await db.themeTranslation.findMany({
-            where: { shop: this.shop, resourceId: resource.resourceId, groupId },
+            // domain-scoped: each rubric's sync only ever considers its own rows
+            // (defense-in-depth; the unique key omits domain).
+            where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain },
             select: { id: true, key: true, locale: true, value: true, outdated: true },
           });
           const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
@@ -1760,7 +1762,7 @@ export class BackgroundSyncService {
           const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
           for (let i = 0; i < keysToDelete.length; i += CHUNK) {
             await db.themeTranslation.deleteMany({
-              where: { shop: this.shop, resourceId: resource.resourceId, groupId, OR: keysToDelete.slice(i, i + CHUNK) },
+              where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain, OR: keysToDelete.slice(i, i + CHUNK) },
             });
           }
 
@@ -1921,8 +1923,9 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
-        // Delivery (checkout shipping names) entitled Basic+.
-        meetsPlan(plan, 'basic')
+        // Delivery (checkout shipping names) entitled Basic+ — gate directly off
+        // the entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'delivery')
           ? this.syncDeliveryContent().catch(err => {
               logger.error('[BackgroundSync] Delivery sync failed:', err);
               return 0;

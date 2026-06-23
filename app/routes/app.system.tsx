@@ -1,7 +1,8 @@
 /**
- * System rubric — Benachrichtigungen, Versand & Zustellung, Zahlung,
- * Lieferschein (EMAIL_TEMPLATE, DELIVERY_METHOD_DEFINITION, PAYMENT_GATEWAY,
- * PACKING_SLIP_TEMPLATE). ThemeContent domain="system".
+ * System rubric (Pro+) — Benachrichtigungen, Zahlung, Lieferschein
+ * (EMAIL_TEMPLATE, PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE). ThemeContent
+ * domain="system". Versand & Zustellung lives in its own Basic+ rubric
+ * (app.delivery, domain="delivery").
  *
  * Thin wrapper over the shared ThemeContent domain factories + page.
  */
