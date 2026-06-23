@@ -143,6 +143,14 @@ LEVEL 2 — Rubric bar (NEW, compact)
    [📦 Katalog] [🌐 Online Store] [🎨 Theme] [⚙️ System] [🌐 Direkte Übersetzungen]
 
 LEVEL 3 — Content-type bar (existing ContentTypeNavigation, compact)
+   under "Katalog":
+   [🛍️ Produkte] [📂 Kollektionen] [🔁 Abo-Pläne (cond.)]
+
+   under "Online Store":
+   [📄 Seiten] [📝 Blog-Beiträge] [📚 Blogs] [🍔 Menüs]
+   [📋 Richtlinien] [🔷 Metaobjekte] [🔍 Filter]
+   [🏪 Shop-Metadaten] [🍪 Cookie-Banner]
+
    under "Theme":
    [📄 Theme-Standardinhalte] [📋 Vorlagen] [🧩 Abschnittsgruppen]
    [🔌 App-Einbettungen] [⚙️ Theme-Einstellungen] [🗂️ Statische Abschnitte]
@@ -150,6 +158,9 @@ LEVEL 3 — Content-type bar (existing ContentTypeNavigation, compact)
    under "System":
    [✉️ Benachrichtigungen] [🚚 Versand & Zustellung]
    [💳 Zahlung (cond.)] [📦 Lieferschein (cond.)]
+
+   under "Direkte Übersetzungen":
+   (single-page rubric — no Level 3 bar shown)
 ```
 
 `(cond.)` = entry hidden when the resource is empty for this shop.
