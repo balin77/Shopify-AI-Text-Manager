@@ -11,7 +11,7 @@ import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleTranslateField(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");
   const targetLocale = getFormString(formData, "targetLocale");
@@ -123,7 +123,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
         shop: session.shop,
         groupId: groupId,
         resourceId: fieldResId,
-        domain: "theme",
+        domain: domain,
         locale: targetLocale,
         key: fieldType,
         value: translatedValue,
@@ -152,7 +152,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
 }
 
 export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");
   const targetLocalesJson = getFormString(formData, "targetLocales");
@@ -289,7 +289,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
               shop: session.shop,
               groupId: groupId,
               resourceId: fieldResId2,
-              domain: "theme",
+              domain: domain,
               locale: locale,
               key: fieldType,
               value: value,

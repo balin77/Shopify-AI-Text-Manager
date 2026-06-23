@@ -477,6 +477,33 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 };
 
 // ============================================================================
+// THEME-CONTENT DOMAIN RUBRICS (System / Online-Store-Extras / Selling-Plans)
+// These share the Templates dynamic-field machinery — same shape, only the
+// contentType (plan gate) and display labels differ.
+// ============================================================================
+
+export const SYSTEM_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "system",
+  displayName: "System",
+  displayNameSingular: "System Content",
+};
+
+export const ONLINE_STORE_EXTRAS_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Filter & Shop-Metadaten",
+  displayNameSingular: "Online Store Content",
+};
+
+export const SELLING_PLANS_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "sellingPlans",
+  displayName: "Abo-Pläne",
+  displayNameSingular: "Selling Plan",
+};
+
+// ============================================================================
 // METAOBJECTS
 // ============================================================================
 

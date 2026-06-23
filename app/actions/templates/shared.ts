@@ -27,6 +27,8 @@ export interface TemplatesActionContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
   formData: FormData;
+  /** ThemeContent domain this group belongs to: "theme" | "system" | "online_store_extras" | "selling_plans". */
+  domain: string;
   groupId: string;
   themeGroups: ThemeContentRow[];
   firstGroup: ThemeContentRow;

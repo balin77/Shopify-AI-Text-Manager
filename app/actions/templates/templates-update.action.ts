@@ -8,7 +8,7 @@ import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
 
@@ -550,7 +550,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       // STEP B: Delete from local DB
       const deleteResult = await db.themeTranslation.deleteMany({
-        where: { shop: session.shop, groupId: groupId, key: { in: changedFields }, domain: "theme" },
+        where: { shop: session.shop, groupId: groupId, key: { in: changedFields }, domain: domain },
       });
       logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
     } else {
@@ -589,7 +589,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             shop: session.shop,
             groupId: groupId,
             resourceId: keyResId,
-            domain: "theme",
+            domain: domain,
             locale: locale,
             key: key,
             value: value,
@@ -601,7 +601,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (keysToDelete.length > 0) {
       dbOps.push(
         db.themeTranslation.deleteMany({
-          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: "theme" },
+          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: domain },
         })
       );
     }

@@ -17,7 +17,11 @@ export type ContentType =
   | "templates"
   | "menus"
   | "metaobjects"
-  | "directTranslations";
+  | "directTranslations"
+  // Full-translation-coverage rubrics (share the ThemeContent model):
+  | "system"             // notifications, shipping, payment, packing slips (Pro+)
+  | "sellingPlans"       // subscription plans (Pro+)
+  | "onlineStoreExtras"; // filters + shop metadata + cookie banner (all tiers)
 
 export interface PlanLimits {
   maxProducts: number;
@@ -69,7 +73,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.free,
     monthlyImageOperations: 0,
     productImages: "featured-only",
-    contentTypes: ["products", "collections"],
+    contentTypes: ["products", "collections", "onlineStoreExtras"],
     aiInstructionsEditable: false,
     // Image processing suite (VariantImageManager, WebP conversion, bulk
     // upload, bulk alt-text) is Pro+ only — monthlyImageOperations is 0
@@ -99,7 +103,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.basic,
     monthlyImageOperations: 0,
     productImages: "all",
-    contentTypes: ["products", "collections", "pages", "policies"],
+    contentTypes: ["products", "collections", "pages", "policies", "onlineStoreExtras"],
     aiInstructionsEditable: false,
     // Same Pro+ gate as free — see comment on free.variantImageManager above.
     variantImageManager: false,
@@ -125,7 +129,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {
@@ -150,7 +154,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.max,
     monthlyImageOperations: 10000,
     productImages: "all",
-    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations"],
+    contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
     variantImageManager: true,
     cacheEnabled: {

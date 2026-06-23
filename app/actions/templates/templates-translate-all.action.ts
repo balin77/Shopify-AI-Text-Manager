@@ -12,7 +12,7 @@ export async function handleTranslateAll(
   ctx: TemplatesActionContext,
   actionType: "translateAll" | "translateAllForLocale"
 ): Promise<Response> {
-  const { admin, db, session, formData, groupId, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const targetLocale = getFormString(formData, "targetLocale");
   const targetLocales = targetLocalesJson
@@ -206,7 +206,7 @@ export async function handleTranslateAll(
               shop: session.shop,
               groupId: groupId,
               resourceId: resId,
-              domain: "theme",
+              domain: domain,
               locale: locale,
               key: key,
               value: value,

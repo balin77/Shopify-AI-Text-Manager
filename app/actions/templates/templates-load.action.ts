@@ -3,7 +3,7 @@ import { getFormString } from "~/utils/form-data.utils";
 import type { TemplatesActionContext } from "./shared";
 
 export async function handleLoadTranslations(ctx: TemplatesActionContext): Promise<Response> {
-  const { db, session, formData, groupId } = ctx;
+  const { db, session, formData, groupId, domain } = ctx;
   const locale = getFormString(formData, "locale");
 
   const translations = await db.themeTranslation.findMany({
@@ -11,7 +11,7 @@ export async function handleLoadTranslations(ctx: TemplatesActionContext): Promi
       shop: session.shop,
       groupId: groupId,
       locale: locale,
-      domain: "theme",
+      domain: domain,
     },
   });
 
