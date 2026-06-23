@@ -66,16 +66,52 @@ interface KeyPatternConfig {
   extractSubgroup?: boolean;
 }
 
+// Ordering matters: more specific patterns MUST precede the generic prefix they
+// share (e.g. shopify.checkout.* before shopify.*, templates.404.* before
+// templates.*). The matcher takes the first hit and stops.
 const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
+  // ── JSON template sections (section.*) ──
   { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
+  { pattern: /^section\.blog\./, name: 'Blog', groupId: 'blog_theme', icon: '📝' },
   { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
   { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
   { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
   { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
   { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
+
+  // ── JSON template top-level keys (templates.*) ──
+  { pattern: /^templates\.404\./, name: '404', groupId: 'tpl_404', icon: '🚫' },
+  { pattern: /^templates\.list-collections\./, name: 'List Collections', groupId: 'tpl_list_coll', icon: '📂' },
+
   { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
   { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
   { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
+
+  // ── shopify.* namespace (LOCALE_CONTENT: checkout + system strings, ~2590 keys) ──
+  { pattern: /^shopify\.checkout\./, name: 'Checkout & System', groupId: 'shopify_checkout', icon: '🛒' },
+  { pattern: /^shopify\.customer_accounts\./, name: 'Customer Accounts (Shopify)', groupId: 'shopify_customer_accounts', icon: '👥' },
+  { pattern: /^shopify\.email_marketing\./, name: 'Email Marketing', groupId: 'shopify_email_marketing', icon: '✉️' },
+  { pattern: /^shopify\.subscriptions\./, name: 'Subscriptions', groupId: 'shopify_subscriptions', icon: '🔁' },
+  { pattern: /^shopify\.sentence\./, name: 'Sentence connectors', groupId: 'shopify_sentence', icon: '✏️' },
+  { pattern: /^shopify\./, name: 'Shopify (other)', groupId: 'shopify_other', icon: '🏬' },
+
+  // ── LOCALE_CONTENT top-level prefixes (Theme-Standardinhalte) ──
+  { pattern: /^accessibility\./, name: 'Accessibility', groupId: 'accessibility', icon: '♿' },
+  { pattern: /^accounts\./, name: 'Accounts', groupId: 'accounts', icon: '👤' },
+  { pattern: /^announcement_bar\./, name: 'Announcement Bar', groupId: 'announcement_bar', icon: '📢' },
+  { pattern: /^blogs\./, name: 'Blogs', groupId: 'blogs_theme', icon: '📝' },
+  { pattern: /^customer_accounts\./, name: 'Customer Accounts', groupId: 'customer_accounts', icon: '👥' },
+  { pattern: /^customer\./, name: 'Customer', groupId: 'customer', icon: '👤' },
+  { pattern: /^general\./, name: 'General', groupId: 'general', icon: '🔧' },
+  { pattern: /^gift_cards?\./, name: 'Gift Cards', groupId: 'gift_cards', icon: '🎁' },
+  { pattern: /^localization\./, name: 'Localization', groupId: 'localization', icon: '🌍' },
+  { pattern: /^newsletter\./, name: 'Newsletter', groupId: 'newsletter', icon: '📰' },
+  { pattern: /^onboarding\./, name: 'Onboarding', groupId: 'onboarding', icon: '🚀' },
+  { pattern: /^products\./, name: 'Products', groupId: 'products_theme', icon: '🛍️' },
+  { pattern: /^recipient\./, name: 'Recipient', groupId: 'recipient', icon: '👥' },
+  { pattern: /^sections\./, name: 'Sections', groupId: 'sections_theme', icon: '🧩' },
+  { pattern: /^templates\./, name: 'Templates', groupId: 'templates_theme', icon: '📋' },
+
   { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
 ];
 
@@ -966,13 +1002,17 @@ export class BackgroundSyncService {
     try {
       const { db } = await import("../db.server");
 
-      // Define the working resource types (based on ContentService)
+      // Define the working resource types (based on ContentService).
+      // ONLINE_STORE_THEME is intentionally dropped — it is a ~99% duplicate of
+      // ONLINE_STORE_THEME_LOCALE_CONTENT. APP_EMBED and SETTINGS_DATA_SECTIONS
+      // are now included (previously excluded) for full Theme rubric coverage.
       const WORKING_RESOURCE_TYPES = [
-        { type: 'ONLINE_STORE_THEME', label: 'Theme Content' },
         { type: 'ONLINE_STORE_THEME_JSON_TEMPLATE', label: 'JSON Templates' },
         { type: 'ONLINE_STORE_THEME_LOCALE_CONTENT', label: 'Locale Content' },
         { type: 'ONLINE_STORE_THEME_SECTION_GROUP', label: 'Section Groups' },
         { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
+        { type: 'ONLINE_STORE_THEME_APP_EMBED', label: 'App Embeds' },
+        { type: 'ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS', label: 'Shared Sections' },
       ];
 
       // Use module-level THEME_KEY_PATTERNS for grouping
@@ -1323,6 +1363,7 @@ export class BackgroundSyncService {
                   resourceId: resource.resourceId,
                   resourceType: resourceTypeConfig.type,
                   resourceTypeLabel: resourceTypeConfig.label,
+                  domain: 'theme',
                   groupId,
                   groupName,
                   groupIcon,
@@ -1333,6 +1374,7 @@ export class BackgroundSyncService {
                 update: {
                   resourceType: resourceTypeConfig.type,
                   resourceTypeLabel: resourceTypeConfig.label,
+                  domain: 'theme',
                   groupName,
                   groupIcon,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
@@ -1352,7 +1394,7 @@ export class BackgroundSyncService {
               // count instead of the number of actual changes (this is what filled the
               // Postgres volume). Mirrors the incremental logic in syncSingleThemeGroup.
               const toCreate: {
-                shop: string; resourceId: string; groupId: string;
+                shop: string; resourceId: string; domain: string; groupId: string;
                 key: string; value: string; locale: string; outdated: boolean;
               }[] = [];
               const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
@@ -1364,6 +1406,7 @@ export class BackgroundSyncService {
                   toCreate.push({
                     shop: this.shop,
                     resourceId: resource.resourceId,
+                    domain: 'theme',
                     groupId,
                     key: t.key,
                     value: t.value,
@@ -1437,7 +1480,7 @@ export class BackgroundSyncService {
       // Health check: refuse to wipe local data when Shopify returns 0 theme resources.
       // Same pattern as syncAllPages / syncAllPolicies.
       if (syncedCombinations.size === 0) {
-        const localThemeCount = await db.themeContent.count({ where: { shop: this.shop } });
+        const localThemeCount = await db.themeContent.count({ where: { shop: this.shop, domain: 'theme' } });
         if (localThemeCount > 0) {
           logger.error(`[BackgroundSync] 🔴 ABORTING theme sync: Shopify returned 0 theme resources but ${localThemeCount} exist locally. Possible API outage.`);
           throw new Error(`Shopify returned 0 theme resources but ${localThemeCount} exist locally - aborting to prevent data loss`);
@@ -1451,9 +1494,11 @@ export class BackgroundSyncService {
         onProgress(95, 100, `Cleaning up obsolete themes...`);
       }
       if (syncedCombinations.size > 0) {
-        // Get all existing theme content for this shop
+        // Get all existing theme content for this shop (scoped to the theme
+        // domain so the System / Online-Store-Extras / Selling-Plans rubrics,
+        // which share this table, are never swept by a theme-only sync).
         const existingThemeContent = await db.themeContent.findMany({
-          where: { shop: this.shop },
+          where: { shop: this.shop, domain: 'theme' },
           select: { resourceId: true, groupId: true }
         });
 
@@ -1475,12 +1520,14 @@ export class BackgroundSyncService {
             db.themeTranslation.deleteMany({
               where: {
                 shop: this.shop,
+                domain: 'theme',
                 OR: deleteConditions,
               },
             }),
             db.themeContent.deleteMany({
               where: {
                 shop: this.shop,
+                domain: 'theme',
                 OR: deleteConditions,
               },
             }),

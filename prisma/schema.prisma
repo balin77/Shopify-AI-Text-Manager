@@ -674,6 +674,11 @@ model ThemeContent {
   resourceId          String // Shopify GID
   resourceType        String // "ONLINE_STORE_THEME", "ONLINE_STORE_THEME_JSON_TEMPLATE", etc.
   resourceTypeLabel   String // "Theme Content", "JSON Templates", etc.
+  // Top-level content rubric this row belongs to. Lets the four content rubrics
+  // (Theme, System, Online-Store-Extras, Selling-Plans) share the ThemeContent
+  // table while each route/sync path scopes itself to its own domain.
+  // "theme" | "system" | "online_store_extras" | "selling_plans"
+  domain              String   @default("theme")
   groupId             String // "article", "collection", "product", "misc_cart", etc.
   groupName           String // "Article", "Collection", "Cart", etc.
   groupIcon           String // "📝", "📂", "🛒", etc.
@@ -683,6 +688,7 @@ model ThemeContent {
   @@unique([shop, resourceId, groupId])
   @@index([shop])
   @@index([shop, groupId])
+  @@index([shop, domain])
   @@index([lastSyncedAt])
 }
 
@@ -690,6 +696,9 @@ model ThemeTranslation {
   id         String  @id @default(cuid())
   shop       String
   resourceId String // Links to ThemeContent
+  // Mirrors ThemeContent.domain (see there). Lets each rubric load/delete its
+  // own translations without touching the others.
+  domain     String  @default("theme")
   groupId    String // For faster queries
   key        String // Translation key
   value      String  @db.Text
@@ -702,6 +711,7 @@ model ThemeTranslation {
   @@unique([shop, resourceId, groupId, key, locale])
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
+  @@index([shop, domain])
   @@index([locale])
 }
 
