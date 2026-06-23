@@ -161,6 +161,17 @@ export const TRANSLATION_BATCH = {
    * tripping provider rate limits while still overlapping latency.
    */
   MAX_CONCURRENCY: 3,
+
+  /**
+   * A translated cell equal to its source is normally fine — many short words
+   * and proper nouns are spelled identically across languages (e.g.
+   * "Schadenfreude", "Hotel", "Information", brand names), so such values are
+   * kept and used. Only a value at least this long that comes back
+   * byte-identical is treated as a failed translation (a full paragraph never
+   * legitimately equals its source) and dropped rather than persisted as
+   * source-as-translation (N-H3).
+   */
+  ECHO_FAILURE_MIN_CHARS: 200,
 } as const;
 
 // ============================================================================

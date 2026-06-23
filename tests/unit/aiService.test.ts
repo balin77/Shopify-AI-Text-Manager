@@ -323,6 +323,19 @@ describe('AIService', () => {
 
       expect(result).toBeDefined();
     });
+
+    it('keeps a SHORT identical value (loanword) instead of throwing', async () => {
+      const svc = new AIService('claude', mockConfig);
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue('Hotel');
+      await expect(svc.translateContent('Hotel', 'en', 'de')).resolves.toBe('Hotel');
+    });
+
+    it('throws on a LONG identical value (failed translation)', async () => {
+      const svc = new AIService('claude', mockConfig);
+      const long = 'The quick brown fox jumps over the lazy dog. '.repeat(8);
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue(long);
+      await expect(svc.translateContent(long, 'en', 'de')).rejects.toThrow(/source unchanged/);
+    });
   });
 
   describe('generateContent()', () => {
@@ -503,27 +516,28 @@ describe('AIService', () => {
       ).rejects.toThrow();
     });
 
-    it('throws when EVERY translated value echoes the source verbatim', async () => {
-      const source = 'this is an untranslated source string';
-      const fields = { body: source };
-      mockResponse(JSON.stringify({ en: { body: source } }));
-
-      await expect(
-        aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']),
-      ).rejects.toThrow(/source unchanged/);
-    });
-
-    it('drops only the echoed cell and keeps the rest of the batch', async () => {
-      const echoed = 'this exact source is echoed back unchanged';
-      const fields = { good: 'translate me properly', bad: echoed };
-      // "good" is translated, "bad" comes back verbatim.
-      mockResponse(JSON.stringify({ en: { good: 'properly translated', bad: echoed } }));
+    it('keeps a short value that is legitimately identical to its source', async () => {
+      // Many short words are spelled the same across languages (loanwords,
+      // proper nouns, brand names) — these must be kept and used, not dropped.
+      const fields = { word: 'Schadenfreude', other: 'translate me' };
+      mockResponse(JSON.stringify({ en: { word: 'Schadenfreude', other: 'translated' } }));
 
       const result = await aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']);
 
-      expect(result.en.good).toBe('properly translated');
-      // Echoed cell is omitted so the caller's "missing → skip" (N-H3) applies.
-      expect(result.en.bad).toBeUndefined();
+      expect(result.en.word).toBe('Schadenfreude');
+      expect(result.en.other).toBe('translated');
+    });
+
+    it('drops only a LONG field returned byte-identical (failed translation, N-H3)', async () => {
+      const longEcho = 'The quick brown fox jumps over the lazy dog. '.repeat(8); // >= 200 chars
+      const fields = { body: longEcho, title: 'kurz' };
+      mockResponse(JSON.stringify({ en: { body: longEcho, title: 'short title' } }));
+
+      const result = await aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']);
+
+      // Long echo dropped → caller's "missing → skip" (N-H3) applies.
+      expect(result.en.body).toBeUndefined();
+      expect(result.en.title).toBe('short title');
     });
   });
 
