@@ -456,39 +456,50 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
 
     const translatedAltTexts: Record<string, string> = {};
     const aiResponses: Array<{ locale: string; response: string }> = [];
-    const totalLocales = targetLocales.length;
 
-    // Translate to each locale
-    for (let i = 0; i < targetLocales.length; i++) {
-      const locale = targetLocales[i];
-      try {
-        const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, locale);
-        translatedAltTexts[locale] = translatedValue;
-        aiResponses.push({ locale, response: translatedValue });
-
-        // Update progress
-        const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
-        await db.task.update({
-          where: { id: task.id },
-          data: { progress },
-        });
-
-        logger.debug("[API-AI] Translated alt-text to locale", {
-          context: "AI",
-          imageIndex,
-          locale
-        });
-      } catch (error: unknown) {
-        logger.error("[API-AI] Error translating alt-text to locale", {
-          context: "AI",
-          imageIndex,
-          locale,
-          error: errorMessage(error)
-        });
-        translatedAltTexts[locale] = sourceAltText; // Fallback to original
-        aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
+    // Translate this alt-text to ALL locales in ONE alt-text-aware AI call
+    // instead of one translateContent round-trip per locale. On total failure,
+    // fall back to the per-locale path so a single bad call doesn't block all.
+    const altKey = String(imageIndex);
+    try {
+      const batch = await aiService.translateAltTextsBatch(
+        { [altKey]: sourceAltText },
+        primaryLocale,
+        targetLocales,
+        contentType
+      );
+      for (const locale of targetLocales) {
+        const value = batch[altKey]?.[locale];
+        // Missing cell → skip (N-H3: never persist source as a translation).
+        if (!value) continue;
+        translatedAltTexts[locale] = value;
+        aiResponses.push({ locale, response: value });
+      }
+    } catch (error: unknown) {
+      logger.error("[API-AI] Alt-text batch translation failed, falling back to per-locale", {
+        context: "AI",
+        imageIndex,
+        error: errorMessage(error)
+      });
+      for (const locale of targetLocales) {
+        try {
+          const value = await aiService.translateContent(sourceAltText, primaryLocale, locale);
+          translatedAltTexts[locale] = value;
+          aiResponses.push({ locale, response: value });
+        } catch (innerError: unknown) {
+          // Skip this locale — do NOT persist source-as-translation (N-H3).
+          logger.error("[API-AI] Error translating alt-text to locale", {
+            context: "AI",
+            imageIndex,
+            locale,
+            error: errorMessage(innerError)
+          });
+          aiResponses.push({ locale, response: `ERROR: ${errorMessage(innerError)}` });
+        }
       }
     }
+
+    await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
     // Save translations to Shopify first, then DB only on success
     const failedLocales: string[] = [];
