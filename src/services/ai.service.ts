@@ -1159,22 +1159,42 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     // R5-H2(b)-style echo guard: a cell equal to its source verbatim means the
     // model echoed untranslated text. Persisting it would silently write
-    // source-as-translation, so fail loud. Conservative: only trips for
+    // source-as-translation (N-H3), so we DROP just that cell — the caller's
+    // "missing cell → skip" handling keeps every other field/locale usable
+    // instead of throwing the whole batch away. Conservative: only trips for
     // non-trivial input (> 8 chars) and when source/target languages differ.
     const result = parsed as Record<string, Record<string, string>>;
+    let droppedEchoes = 0;
+    let totalCells = 0;
     for (const locale of targetLocales) {
-      if (locale === fromLang) continue;
       for (const key of fieldKeys) {
+        totalCells++;
+        if (locale === fromLang) continue;
         const src = sanitizedFields[key].trim();
         const out = result[locale][key].trim();
         if (src.length > 8 && out === src) {
-          throw new Error(
-            `translateFieldsToLocalesBatch: model returned the source unchanged ` +
-            `for field "${key}" (${fromLang} -> ${locale}); treating as a failed ` +
-            `translation rather than persisting untranslated source`
-          );
+          delete result[locale][key];
+          droppedEchoes++;
         }
       }
+    }
+
+    // Only when EVERY cell echoed the source is this a wholesale failure worth
+    // throwing (so the chunked caller can fall back / fail the task) rather than
+    // returning an all-empty result that would look like success.
+    if (droppedEchoes > 0 && droppedEchoes === totalCells) {
+      throw new Error(
+        `translateFieldsToLocalesBatch: model returned the source unchanged for ` +
+        `all ${totalCells} cells (${fromLang}); treating as a failed translation ` +
+        `rather than persisting untranslated source`
+      );
+    }
+    if (droppedEchoes > 0) {
+      loggers.ai('warn', '[AI-SERVICE] translateFieldsToLocalesBatch: dropped echoed (untranslated) cells', {
+        dropped: droppedEchoes,
+        totalCells,
+        fromLang,
+      });
     }
 
     return result;
@@ -1249,7 +1269,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       const groupChars = group.reduce((a, k) => a + (byKey.get(k)?.length || 0), 0);
 
       // Oversized single field: even one locale exceeds the threshold. There is
-      // no JSON-batching benefit, so fall back to translateContent per locale.
+      // no JSON-batching benefit, so fall back to translateContent per locale
+      // (per plan step 3). translateContent returns plain text — safer than
+      // JSON-wrapping a very large HTML body — and its own prompt already
+      // instructs "Keep HTML tags", so options.preserveHtml is honored in
+      // spirit even though the batch prompt's stronger wording isn't reused.
       if (group.length === 1 && groupChars >= perLocaleBudget) {
         const key = group[0];
         const src = byKey.get(key) || '';

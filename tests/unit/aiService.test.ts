@@ -503,7 +503,7 @@ describe('AIService', () => {
       ).rejects.toThrow();
     });
 
-    it('throws when a translated value echoes the source verbatim', async () => {
+    it('throws when EVERY translated value echoes the source verbatim', async () => {
       const source = 'this is an untranslated source string';
       const fields = { body: source };
       mockResponse(JSON.stringify({ en: { body: source } }));
@@ -511,6 +511,19 @@ describe('AIService', () => {
       await expect(
         aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']),
       ).rejects.toThrow(/source unchanged/);
+    });
+
+    it('drops only the echoed cell and keeps the rest of the batch', async () => {
+      const echoed = 'this exact source is echoed back unchanged';
+      const fields = { good: 'translate me properly', bad: echoed };
+      // "good" is translated, "bad" comes back verbatim.
+      mockResponse(JSON.stringify({ en: { good: 'properly translated', bad: echoed } }));
+
+      const result = await aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']);
+
+      expect(result.en.good).toBe('properly translated');
+      // Echoed cell is omitted so the caller's "missing → skip" (N-H3) applies.
+      expect(result.en.bad).toBeUndefined();
     });
   });
 
