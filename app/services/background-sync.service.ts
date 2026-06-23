@@ -798,6 +798,10 @@ export class BackgroundSyncService {
       where: {
         shop: this.shop,
         groupId: groupId,
+        // Defense-in-depth: this per-group reload is theme-only. New-domain
+        // groupIds never collide today, but the unique constraint omits domain
+        // so we scope explicitly.
+        domain: "theme",
       },
     });
 
@@ -920,7 +924,7 @@ export class BackgroundSyncService {
     }));
 
     const existing = await db.themeTranslation.findMany({
-      where: { shop: this.shop, groupId: groupId },
+      where: { shop: this.shop, groupId: groupId, domain: "theme" },
       select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true },
     });
 
@@ -941,6 +945,7 @@ export class BackgroundSyncService {
               shop: this.shop,
               resourceId: d.resourceId,
               groupId: groupId,
+              domain: "theme",
               key: d.key,
               value: d.value,
               locale: d.locale,
@@ -973,6 +978,7 @@ export class BackgroundSyncService {
       where: {
         shop: this.shop,
         groupId: groupId,
+        domain: "theme",
       },
     });
 
@@ -1602,6 +1608,12 @@ export class BackgroundSyncService {
     const syncedCombinations = new Set<string>();
     let totalGroups = 0;
     let typeIndex = 0;
+    // When any resource type fails (GraphQL error or thrown exception) we have an
+    // INCOMPLETE view of Shopify for this domain. Running orphan cleanup in that
+    // state would delete the failed type's rows (they're absent from
+    // syncedCombinations) — silent data loss on a transient API blip. So we skip
+    // cleanup for this run and let the next successful cycle reconcile.
+    let anySourceFailed = false;
 
     for (const rt of resourceTypes) {
       typeIndex++;
@@ -1628,6 +1640,7 @@ export class BackgroundSyncService {
           const data = await resp.json();
           if (data.errors) {
             logger.error(`[BackgroundSync] Error loading ${rt.type} (domain=${domain})`, { error: data.errors[0]?.message });
+            anySourceFailed = true;
             break;
           }
           const pageInfo = data.data?.translatableResources?.pageInfo;
@@ -1708,6 +1721,9 @@ export class BackgroundSyncService {
 
           const seen = new Set<string>();
           const relevant = fetched.filter((t) => {
+            // ThemeTranslation.value is non-null; Shopify can return null values
+            // for an unset translation — skip those rather than crash the insert.
+            if (t.value == null) return false;
             const uk = `${t.key}::${t.locale}`;
             if (seen.has(uk)) return false;
             seen.add(uk);
@@ -1750,6 +1766,7 @@ export class BackgroundSyncService {
           totalGroups++;
         }
       } catch (error) {
+        anySourceFailed = true;
         logger.error(`[BackgroundSync] Error syncing ${rt.type} (domain=${domain})`, { error });
       }
     }
@@ -1764,7 +1781,13 @@ export class BackgroundSyncService {
       return 0;
     }
 
-    // Orphan cleanup, scoped to this domain only.
+    // Orphan cleanup, scoped to this domain only. Skipped on partial failure so
+    // a transient error never deletes the failed type's still-valid rows.
+    if (anySourceFailed) {
+      logger.warn(`[BackgroundSync] Skipping ${domain} orphan cleanup — a resource type failed this run (incomplete view).`);
+      logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} groups for domain "${domain}" (cleanup deferred)`);
+      return totalGroups;
+    }
     const existing = await db.themeContent.findMany({ where: { shop: this.shop, domain }, select: { resourceId: true, groupId: true } });
     const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
     if (toDelete.length > 0) {

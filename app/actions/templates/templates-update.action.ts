@@ -550,7 +550,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       // STEP B: Delete from local DB
       const deleteResult = await db.themeTranslation.deleteMany({
-        where: { shop: session.shop, groupId: groupId, key: { in: changedFields } },
+        where: { shop: session.shop, groupId: groupId, key: { in: changedFields }, domain: "theme" },
       });
       logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
     } else {
@@ -589,6 +589,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             shop: session.shop,
             groupId: groupId,
             resourceId: keyResId,
+            domain: "theme",
             locale: locale,
             key: key,
             value: value,
@@ -600,7 +601,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (keysToDelete.length > 0) {
       dbOps.push(
         db.themeTranslation.deleteMany({
-          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale },
+          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: "theme" },
         })
       );
     }

@@ -511,8 +511,11 @@ async function deletePagesOverLimit(shop: string, maxPages: number): Promise<{ p
  * Delete theme translations over the specified limit (keep newest)
  */
 async function deleteThemeTranslationsOverLimit(shop: string, maxTranslations: number): Promise<number> {
+  // The maxThemeTranslations cap governs the THEME domain only. Scope the prune
+  // accordingly so it never deletes online_store_extras rows (entitled on every
+  // tier) or the Pro-only system/selling_plans rows to satisfy a theme cap.
   const translations = await db.themeTranslation.findMany({
-    where: { shop },
+    where: { shop, domain: "theme" },
     orderBy: { updatedAt: "desc" },
     select: { id: true },
   });

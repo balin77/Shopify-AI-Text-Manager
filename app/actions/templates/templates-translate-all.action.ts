@@ -206,6 +206,7 @@ export async function handleTranslateAll(
               shop: session.shop,
               groupId: groupId,
               resourceId: resId,
+              domain: "theme",
               locale: locale,
               key: key,
               value: value,

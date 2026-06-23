@@ -157,7 +157,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           where: {
             shop: session.shop,
             groupId: groupId,
-            locale: locale
+            locale: locale,
+            domain: "theme"
           }
         });
 
@@ -403,7 +404,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
               where: {
                 shop: session.shop,
                 groupId: groupId,
-                key: { in: changedFields }
+                key: { in: changedFields },
+                domain: "theme"
               }
             });
 
@@ -432,6 +434,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
                 shop: session.shop,
                 groupId: groupId,
                 resourceId: resourceId,
+                domain: "theme",
                 locale: locale,
                 key: key,
                 value: value as string

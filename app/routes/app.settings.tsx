@@ -286,8 +286,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
+    // Theme-translation usage gauge — theme domain only (the System /
+    // Online-Store-Extras / Selling-Plans domains share this table but are not
+    // governed by the maxThemeTranslations cap shown here).
     const themeTranslationCount = await db.themeTranslation.count({
-      where: { shop: session.shop },
+      where: { shop: session.shop, domain: "theme" },
     });
 
     // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only and

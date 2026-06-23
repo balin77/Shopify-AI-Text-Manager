@@ -11,6 +11,7 @@ export async function handleLoadTranslations(ctx: TemplatesActionContext): Promi
       shop: session.shop,
       groupId: groupId,
       locale: locale,
+      domain: "theme",
     },
   });
 
