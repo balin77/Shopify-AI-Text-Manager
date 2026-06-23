@@ -1917,7 +1917,9 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
-        scope.themes.enabled
+        // System (notifications/payment/packing) entitled Pro+ — gate directly
+        // off the entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'system')
           ? this.syncSystemContent().catch(err => {
               logger.error('[BackgroundSync] System sync failed:', err);
               return 0;
@@ -1936,7 +1938,9 @@ export class BackgroundSyncService {
           logger.error('[BackgroundSync] Online-Store-Extras sync failed:', err);
           return 0;
         }),
-        scope.themes.enabled
+        // Selling plans (subscriptions) entitled Pro+ — gate directly off the
+        // entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'sellingPlans')
           ? this.syncSellingPlans().catch(err => {
               logger.error('[BackgroundSync] Selling-Plans sync failed:', err);
               return 0;

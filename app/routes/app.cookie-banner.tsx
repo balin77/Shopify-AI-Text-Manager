@@ -110,7 +110,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }));
 
   const result = await writeCookieBannerTranslations(cbSession, resourceId, translations);
-  return json(result, { status: result.ok ? 200 : 200 });
+  return json(result, { status: 200 });
 }
 
 export default function CookieBannerPage() {

@@ -342,10 +342,11 @@ export async function runInitialFullSync(
 
   // ==========================================
   // PHASE 6b: Sync System content (notifications, payment, packing).
-  // Same Pro+ entitlement as themes. (Delivery is a separate Basic+ phase below.)
+  // Pro+ entitlement — gated directly off the entitlement source so it can't
+  // drift from canAccessContentType. (Delivery is a separate Basic+ phase below.)
   // ==========================================
   assertNotAborted();
-  if (!scope.themes.enabled) {
+  if (!canAccessContentType(plan, 'system')) {
     emit('system', 100, 'System content not included in this plan, skipping...');
   } else {
     emit('system', 0, 'Syncing system content...');
@@ -410,11 +411,12 @@ export async function runInitialFullSync(
   }
 
   // ==========================================
-  // PHASE 6d: Sync Selling Plans (subscriptions). Same Pro+ gate as themes;
-  // empty on shops without subscriptions.
+  // PHASE 6d: Sync Selling Plans (subscriptions). Pro+ entitlement — gated
+  // directly off the entitlement source so it can't drift from
+  // canAccessContentType. Empty on shops without subscriptions.
   // ==========================================
   assertNotAborted();
-  if (!scope.themes.enabled) {
+  if (!canAccessContentType(plan, 'sellingPlans')) {
     emit('sellingPlans', 100, 'Selling plans not included in this plan, skipping...');
   } else {
     emit('sellingPlans', 0, 'Syncing selling plans...');
