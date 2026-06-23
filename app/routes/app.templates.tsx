@@ -60,7 +60,9 @@ export const loader = createContentLoader({
   async loadData(ctx) {
     // LAZY LOADING: Only load navigation metadata, not the full content
     const allGroupRows = await ctx.db.themeContent.findMany({
-      where: { shop: ctx.session.shop },
+      // Scope to the theme domain — the System / Online-Store-Extras /
+      // Selling-Plans rubrics share this table under their own domains.
+      where: { shop: ctx.session.shop, domain: "theme" },
       select: {
         groupId: true,
         groupName: true,
@@ -131,7 +133,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Load group data
   const themeGroups = await db.themeContent.findMany({
-    where: { shop: session.shop, groupId: groupId },
+    where: { shop: session.shop, groupId: groupId, domain: "theme" },
   });
 
   if (themeGroups.length === 0) {

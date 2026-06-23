@@ -71,6 +71,9 @@ export async function runInitialFullSync(
     themes: 0,
     metaobjects: 0,
     menus: 0,
+    system: 0,
+    onlineStoreExtras: 0,
+    sellingPlans: 0,
   };
 
   // Track per-phase failures. A swallowed (non-abort) phase error must NOT
@@ -333,6 +336,76 @@ export async function runInitialFullSync(
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       emit('themes', 100, recordPhaseFailure('themes', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6b: Sync System content (notifications, shipping, payment, packing).
+  // Same Pro+ entitlement as themes.
+  // ==========================================
+  assertNotAborted();
+  if (!scope.themes.enabled) {
+    emit('system', 100, 'System content not included in this plan, skipping...');
+  } else {
+    emit('system', 0, 'Syncing system content...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.system = await bgSyncService.syncSystemContent((current, total, message) => {
+        assertNotAborted();
+        emit('system', current, 'Syncing system content...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('system', 100, `Synced ${stats.system} system groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('system', 100, recordPhaseFailure('system', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6c: Sync Online-Store extras (Filter + Shop-Metadaten).
+  // Entitled on EVERY tier (small + high value).
+  // ==========================================
+  assertNotAborted();
+  {
+    emit('onlineStoreExtras', 0, 'Syncing online-store extras...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.onlineStoreExtras = await bgSyncService.syncOnlineStoreExtras((current, total, message) => {
+        assertNotAborted();
+        emit('onlineStoreExtras', current, 'Syncing online-store extras...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('onlineStoreExtras', 100, `Synced ${stats.onlineStoreExtras} extras groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('onlineStoreExtras', 100, recordPhaseFailure('onlineStoreExtras', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6d: Sync Selling Plans (subscriptions). Same Pro+ gate as themes;
+  // empty on shops without subscriptions.
+  // ==========================================
+  assertNotAborted();
+  if (!scope.themes.enabled) {
+    emit('sellingPlans', 100, 'Selling plans not included in this plan, skipping...');
+  } else {
+    emit('sellingPlans', 0, 'Syncing selling plans...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.sellingPlans = await bgSyncService.syncSellingPlans((current, total, message) => {
+        assertNotAborted();
+        emit('sellingPlans', current, 'Syncing selling plans...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('sellingPlans', 100, `Synced ${stats.sellingPlans} selling-plan groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('sellingPlans', 100, recordPhaseFailure('sellingPlans', err));
     }
   }
 

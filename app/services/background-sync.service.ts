@@ -147,6 +147,9 @@ export interface SyncStats {
   metaobjects: number;
   articles: number;
   menus: number;
+  system: number;
+  onlineStoreExtras: number;
+  sellingPlans: number;
   total: number;
   duration: number;
 }
@@ -1556,6 +1559,254 @@ export class BackgroundSyncService {
   }
 
   // ============================================
+  // FLAT-DOMAIN SYNC (System / Online-Store-Extras / Selling-Plans)
+  // ============================================
+
+  /**
+   * Sync one or more translatable resource types into the shared ThemeContent /
+   * ThemeTranslation tables under a non-"theme" domain.
+   *
+   * Unlike syncAllThemes (which splits one resource type's keys into many groups
+   * by key prefix), these domains use ONE GROUP PER RESOURCE: every Shopify
+   * resource (e.g. each EMAIL_TEMPLATE) becomes its own nav group. This is the
+   * only model that renders correctly because resources of the same type share
+   * key names (title/body_html) — collapsing them into a single shared group
+   * would dedupe-by-key and lose every resource but the first.
+   *
+   * Orphan cleanup and the empty-result health check are scoped to `domain`, so
+   * these never interfere with each other or with the theme domain.
+   */
+  private async syncFlatDomain(
+    domain: string,
+    resourceTypes: { type: string; label: string; icon: string; groupPrefix: string; skipIfEmpty?: boolean }[],
+    onProgress?: ProgressCallback
+  ): Promise<number> {
+    logger.debug(`[BackgroundSync] Syncing domain "${domain}" for shop: ${this.shop}`);
+    const { db } = await import("../db.server");
+
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
+
+    // Preference order for deriving a human group name from a resource's primary
+    // content; falls back to the resource-type label (covers SHOP, whose keys are
+    // meta_title/meta_description rather than a name).
+    const NAME_KEYS = ["title", "name", "label", "subject"];
+    const deriveName = (content: TranslatableContentItem[], fallback: string): string => {
+      for (const nk of NAME_KEYS) {
+        const hit = content.find((c) => c.key === nk && c.value && c.value.trim());
+        if (hit?.value) return hit.value.length > 80 ? `${hit.value.slice(0, 77)}…` : hit.value;
+      }
+      return fallback;
+    };
+
+    const syncedCombinations = new Set<string>();
+    let totalGroups = 0;
+    let typeIndex = 0;
+
+    for (const rt of resourceTypes) {
+      typeIndex++;
+      if (onProgress) {
+        onProgress(Math.round((typeIndex - 1) / resourceTypes.length * 100), 100, `Syncing ${rt.label}...`);
+      }
+
+      try {
+        // Paginate translatableResources for this type
+        const resources: ThemeResource[] = [];
+        let hasNextPage = true;
+        let cursor: string | null = null;
+        while (hasNextPage) {
+          const resp = await this.gateway.graphql(
+            `#graphql
+              query getDomainTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
+                translatableResources(first: $first, resourceType: $resourceType, after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  edges { node { resourceId translatableContent { key value digest locale } } }
+                }
+              }`,
+            { variables: { first: 250, resourceType: rt.type, after: cursor } }
+          );
+          const data = await resp.json();
+          if (data.errors) {
+            logger.error(`[BackgroundSync] Error loading ${rt.type} (domain=${domain})`, { error: data.errors[0]?.message });
+            break;
+          }
+          const pageInfo = data.data?.translatableResources?.pageInfo;
+          const edges = data.data?.translatableResources?.edges || [];
+          resources.push(...edges.map((e: { node: ThemeResource }) => e.node));
+          hasNextPage = pageInfo?.hasNextPage || false;
+          cursor = pageInfo?.endCursor || null;
+        }
+
+        if (resources.length === 0) {
+          logger.debug(`[BackgroundSync] No resources for ${rt.type} (domain=${domain})${rt.skipIfEmpty ? " — skipIfEmpty" : ""}`);
+          continue;
+        }
+
+        for (const resource of resources) {
+          const content = (resource.translatableContent || []).filter((c) => c.key);
+          if (content.length === 0) continue;
+
+          const shortId = resource.resourceId.split("/").pop() || resource.resourceId;
+          const groupId = `${rt.groupPrefix}_${shortId}`;
+          const groupName = deriveName(content, rt.label);
+          syncedCombinations.add(`${resource.resourceId}::${groupId}`);
+
+          await db.themeContent.upsert({
+            where: { shop_resourceId_groupId: { shop: this.shop, resourceId: resource.resourceId, groupId } },
+            create: {
+              shop: this.shop,
+              resourceId: resource.resourceId,
+              resourceType: rt.type,
+              resourceTypeLabel: rt.label,
+              domain,
+              groupId,
+              groupName,
+              groupIcon: rt.icon,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+              translatableContent: content as any,
+              lastSyncedAt: new Date(),
+            },
+            update: {
+              resourceType: rt.type,
+              resourceTypeLabel: rt.label,
+              domain,
+              groupName,
+              groupIcon: rt.icon,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+              translatableContent: content as any,
+              lastSyncedAt: new Date(),
+            },
+          });
+
+          // Fetch + persist foreign-locale translations for this resource.
+          const existingRows = await db.themeTranslation.findMany({
+            where: { shop: this.shop, resourceId: resource.resourceId, groupId },
+            select: { id: true, key: true, locale: true, value: true, outdated: true },
+          });
+          const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
+
+          const fetched: ShopifyTranslation[] = [];
+          for (const locale of nonPrimaryLocales) {
+            try {
+              const tResp = await this.gateway.graphql(
+                `#graphql
+                  query getDomainTranslations($resourceId: ID!, $locale: String!) {
+                    translatableResource(resourceId: $resourceId) {
+                      translations(locale: $locale) { key value locale outdated }
+                    }
+                  }`,
+                { variables: { resourceId: resource.resourceId, locale: locale.locale } }
+              );
+              const tData = await tResp.json();
+              if (tData.errors) continue;
+              const translations: ShopifyTranslation[] = tData.data?.translatableResource?.translations || [];
+              fetched.push(...translations);
+            } catch (err) {
+              logger.error(`[BackgroundSync] Exception fetching ${domain} translations for ${locale.locale}`, { err });
+            }
+          }
+
+          const seen = new Set<string>();
+          const relevant = fetched.filter((t) => {
+            const uk = `${t.key}::${t.locale}`;
+            if (seen.has(uk)) return false;
+            seen.add(uk);
+            return content.some((c) => c.key === t.key);
+          });
+
+          const toCreate: { shop: string; resourceId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean }[] = [];
+          const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
+          for (const t of relevant) {
+            const outdated = t.outdated || false;
+            const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
+            if (!prev) {
+              toCreate.push({ shop: this.shop, resourceId: resource.resourceId, domain, groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+            } else if (prev.value !== t.value || prev.outdated !== outdated) {
+              toUpdate.push({ id: prev.id, value: t.value, outdated });
+            }
+          }
+
+          const CHUNK = 500;
+          for (let i = 0; i < toCreate.length; i += CHUNK) {
+            await db.themeTranslation.createMany({ data: toCreate.slice(i, i + CHUNK), skipDuplicates: true });
+          }
+          for (let i = 0; i < toUpdate.length; i += CHUNK) {
+            await db.$transaction(
+              toUpdate.slice(i, i + CHUNK).map((u) =>
+                db.themeTranslation.update({ where: { id: u.id }, data: { value: u.value, outdated: u.outdated } })
+              )
+            );
+          }
+
+          // Delete locale rows no longer present in Shopify.
+          const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}`));
+          const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
+          for (let i = 0; i < keysToDelete.length; i += CHUNK) {
+            await db.themeTranslation.deleteMany({
+              where: { shop: this.shop, resourceId: resource.resourceId, groupId, OR: keysToDelete.slice(i, i + CHUNK) },
+            });
+          }
+
+          totalGroups++;
+        }
+      } catch (error) {
+        logger.error(`[BackgroundSync] Error syncing ${rt.type} (domain=${domain})`, { error });
+      }
+    }
+
+    // Health check: do not wipe local rows on an empty Shopify response (outage).
+    if (syncedCombinations.size === 0) {
+      const localCount = await db.themeContent.count({ where: { shop: this.shop, domain } });
+      if (localCount > 0) {
+        logger.error(`[BackgroundSync] 🔴 ABORTING ${domain} sync: Shopify returned 0 resources but ${localCount} exist locally.`);
+        throw new Error(`Shopify returned 0 ${domain} resources but ${localCount} exist locally - aborting to prevent data loss`);
+      }
+      return 0;
+    }
+
+    // Orphan cleanup, scoped to this domain only.
+    const existing = await db.themeContent.findMany({ where: { shop: this.shop, domain }, select: { resourceId: true, groupId: true } });
+    const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
+    if (toDelete.length > 0) {
+      const conditions = toDelete.map((i) => ({ resourceId: i.resourceId, groupId: i.groupId }));
+      await db.$transaction([
+        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain, OR: conditions } }),
+        db.themeContent.deleteMany({ where: { shop: this.shop, domain, OR: conditions } }),
+      ]);
+      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete ${domain} groups`);
+    }
+
+    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} groups for domain "${domain}"`);
+    return totalGroups;
+  }
+
+  /** System rubric: notifications, shipping, payment, packing slips. */
+  async syncSystemContent(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("system", [
+      { type: "EMAIL_TEMPLATE", label: "Benachrichtigung", icon: "✉️", groupPrefix: "email" },
+      { type: "DELIVERY_METHOD_DEFINITION", label: "Versandmethode", icon: "🚚", groupPrefix: "delivery" },
+      { type: "PAYMENT_GATEWAY", label: "Zahlungsanbieter", icon: "💳", groupPrefix: "payment", skipIfEmpty: true },
+      { type: "PACKING_SLIP_TEMPLATE", label: "Lieferschein", icon: "📦", groupPrefix: "packing", skipIfEmpty: true },
+    ], onProgress);
+  }
+
+  /** Online-Store extras: storefront filters + shop SEO metadata. */
+  async syncOnlineStoreExtras(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("online_store_extras", [
+      { type: "FILTER", label: "Filter", icon: "🔍", groupPrefix: "filter" },
+      { type: "SHOP", label: "Shop-Metadaten", icon: "🏪", groupPrefix: "shop_metadata" },
+    ], onProgress);
+  }
+
+  /** Selling plans (subscriptions) — conditional, empty on shops without them. */
+  async syncSellingPlans(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("selling_plans", [
+      { type: "SELLING_PLAN_GROUP", label: "Abo-Gruppe", icon: "📚", groupPrefix: "splan_group", skipIfEmpty: true },
+      { type: "SELLING_PLAN", label: "Abo-Plan", icon: "🔁", groupPrefix: "splan", skipIfEmpty: true },
+    ], onProgress);
+  }
+
+  // ============================================
   // HELPER METHODS
   // ============================================
 
@@ -1594,7 +1845,10 @@ export class BackgroundSyncService {
       const contentSync = new ContentSyncService(this.gateway, this.shop);
 
       // Run all entitled syncs in parallel; disabled phases resolve to 0.
-      const [pages, policies, themes, metaobjects, articles, menus] = await Promise.all([
+      // Gating for the new domains (until they get their own SyncPhase entries
+      // in Phase 4): system + selling_plans mirror the themes (Pro+) entitlement;
+      // online_store_extras is small + high-value and runs on every tier.
+      const [pages, policies, themes, metaobjects, articles, menus, system, onlineStoreExtras, sellingPlans] = await Promise.all([
         scope.pages.enabled
           ? this.syncAllPages(scope.pages.max).catch(err => {
               logger.error('[BackgroundSync] Pages sync failed:', err);
@@ -1631,6 +1885,23 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
+        scope.themes.enabled
+          ? this.syncSystemContent().catch(err => {
+              logger.error('[BackgroundSync] System sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        // Online-Store extras (Filter + Shop-Metadaten) entitled on every tier.
+        this.syncOnlineStoreExtras().catch(err => {
+          logger.error('[BackgroundSync] Online-Store-Extras sync failed:', err);
+          return 0;
+        }),
+        scope.themes.enabled
+          ? this.syncSellingPlans().catch(err => {
+              logger.error('[BackgroundSync] Selling-Plans sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
       ]);
 
       const duration = Date.now() - startTime;
@@ -1641,12 +1912,15 @@ export class BackgroundSyncService {
         metaobjects,
         articles,
         menus,
-        total: pages + policies + themes + metaobjects + articles + menus,
+        system,
+        onlineStoreExtras,
+        sellingPlans,
+        total: pages + policies + themes + metaobjects + articles + menus + system + onlineStoreExtras + sellingPlans,
         duration,
       };
 
       logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (plan=${plan})`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}`);
 
       return stats;
     } catch (error: unknown) {

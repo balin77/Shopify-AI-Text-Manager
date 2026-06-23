@@ -33,6 +33,9 @@ const m = vi.hoisted(() => ({
   syncAllPages: vi.fn().mockResolvedValue(0),
   syncAllPolicies: vi.fn().mockResolvedValue(0),
   syncAllThemes: vi.fn().mockResolvedValue(0),
+  syncSystemContent: vi.fn().mockResolvedValue(0),
+  syncOnlineStoreExtras: vi.fn().mockResolvedValue(0),
+  syncSellingPlans: vi.fn().mockResolvedValue(0),
   metaSyncAll: vi.fn().mockResolvedValue({ definitions: 0, metaobjects: 0, translations: 0 }),
 }));
 
@@ -72,6 +75,9 @@ vi.mock('~/services/background-sync.service', () => ({
     syncAllPages = (...a: unknown[]) => m.syncAllPages(...a);
     syncAllPolicies = (...a: unknown[]) => m.syncAllPolicies(...a);
     syncAllThemes = (...a: unknown[]) => m.syncAllThemes(...a);
+    syncSystemContent = (...a: unknown[]) => m.syncSystemContent(...a);
+    syncOnlineStoreExtras = (...a: unknown[]) => m.syncOnlineStoreExtras(...a);
+    syncSellingPlans = (...a: unknown[]) => m.syncSellingPlans(...a);
   },
 }));
 
@@ -112,6 +118,7 @@ beforeEach(() => {
   for (const fn of [
     m.syncAllProducts, m.syncAllCollections, m.syncAllArticles, m.syncAllMenus,
     m.syncAllPages, m.syncAllPolicies, m.syncAllThemes,
+    m.syncSystemContent, m.syncOnlineStoreExtras, m.syncSellingPlans,
   ]) fn.mockResolvedValue(0);
   m.metaSyncAll.mockResolvedValue({ definitions: 0, metaobjects: 0, translations: 0 });
 });

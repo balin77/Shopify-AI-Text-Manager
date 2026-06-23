@@ -344,14 +344,20 @@ async function deletePolicies(shop: string): Promise<{ policies: number; transla
 async function deleteThemeContent(
   shop: string
 ): Promise<{ themeContent: number; themeTranslations: number }> {
+  // The ThemeContent / ThemeTranslation tables hold four domains. This prune runs
+  // when the plan loses the themes (Pro+) entitlement, which also gates the
+  // "system" and "selling_plans" domains — so those are pruned too. The
+  // "online_store_extras" domain (Filter + Shop-Metadaten) is entitled on EVERY
+  // tier and must be kept.
+  const PRUNE_DOMAINS = ["theme", "system", "selling_plans"];
   // Use transaction to ensure both deletes succeed or fail together
   const { themeTranslationsCount, themeContentCount } = await db.$transaction(async (tx) => {
     const themeTranslationResult = await tx.themeTranslation.deleteMany({
-      where: { shop },
+      where: { shop, domain: { in: PRUNE_DOMAINS } },
     });
 
     const themeContentResult = await tx.themeContent.deleteMany({
-      where: { shop },
+      where: { shop, domain: { in: PRUNE_DOMAINS } },
     });
 
     return {

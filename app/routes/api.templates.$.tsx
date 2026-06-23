@@ -43,7 +43,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     const themeGroups = await db.themeContent.findMany({
       where: {
         shop: session.shop,
-        groupId: groupId
+        groupId: groupId,
+        domain: "theme"
       }
     });
 
@@ -132,7 +133,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const themeGroups = await db.themeContent.findMany({
       where: {
         shop: session.shop,
-        groupId: groupId
+        groupId: groupId,
+        domain: "theme"
       }
     });
 
