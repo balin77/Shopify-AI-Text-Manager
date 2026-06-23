@@ -16,8 +16,10 @@ export function NavigationHeightProvider({ children }: { children: ReactNode }) 
   // Use reasonable defaults that match approximate SSR heights to prevent hydration errors
   // These will be updated to actual values once components mount on the client
   const [mainNavHeight, setMainNavHeight] = useState(73);
-  // Level 2 (rubric) bar — 0 until RubricNavigation mounts on a content page.
-  const [rubricNavHeight, setRubricNavHeight] = useState(0);
+  // Level 2 (rubric) bar — seeded to its approximate rendered height so the
+  // Level-3 bar isn't positioned on top of it for one frame before measurement
+  // (on non-content pages nothing consumes this value). Re-measured on mount.
+  const [rubricNavHeight, setRubricNavHeight] = useState(36);
   const [contentNavHeight, setContentNavHeight] = useState(0);
 
   const getTotalNavHeight = useCallback(

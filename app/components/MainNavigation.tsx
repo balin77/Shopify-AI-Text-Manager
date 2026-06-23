@@ -1,5 +1,5 @@
 import { useLocation, useMatches, useNavigation } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
+import { InlineStack, Text, ButtonGroup, Button, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";

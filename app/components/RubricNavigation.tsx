@@ -7,8 +7,11 @@
  * and active border than the Level 3 bar.
  *
  * Rendered by ContentTypeNavigation so every content page gets both bars with a
- * single `<ContentTypeNavigation />`. Returns null (and resets its tracked
- * height to 0) on non-content pages.
+ * single `<ContentTypeNavigation />`. On non-content pages it renders null; in
+ * practice it is only mounted on content routes (alongside ContentTypeNavigation),
+ * so the bar's height is (re)measured fresh on every content-page mount. The
+ * null-rubric branch's height reset only fires in the rare case it stays mounted
+ * while the active rubric becomes null.
  */
 
 import { useLocation } from "@remix-run/react";
