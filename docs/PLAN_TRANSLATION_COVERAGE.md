@@ -51,7 +51,7 @@ Translate & Adapt's left navigation has 5 top-level rubrics that map onto the AP
 | T&A rubric | API surface |
 |---|---|
 | Produkte → Produkte, Kollektionen | `PRODUCT*`, `COLLECTION*` |
-| Onlineshop → Blogs, Filter, Pages, Policies, Metaobjects, Shop-Metadaten, Cookie-Banner | `ARTICLE*`, `BLOG`, `FILTER`, `PAGE`, `SHOP_POLICY`, `METAOBJECT`, `SHOP` (meta only), `COOKIE_BANNER` |
+| Onlineshop → Blog-Beiträge, Blog-Titel, Filter, Pages, Policies, Metaobjects, Shop-Metadaten, Cookie-Banner | `ARTICLE*`, `BLOG`, `FILTER`, `PAGE`, `SHOP_POLICY`, `METAOBJECT`, `SHOP` (meta only), `COOKIE_BANNER` (T&A splits Blog-Beiträge / Blog-Titel; we bundle both under Blog-Beiträge) |
 | Inhalt → Menü | `MENU`, `LINK` |
 | Theme → Theme-Standardinhalte, Vorlagen, Abschnittsgruppen, Statische Abschnitte, App-Einbettungen, Theme-Einstellungen | the 7 `ONLINE_STORE_THEME_*` types |
 | Einstellungen → Benachrichtigungen, Versand & Zustellung | `EMAIL_TEMPLATE`, `DELIVERY_METHOD_DEFINITION` |
@@ -69,7 +69,7 @@ Authoritative resource list, T&A coverage, ContentPilot status:
 | Resource | T&A | ContentPilot | Target rubric | Notes |
 |---|---|---|---|---|
 | `ARTICLE`, `ARTICLE_IMAGE` | ✅ | ✅ | Online Store | covered |
-| `BLOG` | ✅ | ✅ | Online Store | covered |
+| `BLOG` | ✅ | ✅ | Online Store | covered — **bundled with `ARTICLE`** in the Blog-Beiträge view (T&A splits these; we don't, since the 80% case is one default "News" blog) |
 | `COLLECTION`, `COLLECTION_IMAGE` | ✅ | ✅ | Katalog | covered |
 | `MEDIA_IMAGE` | ✅ | ✅ | Katalog | covered via API 2025-10+ |
 | `PAGE` | ✅ | ✅ | Online Store | covered |
@@ -147,7 +147,7 @@ LEVEL 3 — Content-type bar (existing ContentTypeNavigation, compact)
    [🛍️ Produkte] [📂 Kollektionen] [🔁 Abo-Pläne (cond.)]
 
    under "Online Store":
-   [📄 Seiten] [📝 Blog-Beiträge] [📚 Blogs] [🍔 Menüs]
+   [📄 Seiten] [📝 Blog-Beiträge] [🍔 Menüs]
    [📋 Richtlinien] [🔷 Metaobjekte] [🔍 Filter]
    [🏪 Shop-Metadaten] [🍪 Cookie-Banner]
 
@@ -190,8 +190,10 @@ Three stacked horizontal nav bars is a lot of vertical real estate. Design const
 │
 ├─ 🌐 Online Store             (T&A "Onlineshop" + "Inhalt-Menü")
 │   ├─ 📄 Seiten ............. PAGE
-│   ├─ 📝 Blog-Beiträge ...... ARTICLE, ARTICLE_IMAGE
-│   ├─ 📚 Blogs .............. BLOG
+│   ├─ 📝 Blog-Beiträge ...... ARTICLE, ARTICLE_IMAGE, BLOG
+│   │                          (BLOG containers bundled in same view —
+│   │                           1 default blog per shop in 80% of cases;
+│   │                           T&A separates these, we keep integrated)
 │   ├─ 🍔 Menüs .............. MENU, LINK (API-limited)
 │   ├─ 📋 Richtlinien ........ SHOP_POLICY
 │   ├─ 🔷 Metaobjekte ........ METAOBJECT, METAFIELD
