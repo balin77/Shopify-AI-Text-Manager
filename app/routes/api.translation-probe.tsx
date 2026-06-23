@@ -232,8 +232,28 @@ export async function action({ request }: ActionFunctionArgs) {
       translationLocalesSeen: [],
     };
     try {
-      const resp = await admin.graphql(PROBE_QUERY, { variables: { first: 50, resourceType } });
-      const data = (await resp.json()) as { data?: { translatableResources?: { edges: Array<{ node: { resourceId: string; translatableContent: Array<{ key: string; value: string | null; locale: string; digest: string }> } }> } }; errors?: Array<{ message: string }> };
+      // COOKIE_BANNER is documented in unstable but rejected by 2025-10. Try
+      // it against the unstable endpoint via raw fetch using the session's
+      // access token. Everything else uses the pinned admin client.
+      let data: { data?: { translatableResources?: { edges: Array<{ node: { resourceId: string; translatableContent: Array<{ key: string; value: string | null; locale: string; digest: string }> } }> } }; errors?: Array<{ message: string }> };
+      if (resourceType === "COOKIE_BANNER") {
+        const accessToken = (session as unknown as { accessToken?: string }).accessToken;
+        if (!accessToken) {
+          throw new Error("No access token on session — cannot probe unstable endpoint");
+        }
+        const rawResp = await fetch(`https://${session.shop}/admin/api/unstable/graphql.json`, {
+          method: "POST",
+          headers: {
+            "X-Shopify-Access-Token": accessToken,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query: PROBE_QUERY, variables: { first: 50, resourceType } }),
+        });
+        data = await rawResp.json();
+      } else {
+        const resp = await admin.graphql(PROBE_QUERY, { variables: { first: 50, resourceType } });
+        data = await resp.json();
+      }
       if (data.errors?.length) {
         r.status = "error";
         r.errorMessage = data.errors.map((e) => e.message).join(" | ");
