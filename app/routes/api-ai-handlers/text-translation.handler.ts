@@ -885,13 +885,60 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
     // Sequential translation for long fields OR if batch failed
     if (!isShortField || Object.keys(translations).length === 0) {
+      // Long, non-slug fields: fetch ALL locales in one batched/chunked AI call
+      // up front, then read each locale's value inside the loop below — the
+      // per-locale Shopify/DB persistence stays untouched. Slug fields keep
+      // their dedicated translateSlug path (see Phase 3.2 / translateSlugBatch).
+      let batchTranslations: Record<string, Record<string, string>> = {};
+      let batchTranslationFailed = false;
+      if (!isSlugField) {
+        try {
+          batchTranslations = await aiService.translateFieldsToLocalesChunked(
+            { [fieldType]: sourceText },
+            primaryLocale,
+            targetLocales,
+            { preserveHtml: true, contextLabel: contentType }
+          );
+        } catch (batchErr: unknown) {
+          // Whole batch failed (all chunks broke) — fall back to the original
+          // per-locale translateContent path below for every locale.
+          batchTranslationFailed = true;
+          logger.error("[API-AI] Long-field batch translation failed, falling back to sequential translateContent", {
+            context: "AI",
+            error: errorMessage(batchErr),
+            fieldType,
+          });
+        }
+      }
+
       for (let i = 0; i < targetLocales.length; i++) {
         const locale = targetLocales[i];
         try {
-          // Use special method for URL slugs
-          let translatedValue = isSlugField
-            ? await aiService.translateSlug(sourceText, primaryLocale, locale)
-            : await aiService.translateContent(sourceText, primaryLocale, locale);
+          // Use special method for URL slugs; otherwise prefer the prefetched
+          // batch value and only fall back to a per-locale call on total failure.
+          let translatedValue: string;
+          if (isSlugField) {
+            translatedValue = await aiService.translateSlug(sourceText, primaryLocale, locale);
+          } else {
+            const batched = batchTranslations[locale]?.[fieldType];
+            if (batched) {
+              translatedValue = batched;
+            } else if (batchTranslationFailed) {
+              translatedValue = await aiService.translateContent(sourceText, primaryLocale, locale);
+            } else {
+              // Batch succeeded overall but this locale's cell is missing →
+              // reject the locale (N-H3: never persist source-as-translation).
+              logger.warn("[API-AI] Locale missing from batch translation — skipping (not writing source)", {
+                context: "AI",
+                fieldType,
+                locale,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              aiResponses.push({ locale, response: `REJECTED: missing from batch translation` });
+              continue;
+            }
+          }
 
           // For URL slugs: ensure the result is a valid slug (post-process as safety net)
           if (isSlugField) {
