@@ -58,7 +58,7 @@ interface ThemeResource {
 // Theme key-to-group mapping (shared between initial sync and per-group reload)
 // ============================================================================
 
-interface KeyPatternConfig {
+export interface KeyPatternConfig {
   pattern: RegExp;
   name: string;
   groupId: string;
@@ -69,7 +69,7 @@ interface KeyPatternConfig {
 // Ordering matters: more specific patterns MUST precede the generic prefix they
 // share (e.g. shopify.checkout.* before shopify.*, templates.404.* before
 // templates.*). The matcher takes the first hit and stops.
-const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
+export const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
   // ── JSON template sections (section.*) ──
   { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
   { pattern: /^section\.blog\./, name: 'Blog', groupId: 'blog_theme', icon: '📝' },
@@ -116,7 +116,7 @@ const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
 ];
 
 /** Determine which groupId a translatable key belongs to (same logic as initial sync) */
-function getGroupIdForKey(key: string): string {
+export function getGroupIdForKey(key: string): string {
   for (const patternConfig of THEME_KEY_PATTERNS) {
     const match = key.match(patternConfig.pattern);
     if (match) {
