@@ -19,11 +19,14 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 
 // Probe target list. Includes resource types we already cover, so we can find
-// where Shopify hides things like Cookie-Banner (which T&A exposes but our
-// initial probe couldn't locate). The "already covered" types are listed near
-// the top so any cookie-related keys surface quickly in the report.
+// where Shopify hides things like Cookie-Banner. COOKIE_BANNER is documented
+// in the unstable enum but absent from 2025-10's enum docs — we try it anyway
+// since Shopify's enum docs sometimes lag the actual API. The "already covered"
+// types are listed near the top so any cookie-related keys surface quickly.
 const PROBE_RESOURCE_TYPES = [
-  // Hunt for Cookie-Banner — most likely candidates first
+  // Cookie-Banner: try the new documented unstable-enum value first
+  "COOKIE_BANNER",
+  // Hunt for Cookie-Banner content under previously-suspected types
   "SHOP_POLICY",
   "ONLINE_STORE_THEME_LOCALE_CONTENT",
   "ONLINE_STORE_THEME",
