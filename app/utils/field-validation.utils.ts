@@ -1,3 +1,4 @@
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useMemo } from "react";
 import type { TranslatableItem, Translation, ContentType, ShopLocale, ContentImage } from "~/types/content-editor.types";
 import {
@@ -160,7 +161,7 @@ function hasTranslationForField(
  * handled separately in hasPrimaryContentMissing and hasLocaleMissingTranslations
  */
 function getRequiredFieldsForContentType(contentType: ContentType, item?: TranslatableItem | null): string[] {
-  if (contentType === 'templates' || contentType === 'metaobjects') {
+  if (isThemeContentType(contentType) || contentType === 'metaobjects') {
     // Templates and metaobjects have dynamic fields in translatableContent/fields
     // The validation is handled separately in the calling functions
     return [];
@@ -228,7 +229,7 @@ export function hasPrimaryContentMissing(
   if (contentType === 'directTranslations') return false;
 
   // Templates have dynamic fields in translatableContent
-  if (contentType === 'templates') {
+  if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return false;
@@ -321,7 +322,7 @@ export function hasLocaleMissingTranslations(
   if (locale === primaryLocale) return false;
 
   // Templates have dynamic fields in translatableContent
-  if (contentType === 'templates') {
+  if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return false;
@@ -414,7 +415,7 @@ export function getMissingPrimaryFields(
   // Direct translations: the source string is always present.
   if (contentType === 'directTranslations') return [];
 
-  if (contentType === 'templates') {
+  if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return [];
@@ -489,7 +490,7 @@ export function getMissingLocaleTranslationFields(
 
   if (locale === primaryLocale) return [];
 
-  if (contentType === 'templates') {
+  if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent) || translatableContent.length === 0) {
       return [];
@@ -608,7 +609,7 @@ export function getLocaleButtonTooltip(
 
   const fieldLabels = i18n?.fieldLabels ?? {};
   const labels = missingFields.map(key => {
-    if (contentType === 'templates') {
+    if (isThemeContentType(contentType)) {
       return extractReadableName(key);
     }
 
@@ -718,7 +719,7 @@ export function hasFieldMissingTranslations(
   const foreignLocales = shopLocales.filter(l => !l.primary);
 
   // Templates store primary content in translatableContent, not top-level properties
-  if (contentType === 'templates') {
+  if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
     if (!translatableContent || !Array.isArray(translatableContent)) return false;
     const tcEntry = translatableContent.find(

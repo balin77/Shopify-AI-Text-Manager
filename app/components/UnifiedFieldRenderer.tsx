@@ -4,6 +4,7 @@
  * Extracted from UnifiedContentEditor to keep each file focused on one concern.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { Text } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
@@ -157,7 +158,7 @@ export function UnifiedFieldRenderer(
   const requiredIndicator =
     isPrimaryLocale &&
     !readOnly &&
-    (contentType === "templates" ||
+    (isThemeContentType(contentType) ||
       contentType === "metaobjects" ||
       (contentType === "products" && field.key === "title"));
 

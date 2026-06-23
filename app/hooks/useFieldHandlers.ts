@@ -6,6 +6,7 @@
  *          language/item selection, value changes, clear operations.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
@@ -567,7 +568,7 @@ const handleTranslateField = (fieldKey: string) => {
       );
 
       // For templates: Update original values so templateHasFieldChanges becomes false
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translatedValue,
@@ -709,7 +710,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
       }
 
       // For templates: Update original value so hasChanges becomes false after translation
-      if (config.contentType === 'templates' && translations[currentLanguage]) {
+      if (isThemeContentType(config.contentType) && translations[currentLanguage]) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translations[currentLanguage]

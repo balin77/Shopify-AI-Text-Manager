@@ -5,6 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator } from "@remix-run/react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
@@ -657,7 +658,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API
       // and updates editable values directly. Reading from item.translatableContent here
       // would use stale cached data and cause a race condition (stale values overwriting fresh).
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         debugLog.dataLoad(' Templates refresh - skip stale data load, page-level effect handles update');
         return;
       }
@@ -1561,7 +1562,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // after save completes, before the translation starts. Otherwise isLoadingData flips
         // back to false (10ms timer) while the translation is still in-flight, and the stale
         // baseline causes hasFieldChanges to return true → save button flickers active.
-        if (config.contentType === 'templates') {
+        if (isThemeContentType(config.contentType)) {
           const snapshot = { ...editableValuesRef.current };
           originalTemplateValuesRef.current = snapshot;
           setTemplateValuesVersion(v => v + 1);
@@ -1682,7 +1683,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             setIsAcceptAndTranslateFlow(false);
 
             // For templates: Update original values and unified baseline so hasChanges becomes false
-            if (config.contentType === 'templates') {
+            if (isThemeContentType(config.contentType)) {
               // Update with the translated value if we're viewing a foreign locale,
               // OR with the current editableValues for the primary locale (the accepted
               // AI suggestion was saved but the baseline was never updated because the
@@ -1769,7 +1770,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // blocking subsequent saves. The data loading effect (after revalidation) sets
       // originalTemplateValuesRef from resolve() which is always correct.
       // The isLoadingData=true guard in templateHasFieldChanges covers the gap.
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         // For foreign locale saves: update localTranslationsRef so isFieldTranslated
         // and hasLocaleMissingTranslations return correct results IMMEDIATELY —
         // without waiting for revalidation. No item mutation needed; resolve()
@@ -1854,7 +1855,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
 
         // Auto-restore empty fields to their original values (discard empty edits)
-        if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
+        if (isThemeContentType(config.contentType) && originalTemplateValuesRef.current) {
           setEditableValues(prev => {
             const restored = { ...prev };
             let restoredCount = 0;
@@ -2130,7 +2131,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Helper to update original template values (used after loading translations)
   // Also syncs originalLoadedValuesRef so buildFieldsForSave uses the correct baseline
   const setOriginalTemplateValues = (values: Record<string, string>) => {
-    if (config.contentType === 'templates') {
+    if (isThemeContentType(config.contentType)) {
       originalTemplateValuesRef.current = { ...values };
       originalLoadedValuesRef.current = { ...values };
       baselineValuesRef.current = { ...values };
@@ -2143,7 +2144,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This avoids race conditions from 25+ individual setEditableValue calls and ensures
   // editableValues and originalLoadedValuesRef are updated in a single React batch.
   const reloadTemplateValues = useCallback((values: Record<string, string>) => {
-    if (config.contentType !== 'templates') return;
+    if (!isThemeContentType(config.contentType)) return;
     debugLog.dataLoad(' reloadTemplateValues - atomic update with', Object.keys(values).length, 'fields');
     setEditableValues(values);
     originalTemplateValuesRef.current = { ...values };

@@ -6,6 +6,7 @@
  * changed fields / alt-text indices, and submitting them via safeSubmit.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useCallback, useRef } from "react";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -161,7 +162,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       const currentValue = valuesToCheck[field.key] || "";
 
       let originalValue: string;
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         originalValue = originalTemplateValuesRef.current[field.key] || "";
       } else {
         originalValue = getItemFieldValue(item, field.key, primaryLocale, config);

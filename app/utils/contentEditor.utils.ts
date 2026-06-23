@@ -3,6 +3,7 @@
  * Used by: app.collections.tsx, app.blog.tsx, app.pages.tsx, app.policies.tsx
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { TranslatableItem, ContentType, ShopLocale } from "~/types/content-editor.types";
 import {
@@ -328,7 +329,7 @@ export function getLocaleButtonTooltip(
 
   const fieldLabels = i18n?.fieldLabels ?? {};
   const labels = missingFields.map(key => {
-    if (contentType === 'templates') {
+    if (isThemeContentType(contentType)) {
       return extractReadableName(key);
     }
 

@@ -5,6 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -279,7 +280,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     return items.map((item) => {
       let subtitle = config.getSubtitle ? config.getSubtitle(item, t) : undefined;
       // Translate "translatable fields" for templates
-      if (config.contentType === "templates" && item.contentCount !== undefined) {
+      if (isThemeContentType(config.contentType) && item.contentCount !== undefined) {
         subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
       }
       const itemOverlays = item.id === selectedItem?.id ? validationOverlays : undefined;
@@ -602,7 +603,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
                           {/* Clear All: hidden for templates when primary edit is not enabled */}
-                          {!(config.contentType === 'templates' && !ENABLE_THEME_PRIMARY_EDIT) && (
+                          {!(isThemeContentType(config.contentType) && !ENABLE_THEME_PRIMARY_EDIT) && (
                             <Button
                               onClick={handlers.handleClearAllClick}
                               size="slim"
@@ -772,7 +773,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {/* Dynamic Fields */}
                     {!isFieldsLoading && (() => {
                       // Template primary locale: read-only when themeFilesUpsert is not enabled
-                      const isTemplatePrimaryReadOnly = config.contentType === 'templates'
+                      const isTemplatePrimaryReadOnly = isThemeContentType(config.contentType)
                         && state.currentLanguage === primaryLocale
                         && !ENABLE_THEME_PRIMARY_EDIT;
 
@@ -792,7 +793,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
                           isDataLoading={!state.isInitialDataReady}
                           sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                          disableGeneration={config.contentType === 'templates'}
+                          disableGeneration={isThemeContentType(config.contentType)}
                           isFallbackValue={state.fallbackFields?.has(field.key) || false}
                           fieldError={state.fieldErrors?.[field.key]}
                           readOnly={isTemplatePrimaryReadOnly}

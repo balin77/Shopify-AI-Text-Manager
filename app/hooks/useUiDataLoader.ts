@@ -9,6 +9,7 @@
  *   Foreign locale: deleted → localOverride → itemTranslation → fallback → empty
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
@@ -420,7 +421,7 @@ export function useUiDataLoader(
       setBaselineVersion((v) => v + 1);
       // Keep legacy refs updated for error recovery and buildFieldsForSave
       originalLoadedValuesRef.current = { ...values };
-      if (config.contentType === "templates") {
+      if (isThemeContentType(config.contentType)) {
         originalTemplateValuesRef.current = { ...values };
         setTemplateValuesVersion((v) => v + 1);
       }
@@ -466,7 +467,7 @@ export function useUiDataLoader(
       setBaselineVersion((v) => v + 1);
 
       // 5. Template change detection
-      if (config.contentType === "templates") {
+      if (isThemeContentType(config.contentType)) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translatedValue,
@@ -542,7 +543,7 @@ export function useUiDataLoader(
       }
 
       // 4. Template change detection
-      if (config.contentType === "templates" && updatedValues) {
+      if (isThemeContentType(config.contentType) && updatedValues) {
         originalTemplateValuesRef.current = { ...updatedValues };
         setTemplateValuesVersion((v) => v + 1);
       }
@@ -612,7 +613,7 @@ export function useUiDataLoader(
       }
 
       // 4. Template change detection
-      if (config.contentType === "templates" && updatedValues) {
+      if (isThemeContentType(config.contentType) && updatedValues) {
         originalTemplateValuesRef.current = { ...updatedValues };
         setTemplateValuesVersion((v) => v + 1);
       }
