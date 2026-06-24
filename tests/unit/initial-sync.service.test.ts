@@ -37,6 +37,7 @@ const m = vi.hoisted(() => ({
   syncDeliveryContent: vi.fn().mockResolvedValue(0),
   syncOnlineStoreExtras: vi.fn().mockResolvedValue(0),
   syncSellingPlans: vi.fn().mockResolvedValue(0),
+  syncCookieBanner: vi.fn().mockResolvedValue(0),
   metaSyncAll: vi.fn().mockResolvedValue({ definitions: 0, metaobjects: 0, translations: 0 }),
 }));
 
@@ -80,6 +81,7 @@ vi.mock('~/services/background-sync.service', () => ({
     syncDeliveryContent = (...a: unknown[]) => m.syncDeliveryContent(...a);
     syncOnlineStoreExtras = (...a: unknown[]) => m.syncOnlineStoreExtras(...a);
     syncSellingPlans = (...a: unknown[]) => m.syncSellingPlans(...a);
+    syncCookieBanner = (...a: unknown[]) => m.syncCookieBanner(...a);
   },
 }));
 
@@ -121,6 +123,7 @@ beforeEach(() => {
     m.syncAllProducts, m.syncAllCollections, m.syncAllArticles, m.syncAllMenus,
     m.syncAllPages, m.syncAllPolicies, m.syncAllThemes,
     m.syncSystemContent, m.syncDeliveryContent, m.syncOnlineStoreExtras, m.syncSellingPlans,
+    m.syncCookieBanner,
   ]) fn.mockResolvedValue(0);
   m.metaSyncAll.mockResolvedValue({ definitions: 0, metaobjects: 0, translations: 0 });
 });

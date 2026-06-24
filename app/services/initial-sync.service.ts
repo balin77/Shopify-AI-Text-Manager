@@ -75,6 +75,7 @@ export async function runInitialFullSync(
     delivery: 0,
     onlineStoreExtras: 0,
     sellingPlans: 0,
+    cookieBanner: 0,
   };
 
   // Track per-phase failures. A swallowed (non-abort) phase error must NOT
@@ -407,6 +408,30 @@ export async function runInitialFullSync(
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       emit('onlineStoreExtras', 100, recordPhaseFailure('onlineStoreExtras', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6c2: Sync Cookie-Banner (Online-Store rubric, every tier).
+  // Mirrors the onlineStoreExtras entitlement and degrades silently when the
+  // unstable endpoint is unreachable — no Coming-Soon UI needed; the rubric
+  // simply renders an empty list (handled by ThemeContentDomainPage).
+  // ==========================================
+  assertNotAborted();
+  {
+    emit('cookieBanner', 0, 'Syncing cookie banner...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.cookieBanner = await bgSyncService.syncCookieBanner((current, total, message) => {
+        assertNotAborted();
+        emit('cookieBanner', current, 'Syncing cookie banner...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('cookieBanner', 100, `Synced ${stats.cookieBanner} cookie-banner groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('cookieBanner', 100, recordPhaseFailure('cookieBanner', err));
     }
   }
 

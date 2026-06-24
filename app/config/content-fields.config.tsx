@@ -510,6 +510,16 @@ export const SELLING_PLANS_CONFIG: ContentEditorConfig = {
   displayNameSingular: "Selling Plan",
 };
 
+// Cookie-Banner: same dynamic-field machinery as Templates. Plan gate reuses
+// onlineStoreExtras (every tier — Plan §7.5). Resource is read from Shopify's
+// `unstable` COOKIE_BANNER enum during sync; the editor is unaware of that.
+export const COOKIE_BANNER_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Cookie-Banner",
+  displayNameSingular: "Cookie banner",
+};
+
 // ============================================================================
 // METAOBJECTS
 // ============================================================================

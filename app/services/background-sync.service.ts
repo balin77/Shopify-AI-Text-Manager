@@ -151,6 +151,7 @@ export interface SyncStats {
   delivery: number;
   onlineStoreExtras: number;
   sellingPlans: number;
+  cookieBanner: number;
   total: number;
   duration: number;
 }
@@ -1838,6 +1839,206 @@ export class BackgroundSyncService {
     ], onProgress);
   }
 
+  /**
+   * Cookie-Banner rubric — distinct from syncFlatDomain because COOKIE_BANNER
+   * lives only in Shopify's `unstable` TranslatableResourceType enum (the rest of
+   * the ThemeContent domains use the pinned stable enum). The reads therefore go
+   * through a raw fetch against /admin/api/unstable/graphql.json. Persistence is
+   * identical (themeContent + themeTranslation under domain="cookie_banner") so
+   * the editor renders via the standard ThemeContentDomainPage.
+   *
+   * Degrades silently to a no-op return 0 when the resource is unreachable on
+   * this shop (e.g. region without Customer-Privacy cookie banner enabled, or
+   * Shopify schema drift) — matches the original page's "Coming Soon" behaviour
+   * without the bespoke UI: the loader simply finds no themeContent rows.
+   */
+  async syncCookieBanner(onProgress?: ProgressCallback): Promise<number> {
+    logger.debug(`[BackgroundSync] Syncing cookie_banner for shop: ${this.shop}`);
+    const { db } = await import("../db.server");
+    const {
+      getCookieBannerAvailability,
+      getCookieBannerResources,
+      getCookieBannerTranslations,
+    } = await import("../utils/cookie-banner-availability.server");
+
+    // Resolve the access token via the encrypted session storage — the
+    // BackgroundSyncService constructor only receives `admin` (stable gateway),
+    // not the session, but the unstable endpoint needs the raw token.
+    const { sessionStorage } = await import("../shopify.server");
+    const sessions = await sessionStorage.findSessionsByShop(this.shop);
+    const session = sessions.find((s) => !!s.accessToken);
+    if (!session?.accessToken) {
+      logger.debug(`[BackgroundSync] No session token for ${this.shop} — skipping cookie_banner sync`);
+      return 0;
+    }
+    const cbSession = { shop: this.shop, accessToken: session.accessToken };
+
+    if (onProgress) onProgress(5, 100, "Probing cookie-banner availability…");
+    const availability = await getCookieBannerAvailability(cbSession);
+    if (availability !== "available") {
+      logger.debug(`[BackgroundSync] cookie_banner unavailable for ${this.shop} — sync no-op`);
+      // Mirror the orphan-cleanup safety: if rows exist locally but Shopify now
+      // says unavailable, we leave them in place. The next successful probe
+      // reconciles. (A "Shopify deleted the cookie banner" event is not a thing
+      // we should infer from a probe error.)
+      return 0;
+    }
+
+    if (onProgress) onProgress(15, 100, "Fetching cookie-banner content…");
+    const resources = await getCookieBannerResources(cbSession);
+    if (resources === null) {
+      logger.debug(`[BackgroundSync] cookie_banner content fetch failed for ${this.shop} — sync no-op`);
+      return 0;
+    }
+
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
+
+    const NAME_KEYS = ["title", "name", "label"];
+    const deriveName = (content: TranslatableContentItem[], fallback: string): string => {
+      for (const nk of NAME_KEYS) {
+        const hit = content.find((c) => c.key === nk && c.value && c.value.trim());
+        if (hit?.value) return hit.value.length > 80 ? `${hit.value.slice(0, 77)}…` : hit.value;
+      }
+      return fallback;
+    };
+
+    const syncedCombinations = new Set<string>();
+    let totalGroups = 0;
+    let resIdx = 0;
+
+    for (const resource of resources) {
+      resIdx++;
+      if (onProgress) {
+        onProgress(20 + Math.round((resIdx / Math.max(resources.length, 1)) * 70), 100,
+          `Syncing cookie-banner ${resIdx}/${resources.length}`);
+      }
+
+      // CookieBannerResource's translatableContent uses {key,value,digest,locale}
+      // where value/digest are nullable. ThemeContent's JSON column treats
+      // these as opaque, so the cast preserves the shape without losing nulls.
+      const content = (resource.translatableContent || []).filter((c) => c.key);
+      if (content.length === 0) continue;
+
+      const shortId = resource.resourceId.split("/").pop() || resource.resourceId;
+      const groupId = `cookie_banner_${shortId}`;
+      const groupName = deriveName(
+        content as unknown as TranslatableContentItem[],
+        "Cookie banner"
+      );
+      syncedCombinations.add(`${resource.resourceId}::${groupId}`);
+
+      await db.themeContent.upsert({
+        where: { shop_resourceId_groupId: { shop: this.shop, resourceId: resource.resourceId, groupId } },
+        create: {
+          shop: this.shop,
+          resourceId: resource.resourceId,
+          resourceType: "COOKIE_BANNER",
+          resourceTypeLabel: "Cookie banner",
+          domain: "cookie_banner",
+          groupId,
+          groupName,
+          groupIcon: "🍪",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+          translatableContent: content as any,
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          resourceType: "COOKIE_BANNER",
+          resourceTypeLabel: "Cookie banner",
+          domain: "cookie_banner",
+          groupName,
+          groupIcon: "🍪",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+          translatableContent: content as any,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      // Fetch + persist foreign-locale translations (raw unstable fetch — the
+      // gateway can't reach the unstable endpoint).
+      const existingRows = await db.themeTranslation.findMany({
+        where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "cookie_banner" },
+        select: { id: true, key: true, locale: true, value: true, outdated: true },
+      });
+      const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
+
+      const fetched: ShopifyTranslation[] = [];
+      for (const locale of nonPrimaryLocales) {
+        const translations = await getCookieBannerTranslations(cbSession, resource.resourceId, locale.locale);
+        for (const t of translations) {
+          if (t.value == null) continue;
+          fetched.push({ key: t.key, value: t.value, locale: t.locale, outdated: t.outdated });
+        }
+      }
+
+      const seen = new Set<string>();
+      const relevant = fetched.filter((t) => {
+        const uk = `${t.key}::${t.locale}`;
+        if (seen.has(uk)) return false;
+        seen.add(uk);
+        return content.some((c) => c.key === t.key);
+      });
+
+      const toCreate: { shop: string; resourceId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean }[] = [];
+      const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
+      for (const t of relevant) {
+        const outdated = t.outdated || false;
+        const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
+        if (!prev) {
+          toCreate.push({ shop: this.shop, resourceId: resource.resourceId, domain: "cookie_banner", groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+        } else if (prev.value !== t.value || prev.outdated !== outdated) {
+          toUpdate.push({ id: prev.id, value: t.value, outdated });
+        }
+      }
+
+      const CHUNK = 500;
+      for (let i = 0; i < toCreate.length; i += CHUNK) {
+        await db.themeTranslation.createMany({ data: toCreate.slice(i, i + CHUNK), skipDuplicates: true });
+      }
+      for (let i = 0; i < toUpdate.length; i += CHUNK) {
+        await db.$transaction(
+          toUpdate.slice(i, i + CHUNK).map((u) =>
+            db.themeTranslation.update({ where: { id: u.id }, data: { value: u.value, outdated: u.outdated } })
+          )
+        );
+      }
+
+      const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}`));
+      const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
+      for (let i = 0; i < keysToDelete.length; i += CHUNK) {
+        await db.themeTranslation.deleteMany({
+          where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "cookie_banner", OR: keysToDelete.slice(i, i + CHUNK) },
+        });
+      }
+
+      totalGroups++;
+    }
+
+    // Orphan cleanup, scoped to this domain only. Skipping the cleanup when
+    // Shopify returned 0 resources is essential — that path is taken when the
+    // unstable endpoint is reachable but the shop has no cookie banner today.
+    // We must NOT use it to wipe rows on a shop that had a banner before; the
+    // upstream availability guard means we only reach here on a confirmed
+    // "available" probe, so an empty resources[] is authoritative.
+    const existing = await db.themeContent.findMany({
+      where: { shop: this.shop, domain: "cookie_banner" },
+      select: { resourceId: true, groupId: true },
+    });
+    const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
+    if (toDelete.length > 0) {
+      const conditions = toDelete.map((i) => ({ resourceId: i.resourceId, groupId: i.groupId }));
+      await db.$transaction([
+        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "cookie_banner", OR: conditions } }),
+        db.themeContent.deleteMany({ where: { shop: this.shop, domain: "cookie_banner", OR: conditions } }),
+      ]);
+      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete cookie_banner groups`);
+    }
+
+    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} cookie_banner groups`);
+    return totalGroups;
+  }
+
   // ============================================
   // HELPER METHODS
   // ============================================
@@ -1880,7 +2081,7 @@ export class BackgroundSyncService {
       // Gating for the new domains (until they get their own SyncPhase entries
       // in Phase 4): system + selling_plans mirror the themes (Pro+) entitlement;
       // online_store_extras is small + high-value and runs on every tier.
-      const [pages, policies, themes, metaobjects, articles, menus, system, delivery, onlineStoreExtras, sellingPlans] = await Promise.all([
+      const [pages, policies, themes, metaobjects, articles, menus, system, delivery, onlineStoreExtras, sellingPlans, cookieBanner] = await Promise.all([
         scope.pages.enabled
           ? this.syncAllPages(scope.pages.max).catch(err => {
               logger.error('[BackgroundSync] Pages sync failed:', err);
@@ -1946,6 +2147,13 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
+        // Cookie banner shares the onlineStoreExtras entitlement (every tier) —
+        // gracefully no-ops when the unstable endpoint is unreachable, so it's
+        // safe to run unconditionally.
+        this.syncCookieBanner().catch(err => {
+          logger.error('[BackgroundSync] Cookie-Banner sync failed:', err);
+          return 0;
+        }),
       ]);
 
       const duration = Date.now() - startTime;
@@ -1960,12 +2168,13 @@ export class BackgroundSyncService {
         delivery,
         onlineStoreExtras,
         sellingPlans,
-        total: pages + policies + themes + metaobjects + articles + menus + system + delivery + onlineStoreExtras + sellingPlans,
+        cookieBanner,
+        total: pages + policies + themes + metaobjects + articles + menus + system + delivery + onlineStoreExtras + sellingPlans + cookieBanner,
         duration,
       };
 
       logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (plan=${plan})`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Delivery: ${delivery}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Delivery: ${delivery}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}, CookieBanner: ${cookieBanner}`);
 
       return stats;
     } catch (error: unknown) {

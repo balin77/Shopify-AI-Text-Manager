@@ -160,6 +160,53 @@ export async function getCookieBannerResources(
   }
 }
 
+const TRANSLATIONS_QUERY = `query cookieBannerTranslations($resourceId: ID!, $locale: String!) {
+  translatableResource(resourceId: $resourceId) {
+    translations(locale: $locale) { key value locale outdated }
+  }
+}`;
+
+/** One foreign-locale translation row returned from Shopify (subset of the schema). */
+export interface CookieBannerTranslation {
+  key: string;
+  value: string;
+  locale: string;
+  outdated?: boolean;
+}
+
+/**
+ * Fetch foreign-locale translations for one Cookie-Banner resource. Returns an
+ * empty array on any failure (so the sync caller can keep going and move on to
+ * the next locale) and flips the availability cache to "unavailable" on schema
+ * errors so the rubric degrades on the next load.
+ */
+export async function getCookieBannerTranslations(
+  session: CookieBannerSession,
+  resourceId: string,
+  locale: string
+): Promise<CookieBannerTranslation[]> {
+  try {
+    const data = (await unstableGraphQL(session, TRANSLATIONS_QUERY, { resourceId, locale })) as {
+      data?: { translatableResource?: { translations?: CookieBannerTranslation[] } };
+      errors?: Array<{ message: string }>;
+    };
+    if (data.errors?.length) {
+      cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
+      return [];
+    }
+    return data.data?.translatableResource?.translations ?? [];
+  } catch (e) {
+    logger.debug("[CookieBanner] translations fetch threw → returning empty", {
+      context: "CookieBanner",
+      shop: session.shop,
+      resourceId,
+      locale,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+}
+
 const REGISTER_MUTATION = `mutation cookieBannerRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
   translationsRegister(resourceId: $resourceId, translations: $translations) {
     userErrors { field message }

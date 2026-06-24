@@ -18,7 +18,7 @@ import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 
 /** Domains that share the ThemeContent model. */
-export const THEME_CONTENT_DOMAINS = ["theme", "system", "delivery", "online_store_extras", "selling_plans"] as const;
+export const THEME_CONTENT_DOMAINS = ["theme", "system", "delivery", "online_store_extras", "selling_plans", "cookie_banner"] as const;
 export type ThemeContentDomain = (typeof THEME_CONTENT_DOMAINS)[number];
 
 export function isThemeContentDomain(value: string | undefined): value is ThemeContentDomain {
