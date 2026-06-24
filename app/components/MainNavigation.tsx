@@ -286,7 +286,7 @@ export function MainNavigation() {
         }}
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
-        <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
+        <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "0.5rem 1rem", gap: "2rem", flexWrap: "wrap" }}>
           {/* Mobile Menu (Hamburger) - nur auf Mobile sichtbar */}
           <div className="mobile-only">
             <MobileMenu
@@ -331,7 +331,7 @@ export function MainNavigation() {
                   aria-current={isActive ? "page" : undefined}
                   style={{
                     textDecoration: "none",
-                    padding: "1rem 0.5rem",
+                    padding: "0.4rem 0.5rem",
                     transition: "border-color 0.2s",
                     background: "none",
                     border: "none",
