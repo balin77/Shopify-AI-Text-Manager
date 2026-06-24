@@ -4,7 +4,14 @@
  *
  * Thin wrapper over the shared ThemeContent machinery: loader, route action and
  * page UI are identical to the other ThemeContent-backed rubrics (Templates,
- * System, OnlineStoreExtras, Selling-Plans), just with domain="cookie_banner".
+ * System, OnlineStoreExtras, Selling-Plans), just with domain="customer_privacy".
+ *
+ * Why "customer_privacy" instead of "cookie_banner"? Brave Shields and the
+ * EasyPrivacy filter list block any URL containing the substring
+ * "cookie_banner" — the API call to /api/theme-content/cookie_banner/... was
+ * silently dropped with net::ERR_BLOCKED_BY_CLIENT (blocked:other). Renaming
+ * the data path to Shopify's own term ("Customer Privacy API") clears the
+ * filter without changing user-facing labels or code-level identifiers.
  *
  * The unstable-API quirk (COOKIE_BANNER lives only in Shopify's `unstable`
  * TranslatableResourceType enum today) is contained entirely in the sync layer
@@ -22,8 +29,8 @@ import { COOKIE_BANNER_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
 
-export const loader = makeThemeDomainLoader("cookie_banner", "COOKIE_BANNER");
-export const action = makeThemeContentRouteAction("cookie_banner");
+export const loader = makeThemeDomainLoader("customer_privacy", "COOKIE_BANNER");
+export const action = makeThemeContentRouteAction("customer_privacy");
 
 export default function CookieBannerPage() {
   const data = useLoaderData<typeof loader>();
@@ -31,7 +38,7 @@ export default function CookieBannerPage() {
     <ThemeContentDomainPage
       data={data}
       config={COOKIE_BANNER_CONFIG}
-      apiBasePath="/api/theme-content/cookie_banner"
+      apiBasePath="/api/theme-content/customer_privacy"
       planContentType="onlineStoreExtras"
     />
   );

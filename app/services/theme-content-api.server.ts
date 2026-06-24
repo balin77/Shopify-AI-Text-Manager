@@ -18,7 +18,10 @@ import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 
 /** Domains that share the ThemeContent model. */
-export const THEME_CONTENT_DOMAINS = ["theme", "system", "delivery", "online_store_extras", "selling_plans", "cookie_banner"] as const;
+// "customer_privacy" is the data path for the Cookie-Banner rubric — named after
+// Shopify's own Customer Privacy API so URLs do NOT contain the substring
+// "cookie_banner" (blocked by Brave Shields / EasyPrivacy filter lists).
+export const THEME_CONTENT_DOMAINS = ["theme", "system", "delivery", "online_store_extras", "selling_plans", "customer_privacy"] as const;
 export type ThemeContentDomain = (typeof THEME_CONTENT_DOMAINS)[number];
 
 export function isThemeContentDomain(value: string | undefined): value is ThemeContentDomain {

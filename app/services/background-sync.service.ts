@@ -1844,8 +1844,10 @@ export class BackgroundSyncService {
    * lives only in Shopify's `unstable` TranslatableResourceType enum (the rest of
    * the ThemeContent domains use the pinned stable enum). The reads therefore go
    * through a raw fetch against /admin/api/unstable/graphql.json. Persistence is
-   * identical (themeContent + themeTranslation under domain="cookie_banner") so
-   * the editor renders via the standard ThemeContentDomainPage.
+   * under domain="customer_privacy" (Shopify's own term — chosen to keep the
+   * substring "cookie_banner" out of every URL so Brave Shields / EasyPrivacy
+   * filters do not silently drop the API calls). The editor renders via the
+   * standard ThemeContentDomainPage.
    *
    * Degrades silently to a no-op return 0 when the resource is unreachable on
    * this shop (e.g. region without Customer-Privacy cookie banner enabled, or
@@ -1853,8 +1855,18 @@ export class BackgroundSyncService {
    * without the bespoke UI: the loader simply finds no themeContent rows.
    */
   async syncCookieBanner(onProgress?: ProgressCallback): Promise<number> {
-    logger.debug(`[BackgroundSync] Syncing cookie_banner for shop: ${this.shop}`);
+    logger.debug(`[BackgroundSync] Syncing customer_privacy (cookie banner) for shop: ${this.shop}`);
     const { db } = await import("../db.server");
+
+    // One-shot cleanup of legacy rows from the pre-rename sync (domain was
+    // "cookie_banner" until we renamed it to dodge ad-blocker filter lists).
+    // Idempotent: the deletes are domain-scoped and no other code touches that
+    // domain anymore, so once the table has no "cookie_banner" rows this is a
+    // no-op forever. Cheaper than a one-shot migration script.
+    await db.$transaction([
+      db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "cookie_banner" } }),
+      db.themeContent.deleteMany({ where: { shop: this.shop, domain: "cookie_banner" } }),
+    ]);
     const {
       getCookieBannerAvailability,
       getCookieBannerResources,
@@ -1921,7 +1933,7 @@ export class BackgroundSyncService {
       if (content.length === 0) continue;
 
       const shortId = resource.resourceId.split("/").pop() || resource.resourceId;
-      const groupId = `cookie_banner_${shortId}`;
+      const groupId = `customer_privacy_${shortId}`;
       const groupName = deriveName(
         content as unknown as TranslatableContentItem[],
         "Cookie banner"
@@ -1935,7 +1947,7 @@ export class BackgroundSyncService {
           resourceId: resource.resourceId,
           resourceType: "COOKIE_BANNER",
           resourceTypeLabel: "Cookie banner",
-          domain: "cookie_banner",
+          domain: "customer_privacy",
           groupId,
           groupName,
           groupIcon: "🍪",
@@ -1946,7 +1958,7 @@ export class BackgroundSyncService {
         update: {
           resourceType: "COOKIE_BANNER",
           resourceTypeLabel: "Cookie banner",
-          domain: "cookie_banner",
+          domain: "customer_privacy",
           groupName,
           groupIcon: "🍪",
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
@@ -1958,7 +1970,7 @@ export class BackgroundSyncService {
       // Fetch + persist foreign-locale translations (raw unstable fetch — the
       // gateway can't reach the unstable endpoint).
       const existingRows = await db.themeTranslation.findMany({
-        where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "cookie_banner" },
+        where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "customer_privacy" },
         select: { id: true, key: true, locale: true, value: true, outdated: true },
       });
       const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
@@ -1986,7 +1998,7 @@ export class BackgroundSyncService {
         const outdated = t.outdated || false;
         const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
         if (!prev) {
-          toCreate.push({ shop: this.shop, resourceId: resource.resourceId, domain: "cookie_banner", groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+          toCreate.push({ shop: this.shop, resourceId: resource.resourceId, domain: "customer_privacy", groupId, key: t.key, value: t.value, locale: t.locale, outdated });
         } else if (prev.value !== t.value || prev.outdated !== outdated) {
           toUpdate.push({ id: prev.id, value: t.value, outdated });
         }
@@ -2008,7 +2020,7 @@ export class BackgroundSyncService {
       const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
       for (let i = 0; i < keysToDelete.length; i += CHUNK) {
         await db.themeTranslation.deleteMany({
-          where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "cookie_banner", OR: keysToDelete.slice(i, i + CHUNK) },
+          where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "customer_privacy", OR: keysToDelete.slice(i, i + CHUNK) },
         });
       }
 
@@ -2022,20 +2034,20 @@ export class BackgroundSyncService {
     // upstream availability guard means we only reach here on a confirmed
     // "available" probe, so an empty resources[] is authoritative.
     const existing = await db.themeContent.findMany({
-      where: { shop: this.shop, domain: "cookie_banner" },
+      where: { shop: this.shop, domain: "customer_privacy" },
       select: { resourceId: true, groupId: true },
     });
     const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
     if (toDelete.length > 0) {
       const conditions = toDelete.map((i) => ({ resourceId: i.resourceId, groupId: i.groupId }));
       await db.$transaction([
-        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "cookie_banner", OR: conditions } }),
-        db.themeContent.deleteMany({ where: { shop: this.shop, domain: "cookie_banner", OR: conditions } }),
+        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "customer_privacy", OR: conditions } }),
+        db.themeContent.deleteMany({ where: { shop: this.shop, domain: "customer_privacy", OR: conditions } }),
       ]);
-      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete cookie_banner groups`);
+      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete customer_privacy groups`);
     }
 
-    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} cookie_banner groups`);
+    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} customer_privacy (cookie-banner) groups`);
     return totalGroups;
   }
 
