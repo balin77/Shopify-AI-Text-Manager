@@ -86,7 +86,7 @@ export function RubricNavigation() {
       style={{
         borderBottom: "1px solid #e1e3e5",
         background: "#fafbfb",
-        padding: "0.2rem 1rem",
+        padding: "0.25rem 1rem",
         position: "sticky",
         top: `${mainNavHeight}px`,
         left: 0,
@@ -95,7 +95,7 @@ export function RubricNavigation() {
         overflowX: "auto",
       }}
     >
-      <InlineStack gap="100">
+      <InlineStack gap="150">
         {CONTENT_RUBRICS.map((r) => {
           const isActive = r.id === activeRubricId;
           return (
@@ -104,19 +104,21 @@ export function RubricNavigation() {
               onClick={() => goToRubric(r)}
               aria-current={isActive ? "page" : undefined}
               style={{
-                padding: "0.2rem 0.6rem",
-                border: isActive ? "2px solid #008060" : "1px solid transparent",
+                // 2px transparent border on inactive avoids any layout shift
+                // when switching to the 2px green active border.
+                padding: "0.25rem 0.75rem",
+                border: isActive ? "2px solid #008060" : "2px solid #e1e3e5",
                 borderRadius: "6px",
-                background: isActive ? "#f1f8f5" : "transparent",
+                background: isActive ? "#f1f8f5" : "white",
                 cursor: "pointer",
                 transition: "all 0.15s",
                 display: "flex",
                 alignItems: "center",
-                gap: "0.3rem",
+                gap: "0.4rem",
                 lineHeight: 1.1,
               }}
             >
-              <span style={{ fontSize: "0.9rem" }}>{r.icon}</span>
+              <span style={{ fontSize: "1rem" }}>{r.icon}</span>
               <Text as="span" variant="bodySm" fontWeight={isActive ? "semibold" : "regular"}>
                 {rubricLabel(r)}
               </Text>

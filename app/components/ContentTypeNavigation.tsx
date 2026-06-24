@@ -77,7 +77,10 @@ export function ContentTypeNavigation() {
         style={{
           borderBottom: "1px solid #e1e3e5",
           background: "white",
-          padding: "0.25rem 1rem",
+          // Extra left padding visually indents L3 chips under the L2 bar so
+          // hierarchy reads top → down even when the L3 chips are smaller
+          // than the L2 chips above them.
+          padding: "0.2rem 1rem 0.2rem 2rem",
           position: "sticky",
           top: `${mainNavHeight + rubricNavHeight}px`,
           left: 0,
@@ -86,7 +89,7 @@ export function ContentTypeNavigation() {
           overflowX: "auto",
         }}
       >
-        <InlineStack gap="150">
+        <InlineStack gap="100">
           {entries.map((entry) => {
             const hasAccess = canAccessContentType(entry.planContentType);
             const isActive = activeEntry?.id === entry.id;
@@ -112,21 +115,28 @@ export function ContentTypeNavigation() {
                 aria-current={isActive ? "page" : undefined}
                 title={upgradeHint}
                 style={{
-                  padding: "0.25rem 0.65rem",
-                  border: isActive ? "2px solid #008060" : "1px solid #c9cccf",
-                  borderRadius: "6px",
-                  background: isActive ? "#f1f8f5" : !hasAccess ? "#f6f6f7" : "white",
+                  // L3 (this bar) reads as a sub-level of L2: flat by default
+                  // (transparent bg + border), active state marked by a bottom
+                  // underline + subtle bg — looks like a sub-tab rather than a
+                  // raised card, so the L2 card-chips above visually dominate.
+                  // 2px transparent border on all sides keeps the active state
+                  // (which only swaps the bottom edge) from causing layout shift.
+                  padding: "0.2rem 0.55rem",
+                  border: "2px solid transparent",
+                  borderBottom: isActive ? "2px solid #008060" : "2px solid transparent",
+                  borderRadius: "4px",
+                  background: isActive ? "#f1f8f5" : "transparent",
                   cursor: isPlanLocked ? "help" : "pointer",
                   transition: "all 0.15s",
                   display: "flex",
                   alignItems: "center",
-                  gap: "0.35rem",
+                  gap: "0.3rem",
                   lineHeight: 1.1,
-                  opacity: !hasAccess ? 0.6 : 1,
+                  opacity: !hasAccess ? 0.55 : 1,
                 }}
               >
-                <span style={{ fontSize: "0.95rem" }}>{entry.icon}</span>
-                <Text as="span" variant="bodySm" fontWeight={isActive ? "semibold" : "regular"}>
+                <span style={{ fontSize: "0.85rem" }}>{entry.icon}</span>
+                <Text as="span" variant="bodySm" fontWeight={isActive ? "semibold" : "regular"} tone={isActive ? "base" : "subdued"}>
                   {labelFor(entry)}
                 </Text>
                 {showProductCount && (
@@ -134,7 +144,7 @@ export function ContentTypeNavigation() {
                     ({productCount})
                   </Text>
                 )}
-                {!hasAccess && <span style={{ marginLeft: "0.15rem" }}>🔒</span>}
+                {!hasAccess && <span style={{ marginLeft: "0.15rem", fontSize: "0.8rem" }}>🔒</span>}
               </button>
             );
 

@@ -603,6 +603,18 @@ a:focus:not(:focus-visible) {
   }
 }
 
+/* Sub-navigation hover affordance — L3 chips are flat by default (no
+   border/bg) so they need a hover state to read as clickable. L2 chips
+   already have a card appearance and only need a subtle darken. Active
+   chips ([aria-current="page"]) are excluded so the selected state stays
+   visually distinct under the pointer. */
+.content-type-nav button:not([aria-current="page"]):not([aria-disabled="true"]):hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+.rubric-nav button:not([aria-current="page"]):hover {
+  background-color: #f1f2f3 !important;
+}
+
 /* Global: Remove blue focus ring from all Polaris TextFields and Select inputs */
 .Polaris-TextField__Input:focus {
   outline: none !important;
