@@ -31,7 +31,6 @@ export function MainNavigation() {
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
-  const [navHeight, setNavHeight] = useState(73);
   const notifiedTaskIds = useRef<Set<string>>(new Set());
   const isMountedRef = useRef(true);
 
@@ -164,8 +163,7 @@ export function MainNavigation() {
     const updateHeight = () => {
       if (navRef.current && isMountedRef.current) {
         const height = navRef.current.offsetHeight;
-        setNavHeight(height);
-        setMainNavHeight(height); // Update context for other components
+        setMainNavHeight(height); // Publish for downstream sticky elements
       }
     };
 
@@ -270,7 +268,9 @@ export function MainNavigation() {
 
   return (
     <>
-      {/* Fixed Navigation */}
+      {/* Sticky Navigation — takes real space in document flow, so no spacer
+          is needed and the bar doesn't briefly overlap content during hydration
+          like a position:fixed bar would. */}
       <nav
         ref={navRef}
         role="navigation"
@@ -278,7 +278,7 @@ export function MainNavigation() {
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
-          position: "fixed",
+          position: "sticky",
           top: 0,
           left: 0,
           right: 0,
@@ -712,9 +712,6 @@ export function MainNavigation() {
           </div>
         </div>
       </nav>
-
-      {/* Dynamic spacer to prevent content from going under fixed navigation */}
-      <div style={{ height: `${navHeight}px` }} aria-hidden="true" />
     </>
   );
 }
