@@ -47,6 +47,13 @@
 | Richtlinien-Übersetzungen | ✅ | Shop-Policies |
 | Bild Alt-Text Übersetzungen | ✅ | Bulk-API für MediaImages |
 | Theme-Content-Übersetzungen | ✅ | Templates, Sections |
+| Theme-Standardinhalte (inkl. Checkout) | ✅ | LOCALE_CONTENT nach Präfix gruppiert; `shopify.checkout.*` = kompletter Checkout-Text |
+| E-Mail-Benachrichtigungen | ✅ | EMAIL_TEMPLATE — Bestell-, Versand-, Konto-Mails etc. |
+| Versand & Zustellung | ✅ | DELIVERY_METHOD_DEFINITION (Methodennamen im Checkout) |
+| Filter & Shop-Metadaten | ✅ | FILTER-Labels + SHOP meta_title/meta_description |
+| Cookie-Banner | ✅ | COOKIE_BANNER (via `unstable`, Auto-Fallback) |
+| Zahlung & Lieferschein | ✅ | PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE (konditional) |
+| Abo-Pläne | ✅ | SELLING_PLAN, SELLING_PLAN_GROUP (konditional) |
 | Locale-Navigation | ✅ | Schnellwechsel im Editor |
 
 ### 1.3 Content-Management
@@ -103,7 +110,7 @@
 | **Glossar/Terminologie** | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **Language/Currency Switcher Widget** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Third-Party-App-Übersetzung** ² | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Checkout-Übersetzung** | ❌ | ✅ | ✅ | ✅ | ❌ |
+| **Checkout-Übersetzung** ³ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 > ¹ **Währungsumrechnung ist kein echter Gap** (Stand 2026-06): Shopify
@@ -128,6 +135,42 @@
 > Produktübersetzung. Harte Grenze (haben alle Konkurrenten ebenfalls):
 > cross-origin iframes (z. B. Loox-Reviews im Full-Widget-Modus) sind
 > per Browser-Sandbox unerreichbar.
+>
+> ³ **Checkout-Übersetzung — ausgeliefert** (Full-Translation-Coverage,
+> Stand 2026-06): Die kompletten Checkout-Texte liegen als `shopify.checkout.*`
+> in `ONLINE_STORE_THEME_LOCALE_CONTENT` (Rubrik „Theme-Standardinhalte" →
+> Gruppe „Checkout & System") und sind über denselben `translationsRegister`-
+> Pfad wie jeder andere Theme-Key les- und schreibbar. Für **nicht** von
+> Shopify nativ unterstützte Sprachen (Arabisch, Hebräisch, Ukrainisch, …)
+> greift unsere Übersetzung garantiert; für die 33 von Shopify mit
+> Profi-Übersetzungen bestückten Sprachen ist die Override-Präzedenz noch
+> nicht abschließend verifiziert (Smoke-Test offen). Damit ist die letzte
+> große ❌-Zeile gegenüber Transcy/Weglot/LangShop geschlossen.
+
+#### Vollständige Übersetzungsabdeckung — T&A-Parität + 3 Flächen darüber hinaus
+
+Mit dem „Full Translation Coverage"-Release (2026-06) deckt ContentPilot
+**jeden übersetzbaren Ressourcentyp** der Shopify Admin GraphQL API ab und
+erreicht damit volle Parität zu Shopifys eigener *Translate & Adapt* —
+inklusive dreier Flächen, die T&A selbst **nicht** anbietet:
+
+| Neu übersetzbar | API-Ressource | T&A |
+|---|---|---|
+| Theme-Standardinhalte (inkl. Checkout) | `ONLINE_STORE_THEME_LOCALE_CONTENT` | ✅ |
+| E-Mail-Benachrichtigungen | `EMAIL_TEMPLATE` | ✅ |
+| Versand & Zustellung (im Checkout sichtbar) | `DELIVERY_METHOD_DEFINITION` | ✅ |
+| Filter-Labels | `FILTER` | ✅ |
+| Shop-Metadaten (SEO) | `SHOP` (meta_title/description) | ✅ |
+| Cookie-Banner (via `unstable`, Auto-Fallback) | `COOKIE_BANNER` | ✅ |
+| **Zahlungsanbieter-Texte** | `PAYMENT_GATEWAY` | ❌ |
+| **Lieferschein-Vorlagen** | `PACKING_SLIP_TEMPLATE` | ❌ |
+| **Abo-Pläne / Abo-Gruppen** | `SELLING_PLAN`, `SELLING_PLAN_GROUP` | ❌ |
+
+Einzig `MENU`/`LINK` bleibt teilabgedeckt — eine Shopify-API-Limitierung, die
+alle Apps betrifft. Die letzten drei Zeilen sind ein echtes Differenzial:
+Shopifys hauseigene App kann sie nicht übersetzen, wir schon (konditional
+eingeblendet, wenn der Shop sie besitzt). Kombiniert mit AI-Markenstimme und
+Direct Translations ist das die breiteste Abdeckung am Markt.
 
 **Preise der Wettbewerber (aktualisiert Mai 2026, USD/Monat — Shopify App Store):**
 
@@ -372,7 +415,7 @@ Warum wichtig:
 | 14 | **Auto-Generate bei neuem Produkt** | Mittel | Niedrig | ChatGPT-AI |
 | 15 | **Keyword Research/Tracking** | Niedrig | Mittel | Yoast, SEOWILL, StoreSEO |
 | 16 | **Third-Party-App-Übersetzung** | Niedrig | Hoch | Transcy, Weglot, LangShop |
-| 17 | **Checkout-Übersetzung** | Niedrig | Hoch | Transcy, Weglot, LangShop |
+| ~~17~~ | ~~**Checkout-Übersetzung**~~ ✅ **erledigt** (2026-06, `shopify.checkout.*` in LOCALE_CONTENT) — kein Gap | — | — | — |
 | 18 | **Readability Analysis** | Niedrig | Niedrig | Yoast |
 
 ---
@@ -455,10 +498,12 @@ optional obendrauf, z. B. erst ab Pro).
   404er schaden Ranking. Mittlerer Aufwand.
 
 ### 🟡/🟢 Niedrig
-Page-Speed, Auto-Generierung bei `products/create`, Keyword-Research, Third-
-Party-App-/Checkout-Übersetzung; optionale Differenzierer (AI-Bildgenerierung,
-Social/Email-Content, Image-to-Description, OCR). Nice-to-have, kein
-Kaufentscheidungs-Treiber. (Image Compression = ✅ via WebP, kein Gap.)
+Page-Speed, Auto-Generierung bei `products/create`, Keyword-Research;
+optionale Differenzierer (AI-Bildgenerierung, Social/Email-Content,
+Image-to-Description, OCR). Nice-to-have, kein Kaufentscheidungs-Treiber.
+(Image Compression = ✅ via WebP, kein Gap. Checkout-Übersetzung = ✅ via
+LOCALE_CONTENT, kein Gap. Third-Party-App-Übersetzung = ✅ via Direct
+Translations, siehe §2.1 Fußnote ².)
 
 ### Strategisches Big Picture
 Schwächen = „Sichtbarkeit & SEO-Mechanik" (Switcher, Structured Data).
@@ -638,4 +683,5 @@ model ContentTemplate {
 | 2026-01-27 | Initiale Erstellung der Wettbewerbsanalyse |
 | 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |
 | 2026-05-18 | §3.5-Banner nachgezogen: Limit-Befunde 1–4 alle erledigt (Commit 1327432) — Befund 4 via Bild-Quota + WebP-Spreizung Pro 2/Max 6; Template-Verweise auf „zusätzliches Differenzial" entschärft |
+| 2026-06-25 | **Full Translation Coverage ausgeliefert** (T&A-Parität): Checkout-Übersetzung ❌→✅ (§2.1 + Fußnote ³); neue übersetzbare Flächen in §1.2 (E-Mail/Versand/Filter/Shop-Metadaten/Cookie-Banner/Zahlung/Lieferschein/Abo-Pläne); §1.2-Coverage-Tabelle inkl. 3 Flächen über T&A hinaus (PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE, SELLING_PLAN*); §3.3 Zeile 17 (Checkout) als erledigt markiert; §3.5-Niedrig nachgezogen |
 
