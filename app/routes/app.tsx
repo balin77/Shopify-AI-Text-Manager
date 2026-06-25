@@ -329,10 +329,14 @@ function AppContent() {
           layout route so it survives sibling navigation instead of being
           remounted on every sub-page. Only the <Outlet /> content swaps.
           ContentTypeNavigation returns null on non-content pages. */}
-      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
         <MainNavigation />
         <ContentTypeNavigation />
-        <main style={{ flex: 1, minHeight: 0 }}>
+        {/* Fills the space below the (in-flow) nav bars. overflowY:auto makes
+            this the scroll container, so document-flow routes (settings/tasks)
+            scroll here while the nav stays pinned above, and fixed-frame editor
+            routes (height:100%) fit exactly without a stray document scroll. */}
+        <main style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Outlet />
         </main>
       </div>

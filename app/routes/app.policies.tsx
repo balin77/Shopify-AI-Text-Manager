@@ -215,7 +215,7 @@ export default function PoliciesPage() {
 
   return (
     <PlanAccessGate contentType="policies">
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={POLICIES_CONFIG}

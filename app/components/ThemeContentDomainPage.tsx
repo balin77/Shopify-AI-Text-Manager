@@ -910,7 +910,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
 
   return (
     <PlanAccessGate contentType={planContentType}>
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {selectedEmbedTechnical && (
           <div style={{ padding: "0.5rem 1rem 0" }}>

@@ -233,7 +233,7 @@ export default function MetaobjectsPage() {
 
   return (
     <PlanAccessGate contentType="metaobjects">
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={METAOBJECTS_CONFIG}
