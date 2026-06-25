@@ -110,7 +110,7 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
     if (typeof value === "string") updatedFields[key] = value;
   }
   if (Object.keys(updatedFields).length === 0) {
-    return json({ success: true, actionType: "updateContent" });
+    return json({ success: true, actionType: "updateContent" as const });
   }
 
   // Partition into register-vs-remove per resource.
@@ -209,7 +209,11 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
     }
   }
 
-  return json({ success: true });
+  // IMPORTANT: include actionType — the editor's save-response handler
+  // (useUnifiedContentEditor) only clears `isSaving` when it sees
+  // `success && actionType === "updateContent"`. Without it the spinner
+  // stays spinning forever and the Save button never re-enables.
+  return json({ success: true, actionType: "updateContent" as const });
 }
 
 export default function CookieBannerPage() {
