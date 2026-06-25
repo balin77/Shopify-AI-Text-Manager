@@ -4,8 +4,15 @@
  * Centralized navigation logic for Shopify embedded apps.
  * Preserves all Shopify session parameters across navigation.
  *
- * Uses window.location.href for navigation to ensure reliable page loads
- * in the Shopify Admin iframe context.
+ * Uses Remix client-side navigation (useNavigate) so the persistent layout
+ * route (app.tsx) — including the navigation bars — stays mounted across
+ * sub-page navigation and only the <Outlet /> content swaps. App Bridge
+ * (initialized via the CDN script + shopify-api-key meta in root.tsx) keeps
+ * the embedded session alive and injects the session token into Remix data
+ * requests, so client-side loader fetches authenticate without a full reload.
+ *
+ * All current URL search params (shop, host, embedded, …) are carried over to
+ * the target path so anything that reads them keeps working.
  *
  * NOTE: Does NOT use sessionStorage/localStorage to comply with Shopify's
  * requirement that embedded apps work without third-party cookies/storage
@@ -13,6 +20,7 @@
  */
 
 import { useCallback } from "react";
+import { useNavigate } from "@remix-run/react";
 
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */
@@ -29,6 +37,8 @@ interface NavigateOptions {
  * @returns handleNavigate function for navigation
  */
 export function useAppNavigation() {
+  const navigate = useNavigate();
+
   /**
    * Navigate to a path while preserving ALL Shopify session parameters
    *
@@ -61,16 +71,13 @@ export function useAppNavigation() {
     const searchString = finalParams.toString();
     const pathWithParams = searchString ? `${path}?${searchString}` : path;
 
-    // IMPORTANT: Use absolute URL with current origin to avoid iframe navigation issues
-    // If we use a relative path, the browser might resolve it to admin.shopify.com
-    const fullUrl = new URL(pathWithParams, window.location.origin).toString();
-
-    // Use window.location.href for reliable navigation in iframe
-    if (window.shopify && typeof window.shopify.loading === 'function') {
-      window.shopify.loading(true);
-    }
-    window.location.href = fullUrl;
-  }, []);
+    // Client-side Remix navigation: only the <Outlet /> re-renders, the layout
+    // route (app.tsx) and its navigation bars stay mounted. The leading-slash
+    // path is resolved in-app by Remix, so there is no risk of the browser
+    // resolving it against admin.shopify.com (the reason the old hard-reload
+    // implementation built an absolute URL).
+    navigate(pathWithParams);
+  }, [navigate]);
 
   return { handleNavigate };
 }
