@@ -37,23 +37,31 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string) {
           groupId: true,
           groupName: true,
           groupIcon: true,
+          resourceType: true,
           translatableContent: true,
         },
       });
 
-      // Aggregate by groupId, counting unique translatable field keys.
-      const groupMap = new Map<string, { groupName: string; groupIcon: string; uniqueKeys: Set<string> }>();
+      // Aggregate by groupId, counting unique translatable field keys. A group
+      // is flagged technical when any of its rows is an App-Embed resource.
+      const APP_EMBED = "ONLINE_STORE_THEME_APP_EMBED";
+      const groupMap = new Map<
+        string,
+        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean }
+      >();
       for (const row of allGroupRows) {
         const existing = groupMap.get(row.groupId);
         const items = Array.isArray(row.translatableContent)
           ? (row.translatableContent as unknown as TranslatableField[])
           : [];
+        const isEmbed = row.resourceType === APP_EMBED;
         if (existing) {
           for (const item of items) if (item.key) existing.uniqueKeys.add(item.key);
+          if (isEmbed) existing.embedTechnical = true;
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys });
+          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isEmbed });
         }
       }
 
@@ -68,6 +76,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string) {
           contentCount: group.uniqueKeys.size,
           translatableContent: [] as TranslatableField[],
           translations: [] as { key: string; value: string; locale?: string }[],
+          embedTechnical: group.embedTechnical,
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 

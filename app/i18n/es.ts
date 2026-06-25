@@ -210,6 +210,8 @@ export const es: Translation = {
     cookieBannerSaved: "Guardado.",
     theme: "Textos del tema",
     themeDescription: "Traduce textos del tema como botones, etiquetas y mensajes",
+    appEmbedWarningTitle: "Contenido técnico",
+    appEmbedWarning: "Este es contenido de app-embed (mayormente selectores CSS y configuración). Traducirlo puede romper la inserción en tu tienda — edítalo solo si sabes lo que haces.",
     noEntries: "No hay entradas disponibles",
     selectFromList: "Selecciona una entrada de la lista",
     comingSoon: "Próximamente",

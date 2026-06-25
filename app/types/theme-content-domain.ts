@@ -25,4 +25,10 @@ export interface ThemeNavItem {
   contentCount: number;
   translatableContent: TranslatableField[];
   translations: ThemeTranslationRecord[];
+  /**
+   * App-Embed group (ONLINE_STORE_THEME_APP_EMBED) — its translatable content is
+   * mostly technical (CSS selectors / config); the editor shows a warning that
+   * translating it may break the embed.
+   */
+  embedTechnical?: boolean;
 }

@@ -16,6 +16,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
+import { Banner } from "@shopify/polaris";
 import { MainNavigation } from "./MainNavigation";
 import { ContentTypeNavigation } from "./ContentTypeNavigation";
 import { UnifiedContentEditor } from "./UnifiedContentEditor";
@@ -906,12 +907,24 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     }
   }, [error, showInfoBox, t]);
 
+  const selectedEmbedTechnical =
+    !!selectedGroupId && themes.some((item: ThemeNavItem) => item.groupId === selectedGroupId && item.embedTechnical);
+
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
       <MainNavigation />
       <ContentTypeNavigation />
-      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {selectedEmbedTechnical && (
+          <div style={{ padding: "0.5rem 1rem 0" }}>
+            <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
+              {t.content?.appEmbedWarning ||
+                "This is app-embed content (mostly CSS selectors and configuration). Translating it may break the embed on your storefront."}
+            </Banner>
+          </div>
+        )}
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={config}
           items={items as unknown as TranslatableContentItem[]}
@@ -932,6 +945,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             { field: "title", label: "Title" },
           ]}
         />
+        </div>
       </div>
     </div>
     </PlanAccessGate>

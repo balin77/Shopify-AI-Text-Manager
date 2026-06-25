@@ -208,6 +208,8 @@ export const de = {
     cookieBannerSaved: "Gespeichert.",
     theme: "Theme-Texte",
     themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
+    appEmbedWarningTitle: "Technischer Inhalt",
+    appEmbedWarning: "Dies ist App-Einbettungs-Inhalt (überwiegend CSS-Selektoren und Konfiguration). Eine Übersetzung kann die Einbettung im Storefront beschädigen — nur ändern, wenn Sie wissen, was Sie tun.",
     noEntries: "Keine Einträge verfügbar",
     selectFromList: "Wähle einen Eintrag aus der Liste",
     comingSoon: "Demnächst verfügbar",

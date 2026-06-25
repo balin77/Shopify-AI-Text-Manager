@@ -211,6 +211,8 @@ export const en: Translation = {
     cookieBannerSaved: "Saved.",
     theme: "Theme Texts",
     themeDescription: "Translate theme texts like buttons, labels and messages",
+    appEmbedWarningTitle: "Technical content",
+    appEmbedWarning: "This is app-embed content (mostly CSS selectors and configuration). Translating it may break the embed on your storefront — only edit if you know what you're doing.",
     noEntries: "No entries available",
     selectFromList: "Select an entry from the list",
     comingSoon: "Coming soon",

@@ -21,6 +21,13 @@ export interface ContentEntryDef {
   labelKey: string;
   /** Plan entitlement this entry maps to (drives the lock + gate). */
   planContentType: PlanContentType;
+  /**
+   * Conditional entry: hidden from the nav when the shop has no content for it
+   * AND the plan is entitled (an entitled-but-empty rubric e.g. Abo-Pläne on a
+   * shop without subscriptions). Non-entitled plans keep showing the upsell lock.
+   * Presence is reported per id by the app root loader's `conditionalContent`.
+   */
+  conditional?: boolean;
 }
 
 /** One Level-2 rubric grouping several content entries. */
@@ -38,7 +45,7 @@ export const CONTENT_RUBRICS: RubricDef[] = [
     entries: [
       { id: "products", path: "/app/products", icon: "🛍️", labelKey: "products", planContentType: "products" },
       { id: "collections", path: "/app/collections", icon: "📂", labelKey: "collections", planContentType: "collections" },
-      { id: "sellingPlans", path: "/app/selling-plans", icon: "🔁", labelKey: "sellingPlans", planContentType: "sellingPlans" },
+      { id: "sellingPlans", path: "/app/selling-plans", icon: "🔁", labelKey: "sellingPlans", planContentType: "sellingPlans", conditional: true },
     ],
   },
   {

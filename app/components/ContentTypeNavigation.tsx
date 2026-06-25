@@ -34,7 +34,20 @@ export function ContentTypeNavigation() {
 
   const activeRubric = getActiveRubric(location.pathname);
   const activeEntry = getActiveEntry(location.pathname);
-  const entries: ContentEntryDef[] = activeRubric?.entries ?? [];
+  const allEntries: ContentEntryDef[] = activeRubric?.entries ?? [];
+
+  // Presence of conditional content types from the app root loader. A
+  // conditional entry (e.g. Abo-Pläne) is hidden only when the plan is entitled
+  // AND the shop has no such content — otherwise it stays (upsell lock for
+  // non-entitled plans; fail-open when presence is unknown).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const appRootData = matches.find((m) => m.id === "routes/app")?.data as any;
+  const conditionalContent: Record<string, boolean> | undefined = appRootData?.conditionalContent;
+  const entries = allEntries.filter((entry) => {
+    if (!entry.conditional) return true;
+    const present = conditionalContent?.[entry.id];
+    return !(present === false && canAccessContentType(entry.planContentType));
+  });
 
   // Product count (+ at-limit warning) is sourced from the products route loader
   // and shown on the Produkte entry — only populated while on the products page.

@@ -150,6 +150,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: installState?.initialSyncError ?? null,
     };
 
+    // Presence of conditional content types (drives nav hiding of entitled-but-
+    // empty entries, e.g. Abo-Pläne on a shop without subscriptions). Cheap
+    // indexed count on (shop, domain).
+    const sellingPlanRows = await db.themeContent.count({
+      where: { shop: session.shop, domain: "selling_plans" },
+    });
+    const conditionalContent = { sellingPlans: sellingPlanRows > 0 };
+
     return json({
       appLanguage,
       subscriptionPlan,
@@ -158,6 +166,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
       extensionSetupHint,
+      conditionalContent,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -183,6 +192,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,
+      conditionalContent: { sellingPlans: true },
       loaderError: true,
     });
   }
