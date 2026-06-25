@@ -260,6 +260,49 @@ export async function writeCookieBannerTranslations(
   }
 }
 
+const REMOVE_MUTATION = `mutation cookieBannerRemove($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
+  translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+    userErrors { field message }
+  }
+}`;
+
+/**
+ * Remove foreign-locale Cookie-Banner translations via the unstable endpoint —
+ * counterpart to writeCookieBannerTranslations for cleared fields.
+ * Returns { ok: false, error } on any failure (never throws).
+ */
+export async function removeCookieBannerTranslations(
+  session: CookieBannerSession,
+  resourceId: string,
+  translationKeys: string[],
+  locales: string[]
+): Promise<{ ok: boolean; error?: string }> {
+  if (translationKeys.length === 0) return { ok: true };
+  try {
+    const data = (await unstableGraphQL(session, REMOVE_MUTATION, { resourceId, translationKeys, locales })) as {
+      data?: { translationsRemove?: { userErrors?: Array<{ message: string }> } };
+      errors?: Array<{ message: string }>;
+    };
+    if (data.errors?.length) {
+      cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
+      return { ok: false, error: data.errors[0]?.message ?? "Cookie banner temporarily unavailable" };
+    }
+    const userErrors = data.data?.translationsRemove?.userErrors ?? [];
+    if (userErrors.length) {
+      return { ok: false, error: userErrors[0]?.message ?? "Translation removal rejected" };
+    }
+    return { ok: true };
+  } catch (e) {
+    logger.debug("[CookieBanner] remove threw → unavailable", {
+      context: "CookieBanner",
+      shop: session.shop,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Test/maintenance helper — clears the in-memory cache. */
 export function __clearCookieBannerCache(): void {
   cache.clear();
