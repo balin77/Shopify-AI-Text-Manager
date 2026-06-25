@@ -60,8 +60,15 @@ export function ContentTypeNavigation() {
   const labelFor = (entry: ContentEntryDef) => contentLabels?.[entry.labelKey] || entry.id;
 
   // Measure the bar and publish its height for downstream sticky offsets
-  // (UnifiedItemList, UnifiedContentEditor, app.menus.tsx).
+  // (UnifiedItemList, UnifiedContentEditor, app.menus.tsx). On non-content
+  // pages (no active rubric) the bar renders nothing, so its contributed
+  // height must reset to 0 — otherwise the last measured value would leak
+  // into sticky offsets now that this component is mounted app-wide.
   useEffect(() => {
+    if (!activeRubric) {
+      setContentNavHeight(0);
+      return;
+    }
     const updateHeight = () => {
       if (navRef.current) setContentNavHeight(navRef.current.offsetHeight);
     };
@@ -76,7 +83,11 @@ export function ContentTypeNavigation() {
       observer?.disconnect();
       window.removeEventListener("resize", updateHeight);
     };
-  }, [setContentNavHeight, entries.length]);
+  }, [activeRubric, setContentNavHeight, entries.length]);
+
+  // Mounted app-wide via the layout route: render nothing on non-content
+  // pages so no empty L2/L3 strip appears under the main nav.
+  if (!activeRubric) return null;
 
   return (
     <>

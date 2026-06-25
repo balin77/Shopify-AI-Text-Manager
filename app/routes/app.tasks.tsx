@@ -15,7 +15,6 @@ import {
   Pagination,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -301,8 +300,6 @@ export default function TasksPage() {
 
   return (
     <Page fullWidth>
-      <MainNavigation />
-
       <div style={{ padding: "1rem" }}>
         <BlockStack gap="400">
           {/* Filters */}

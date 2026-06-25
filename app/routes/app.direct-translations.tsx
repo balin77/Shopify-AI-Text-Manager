@@ -36,8 +36,6 @@ import { QuestionCircleIcon } from "@shopify/polaris-icons";
 import { ToggleSwitch } from "../components/ToggleSwitch";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
@@ -722,8 +720,6 @@ export default function DirectTranslationsPage() {
   return (
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-        <MainNavigation />
-        <ContentTypeNavigation />
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "16px", padding: "16px", boxSizing: "border-box" }}>
           {/* Left list is desktop-only; on mobile the navbar compact selector
               (fed via registerItems) takes over, like the other content tabs. */}

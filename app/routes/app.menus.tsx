@@ -18,8 +18,6 @@ import {
   Banner,
   TextField,
 } from "@shopify/polaris";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
@@ -121,9 +119,6 @@ export default function MenusPage() {
   return (
     <PlanAccessGate contentType="menus">
     <Page fullWidth>
-      <MainNavigation />
-      <ContentTypeNavigation />
-
       <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Menus List */}
         <div style={{ width: "350px", flexShrink: 0 }}>

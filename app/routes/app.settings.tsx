@@ -11,7 +11,6 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { resolveMerchantLocale } from "../utils/locale.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
@@ -1009,7 +1008,6 @@ export default function SettingsPage() {
 
   return (
     <Page fullWidth>
-      <MainNavigation />
       <div style={{ padding: "1rem" }}>
         <div style={{ display: "flex", gap: "1rem" }}>
           {/* Left Sidebar - Hidden on mobile */}

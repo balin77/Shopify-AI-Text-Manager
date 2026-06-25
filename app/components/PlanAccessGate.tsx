@@ -15,8 +15,6 @@ import type { ReactNode } from "react";
 import { Text } from "@shopify/polaris";
 import { usePlan } from "../contexts/PlanContext";
 import { useI18n } from "../contexts/I18nContext";
-import { MainNavigation } from "./MainNavigation";
-import { ContentTypeNavigation } from "./ContentTypeNavigation";
 import { getMinimumPlanForContentType } from "../utils/planUtils";
 import { PLAN_DISPLAY_NAMES, type ContentType } from "../config/plans";
 
@@ -37,15 +35,11 @@ export function PlanAccessGate({ contentType, children }: PlanAccessGateProps) {
   const planName = requiredPlan ? PLAN_DISPLAY_NAMES[requiredPlan] : "Pro";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
-      <div style={{ padding: "2rem", textAlign: "center" }}>
-        <Text as="p" variant="bodyMd" tone="subdued">
-          {t.content?.upgradeToAccessFeature?.replace("{plan}", planName)
-            || `Upgrade to ${planName} to access this feature.`}
-        </Text>
-      </div>
+    <div style={{ padding: "2rem", textAlign: "center" }}>
+      <Text as="p" variant="bodyMd" tone="subdued">
+        {t.content?.upgradeToAccessFeature?.replace("{plan}", planName)
+          || `Upgrade to ${planName} to access this feature.`}
+      </Text>
     </div>
   );
 }

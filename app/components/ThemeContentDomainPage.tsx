@@ -17,8 +17,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useFetcher, useRevalidator } from "@remix-run/react";
 import { Banner } from "@shopify/polaris";
-import { MainNavigation } from "./MainNavigation";
-import { ContentTypeNavigation } from "./ContentTypeNavigation";
 import { UnifiedContentEditor } from "./UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useI18n } from "../contexts/I18nContext";
@@ -913,8 +911,6 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {selectedEmbedTechnical && (
           <div style={{ padding: "0.5rem 1rem 0" }}>

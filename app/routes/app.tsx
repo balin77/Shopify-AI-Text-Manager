@@ -17,6 +17,8 @@ import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
+import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
@@ -323,7 +325,17 @@ function AppContent() {
   return (
     <AppErrorBoundary>
       <InitialSyncBanner />
-      <Outlet />
+      {/* Persistent navigation: mounted once per app lifecycle here in the
+          layout route so it survives sibling navigation instead of being
+          remounted on every sub-page. Only the <Outlet /> content swaps.
+          ContentTypeNavigation returns null on non-content pages. */}
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        <MainNavigation />
+        <ContentTypeNavigation />
+        <main style={{ flex: 1, minHeight: 0 }}>
+          <Outlet />
+        </main>
+      </div>
     </AppErrorBoundary>
   );
 }

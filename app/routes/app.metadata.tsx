@@ -16,7 +16,6 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { useI18n } from "../contexts/I18nContext";
 import { ContentService } from "../services/content.service";
 import { logger } from "~/utils/logger.server";
@@ -72,8 +71,6 @@ export default function MetadataPage() {
 
   return (
     <Page fullWidth>
-      <MainNavigation />
-
       <div style={{ padding: "2rem" }}>
         <BlockStack gap="600">
           {/* Page Header */}

@@ -8,8 +8,6 @@
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -183,8 +181,6 @@ export default function CollectionsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={COLLECTIONS_CONFIG}

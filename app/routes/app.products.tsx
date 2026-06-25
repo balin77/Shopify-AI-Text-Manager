@@ -14,9 +14,7 @@
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { confirmNavigation } from "../hooks/useSaveBar";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -862,8 +860,6 @@ export default function ProductsPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}

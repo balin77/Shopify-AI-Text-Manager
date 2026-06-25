@@ -12,8 +12,6 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -218,8 +216,6 @@ export default function PoliciesPage() {
   return (
     <PlanAccessGate contentType="policies">
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={POLICIES_CONFIG}
