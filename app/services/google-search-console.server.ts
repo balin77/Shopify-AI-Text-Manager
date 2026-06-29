@@ -1,0 +1,391 @@
+/**
+ * Google Search Console integration (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 6 / A7).
+ *
+ * OAuth 2.0 to Google + the Search Console API. The refresh token is encrypted
+ * at rest (same AES-256-GCM utility as the AI API keys); access tokens are
+ * derived per request and never stored. The OAuth `state` is HMAC-signed
+ * (CSRF + carries the shop/host so the callback can re-enter the embedded app).
+ *
+ * The whole feature is opt-in: when the GOOGLE_OAUTH_* env vars are absent,
+ * isGscConfigured() is false and the section shows "not configured" rather than
+ * erroring. `invalid_grant` (revoked/expired refresh token) clears the stored
+ * connection so the merchant is prompted to reconnect.
+ */
+
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
+import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
+
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GSC_API = "https://www.googleapis.com/webmasters/v3";
+const GSC_INSPECT_API = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
+
+// webmasters.readonly = analytics/inspection; webmasters = sitemaps.submit.
+// openid+email so we can show which Google account is connected.
+const SCOPES = [
+  "https://www.googleapis.com/auth/webmasters.readonly",
+  "https://www.googleapis.com/auth/webmasters",
+  "openid",
+  "email",
+];
+
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Thrown when the merchant must (re)connect — caller clears any stored token. */
+export class GscReconnectRequiredError extends Error {
+  constructor(public reason: string) {
+    super(`GSC reconnect required: ${reason}`);
+    this.name = "GscReconnectRequiredError";
+  }
+}
+
+export interface GscOAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}
+
+export function getGscOAuthConfig(): GscOAuthConfig | null {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const appUrl = process.env.SHOPIFY_APP_URL?.replace(/\/$/, "");
+  const redirectUri =
+    process.env.GOOGLE_OAUTH_REDIRECT_URI || (appUrl ? `${appUrl}/auth/google/callback` : undefined);
+  if (!clientId || !clientSecret || !redirectUri) return null;
+  return { clientId, clientSecret, redirectUri };
+}
+
+export function isGscConfigured(): boolean {
+  return getGscOAuthConfig() !== null;
+}
+
+// ── Signed OAuth state (CSRF + carries shop/host) ────────────────────────────
+
+function stateSecret(): string {
+  return process.env.SHOPIFY_API_SECRET || process.env.ENCRYPTION_KEY || "dev-only-state-secret";
+}
+
+export function signOAuthState(payload: { shop: string; host: string }): string {
+  const body = Buffer.from(JSON.stringify({ ...payload, ts: Date.now() })).toString("base64url");
+  const sig = createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+export function verifyOAuthState(state: string): { shop: string; host: string } | null {
+  const [body, sig] = (state || "").split(".");
+  if (!body || !sig) return null;
+  const expected = createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (typeof data.shop !== "string" || typeof data.ts !== "number") return null;
+    if (Date.now() - data.ts > STATE_TTL_MS) return null;
+    return { shop: data.shop, host: typeof data.host === "string" ? data.host : "" };
+  } catch {
+    return null;
+  }
+}
+
+export function buildGscAuthUrl(state: string): string | null {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) return null;
+  const params = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    response_type: "code",
+    scope: SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent", // force a refresh_token on every (re)connect
+    include_granted_scopes: "true",
+    state,
+  });
+  return `${GOOGLE_AUTH_URL}?${params.toString()}`;
+}
+
+// ── Token exchange / refresh ─────────────────────────────────────────────────
+
+export interface TokenResult {
+  accessToken: string;
+  refreshToken?: string;
+  expiresIn: number;
+  idToken?: string;
+}
+
+export async function exchangeCodeForTokens(code: string): Promise<TokenResult> {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) throw new Error("GSC is not configured");
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      redirect_uri: cfg.redirectUri,
+      grant_type: "authorization_code",
+    }),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.access_token) {
+    throw new Error(`Google token exchange failed: ${json.error || res.status}`);
+  }
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token,
+    expiresIn: json.expires_in ?? 3600,
+    idToken: json.id_token,
+  };
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<string> {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) throw new Error("GSC is not configured");
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: refreshToken,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      grant_type: "refresh_token",
+    }),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.access_token) {
+    if (json.error === "invalid_grant") throw new GscReconnectRequiredError("invalid_grant");
+    throw new Error(`Google token refresh failed: ${json.error || res.status}`);
+  }
+  return json.access_token;
+}
+
+/** Best-effort email from an OpenID id_token (no signature verification needed — display only). */
+export function emailFromIdToken(idToken: string | undefined): string | null {
+  if (!idToken) return null;
+  const parts = idToken.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    return typeof payload.email === "string" ? payload.email : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Connection persistence ───────────────────────────────────────────────────
+
+export async function saveGscConnection(
+  db: PrismaClient,
+  shop: string,
+  input: { propertyUrl: string; refreshToken: string; email?: string | null },
+): Promise<void> {
+  const enc = encryptApiKey(input.refreshToken);
+  if (!enc) throw new Error("Failed to encrypt the GSC refresh token");
+  await db.googleSearchConsoleConnection.upsert({
+    where: { shop },
+    create: { shop, propertyUrl: input.propertyUrl, refreshToken: enc, email: input.email ?? null },
+    update: { propertyUrl: input.propertyUrl, refreshToken: enc, email: input.email ?? null },
+  });
+}
+
+/** Update just the property (when a refresh on reconnect didn't return a new token). */
+export async function updateGscProperty(
+  db: PrismaClient,
+  shop: string,
+  propertyUrl: string,
+  email?: string | null,
+): Promise<void> {
+  await db.googleSearchConsoleConnection.updateMany({
+    where: { shop },
+    data: { propertyUrl, ...(email !== undefined ? { email } : {}) },
+  });
+}
+
+export async function getGscConnection(db: PrismaClient, shop: string) {
+  return db.googleSearchConsoleConnection.findUnique({ where: { shop } });
+}
+
+export async function deleteGscConnection(db: PrismaClient, shop: string): Promise<void> {
+  await db.googleSearchConsoleConnection.deleteMany({ where: { shop } });
+}
+
+/** Load the connection, refresh an access token. Clears the connection on invalid_grant. */
+export async function getGscAccessToken(
+  db: PrismaClient,
+  shop: string,
+): Promise<{ accessToken: string; propertyUrl: string }> {
+  const conn = await getGscConnection(db, shop);
+  if (!conn) throw new GscReconnectRequiredError("not_connected");
+  const refresh = decryptApiKey(conn.refreshToken);
+  if (!refresh) {
+    await deleteGscConnection(db, shop);
+    throw new GscReconnectRequiredError("decrypt_failed");
+  }
+  try {
+    const accessToken = await refreshAccessToken(refresh);
+    return { accessToken, propertyUrl: conn.propertyUrl };
+  } catch (e) {
+    if (e instanceof GscReconnectRequiredError) await deleteGscConnection(db, shop);
+    throw e;
+  }
+}
+
+// ── Search Console API ───────────────────────────────────────────────────────
+
+export interface GscSite {
+  siteUrl: string;
+  permissionLevel: string;
+}
+
+export async function listSites(accessToken: string): Promise<GscSite[]> {
+  const res = await fetch(`${GSC_API}/sites`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC listSites failed: ${json.error?.message || res.status}`);
+  return (json.siteEntry ?? []).filter((s: GscSite) => s.permissionLevel !== "siteUnverifiedUser");
+}
+
+/**
+ * Pick the GSC property that best matches a shop. Prefers a domain property or a
+ * URL-prefix property whose host contains the shop's domain (myshopify or
+ * custom); falls back to the first verified site.
+ */
+export function pickProperty(sites: GscSite[], shop: string, customDomain?: string | null): string | null {
+  if (sites.length === 0) return null;
+  const needles = [shop.toLowerCase(), customDomain?.toLowerCase()].filter(Boolean) as string[];
+  const matches = (siteUrl: string) => {
+    const s = siteUrl.toLowerCase();
+    return needles.some((n) => s.includes(n));
+  };
+  // Prefer a matching domain property, then a matching URL property, then first.
+  const domainMatch = sites.find((s) => s.siteUrl.startsWith("sc-domain:") && matches(s.siteUrl));
+  if (domainMatch) return domainMatch.siteUrl;
+  const urlMatch = sites.find((s) => matches(s.siteUrl));
+  if (urlMatch) return urlMatch.siteUrl;
+  return sites[0].siteUrl;
+}
+
+export interface SearchAnalyticsRow {
+  keys: string[];
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface SearchAnalyticsOptions {
+  startDate: string; // YYYY-MM-DD
+  endDate: string;
+  dimensions?: string[]; // e.g. ["query"], ["query","page"]
+  rowLimit?: number;
+}
+
+export async function querySearchAnalytics(
+  accessToken: string,
+  propertyUrl: string,
+  opts: SearchAnalyticsOptions,
+): Promise<SearchAnalyticsRow[]> {
+  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/searchAnalytics/query`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDate: opts.startDate,
+      endDate: opts.endDate,
+      dimensions: opts.dimensions ?? ["query"],
+      rowLimit: opts.rowLimit ?? 25,
+      dataState: "final", // GSC has 2–3d latency; only settled data
+    }),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC searchAnalytics failed: ${json.error?.message || res.status}`);
+  return (json.rows ?? []) as SearchAnalyticsRow[];
+}
+
+export async function submitSitemap(
+  accessToken: string,
+  propertyUrl: string,
+  feedpath: string,
+): Promise<void> {
+  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/sitemaps/${encodeURIComponent(feedpath)}`;
+  const res = await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok && res.status !== 204) {
+    const json: any = await res.json().catch(() => ({}));
+    throw new Error(`GSC submitSitemap failed: ${json.error?.message || res.status}`);
+  }
+}
+
+export async function inspectUrl(
+  accessToken: string,
+  propertyUrl: string,
+  inspectionUrl: string,
+): Promise<any> {
+  const res = await fetch(GSC_INSPECT_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ inspectionUrl, siteUrl: propertyUrl }),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC urlInspection failed: ${json.error?.message || res.status}`);
+  return json.inspectionResult ?? null;
+}
+
+// ── Keyword enrichment ───────────────────────────────────────────────────────
+
+/** Default trailing window for analytics (GSC has 2–3 day latency). */
+export function defaultDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
+  const end = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3d lag
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+/**
+ * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
+ * back onto matching SeoKeyword rows (exact, case-insensitive query match).
+ * Returns the number of keyword rows enriched. Caller must pass `now` (the
+ * service stays deterministic / testable).
+ */
+export async function enrichKeywordsFromGsc(
+  db: PrismaClient,
+  shop: string,
+  now: Date,
+): Promise<number> {
+  const { accessToken, propertyUrl } = await getGscAccessToken(db, shop);
+  const { startDate, endDate } = defaultDateRange(now);
+  const rows = await querySearchAnalytics(accessToken, propertyUrl, {
+    startDate,
+    endDate,
+    dimensions: ["query"],
+    rowLimit: 1000,
+  });
+
+  // Best row per query keyword (GSC already aggregates by the query dimension).
+  const byKeyword = new Map<string, SearchAnalyticsRow>();
+  for (const row of rows) {
+    const kw = (row.keys?.[0] ?? "").toLowerCase();
+    if (kw) byKeyword.set(kw, row);
+  }
+
+  const keywords = await db.seoKeyword.findMany({ where: { shop }, select: { id: true, keyword: true } });
+  let enriched = 0;
+  for (const k of keywords) {
+    const row = byKeyword.get(k.keyword.toLowerCase());
+    if (!row) continue;
+    await db.seoKeyword.update({
+      where: { id: k.id },
+      data: {
+        gscPosition: row.position,
+        gscClicks: row.clicks,
+        gscImpressions: row.impressions,
+        gscCtr: row.ctr,
+        gscUpdatedAt: now,
+      },
+    });
+    enriched += 1;
+  }
+  return enriched;
+}

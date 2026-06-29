@@ -137,6 +137,23 @@ if (!process.env.SENTRY_DSN) {
   console.log(`   Sourcemap-Upload: ${process.env.SENTRY_AUTH_TOKEN ? '✅ aktiv (SENTRY_AUTH_TOKEN gesetzt)' : 'deaktiviert (SENTRY_AUTH_TOKEN nicht gesetzt — Stacktraces bleiben minifiziert)'}`);
 }
 
+// Optional: Google Search Console (SEO tab Phase 6) — never an error, the
+// feature is opt-in. Either all three OAuth vars are set, or none (a partial
+// config is a likely misconfiguration → warn).
+console.log('\n🔎 Google Search Console (SEO tab):');
+{
+  const gscVars = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REDIRECT_URI'];
+  const present = gscVars.filter((v) => process.env[v]);
+  if (present.length === 0) {
+    console.log('   deaktiviert (GOOGLE_OAUTH_* nicht gesetzt — Search-Console-Sektion zeigt "nicht konfiguriert")');
+  } else if (present.length === gscVars.length) {
+    console.log('   ✅ konfiguriert (alle GOOGLE_OAUTH_* gesetzt)');
+  } else {
+    const missing = gscVars.filter((v) => !process.env[v]);
+    warnings.push(`⚠️  Google Search Console teilweise konfiguriert — fehlt: ${missing.join(', ')} (GSC bleibt deaktiviert, bis alle drei gesetzt sind)`);
+  }
+}
+
 // Print results
 console.log('\n' + '='.repeat(60));
 if (errors.length > 0) {

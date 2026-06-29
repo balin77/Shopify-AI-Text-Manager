@@ -64,6 +64,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     labelKey: "keywords",
     kind: "tool",
   },
+  {
+    id: "searchConsole",
+    path: "/app/seo/search-console",
+    icon: "📈",
+    labelKey: "searchConsole",
+    kind: "integration",
+    planGate: "pro",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */

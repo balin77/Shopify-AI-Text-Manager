@@ -911,3 +911,16 @@ model SeoKeyword {
   @@index([shop, keyword])
   @@index([shop])
 }
+
+// SEO tab Phase 6: per-shop Google Search Console OAuth connection. The
+// refresh token is stored ENCRYPTED (same AES-256-GCM utility as the AI API
+// keys); access tokens are derived per-request and never persisted. Shop-scoped
+// (shop is the PK) and purged in redactShopData (GDPR schema-coverage guard).
+model GoogleSearchConsoleConnection {
+  shop         String  @id
+  propertyUrl  String // GSC property, e.g. "sc-domain:example.com" or "https://example.com/"
+  refreshToken String  @db.Text // encrypted at rest
+  email        String? // connected Google account (display only)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
