@@ -140,6 +140,46 @@ export function getGroupIdForKey(key: string): string {
   return 'misc_other';
 }
 
+/**
+ * App-embed translatable keys look like `block.<blockId>.<setting>`. All keys
+ * within one ONLINE_STORE_THEME_APP_EMBED resource share the same <blockId>,
+ * which matches an entry under `current.blocks` in settings_data.json. Returns
+ * the first blockId found, or null when the keys don't follow this shape.
+ */
+export function extractAppEmbedBlockId(content: { key: string }[]): string | null {
+  for (const item of content) {
+    const m = item.key.match(/^block\.([^.]+)\./);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** "contentpilot-ai" / "language_and_currency" → "Contentpilot Ai" / "Language And Currency". */
+function titleizeHandle(handle: string): string {
+  return handle
+    .replace(/[-_]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/**
+ * Turn an app-block `type` (`shopify://apps/<app>/blocks/<block>/<uuid>`) into a
+ * human label like "Contentpilot Ai – Language And Currency". Names are derived
+ * from handles (the storefront-pretty title lives in the app's extension schema,
+ * not in the Admin API), so they're recognizable but not pixel-perfect. Returns
+ * null when the type isn't an app block.
+ */
+export function prettifyAppEmbedType(type: unknown): string | null {
+  if (typeof type !== 'string') return null;
+  const m = type.match(/^shopify:\/\/apps\/([^/]+)\/blocks\/([^/]+)\//);
+  if (!m) return null;
+  const app = titleizeHandle(m[1]);
+  const block = titleizeHandle(m[2]);
+  return block ? `${app} – ${block}` : app;
+}
+
 export interface SyncStats {
   pages: number;
   policies: number;
@@ -785,6 +825,54 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
+   * Build a blockId → display-name map for theme app embeds by reading the main
+   * theme's config/settings_data.json (requires read_themes). App embeds live
+   * under `current.blocks`, keyed by the same blockId that prefixes their
+   * translatable keys. Best-effort: returns an empty map on any error so the
+   * sync falls back to generic names.
+   */
+  private async fetchAppEmbedNameMap(): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    try {
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query themeSettingsData {
+            themes(first: 1, roles: [MAIN]) {
+              nodes {
+                files(filenames: ["config/settings_data.json"]) {
+                  nodes {
+                    body { ... on OnlineStoreThemeFileBodyText { content } }
+                  }
+                }
+              }
+            }
+          }`
+      );
+      const data = await resp.json();
+      if (data.errors) {
+        logger.warn(`[BackgroundSync] settings_data.json query error`, { error: data.errors[0]?.message });
+        return map;
+      }
+      const content: string | undefined =
+        data.data?.themes?.nodes?.[0]?.files?.nodes?.[0]?.body?.content;
+      if (!content) return map;
+      const parsed = JSON.parse(content);
+      const blocks = parsed?.current?.blocks;
+      if (blocks && typeof blocks === 'object') {
+        for (const [blockId, block] of Object.entries(blocks)) {
+          const name = prettifyAppEmbedType((block as { type?: unknown })?.type);
+          if (name) map.set(blockId, name);
+        }
+      }
+    } catch (err) {
+      logger.warn(`[BackgroundSync] Could not derive app-embed names from settings_data.json`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return map;
+  }
+
+  /**
    * Sync a single theme group by groupId (public method for manual reload)
    */
   async syncSingleThemeGroup(groupId: string): Promise<Record<string, unknown>> {
@@ -855,9 +943,11 @@ export class BackgroundSyncService {
       // Filter content that belongs to this group using the same pattern-based
       // grouping logic as the initial sync.
       const allContent: TranslatableContentItem[] = resource.translatableContent || [];
-      const groupContent = allContent.filter((item) => {
-        return getGroupIdForKey(item.key) === groupId;
-      });
+      // App-embed groups are keyed per resource (groupId = app_embed_<id>), not
+      // by key pattern — every field of the resource belongs to the group.
+      const groupContent = groupId.startsWith('app_embed_')
+        ? allContent
+        : allContent.filter((item) => getGroupIdForKey(item.key) === groupId);
 
       logger.debug(`[BackgroundSync] Resource ${resourceId}: ${groupContent.length} fields for group ${groupId}`);
 
@@ -1041,6 +1131,12 @@ export class BackgroundSyncService {
       // Track fetched translations to avoid duplicate API calls
       const translationCache = new Map<string, ShopifyTranslation[]>();
 
+      // App-embed naming: blockId→name map from settings_data.json (lazily
+      // fetched on the first APP_EMBED resource), plus a counter for embeds we
+      // can't resolve a name for.
+      let appEmbedNames: Map<string, string> | null = null;
+      let appEmbedFallbackCount = 0;
+
       // Fetch resources for each working resource type
       let resourceTypeIndex = 0;
       const totalResourceTypes = WORKING_RESOURCE_TYPES.length;
@@ -1141,8 +1237,29 @@ export class BackgroundSyncService {
               logger.debug(`[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);
               continue;
             }
-            // Group translatable content by key patterns
+            // Group translatable content into nav groups.
             const contentByGroup: Record<string, ThemeContentItem[]> = {};
+
+            if (resourceTypeConfig.type === 'ONLINE_STORE_THEME_APP_EMBED') {
+              // App embeds: ONE group per resource (one per installed embed),
+              // named from the theme's settings_data.json instead of collapsing
+              // every embed into a single key-pattern "block" bucket. Mirrors how
+              // Translate & Adapt lists one entry per app.
+              if (appEmbedNames === null) {
+                appEmbedNames = await this.fetchAppEmbedNameMap();
+              }
+              const blockId = extractAppEmbedBlockId(resource.translatableContent || []);
+              const shortId = resource.resourceId.split('/').pop()?.split('?')[0] || resource.resourceId;
+              const appEmbedGroupId = `app_embed_${shortId}`;
+              const derivedName = blockId ? appEmbedNames.get(blockId) : undefined;
+              const appEmbedGroupName = derivedName || `App-Einbettung ${++appEmbedFallbackCount}`;
+              contentByGroup[appEmbedGroupId] = (resource.translatableContent || []).map((item) => ({
+                ...item,
+                _groupId: appEmbedGroupId,
+                _groupName: appEmbedGroupName,
+                _groupIcon: '🔌',
+              }));
+            } else {
             const unmatchedContent: TranslatableContentItem[] = [];
 
             for (const item of resource.translatableContent || []) {
@@ -1229,6 +1346,7 @@ export class BackgroundSyncService {
                   _groupIcon: icon
                 }));
               }
+            }
             }
 
             // Batch-fetch ALL existing theme translations for this resource (avoids N+1 per group).
