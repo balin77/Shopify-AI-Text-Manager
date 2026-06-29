@@ -460,7 +460,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           minHeight: 0,
           display: "flex",
           gap: "16px",
-          padding: "16px",
+          // Single source of truth for the page margin — shared with the
+          // simple Polaris pages via responsive.css (.Polaris-Page padding).
+          padding: "var(--app-page-padding)",
           overflow: "hidden",
           boxSizing: "border-box",
         }}

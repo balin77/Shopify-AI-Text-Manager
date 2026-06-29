@@ -7,6 +7,12 @@
   --spacing-mobile: 8px;
   --spacing-tablet: 12px;
   --spacing-desktop: 16px;
+  /* Single source of truth for the outer page padding (margin from page
+     content to the window edge) on desktop+. Owned here so every route — the
+     content editor AND the simple Polaris pages (Tasks, Settings, …) — reads
+     the same value and stays as tight as the content page. Routes must NOT add
+     their own page-level padding wrapper on top of this. */
+  --app-page-padding: 16px;
 }
 
 /* Visibility Utilities for Mobile/Tablet/Desktop */
@@ -477,9 +483,9 @@
     display: block;
   }
 
-  /* Standard padding */
+  /* Standard padding — single source of truth (see --app-page-padding) */
   .Polaris-Page {
-    padding: var(--spacing-desktop) !important;
+    padding: var(--app-page-padding) !important;
   }
 
   /* Inline button groups on desktop */
@@ -495,9 +501,10 @@
     grid-template-columns: 360px 1fr 320px;
   }
 
-  /* More generous spacing */
+  /* Keep the same tight page padding as every other breakpoint so simple
+     Polaris pages stay as small as the content page (see --app-page-padding). */
   .Polaris-Page {
-    padding: 20px !important;
+    padding: var(--app-page-padding) !important;
   }
 }
 

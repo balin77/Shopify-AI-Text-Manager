@@ -300,7 +300,10 @@ export default function TasksPage() {
 
   return (
     <Page fullWidth>
-      <div style={{ padding: "1rem" }}>
+      {/* Page padding is owned globally by .Polaris-Page (responsive.css,
+          --app-page-padding) — no extra wrapper padding here, so the margin
+          stays as tight as the content page. */}
+      <div>
         <BlockStack gap="400">
           {/* Filters */}
           <Card>
