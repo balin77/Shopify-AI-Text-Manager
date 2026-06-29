@@ -66,7 +66,12 @@ export const CONTENT_RUBRICS: RubricDef[] = [
     id: "theme",
     icon: "🎨",
     entries: [
-      { id: "templates", path: "/app/templates", icon: "🧪", labelKey: "templates", planContentType: "templates" },
+      { id: "themeStandard", path: "/app/theme-standard", icon: "📄", labelKey: "themeStandard", planContentType: "templates" },
+      { id: "templates", path: "/app/templates", icon: "📋", labelKey: "themeTemplates", planContentType: "templates" },
+      { id: "themeSectionGroups", path: "/app/theme-section-groups", icon: "🧩", labelKey: "themeSectionGroups", planContentType: "templates" },
+      { id: "themeStaticSections", path: "/app/theme-static-sections", icon: "🗂️", labelKey: "themeStaticSections", planContentType: "templates", conditional: true },
+      { id: "themeAppEmbeds", path: "/app/theme-app-embeds", icon: "🔌", labelKey: "themeAppEmbeds", planContentType: "templates", conditional: true },
+      { id: "themeSettings", path: "/app/theme-settings", icon: "⚙️", labelKey: "themeSettings", planContentType: "templates" },
     ],
   },
   {

@@ -38,14 +38,35 @@ interface ThemeContentDomainPageProps {
   config: ContentEditorConfig;
   apiBasePath: string;
   planContentType: ContentType;
+  /**
+   * Optional Shopify resource-type scope. The Theme rubric splits the single
+   * "theme" domain into several tabs by resource type; each tab passes its
+   * type(s) so the shared lazy-load endpoint returns only that tab's rows
+   * (key-pattern groupIds are not unique across resource types). Sent as
+   * repeatable `rt` query params (GET) / form fields (POST).
+   */
+  resourceTypes?: string[];
 }
 
-export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType }: ThemeContentDomainPageProps) {
+export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes }: ThemeContentDomainPageProps) {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = data;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+
+  // Append the tab's resource-type scope to lazy-load requests. `rt` is
+  // repeatable so multi-type tabs (e.g. Theme-Standardinhalte) work too.
+  const rtQuerySuffix = useMemo(
+    () => (resourceTypes ?? []).map((rt) => `&rt=${encodeURIComponent(rt)}`).join(""),
+    [resourceTypes]
+  );
+  const appendResourceTypes = useCallback(
+    (formData: FormData) => {
+      for (const rt of resourceTypes ?? []) formData.append("rt", rt);
+    },
+    [resourceTypes]
+  );
 
   // State for lazy-loaded theme data
   const [loadedThemes, setLoadedThemes] = useState<Record<string, { translatableContent?: TranslatableField[]; pagination?: { page: number; limit: number; totalCount: number; totalPages: number } }>>({});
@@ -122,6 +143,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", locale.locale);
+        appendResourceTypes(formData);
 
         const response = await fetch(`${apiBasePath}/${groupId}`, {
           method: "POST",
@@ -154,7 +176,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         }
       }));
     }
-  }, [loaderShopLocales]);
+  }, [loaderShopLocales, apiBasePath, appendResourceTypes]);
 
   // Load theme data on demand (for initial load) with pagination
   const loadThemeData = useCallback(async (groupId: string, page: number = 1, search: string = "") => {
@@ -180,7 +202,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         ...(search && { search })
       });
 
-      const response = await fetch(`${apiBasePath}/${groupId}?${params}`);
+      const response = await fetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
       if (!response.ok) throw new Error('Failed to load theme data');
 
       const data = await response.json();
@@ -214,7 +236,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     } finally {
       setIsLoading(false);
     }
-  }, [loadedThemes, fieldPagination, showInfoBox, t, preloadAllTranslations]);
+  }, [loadedThemes, fieldPagination, showInfoBox, t, preloadAllTranslations, apiBasePath, rtQuerySuffix]);
 
   // Separate fetcher for loading translations (to not interfere with main actions)
   const translationFetcher = useFetcher();
@@ -341,7 +363,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           limit: String(DEFAULT_FIELDS_PER_PAGE),
         });
 
-        fetch(`${apiBasePath}/${theme.groupId}?${params}`)
+        fetch(`${apiBasePath}/${theme.groupId}?${params}${rtQuerySuffix}`)
           .then(response => {
             if (!response.ok) throw new Error('Failed to load theme data');
             return response.json();
@@ -797,7 +819,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         ...(search && { search })
       });
 
-      const res = await fetch(`${apiBasePath}/${groupId}?${params}`);
+      const res = await fetch(`${apiBasePath}/${groupId}?${params}${rtQuerySuffix}`);
       if (!res.ok) throw new Error('Failed to reload theme data');
       const data = await res.json();
 
@@ -845,6 +867,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         const formData = new FormData();
         formData.append("action", "loadTranslations");
         formData.append("locale", currentLanguage);
+        appendResourceTypes(formData);
 
         const transResponse = await fetch(`${apiBasePath}/${groupId}`, {
           method: "POST",
@@ -893,7 +916,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     fetchAndApply(page, search).catch((err) => {
       console.error('[Templates Reload] fetchAndApply failed:', err);
     });
-  }, [revalidator.state, primaryLocale, preloadAllTranslations]);
+  }, [revalidator.state, primaryLocale, preloadAllTranslations, apiBasePath, rtQuerySuffix, appendResourceTypes]);
 
   // NOTE: All fetcher error handling (save errors, translateAll errors, errorKey responses)
   // is handled by useUnifiedContentEditor's catch-all error effect. No duplicate handler needed here.

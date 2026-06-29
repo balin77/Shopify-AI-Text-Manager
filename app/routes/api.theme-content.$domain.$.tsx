@@ -1,12 +1,12 @@
 /**
  * API Route: generic ThemeContent-backed content details, parameterised by
- * domain. Serves the System / Online-Store-Extras / Selling-Plans rubrics (and
- * could serve "theme" too — that stays on api.templates.$ for backward compat).
+ * domain. Serves every ThemeContent rubric — the six Theme sub-tabs
+ * (domain="theme", scoped by the repeatable `rt` resource-type param) as well
+ * as System / Online-Store-Extras / Selling-Plans / Cookie-Banner.
  *
  * Path: /api/theme-content/:domain/*   (* = groupId, may contain slashes)
  *
- * Thin delegate over the shared ThemeContent API helpers — identical behaviour
- * to api.templates.$, just domain-scoped.
+ * Thin delegate over the shared ThemeContent API helpers.
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
@@ -34,10 +34,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
   const limit = Math.min(250, Math.max(1, parseInt(url.searchParams.get("limit") || "25", 10) || 25));
   const search = url.searchParams.get("search") || "";
+  // `rt` scopes a Theme sub-tab to its Shopify resource type(s) (repeatable).
+  const resourceTypes = url.searchParams.getAll("rt");
 
   try {
     const { db } = await import("../db.server");
-    return await loadThemeGroupResponse({ db, shop: session.shop, domain, groupId, page, limit, search });
+    return await loadThemeGroupResponse({ db, shop: session.shop, domain, groupId, page, limit, search, resourceTypes });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[API-THEME-CONTENT] Error loading group", { context: "ThemeContent", domain, groupId, error: msg });
@@ -59,8 +61,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   try {
     const formData = await request.formData();
+    const resourceTypes = formData.getAll("rt").map(String);
     const { db } = await import("../db.server");
-    return await handleThemeContentActionResponse({ db, admin, session, formData, domain, groupId });
+    return await handleThemeContentActionResponse({ db, admin, session, formData, domain, groupId, resourceTypes });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[API-THEME-CONTENT-ACTION] Error", { context: "ThemeContent", domain, error: msg, stack: error instanceof Error ? error.stack : undefined });

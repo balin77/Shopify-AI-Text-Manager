@@ -99,7 +99,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
  * fetchers (loadTranslations / generateAIText / translate* / updateContent),
  * dispatching to the shared template action handlers with the right domain.
  */
-export function makeThemeContentRouteAction(domain: string) {
+export function makeThemeContentRouteAction(domain: string, resourceTypes?: string[]) {
   return async ({ request }: ActionFunctionArgs) => {
     const { admin, session } = await authenticate.admin(request);
     const formData = await request.formData();
@@ -113,8 +113,16 @@ export function makeThemeContentRouteAction(domain: string) {
 
     const { db } = await import("../db.server");
 
+    // Theme sub-tabs share domain="theme" but a key-pattern groupId is not
+    // guaranteed unique across resource types — scope to the tab's type(s) so
+    // editor actions never touch a sibling tab's rows.
     const themeGroups = await db.themeContent.findMany({
-      where: { shop: session.shop, groupId, domain },
+      where: {
+        shop: session.shop,
+        groupId,
+        domain,
+        ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+      },
     });
 
     if (themeGroups.length === 0) {

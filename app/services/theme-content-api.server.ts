@@ -55,11 +55,23 @@ export async function loadThemeGroupResponse(opts: {
   page: number;
   limit: number;
   search: string;
+  /**
+   * Optional Shopify resource-type scope. The Theme rubric splits one domain
+   * ("theme") into several tabs by resource type; a groupId derived from key
+   * patterns is NOT guaranteed unique across resource types, so the tab passes
+   * its resource type(s) to keep one tab from leaking another's fields.
+   */
+  resourceTypes?: string[];
 }): Promise<Response> {
-  const { db, shop, domain, groupId, page, limit, search } = opts;
+  const { db, shop, domain, groupId, page, limit, search, resourceTypes } = opts;
 
   const themeGroups = await db.themeContent.findMany({
-    where: { shop, groupId, domain },
+    where: {
+      shop,
+      groupId,
+      domain,
+      ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+    },
   });
 
   if (themeGroups.length === 0) {
@@ -139,12 +151,19 @@ export async function handleThemeContentActionResponse(opts: {
   formData: FormData;
   domain: ThemeContentDomain;
   groupId: string;
+  /** See loadThemeGroupResponse — scopes a Theme sub-tab to its resource type(s). */
+  resourceTypes?: string[];
 }): Promise<Response> {
-  const { db, admin, session, formData, domain, groupId } = opts;
+  const { db, admin, session, formData, domain, groupId, resourceTypes } = opts;
   const actionType = getFormString(formData, "action");
 
   const themeGroups = await db.themeContent.findMany({
-    where: { shop: session.shop, groupId, domain },
+    where: {
+      shop: session.shop,
+      groupId,
+      domain,
+      ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+    },
   });
 
   if (themeGroups.length === 0) {
