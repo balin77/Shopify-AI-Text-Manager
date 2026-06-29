@@ -221,6 +221,28 @@ Direct Translations ist das die breiteste Abdeckung am Markt.
 - SEOWILL: Free / Paid Plans
 - StoreSEO: Free / ab $100/Monat (250+ SKUs)
 
+### 2.2.1 Übersehene & neue Funktionsweisen (Nachtrag 2026-06-29)
+
+Die ursprüngliche SEO-Tabelle (§2.2) stammt aus 01/2026 und verpasst den **definierenden Markt-Shift 2026: AEO/GEO** — Optimierung für *Antwort-/generative Engines* (ChatGPT Search, Perplexity, Google AI Overviews, Gemini, Amazon Rufus, MS Copilot). Diese Funktionsweisen fehlen oben komplett und werden von der aktuellen Wettbewerbsspitze (StoreSEO „AI SEO Agent", SEOWILL, TinyIMG, dedizierte IndexNow-Apps) bereits ausgeliefert:
+
+| Funktionsweise | Was es ist | Wettbewerber | Status bei uns |
+|---|---|---|---|
+| **AEO/GEO** | Sichtbarkeit & Zitierung in KI-Antworten (ChatGPT/Perplexity/AI Overviews) statt nur klassischem SERP | StoreSEO, SEOWILL | ❌ fehlt komplett |
+| **llms.txt-Generierung** | Kanonische Markenfakten-/Citation-Datei für LLMs | StoreSEO, TinyIMG, IndexNow-Apps | ❌ |
+| **IndexNow / Instant Indexing** | Echtzeit-Push an Bing/Yandex/AI-Crawler bei jeder Content-Änderung (Google hat seinen Ping abgekündigt) | IndexNow, InstaIndex, SEO Instant Indexer, TinyIMG, SEOWILL | ❌ — **Webhook-Infra für products/collections vorhanden** (articles-Webhook nachzurüsten) |
+| **AI-Crawler-Zugriff (robots.txt)** | `OAI-SearchBot`/`PerplexityBot`/`Claude-SearchBot` zulassen (sonst in KI-Shopping unsichtbar), `GPTBot` (Training) bewusst steuern | GEO-Tools, app-übergreifend empfohlen | ❌ |
+| **GTIN/Brand im Product-Schema (AI Shopping)** | `gtin13/12/14` + vollständige Attribute; 83 % von ChatGPTs Shopping-Carousel zieht aus dem Google-Shopping-Feed | ChatGPT/Perplexity Shopping, TinyIMG (AI Product Feed) | ⚠️ JSON-LD-Branch ohne `gtin`/vollständige Offer-Felder |
+| **Erweiterte Schema-Typen** | FAQ, Review, LocalBusiness, Video, HowTo — über Product/Breadcrumb hinaus | Yoast, StoreSEO, SEOWILL (LocalBusiness), Schema Plus | ⚠️ Branch deckt Product/Collection/Article/Org/Breadcrumb, **nicht** FAQ/LocalBusiness/Video |
+| **Internes Linking** | Verlinkungs-Vorschläge/Automatik + Link-Health | SEO Instant Indexer, SEOWILL | ❌ |
+| **Manueller Bulk-Meta-Editor** | Spreadsheet-Grid zum direkten Bearbeiten von Titel/Meta/Alt/**Dateiname** über den ganzen Katalog | TinyIMG, Smart SEO, SEO Manager, Booster | ⚠️ wir haben **AI-**Bulk-Fix, kein manuelles Grid |
+| **Bild-Dateinamen-SEO** | SEO-Dateinamen, nicht nur Alt-Text | TinyIMG | ❌ (wir: Alt + WebP) |
+| **AI-Referral-Tracking** | `ChatGPT.com`/`Perplexity.ai` als Referral-Quelle + Präsenz-Monitoring in AI Overviews | AEO-Tools | ❌ |
+| **Open Graph / Twitter Cards** | Social-Share-Vorschau & -Steuerung | app-übergreifend | ⚠️ im Plan nur optional |
+| **Lokales SEO / Backlink / Keyword-Gap** | NAP/LocalBusiness, Backlink-Analyse, Wettbewerber-Keywords | SearchPie, SEOWILL | ❌ (teils externe Daten → niedrige Prio) |
+| **Auto-Fix/Autopilot — Design-Warnung** | Booster-Autopilot **überschreibt Merchant-Arbeit** (Agenturen raten auf Plus-Builds ab) → unser Prinzip: **opt-in, nicht-destruktiv** | Booster (Negativbeispiel) | Design-Leitplanke |
+
+**Strategische Einordnung:** Shopify syndiziert Kataloge inzwischen **automatisch** an ChatGPT (Agentic Storefronts), Perplexity und Copilot-Checkout. Die App-Wertschöpfung verschiebt sich damit von „Katalog überhaupt sichtbar machen" zu **Schema-Vollständigkeit** (GTIN/Brand/Review/FAQ), **llms.txt**, **IndexNow** und **AI-Crawler-Zugriff** — genau die Hebel, die entscheiden, ob ein Produkt in der KI-Antwort *zitiert* wird. Kombiniert mit unseren bestehenden Stärken (Multi-Provider-AI, BYO-Key, breite Übersetzungsabdeckung) ist **mehrsprachige AEO** ein bislang unbesetzter USP: kein Übersetzungs- **oder** SEO-Konkurrent liefert KI-Search-Optimierung über alle Shop-Locales. Bereits im SEO-Tab-Plan adressiert: hreflang-Audit (Phase 4) und Structured-Data-Basis (Branch `feature/jsonld-structured-data`).
+
 ### 2.3 AI Content Generator Apps
 
 | Feature | Unsere App | ChatGPT-AI | WritePilot | Smartli |
@@ -684,4 +706,5 @@ model ContentTemplate {
 | 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |
 | 2026-05-18 | §3.5-Banner nachgezogen: Limit-Befunde 1–4 alle erledigt (Commit 1327432) — Befund 4 via Bild-Quota + WebP-Spreizung Pro 2/Max 6; Template-Verweise auf „zusätzliches Differenzial" entschärft |
 | 2026-06-25 | **Full Translation Coverage ausgeliefert** (T&A-Parität): Checkout-Übersetzung ❌→✅ (§2.1 + Fußnote ³); neue übersetzbare Flächen in §1.2 (E-Mail/Versand/Filter/Shop-Metadaten/Cookie-Banner/Zahlung/Lieferschein/Abo-Pläne); §1.2-Coverage-Tabelle inkl. 3 Flächen über T&A hinaus (PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE, SELLING_PLAN*); §3.3 Zeile 17 (Checkout) als erledigt markiert; §3.5-Niedrig nachgezogen |
+| 2026-06-29 | **§2.2.1 Nachtrag — übersehene & neue Funktionsweisen** ergänzt (Web-Recherche 06/2026): AEO/GEO als definierender 2026-Layer, llms.txt, IndexNow/Instant-Indexing, AI-Crawler-Zugriff (robots.txt), GTIN/Brand im Product-Schema für AI-Shopping, erweiterte Schema-Typen (FAQ/Review/LocalBusiness/Video), internes Linking, manueller Bulk-Meta-Editor, Bild-Dateinamen-SEO, AI-Referral-Tracking, OG/Twitter-Cards, Autopilot-Design-Warnung. Strategie: **mehrsprachige AEO** als unbesetzter USP. Fließt in den SEO-Tab-Plan (`docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md`) ein. |
 
