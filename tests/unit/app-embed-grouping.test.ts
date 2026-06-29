@@ -25,7 +25,7 @@ vi.mock('~/services/sync-utils', () => ({
 }));
 vi.mock('~/services/content-sync.service', () => ({ ContentSyncService: class {} }));
 
-import { extractAppEmbedBlockId, prettifyAppEmbedType } from '~/services/background-sync.service';
+import { extractAppEmbedBlockId, appEmbedGroupId, prettifyAppEmbedType } from '~/services/background-sync.service';
 
 describe('extractAppEmbedBlockId', () => {
   it('reads the blockId shared by an embed resource\'s keys', () => {
@@ -39,6 +39,30 @@ describe('extractAppEmbedBlockId', () => {
   it('returns null when no key follows the block.<id>.* shape', () => {
     expect(extractAppEmbedBlockId([{ key: 'name' }, { key: 'title' }])).toBeNull();
     expect(extractAppEmbedBlockId([])).toBeNull();
+  });
+});
+
+describe('appEmbedGroupId', () => {
+  // The two blocks of one app share a resourceId tail (everything after "?"),
+  // so keying the group by resourceId collapsed switcher + gallery into one
+  // entry. Keying by blockId keeps them apart.
+  it('keys by blockId so two blocks of the same app stay distinct', () => {
+    const switcher = appEmbedGroupId(
+      'gid://shopify/OnlineStoreThemeAppEmbed/123?12221302618087021987',
+      '12221302618087021987'
+    );
+    const gallery = appEmbedGroupId(
+      'gid://shopify/OnlineStoreThemeAppEmbed/123?8064757537981474425',
+      '8064757537981474425'
+    );
+    expect(switcher).toBe('app_embed_12221302618087021987');
+    expect(gallery).toBe('app_embed_8064757537981474425');
+    expect(switcher).not.toBe(gallery);
+  });
+
+  it('falls back to the resourceId tail when no blockId is present', () => {
+    expect(appEmbedGroupId('gid://shopify/OnlineStoreThemeAppEmbed/999?x', null))
+      .toBe('app_embed_999');
   });
 });
 

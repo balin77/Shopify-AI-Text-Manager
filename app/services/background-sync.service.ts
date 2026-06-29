@@ -154,6 +154,22 @@ export function extractAppEmbedBlockId(content: { key: string }[]): string | nul
   return null;
 }
 
+/**
+ * Group key for one app-embed block. Keyed by the blockId (unique per block and
+ * shared by all of that block's `block.<blockId>.<setting>` keys) — NOT by the
+ * resourceId. Shopify returns one translatable resource per block, but the
+ * resourceIds of two blocks belonging to the SAME app differ only after the
+ * "?"; truncating at "?" (the old behaviour) collapsed every block of an app
+ * into a single entry (e.g. the variant-gallery block was swallowed by the
+ * locale-switcher entry). Falls back to the resourceId tail only for content
+ * that does not follow the `block.*` shape.
+ */
+export function appEmbedGroupId(resourceId: string, blockId: string | null): string {
+  if (blockId) return `app_embed_${blockId}`;
+  const shortId = resourceId.split('/').pop()?.split('?')[0] || resourceId;
+  return `app_embed_${shortId}`;
+}
+
 /** "contentpilot-ai" / "language_and_currency" → "Contentpilot Ai" / "Language And Currency". */
 function titleizeHandle(handle: string): string {
   return handle
@@ -959,8 +975,9 @@ export class BackgroundSyncService {
       // Filter content that belongs to this group using the same pattern-based
       // grouping logic as the initial sync.
       const allContent: TranslatableContentItem[] = resource.translatableContent || [];
-      // App-embed groups are keyed per resource (groupId = app_embed_<id>), not
-      // by key pattern — every field of the resource belongs to the group.
+      // App-embed groups are keyed per block (groupId = app_embed_<blockId>),
+      // not by key pattern. Shopify returns one resource per block, so every
+      // field of this resource belongs to the group.
       const groupContent = groupId.startsWith('app_embed_')
         ? allContent
         : allContent.filter((item) => getGroupIdForKey(item.key) === groupId);
@@ -1257,21 +1274,22 @@ export class BackgroundSyncService {
             const contentByGroup: Record<string, ThemeContentItem[]> = {};
 
             if (resourceTypeConfig.type === 'ONLINE_STORE_THEME_APP_EMBED') {
-              // App embeds: ONE group per resource (one per installed embed),
-              // named from the theme's settings_data.json instead of collapsing
-              // every embed into a single key-pattern "block" bucket. Mirrors how
-              // Translate & Adapt lists one entry per app.
+              // App embeds: ONE group per BLOCK (one per installed embed),
+              // named from the theme's settings_data.json. Keyed by the blockId,
+              // NOT the resourceId — two blocks of the same app share a
+              // resourceId tail, so keying by resource collapsed them into one
+              // entry (see appEmbedGroupId). Mirrors how Translate & Adapt lists
+              // one entry per block.
               if (appEmbedNames === null) {
                 appEmbedNames = await this.fetchAppEmbedNameMap();
               }
               const blockId = extractAppEmbedBlockId(resource.translatableContent || []);
-              const shortId = resource.resourceId.split('/').pop()?.split('?')[0] || resource.resourceId;
-              const appEmbedGroupId = `app_embed_${shortId}`;
+              const groupKey = appEmbedGroupId(resource.resourceId, blockId);
               const derivedName = blockId ? appEmbedNames.get(blockId) : undefined;
               const appEmbedGroupName = derivedName || `App-Einbettung ${++appEmbedFallbackCount}`;
-              contentByGroup[appEmbedGroupId] = (resource.translatableContent || []).map((item) => ({
+              contentByGroup[groupKey] = (resource.translatableContent || []).map((item) => ({
                 ...item,
-                _groupId: appEmbedGroupId,
+                _groupId: groupKey,
                 _groupName: appEmbedGroupName,
                 _groupIcon: '🔌',
               }));
