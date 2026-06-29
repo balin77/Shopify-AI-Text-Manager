@@ -94,6 +94,59 @@ export class MissingAIKeyError extends Error {
   }
 }
 
+/**
+ * Thrown when a provider rejects the merchant's API key at call time (HTTP 401
+ * / "authentication" / "invalid api key"). Distinct from {@link MissingAIKeyError}
+ * (no key configured at all): here a key IS present but the provider says it is
+ * invalid/unauthorized. Carries the provider's original message so the UI can
+ * show an actionable hint pointing to Settings → AI API Access Codes.
+ */
+export class InvalidAIKeyError extends Error {
+  readonly code = 'INVALID_AI_KEY' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidAIKeyError';
+  }
+}
+
+/**
+ * Returns true when an unknown thrown value looks like a provider authentication
+ * failure (invalid/expired/unauthorized API key). Covers the OpenAI/Grok/DeepSeek
+ * (OpenAI-compatible), Anthropic, Gemini and HuggingFace SDK shapes plus the
+ * HuggingFace router string ("401 Authentication Fails, Your api key ... is invalid").
+ *
+ * Deliberately conservative: it matches 401/explicit auth codes and unambiguous
+ * auth phrases, but NOT bare 403 (which providers also use for content-policy /
+ * quota blocks) so a non-auth 403 is never misclassified as a bad key.
+ */
+export function isAuthError(error: unknown): boolean {
+  const e = error as { status?: number; statusCode?: number; code?: string; message?: string } | null;
+  if (e && typeof e === 'object') {
+    if (e.status === 401 || e.statusCode === 401) return true;
+    const code = String(e.code ?? '').toLowerCase();
+    if (
+      code === 'invalid_api_key' ||
+      code === 'invalid_ai_key' ||
+      code === 'unauthenticated' ||
+      code === 'invalid_authentication'
+    ) return true;
+  }
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    /\b401\b/.test(msg) ||
+    msg.includes('unauthorized') ||
+    msg.includes('authentication fails') ||
+    msg.includes('authentication error') ||
+    msg.includes('invalid api key') ||
+    msg.includes('incorrect api key') ||
+    msg.includes('invalid_api_key') ||
+    msg.includes('api key not valid') ||
+    msg.includes('api key is invalid') ||
+    msg.includes('no auth credentials') ||
+    (msg.includes('api key') && msg.includes('invalid'))
+  );
+}
+
 export interface AIServiceConfig {
   huggingfaceApiKey?: string;
   geminiApiKey?: string;
@@ -116,6 +169,14 @@ export class AIService {
   private queue: AIQueueService;
   private shop?: string;
   private taskId?: string;
+  /**
+   * Circuit breaker: once the provider rejects this instance's key, every later
+   * askAI() call fails immediately with the same error instead of firing more
+   * doomed requests. A bulk translate (many fields × many locales) shares one
+   * AIService instance, so without this an invalid key produced one 401 per
+   * cell, hammering the provider and the queue.
+   */
+  private authError: InvalidAIKeyError | null = null;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -1340,6 +1401,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   private async askAI(prompt: string, imageUrl?: string): Promise<string> {
+    // Circuit breaker: a previous call on this instance already saw the
+    // provider reject the key — fail fast instead of firing more 401s.
+    if (this.authError) throw this.authError;
+
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
       await this.savePromptToTask(prompt, imageUrl);
@@ -1347,20 +1412,32 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     let response: string;
 
-    // If no shop/taskId provided, execute directly (backward compatibility)
-    if (!this.shop || !this.taskId) {
-      response = await this.executeAIRequest(prompt, imageUrl);
-    } else {
-      // Use queue for rate-limited execution
-      const estimatedTokens = this.estimateTokens(prompt);
+    try {
+      // If no shop/taskId provided, execute directly (backward compatibility)
+      if (!this.shop || !this.taskId) {
+        response = await this.executeAIRequest(prompt, imageUrl);
+      } else {
+        // Use queue for rate-limited execution
+        const estimatedTokens = this.estimateTokens(prompt);
 
-      response = await this.queue.enqueue(
-        this.shop,
-        this.taskId,
-        this.provider,
-        estimatedTokens,
-        () => this.executeAIRequest(prompt, imageUrl)
-      );
+        response = await this.queue.enqueue(
+          this.shop,
+          this.taskId,
+          this.provider,
+          estimatedTokens,
+          () => this.executeAIRequest(prompt, imageUrl)
+        );
+      }
+    } catch (error) {
+      // Normalise provider auth failures (invalid/expired key) into a single
+      // typed error and trip the breaker. Callers that loop over locales must
+      // re-throw this rather than swallowing it (see isAuthError usages), so an
+      // invalid key always surfaces instead of silently producing no output.
+      if (isAuthError(error)) {
+        this.authError = new InvalidAIKeyError(error instanceof Error ? error.message : String(error));
+        throw this.authError;
+      }
+      throw error;
     }
 
     // Save AI response to the corresponding prompt entry (raw, for debugging)

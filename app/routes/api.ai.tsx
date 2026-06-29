@@ -19,6 +19,8 @@ import {
   errorStack,
   getMissingPreferredKey,
   noAiKeyResponse,
+  isAuthError,
+  aiAuthErrorResponse,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
 import {
@@ -110,6 +112,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
   } catch (error: unknown) {
+    // An invalid/expired provider key must always surface as an actionable
+    // error — never as a generic 500 (or, worse, a silent success from a
+    // handler that swallowed it). Handlers re-throw auth errors for exactly
+    // this central translation into a clear INVALID_AI_KEY response.
+    if (isAuthError(error)) {
+      logger.error("[API-AI] AI request failed — provider rejected the API key", {
+        context: "AI",
+        error: errorMessage(error),
+      });
+      return aiAuthErrorResponse(error);
+    }
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",
       error: errorMessage(error),

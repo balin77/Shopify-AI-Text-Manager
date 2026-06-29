@@ -7,7 +7,7 @@
  */
 
 import { json } from "@remix-run/node";
-import { AIService } from "../../../src/services/ai.service";
+import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
@@ -574,6 +574,10 @@ export async function handleTranslateSubResourceToAllLocales(
           });
         }
       } catch (err) {
+        // Invalid API key: abort — every remaining locale would 401 too. Surface
+        // it so the request fails loudly instead of reporting success with every
+        // locale in failedLocales.
+        if (isAuthError(err)) throw err;
         logger.error(`[UnifiedContent] Failed to translate sub-resources to ${targetLocale}`, {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });

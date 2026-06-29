@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
-import { errorMessage, errorStack, createAIService } from "./shared";
+import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
@@ -874,6 +874,9 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
         // Progress already updated in loop above
 
       } catch (batchError: unknown) {
+        // An invalid API key will fail the sequential fallback too — don't mask
+        // it as a fallback, surface it so the whole request fails loudly.
+        if (isAuthError(batchError)) throw batchError;
         logger.error("[API-AI] Batch translation failed, falling back to sequential", {
           context: "AI",
           error: errorMessage(batchError),
@@ -900,6 +903,9 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             { preserveHtml: true, contextLabel: contentType }
           );
         } catch (batchErr: unknown) {
+          // An invalid API key will fail every per-locale fallback too — surface
+          // it instead of silently degrading to a doomed sequential pass.
+          if (isAuthError(batchErr)) throw batchErr;
           // Whole batch failed (all chunks broke) — fall back to the original
           // per-locale translateContent path below for every locale.
           batchTranslationFailed = true;
@@ -1364,24 +1370,56 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             data: { progress },
           });
         } catch (error: unknown) {
+          // Invalid API key: abort the whole loop — every remaining locale would
+          // 401 too. Re-throw so the outer handler fails loudly (success: false)
+          // instead of marking all locales "rejected" and reporting success.
+          if (isAuthError(error)) throw error;
           logger.error("[API-AI] Error translating to locale", {
             context: "AI",
             fieldType,
             locale,
             error: errorMessage(error)
           });
-          // R3-H10 / N-H3 audited-safe: this sourceText assignment is
-          // RESPONSE-MAP ONLY. The Shopify translationsRegister + DB upsert
-          // for this locale live inside the try above, BEFORE this catch, so
-          // a translation failure writes NOTHING to Shopify/DB for it. The
-          // persisted artifact (task.result = aiResponses) records an
-          // explicit `ERROR:` for the locale, never the source. Do NOT start
-          // persisting `translations` without re-introducing an N-H3 guard.
-          translations[locale] = sourceText; // response map only — see note
+          // The AI call (or its Shopify/DB persistence) failed for this
+          // locale — nothing was written to Shopify/DB. Mark the locale as
+          // rejected and do NOT put it into `translations`: that map is
+          // returned to the client and used to populate the editor, so writing
+          // `sourceText` here (a) surfaced the untranslated source as if it
+          // were a real translation (N-H3) and (b) kept `translations`
+          // non-empty even when EVERY locale failed (e.g. invalid AI API key
+          // → 401 for all locales), so the handler reported success: true
+          // while nothing was translated. The task log keeps an explicit
+          // ERROR entry for diagnostics.
+          if (!rejectedFields[locale]) rejectedFields[locale] = [];
+          rejectedFields[locale].push(fieldType);
           aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
         }
       }
     } // End of sequential translation if block
+
+    // No locale produced a real translation → the whole operation failed
+    // (e.g. an invalid AI API key returning 401 for every locale, or all
+    // batch chunks broke). Previously this still marked the task "completed"
+    // and returned success: true, so the frontend reported success while
+    // nothing was translated or saved — the silent-failure bug. Fail loudly:
+    // mark the task failed and return an error so the editor surfaces it.
+    if (Object.keys(translations).length === 0) {
+      const firstError = aiResponses.find((r) => r.response.startsWith("ERROR:"))?.response;
+      const failMsg = (firstError
+        ? firstError.replace(/^ERROR:\s*/, "")
+        : "Translation failed for all locales").trim();
+      logger.error("[API-AI] translateFieldToAllLocales produced no translations — failing loudly", {
+        context: "AI",
+        fieldType,
+        targetLocales,
+        error: failMsg,
+      });
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "failed", completedAt: new Date(), error: failMsg.substring(0, 1000) },
+      });
+      return json({ success: false, error: failMsg, fieldType, rejectedFields }, { status: 502 });
+    }
 
     // Update task to completed with all AI responses
     await db.task.update({

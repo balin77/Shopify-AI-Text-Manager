@@ -7,6 +7,7 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
+import { isAuthError } from './ai.service';
 import type { PrismaClient } from "@prisma/client";
 
 export interface ShopifyAdminClient {
@@ -1270,6 +1271,9 @@ export class ShopifyContentService {
 
         loggers.translation('debug', 'Batch short fields completed');
       } catch (batchError: unknown) {
+        // Invalid API key: the sequential fallback would fail for every locale
+        // too — surface it so the caller reports failure instead of success.
+        if (isAuthError(batchError)) throw batchError;
         loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
@@ -1281,6 +1285,8 @@ export class ShopifyContentService {
               allPrepared.push(...prepared);
             }
           } catch (localeError: unknown) {
+            // Invalid key: abort — every remaining locale would fail identically.
+            if (isAuthError(localeError)) throw localeError;
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
@@ -1305,6 +1311,8 @@ export class ShopifyContentService {
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
         } catch (localeError: unknown) {
+          // Invalid key: abort — every remaining locale would fail identically.
+          if (isAuthError(localeError)) throw localeError;
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
           if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }
