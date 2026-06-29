@@ -865,7 +865,13 @@ export class BackgroundSyncService {
         logger.warn(`[BackgroundSync] settings_data.json not found on main theme (themes: ${nodes.length})`);
         return map;
       }
-      const parsed = JSON.parse(content);
+      // Shopify auto-generates settings_data.json with a leading /* ... */
+      // banner comment, which is not valid JSON. Strip it before parsing
+      // (mirrors the leading-comment handling in templates-update.action.ts).
+      // Without this, JSON.parse throws and every app-embed falls back to a
+      // generic "App-Einbettung N" name.
+      const jsonContent = content.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, "");
+      const parsed = JSON.parse(jsonContent);
       const blocks = parsed?.current?.blocks;
       if (blocks && typeof blocks === 'object') {
         for (const [blockId, block] of Object.entries(blocks)) {
