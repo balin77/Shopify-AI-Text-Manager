@@ -10,6 +10,7 @@ import {
   pickProperty,
   defaultDateRange,
   enrichKeywordsFromGsc,
+  getGscAccessToken,
   GscReconnectRequiredError,
 } from "~/services/google-search-console.server";
 import { encryptApiKey, isEncrypted } from "~/utils/encryption.server";
@@ -61,6 +62,17 @@ describe("OAuth state signing", () => {
   it("rejects malformed input", () => {
     expect(verifyOAuthState("not-a-state")).toBeNull();
     expect(verifyOAuthState("")).toBeNull();
+  });
+  it("rejects an expired state (past the 10-min TTL)", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-29T00:00:00Z"));
+      const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+      vi.advanceTimersByTime(11 * 60 * 1000);
+      expect(verifyOAuthState(state)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -223,5 +235,48 @@ describe("enrichKeywordsFromGsc", () => {
     expect(updates[0].where).toEqual({ id: "k1" });
     expect(updates[0].data.gscPosition).toBe(7.5);
     expect(updates[0].data.gscClicks).toBe(12);
+  });
+});
+
+describe("getGscAccessToken — recovery paths", () => {
+  beforeEach(() => {
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "cid");
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "csec");
+    vi.stubEnv("GOOGLE_OAUTH_REDIRECT_URI", "https://app.example.com/auth/google/callback");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("clears the connection and asks to reconnect when the stored token can't be decrypted", async () => {
+    // A real ciphertext with a flipped tail → AES-GCM auth-tag mismatch → decrypt
+    // throws internally; the non-throwing read must turn that into null (the H1 fix).
+    const valid = encryptApiKey("rt")!;
+    const corrupted = valid.slice(0, -6) + "abcdef";
+    // If the fix regressed and decrypt threw past the guard, fetch must not be hit.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network must not be called"); }));
+    const deleteMany = vi.fn(async () => ({ count: 1 }));
+    const db = {
+      googleSearchConsoleConnection: {
+        findUnique: async () => ({ shop: "s", propertyUrl: "sc-domain:x", refreshToken: corrupted }),
+        deleteMany,
+      },
+    } as any;
+    await expect(getGscAccessToken(db, "s")).rejects.toBeInstanceOf(GscReconnectRequiredError);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "s" } });
+  });
+
+  it("clears the connection on invalid_grant (revoked refresh token)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => resp(false, { error: "invalid_grant" })));
+    const deleteMany = vi.fn(async () => ({ count: 1 }));
+    const db = {
+      googleSearchConsoleConnection: {
+        findUnique: async () => ({ shop: "s", propertyUrl: "sc-domain:x", refreshToken: encryptApiKey("rt") }),
+        deleteMany,
+      },
+    } as any;
+    await expect(getGscAccessToken(db, "s")).rejects.toBeInstanceOf(GscReconnectRequiredError);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "s" } });
   });
 });

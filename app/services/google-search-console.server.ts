@@ -14,7 +14,7 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
-import { encryptApiKey, decryptApiKey } from "../utils/encryption.server";
+import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -218,7 +218,10 @@ export async function getGscAccessToken(
 ): Promise<{ accessToken: string; propertyUrl: string }> {
   const conn = await getGscConnection(db, shop);
   if (!conn) throw new GscReconnectRequiredError("not_connected");
-  const refresh = decryptApiKey(conn.refreshToken);
+  // NON-throwing decrypt: a corrupted token or a rotated ENCRYPTION_KEY must
+  // yield null (→ clear the connection + prompt reconnect), not throw past this
+  // guard and get misclassified as a generic fetch error.
+  const refresh = tryDecryptApiKey(conn.refreshToken, "gsc-refresh-token");
   if (!refresh) {
     await deleteGscConnection(db, shop);
     throw new GscReconnectRequiredError("decrypt_failed");
