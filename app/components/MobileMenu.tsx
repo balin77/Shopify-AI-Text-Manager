@@ -65,6 +65,7 @@ export function MobileMenu({
   const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
     { id: "content", label: navContentLabel, path: "/app/products" },
+    { id: "seo", label: t.nav.seo, path: "/app/seo" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];

@@ -7,6 +7,7 @@ import {
   renderJsonLdScript,
   type JsonLd,
 } from "../services/structured-data.service";
+import { computeSeoScore, scoreTone, scoreLabelKey } from "../utils/seo-score";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -69,172 +70,43 @@ export function SeoSidebar({
   // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
   const seoTitleEffectiveLimit = seoTitleSuffix ? 60 - seoTitleSuffix.length : 60;
 
+  // Scoring is computed by the shared pure function (app/utils/seo-score.ts) so
+  // the Sidebar and the store-wide Audit-Dashboard never drift. The function
+  // returns i18n *codes*; we map them to the canonical t.seo.* strings here.
   const analysis = useMemo((): SeoAnalysis => {
-    const issues: SeoIssue[] = [];
-    let score = 0;
-    let maxScore = 0;
+    const result = computeSeoScore({
+      title,
+      description,
+      seoTitle,
+      metaDescription,
+      imagesWithAlt,
+      totalImages,
+      excludeDescription,
+      excludeImages,
+      seoTitleEffectiveLimit,
+    });
 
-    // 1. Title length (15 points max)
-    maxScore += 15;
-    const titleLength = title.length;
-    if (titleLength >= 30 && titleLength <= 70) {
-      score += 15;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.titleLengthGood,
-        points: 15,
-      });
-    } else if (titleLength < 30) {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.titleTooShort,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.titleTooLong,
-        points: 0,
-      });
-    }
-
-    // 2. SEO Title (15 points max) — limit adjusted for shop name suffix
-    maxScore += 15;
-    const seoTitleLength = seoTitle.length;
-    if (seoTitleLength > 0 && seoTitleLength <= seoTitleEffectiveLimit) {
-      score += 15;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.seoTitleGood,
-        points: 15,
-      });
-    } else if (seoTitleLength === 0) {
-      issues.push({
-        type: "error",
-        message: t.seo.issues.seoTitleMissing,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.seoTitleTooLong,
-        points: 0,
-      });
-    }
-
-    // 3. Description length (20 points max) — skipped for content without body
-    if (!excludeDescription) {
-      maxScore += 20;
-      const descriptionText = description.replace(/<[^>]*>/g, "");
-      const descriptionLength = descriptionText.length;
-      if (descriptionLength >= 150) {
-        score += 20;
-        issues.push({
-          type: "success",
-          message: t.seo.issues.descriptionGood,
-          points: 20,
-        });
-      } else if (descriptionLength === 0) {
-        issues.push({
-          type: "error",
-          message: t.seo.issues.descriptionMissing,
-          points: 0,
-        });
-      } else {
-        issues.push({
-          type: "warning",
-          message: t.seo.issues.descriptionTooShort,
-          points: 0,
-        });
+    const issues: SeoIssue[] = result.findings.map((f) => {
+      let message = (t.seo.issues as Record<string, string>)[f.code] ?? f.code;
+      if (f.data) {
+        for (const [key, value] of Object.entries(f.data)) {
+          message = message.replace(`{${key}}`, String(value));
+        }
       }
-    }
+      return { type: f.severity, message, points: f.points };
+    });
 
-    // 4. Meta Description (20 points max)
-    maxScore += 20;
-    const metaDescLength = metaDescription.length;
-    if (metaDescLength >= 120 && metaDescLength <= 160) {
-      score += 20;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.metaDescriptionGood,
-        points: 20,
-      });
-    } else if (metaDescLength === 0) {
-      issues.push({
-        type: "error",
-        message: t.seo.issues.metaDescriptionMissing,
-        points: 0,
-      });
-    } else if (metaDescLength < 120) {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.metaDescriptionTooShort,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.metaDescriptionTooLong,
-        points: 0,
-      });
-    }
+    const recommendations = result.recommendations.map(
+      (code) => (t.seo.recommendations as Record<string, string>)[code] ?? code,
+    );
 
-    // 5. Image Alt Texts (30 points max) — skipped for content without images
-    if (!excludeImages && totalImages > 0) {
-      maxScore += 30;
-      const imageScore = Math.round((imagesWithAlt / totalImages) * 30);
-      score += imageScore;
-      if (imagesWithAlt === totalImages) {
-        issues.push({
-          type: "success",
-          message: t.seo.issues.allImagesHaveAlt,
-          points: 30,
-        });
-      } else {
-        issues.push({
-          type: "warning",
-          message: t.seo.issues.someImagesMissingAlt.replace("{count}", String(totalImages - imagesWithAlt)),
-          points: imageScore,
-        });
-      }
-    }
+    return { score: result.score, issues, recommendations };
+  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, seoTitleEffectiveLimit]);
 
-    // Normalize score to 0-100 based on applicable criteria
-    const normalizedScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+  const getScoreColor = scoreTone;
 
-    // Generate recommendations
-    const recommendations: string[] = [];
-    if (titleLength < 30) recommendations.push(t.seo.recommendations.expandTitle);
-    if (titleLength > 70) recommendations.push(t.seo.recommendations.shortenTitle);
-    if (seoTitleLength === 0) recommendations.push(t.seo.recommendations.addSeoTitle);
-    if (seoTitleLength > seoTitleEffectiveLimit) recommendations.push(t.seo.recommendations.shortenSeoTitle);
-    if (!excludeDescription) {
-      const descriptionText = description.replace(/<[^>]*>/g, "");
-      if (descriptionText.length < 150) recommendations.push(t.seo.recommendations.expandDescription);
-    }
-    if (metaDescLength === 0) recommendations.push(t.seo.recommendations.addMetaDescription);
-    if (metaDescLength < 120) recommendations.push(t.seo.recommendations.expandMetaDescription);
-    if (metaDescLength > 160) recommendations.push(t.seo.recommendations.shortenMetaDescription);
-    if (!excludeImages && totalImages > 0 && imagesWithAlt < totalImages) recommendations.push(t.seo.recommendations.addImageAlt);
-
-    return {
-      score: normalizedScore,
-      issues,
-      recommendations,
-    };
-  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, seoTitleEffectiveLimit]);
-
-  const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
-    if (scoreValue >= 70) return "success";
-    if (scoreValue >= 40) return "warning";
-    return "critical";
-  };
-
-  const getScoreLabel = (scoreValue: number): string => {
-    if (scoreValue >= 70) return t.seo.scoreLabels.good;
-    if (scoreValue >= 40) return t.seo.scoreLabels.medium;
-    return t.seo.scoreLabels.poor;
-  };
+  const getScoreLabel = (scoreValue: number): string =>
+    t.seo.scoreLabels[scoreLabelKey(scoreValue)];
 
   return (
     <Card>
