@@ -57,6 +57,13 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     labelKey: "hreflang",
     kind: "audit",
   },
+  {
+    id: "keywords",
+    path: "/app/seo/keywords",
+    icon: "🔑",
+    labelKey: "keywords",
+    kind: "tool",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */

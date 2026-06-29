@@ -181,7 +181,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 36 models in prisma/schema.prisma:
+ * Coverage of all 37 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
@@ -191,7 +191,7 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings, Seo404Hit       (all scoped by `shop`)
+ *      DirectTranslationSettings, Seo404Hit, SeoKeyword  (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -403,6 +403,12 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // SEO tab Phase 5: per-item target keywords (shop-scoped).
+    const seoKeywordsDeleted = await tx.seoKeyword.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordsDeleted.count} SEO keywords`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

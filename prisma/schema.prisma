@@ -884,3 +884,30 @@ model Seo404Hit {
   @@index([shop, lastSeenAt])
   @@index([shop, count])
 }
+
+// SEO tab Phase 5: one target keyword per content item (per locale), with
+// optional Google Search Console enrichment columns (Phase 6). Shop-scoped;
+// purged in redactShopData (the GDPR schema-coverage guard requires it).
+// keyword is stored lowercased; the (shop, keyword) index backs the GSC join.
+model SeoKeyword {
+  id           String @id @default(cuid())
+  shop         String
+  resourceType String // "Product" | "Collection" | "Article" | "Page"
+  resourceId   String // Shopify GID
+  keyword      String // lowercased on write
+  locale       String @default("") // "" = primary/default locale
+
+  // GSC enrichment (written by Phase 6 sync; null until connected).
+  gscPosition    Float?
+  gscClicks      Int?
+  gscImpressions Int?
+  gscCtr         Float?
+  gscUpdatedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, resourceId, locale])
+  @@index([shop, keyword])
+  @@index([shop])
+}
