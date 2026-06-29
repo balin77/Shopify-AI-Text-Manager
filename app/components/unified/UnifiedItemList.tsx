@@ -252,22 +252,25 @@ export function UnifiedItemList({
   // Calculate items per page and item height based on available space
   useEffect(() => {
     const calculateDynamicPagination = () => {
-      // Get the wrapper height (from flexbox layout)
-      const wrapperHeight = wrapperRef.current?.clientHeight;
-      const headerHeight = headerRef.current?.offsetHeight || 100;
-      const paginationHeight = showPagination ? 56 : 0;
+      // Measure the actual scroll container (the flex:1 list area). Its
+      // clientHeight is exactly the space left after the flexbox laid out the
+      // header and pagination — so we never have to guess their sizes or
+      // reserve a phantom pagination bar. This is the available list height.
+      let availableHeight = listContainerRef.current?.clientHeight ?? 0;
 
-      // Calculate available height for the list
-      let availableHeight: number;
-
-      if (wrapperHeight && wrapperHeight > 200) {
-        // Use wrapper height minus header, pagination, and a small buffer for borders/padding
-        availableHeight = wrapperHeight - headerHeight - paginationHeight - 20;
-      } else {
-        // Fallback: calculate from window
-        const navHeight = getTotalNavHeight();
-        const padding = 32;
-        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
+      // Fallback for the very first paint, before flexbox has sized the scroll
+      // area: derive it from the wrapper (or the window) minus the measured
+      // header. Pagination is only subtracted here because the real measurement
+      // path above already accounts for it implicitly once it kicks in.
+      if (!availableHeight || availableHeight < 100) {
+        const headerHeight = headerRef.current?.offsetHeight || 100;
+        const wrapperHeight = wrapperRef.current?.clientHeight;
+        if (wrapperHeight && wrapperHeight > 200) {
+          availableHeight = wrapperHeight - headerHeight;
+        } else {
+          const navHeight = getTotalNavHeight();
+          availableHeight = window.innerHeight - navHeight - headerHeight - 32;
+        }
       }
 
       // Calculate item dimensions
@@ -290,11 +293,14 @@ export function UnifiedItemList({
     const timer = setTimeout(calculateDynamicPagination, 150);
     window.addEventListener('resize', calculateDynamicPagination);
 
-    // Use ResizeObserver for more reliable height detection
+    // Observe both the wrapper (overall height changes) and the scroll
+    // container (changes when the pagination bar toggles on/off) so the fill
+    // stays correct without a stray gap at the bottom.
     let resizeObserver: ResizeObserver | null = null;
-    if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
+    if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(calculateDynamicPagination);
-      resizeObserver.observe(wrapperRef.current);
+      if (wrapperRef.current) resizeObserver.observe(wrapperRef.current);
+      if (listContainerRef.current) resizeObserver.observe(listContainerRef.current);
     }
 
     return () => {
