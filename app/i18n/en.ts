@@ -1085,6 +1085,9 @@ export const en: Translation = {
     allAltTexts: "all alt-texts",
     imageAltText: "Image {n} alt-text",
     requests: "requests",
+    runningPreviewTitle: "Running tasks",
+    runningPreviewMore: "+{n} more",
+    runningPreviewEmpty: "No running tasks",
   },
 
   // SEO Sidebar

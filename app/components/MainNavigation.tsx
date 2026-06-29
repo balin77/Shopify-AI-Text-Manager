@@ -11,6 +11,7 @@ import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
+import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
 import { extractReadableName } from "../utils/templates-field-factory";
@@ -349,20 +350,7 @@ export function MainNavigation() {
                       {tab.label}
                     </Text>
                     {showTaskCount && (
-                      <div
-                        style={{
-                          backgroundColor: "#0066CC",
-                          color: "white",
-                          borderRadius: "10px",
-                          padding: "2px 8px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                          minWidth: "20px",
-                          textAlign: "center",
-                        }}
-                      >
-                        {runningTaskCount}
-                      </div>
+                      <RunningTasksPreview count={runningTaskCount} />
                     )}
                   </InlineStack>
                 </button>

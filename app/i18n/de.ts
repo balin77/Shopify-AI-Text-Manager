@@ -1082,6 +1082,9 @@ export const de = {
     allAltTexts: "alle Alt-Texte",
     imageAltText: "Bild {n} Alt-Text",
     requests: "Anfragen",
+    runningPreviewTitle: "Laufende Aufgaben",
+    runningPreviewMore: "+{n} weitere",
+    runningPreviewEmpty: "Keine laufenden Aufgaben",
   },
 
   // SEO Sidebar

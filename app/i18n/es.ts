@@ -1084,6 +1084,9 @@ export const es: Translation = {
     allAltTexts: "todos los textos alt",
     imageAltText: "texto alt imagen {n}",
     requests: "solicitudes",
+    runningPreviewTitle: "Tareas en curso",
+    runningPreviewMore: "+{n} más",
+    runningPreviewEmpty: "No hay tareas en curso",
   },
 
   // SEO Sidebar
