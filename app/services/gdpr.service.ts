@@ -357,7 +357,7 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${metaobjectTranslationsDeleted.count} metaobject translations`);
 
-    // 23. Delete install-state marker (R3) — leaving no residue keeps both the
+    // 24. Delete install-state marker (R3) — leaving no residue keeps both the
     //     shop/redact webhook and the 30-day reaper idempotent (a redelivered
     //     request finds no marker and deletes 0 rows everywhere).
     const shopInstallStateDeleted = await tx.shopInstallState.deleteMany({

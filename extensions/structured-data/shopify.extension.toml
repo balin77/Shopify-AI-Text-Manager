@@ -1,0 +1,7 @@
+api_version = "2025-10"
+uid = "fcb314e9-55af-4567-82dd-eef22371b2cc7103535b"
+
+[[extensions]]
+  type = "theme"
+  name = "JSON-LD Structured Data"
+  handle = "structured-data"

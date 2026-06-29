@@ -1094,6 +1094,11 @@ export const de = {
     points: "Pkt.",
     showDetails: "Details anzeigen",
     hideDetails: "Details ausblenden",
+    showStructuredData: "Strukturierte Daten anzeigen (JSON-LD)",
+    hideStructuredData: "Strukturierte Daten ausblenden",
+    structuredDataValid: "Schema sieht gültig aus",
+    copyJsonLd: "<script>-Tag kopieren",
+    copied: "Kopiert!",
     suffixPreviewLabel: "Vorschau (vollständiger Titel in Suchergebnissen):",
     suffixEffectiveLimit: "Effektives Limit: {limit} von 60 Zeichen",
     scoreLabels: {
