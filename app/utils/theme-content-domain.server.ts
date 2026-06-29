@@ -23,8 +23,13 @@ import type { ThemeNavItem } from "~/types/theme-content-domain";
  * Build a content loader scoped to one ThemeContent domain. Returns lightweight
  * nav metadata (group list + unique-key counts); the per-group field content is
  * loaded lazily by the api.theme-content route.
+ *
+ * `resourceTypeFilter` optionally restricts the loaded groups to specific
+ * Shopify resource types. The online_store_extras domain holds both FILTER and
+ * SHOP rows; the Filter and Shop-Metadaten tabs each pass their own filter so a
+ * single domain backs two separate tabs.
  */
-export function makeThemeDomainLoader(domain: string, logPrefix: string) {
+export function makeThemeDomainLoader(domain: string, logPrefix: string, resourceTypeFilter?: string[]) {
   return createContentLoader({
     logPrefix,
     resourceType: null, // uses the ThemeTranslation table, not ContentTranslation
@@ -32,7 +37,11 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string) {
 
     async loadData(ctx) {
       const allGroupRows = await ctx.db.themeContent.findMany({
-        where: { shop: ctx.session.shop, domain },
+        where: {
+          shop: ctx.session.shop,
+          domain,
+          ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+        },
         select: {
           groupId: true,
           groupName: true,

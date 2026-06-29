@@ -499,8 +499,18 @@ export const DELIVERY_CONFIG: ContentEditorConfig = {
 export const ONLINE_STORE_EXTRAS_CONFIG: ContentEditorConfig = {
   ...TEMPLATES_CONFIG,
   contentType: "onlineStoreExtras",
-  displayName: "Filter & Shop-Metadaten",
-  displayNameSingular: "Online Store Content",
+  displayName: "Filter",
+  displayNameSingular: "Filter",
+};
+
+// Shop-Metadaten: same dynamic-field machinery and plan gate as Filter
+// (onlineStoreExtras). Backed by the same online_store_extras domain, restricted
+// to the SHOP resource type by its route loader.
+export const SHOP_METADATA_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Shop-Metadaten",
+  displayNameSingular: "Shop metadata",
 };
 
 export const SELLING_PLANS_CONFIG: ContentEditorConfig = {
