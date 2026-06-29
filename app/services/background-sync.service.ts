@@ -834,12 +834,16 @@ export class BackgroundSyncService {
   private async fetchAppEmbedNameMap(): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     try {
+      // Mirror the proven GET_THEME_FILES shape (content.queries.ts): `files`
+      // is a connection and REQUIRES `first`/`last`, and we filter to the MAIN
+      // theme by `role` rather than the `roles:` arg for maximum compatibility.
       const resp = await this.gateway.graphql(
         `#graphql
           query themeSettingsData {
-            themes(first: 1, roles: [MAIN]) {
+            themes(first: 20) {
               nodes {
-                files(filenames: ["config/settings_data.json"]) {
+                role
+                files(filenames: ["config/settings_data.json"], first: 1) {
                   nodes {
                     body { ... on OnlineStoreThemeFileBodyText { content } }
                   }
@@ -853,9 +857,14 @@ export class BackgroundSyncService {
         logger.warn(`[BackgroundSync] settings_data.json query error`, { error: data.errors[0]?.message });
         return map;
       }
-      const content: string | undefined =
-        data.data?.themes?.nodes?.[0]?.files?.nodes?.[0]?.body?.content;
-      if (!content) return map;
+      const nodes: Array<{ role?: string; files?: { nodes?: Array<{ body?: { content?: string } }> } }> =
+        data.data?.themes?.nodes ?? [];
+      const mainTheme = nodes.find((n) => String(n.role).toUpperCase() === "MAIN") ?? nodes[0];
+      const content = mainTheme?.files?.nodes?.[0]?.body?.content;
+      if (!content) {
+        logger.warn(`[BackgroundSync] settings_data.json not found on main theme (themes: ${nodes.length})`);
+        return map;
+      }
       const parsed = JSON.parse(content);
       const blocks = parsed?.current?.blocks;
       if (blocks && typeof blocks === 'object') {
@@ -864,6 +873,7 @@ export class BackgroundSyncService {
           if (name) map.set(blockId, name);
         }
       }
+      logger.debug(`[BackgroundSync] app-embed name map built: ${map.size} block(s) named (current.blocks: ${blocks ? Object.keys(blocks).length : 0})`);
     } catch (err) {
       logger.warn(`[BackgroundSync] Could not derive app-embed names from settings_data.json`, {
         error: err instanceof Error ? err.message : String(err),
