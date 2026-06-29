@@ -43,6 +43,13 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     labelKey: "structuredData",
     kind: "tool",
   },
+  {
+    id: "redirects",
+    path: "/app/seo/redirects",
+    icon: "↪️",
+    labelKey: "redirects",
+    kind: "tool",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */

@@ -860,3 +860,27 @@ model ImageOperationCounter {
   @@unique([shop, period])
   @@index([shop])
 }
+
+// SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
+// through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
+// via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:
+// upsert-increment per path, FIFO-pruned per shop (MAX_404_HITS_PER_SHOP), and
+// purged in redactShopData (the GDPR schema-coverage guard requires it).
+model Seo404Hit {
+  id          String   @id @default(cuid())
+  shop        String
+  path        String   @db.Text // requested storefront path (may be long)
+  pathHash    String // sha256 of the normalized path — the upsert key
+  referrer    String?  @db.Text
+  count       Int      @default(1)
+  status      String   @default("new") // "new" | "redirected" | "dismissed"
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, pathHash])
+  @@index([shop, status])
+  // Backs the FIFO-prune query (delete oldest-untouched when a shop exceeds the
+  // cap) and the "most frequent / most recent" admin listing.
+  @@index([shop, lastSeenAt])
+  @@index([shop, count])
+}
