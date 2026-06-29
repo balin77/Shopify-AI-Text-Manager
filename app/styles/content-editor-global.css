@@ -23,6 +23,18 @@ html, body {
   height: 100% !important;
 }
 
+/* responsive.css re-adds vertical padding to EVERY .Polaris-Page via its
+   breakpoint media queries (same specificity + !important, so the winner
+   depends on stylesheet order). On the editor that padding is NOT part of the
+   `calc(100vh - navHeight)` the layout uses, so the <Page> wrapper ends up
+   taller than <main> by padding-top+bottom and the bottom of both columns is
+   clipped behind a grey strip. Scope a higher-specificity override (two
+   classes via :has) to just the editor's page so its padding is always zero
+   here, independent of import order. */
+.Polaris-Page:has(.unified-content-editor-layout) {
+  padding: 0 !important;
+}
+
 /* Ensure full height propagates through Polaris wrappers */
 .Polaris-Frame {
   height: 100% !important;
