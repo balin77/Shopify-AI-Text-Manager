@@ -24,7 +24,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
-import { scoreTone } from "../utils/seo-score";
+import { scoreTone, progressTone } from "../utils/seo-score";
 import { analyzeHreflang, type HreflangType } from "../services/seo/hreflang.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -144,7 +144,7 @@ function LocaleCoverageCard({
           </Text>
         </InlineStack>
 
-        <ProgressBar progress={loc.coveragePct} tone={scoreTone(loc.coveragePct) as any} size="small" />
+        <ProgressBar progress={loc.coveragePct} tone={progressTone(loc.coveragePct)} size="small" />
 
         {loc.missingTotal === 0 ? (
           <Text as="p" variant="bodySm" tone="subdued">

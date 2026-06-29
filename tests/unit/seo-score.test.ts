@@ -3,6 +3,7 @@ import {
   computeSeoScore,
   scoreTone,
   scoreLabelKey,
+  progressTone,
   DEFAULT_SEO_TITLE_LIMIT,
 } from "~/utils/seo-score";
 
@@ -177,5 +178,10 @@ describe("tone + label thresholds (single source ≥70 / ≥40)", () => {
     expect(scoreLabelKey(70)).toBe("good");
     expect(scoreLabelKey(40)).toBe("medium");
     expect(scoreLabelKey(39)).toBe("poor");
+  });
+  it("progressTone maps the mid band to a Polaris-ProgressBar-valid tone", () => {
+    expect(progressTone(70)).toBe("success");
+    expect(progressTone(50)).toBe("highlight"); // never "warning" (invalid for ProgressBar)
+    expect(progressTone(39)).toBe("critical");
   });
 });

@@ -24,7 +24,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
-import { scoreTone } from "../utils/seo-score";
+import { scoreTone, progressTone } from "../utils/seo-score";
 import { analyzeStore, type AuditType } from "../services/seo/audit.service";
 import type { Plan } from "../config/plans";
 
@@ -106,7 +106,7 @@ export default function SeoDashboard() {
                 </Text>
                 <ProgressBar
                   progress={audit.averageScore}
-                  tone={scoreTone(audit.averageScore) as any}
+                  tone={progressTone(audit.averageScore)}
                   size="small"
                 />
                 <Text as="p" variant="bodySm" tone="subdued">
@@ -161,7 +161,7 @@ export default function SeoDashboard() {
                 <div style={{ flex: 1, minWidth: "120px" }}>
                   <ProgressBar
                     progress={s.avgScore}
-                    tone={scoreTone(s.avgScore) as any}
+                    tone={progressTone(s.avgScore)}
                     size="small"
                   />
                 </div>
@@ -269,6 +269,8 @@ function DistributionRow({
   tone: "success" | "warning" | "critical";
 }) {
   const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  // Polaris ProgressBar has no `warning` tone — map it to `highlight`.
+  const barTone = tone === "warning" ? "highlight" : tone;
   return (
     <InlineStack gap="300" blockAlign="center">
       <div style={{ width: "120px" }}>
@@ -277,7 +279,7 @@ function DistributionRow({
         </Text>
       </div>
       <div style={{ flex: 1, minWidth: "120px" }}>
-        <ProgressBar progress={pct} tone={tone as any} size="small" />
+        <ProgressBar progress={pct} tone={barTone} size="small" />
       </div>
       <div style={{ width: "48px", textAlign: "right" }}>
         <Text as="span" variant="bodySm" tone="subdued">

@@ -21,18 +21,21 @@ function makeDb(opts: {
   articles?: Array<{ id: string; title: string }>;
   pages?: Array<{ id: string; title: string }>;
   translatedByLocale?: Record<string, string[]>;
+  /** Override count() to simulate a catalog larger than the scanned page (capped). */
+  counts?: { products?: number; collections?: number; articles?: number; pages?: number };
 }) {
   const products = opts.products ?? [];
   const collections = opts.collections ?? [];
   const articles = opts.articles ?? [];
   const pages = opts.pages ?? [];
   const translatedByLocale = opts.translatedByLocale ?? {};
+  const counts = opts.counts ?? {};
 
   return {
-    product: { count: async () => products.length, findMany: async () => products },
-    collection: { count: async () => collections.length, findMany: async () => collections },
-    article: { count: async () => articles.length, findMany: async () => articles },
-    page: { count: async () => pages.length, findMany: async () => pages },
+    product: { count: async () => counts.products ?? products.length, findMany: async () => products },
+    collection: { count: async () => counts.collections ?? collections.length, findMany: async () => collections },
+    article: { count: async () => counts.articles ?? articles.length, findMany: async () => articles },
+    page: { count: async () => counts.pages ?? pages.length, findMany: async () => pages },
     contentTranslation: {
       groupBy: async (args: any) => {
         const ids = translatedByLocale[args.where.locale] ?? [];
@@ -96,5 +99,62 @@ describe("analyzeHreflang", () => {
     expect(r.hasXDefault).toBe(false);
     expect(r.coverage[0].coveragePct).toBe(0);
     expect(r.coverage[0].missingTotal).toBe(1);
+  });
+
+  it("handles multiple secondary locales with divergent translation sets", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+      { locale: "es", name: "Spanish", primary: false, published: true },
+    ]);
+    const db = makeDb({
+      products: [
+        { id: "gid-P1", title: "P1" },
+        { id: "gid-P2", title: "P2" },
+      ],
+      translatedByLocale: { de: ["gid-P1", "gid-P2"], es: ["gid-P1"] },
+    });
+
+    const r = await analyzeHreflang("h4.myshopify.com", { db, admin });
+    const byLocale = Object.fromEntries(r.coverage.map((c) => [c.locale, c]));
+    expect(byLocale.de.coveragePct).toBe(100);
+    expect(byLocale.de.missingTotal).toBe(0);
+    expect(byLocale.es.coveragePct).toBe(50);
+    expect(byLocale.es.missing).toEqual([{ resourceType: "product", resourceId: "gid-P2", title: "P2" }]);
+  });
+
+  it("fully translated locale → 100% and empty missing list", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+    ]);
+    const db = makeDb({
+      collections: [{ id: "gid-C1", title: "C1" }],
+      translatedByLocale: { de: ["gid-C1"] },
+    });
+    const r = await analyzeHreflang("h5.myshopify.com", { db, admin });
+    expect(r.coverage[0].coveragePct).toBe(100);
+    expect(r.coverage[0].missingTotal).toBe(0);
+    expect(r.coverage[0].missing).toEqual([]);
+  });
+
+  it("sets capped when a type's catalog exceeds the scanned page, and never shows 100% with missing items", async () => {
+    const admin = makeAdmin([
+      { locale: "en", name: "English", primary: true, published: true },
+      { locale: "de", name: "German", primary: false, published: true },
+    ]);
+    // 2 products scanned but count says 1000 → capped; 1 of the 2 translated.
+    const db = makeDb({
+      products: [
+        { id: "gid-P1", title: "P1" },
+        { id: "gid-P2", title: "P2" },
+      ],
+      counts: { products: 1000 },
+      translatedByLocale: { de: ["gid-P1"] },
+    });
+    const r = await analyzeHreflang("h6.myshopify.com", { db, admin });
+    expect(r.capped).toBe(true);
+    expect(r.coverage[0].publishableScanned).toBe(2);
+    expect(r.coverage[0].coveragePct).toBe(50);
   });
 });

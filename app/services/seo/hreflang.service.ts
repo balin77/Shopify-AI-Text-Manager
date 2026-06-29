@@ -28,9 +28,11 @@ const RESOURCE_TYPE: Record<HreflangType, string> = {
 
 /**
  * A resource counts as "translated" in a locale if any of these keys is present.
- * Mirrors the keys the translation pipeline writes (A5).
+ * These are exactly the Shopify translation keys the pipeline writes for the
+ * audited resource types (A5). (`body` is only written for ShopPolicy, which we
+ * don't audit, so it is deliberately omitted.)
  */
-const TRANSLATION_KEYS = ["title", "body_html", "body", "meta_title", "meta_description"];
+const TRANSLATION_KEYS = ["title", "body_html", "meta_title", "meta_description"];
 
 /** Per-type publishable scan cap (id+title only — bounds memory on huge shops). */
 export const PUBLISHABLE_SCAN_CAP = 2000;
@@ -199,12 +201,18 @@ export async function analyzeHreflang(
       }
     }
 
+    // Never show a green 100% while items are still missing: rounding 997/1000
+    // up to 100 next to a non-empty missing list is contradictory. Cap at 99
+    // until coverage is truly complete.
+    let coveragePct = items.length > 0 ? Math.round((translated / items.length) * 100) : 0;
+    if (coveragePct === 100 && missingTotal > 0) coveragePct = 99;
+
     coverage.push({
       locale: loc.locale,
       name: loc.name,
       publishableScanned: items.length,
       translated,
-      coveragePct: items.length > 0 ? Math.round((translated / items.length) * 100) : 0,
+      coveragePct,
       missing,
       missingTotal,
     });

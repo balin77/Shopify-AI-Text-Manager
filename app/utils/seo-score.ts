@@ -181,3 +181,15 @@ export function scoreLabelKey(score: number): "good" | "medium" | "poor" {
   if (score >= 40) return "medium";
   return "poor";
 }
+
+/**
+ * Tone for a Polaris <ProgressBar>, whose `tone` union is
+ * `highlight | primary | success | critical` — it has NO `warning` (unlike
+ * <Badge>). Mid-band maps to `highlight` so the bar still renders distinctly
+ * instead of silently falling back to the default when given an invalid tone.
+ */
+export function progressTone(score: number): "success" | "highlight" | "critical" {
+  if (score >= 70) return "success";
+  if (score >= 40) return "highlight";
+  return "critical";
+}
