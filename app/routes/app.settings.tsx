@@ -409,6 +409,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled,
     );
     const showTranslationsTab = true;
+    // Dev-only diagnostic surface: only visible when APP_ENV === "development".
+    const showTranslationProbeTab = process.env.APP_ENV === "development";
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -455,6 +457,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationsTab,
+      showTranslationProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
       optionValueMemory,
@@ -884,7 +887,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -906,6 +909,7 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
+    if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
     if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe"].includes(tabParam)) {
       return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe";
     }
@@ -982,7 +986,7 @@ export default function SettingsPage() {
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
-      { id: "translationprobe", title: "Translation Probe" },
+      ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
     ];
 
     registerItems({
@@ -1228,6 +1232,7 @@ export default function SettingsPage() {
                   {t.settings.feedback}
                 </Text>
               </button>
+              {showTranslationProbeTab && (
               <button
                 onClick={() => handleSectionChange("translationprobe")}
                 style={{
@@ -1247,6 +1252,7 @@ export default function SettingsPage() {
                   Translation Probe
                 </Text>
               </button>
+              )}
             </Card>
           </div>
 
@@ -1424,7 +1430,7 @@ export default function SettingsPage() {
               )}
 
               {/* Translation Coverage Probe (Phase 0 dev tool) */}
-              {selectedSection === "translationprobe" && (
+              {selectedSection === "translationprobe" && showTranslationProbeTab && (
                 <SettingsTranslationProbeTab />
               )}
             </BlockStack>
