@@ -15,6 +15,19 @@
   --app-page-padding: 16px;
 }
 
+/* Simple Polaris pages (Tasks, Settings, …) opt into the SAME uniform page
+   gutter as the content editor by wrapping their content in .app-page-content.
+   Polaris' own .Polaris-Page__Content adds an asymmetric inset on top of our
+   .Polaris-Page padding (padding-top var(--p-space-500)=20px, padding-bottom
+   var(--p-space-200)=8px) — that stacked extra top space is what made these
+   pages look more inset at the top than the content page, and gave an uneven
+   bottom. Zero it so the only gutter is the .Polaris-Page padding
+   (--app-page-padding), i.e. an even margin on all four sides incl. the
+   bottom — exactly like the content page. */
+.Polaris-Page__Content:has(> .app-page-content) {
+  padding: 0 !important;
+}
+
 /* Visibility Utilities for Mobile/Tablet/Desktop */
 /* Breakpoint bei 900px: Unter 900px = Mobile Dropdown, ab 900px = Desktop Sidebar */
 .mobile-only {

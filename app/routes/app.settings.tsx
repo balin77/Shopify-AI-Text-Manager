@@ -1013,9 +1013,10 @@ export default function SettingsPage() {
   return (
     <Page fullWidth>
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
-          --app-page-padding) — no extra wrapper padding here, so the margin
-          stays as tight as the content page. */}
-      <div>
+          --app-page-padding); .app-page-content zeroes Polaris' own
+          Page__Content inset so the gutter is even on all sides (incl. top
+          and bottom), matching the content page. */}
+      <div className="app-page-content">
         <div style={{ display: "flex", gap: "1rem" }}>
           {/* Left Sidebar - Hidden on mobile */}
           <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
