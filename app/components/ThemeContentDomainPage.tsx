@@ -46,9 +46,14 @@ interface ThemeContentDomainPageProps {
    * repeatable `rt` query params (GET) / form fields (POST).
    */
   resourceTypes?: string[];
+  /**
+   * Optional informational banner rendered above the editor (e.g. a pointer to
+   * related content that lives in another rubric).
+   */
+  infoBanner?: React.ReactNode;
 }
 
-export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes }: ThemeContentDomainPageProps) {
+export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner }: ThemeContentDomainPageProps) {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = data;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
@@ -935,6 +940,9 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {infoBanner && (
+          <div style={{ padding: "0.5rem 1rem 0" }}>{infoBanner}</div>
+        )}
         {selectedEmbedTechnical && (
           <div style={{ padding: "0.5rem 1rem 0" }}>
             <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
