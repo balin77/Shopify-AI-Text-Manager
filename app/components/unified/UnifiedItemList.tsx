@@ -270,6 +270,10 @@ export function UnifiedItemList({
         baseHeight = window.innerHeight - navHeight - headerHeight - 32;
       }
 
+      // Extra breathing room at the bottom of the list so the last row never
+      // sits flush against the card edge.
+      baseHeight -= 20;
+
       // Calculate item dimensions
       const minItemHeight = showThumbnails ? 62 : 54;
       const maxItemHeight = 82;
