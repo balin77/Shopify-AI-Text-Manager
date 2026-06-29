@@ -84,6 +84,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   }
 
   const skippedKeys: string[] = [];
+  const noDigestKeys: string[] = [];
   const failedDeleteKeys: string[] = [];
   const shopifyErrors: string[] = [];
 
@@ -119,6 +120,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           resourceId: fieldResId,
         });
         skippedKeys.push(key);
+        noDigestKeys.push(key);
         continue;
       }
 
@@ -126,8 +128,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       translationsByResource.get(fieldResId)!.push({ key, value, locale, translatableContentDigest: digest });
     }
 
-    // Send one translationsRegister call per resource ID
-    const shopifyErrors: string[] = [];
+    // Send one translationsRegister call per resource ID.
+    // NOTE: reuse the function-scope `shopifyErrors` declared above — do NOT
+    // re-declare it here. A local `const shopifyErrors` shadowed the outer one,
+    // so the final `if (shopifyErrors.length > 0)` check (which reads the outer
+    // variable) was always empty and partial Shopify rejections were reported
+    // as success: true — the silent-error bug on Theme-Standardinhalte saves.
     for (const [resId, translationInputs] of translationsByResource) {
       if (translationInputs.length === 0) continue;
 
@@ -175,8 +181,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       }
     }
 
-    // Delete cleared translations from Shopify via translationsRemove
-    const failedDeleteKeys: string[] = [];
+    // Delete cleared translations from Shopify via translationsRemove.
+    // NOTE: reuse the function-scope `failedDeleteKeys` declared above — do NOT
+    // re-declare it. A shadowing local meant failed deletions were never
+    // excluded from the local DB delete below, silently diverging DB ↔ Shopify.
     for (const [resId, keysToDelete] of deletionsByResource) {
       if (keysToDelete.length === 0) continue;
 
@@ -220,6 +228,15 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         failedDeleteKeys.push(...keysToDelete);
         shopifyErrors.push(errorMsg);
       }
+    }
+
+    // Surface no-digest skips too: these keys are saved to neither Shopify nor
+    // the local DB (they are filtered out of the DB upsert below), so without an
+    // error the user would be told the save succeeded while nothing persisted.
+    if (noDigestKeys.length > 0) {
+      shopifyErrors.push(
+        `Missing Shopify digest for ${noDigestKeys.length} field(s) — try reloading the content first: ${noDigestKeys.slice(0, 5).join(", ")}`
+      );
     }
 
     const totalShopifyOps =
