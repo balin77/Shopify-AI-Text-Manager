@@ -940,11 +940,13 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {/* Top padding (16px) matches the editor page's grey padding border
+            below, so the gap nav→banner equals the gap banner→content. */}
         {infoBanner && (
-          <div style={{ padding: "0.5rem 1rem 0" }}>{infoBanner}</div>
+          <div style={{ padding: "1rem 1rem 0" }}>{infoBanner}</div>
         )}
         {selectedEmbedTechnical && (
-          <div style={{ padding: "0.5rem 1rem 0" }}>
+          <div style={{ padding: "1rem 1rem 0" }}>
             <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
               {t.content?.appEmbedWarning ||
                 "This is app-embed content (mostly CSS selectors and configuration). Translating it may break the embed on your storefront."}

@@ -24,7 +24,6 @@ import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -389,7 +388,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
 
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
-  const { getTotalNavHeight } = useNavigationHeight();
 
   // Stable ref for handleItemSelect to avoid re-triggering useEffect
   const handleItemSelectRef = useRef(handlers.handleItemSelect);
@@ -449,14 +447,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       <div
         className="unified-content-editor-layout"
         style={{
-          // Definite viewport-based height (not height:100%): the Polaris
-          // <Page> wrapper above breaks the percentage-height chain, which let
-          // the editor column stretch via flexbox while the item-list column —
-          // relying on height:100% — fell back to content height and rendered
-          // shorter. The nav now lives in the layout route, so the available
-          // space is the viewport minus the measured nav bars (same pattern as
-          // app.menus.tsx). Both columns now fill this definite height equally.
-          height: `calc(100vh - ${getTotalNavHeight()}px)`,
+          // Fill the real available space via flexbox instead of a viewport
+          // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
+          // made a column flex container in content-editor-global.css, so this
+          // row grows to exactly what's left after the page's grey padding
+          // border AND any banner rendered above the editor (e.g. the
+          // "Technical content" warning on theme pages). A viewport calc
+          // (100vh - nav) could account for neither, so it overshot and clipped
+          // the bottom of both columns. minHeight:0 lets the columns scroll
+          // internally instead of stretching the row.
+          flex: 1,
           minHeight: 0,
           display: "flex",
           gap: "16px",
