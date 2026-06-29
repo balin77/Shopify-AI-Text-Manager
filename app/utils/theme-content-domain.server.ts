@@ -134,10 +134,14 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
 
     // Map each field key → owning Shopify resource (a group may span resources).
     const keyToResourceId = new Map<string, string>();
+    const keyToResourceType = new Map<string, string>();
     for (const group of themeGroups) {
       const items = group.translatableContent as unknown as TranslatableField[];
       if (Array.isArray(items)) {
-        for (const item of items) keyToResourceId.set(item.key, group.resourceId);
+        for (const item of items) {
+          keyToResourceId.set(item.key, group.resourceId);
+          if (group.resourceType) keyToResourceType.set(item.key, group.resourceType);
+        }
       }
     }
 
@@ -152,6 +156,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
       firstGroup,
       resourceId,
       keyToResourceId,
+      keyToResourceType,
     };
 
     try {

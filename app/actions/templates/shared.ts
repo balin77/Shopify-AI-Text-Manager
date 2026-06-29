@@ -12,6 +12,8 @@ export interface ThemeContentRow {
   id: string;
   shop: string;
   resourceId: string;
+  /** Shopify translatable resource type, e.g. "ONLINE_STORE_THEME_JSON_TEMPLATE" or "ONLINE_STORE_THEME_LOCALE_CONTENT". */
+  resourceType?: string;
   groupId: string;
   groupName: string;
   groupIcon: string;
@@ -35,4 +37,6 @@ export interface TemplatesActionContext {
   resourceId: string;
   /** Maps each translatable field key → the Shopify resource ID that owns it */
   keyToResourceId: Map<string, string>;
+  /** Maps each translatable field key → the Shopify resource type that owns it */
+  keyToResourceType: Map<string, string>;
 }

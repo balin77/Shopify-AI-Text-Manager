@@ -8,9 +8,40 @@ import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+
+  // Resolve the theme file that owns a translatable key's PRIMARY value.
+  // JSON-template keys (section.*, collections.json.*) live in templates/*.json.
+  // Locale-content keys (accessibility.*, general.*, shopify.checkout.*, …) live
+  // in the theme's default locale file; these have no section/collections pattern,
+  // so keyToFilename alone returns null and they were silently dropped from the
+  // Shopify push — the silent-save bug.
+  //
+  // Shopify theme locale filenames are LOWERCASED (e.g. locales/pt-br.default.json
+  // for a "pt-BR" shop locale), so we lowercase the constructed name. The real
+  // default-locale file is also discovered by glob below (isLocaleDefaultFile),
+  // which additionally covers themes whose default locale differs from the shop's
+  // primary locale.
+  // ONLINE_STORE_THEME is a ~99% duplicate of LOCALE_CONTENT (same accessibility.*
+  // / general.* keys, same default locale file), so legacy rows of that type route
+  // to the same file — this also makes resolution deterministic when a key exists
+  // under both types (keyToResourceType's "last group wins" no longer matters).
+  const LOCALE_CONTENT_TYPES = new Set(["ONLINE_STORE_THEME_LOCALE_CONTENT", "ONLINE_STORE_THEME"]);
+  const resolveFilename = (key: string): string | null => {
+    const templateFile = keyToFilename(key);
+    if (templateFile) return templateFile;
+    if (LOCALE_CONTENT_TYPES.has(keyToResourceType.get(key) ?? "")) {
+      return `locales/${primaryLocale.toLowerCase()}.default.json`;
+    }
+    return null;
+  };
+
+  // Matches any theme default-locale file (exactly one exists per theme),
+  // independent of the locale code or its casing.
+  const isLocaleDefaultFile = (filename: string): boolean =>
+    /^locales\/[^/]+\.default\.json$/i.test(filename);
 
   const changedFields: string[] = getFormJSON<string[]>(formData, "changedFields") || [];
 
@@ -265,6 +296,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       );
     }
 
+    // Tracks which changed primary keys actually reached Shopify. Only these are
+    // written to the local DB (STEP 2b), and only an empty failure set returns
+    // success — never report a save the storefront never received.
+    const pushedPrimaryKeys = new Set<string>();
+    const failedPrimaryKeys: string[] = [];
+    const primarySaveErrors: string[] = [];
+
     // STEP 2a: Push primary locale changes to Shopify via themeFilesUpsert
     {
       const oldValueMap = new Map<string, string>();
@@ -282,7 +320,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       for (const key of Object.keys(updatedFields)) {
         if (oldValueMap.get(key) === updatedFields[key]) continue;
 
-        const filename = keyToFilename(key);
+        const filename = resolveFilename(key);
         if (filename) {
           const existing = keysByFilename.get(filename) || [];
           existing.push(key);
@@ -292,11 +330,20 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
       }
 
+      // Unmapped keys are changed primary values we cannot push to any theme file.
+      // They must NOT be silently saved to the local DB as success — that is the
+      // exact divergence (DB updated, Shopify untouched, user told "saved") this
+      // handler now guards against. Record them as failures so the response below
+      // reports success: false.
       if (unmappedKeys.length > 0) {
-        logger.warn("[TEMPLATES] Keys could not be mapped to filenames — skipping Shopify push", {
+        logger.error("[TEMPLATES] Changed primary keys could not be mapped to a theme file — cannot push to Shopify", {
           context: "Templates",
           unmappedKeys,
         });
+        failedPrimaryKeys.push(...unmappedKeys);
+        primarySaveErrors.push(
+          `These fields are not editable in the primary language (no matching theme file): ${unmappedKeys.slice(0, 5).join(", ")}`
+        );
       }
 
       if (keysByFilename.size > 0) {
@@ -320,7 +367,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
 
         const themeId = mainTheme.node.id;
+        // If a default-locale file is involved, also request it by glob so we get
+        // the theme's ACTUAL default-locale file even when its name differs from
+        // our constructed locales/<primaryLocale>.default.json (locale casing, or
+        // a theme whose default locale ≠ the shop's primary locale).
+        const hasLocaleDefault = Array.from(keysByFilename.keys()).some(isLocaleDefaultFile);
         const filenames = Array.from(keysByFilename.keys());
+        if (hasLocaleDefault) filenames.push("locales/*.default.json");
 
         logger.info("[TEMPLATES] Reading theme files from Shopify", {
           context: "Templates",
@@ -344,10 +397,24 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
         const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
         const fileShopifyErrors: string[] = [];
+        // Keys whose new value was actually written into a file we are about to
+        // upsert. Promoted to pushedPrimaryKeys only once Shopify accepts the upsert.
+        const stagedKeys: string[] = [];
 
         for (const [filename, keys] of keysByFilename) {
+          // Template files match by exact name. For the default-locale file, the
+          // theme may name it differently than our constructed name (casing, or a
+          // different default locale), so fall back to the single *.default.json
+          // node Shopify returned for the glob.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const fileNode = fileNodes.find((n: any) => n.filename === filename);
+          const fileNode =
+            fileNodes.find((n: any) => n.filename === filename) ??
+            (isLocaleDefaultFile(filename)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              ? fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename))
+              : undefined);
+          // Write back to the file Shopify actually returned, never our guess.
+          const actualFilename: string = fileNode?.filename ?? filename;
 
           logger.debug("[TEMPLATES] Theme file node details", {
             context: "Templates",
@@ -370,6 +437,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               rawContentType: typeof rawContent,
             });
             fileShopifyErrors.push(`File not found or not a text file: ${filename}`);
+            failedPrimaryKeys.push(...keys);
             continue;
           }
 
@@ -387,6 +455,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               contentPreview: rawContent.substring(0, 500),
             });
             fileShopifyErrors.push(`Invalid JSON in file: ${filename}`);
+            failedPrimaryKeys.push(...keys);
             continue;
           }
 
@@ -400,6 +469,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           }
 
           const replacedKeys = replaceValuesInJson(fileJson, replacements);
+          const missedKeys = keys.filter((k) => !replacedKeys.has(k));
 
           logger.info("[TEMPLATES] Value replacement results", {
             context: "Templates",
@@ -407,12 +477,23 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             totalKeys: keys.length,
             replacedCount: replacedKeys.size,
             replacedKeys: Array.from(replacedKeys),
-            missedKeys: keys.filter((k) => !replacedKeys.has(k)),
+            missedKeys,
           });
 
+          // A missed key means our stored old value no longer matches the theme
+          // file (drifted content) — we could not locate it to replace, so it
+          // cannot be saved. Report it instead of silently dropping it.
+          if (missedKeys.length > 0) {
+            failedPrimaryKeys.push(...missedKeys);
+            primarySaveErrors.push(
+              `Could not locate the current value in the theme file for: ${missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
+            );
+          }
+
           if (replacedKeys.size > 0) {
+            stagedKeys.push(...replacedKeys);
             filesToUpsert.push({
-              filename,
+              filename: actualFilename,
               body: {
                 type: "TEXT",
                 value: hasLeadingComment
@@ -441,6 +522,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               const errors = upsertData.data.themeFilesUpsert.userErrors;
               logger.error("[TEMPLATES] themeFilesUpsert returned errors", { context: "Templates", errors });
               fileShopifyErrors.push(...errors.map((e: { message: string }) => e.message));
+              // Shopify rejected the batch — none of the staged keys persisted.
+              failedPrimaryKeys.push(...stagedKeys);
             } else {
               logger.info("[TEMPLATES] themeFilesUpsert succeeded", {
                 context: "Templates",
@@ -448,6 +531,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                   (f: { filename: string }) => f.filename
                 ),
               });
+              // Confirmed persisted to Shopify — safe to mirror into the local DB.
+              for (const k of stagedKeys) pushedPrimaryKeys.add(k);
             }
           } catch (upsertError) {
             const msg = upsertError instanceof Error ? upsertError.message : String(upsertError);
@@ -462,33 +547,29 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               );
             }
             fileShopifyErrors.push(msg);
+            failedPrimaryKeys.push(...stagedKeys);
           }
         }
 
         if (fileShopifyErrors.length > 0) {
-          logger.error("[TEMPLATES] Shopify rejected primary locale save — aborting without local DB update", {
+          logger.error("[TEMPLATES] Shopify rejected part of the primary locale save", {
             context: "Templates",
             errors: fileShopifyErrors,
           });
-          return json(
-            {
-              success: false,
-              error: `Shopify rejected the changes: ${fileShopifyErrors.join("; ")}`,
-              actionType: "updateContent",
-            },
-            { status: 500 }
-          );
+          primarySaveErrors.push(...fileShopifyErrors);
         }
       }
     }
 
     // STEP 2b: Update primary locale in local DB (translatableContent in ThemeContent)
+    // Only mirror keys Shopify actually accepted (pushedPrimaryKeys); keys that
+    // failed to push keep their old DB value so DB and storefront stay in sync.
     for (const group of themeGroups) {
       const content = (group.translatableContent as unknown) as TranslatableField[];
       let hasChanges = false;
 
       for (const item of content) {
-        if (updatedFields[item.key] !== undefined) {
+        if (updatedFields[item.key] !== undefined && pushedPrimaryKeys.has(item.key)) {
           item.value = updatedFields[item.key];
           hasChanges = true;
         }
@@ -509,17 +590,21 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       }
     }
 
-    // Delete translations for changed fields (they are now outdated)
-    if (changedFields.length > 0) {
+    // Delete translations for changed fields (they are now outdated).
+    // Only invalidate translations for fields whose primary value actually
+    // changed on Shopify — a field that failed to save still has matching
+    // primary content, so its translations must not be dropped.
+    const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
+    if (savedChangedFields.length > 0) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
-        keysToDelete: changedFields,
+        keysToDelete: savedChangedFields,
         groupId,
       });
 
       // STEP A: Delete from Shopify via translationsRemove
       const changedKeysByResource = new Map<string, string[]>();
-      for (const key of changedFields) {
+      for (const key of savedChangedFields) {
         const resId = keyToResourceId.get(key) || resourceId;
         const existing = changedKeysByResource.get(resId) || [];
         existing.push(key);
@@ -567,11 +652,30 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       // STEP B: Delete from local DB
       const deleteResult = await db.themeTranslation.deleteMany({
-        where: { shop: session.shop, groupId: groupId, key: { in: changedFields }, domain: domain },
+        where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain },
       });
       logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
     } else {
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
+    }
+
+    // Surface any primary fields that did NOT reach Shopify. Without this the
+    // handler would fall through to success: true while the storefront kept the
+    // old value — the silent-save bug on Theme-Standardinhalte (locale content).
+    if (failedPrimaryKeys.length > 0 || primarySaveErrors.length > 0) {
+      const message =
+        primarySaveErrors.length > 0
+          ? primarySaveErrors.join("; ")
+          : `Some fields could not be saved to Shopify: ${failedPrimaryKeys.slice(0, 5).join(", ")}`;
+      logger.error("[TEMPLATES] Primary locale save did not fully persist to Shopify", {
+        context: "Templates",
+        failedPrimaryKeys,
+        pushedCount: pushedPrimaryKeys.size,
+      });
+      return json(
+        { success: false, error: message, actionType: "updateContent" },
+        { status: 500 }
+      );
     }
   } else {
     // Update translations: batch upsert non-empty values, delete cleared values
