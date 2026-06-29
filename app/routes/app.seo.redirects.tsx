@@ -127,6 +127,13 @@ export default function SeoRedirects() {
       ? r.errors[createFetcher.data.error] || r.errors.createFailed
       : null;
 
+  // Row actions (create-from-404 / dismiss) report failures through rowFetcher;
+  // surface them too, otherwise a rejected create (e.g. empty target) is silent.
+  const rowError =
+    rowFetcher.data && !rowFetcher.data.ok
+      ? r.errors[rowFetcher.data.error] || r.errors.createFailed
+      : null;
+
   const submitSearch = () => {
     handleNavigate("/app/seo/redirects", { searchParams: new URLSearchParams(search ? { q: search } : {}) });
   };
@@ -150,6 +157,7 @@ export default function SeoRedirects() {
             <Text as="p" variant="bodySm" tone="subdued">
               {r.fourOhFourIntro}
             </Text>
+            {rowError && <Banner tone="critical">{rowError}</Banner>}
 
             {hits.length === 0 ? (
               <Text as="p" tone="subdued">
@@ -195,6 +203,7 @@ export default function SeoRedirects() {
                             <Button
                               variant="primary"
                               size="slim"
+                              disabled={!(hitTargets[hit.id] ?? "").trim()}
                               onClick={() =>
                                 rowFetcher.submit(
                                   {

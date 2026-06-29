@@ -65,13 +65,20 @@ const TYPE_TO_CONTENT_TYPE: Record<AuditType, ContentType> = {
   page: "pages",
 };
 
-/** Finding code → dashboard problem-bucket key. */
+// Finding code → dashboard problem-bucket key. Every non-success finding code
+// computeSeoScore can emit must map to a bucket here, otherwise the item counts
+// toward its score/worst-offender rank but is never explained in the "most
+// common problems" list. Length issues (too short / too long) share one bucket.
 const FINDING_TO_BUCKET: Record<string, string> = {
-  metaDescriptionMissing: "metaDescriptionMissing",
+  titleTooShort: "titleLength",
+  titleTooLong: "titleLength",
   seoTitleMissing: "seoTitleMissing",
   seoTitleTooLong: "seoTitleTooLong",
   descriptionMissing: "descriptionTooShort",
   descriptionTooShort: "descriptionTooShort",
+  metaDescriptionMissing: "metaDescriptionMissing",
+  metaDescriptionTooShort: "metaDescriptionLength",
+  metaDescriptionTooLong: "metaDescriptionLength",
   someImagesMissingAlt: "imagesMissingAlt",
 };
 
@@ -370,7 +377,9 @@ export async function analyzeStore(
   const worstOffenders = scored
     .filter((s) => s.row.issueCount > 0)
     .map((s) => s.row)
-    .sort((a, b) => a.score - b.score || b.issueCount - a.issueCount)
+    // Lowest score first, then most issues; id as a stable tiebreaker so the
+    // list order is deterministic across reloads.
+    .sort((a, b) => a.score - b.score || b.issueCount - a.issueCount || a.id.localeCompare(b.id))
     .slice(0, WORST_OFFENDERS_CAP);
 
   return {

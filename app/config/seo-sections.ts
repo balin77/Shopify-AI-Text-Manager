@@ -50,6 +50,13 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     labelKey: "redirects",
     kind: "tool",
   },
+  {
+    id: "hreflang",
+    path: "/app/seo/hreflang",
+    icon: "🌐",
+    labelKey: "hreflang",
+    kind: "audit",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */
