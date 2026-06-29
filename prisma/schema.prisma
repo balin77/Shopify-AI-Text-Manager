@@ -924,3 +924,30 @@ model GoogleSearchConsoleConnection {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+// SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
+// design (it is served at keyLocation for verification), so it is intentionally
+// stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+model SeoIndexNowConfig {
+  shop            String    @id
+  key             String // public IndexNow token (plaintext by design)
+  keyLocation     String // URL where the key file is served (app-proxy on the shop host)
+  enabled         Boolean   @default(true)
+  lastSubmittedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// SEO tab Phase 8: debounced queue of changed storefront URLs to submit to
+// IndexNow (fed by product/collection webhooks, drained on demand). Shop-scoped;
+// purged in redactShopData.
+model SeoIndexNowQueue {
+  id        String   @id @default(cuid())
+  shop      String
+  url       String   @db.Text
+  urlHash   String // dedupe key (sha256 of url)
+  createdAt DateTime @default(now())
+
+  @@unique([shop, urlHash])
+  @@index([shop])
+}

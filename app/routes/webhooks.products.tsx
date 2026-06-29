@@ -63,6 +63,13 @@ async function processWebhookAsync(
 
     if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
       await syncService.syncProduct(productId);
+      // SEO tab Phase 8: queue the changed URL for IndexNow (no-op unless the
+      // shop enabled IndexNow). Best-effort — never let it break the webhook.
+      try {
+        const { enqueueResource } = await import("../services/seo/index-now.service");
+        const prod = await db.product.findUnique({ where: { id: productId }, select: { handle: true } });
+        if (prod?.handle) await enqueueResource(db, shop, shop, "product", prod.handle);
+      } catch { /* ignore */ }
     } else if (topic === "PRODUCTS_DELETE") {
       await syncService.deleteProduct(productId);
     }

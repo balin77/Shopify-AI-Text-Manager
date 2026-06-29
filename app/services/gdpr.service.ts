@@ -181,7 +181,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 38 models in prisma/schema.prisma:
+ * Coverage of all 40 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
@@ -192,7 +192,8 @@ export async function redactCustomerData(
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
  *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
- *      GoogleSearchConsoleConnection              (all scoped by `shop`)
+ *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
+ *      SeoIndexNowQueue                           (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -416,6 +417,17 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${gscConnectionsDeleted.count} GSC connections`);
+
+    // SEO tab Phase 8: IndexNow config + submit queue (shop-scoped).
+    const indexNowConfigsDeleted = await tx.seoIndexNowConfig.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowConfigsDeleted.count} IndexNow configs`);
+
+    const indexNowQueueDeleted = await tx.seoIndexNowQueue.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowQueueDeleted.count} IndexNow queue rows`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

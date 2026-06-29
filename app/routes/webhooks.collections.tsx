@@ -64,6 +64,13 @@ async function processWebhookAsync(
 
     if (topic === "COLLECTIONS_CREATE" || topic === "COLLECTIONS_UPDATE") {
       await syncService.syncCollection(collectionId);
+      // SEO tab Phase 8: queue the changed URL for IndexNow (no-op unless the
+      // shop enabled IndexNow). Best-effort — never let it break the webhook.
+      try {
+        const { enqueueResource } = await import("../services/seo/index-now.service");
+        const coll = await db.collection.findUnique({ where: { id: collectionId }, select: { handle: true } });
+        if (coll?.handle) await enqueueResource(db, shop, shop, "collection", coll.handle);
+      } catch { /* ignore */ }
     } else if (topic === "COLLECTIONS_DELETE") {
       await syncService.deleteCollection(collectionId);
     }

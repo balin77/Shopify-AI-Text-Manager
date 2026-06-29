@@ -80,6 +80,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "tool",
     planGate: "basic",
   },
+  {
+    id: "indexNow",
+    path: "/app/seo/index-now",
+    icon: "⚡",
+    labelKey: "indexNow",
+    kind: "integration",
+    planGate: "pro",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */
