@@ -18,7 +18,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
-import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
+import { getPlanDisplayName as getPlanDisplayNameUtil, getMinimumPlanForContentType } from "../utils/planUtils";
 import { getActiveRubric, getActiveEntry, type ContentEntryDef } from "../config/content-rubrics";
 import { RubricNavigation } from "./RubricNavigation";
 import { useEffect, useRef } from "react";
@@ -28,7 +28,7 @@ export function ContentTypeNavigation() {
   const matches = useMatches();
   const { handleNavigate } = useAppNavigation();
   const { t } = useI18n();
-  const { canAccessContentType, getNextPlanUpgrade, plan, getMaxProducts } = usePlan();
+  const { canAccessContentType, plan, getMaxProducts } = usePlan();
   const { mainNavHeight, rubricNavHeight, setContentNavHeight } = useNavigationHeight();
   const navRef = useRef<HTMLDivElement>(null);
 
@@ -117,13 +117,18 @@ export function ContentTypeNavigation() {
           {entries.map((entry) => {
             const hasAccess = canAccessContentType(entry.planContentType);
             const isActive = activeEntry?.id === entry.id;
-            const nextPlan = getNextPlanUpgrade();
             const isPlanLocked = !hasAccess;
 
-            const nextPlanName = nextPlan ? getPlanDisplayNameUtil(nextPlan) : "";
+            // Use the plan that actually unlocks THIS content type — not just
+            // the next tier up. Free → Basic for pages/policies/delivery, but
+            // Free → Pro for articles/templates/menus/…, and Free → Max for
+            // direct translations. getNextPlanUpgrade() would wrongly say
+            // "Basic" for all of them.
+            const requiredPlan = getMinimumPlanForContentType(entry.planContentType);
+            const requiredPlanName = requiredPlan ? getPlanDisplayNameUtil(requiredPlan) : "";
             const upgradeHint =
-              isPlanLocked && nextPlan
-                ? t.content.upgradeToAccessFeature.replace("{plan}", nextPlanName)
+              isPlanLocked && requiredPlan
+                ? t.content.upgradeToAccessFeature.replace("{plan}", requiredPlanName)
                 : undefined;
 
             const showProductCount = entry.id === "products" && productCount !== undefined;
