@@ -31,32 +31,72 @@ Klick- und Impressionsdaten und reichert damit die verfolgten Keywords an.
    (z. B. „ContentPilot SEO").
 2. **APIs & Dienste → Bibliothek** → „**Google Search Console API**" suchen → **Aktivieren**.
 
+> ⚠️ **Reihenfolge wichtig:** Die Search-Console-**Scopes tauchen in der Auswahl
+> erst auf, nachdem die API aktiviert ist** (Schritt 4 unten). Wer die API
+> vergisst, sucht die Scopes vergeblich. Alternativ lassen sie sich manuell
+> eintragen (siehe 2.4).
+
 ---
 
-## 2. OAuth-Zustimmungsbildschirm (Consent Screen)
+## Orientierung: Googles neue Oberfläche („Google Auth Platform")
 
-1. **APIs & Dienste → OAuth-Zustimmungsbildschirm**.
-2. **Nutzertyp: „Extern"** wählen.
+Google hat den früheren einseitigen **„OAuth-Zustimmungsbildschirm"** in mehrere
+Unterseiten aufgeteilt (linke Navigation unter **APIs & Dienste →
+OAuth-Zustimmungsbildschirm** bzw. **Google Auth Platform**). Deshalb finden
+ältere Anleitungen die Punkte nicht mehr. So liegt jetzt was:
+
+| Was du brauchst | Unterseite (neue UI) |
+|---|---|
+| Nutzertyp „Extern", App-Name, Logo | **Branding** (Übersicht) |
+| **Testnutzer** eintragen | **Zielgruppe** (Audience) |
+| **Auf Produktiv veröffentlichen** | **Zielgruppe** (Audience) → „App veröffentlichen" |
+| **Scopes** hinzufügen | **Datenzugriff** (Data access) |
+| **OAuth-Client / Redirect-URIs** | **Clients** |
+
+> 💡 **Fürs reine Testen brauchst du weder die Scopes hier einzutragen noch zu
+> veröffentlichen** — die angeforderten Scopes kommen aus dem App-Code
+> (`scope=`-Parameter). Pflicht ist nur: **Testnutzer = deine Adresse** (2.5).
+
+---
+
+## 2. OAuth-Zustimmungsbildschirm
+
+1. **APIs & Dienste → OAuth-Zustimmungsbildschirm** (bzw. **Google Auth Platform**).
+   Falls noch nichts existiert: **„Erste Schritte" / Konfigurieren** und die
+   Branding-Basisdaten ausfüllen (App-Name, Support-E-Mail).
+2. **Nutzertyp: „Extern"** wählen (unter **Zielgruppe**, falls separat abgefragt).
    - „Intern" gibt es nur mit Google-Workspace-Organisation und wäre für eine
      öffentliche App ohnehin falsch. **Extern** = jeder Google-Account darf
      verbinden — genau das, was wir wollen. **Kein Workspace nötig.**
-3. App-Infos ausfüllen (Name, Support-E-Mail, Logo optional).
-4. **Scopes** hinzufügen — die App verwendet genau diese:
+3. **Branding** ausfüllen (Name, Support-E-Mail, Logo optional).
+4. **Scopes** unter **Datenzugriff** → **„Bereiche hinzufügen oder entfernen"**.
+   Die App verwendet genau diese:
    - `https://www.googleapis.com/auth/webmasters.readonly` (Analytics + URL-Inspection)
    - `https://www.googleapis.com/auth/webmasters` (Sitemap einreichen)
    - `openid`, `email` (nur um das verbundene Google-Konto anzuzeigen)
 
+   > Findest du sie in der Tabelle nicht? Zwei Gründe: (a) die **API ist nicht
+   > aktiviert** (Schritt 2 in Abschnitt 1), oder (b) du nutzt das Feld
+   > **„Bereiche manuell hinzufügen"** ganz unten — dort die beiden
+   > `webmasters`-URLs einfügen → „Zur Tabelle hinzufügen" → „Aktualisieren".
+   >
    > Diese Search-Console-Scopes gelten bei Google als **„sensibel"** (nicht
    > „restricted"). Für die **Produktion** braucht es daher Marken-/App-Verifizierung,
-   > aber **kein** teures Drittanbieter-Sicherheits-Audit.
-5. **Testnutzer** hinzufügen: **trage hier deine eigene Google-Adresse** (und ggf.
-   weitere Test-Händler) ein. Im Testmodus blockt Google sonst auch **dich**.
+   > aber **kein** teures Drittanbieter-Sicherheits-Audit. Fürs Testen ist das
+   > Eintragen optional.
+5. **Testnutzer** unter **Zielgruppe** → **„Testnutzer" → Hinzufügen**: **trage
+   deine eigene Google-Adresse** (und ggf. weitere Test-Händler) ein. Im
+   Testmodus blockt Google sonst auch **dich** (`access_denied`).
 
 ---
 
 ## 3. OAuth-Client erstellen
 
-1. **APIs & Dienste → Anmeldedaten → Anmeldedaten erstellen → OAuth-Client-ID**.
+> Neue UI: entweder **APIs & Dienste → Anmeldedaten** *oder*
+> **OAuth-Zustimmungsbildschirm → Clients → „Client erstellen"** — beide führen
+> zum selben Dialog.
+
+1. **Anmeldedaten erstellen → OAuth-Client-ID** (bzw. **Clients → Client erstellen**).
 2. **Anwendungstyp: „Webanwendung"**.
 3. **Autorisierte Redirect-URIs** → **exakt** diese eine URI eintragen:
 
@@ -99,7 +139,9 @@ Nach dem Setzen die App **neu starten/deployen**.
 
 ## 5. Testmodus vs. Produktion
 
-Bei „Extern" entscheidet der **Veröffentlichungsstatus**, nicht der Nutzertyp:
+Bei „Extern" entscheidet der **Veröffentlichungsstatus**, nicht der Nutzertyp.
+Den findest du unter **OAuth-Zustimmungsbildschirm → Zielgruppe (Audience)** —
+dort steht „Veröffentlichungsstatus: Test" mit dem Button **„App veröffentlichen"**:
 
 | Status | Wer darf verbinden? | Verifizierung | Haken |
 |---|---|---|---|
@@ -137,7 +179,9 @@ liefert Google `invalid_grant` → die App löscht die Verbindung und zeigt
 | Verbindung „abgelaufen/widerrufen" | Im Testmodus nach 7 Tagen erwartbar. Einfach **„Neu verbinden"**. |
 | „nicht konfiguriert" in der Sektion | `GOOGLE_OAUTH_*`-Env-Vars fehlen oder unvollständig → siehe Schritt 4. |
 | Verbunden, aber keine Daten | Property in der Search Console nicht/zu neu verifiziert, oder noch keine 2–3 Tage Daten. Wir fragen nur **finalisierte** Daten ab (`dataState: final`). |
-| `access_denied` / Login blockiert | Eigene Adresse als **Testnutzer** eintragen (Schritt 2.5). |
+| `access_denied` / Login blockiert | Eigene Adresse als **Testnutzer** eintragen (Zielgruppe → Testnutzer). |
+| Search-Console-**Scopes nicht in der Liste** | API nicht aktiviert (Abschnitt 1) **oder** falsche Unterseite — sie liegen unter **Datenzugriff**; sonst „Bereiche manuell hinzufügen" mit den `webmasters`-URLs. |
+| **„Veröffentlichen" nicht gefunden** | Neue UI: **OAuth-Zustimmungsbildschirm → Zielgruppe** → „App veröffentlichen". Fürs Testen aber **nicht** nötig. |
 
 ---
 
