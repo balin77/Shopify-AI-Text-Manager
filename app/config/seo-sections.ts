@@ -72,6 +72,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "integration",
     planGate: "pro",
   },
+  {
+    id: "aeo",
+    path: "/app/seo/aeo",
+    icon: "🤖",
+    labelKey: "aeo",
+    kind: "tool",
+    planGate: "basic",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */
