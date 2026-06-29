@@ -252,37 +252,50 @@ export function UnifiedItemList({
   // Calculate items per page and item height based on available space
   useEffect(() => {
     const calculateDynamicPagination = () => {
-      // Measure the actual scroll area (the flex:1 list container). Its
-      // clientHeight is exactly the space left after the header AND the real
-      // pagination bar — so we never have to estimate either, and the items
-      // fill flush to the bottom with no clipped strip. This is safe now that
-      // the column is bounded (min-height:0 + overflow:hidden on
-      // .unified-item-list-container): the card can't grow with its content, so
-      // measuring the scroll area can't run away the way it did before.
-      let availableHeight = listContainerRef.current?.clientHeight ?? 0;
+      // Measure the OUTER wrapper, never the flex:1 scroll area. The wrapper has
+      // a fixed height (it fills the bounded column), so measuring it can never
+      // feed back into itself. Measuring the scroll child instead caused a
+      // flicker loop: a scrollbar / pagination toggle changed its size → the
+      // observer fired → we recomputed → the size changed again…
+      const wrapperHeight = wrapperRef.current?.clientHeight;
+      const headerHeight = headerRef.current?.offsetHeight || 100;
 
-      // Fallback for the very first paint, before the scroll area is laid out:
-      // derive it from the wrapper (or the window) minus the measured header.
-      if (!availableHeight || availableHeight < 80) {
-        const headerHeight = headerRef.current?.offsetHeight || 100;
-        const wrapperHeight = wrapperRef.current?.clientHeight;
-        availableHeight = (wrapperHeight && wrapperHeight > 200)
-          ? wrapperHeight - headerHeight
-          : window.innerHeight - getTotalNavHeight() - headerHeight - 32;
+      // Space below the header, before reserving the pagination bar.
+      let baseHeight: number;
+      if (wrapperHeight && wrapperHeight > 200) {
+        baseHeight = wrapperHeight - headerHeight;
+      } else {
+        // Fallback for the very first paint, before the wrapper has a height.
+        const navHeight = getTotalNavHeight();
+        baseHeight = window.innerHeight - navHeight - headerHeight - 32;
       }
-
-      // Tiny safety so sub-pixel rounding of per-item heights never spills one
-      // pixel past the clip (which would either show a scrollbar or shave the
-      // last row).
-      availableHeight -= 2;
 
       // Calculate item dimensions
       const minItemHeight = showThumbnails ? 62 : 54;
       const maxItemHeight = 82;
+      // Reserve the REAL pagination bar height (measured once it has rendered;
+      // ~70px otherwise). A hardcoded 56 was too small, so a paginated list
+      // overfilled and the bottom row was shaved by the column's clip.
+      const paginationHeight = paginationRef.current?.offsetHeight || 70;
 
-      // How many items fit, then the exact per-item height to fill the space.
-      const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
-      const exactItemHeight = availableHeight / itemsThatFit;
+      // First pass: assume the pagination bar is hidden and the full base height
+      // is available for items.
+      let availableHeight = baseHeight;
+      let itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+
+      // If the full set won't fit on one page, the pagination bar WILL render and
+      // consume space — recompute once with it reserved. Deterministic (it reads
+      // the item count, not the live size of the flex child), so it settles in
+      // one pass and can't feedback-loop. Reserving the bar only when it shows
+      // keeps single-page lists flush with the bottom instead of leaving a gap.
+      if (showPagination && items.length > itemsThatFit) {
+        availableHeight = baseHeight - paginationHeight;
+        itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+      }
+
+      // Exact per-item height to fill the space; 2px safety absorbs sub-pixel
+      // rounding so the last row is never shaved by the clip.
+      const exactItemHeight = (availableHeight - 2) / itemsThatFit;
       const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
 
       setDynamicItemsPerPage(itemsThatFit);
@@ -293,15 +306,12 @@ export function UnifiedItemList({
     const timer = setTimeout(calculateDynamicPagination, 150);
     window.addEventListener('resize', calculateDynamicPagination);
 
-    // Observe the wrapper (window/nav resize) and the scroll area (changes when
-    // the pagination bar toggles on/off). The column is bounded, so the scroll
-    // area only changes for those real reasons — never as runaway feedback from
-    // our own item-count changes — and any pagination toggle settles in a step.
+    // Observe ONLY the wrapper — its height changes on window/nav resize, never
+    // as a side effect of our own item-count changes, so no feedback loop.
     let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
+    if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(calculateDynamicPagination);
-      if (wrapperRef.current) resizeObserver.observe(wrapperRef.current);
-      if (listContainerRef.current) resizeObserver.observe(listContainerRef.current);
+      resizeObserver.observe(wrapperRef.current);
     }
 
     return () => {
