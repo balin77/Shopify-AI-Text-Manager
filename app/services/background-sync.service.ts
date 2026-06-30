@@ -934,48 +934,12 @@ export class BackgroundSyncService {
     });
 
     if (existingRows.length === 0) {
-      // DISCOVERY PATH: the group isn't in the local DB yet. This happens when a
-      // brand-new theme resource (e.g. a freshly added static section / a new
-      // app embed) exists in Shopify but was never picked up by a full sync.
-      // The per-group refresh below can only update *known* resourceIds, so it
-      // can't materialise a group it has never seen. Rather than failing the
-      // reload, delegate to the authoritative theme discovery (the exact path
-      // the scheduler + initial sync use), which creates the missing group and
-      // its translations, then return the freshly-discovered data.
-      //
-      // Safety: syncAllThemes() is domain-scoped to 'theme' and guarded by a
-      // 0-resources health check (it aborts rather than wiping when Shopify
-      // returns nothing), and a per-shop coalescing lock keeps it from
-      // interleaving with the scheduler's concurrent run. The existing-group
-      // path (and its group-scoped stale-delete) is left completely untouched.
-      logger.info(
-        `[BackgroundSync] Theme group "${groupId}" not found locally — running full theme discovery to detect new resources`
-      );
-      await this.syncAllThemes();
-
-      const discoveredContent = await db.themeContent.findMany({
-        where: { shop: this.shop, groupId: groupId, domain: "theme" },
-      });
-
-      if (discoveredContent.length === 0) {
-        // Still nothing after a full discovery → the group genuinely does not
-        // exist in Shopify (e.g. a stale id from the client). Preserve the
-        // original "not found" contract so callers behave as before.
-        throw new Error(`Theme group not found: ${groupId}`);
-      }
-
-      const discoveredTranslations = await db.themeTranslation.findMany({
-        where: { shop: this.shop, groupId: groupId },
-      });
-
-      logger.debug(
-        `[BackgroundSync] Discovered theme group ${groupId} via full theme sync (${discoveredContent.length} resource(s), ${discoveredTranslations.length} translations)`
-      );
-
-      return {
-        themeContent: discoveredContent,
-        translations: discoveredTranslations,
-      };
+      // Per-group reload is a Refresh of a KNOWN group only. Discovery of a
+      // brand-new theme group (e.g. a freshly added static section) is the job
+      // of the list-level "sync from Shopify" action, which runs the full
+      // syncAllThemes() discovery. Keep this path a single-resource refresh so
+      // the two reload buttons stay cleanly separated.
+      throw new Error(`Theme group not found: ${groupId}`);
     }
 
     const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];

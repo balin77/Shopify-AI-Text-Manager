@@ -1,20 +1,16 @@
 /**
- * Unit Tests for BackgroundSyncService.syncSingleThemeGroup() — theme discovery
+ * Unit Tests for BackgroundSyncService — theme group reload + theme-sync guard
  *
- * Background: the per-group "Reload" button used to call findMany({ groupId })
- * and throw "Theme group not found" whenever the group had no local rows. That
- * made the reload unable to discover a brand-new theme resource (e.g. a freshly
- * added static section) — it could only refresh groups the DB already knew.
- *
- * The fix delegates the unknown-group case to syncAllThemes() (the authoritative
- * discovery path used by the scheduler + initial sync), then re-reads the group.
- * The "not found" contract is preserved only when the group is STILL absent
- * after a full discovery (a genuinely stale id).
- *
- * Constraints this guards:
- *  - the existing-group refresh path is left completely untouched (no discovery,
- *    its own group-scoped writes still run);
- *  - discovery is only triggered for a genuinely unknown group.
+ * Two cleanly separated reload paths:
+ *  - syncSingleThemeGroup(): the per-item ("language bar") reload. It is a
+ *    Refresh of a KNOWN group only — it throws "Theme group not found" for an
+ *    unknown group and never triggers a full discovery. Discovery of brand-new
+ *    groups is the job of the list-level "sync from Shopify" button, which runs
+ *    syncAllThemes() via /api/sync-content.
+ *  - syncAllThemes(): the full theme discovery. It runs an aggressive
+ *    cross-group cleanup, so concurrent runs for the same shop (e.g. the
+ *    scheduler tick and a list-button click) must coalesce onto one run instead
+ *    of interleaving their findMany/deleteMany.
  *
  * DB is mocked (dynamic import("../db.server")); the gateway + sync-utils are
  * mocked so no network is touched.
@@ -86,41 +82,22 @@ const makeService = () => new BackgroundSyncService({ graphql: vi.fn() } as neve
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('BackgroundSyncService.syncSingleThemeGroup() — discovery', () => {
+describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbm.themeTranslationFindMany.mockResolvedValue([]);
     dbm.transaction.mockResolvedValue([]);
   });
 
-  it('runs full theme discovery for an unknown group instead of throwing', async () => {
-    const svc = makeService();
-    const syncAllSpy = vi.spyOn(svc, 'syncAllThemes').mockResolvedValue(1);
-
-    const discovered = [{ resourceId: 'gid://shopify/x/1', groupId: 'shared_new', domain: 'theme' }];
-    dbm.themeContentFindMany
-      .mockResolvedValueOnce([])          // existingRows: group unknown locally
-      .mockResolvedValueOnce(discovered); // discoveredContent: created by syncAllThemes
-    dbm.themeTranslationFindMany.mockResolvedValueOnce([
-      { id: 't1', resourceId: 'gid://shopify/x/1', groupId: 'shared_new', key: 'k', locale: 'de', value: 'v' },
-    ]);
-
-    const result = await svc.syncSingleThemeGroup('shared_new');
-
-    expect(syncAllSpy).toHaveBeenCalledTimes(1);
-    expect(result.themeContent).toEqual(discovered);
-    expect((result.translations as unknown[])).toHaveLength(1);
-    // Discovery path must NOT run the per-resource refresh writes.
-    expect(dbm.themeContentUpdate).not.toHaveBeenCalled();
-  });
-
-  it('throws "not found" only when the group is still absent after discovery', async () => {
+  it('throws "Theme group not found" for an unknown group and does NOT trigger discovery', async () => {
     const svc = makeService();
     const syncAllSpy = vi.spyOn(svc, 'syncAllThemes').mockResolvedValue(0);
-    dbm.themeContentFindMany.mockResolvedValue([]); // unknown before AND after discovery
+    dbm.themeContentFindMany.mockResolvedValueOnce([]); // group unknown locally
 
     await expect(svc.syncSingleThemeGroup('ghost')).rejects.toThrow('Theme group not found: ghost');
-    expect(syncAllSpy).toHaveBeenCalledTimes(1);
+    // Item-button reload stays a single-group refresh — discovery belongs to the
+    // list-level sync, not here.
+    expect(syncAllSpy).not.toHaveBeenCalled();
   });
 
   it('refreshes a known group without triggering discovery', async () => {
@@ -140,16 +117,6 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — discovery', () => {
     expect(syncAllSpy).not.toHaveBeenCalled();
     expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1); // known resource refreshed
     expect(result.themeContent).toEqual(existing);
-  });
-
-  it('propagates the error when discovery (syncAllThemes) aborts', async () => {
-    const svc = makeService();
-    vi.spyOn(svc, 'syncAllThemes').mockRejectedValue(
-      new Error('Shopify returned 0 theme resources but 5 exist locally - aborting to prevent data loss')
-    );
-    dbm.themeContentFindMany.mockResolvedValueOnce([]); // unknown group → triggers discovery
-
-    await expect(svc.syncSingleThemeGroup('shared_new')).rejects.toThrow('aborting to prevent data loss');
   });
 });
 

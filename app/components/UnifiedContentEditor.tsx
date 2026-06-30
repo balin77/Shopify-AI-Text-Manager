@@ -243,6 +243,39 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
+  // List-level "sync from Shopify" (discovery): trigger a real full sync of this
+  // content type from Shopify, THEN revalidate so newly-created items appear in
+  // the list. (The per-item ReloadButton in the language bar stays a single-item
+  // refresh.) Falls back to a plain revalidate for content types without a
+  // discovery endpoint.
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const handleSyncAll = useCallback(async () => {
+    if (!revalidator) return;
+    const ct = config.contentType;
+    const endpoint =
+      ct === "products"
+        ? "/api/sync-products"
+        : SYNC_CONTENT_TYPE[ct]
+          ? `/api/sync-content?types=${SYNC_CONTENT_TYPE[ct]}`
+          : null;
+    if (!endpoint) {
+      revalidator.revalidate();
+      return;
+    }
+    setIsDiscovering(true);
+    try {
+      const res = await fetch(endpoint, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // Don't block the revalidate — the DB may still hold fresher data than the
+      // current view even if the Shopify pull failed.
+      console.error("[UnifiedContentEditor] sync-from-Shopify failed:", err);
+    } finally {
+      setIsDiscovering(false);
+      revalidator.revalidate();
+    }
+  }, [revalidator, config.contentType]);
+
   // Check if a global AI action is currently running (affects all fields)
   // Uses global AI operations store — spinners persist across item navigation.
   const { isAllLocalesRunning: isAllLocalesActionRunning, isPerLocaleRunning: isPerLocaleActionRunning } =
@@ -482,8 +515,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          onSyncAll={revalidator ? () => revalidator.revalidate() : undefined}
-          isSyncing={revalidator?.state === "loading"}
+          onSyncAll={revalidator ? handleSyncAll : undefined}
+          isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
@@ -1185,6 +1218,25 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
 
   return "";
 }
+
+/**
+ * contentType → the `types` value for POST /api/sync-content, used by the
+ * list-level "sync from Shopify" (discovery) button. `products` is special-cased
+ * to its own /api/sync-products endpoint by the caller. Content types absent
+ * here have no full-discovery endpoint and fall back to a plain revalidate.
+ */
+const SYNC_CONTENT_TYPE: Record<string, string> = {
+  collections: "collections",
+  blogs: "articles",
+  pages: "pages",
+  policies: "policies",
+  templates: "themes",
+  metaobjects: "metaobjects",
+  system: "system",
+  delivery: "delivery",
+  onlineStoreExtras: "onlineStoreExtras",
+  sellingPlans: "sellingPlans",
+};
 
 function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
   const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
