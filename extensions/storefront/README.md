@@ -20,11 +20,53 @@ See [Shopify docs](https://shopify.dev/docs/apps/build/online-store/theme-app-ex
 
 ## Blocks
 
-| Handle                  | Type      | Purpose                                   |
-|-------------------------|-----------|-------------------------------------------|
-| `variant-gallery`       | app block | Variant-aware product gallery             |
-| `variant-gallery-embed` | app embed | Pre-paint FOUC fix for the native gallery |
-| `locale-switcher`       | app embed | Storefront language + currency picker     |
+| Handle                  | Type      | Purpose                                            |
+|-------------------------|-----------|----------------------------------------------------|
+| `variant-gallery`       | app block | Minimal inline variant gallery (main + thumbnails) |
+| `variant-gallery-embed` | app embed | Full variant gallery that replaces the native one  |
+| `locale-switcher`       | app embed | Storefront language + currency picker              |
+
+### Two variant-gallery flavours
+
+There are **two** independent variant-gallery implementations — don't confuse
+them when editing:
+
+- **`variant-gallery` (app block, `cp-variant-gallery`)** — the lightweight
+  option the merchant manually places in the theme editor. Renders a main image
+  plus a thumbnail strip and switches client-side on variant change. **No**
+  lightbox/zoom/carousel — it is intentionally minimal.
+
+- **`variant-gallery-embed` (app embed, `cp-embed-gallery`)** — the
+  full-featured gallery. It started life as a pre-paint FOUC fix but now
+  **replaces the theme's native product gallery in place** and provides:
+  - **Lightbox** (native `<dialog>`) + **2× click-zoom**, with the zoom mode
+    (`lightbox` / `hover` / `none`) inherited from the theme's `image_zoom`
+    section setting.
+  - Thumbnail carousel with prev/next arrows + mobile dot pagination.
+  - Native video (`<video>`), external video (YouTube/Vimeo `<iframe>`) and 3D
+    models (`<model-viewer>`).
+  - **Theme-settings inheritance** (Dawn): thumbnail position/layout, mobile
+    thumbnails, `media_fit`, `constrain_to_viewport`.
+  - Pre-paint FOUC handling for both initial load and AJAX variant switches.
+
+  The "pre-paint FOUC fix" label is historical — keep in mind this embed is now
+  the primary, fully-featured storefront gallery.
+
+#### Which one merchants actually get
+
+Both blocks are still shipped and both therefore still show up in the theme
+editor (the app block under "Add block" inside a product section, the app embed
+under "App embeds"). **The app only promotes the embed**, though: the Setup tab
+builds a deep link to `variant-gallery-embed` only
+([`SettingsSetupTab.tsx`](../../app/components/SettingsSetupTab.tsx), via
+`buildEmbedUrl("variant-gallery-embed")`) — nothing in the admin UI links to or
+mentions the `variant-gallery` app block. So in practice merchants are always
+guided to the full-featured embed; the app block is just the unpromoted minimal
+fallback (kept available for manual placement / backward compatibility).
+
+> **Gotcha:** both block schemas currently use the same `"name": "Variant Image
+> Gallery"`, so a merchant sees that label twice in the theme editor (once as a
+> block, once as an app embed). Rename one of them if this causes confusion.
 
 ## Identifiers worth knowing
 
