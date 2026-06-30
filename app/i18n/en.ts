@@ -297,6 +297,8 @@ export const en: Translation = {
     planLimitReached: "You've reached the maximum of {max} {items} for the {plan} plan.",
     upgradeForMore: "Upgrade to {plan} for more {items}.",
     noResults: "No items found",
+    noItemsFound: "No {items} found",
+    noItemsFoundMatching: 'No {items} found matching "{query}"',
     selectItem: "Select item",
     // Field labels
     fieldLabels: {

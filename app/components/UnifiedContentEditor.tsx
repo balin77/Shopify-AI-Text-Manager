@@ -493,6 +493,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             planLimitReached: t.content?.planLimitReached,
             upgradeForMore: t.content?.upgradeForMore,
             itemNoun,
+            noItemsFound: t.content?.noItemsFound,
+            noItemsFoundMatching: t.content?.noItemsFoundMatching,
           }}
           />
           </div>
@@ -943,13 +945,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               </div>
             </>
           ) : (
-            <Card padding="600">
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">
-                  {t.content?.selectFromList || "Select an item from the list"}
-                </Text>
-              </div>
-            </Card>
+            // Empty state fills the editor column so it matches the item-list
+            // column height when nothing is selected (both equal height when
+            // empty). The injected style forces the Polaris Card to full height
+            // and vertically centers the hint — mirrors UnifiedItemList's
+            // full-height card pattern. The item-list height is left untouched.
+            <div className="unified-editor-empty" style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <style dangerouslySetInnerHTML={{ __html: `
+                .unified-editor-empty > .Polaris-Card {
+                  height: 100% !important;
+                  display: flex !important;
+                  flex-direction: column !important;
+                }
+                .unified-editor-empty .Polaris-Card > div {
+                  flex: 1 !important;
+                  display: flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                }
+              ` }} />
+              <Card padding="600">
+                <div style={{ textAlign: "center", padding: "2rem" }}>
+                  <Text as="p" variant="headingLg" tone="subdued">
+                    {t.content?.selectFromList || "Select an item from the list"}
+                  </Text>
+                </div>
+              </Card>
+            </div>
           )}
         </div>
 

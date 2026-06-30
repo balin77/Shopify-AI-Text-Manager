@@ -294,6 +294,8 @@ export const de = {
     planLimitReached: "Sie haben das Maximum von {max} {items} für den Tarif {plan} erreicht.",
     upgradeForMore: "Führen Sie ein Upgrade auf {plan} durch, um mehr {items} hinzuzufügen.",
     noResults: "Keine Einträge gefunden",
+    noItemsFound: "Keine {items} gefunden",
+    noItemsFoundMatching: 'Keine {items} gefunden für „{query}"',
     selectItem: "Eintrag auswählen",
     // Field labels
     fieldLabels: {

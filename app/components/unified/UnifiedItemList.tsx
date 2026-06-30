@@ -145,6 +145,10 @@ interface UnifiedItemListProps {
     upgradeForMore?: string;
     /** Locale-cased resource noun for plan-limit banner ({items} placeholder) */
     itemNoun?: string;
+    /** Empty-list message ({items} placeholder) */
+    noItemsFound?: string;
+    /** Empty-search message ({items} + {query} placeholders) */
+    noItemsFoundMatching?: string;
   };
 }
 
@@ -729,8 +733,11 @@ export function UnifiedItemList({
             <div style={{ padding: "2rem", textAlign: "center" }}>
               <Text as="p" variant="bodySm" tone="subdued">
                 {searchQuery
-                  ? `No ${resourceName.plural.toLowerCase()} found matching "${searchQuery}"`
-                  : `No ${resourceName.plural.toLowerCase()} found`}
+                  ? (t.noItemsFoundMatching || 'No {items} found matching "{query}"')
+                      .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())
+                      .replace("{query}", searchQuery)
+                  : (t.noItemsFound || "No {items} found")
+                      .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())}
               </Text>
             </div>
           )}
