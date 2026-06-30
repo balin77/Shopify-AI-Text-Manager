@@ -217,7 +217,7 @@ export const es: Translation = {
     theme: "Textos del tema",
     themeDescription: "Traduce textos del tema como botones, etiquetas y mensajes",
     appEmbedWarningTitle: "Contenido técnico",
-    appEmbedWarning: "Este es contenido de app-embed (mayormente selectores CSS y configuración). Traducirlo puede romper la inserción en tu tienda — edítalo solo si sabes lo que haces.",
+    appEmbedWarning: "Este es contenido de app-embed. Puede contener selectores CSS y configuración técnica — traducirlo puede romper la inserción en tu tienda. Edítalo solo si sabes lo que haces.",
     deliveryPackingSlipNoticeTitle: "Plantilla de albarán",
     deliveryPackingSlipNotice: "Puedes traducir la plantilla de albarán en «Notificaciones».",
     noEntries: "No hay entradas disponibles",

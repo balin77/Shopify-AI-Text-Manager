@@ -218,7 +218,7 @@ export const en: Translation = {
     theme: "Theme Texts",
     themeDescription: "Translate theme texts like buttons, labels and messages",
     appEmbedWarningTitle: "Technical content",
-    appEmbedWarning: "This is app-embed content (mostly CSS selectors and configuration). Translating it may break the embed on your storefront — only edit if you know what you're doing.",
+    appEmbedWarning: "This is app-embed content. It can contain CSS selectors and technical configuration — translating it may break the embed on your storefront. Only edit if you know what you're doing.",
     deliveryPackingSlipNoticeTitle: "Packing slip template",
     deliveryPackingSlipNotice: "You can translate the packing slip template under \"Notifications\".",
     noEntries: "No entries available",

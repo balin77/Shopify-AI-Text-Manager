@@ -215,7 +215,7 @@ export const de = {
     theme: "Theme-Texte",
     themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
     appEmbedWarningTitle: "Technischer Inhalt",
-    appEmbedWarning: "Dies ist App-Einbettungs-Inhalt (überwiegend CSS-Selektoren und Konfiguration). Eine Übersetzung kann die Einbettung im Storefront beschädigen — nur ändern, wenn Sie wissen, was Sie tun.",
+    appEmbedWarning: "Dies ist App-Einbettungs-Inhalt. Er kann CSS-Selektoren und technische Konfiguration enthalten — eine Übersetzung kann die Einbettung im Storefront beschädigen. Nur ändern, wenn Sie wissen, was Sie tun.",
     deliveryPackingSlipNoticeTitle: "Lieferscheinvorlage",
     deliveryPackingSlipNotice: "Die Lieferscheinvorlage übersetzen Sie unter Benachrichtigungen.",
     noEntries: "Keine Einträge verfügbar",

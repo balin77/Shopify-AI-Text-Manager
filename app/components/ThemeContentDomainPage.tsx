@@ -949,7 +949,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           <div style={{ padding: "1rem 1rem 0" }}>
             <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
               {t.content?.appEmbedWarning ||
-                "This is app-embed content (mostly CSS selectors and configuration). Translating it may break the embed on your storefront."}
+                "This is app-embed content. It can contain CSS selectors and technical configuration — translating it may break the embed on your storefront."}
             </Banner>
           </div>
         )}
