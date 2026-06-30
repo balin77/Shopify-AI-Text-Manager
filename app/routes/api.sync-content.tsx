@@ -177,6 +177,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             results.onlineStoreExtras = 0;
           })
       );
+      // The Cookie-Banner tab's config.contentType is also "onlineStoreExtras",
+      // but its content is synced by a SEPARATE phase. Mirror syncAll() and run
+      // syncCookieBanner() here too, otherwise the Cookie-Banner tab's list-level
+      // sync would discover nothing for that tab. It gracefully no-ops when its
+      // (unstable) endpoint is unreachable, so it is safe to run unconditionally.
+      promises.push(
+        bgSyncService.syncCookieBanner()
+          .then(count => { results.cookieBanner = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Cookie-Banner sync failed', { context: "SyncContent", error: err.message });
+            results.cookieBanner = 0;
+          })
+      );
     }
 
     // Wait for all syncs to complete
