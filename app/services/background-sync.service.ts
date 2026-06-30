@@ -212,6 +212,12 @@ export interface SyncStats {
   duration: number;
 }
 
+// Per-shop in-flight full-theme-sync promises. A full theme sync runs an
+// aggressive cross-group cleanup, so two concurrent runs for the same shop must
+// not interleave — concurrent callers coalesce onto the in-flight run. Keyed by
+// shop; entries are always removed on settle (see syncAllThemes).
+const inFlightThemeSyncs = new Map<string, Promise<number>>();
+
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
 
@@ -928,7 +934,48 @@ export class BackgroundSyncService {
     });
 
     if (existingRows.length === 0) {
-      throw new Error(`Theme group not found: ${groupId}`);
+      // DISCOVERY PATH: the group isn't in the local DB yet. This happens when a
+      // brand-new theme resource (e.g. a freshly added static section / a new
+      // app embed) exists in Shopify but was never picked up by a full sync.
+      // The per-group refresh below can only update *known* resourceIds, so it
+      // can't materialise a group it has never seen. Rather than failing the
+      // reload, delegate to the authoritative theme discovery (the exact path
+      // the scheduler + initial sync use), which creates the missing group and
+      // its translations, then return the freshly-discovered data.
+      //
+      // Safety: syncAllThemes() is domain-scoped to 'theme' and guarded by a
+      // 0-resources health check (it aborts rather than wiping when Shopify
+      // returns nothing), and a per-shop coalescing lock keeps it from
+      // interleaving with the scheduler's concurrent run. The existing-group
+      // path (and its group-scoped stale-delete) is left completely untouched.
+      logger.info(
+        `[BackgroundSync] Theme group "${groupId}" not found locally — running full theme discovery to detect new resources`
+      );
+      await this.syncAllThemes();
+
+      const discoveredContent = await db.themeContent.findMany({
+        where: { shop: this.shop, groupId: groupId, domain: "theme" },
+      });
+
+      if (discoveredContent.length === 0) {
+        // Still nothing after a full discovery → the group genuinely does not
+        // exist in Shopify (e.g. a stale id from the client). Preserve the
+        // original "not found" contract so callers behave as before.
+        throw new Error(`Theme group not found: ${groupId}`);
+      }
+
+      const discoveredTranslations = await db.themeTranslation.findMany({
+        where: { shop: this.shop, groupId: groupId },
+      });
+
+      logger.debug(
+        `[BackgroundSync] Discovered theme group ${groupId} via full theme sync (${discoveredContent.length} resource(s), ${discoveredTranslations.length} translations)`
+      );
+
+      return {
+        themeContent: discoveredContent,
+        translations: discoveredTranslations,
+      };
     }
 
     const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];
@@ -1127,10 +1174,44 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
-   * Sync all theme content with translations
-   * This is complex as it groups theme resources by patterns
+   * Sync all theme content with translations (public entry point).
+   *
+   * Coalescing wrapper: a full theme sync runs the aggressive cross-group
+   * cleanup (deleteMany over the whole `domain:'theme'` set). Two of these
+   * running at once for the same shop — e.g. the ~40s scheduler tick and a
+   * manual reload that fell through to discovery (syncSingleThemeGroup) — could
+   * interleave their findMany/deleteMany and churn rows (delete-then-recreate).
+   * To prevent that, concurrent calls for the same shop share the in-flight run
+   * instead of starting a second one. The in-flight promise is keyed per shop
+   * and always cleared on settle so a failed run never wedges the next one.
+   *
+   * Note: a coalesced caller's onProgress is not invoked (it rides the existing
+   * run); only the run that actually started reports progress. This is fine —
+   * progress reporting only matters for the foreground initial sync, which does
+   * not overlap a background reload.
    */
   async syncAllThemes(onProgress?: ProgressCallback): Promise<number> {
+    const inFlight = inFlightThemeSyncs.get(this.shop);
+    if (inFlight) {
+      logger.debug(`[BackgroundSync] Theme sync already running for ${this.shop} — coalescing onto in-flight run`);
+      return inFlight;
+    }
+
+    const run = this.runFullThemeSync(onProgress);
+    inFlightThemeSyncs.set(this.shop, run);
+    try {
+      return await run;
+    } finally {
+      inFlightThemeSyncs.delete(this.shop);
+    }
+  }
+
+  /**
+   * The actual full theme sync. Do not call directly — go through
+   * syncAllThemes() so the per-shop coalescing guard applies.
+   * This is complex as it groups theme resources by patterns
+   */
+  private async runFullThemeSync(onProgress?: ProgressCallback): Promise<number> {
     logger.debug(`[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
 
     try {
