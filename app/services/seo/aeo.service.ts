@@ -73,13 +73,23 @@ function oneLine(text: string | null | undefined, max = 160): string {
 }
 
 /**
+ * Escape a string for use as Markdown link text: collapse whitespace (so a
+ * newline in a title can't split the line) and backslash-escape the characters
+ * that would corrupt `[text](url)` — `\`, `[`, `]`. Without this, a title like
+ * "Shoe [Red] (40% off)" breaks the link an AI crawler ingests.
+ */
+function mdText(text: string | null | undefined): string {
+  return (text || "").replace(/\s+/g, " ").trim().replace(/([\\[\]])/g, "\\$1");
+}
+
+/**
  * Build an llms.txt (Markdown) snapshot from the shop + top products/collections.
  * Pure. Follows the llms.txt convention: H1 name, a `>` summary, then sections.
  */
 export function buildLlmsTxt(input: LlmsTxtInput): string {
   const base = baseUrl(input.domain);
   const lines: string[] = [];
-  lines.push(`# ${input.shopName || "Shop"}`);
+  lines.push(`# ${oneLine(input.shopName) || "Shop"}`);
   lines.push("");
   if (input.description) {
     lines.push(`> ${oneLine(input.description, 250)}`);
@@ -91,7 +101,8 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
     for (const p of input.products) {
       const url = base ? `${base}/products/${p.handle}` : `/products/${p.handle}`;
       const desc = oneLine(p.description);
-      lines.push(desc ? `- [${p.title}](${url}): ${desc}` : `- [${p.title}](${url})`);
+      const title = mdText(p.title);
+      lines.push(desc ? `- [${title}](${url}): ${desc}` : `- [${title}](${url})`);
     }
     lines.push("");
   }
@@ -100,7 +111,7 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
     lines.push("## Collections");
     for (const c of input.collections) {
       const url = base ? `${base}/collections/${c.handle}` : `/collections/${c.handle}`;
-      lines.push(`- [${c.title}](${url})`);
+      lines.push(`- [${mdText(c.title)}](${url})`);
     }
     lines.push("");
   }
@@ -187,9 +198,8 @@ export async function getMainThemeId(admin: AdminApiContext): Promise<string | n
   const res = await admin.graphql(GET_THEMES, { variables: { first: 50 } });
   const json: any = await res.json();
   const edges = json?.data?.themes?.edges ?? [];
-  const main =
-    edges.find((e: any) => e.node?.role === "MAIN") ??
-    edges.find((e: any) => e.node?.role === "PUBLISHED");
+  // The published theme is role MAIN (OnlineStoreThemeRole has no PUBLISHED).
+  const main = edges.find((e: any) => e.node?.role === "MAIN");
   return main?.node?.id ?? null;
 }
 

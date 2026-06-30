@@ -7,6 +7,9 @@ import {
   chunkUrls,
   submitUrls,
   collectStoreUrls,
+  drainQueue,
+  enqueueIndexNowUrl,
+  provisionIndexNow,
   INDEXNOW_MAX_URLS_PER_REQUEST,
 } from "~/services/seo/index-now.service";
 
@@ -74,6 +77,83 @@ describe("submitUrls", () => {
     const r = await submitUrls("s", "KEY", "https://s/k", ["https://s/products/a"]);
     expect(r.failed).toBe(1);
     expect(r.submitted).toBe(0);
+  });
+});
+
+describe("drainQueue — partial-failure safety", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("does NOT delete rows or bump lastSubmittedAt when any chunk fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500 })));
+    const deleteMany = vi.fn(async () => ({ count: 0 }));
+    const updateMany = vi.fn(async () => ({ count: 0 }));
+    const db = {
+      seoIndexNowConfig: {
+        findUnique: async () => ({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: true }),
+        updateMany,
+      },
+      seoIndexNowQueue: {
+        findMany: async () => [{ id: "q1", url: "https://s/products/a" }],
+        deleteMany,
+      },
+    } as any;
+    const r = await drainQueue(db, "s", "s");
+    expect(r.failed).toBeGreaterThan(0);
+    expect(deleteMany).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("clears the queue and stamps lastSubmittedAt on full success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
+    const deleteMany = vi.fn(async () => ({ count: 1 }));
+    const updateMany = vi.fn(async () => ({ count: 1 }));
+    const db = {
+      seoIndexNowConfig: {
+        findUnique: async () => ({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: true }),
+        updateMany,
+      },
+      seoIndexNowQueue: {
+        findMany: async () => [{ id: "q1", url: "https://s/products/a" }],
+        deleteMany,
+      },
+    } as any;
+    const r = await drainQueue(db, "s", "s");
+    expect(r.failed).toBe(0);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["q1"] } } });
+    expect(updateMany).toHaveBeenCalled();
+  });
+});
+
+describe("enqueueIndexNowUrl — no-op unless enabled", () => {
+  it("does nothing when there is no config", async () => {
+    const upsert = vi.fn();
+    const db = { seoIndexNowConfig: { findUnique: async () => null }, seoIndexNowQueue: { upsert } } as any;
+    await enqueueIndexNowUrl(db, "s", "https://s/products/a");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+  it("does nothing when config is disabled", async () => {
+    const upsert = vi.fn();
+    const db = {
+      seoIndexNowConfig: { findUnique: async () => ({ enabled: false }) },
+      seoIndexNowQueue: { upsert },
+    } as any;
+    await enqueueIndexNowUrl(db, "s", "https://s/products/a");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("provisionIndexNow — idempotent", () => {
+  it("returns the existing key without creating a new one", async () => {
+    const create = vi.fn();
+    const db = {
+      seoIndexNowConfig: {
+        findUnique: async () => ({ key: "EXISTING", keyLocation: "https://s/k" }),
+        create,
+      },
+    } as any;
+    const r = await provisionIndexNow(db, "s");
+    expect(r).toEqual({ key: "EXISTING", keyLocation: "https://s/k" });
+    expect(create).not.toHaveBeenCalled();
   });
 });
 

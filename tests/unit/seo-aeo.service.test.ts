@@ -21,6 +21,18 @@ describe("buildLlmsTxt", () => {
     expect(out.endsWith("\n")).toBe(true);
   });
 
+  it("escapes Markdown special characters and newlines in titles (link-injection)", () => {
+    const out = buildLlmsTxt({
+      shopName: "Acme",
+      domain: "shop.com",
+      products: [{ title: "Shoe [Red] (40% off)\nNEW", handle: "shoe" }],
+      collections: [],
+    });
+    expect(out).toContain("- [Shoe \\[Red\\] (40% off) NEW](https://shop.com/products/shoe)");
+    // the raw, unescaped bracket form must NOT appear
+    expect(out).not.toContain("[Shoe [Red]");
+  });
+
   it("does not double-prefix an https domain and omits empty sections", () => {
     const out = buildLlmsTxt({
       shopName: "Acme",

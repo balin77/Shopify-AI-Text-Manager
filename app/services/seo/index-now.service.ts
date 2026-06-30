@@ -14,6 +14,12 @@
  * caps keep a store's total URL count well under 10k, so no background task is
  * needed. If catalogs ever exceed that, move drainQueue/submitAll into a Task.
  *
+ * Host: everything (submit host, urlList, keyLocation) uses the myshopify host
+ * so they share a host as IndexNow requires. Caveat: for a store on a custom
+ * primary domain the submitted myshopify URLs 301 to the canonical domain —
+ * Bing/IndexNow follow the redirect, so this works, but a future enhancement
+ * could resolve the primary domain and submit canonical URLs instead.
+ *
  * Pure helpers (key gen, submit body, chunking, URL building) are unit-tested.
  */
 
@@ -81,6 +87,19 @@ function urlHash(url: string): string {
 
 export async function getIndexNowConfig(db: PrismaClient, shop: string) {
   return db.seoIndexNowConfig.findUnique({ where: { shop } });
+}
+
+/**
+ * Cheap PK-indexed check used by webhooks to short-circuit BEFORE the (otherwise
+ * wasted) handle lookup for the vast majority of shops that never enabled
+ * IndexNow. Selects a single column on the shop-PK row.
+ */
+export async function isIndexNowEnabled(db: PrismaClient, shop: string): Promise<boolean> {
+  const config = await db.seoIndexNowConfig.findUnique({
+    where: { shop },
+    select: { enabled: true },
+  });
+  return !!config?.enabled;
 }
 
 export async function provisionIndexNow(
