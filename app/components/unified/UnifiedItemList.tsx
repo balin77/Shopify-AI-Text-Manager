@@ -546,7 +546,7 @@ export function UnifiedItemList({
                   <Popover
                     active={sortPopoverActive}
                     activator={
-                      <Tooltip content={t.sortTooltip || "Einträge sortieren"}>
+                      <Tooltip content={t.sortTooltip || "Einträge sortieren"} zIndexOverride={1200}>
                         <Button
                           icon={SortIcon}
                           variant="plain"
@@ -589,7 +589,7 @@ export function UnifiedItemList({
                   </Popover>
                 )}
                 {onSyncAll && (
-                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}>
+                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"} zIndexOverride={1200}>
                     <Button
                       icon={RefreshIcon}
                       onClick={onSyncAll}
