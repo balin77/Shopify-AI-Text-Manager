@@ -362,6 +362,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     const pushedPrimaryKeys = new Set<string>();
     const failedPrimaryKeys: string[] = [];
     const primarySaveErrors: string[] = [];
+    // The value ACTUALLY written into the theme file per key. May differ from
+    // updatedFields[key] when autofix/normalize rewrote it (e.g. richtext
+    // normalization). STEP 2b mirrors THIS into the DB so the DB and the theme
+    // file stay byte-identical — otherwise the next primary save builds
+    // oldValueMap from the raw DB value, cannot find it in the (normalized) file,
+    // and reports the change as an unlocatable/failed key.
+    const pushedValueByKey = new Map<string, string>();
 
     // Merchant-selected handling of Shopify's richtext top-level-node rule for
     // theme-settings values (config/settings_data.json). See AISettings.themeRichtextMode.
@@ -484,6 +491,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           entry?: { filename: string; body: { type: string; value: string } };
           replacedKeys: string[];
           missedKeys: string[];
+          // Final value written per replaced key (post-normalization). Used to keep
+          // the DB mirror consistent with what actually landed in the theme file.
+          pushedValues: Map<string, string>;
           error?: string;
         } => {
           // Template files match by exact name. For the default-locale file, the
@@ -507,7 +517,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               keys,
               rawContentType: typeof rawContent,
             });
-            return { replacedKeys: [], missedKeys: [...keys], error: `File not found or not a text file: ${filename}` };
+            return { replacedKeys: [], missedKeys: [...keys], pushedValues: new Map(), error: `File not found or not a text file: ${filename}` };
           }
 
           const hasLeadingComment = leadingCommentRegex.test(rawContent);
@@ -522,7 +532,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               filename,
               contentPreview: rawContent.substring(0, 500),
             });
-            return { replacedKeys: [], missedKeys: [...keys], error: `Invalid JSON in file: ${filename}` };
+            return { replacedKeys: [], missedKeys: [...keys], pushedValues: new Map(), error: `Invalid JSON in file: ${filename}` };
           }
 
           const replacements = new Map<string, { oldValue: string; newValue: string; keyHint: string }>();
@@ -539,6 +549,14 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
           const replacedKeys = replaceValuesInJson(fileJson, replacements);
           const missedKeys = keys.filter((k) => !replacedKeys.has(k));
+
+          // Record the value that actually went into the file (post-normalization)
+          // for every replaced key, so STEP 2b can mirror the exact same value.
+          const pushedValues = new Map<string, string>();
+          for (const key of replacedKeys) {
+            const r = replacements.get(key);
+            if (r) pushedValues.set(key, r.newValue);
+          }
 
           logger.info("[TEMPLATES] Value replacement results", {
             context: "Templates",
@@ -563,7 +581,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                 }
               : undefined;
 
-          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys };
+          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys, pushedValues };
         };
 
         const runUpsert = async (
@@ -604,6 +622,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           if (result.entry) {
             stagedKeys.push(...result.replacedKeys);
             filesToUpsert.push(result.entry);
+            for (const [k, v] of result.pushedValues) pushedValueByKey.set(k, v);
           }
         }
 
@@ -638,6 +657,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                   f.filename === retryEntry.filename ? retryEntry : f
                 );
                 ({ errors, upsertedFilenames } = await runUpsert(retryFiles));
+                // The retry wrote NORMALIZED values for the settings-data keys —
+                // overwrite the raw first-pass values so the DB mirror matches the file.
+                for (const [k, v] of rebuilt.pushedValues) pushedValueByKey.set(k, v);
               }
             }
 
@@ -698,7 +720,11 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       for (const item of content) {
         if (updatedFields[item.key] !== undefined && pushedPrimaryKeys.has(item.key)) {
-          item.value = updatedFields[item.key];
+          // Mirror the value that actually landed in the theme file (normalized by
+          // autofix/normalize where applicable), NOT the raw submitted value — see
+          // pushedValueByKey. Falls back to the raw value for keys that were pushed
+          // without any rewrite.
+          item.value = pushedValueByKey.get(item.key) ?? updatedFields[item.key];
           hasChanges = true;
         }
       }
