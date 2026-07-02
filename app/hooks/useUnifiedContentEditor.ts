@@ -993,6 +993,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     targetLocales: string[];
     contextTitle: string;
     itemId: string;
+    // Source language of `sourceText`. Defaults to primaryLocale (standard
+    // primary-locale Accept & Translate). Set to the current foreign locale
+    // when translating an accepted foreign suggestion into the other locales.
+    sourceLocale?: string;
   } | null>(null);
 
   // Ref to store the accepted primary locale value during Accept & Translate flow
@@ -1553,8 +1557,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
-        const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
+        const { fieldKey, sourceText, targetLocales, contextTitle, itemId, sourceLocale } = pendingTranslationAfterSaveRef.current;
         pendingTranslationAfterSaveRef.current = null;
+
+        // Source language of the text being translated. For the standard
+        // primary-locale flow this is primaryLocale; for an accepted foreign
+        // suggestion it is the current foreign locale so the other locales are
+        // translated directly from the accepted text (no double translation).
+        const translateSourceLocale = sourceLocale ?? primaryLocale;
 
         debugLog.acceptAndTranslate(' Save completed, now starting translation');
 
@@ -1579,7 +1589,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             sourceText: sourceText,
             targetLocales: JSON.stringify(targetLocales),
             contextTitle: contextTitle,
-            primaryLocale,
+            // Server uses `primaryLocale` purely as the SOURCE language for the
+            // AI translation, not for save semantics — so we pass the actual
+            // source locale here (foreign locale for accepted foreign suggestions).
+            primaryLocale: translateSourceLocale,
           },
           fieldKey,
           (result) => {
