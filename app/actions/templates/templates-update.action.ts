@@ -147,6 +147,43 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       if (item.digest) digestMap.set(item.key, item.digest);
     }
 
+    // The cached digests above (from db.themeContent) go stale the moment the
+    // primary content changes on Shopify — e.g. a foreign-locale "Accept &
+    // Translate" writes the primary base value before registering the foreign
+    // translation. Registering with a stale digest fails with "Translatable
+    // content hash is invalid". Fetch fresh digests LIVE per resource (mirrors
+    // the AI translate handler's getCachedDigest) and prefer them over the cache.
+    const liveDigestCache = new Map<string, Map<string, string>>();
+    const fetchLiveDigest = async (resId: string, key: string): Promise<string> => {
+      if (!liveDigestCache.has(resId)) {
+        const map = new Map<string, string>();
+        try {
+          const resp = await admin.graphql(
+            `#graphql
+              query getTranslatableContent($resourceId: ID!) {
+                translatableResource(resourceId: $resourceId) {
+                  translatableContent { key digest }
+                }
+              }`,
+            { variables: { resourceId: resId } },
+          );
+          const d = await resp.json();
+          const content = d.data?.translatableResource?.translatableContent || [];
+          for (const c of content as Array<{ key: string; digest?: string }>) {
+            if (c.digest) map.set(c.key, c.digest);
+          }
+        } catch (digestErr) {
+          logger.warn("[TEMPLATES] Live digest fetch failed — falling back to cached digest", {
+            context: "Templates",
+            resourceId: resId,
+            error: digestErr instanceof Error ? digestErr.message : String(digestErr),
+          });
+        }
+        liveDigestCache.set(resId, map);
+      }
+      return liveDigestCache.get(resId)!.get(key) || "";
+    };
+
     const translationsByResource = new Map<
       string,
       Array<{ key: string; value: string; locale: string; translatableContentDigest: string }>
@@ -163,7 +200,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         continue;
       }
 
-      const digest = digestMap.get(key) || "";
+      // Prefer a fresh live digest; fall back to the cached one only if the
+      // live fetch produced nothing (network error or key not currently present).
+      const digest = (await fetchLiveDigest(fieldResId, key)) || digestMap.get(key) || "";
       if (!digest) {
         logger.warn("[TEMPLATES] No digest for key — skipping Shopify save", {
           context: "Templates",
