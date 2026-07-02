@@ -528,6 +528,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             itemNoun,
             noItemsFound: t.content?.noItemsFound,
             noItemsFoundMatching: t.content?.noItemsFoundMatching,
+            sortTooltip: t.content?.sortTooltip,
+            reloadAllTooltip: t.content?.reloadAllTooltip,
           }}
           />
           </div>
@@ -593,6 +595,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
                     sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
+                    reloadItemTooltip: t.content?.reloadItemTooltip,
                   }}
                 />
               </div>
@@ -697,6 +700,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}
                         locale={state.currentLanguage}
+                        tooltip={t.content?.reloadItemTooltip}
                         onReloadComplete={handleReloadComplete}
                         onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
                         revalidator={revalidator}

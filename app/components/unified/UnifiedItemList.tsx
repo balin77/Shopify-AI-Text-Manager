@@ -149,6 +149,10 @@ interface UnifiedItemListProps {
     noItemsFound?: string;
     /** Empty-search message ({items} + {query} placeholders) */
     noItemsFoundMatching?: string;
+    /** Tooltip for the sort button */
+    sortTooltip?: string;
+    /** Tooltip for the reload-all button */
+    reloadAllTooltip?: string;
   };
 }
 
@@ -542,13 +546,15 @@ export function UnifiedItemList({
                   <Popover
                     active={sortPopoverActive}
                     activator={
-                      <Button
-                        icon={SortIcon}
-                        variant="plain"
-                        onClick={toggleSortPopover}
-                        accessibilityLabel="Sort items"
-                        size="slim"
-                      />
+                      <Tooltip content={t.sortTooltip || "Einträge sortieren"}>
+                        <Button
+                          icon={SortIcon}
+                          variant="plain"
+                          onClick={toggleSortPopover}
+                          accessibilityLabel={t.sortTooltip || "Einträge sortieren"}
+                          size="slim"
+                        />
+                      </Tooltip>
                     }
                     onClose={closeSortPopover}
                     preferredAlignment="right"
@@ -583,14 +589,15 @@ export function UnifiedItemList({
                   </Popover>
                 )}
                 {onSyncAll && (
-                  <Button
-                    icon={RefreshIcon}
-                    variant="plain"
-                    onClick={onSyncAll}
-                    loading={isSyncing}
-                    accessibilityLabel="Sync from Shopify"
-                    size="slim"
-                  />
+                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}>
+                    <Button
+                      icon={RefreshIcon}
+                      onClick={onSyncAll}
+                      loading={isSyncing}
+                      accessibilityLabel={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}
+                      size="slim"
+                    />
+                  </Tooltip>
                 )}
                 {showAddButton && onAddItem && (
                   <Button

@@ -58,6 +58,7 @@ interface MobileToolbarProps {
     translating?: string;
     clearAll?: string;
     sendImageToAI?: string;
+    reloadItemTooltip?: string;
   };
 }
 
@@ -159,6 +160,7 @@ export function MobileToolbar({
             resourceId={reloadResourceId}
             resourceType={reloadResourceType}
             locale={reloadLocale}
+            tooltip={t.reloadItemTooltip}
             onReloadComplete={onReloadComplete}
             revalidator={revalidator}
           />
