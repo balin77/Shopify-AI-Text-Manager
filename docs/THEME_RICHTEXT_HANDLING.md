@@ -83,6 +83,20 @@ does (and avoids the extra round-trip).
 The setting only affects primary-language theme settings in
 `config/settings_data.json`. Product/collection/page content is untouched.
 
+### DB ↔ theme-file consistency (important)
+
+When autofix/normalize rewrites a value, the **local DB mirror must store the
+rewritten value, not the raw submitted one**. The write path (`buildFileEntry`)
+returns `pushedValues` — the exact value written into the file per key — which is
+collected into `pushedValueByKey` (and overwritten with the normalized value on
+the autofix retry). STEP 2b mirrors `pushedValueByKey` into `ThemeContent`.
+
+If the DB instead stored the raw value, it would diverge from the theme file:
+the next primary save builds `oldValueMap` from the DB, `replaceValuesInJson`
+cannot find that raw old value in the (normalized) file, and the change is
+reported as an unlocatable/failed key (`failedPrimaryKeys`, `pushedCount: 0`) with
+the form stuck dirty. Keep DB and file byte-identical.
+
 ## 4. Save-error handling coverage (app-wide)
 
 Scope of what happens when a merchant saves a **wrongly-formatted value**. This is
