@@ -32,8 +32,18 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   const resolveFilename = (key: string): string | null => {
     const templateFile = keyToFilename(key);
     if (templateFile) return templateFile;
-    if (LOCALE_CONTENT_TYPES.has(keyToResourceType.get(key) ?? "")) {
+    const resourceType = keyToResourceType.get(key) ?? "";
+    if (LOCALE_CONTENT_TYPES.has(resourceType)) {
       return `locales/${primaryLocale.toLowerCase()}.default.json`;
+    }
+    // Shared/static sections (the "Statische Abschnitte" tab) live in the theme's
+    // config/settings_data.json under current.sections.*. Their keys look like
+    // section.<sectionId>.<blockId>.<setting> with NO ".json." segment, so
+    // keyToFilename can't map them — route by resource type instead. Without this
+    // every primary-language save of a static section was reported as an unmapped
+    // key and never pushed to Shopify (the silent-drop bug).
+    if (resourceType === "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS") {
+      return "config/settings_data.json";
     }
     return null;
   };
