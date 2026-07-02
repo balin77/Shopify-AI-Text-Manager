@@ -214,6 +214,16 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
   }
 
+  // Locales that should be TRANSLATED (and returned) but NOT persisted here.
+  // Used by foreign-locale "Accept & Translate": the shop's primary locale is
+  // included as a target so the batch AI call also produces the primary-language
+  // value, but the primary base content is saved by the client (via updateContent),
+  // not registered as a foreign translation. Empty for all normal flows.
+  const skipSaveLocalesJson = getFormString(formData, "skipSaveLocales");
+  const skipSaveLocales = new Set(
+    skipSaveLocalesJson ? safeJsonParse<string[]>(skipSaveLocalesJson, []) : []
+  );
+
   const MAX_TARGET_LOCALES = 50;
   if (targetLocales.length > MAX_TARGET_LOCALES) {
     return json(
@@ -490,6 +500,10 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             locale,
             response: isCacheHit ? `${translatedValue} (cache)` : translatedValue,
           });
+
+          // Translate-and-return only (e.g. primary locale for the client to save
+          // as base content) — skip Shopify + DB persistence for this locale.
+          if (skipSaveLocales.has(locale)) continue;
 
           // Save to Shopify for templates
           if (contentType === 'templates' && templateGroupId) {
@@ -977,6 +991,10 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
           translations[locale] = translatedValue;
           aiResponses.push({ locale, response: translatedValue });
+
+          // Translate-and-return only (e.g. primary locale for the client to save
+          // as base content) — skip Shopify + DB persistence for this locale.
+          if (skipSaveLocales.has(locale)) continue;
 
           // For templates: Send to Shopify AND save to database
           if (contentType === 'templates' && templateGroupId) {

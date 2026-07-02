@@ -74,7 +74,7 @@ export interface FieldHandlerProps {
   isSaveFromTranslateRef: { current: boolean };
   /** Tracks the fieldKey of a copy save so the response handler can clear the loading state. */
   pendingCopyFieldKeyRef: { current: string | null };
-  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string; sourceLocale?: string } | null };
+  pendingTranslationAfterSaveRef: { current: { fieldKey: string; sourceText: string; targetLocales: string[]; contextTitle: string; itemId: string } | null };
   acceptedPrimaryValueRef: { current: { fieldKey: string; value: string } | null };
   initialLoadSuccessfulRef: { current: boolean };
   retryCountRef: { current: number };
@@ -953,80 +953,72 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     }
     const translationKey = field.translationKey;
 
-    const targetOthers = enabledLanguages.filter((l) => l !== primaryLocale && l !== L);
+    // The foreign flow uses hand-built saves (not performAutoSave), so the
+    // deletion-suppression flag isn't needed. Clear it so a subsequent manual
+    // save isn't affected.
+    setIsAcceptAndTranslateFlow(false);
 
-    // Persist the accepted foreign text EXACTLY in `L` (overlay refs + Shopify/DB).
-    const saveForeignExact = () => {
-      // Overlay update (localTranslationsRef, deletedTranslationKeysRef, baselines)
-      const transResult = dataLoader.onTranslateFieldComplete(
-        fieldKey,
-        translationKey,
-        suggestion,
-        L,
-        editableValuesRef.current
-      );
-      if (transResult.updatedValues) setEditableValues(transResult.updatedValues);
+    // Update the `L` overlay AND the change-detection baseline IMMEDIATELY so the
+    // accepted field is not flagged "dirty" — everything here saves automatically,
+    // so the Save button must stay inactive.
+    const transResult = dataLoader.onTranslateFieldComplete(
+      fieldKey,
+      translationKey,
+      suggestion,
+      L,
+      editableValuesRef.current
+    );
+    if (transResult.updatedValues) setEditableValues(transResult.updatedValues);
 
-      const foreignSaveValues = { ...editableValuesRef.current, [fieldKey]: suggestion };
-      const foreignForm: Record<string, string> = {
-        action: "updateContent",
-        itemId: requestItemId,
-        locale: L,
-        primaryLocale,
-      };
-      Object.assign(foreignForm, buildFieldsForSave(foreignSaveValues, L));
-      // Always include the accepted field (buildFieldsForSave may filter it out
-      // due to stale originalLoadedValuesRef timing during async callbacks).
-      foreignForm[fieldKey] = suggestion;
-      savedLocaleRef.current = L;
-      savedItemIdRef.current = requestItemId;
-      isSavePendingRef.current = true;
-      isSaveFromTranslateRef.current = true;
-      safeSubmit(foreignForm, { method: "POST" });
-      // Reset the baseline so the just-saved field isn't re-sent on the next save.
-      originalLoadedValuesRef.current = { ...foreignSaveValues };
+    // Persist the accepted foreign text EXACTLY in `L`.
+    const foreignSaveValues = { ...editableValuesRef.current, [fieldKey]: suggestion };
+    const foreignForm: Record<string, string> = {
+      action: "updateContent",
+      itemId: requestItemId,
+      locale: L,
+      primaryLocale,
     };
+    Object.assign(foreignForm, buildFieldsForSave(foreignSaveValues, L));
+    // Always include the accepted field (buildFieldsForSave may filter it out
+    // due to stale originalLoadedValuesRef timing during async callbacks).
+    foreignForm[fieldKey] = suggestion;
+    savedLocaleRef.current = L;
+    savedItemIdRef.current = requestItemId;
+    isSavePendingRef.current = true;
+    isSaveFromTranslateRef.current = true;
+    safeSubmit(foreignForm, { method: "POST" });
+    originalLoadedValuesRef.current = { ...foreignSaveValues };
 
-    // Translate the accepted foreign text into the primary language, then save
-    // it as primary base content and queue translation of the other locales.
-    debugLog.acceptAndTranslate(' Foreign locale: translating accepted text into primary language first');
+    // ONE AI call: translate the accepted text into the primary language AND the
+    // other foreign locales in a single batch. The server persists the OTHER
+    // locales as translations but SKIPS the primary locale (skipSaveLocales) and
+    // returns it, so the client saves it as base content (below).
+    const targetOthers = enabledLanguages.filter((l) => l !== primaryLocale && l !== L);
+    const allTargets = [primaryLocale, ...targetOthers];
+
+    debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
     submitAIAction(
       {
-        action: "translateField",
+        action: "translateFieldToAllLocales",
         itemId: requestItemId,
         fieldType: fieldKey,
         sourceText: suggestion,
-        targetLocale: primaryLocale,
-        // Server treats `primaryLocale` purely as the SOURCE language for the
-        // AI call — passing `L` here yields the correct `L -> primary` direction.
+        targetLocales: JSON.stringify(allTargets),
+        // Translate the primary too, but don't persist it as a foreign
+        // translation — the client saves it as base content below.
+        skipSaveLocales: JSON.stringify([primaryLocale]),
+        contextTitle,
+        // Server treats `primaryLocale` as the SOURCE language for the AI call.
         primaryLocale: L,
       },
       fieldKey,
       (result) => {
         if (selectedItemIdRef.current !== requestItemId) return;
-        const primaryTranslated = ((result.translatedValue as string) || "").trim();
+        const translations = (result.translations as Record<string, string>) || {};
 
-        // 1. Save the accepted foreign text exactly in `L`.
-        saveForeignExact();
-
-        // 2. Queue translation of the OTHER foreign locales AFTER a save
-        //    completes (post-save effect consumes this ref). Source is `L`.
-        if (targetOthers.length > 0) {
-          pendingTranslationAfterSaveRef.current = {
-            fieldKey,
-            sourceText: suggestion,
-            sourceLocale: L,
-            targetLocales: targetOthers,
-            contextTitle,
-            itemId: requestItemId,
-          };
-        } else {
-          // Nothing else to translate — end the flow once saves finish.
-          setIsAcceptAndTranslateFlow(false);
-        }
-
-        // 3. Save the primary base content (this field only, NO changedFields
-        //    → existing foreign translations are preserved).
+        // Save the primary-language value as BASE content (this field only, NO
+        // changedFields → existing foreign translations are preserved).
+        const primaryTranslated = (translations[primaryLocale] || "").trim();
         if (primaryTranslated) {
           const primaryForm: Record<string, string> = {
             action: "updateContent",
@@ -1035,36 +1027,62 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
             primaryLocale,
             [fieldKey]: primaryTranslated,
           };
-          // Products reject any primary-locale update that doesn't carry a
-          // non-empty title (updatePrimaryProduct). A single-field primary save
-          // for a NON-title field would 400, so include the real primary title.
+          // Products reject any primary-locale update without a non-empty title
+          // (updatePrimaryProduct); include the real primary title for non-title
+          // single-field saves.
           if (config.contentType === "products" && fieldKey !== "title") {
             primaryForm.title = getItemFieldValue(selectedItem!, "title", primaryLocale, config);
           }
           if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
             primaryForm.policyType = selectedItem.type;
           }
-          // IMPORTANT: do NOT set savedLocaleRef to primaryLocale here.
-          // saveForeignExact() already submitted save A (locale L) immediately;
-          // this primary save is QUEUED behind it. `savedLocaleRef` is a single
-          // shared ref read by the save-response effect — overwriting it to the
-          // primary locale would make save A's response be processed under the
-          // wrong locale (and, for alt-text, leak the foreign value into the
-          // primary in-memory item). The server persists this save as primary
-          // via the form `locale` field regardless of the client-side ref, so
-          // leaving the ref on L is correct and benign for both saves.
+          // Keep savedLocaleRef on `L`: we are viewing L, the server persists
+          // this as primary via the form `locale` field, and processing the
+          // response under `primaryLocale` would pick a stale primary baseline.
+          savedLocaleRef.current = L;
           savedItemIdRef.current = requestItemId;
           isSavePendingRef.current = true;
           isSaveFromTranslateRef.current = true;
           safeSubmit(primaryForm, { method: "POST" });
         }
+
+        // Update overlays for the OTHER foreign locales (already saved server-side).
+        const othersTranslations: Record<string, string> = {};
+        for (const [loc, val] of Object.entries(translations)) {
+          if (loc !== primaryLocale) othersTranslations[loc] = val;
+        }
+        if (Object.keys(othersTranslations).length > 0) {
+          dataLoader.onTranslateFieldToAllLocalesComplete(translationKey, othersTranslations, L);
+        }
+
+        const failedLocales = (result.failedLocales as string[]) || [];
+        const fieldLabel = resolveFieldLabel(fieldKey);
+        if (failedLocales.length > 0) {
+          showInfoBox(
+            String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+              .replace("{successCount}", String(Object.keys(translations).length))
+              .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
+              .replace("{failedLocales}", failedLocales.join(", ")),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          showInfoBox(
+            t.common?.fieldTranslatedToLanguages
+              ?.replace("{fieldType}", fieldLabel)
+              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
+              || `${fieldLabel} translated`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
+
+        setIsLoadingData(true);
+        try { revalidatorRef.current.revalidate(); } catch {}
       },
       () => {
-        // Translating into the primary language failed. Still keep the accepted
-        // foreign text (save it), but skip the primary/other-locale propagation.
+        // Translation failed — the accepted foreign text is still saved in `L`.
         if (selectedItemIdRef.current !== requestItemId) return;
-        setIsAcceptAndTranslateFlow(false);
-        saveForeignExact();
       }
     );
     return;
