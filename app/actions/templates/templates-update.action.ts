@@ -36,6 +36,19 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (LOCALE_CONTENT_TYPES.has(resourceType)) {
       return `locales/${primaryLocale.toLowerCase()}.default.json`;
     }
+    // Theme-editor / settings labels (the "Theme-Einstellungen" tab, resourceType
+    // ONLINE_STORE_THEME_SETTINGS_CATEGORY) live in the theme's SCHEMA locale file
+    // (locales/<locale>.default.schema.json) — a SEPARATE file from the storefront
+    // locale file above. Keys look like "general.brand_description"
+    // (category.group.description) with NO section/collections pattern, so
+    // keyToFilename returns null. Without this branch every primary-language save of
+    // a theme setting was reported as an unmapped key and never pushed (the
+    // silent-drop bug on the Theme-Einstellungen tab). The real schema file is also
+    // discovered by glob below (isSchemaDefaultFile) so themes whose default schema
+    // locale differs from the shop's primary locale are handled too.
+    if (resourceType === "ONLINE_STORE_THEME_SETTINGS_CATEGORY") {
+      return `locales/${primaryLocale.toLowerCase()}.default.schema.json`;
+    }
     // Shared/static sections (the "Statische Abschnitte" tab) live in the theme's
     // config/settings_data.json under current.sections.*. Their keys look like
     // section.<sectionId>.<blockId>.<setting> with NO ".json." segment, so
@@ -52,6 +65,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   // independent of the locale code or its casing.
   const isLocaleDefaultFile = (filename: string): boolean =>
     /^locales\/[^/]+\.default\.json$/i.test(filename);
+
+  // Matches any theme default SCHEMA-locale file (locales/<locale>.default.schema.json).
+  // Distinct from isLocaleDefaultFile: that regex requires a ".default.json" suffix,
+  // which ".default.schema.json" does not have, so the two never overlap and neither
+  // glob returns the other's file.
+  const isSchemaDefaultFile = (filename: string): boolean =>
+    /^locales\/[^/]+\.default\.schema\.json$/i.test(filename);
 
   const changedFields: string[] = getFormJSON<string[]>(formData, "changedFields") || [];
 
@@ -382,8 +402,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // our constructed locales/<primaryLocale>.default.json (locale casing, or
         // a theme whose default locale ≠ the shop's primary locale).
         const hasLocaleDefault = Array.from(keysByFilename.keys()).some(isLocaleDefaultFile);
+        const hasSchemaDefault = Array.from(keysByFilename.keys()).some(isSchemaDefaultFile);
         const filenames = Array.from(keysByFilename.keys());
         if (hasLocaleDefault) filenames.push("locales/*.default.json");
+        if (hasSchemaDefault) filenames.push("locales/*.default.schema.json");
 
         logger.info("[TEMPLATES] Reading theme files from Shopify", {
           context: "Templates",
@@ -422,6 +444,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             (isLocaleDefaultFile(filename)
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               ? fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename))
+              : isSchemaDefaultFile(filename)
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              ? fileNodes.find((n: any) => typeof n.filename === "string" && isSchemaDefaultFile(n.filename))
               : undefined);
           // Write back to the file Shopify actually returned, never our guess.
           const actualFilename: string = fileNode?.filename ?? filename;
