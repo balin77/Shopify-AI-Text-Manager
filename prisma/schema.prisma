@@ -42,6 +42,16 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // How to handle Shopify's richtext rule ("all top level nodes must be
+  // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
+  // (e.g. Brand information → brand_description). Merchant-selectable in Settings.
+  //   "autofix"   (default) — try the save; if Shopify rejects for this reason,
+  //               normalize the offending value's top-level HTML and retry once.
+  //   "normalize" — always normalize HTML-bearing theme-settings values before
+  //               pushing, no retry round-trip.
+  //   "error"     — never rewrite merchant HTML; surface a clear instruction.
+  themeRichtextMode String @default("autofix")
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()

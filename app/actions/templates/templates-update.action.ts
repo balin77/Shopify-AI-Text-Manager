@@ -5,6 +5,7 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
 import { GET_THEMES, GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
 import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.utils";
+import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
@@ -323,6 +324,18 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     const failedPrimaryKeys: string[] = [];
     const primarySaveErrors: string[] = [];
 
+    // Merchant-selected handling of Shopify's richtext top-level-node rule for
+    // theme-settings values (config/settings_data.json). See AISettings.themeRichtextMode.
+    //   autofix   (default) — push raw; on the specific rejection, normalize + retry once.
+    //   normalize           — normalize HTML-bearing settings values before the first push.
+    //   error               — never rewrite; surface a clear instruction.
+    const SETTINGS_DATA_FILE = "config/settings_data.json";
+    const richtextSetting = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { themeRichtextMode: true },
+    });
+    const richtextMode = richtextSetting?.themeRichtextMode ?? "autofix";
+
     // STEP 2a: Push primary locale changes to Shopify via themeFilesUpsert
     {
       const oldValueMap = new Map<string, string>();
@@ -415,13 +428,25 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const fileNodes: any[] = filesData.data?.theme?.files?.nodes || [];
 
-        const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
         const fileShopifyErrors: string[] = [];
-        // Keys whose new value was actually written into a file we are about to
-        // upsert. Promoted to pushedPrimaryKeys only once Shopify accepts the upsert.
-        const stagedKeys: string[] = [];
+        const leadingCommentRegex = /^\s*\/\*[\s\S]*?\*\/\s*/;
 
-        for (const [filename, keys] of keysByFilename) {
+        // Build one themeFilesUpsert entry for a file. Kept free of outer failure
+        // side-effects so it can be re-run for the autofix retry (it re-parses the
+        // original Shopify content each call, so it is idempotent). When
+        // `normalizeSettings` is set, richtext values destined for
+        // config/settings_data.json are rewritten to satisfy Shopify's
+        // top-level-node rule (plain-text values are left untouched by the normalizer).
+        const buildFileEntry = (
+          filename: string,
+          keys: string[],
+          normalizeSettings: boolean,
+        ): {
+          entry?: { filename: string; body: { type: string; value: string } };
+          replacedKeys: string[];
+          missedKeys: string[];
+          error?: string;
+        } => {
           // Template files match by exact name. For the default-locale file, the
           // theme may name it differently than our constructed name (casing, or a
           // different default locale), so fall back to the single *.default.json
@@ -433,20 +458,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               ? fileNodes.find((n: any) => typeof n.filename === "string" && isLocaleDefaultFile(n.filename))
               : undefined);
-          // Write back to the file Shopify actually returned, never our guess.
           const actualFilename: string = fileNode?.filename ?? filename;
-
-          logger.debug("[TEMPLATES] Theme file node details", {
-            context: "Templates",
-            filename,
-            found: !!fileNode,
-            bodyKeys: fileNode?.body ? Object.keys(fileNode.body) : null,
-            bodyType: typeof fileNode?.body,
-            contentPreview:
-              typeof fileNode?.body?.content === "string"
-                ? fileNode.body.content.substring(0, 300)
-                : `(type: ${typeof fileNode?.body?.content})`,
-          });
 
           const rawContent = fileNode?.body?.content ?? fileNode?.body;
           if (!rawContent || typeof rawContent !== "string") {
@@ -456,12 +468,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               keys,
               rawContentType: typeof rawContent,
             });
-            fileShopifyErrors.push(`File not found or not a text file: ${filename}`);
-            failedPrimaryKeys.push(...keys);
-            continue;
+            return { replacedKeys: [], missedKeys: [...keys], error: `File not found or not a text file: ${filename}` };
           }
 
-          const leadingCommentRegex = /^\s*\/\*[\s\S]*?\*\/\s*/;
           const hasLeadingComment = leadingCommentRegex.test(rawContent);
           const jsonContent = hasLeadingComment ? rawContent.replace(leadingCommentRegex, "") : rawContent;
 
@@ -474,15 +483,16 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
               filename,
               contentPreview: rawContent.substring(0, 500),
             });
-            fileShopifyErrors.push(`Invalid JSON in file: ${filename}`);
-            failedPrimaryKeys.push(...keys);
-            continue;
+            return { replacedKeys: [], missedKeys: [...keys], error: `Invalid JSON in file: ${filename}` };
           }
 
           const replacements = new Map<string, { oldValue: string; newValue: string; keyHint: string }>();
           for (const key of keys) {
             const oldValue = oldValueMap.get(key) || "";
-            const newValue = updatedFields[key];
+            let newValue = updatedFields[key];
+            if (normalizeSettings && filename === SETTINGS_DATA_FILE && hasHtmlTags(newValue)) {
+              newValue = normalizeShopifyRichtext(newValue);
+            }
             const keyParts = key.split(".");
             const keyHint = keyParts[keyParts.length - 1];
             replacements.set(key, { oldValue, newValue, keyHint });
@@ -498,29 +508,63 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             replacedCount: replacedKeys.size,
             replacedKeys: Array.from(replacedKeys),
             missedKeys,
+            normalizeSettings,
           });
 
+          const entry =
+            replacedKeys.size > 0
+              ? {
+                  filename: actualFilename,
+                  body: {
+                    type: "TEXT",
+                    value: hasLeadingComment
+                      ? rawContent.match(leadingCommentRegex)![0] + JSON.stringify(fileJson, null, 2)
+                      : JSON.stringify(fileJson, null, 2),
+                  },
+                }
+              : undefined;
+
+          return { entry, replacedKeys: Array.from(replacedKeys), missedKeys };
+        };
+
+        const runUpsert = async (
+          files: Array<{ filename: string; body: { type: string; value: string } }>,
+        ): Promise<{ errors: string[]; upsertedFilenames: string[] }> => {
+          const upsertResponse = await admin.graphql(UPSERT_THEME_FILES, {
+            variables: { themeId, files },
+          });
+          const upsertData = await upsertResponse.json();
+          const userErrors = upsertData.data?.themeFilesUpsert?.userErrors ?? [];
+          return {
+            errors: userErrors.map((e: { message: string }) => e.message),
+            upsertedFilenames:
+              upsertData.data?.themeFilesUpsert?.upsertedThemeFiles?.map((f: { filename: string }) => f.filename) ?? [],
+          };
+        };
+
+        // First pass. In "normalize" mode we rewrite settings-data richtext up front;
+        // "autofix"/"error" push the merchant's HTML verbatim and only react on error.
+        const filesToUpsert: Array<{ filename: string; body: { type: string; value: string } }> = [];
+        const stagedKeys: string[] = [];
+        for (const [filename, keys] of keysByFilename) {
+          const result = buildFileEntry(filename, keys, richtextMode === "normalize");
+          if (result.error) {
+            fileShopifyErrors.push(result.error);
+            failedPrimaryKeys.push(...keys);
+            continue;
+          }
           // A missed key means our stored old value no longer matches the theme
           // file (drifted content) — we could not locate it to replace, so it
           // cannot be saved. Report it instead of silently dropping it.
-          if (missedKeys.length > 0) {
-            failedPrimaryKeys.push(...missedKeys);
+          if (result.missedKeys.length > 0) {
+            failedPrimaryKeys.push(...result.missedKeys);
             primarySaveErrors.push(
-              `Could not locate the current value in the theme file for: ${missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
+              `Could not locate the current value in the theme file for: ${result.missedKeys.slice(0, 5).join(", ")} (reload the content and try again)`
             );
           }
-
-          if (replacedKeys.size > 0) {
-            stagedKeys.push(...replacedKeys);
-            filesToUpsert.push({
-              filename: actualFilename,
-              body: {
-                type: "TEXT",
-                value: hasLeadingComment
-                  ? rawContent.match(leadingCommentRegex)![0] + JSON.stringify(fileJson, null, 2)
-                  : JSON.stringify(fileJson, null, 2),
-              },
-            });
+          if (result.entry) {
+            stagedKeys.push(...result.replacedKeys);
+            filesToUpsert.push(result.entry);
           }
         }
 
@@ -530,26 +574,51 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             themeId,
             fileCount: filesToUpsert.length,
             filenames: filesToUpsert.map((f) => f.filename),
+            richtextMode,
           });
 
           try {
-            const upsertResponse = await admin.graphql(UPSERT_THEME_FILES, {
-              variables: { themeId, files: filesToUpsert },
-            });
-            const upsertData = await upsertResponse.json();
+            let { errors, upsertedFilenames } = await runUpsert(filesToUpsert);
 
-            if (upsertData.data?.themeFilesUpsert?.userErrors?.length > 0) {
-              const errors = upsertData.data.themeFilesUpsert.userErrors;
+            // AUTOFIX: Shopify rejected a settings_data.json richtext value for the
+            // top-level-node rule. Re-normalize just that file and retry once.
+            if (
+              errors.length > 0 &&
+              richtextMode === "autofix" &&
+              errors.some(isRichtextTopLevelError) &&
+              keysByFilename.has(SETTINGS_DATA_FILE)
+            ) {
+              logger.info("[TEMPLATES] Autofix: normalizing richtext settings and retrying upsert", {
+                context: "Templates",
+                errors,
+              });
+              const rebuilt = buildFileEntry(SETTINGS_DATA_FILE, keysByFilename.get(SETTINGS_DATA_FILE)!, true);
+              if (rebuilt.entry) {
+                const retryEntry = rebuilt.entry;
+                const retryFiles = filesToUpsert.map((f) =>
+                  f.filename === retryEntry.filename ? retryEntry : f
+                );
+                ({ errors, upsertedFilenames } = await runUpsert(retryFiles));
+              }
+            }
+
+            if (errors.length > 0) {
               logger.error("[TEMPLATES] themeFilesUpsert returned errors", { context: "Templates", errors });
-              fileShopifyErrors.push(...errors.map((e: { message: string }) => e.message));
+              fileShopifyErrors.push(...errors);
               // Shopify rejected the batch — none of the staged keys persisted.
               failedPrimaryKeys.push(...stagedKeys);
+              // Give richtext rejections a human-actionable hint (esp. in "error"
+              // mode where we deliberately do not rewrite the merchant's HTML).
+              if (errors.some(isRichtextTopLevelError)) {
+                primarySaveErrors.push(
+                  "This is a rich-text setting: every paragraph must be wrapped in a block (e.g. <p>…</p>). " +
+                    "Enable automatic formatting under Settings → Rich-text formatting to fix this on save."
+                );
+              }
             } else {
               logger.info("[TEMPLATES] themeFilesUpsert succeeded", {
                 context: "Templates",
-                upsertedFiles: upsertData.data?.themeFilesUpsert?.upsertedThemeFiles?.map(
-                  (f: { filename: string }) => f.filename
-                ),
+                upsertedFiles: upsertedFilenames,
               });
               // Confirmed persisted to Shopify — safe to mirror into the local DB.
               for (const k of stagedKeys) pushedPrimaryKeys.add(k);
