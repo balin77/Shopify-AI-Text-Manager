@@ -1019,7 +1019,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // Save the primary-language value as BASE content (this field only, NO
         // changedFields → existing foreign translations are preserved).
         const primaryTranslated = (translations[primaryLocale] || "").trim();
+        let primarySaveSubmitted = false;
         if (primaryTranslated) {
+          primarySaveSubmitted = true;
           const primaryForm: Record<string, string> = {
             action: "updateContent",
             itemId: requestItemId,
@@ -1078,7 +1080,14 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         }
 
         setIsLoadingData(true);
-        try { revalidatorRef.current.revalidate(); } catch {}
+        // Revalidate to pull the freshly-saved primary + translations from the
+        // server. When a primary base save was submitted, do NOT revalidate here:
+        // it would race the in-flight save and re-load the STALE primary value.
+        // The primary save's own response handler revalidates AFTER it commits,
+        // so the main language reflects the new value.
+        if (!primarySaveSubmitted) {
+          try { revalidatorRef.current.revalidate(); } catch {}
+        }
       },
       () => {
         // Translation failed — the accepted foreign text is still saved in `L`.
