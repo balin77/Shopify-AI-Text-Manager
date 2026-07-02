@@ -1019,9 +1019,16 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         // Save the primary-language value as BASE content (this field only, NO
         // changedFields → existing foreign translations are preserved).
         const primaryTranslated = (translations[primaryLocale] || "").trim();
-        let primarySaveSubmitted = false;
         if (primaryTranslated) {
-          primarySaveSubmitted = true;
+          // Overlay the new primary value so the main language shows it
+          // IMMEDIATELY when the user switches to it — independent of when the
+          // primary base save commits or whether the loader reads stale data.
+          // resolve() checks savedPrimaryValuesRef first for the primary locale.
+          if (!savedPrimaryValuesRef.current[requestItemId]) {
+            savedPrimaryValuesRef.current[requestItemId] = {};
+          }
+          savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
+
           const primaryForm: Record<string, string> = {
             action: "updateContent",
             itemId: requestItemId,
@@ -1080,14 +1087,12 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         }
 
         setIsLoadingData(true);
-        // Revalidate to pull the freshly-saved primary + translations from the
-        // server. When a primary base save was submitted, do NOT revalidate here:
-        // it would race the in-flight save and re-load the STALE primary value.
-        // The primary save's own response handler revalidates AFTER it commits,
-        // so the main language reflects the new value.
-        if (!primarySaveSubmitted) {
-          try { revalidatorRef.current.revalidate(); } catch {}
-        }
+        // Revalidate to reconcile with the server's canonical data. The primary
+        // and other-locale overlays above already drive the UI, so even if this
+        // revalidation races the in-flight primary save and briefly reads stale
+        // data, resolve() keeps showing the new (overlaid) values until the
+        // server catches up.
+        try { revalidatorRef.current.revalidate(); } catch {}
       },
       () => {
         // Translation failed — the accepted foreign text is still saved in `L`.

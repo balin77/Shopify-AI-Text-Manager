@@ -1541,7 +1541,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const currentItemId = selectedItemIdRef.current;
         if (currentItemId) {
           const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
-          if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
+          // Only adopt the primary snapshot as the change-detection baseline when
+          // the user is actually VIEWING the primary locale. The foreign-locale
+          // Accept & Translate flow populates savedPrimaryValuesRef purely as a
+          // display overlay while the user is on a foreign locale — using it as
+          // the baseline there would wrongly flag the field dirty (the overlay
+          // holds the primary value, but editableValues holds the foreign value).
+          if (
+            primarySnapshot &&
+            Object.keys(primarySnapshot).length > 0 &&
+            currentLanguageRef.current === primaryLocale
+          ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
           } else {
