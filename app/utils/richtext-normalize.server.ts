@@ -113,5 +113,22 @@ export function normalizeShopifyRichtext(html: string): string {
   process(Array.from(body.childNodes), 0);
   flush();
 
+  // Drop empty block nodes — e.g. the trailing <p></p> a contentEditable leaves
+  // behind when you type "test" in front of the field's initial empty paragraph
+  // (innerHTML "test<p></p>" → we'd otherwise emit "<p>test</p><p></p>"). Valid
+  // for Shopify, but noise. A block is "empty" when it has no text and no child
+  // other than <br>. If removing empties leaves nothing, keep the original input
+  // so an intentionally-empty value stays "<p></p>" and never collapses to "" —
+  // an empty primary value would trip the irreversible-data-loss guard upstream.
+  const isEmptyBlock = (el: Element): boolean => {
+    if (!ALLOWED_TOP.has(el.tagName)) return false;
+    if ((el.textContent || "").trim() !== "") return false;
+    return !Array.from(el.children).some((c) => c.tagName !== "BR");
+  };
+  for (const child of Array.from(out.children)) {
+    if (isEmptyBlock(child)) out.removeChild(child);
+  }
+  if (!out.firstChild) return html;
+
   return out.innerHTML;
 }
