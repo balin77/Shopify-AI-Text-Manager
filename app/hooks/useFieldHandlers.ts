@@ -1550,6 +1550,11 @@ const handleCopyField = (fieldKey: string): void => {
   pendingCopyFieldKeyRef.current = fieldKey;
 
   savedLocaleRef.current = currentLanguage;
+  // Track WHICH item is being saved so the save-response handler's
+  // `isSavedItemCurrent` guard passes. Without this, savedItemIdRef stays null
+  // (cleared by a prior save) → the handler early-returns before reaching
+  // markOperationFailed(copy), leaving every button on this field spinning forever.
+  savedItemIdRef.current = selectedItemId;
   isSavePendingRef.current = true;
   isSaveFromTranslateRef.current = true;
   safeSubmit(formDataObj, { method: "POST" });
