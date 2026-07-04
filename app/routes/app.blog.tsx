@@ -182,6 +182,11 @@ export const loader = createContentLoader({
       handle: blog.handle,
       isBlogContainer: true as const,
       blogTitle: blog.title, // Used for category badge
+      // Type icon + filter metadata (mirrors the theme-domain loader): the list
+      // holds two types — Blog containers and their articles.
+      icon: "📓",
+      iconTooltip: "Blog",
+      type: "Blog",
       seo: {
         title: blog.seoTitle?.value ?? null,
         description: blog.seoDescription?.value ?? null,
@@ -217,6 +222,9 @@ export const loader = createContentLoader({
       blogTitle: a.blogTitle,
       title: a.title,
       handle: a.handle,
+      icon: "📝",
+      iconTooltip: "Blogeintrag",
+      type: "Article",
       body: a.body,
       summary: a.summary,
       featuredImage: a.imageUrl

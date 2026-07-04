@@ -237,6 +237,8 @@ export const en: Translation = {
     reloadItemTooltip: "Reload only this entry's data from Shopify",
     reloadAllTooltip: "Reload all entries from Shopify",
     sortTooltip: "Sort entries",
+    filterTooltip: "Filter types",
+    filterTitle: "Visible types",
     errorLoadingThemeContent: "Error loading theme content",
     error: "Error",
     success: "Success!",

@@ -530,6 +530,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             noItemsFoundMatching: t.content?.noItemsFoundMatching,
             sortTooltip: t.content?.sortTooltip,
             reloadAllTooltip: t.content?.reloadAllTooltip,
+            filterTooltip: t.content?.filterTooltip,
+            filterTitle: t.content?.filterTitle,
           }}
           />
           </div>

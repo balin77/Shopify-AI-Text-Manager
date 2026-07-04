@@ -23,6 +23,13 @@ export interface ThemeNavItem {
   groupId: string;
   role: string;
   contentCount: number;
+  /**
+   * Shopify resource type of the group (e.g. SELLING_PLAN_GROUP, SELLING_PLAN).
+   * Drives the item-list type filter when a domain holds more than one type.
+   */
+  type?: string;
+  /** Human label for `type` (e.g. "Abo-Gruppe"), shown as the icon's tooltip. */
+  iconTooltip?: string;
   translatableContent: TranslatableField[];
   translations: ThemeTranslationRecord[];
   /**

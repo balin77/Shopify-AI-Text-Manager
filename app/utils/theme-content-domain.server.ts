@@ -47,16 +47,29 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           groupName: true,
           groupIcon: true,
           resourceType: true,
+          resourceTypeLabel: true,
           translatableContent: true,
         },
+        // Deterministic scan order so first-row-derived fields (groupName/icon)
+        // don't flip between reloads.
+        orderBy: { groupId: "asc" },
       });
 
       // Aggregate by groupId, counting unique translatable field keys. A group
       // is flagged technical when any of its rows is an App-Embed resource.
+      //
+      // type/typeLabel drive the item-list type filter. They are only meaningful
+      // when a group maps to a SINGLE resource type: for flat domains (selling
+      // plans, system, …) each group is exactly one resource, so it is set. For
+      // the theme domain a group can consolidate rows of DIFFERENT resource
+      // types (e.g. theme-standard mixes ONLINE_STORE_THEME_LOCALE_CONTENT and
+      // ONLINE_STORE_THEME under one pattern-derived groupId) — mixed groups are
+      // marked resourceType=null so they never contribute a (misleading,
+      // order-dependent) type to the filter. The emoji icon still shows.
       const APP_EMBED = "ONLINE_STORE_THEME_APP_EMBED";
       const groupMap = new Map<
         string,
-        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean }
+        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
       >();
       for (const row of allGroupRows) {
         const existing = groupMap.get(row.groupId);
@@ -67,10 +80,15 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
         if (existing) {
           for (const item of items) if (item.key) existing.uniqueKeys.add(item.key);
           if (isEmbed) existing.embedTechnical = true;
+          // Downgrade to "mixed" (null) as soon as a second resource type appears.
+          if (existing.resourceType !== null && existing.resourceType !== row.resourceType) {
+            existing.resourceType = null;
+            existing.resourceTypeLabel = null;
+          }
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isEmbed });
+          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
         }
       }
 
@@ -83,6 +101,8 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           groupId,
           role: "THEME_GROUP",
           contentCount: group.uniqueKeys.size,
+          type: group.resourceType ?? undefined,
+          iconTooltip: group.resourceTypeLabel ?? undefined,
           translatableContent: [] as TranslatableField[],
           translations: [] as { key: string; value: string; locale?: string }[],
           embedTechnical: group.embedTechnical,

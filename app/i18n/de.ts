@@ -234,6 +234,8 @@ export const de = {
     reloadItemTooltip: "Nur die Daten dieses Eintrags von Shopify neu laden",
     reloadAllTooltip: "Alle Einträge von Shopify neu laden",
     sortTooltip: "Einträge sortieren",
+    filterTooltip: "Typen filtern",
+    filterTitle: "Angezeigte Typen",
     errorLoadingThemeContent: "Fehler beim Laden des Theme-Inhalts",
     error: "Fehler",
     success: "Erfolg!",

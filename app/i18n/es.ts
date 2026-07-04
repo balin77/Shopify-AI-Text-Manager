@@ -236,6 +236,8 @@ export const es: Translation = {
     reloadItemTooltip: "Recargar solo los datos de esta entrada desde Shopify",
     reloadAllTooltip: "Recargar todas las entradas desde Shopify",
     sortTooltip: "Ordenar entradas",
+    filterTooltip: "Filtrar tipos",
+    filterTitle: "Tipos visibles",
     errorLoadingThemeContent: "Error al cargar el contenido del tema",
     error: "Error",
     success: "¡Éxito!",

@@ -12,7 +12,7 @@
  * Used by: Products, Collections, Pages, Blogs, Articles, Policies, etc.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Card,
   ResourceList,
@@ -27,10 +27,11 @@ import {
   TextField,
   Popover,
   ActionList,
+  ChoiceList,
   Tooltip,
   Spinner,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -153,6 +154,10 @@ interface UnifiedItemListProps {
     sortTooltip?: string;
     /** Tooltip for the reload-all button */
     reloadAllTooltip?: string;
+    /** Tooltip for the type-filter button */
+    filterTooltip?: string;
+    /** Title inside the type-filter popover */
+    filterTitle?: string;
   };
 }
 
@@ -189,9 +194,30 @@ export function UnifiedItemList({
   const [sortField, setSortField] = useState<string>("title");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [sortPopoverActive, setSortPopoverActive] = useState(false);
+  // Type filter: keys of item.type that are hidden. Only surfaces when the list
+  // actually holds more than one distinct type (e.g. Selling Plans =
+  // Abo-Gruppe + Abo-Plan, Blogs = Blog + Blogeintrag). Single-type lists never
+  // show the filter button.
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  const [filterPopoverActive, setFilterPopoverActive] = useState(false);
 
   const toggleSortPopover = useCallback(() => setSortPopoverActive((v) => !v), []);
   const closeSortPopover = useCallback(() => setSortPopoverActive(false), []);
+  const toggleFilterPopover = useCallback(() => setFilterPopoverActive((v) => !v), []);
+  const closeFilterPopover = useCallback(() => setFilterPopoverActive(false), []);
+
+  // Distinct types present in the (unfiltered) items, each with its display
+  // label + icon taken from the first item of that type.
+  const presentTypes = useMemo(() => {
+    const map = new Map<string, { type: string; label: string; icon?: string }>();
+    for (const it of items) {
+      if (it.type && !map.has(it.type)) {
+        map.set(it.type, { type: it.type, label: it.iconTooltip || it.type, icon: it.icon });
+      }
+    }
+    return Array.from(map.values());
+  }, [items]);
+  const showTypeFilter = presentTypes.length > 1;
 
   const { getTotalNavHeight } = useNavigationHeight();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -203,13 +229,20 @@ export function UnifiedItemList({
   // Use dynamic items per page (calculated from window height)
   const itemsPerPage = fixedItemsPerPage || dynamicItemsPerPage;
 
-  // Filter items based on search
+  // Filter items by hidden types first, then by search. An item without a
+  // `type` is never hidden (single-type lists are unaffected). Only applied
+  // while the filter is actually available (>1 type present): if a reload
+  // shrinks the list to a single type, a previously hidden type must NOT keep
+  // filtering — otherwise the button disappears and the list is a dead-end.
+  const typeFilteredItems = showTypeFilter && hiddenTypes.size
+    ? items.filter((item) => !item.type || !hiddenTypes.has(item.type))
+    : items;
   const filteredItems = showSearch
-    ? items.filter((item) => {
+    ? typeFilteredItems.filter((item) => {
         const searchableText = `${item.title || ""} ${item.subtitle || ""}`.toLowerCase();
         return searchableText.includes(searchQuery.toLowerCase());
       })
-    : items;
+    : typeFilteredItems;
 
   // Determine if current sort field is a date type
   const currentSortOption = sortOptions?.find((opt) => opt.field === sortField);
@@ -378,6 +411,14 @@ export function UnifiedItemList({
           />
         )}
 
+        {/* Type icon (emoji) with hover tooltip naming the type. Only rendered
+            when the item carries an icon (theme groups, blogs, selling plans). */}
+        {item.icon && (
+          <Tooltip content={item.iconTooltip || item.type || ""} zIndexOverride={1200}>
+            <span style={{ fontSize: "1.1rem", flexShrink: 0, lineHeight: 1 }}>{item.icon}</span>
+          </Tooltip>
+        )}
+
         {/* Category Badge (standalone - only when no thumbnails) */}
         {showCategoryBadge && !showThumbnails && item.category && (
           <div
@@ -542,6 +583,45 @@ export function UnifiedItemList({
                   to anchor the row; Delete is tone=critical to stand out as a
                   destructive action. */}
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                {showTypeFilter && (
+                  <Popover
+                    active={filterPopoverActive}
+                    activator={
+                      <Tooltip content={t.filterTooltip || "Typen filtern"} zIndexOverride={1200}>
+                        <Button
+                          icon={FilterIcon}
+                          variant="plain"
+                          onClick={toggleFilterPopover}
+                          accessibilityLabel={t.filterTooltip || "Typen filtern"}
+                          size="slim"
+                        />
+                      </Tooltip>
+                    }
+                    onClose={closeFilterPopover}
+                    preferredAlignment="right"
+                  >
+                    <div style={{ padding: "8px 12px", minWidth: "180px" }}>
+                      <ChoiceList
+                        allowMultiple
+                        title={t.filterTitle || "Angezeigte Typen"}
+                        choices={presentTypes.map((pt) => ({
+                          label: pt.icon ? `${pt.icon} ${pt.label}` : pt.label,
+                          value: pt.type,
+                        }))}
+                        selected={presentTypes
+                          .map((pt) => pt.type)
+                          .filter((tp) => !hiddenTypes.has(tp))}
+                        onChange={(selected) => {
+                          const sel = new Set(selected);
+                          setHiddenTypes(
+                            new Set(presentTypes.map((pt) => pt.type).filter((tp) => !sel.has(tp)))
+                          );
+                          setCurrentPage(1);
+                        }}
+                      />
+                    </div>
+                  </Popover>
+                )}
                 {sortOptions && sortOptions.length > 0 && (
                   <Popover
                     active={sortPopoverActive}
