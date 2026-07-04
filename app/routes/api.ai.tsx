@@ -13,6 +13,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
+import { isThemeContentType } from "~/utils/content-type-groups";
 import {
   VALID_CONTENT_TYPES,
   errorMessage,
@@ -48,10 +49,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const formData = await request.formData();
     const actionType = getFormString(formData, "action");
     const rawContentType = getFormString(formData, "contentType") || "";
-    if (!VALID_CONTENT_TYPES.has(rawContentType)) {
+    // The theme-content family (system / delivery / sellingPlans /
+    // onlineStoreExtras) shares the Templates ThemeContent data model, item id
+    // shape (`group_<groupId>`) and handler path. They only differ by their
+    // plan-gating contentType, which is NOT in VALID_CONTENT_TYPES and which the
+    // AI handlers don't recognise (persistence branches key on
+    // `contentType === 'templates'`). Normalise the whole family to 'templates'
+    // so the shared handler logic applies uniformly; without this, "Übersetzen"
+    // on these rubrics 400s ("Invalid contentType: sellingPlans").
+    const contentType = isThemeContentType(rawContentType) ? "templates" : rawContentType;
+    if (!VALID_CONTENT_TYPES.has(contentType)) {
       return json({ success: false, error: `Invalid contentType: ${rawContentType}` }, { status: 400 });
     }
-    const contentType = rawContentType;
     const itemId = getFormString(formData, "itemId") || "unknown";
 
     const { db } = await import("../db.server");
