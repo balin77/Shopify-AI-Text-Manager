@@ -1560,7 +1560,9 @@ const handleCopyField = (fieldKey: string): void => {
   safeSubmit(formDataObj, { method: "POST" });
   originalLoadedValuesRef.current = { ...newValues };
 
-  showInfoBox(t.common?.copied ?? "Copied", "success");
+  // Success/error feedback is deferred to the save-response handler so the
+  // InfoBox reflects the actual Shopify result (see pendingCopyFieldKeyRef in
+  // useUnifiedContentEditor.ts), not an optimistic guess.
 };
 
 const handleCopyFieldToAllLocales = (fieldKey: string): void => {

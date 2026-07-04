@@ -977,6 +977,7 @@ export const es: Translation = {
     close: "Cerrar",
     clear: "Limpiar",
     copied: "Copiado",
+    copiedToShopify: "Transferido correctamente a Shopify",
     loadMore: "Cargar más",
     loading: "Cargando...",
     error: "Error",

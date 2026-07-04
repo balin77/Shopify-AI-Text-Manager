@@ -978,6 +978,7 @@ export const en: Translation = {
     close: "Close",
     clear: "Clear",
     copied: "Copied",
+    copiedToShopify: "Successfully transferred to Shopify",
     loadMore: "Load more",
     loading: "Loading...",
     error: "Error",

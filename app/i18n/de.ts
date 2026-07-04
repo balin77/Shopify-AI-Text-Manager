@@ -975,6 +975,7 @@ export const de = {
     close: "Schließen",
     clear: "Leeren",
     copied: "Übertragen",
+    copiedToShopify: "Korrekt auf Shopify übertragen",
     loadMore: "Mehr laden",
     loading: "Lädt...",
     error: "Fehler",

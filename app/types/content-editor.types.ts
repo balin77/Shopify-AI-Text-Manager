@@ -189,6 +189,7 @@ export interface TranslationStrings {
     fieldTranslatedAndSaved?: string;
     translatedSuccessfully?: string;
     copied?: string;
+    copiedToShopify?: string;
     [key: string]: TranslationValue;
   };
   content?: {

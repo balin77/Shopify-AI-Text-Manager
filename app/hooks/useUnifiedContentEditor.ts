@@ -1734,6 +1734,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
       // If this save was triggered by a copy action, clear the field loading state.
+      const wasCopySave = !!pendingCopyFieldKeyRef.current;
       if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
@@ -1762,6 +1763,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           String(fetcher.data.warning),
           "warning",
           t.common?.warning || "Warning"
+        );
+      } else if (wasCopySave) {
+        // Copy ("Übertragen") confirmed persisted to Shopify.
+        showInfoBox(
+          t.common?.copiedToShopify || "Successfully transferred to Shopify",
+          "success",
+          t.common?.success || "Success"
         );
       } else if (!wasTranslateSave) {
         showInfoBox(
@@ -1831,6 +1839,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
+
+      // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
+      // buttons keep spinning forever after a failed Shopify save.
+      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
