@@ -138,10 +138,13 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => 
     expect(dbm.themeContentFindMany).toHaveBeenNthCalledWith(1, {
       where: { shop, groupId: 'splan_1' },
     });
-    // The differential translation read is scoped to the DERIVED domain.
+    // The differential translation read is ALSO domain-agnostic: the unique key
+    // omits domain, so a row saved under the wrong domain (e.g. "theme" from the
+    // AI translate path) must still be found — otherwise a re-create collides.
     expect(dbm.themeTranslationFindMany.mock.calls[0][0]).toMatchObject({
-      where: { shop, groupId: 'splan_1', domain: 'selling_plans' },
+      where: { shop, groupId: 'splan_1' },
     });
+    expect(dbm.themeTranslationFindMany.mock.calls[0][0].where).not.toHaveProperty('domain');
     expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1);
     expect(result.themeContent).toEqual(existing);
   });

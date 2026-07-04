@@ -291,6 +291,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     // so each field key must be saved against its own resource ID.
     let templateGroupId: string | null = null;
     let templateResourceId: string | null = null;
+    // The ThemeContent domain that owns this group (theme / system / delivery /
+    // online_store_extras / selling_plans / customer_privacy). MUST be mirrored
+    // onto every themeTranslation row we write — the Prisma default is "theme",
+    // so persisting without it saves flat-domain translations (e.g. Abo-Gruppe)
+    // under the wrong domain. That both hides them from the domain-scoped loader
+    // AND makes the next reload collide (the @@unique omits domain, so a
+    // re-create under the correct domain violates the constraint).
+    let templateDomain = "theme";
     const templateKeyToResourceId = new Map<string, string>();
     if (contentType === 'templates' && itemId) {
       templateGroupId = itemId.replace("group_", "");
@@ -302,6 +310,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
       });
       if (themeContentRows.length > 0) {
         templateResourceId = themeContentRows[0].resourceId;
+        templateDomain = themeContentRows[0].domain;
         // Build key → resourceId map from all rows
         for (const row of themeContentRows) {
           const items = (row.translatableContent as unknown) as Array<{ key: string; value?: string; digest?: string }>;
@@ -597,12 +606,16 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     }
                   },
                   update: {
+                    // Heal the domain too: a row written before this fix (or by a
+                    // path that omitted domain) may sit under the default "theme".
+                    domain: templateDomain,
                     value: translatedValue,
                     updatedAt: new Date()
                   },
                   create: {
                     shop: session.shop,
                     groupId: templateGroupId,
+                    domain: templateDomain,
                     resourceId: fieldResourceId,
                     locale: locale,
                     key: fieldType,
@@ -1097,12 +1110,16 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     }
                   },
                   update: {
+                    // Heal the domain too: a row written before this fix (or by a
+                    // path that omitted domain) may sit under the default "theme".
+                    domain: templateDomain,
                     value: translatedValue,
                     updatedAt: new Date()
                   },
                   create: {
                     shop: session.shop,
                     groupId: templateGroupId,
+                    domain: templateDomain,
                     resourceId: fieldResourceId,
                     locale: locale,
                     key: fieldType,

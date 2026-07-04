@@ -1106,9 +1106,17 @@ export class BackgroundSyncService {
         return true;
       });
 
+    // Read existing rows by (shop, groupId) WITHOUT a domain filter. The
+    // ThemeTranslation @@unique is (shop, resourceId, groupId, key, locale) —
+    // domain is NOT part of it. A row for this group can therefore already exist
+    // under a DIFFERENT domain (e.g. the AI translate path historically saved
+    // flat-domain translations under the default "theme"). Filtering by the
+    // derived domain would miss that row, we'd try to create it, and hit the
+    // unique constraint. Matching on the real unique tuple lets us UPDATE (and
+    // heal the domain) instead of colliding.
     const existing = await db.themeTranslation.findMany({
-      where: { shop: this.shop, groupId: groupId, domain },
-      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true },
+      where: { shop: this.shop, groupId: groupId },
+      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true, domain: true },
     });
 
     const rowKey = (r: { resourceId: string; key: string; locale: string }) =>
@@ -1136,11 +1144,13 @@ export class BackgroundSyncService {
             },
           })
         );
-      } else if (prev.value !== d.value || prev.outdated !== d.outdated) {
+      } else if (prev.value !== d.value || prev.outdated !== d.outdated || prev.domain !== domain) {
         ops.push(
           db.themeTranslation.update({
             where: { id: prev.id },
-            data: { value: d.value, outdated: d.outdated, updatedAt: new Date() },
+            // Heal the domain too: a row saved under the wrong domain is moved to
+            // the group's real domain so the domain-scoped loader finds it.
+            data: { value: d.value, outdated: d.outdated, domain, updatedAt: new Date() },
           })
         );
       }
