@@ -1245,6 +1245,12 @@ const SYNC_CONTENT_TYPE: Record<string, string> = {
 };
 
 function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
+  // The whole theme-content family (templates + system / delivery / sellingPlans
+  // / onlineStoreExtras) reloads through the single-group theme-content path
+  // (api.sync-single-resource → syncSingleThemeGroup, which is now domain-aware).
+  // Without this, non-templates rubrics posted their raw contentType and the
+  // route rejected it ("Unknown resource type: sellingPlans").
+  if (isThemeContentType(contentType)) return "templates";
   const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
     blogs: "article",
     pages: "page",

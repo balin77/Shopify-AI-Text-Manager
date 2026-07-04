@@ -922,14 +922,18 @@ export class BackgroundSyncService {
     // files both contribute keys to the "product" group).  Fetch ALL rows so
     // every resource is synced — using findFirst would arbitrarily pick one
     // and leave the others stale / their translations deleted.
+    //
+    // No domain filter: the whole ThemeContent family (theme / system /
+    // delivery / online_store_extras / selling_plans / customer_privacy) shares
+    // this table and the group_<groupId> id shape. groupId+resourceId is
+    // globally unique (the @@unique omits domain), so a lookup by groupId
+    // resolves the owning domain unambiguously — derived below. Scoping to
+    // domain:"theme" here made per-group reloads of the other rubrics throw
+    // ("Theme group not found" / the route's "Unknown resource type").
     const existingRows = await db.themeContent.findMany({
       where: {
         shop: this.shop,
         groupId: groupId,
-        // Defense-in-depth: this per-group reload is theme-only. New-domain
-        // groupIds never collide today, but the unique constraint omits domain
-        // so we scope explicitly.
-        domain: "theme",
       },
     });
 
@@ -941,6 +945,27 @@ export class BackgroundSyncService {
       // the two reload buttons stay cleanly separated.
       throw new Error(`Theme group not found: ${groupId}`);
     }
+
+    // Derive the domain from the stored rows so this single-group refresh works
+    // for every rubric, not just theme.
+    const domain = existingRows[0].domain;
+
+    // Cookie-banner content is only readable through Shopify's `unstable`
+    // endpoint, which the generic translatableResource query below cannot use.
+    // Re-run the dedicated whole-domain sync (idempotent) and return this
+    // group's freshly-synced rows.
+    if (domain === "customer_privacy") {
+      await this.syncCookieBanner();
+      const themeContent = await db.themeContent.findMany({ where: { shop: this.shop, groupId } });
+      const translations = await db.themeTranslation.findMany({ where: { shop: this.shop, groupId } });
+      return { themeContent, translations };
+    }
+
+    // The `theme` domain groups fields by key pattern and a group can span
+    // multiple resources; the flat domains (system / delivery /
+    // online_store_extras / selling_plans) put every field of a single resource
+    // into one group.
+    const isThemeDomain = domain === "theme";
 
     const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];
     logger.debug(`[BackgroundSync] Group "${groupId}" spans ${uniqueResourceIds.length} resource(s)`);
@@ -989,9 +1014,14 @@ export class BackgroundSyncService {
       // App-embed groups are keyed per block (groupId = app_embed_<blockId>),
       // not by key pattern. Shopify returns one resource per block, so every
       // field of this resource belongs to the group.
-      const groupContent = groupId.startsWith('app_embed_')
+      // Flat-domain groups own every field of their single resource; only the
+      // theme domain sub-selects by key pattern (app-embed groups are keyed per
+      // block, so every field of that resource belongs to the group).
+      const groupContent = !isThemeDomain
         ? allContent
-        : allContent.filter((item) => getGroupIdForKey(item.key) === groupId);
+        : groupId.startsWith('app_embed_')
+          ? allContent
+          : allContent.filter((item) => getGroupIdForKey(item.key) === groupId);
 
       logger.debug(`[BackgroundSync] Resource ${resourceId}: ${groupContent.length} fields for group ${groupId}`);
 
@@ -1060,7 +1090,7 @@ export class BackgroundSyncService {
     }));
 
     const existing = await db.themeTranslation.findMany({
-      where: { shop: this.shop, groupId: groupId, domain: "theme" },
+      where: { shop: this.shop, groupId: groupId, domain },
       select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true },
     });
 
@@ -1081,7 +1111,7 @@ export class BackgroundSyncService {
               shop: this.shop,
               resourceId: d.resourceId,
               groupId: groupId,
-              domain: "theme",
+              domain,
               key: d.key,
               value: d.value,
               locale: d.locale,
@@ -1114,7 +1144,7 @@ export class BackgroundSyncService {
       where: {
         shop: this.shop,
         groupId: groupId,
-        domain: "theme",
+        domain,
       },
     });
 

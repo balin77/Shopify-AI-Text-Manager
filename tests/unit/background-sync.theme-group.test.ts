@@ -118,6 +118,33 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => 
     expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1); // known resource refreshed
     expect(result.themeContent).toEqual(existing);
   });
+
+  it('refreshes a flat-domain group (selling_plans) using the derived domain', async () => {
+    const svc = makeService();
+
+    // Flat-domain group: one resource, domain "selling_plans" (not "theme").
+    const existing = [{ resourceId: 'gid://shopify/SellingPlan/1', groupId: 'splan_1', domain: 'selling_plans' }];
+    dbm.themeContentFindMany
+      .mockResolvedValueOnce(existing)  // existingRows (lookup by groupId, no domain filter)
+      .mockResolvedValueOnce(existing); // updatedThemeContent at the end
+    dbm.themeTranslationFindMany
+      .mockResolvedValueOnce([])        // existing translations
+      .mockResolvedValueOnce([]);       // updatedTranslations at the end
+
+    const result = await svc.syncSingleThemeGroup('splan_1');
+
+    // The group is looked up by groupId WITHOUT a hard-coded domain:"theme"
+    // filter — otherwise a selling_plans group would 404.
+    expect(dbm.themeContentFindMany).toHaveBeenNthCalledWith(1, {
+      where: { shop, groupId: 'splan_1' },
+    });
+    // The differential translation read is scoped to the DERIVED domain.
+    expect(dbm.themeTranslationFindMany.mock.calls[0][0]).toMatchObject({
+      where: { shop, groupId: 'splan_1', domain: 'selling_plans' },
+    });
+    expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1);
+    expect(result.themeContent).toEqual(existing);
+  });
 });
 
 // ── Coalescing guard: concurrent full theme syncs must not run twice ──────────
