@@ -1081,13 +1081,30 @@ export class BackgroundSyncService {
     // Differential sync: only write rows that are new or actually changed, and
     // delete rows that disappeared. Re-creating every row on each sync produced
     // tens of thousands of dead tuples per run -> table bloat + WAL explosion.
-    const desired = allTranslations.map((t) => ({
-      resourceId: (t as any)._resourceId || uniqueResourceIds[0],
-      key: t.key,
-      value: t.value,
-      locale: t.locale,
-      outdated: t.outdated || false,
-    }));
+    //
+    // De-duplicate by the ThemeTranslation unique tuple (resourceId, key,
+    // locale) and drop null values — mirrors syncFlatDomain's `seen`/`value !=
+    // null` guards. Shopify's translations(locale:) can return the same key
+    // twice for a resource (e.g. SELLING_PLAN_GROUP); without this, two `create`
+    // calls for the same tuple hit "Unique constraint failed on the fields:
+    // (shop, resourceId, groupId, key, locale)". ThemeTranslation.value is
+    // non-null, so a null-valued Shopify translation must be skipped, not written.
+    const desiredSeen = new Set<string>();
+    const desired = allTranslations
+      .filter((t) => t.value != null)
+      .map((t) => ({
+        resourceId: (t as any)._resourceId || uniqueResourceIds[0],
+        key: t.key,
+        value: t.value,
+        locale: t.locale,
+        outdated: t.outdated || false,
+      }))
+      .filter((d) => {
+        const k = `${d.resourceId} ${d.key} ${d.locale}`;
+        if (desiredSeen.has(k)) return false;
+        desiredSeen.add(k);
+        return true;
+      });
 
     const existing = await db.themeTranslation.findMany({
       where: { shop: this.shop, groupId: groupId, domain },

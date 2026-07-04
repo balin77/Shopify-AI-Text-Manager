@@ -341,6 +341,32 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
   // STEP 2: Update local database
   if (locale === primaryLocale) {
+    // Primary-language editing writes the source value into a theme file via
+    // themeFilesUpsert (STEP 2a) — which only exists for the `theme` domain
+    // (contentType "templates"). The other ThemeContent rubrics (system /
+    // delivery / online_store_extras / selling_plans / customer_privacy) are
+    // backed by Shopify RESOURCES with no theme file, and the app has no
+    // resource-update mutation for their originals, so their primary value is
+    // authoritative in Shopify admin. Reject cleanly instead of failing to map
+    // keys to a non-existent file — which surfaced the confusing "not editable
+    // in the primary language (no matching theme file)" partial-failure. Foreign
+    // translations (STEP 1) still work for these resources via translationsRegister.
+    if (domain !== "theme") {
+      logger.warn("[TEMPLATES] Primary locale save rejected — resource-backed domain has no theme file", {
+        context: "Templates",
+        domain,
+        keys: Object.keys(updatedFields),
+      });
+      return json(
+        {
+          success: false,
+          error:
+            "Primary-language editing is not available for this content type — edit the original in your Shopify admin. You can still translate it into other languages.",
+        },
+        { status: 400 }
+      );
+    }
+
     if (!ENABLE_THEME_PRIMARY_EDIT) {
       logger.warn("[TEMPLATES] Primary locale save rejected - ENABLE_THEME_PRIMARY_EDIT is false", {
         context: "Templates",

@@ -822,10 +822,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
                     {/* Dynamic Fields */}
                     {!isFieldsLoading && (() => {
-                      // Template primary locale: read-only when themeFilesUpsert is not enabled
+                      // Primary-language editing writes to a theme file
+                      // (themeFilesUpsert), which only exists for the `theme`
+                      // domain (contentType "templates"). It is read-only when:
+                      //  - themeFilesUpsert is not enabled (templates), OR
+                      //  - the rubric is a resource-backed theme-content family
+                      //    member (System/Versand/Abo-Pläne/Filter) — those have
+                      //    no theme file, so their original lives in Shopify admin
+                      //    and the server rejects primary saves for them.
                       const isTemplatePrimaryReadOnly = isThemeContentType(config.contentType)
                         && state.currentLanguage === primaryLocale
-                        && !ENABLE_THEME_PRIMARY_EDIT;
+                        && (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates");
 
                       return fieldDefinitions.map((field) => {
                         if (field.type === "image-gallery" && imageGalleryReplacement) {
