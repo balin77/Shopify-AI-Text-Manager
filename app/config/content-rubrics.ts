@@ -45,7 +45,7 @@ export const CONTENT_RUBRICS: RubricDef[] = [
     entries: [
       { id: "products", path: "/app/products", icon: "🛍️", labelKey: "products", planContentType: "products" },
       { id: "collections", path: "/app/collections", icon: "📂", labelKey: "collections", planContentType: "collections" },
-      { id: "sellingPlans", path: "/app/selling-plans", icon: "🔁", labelKey: "sellingPlans", planContentType: "sellingPlans", conditional: true },
+      { id: "sellingPlans", path: "/app/selling-plans", icon: "🔁", labelKey: "sellingPlans", planContentType: "sellingPlans" },
     ],
   },
   {
