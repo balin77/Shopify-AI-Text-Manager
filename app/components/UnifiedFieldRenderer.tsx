@@ -4,8 +4,9 @@
  * Extracted from UnifiedContentEditor to keep each file focused on one concern.
  */
 
+import type { ReactElement } from "react";
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { Text } from "@shopify/polaris";
+import { Text, Tooltip } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
@@ -271,9 +272,22 @@ export function UnifiedFieldRenderer(
 
   const shouldShowClear = !(field.key === "title" && isPrimaryLocale);
 
+  // Read-only fields (main language of resource-backed rubrics like Abo-Pläne)
+  // get a hover tooltip explaining why they can't be edited here.
+  const readOnlyHint = String(
+    t.content?.primaryReadOnlyHint ||
+    "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."
+  );
+  const withReadOnlyTooltip = (el: ReactElement): ReactElement =>
+    readOnly ? (
+      <Tooltip content={readOnlyHint} dismissOnMouseOut preferredPosition="above">
+        <div>{el}</div>
+      </Tooltip>
+    ) : el;
+
   // HTML Field
   if (field.type === "html") {
-    return (
+    return withReadOnlyTooltip(
       <AIEditableHTMLField
         label={label}
         value={value}
@@ -308,7 +322,7 @@ export function UnifiedFieldRenderer(
   }
 
   // Default: Use AIEditableField for text, slug, textarea, number
-  return (
+  return withReadOnlyTooltip(
     <AIEditableField
       label={label}
       value={value}

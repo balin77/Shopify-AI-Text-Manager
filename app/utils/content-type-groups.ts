@@ -28,3 +28,15 @@ const THEME_CONTENT_TYPES: readonly string[] = [
 export function isThemeContentType(contentType: ContentType | string | undefined): boolean {
   return !!contentType && THEME_CONTENT_TYPES.includes(contentType);
 }
+
+/**
+ * Theme-content rubrics backed by a Shopify RESOURCE rather than a theme file —
+ * i.e. the whole family EXCEPT `templates` (the `theme` domain). Their
+ * primary/source value cannot be written by this app (no theme file, and the
+ * owning resource's update API is either app-owned or unavailable — see the
+ * primary-read-only research), so the main language is read-only and only
+ * translation into foreign locales is supported.
+ */
+export function isResourceBackedThemeContent(contentType: ContentType | string | undefined): boolean {
+  return isThemeContentType(contentType) && contentType !== "templates";
+}

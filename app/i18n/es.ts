@@ -218,6 +218,8 @@ export const es: Translation = {
     themeDescription: "Traduce textos del tema como botones, etiquetas y mensajes",
     appEmbedWarningTitle: "Contenido técnico",
     appEmbedWarning: "Este es contenido de app-embed. Puede contener selectores CSS y configuración técnica — traducirlo puede romper la inserción en tu tienda. Edítalo solo si sabes lo que haces.",
+    primaryReadOnlyHint: "Este campo no se puede editar en el idioma principal aquí — gestiona el original en tu panel de Shopify. Aún puedes traducirlo a otros idiomas.",
+    primaryReadOnlyTranslateInfo: "El idioma principal es de solo lectura para este tipo de contenido — la traducción se aplicó, pero el original se gestiona en tu panel de Shopify.",
     deliveryPackingSlipNoticeTitle: "Plantilla de albarán",
     deliveryPackingSlipNotice: "Puedes traducir la plantilla de albarán en «Notificaciones».",
     noEntries: "No hay entradas disponibles",

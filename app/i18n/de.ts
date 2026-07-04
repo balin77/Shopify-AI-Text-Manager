@@ -216,6 +216,8 @@ export const de = {
     themeDescription: "Übersetzen Sie Theme-Texte wie Buttons, Labels und Meldungen",
     appEmbedWarningTitle: "Technischer Inhalt",
     appEmbedWarning: "Dies ist App-Einbettungs-Inhalt. Er kann CSS-Selektoren und technische Konfiguration enthalten — eine Übersetzung kann die Einbettung im Storefront beschädigen. Nur ändern, wenn Sie wissen, was Sie tun.",
+    primaryReadOnlyHint: "Dieses Feld kann in der Hauptsprache hier nicht bearbeitet werden — das Original verwaltest du in deinem Shopify-Admin. Übersetzen in andere Sprachen ist weiterhin möglich.",
+    primaryReadOnlyTranslateInfo: "Die Hauptsprache ist bei diesem Inhaltstyp schreibgeschützt — die Übersetzung wurde übernommen, aber das Original wird in deinem Shopify-Admin verwaltet.",
     deliveryPackingSlipNoticeTitle: "Lieferscheinvorlage",
     deliveryPackingSlipNotice: "Die Lieferscheinvorlage übersetzen Sie unter Benachrichtigungen.",
     noEntries: "Keine Einträge verfügbar",

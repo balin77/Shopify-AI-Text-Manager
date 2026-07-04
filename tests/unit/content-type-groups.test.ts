@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isThemeContentType } from "~/utils/content-type-groups";
+import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 
 describe("isThemeContentType", () => {
   it("returns true for every ThemeContent-backed rubric", () => {
@@ -24,5 +24,23 @@ describe("isThemeContentType", () => {
   it("returns false for undefined / empty", () => {
     expect(isThemeContentType(undefined)).toBe(false);
     expect(isThemeContentType("")).toBe(false);
+  });
+});
+
+describe("isResourceBackedThemeContent", () => {
+  it("returns true for the resource-backed rubrics (main language read-only)", () => {
+    for (const ct of ["system", "delivery", "sellingPlans", "onlineStoreExtras"]) {
+      expect(isResourceBackedThemeContent(ct)).toBe(true);
+    }
+  });
+
+  it("returns false for templates (theme-file backed, primary editable)", () => {
+    expect(isResourceBackedThemeContent("templates")).toBe(false);
+  });
+
+  it("returns false for non-theme content and empty input", () => {
+    for (const ct of ["products", "collections", "metaobjects", "", undefined]) {
+      expect(isResourceBackedThemeContent(ct)).toBe(false);
+    }
   });
 });

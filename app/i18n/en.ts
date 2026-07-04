@@ -219,6 +219,8 @@ export const en: Translation = {
     themeDescription: "Translate theme texts like buttons, labels and messages",
     appEmbedWarningTitle: "Technical content",
     appEmbedWarning: "This is app-embed content. It can contain CSS selectors and technical configuration — translating it may break the embed on your storefront. Only edit if you know what you're doing.",
+    primaryReadOnlyHint: "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.",
+    primaryReadOnlyTranslateInfo: "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin.",
     deliveryPackingSlipNoticeTitle: "Packing slip template",
     deliveryPackingSlipNotice: "You can translate the packing slip template under \"Notifications\".",
     noEntries: "No entries available",

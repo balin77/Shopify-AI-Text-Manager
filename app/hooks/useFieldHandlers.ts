@@ -6,7 +6,7 @@
  *          language/item selection, value changes, clear operations.
  */
 
-import { isThemeContentType } from "~/utils/content-type-groups";
+import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue } from "./useUiDataLoader";
@@ -896,6 +896,20 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   const suggestion = aiSuggestions[fieldKey];
   if (!suggestion || !selectedItemId) return;
 
+  // Resource-backed rubrics (Abo-Pläne/System/…) have a read-only main language.
+  // If this is somehow invoked while viewing the primary locale, refuse instead
+  // of attempting a primary save the server rejects. (Generation is disabled on
+  // primary for these rubrics, so this is a defensive guard.)
+  if (currentLanguage === primaryLocale && isResourceBackedThemeContent(config.contentType)) {
+    showInfoBox(
+      String(t.content?.primaryReadOnlyHint
+        || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
+      "warning",
+      String(t.common?.warning || "Warning")
+    );
+    return;
+  }
+
   // Set flag to prevent translation deletion during this flow
   setIsAcceptAndTranslateFlow(true);
 
@@ -993,8 +1007,27 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // other foreign locales in a single batch. The server persists the OTHER
     // locales as translations but SKIPS the primary locale (skipSaveLocales) and
     // returns it, so the client saves it as base content (below).
+    // Resource-backed rubrics (Abo-Pläne/System/Versand/Filter) have a read-only
+    // main language — the original lives in Shopify. Do NOT back-translate the
+    // accepted text into the primary language, save it, or overlay it in the UI;
+    // only translate into the OTHER foreign locales.
+    const primaryReadOnly = isResourceBackedThemeContent(config.contentType);
     const targetOthers = enabledLanguages.filter((l) => l !== primaryLocale && l !== L);
-    const allTargets = [primaryLocale, ...targetOthers];
+    const allTargets = primaryReadOnly ? targetOthers : [primaryLocale, ...targetOthers];
+
+    // Nothing left to translate (no other foreign locales) — the accepted text is
+    // already saved in `L`. For read-only rubrics that is the whole job; inform.
+    if (allTargets.length === 0) {
+      if (primaryReadOnly) {
+        showInfoBox(
+          String(t.content?.primaryReadOnlyTranslateInfo
+            || "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin."),
+          "info",
+          String(t.common?.info || "Info")
+        );
+      }
+      return;
+    }
 
     debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
     submitAIAction(
@@ -1005,8 +1038,9 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         sourceText: suggestion,
         targetLocales: JSON.stringify(allTargets),
         // Translate the primary too, but don't persist it as a foreign
-        // translation — the client saves it as base content below.
-        skipSaveLocales: JSON.stringify([primaryLocale]),
+        // translation — the client saves it as base content below. For read-only
+        // rubrics the primary is not a target at all, so nothing to skip.
+        skipSaveLocales: JSON.stringify(primaryReadOnly ? [] : [primaryLocale]),
         contextTitle,
         // Server treats `primaryLocale` as the SOURCE language for the AI call.
         primaryLocale: L,
@@ -1018,7 +1052,8 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
 
         // Save the primary-language value as BASE content (this field only, NO
         // changedFields → existing foreign translations are preserved).
-        const primaryTranslated = (translations[primaryLocale] || "").trim();
+        // Read-only rubrics never translate/save/overlay the main language.
+        const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
         if (primaryTranslated) {
           // Overlay the new primary value so the main language shows it
           // IMMEDIATELY when the user switches to it — independent of when the
