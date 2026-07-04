@@ -849,11 +849,57 @@ async function updatePrimaryProduct(
     title: params.title,
     handle: params.handle,
     descriptionHtml: params.descriptionHtml,
-    seo: {
-      title: params.seoTitle,
-      description: params.metaDescription,
-    },
   };
+
+  // Build the SEO object defensively. Shopify's productUpdate treats `seo` as a
+  // unit: sending `seo: { title }` without a description CLEARS the existing
+  // seo.description (and vice versa). Single-field primary saves — e.g. the
+  // Accept & Translate flow that translates only the meta title back into the
+  // primary locale — send just one sub-field, so the other would be wiped.
+  //
+  // A normal full save always sends both fields, so it is unaffected. For the
+  // partial case (exactly one sub-field provided) we fetch the current live SEO
+  // from Shopify and carry the missing half over, so it is preserved rather than
+  // cleared. `undefined` means "field not sent by the client" (see the
+  // getFormStringOrNull mapping above), `""` means "user intentionally cleared it".
+  const hasSeoTitle = params.seoTitle !== undefined;
+  const hasSeoDescription = params.metaDescription !== undefined;
+  if (hasSeoTitle || hasSeoDescription) {
+    const seoInput: Record<string, unknown> = {};
+    seoInput.title = params.seoTitle;
+    seoInput.description = params.metaDescription;
+
+    // Only one side sent → preserve the other side from Shopify's current value.
+    if (hasSeoTitle !== hasSeoDescription) {
+      try {
+        const currentSeoResponse = await gateway.graphql(
+          `#graphql
+            query getProductSeo($id: ID!) {
+              product(id: $id) {
+                seo { title description }
+              }
+            }`,
+          { variables: { id: productId } }
+        );
+        const currentSeoData = await currentSeoResponse.json() as any;
+        const currentSeo = currentSeoData.data?.product?.seo || {};
+        if (!hasSeoTitle) seoInput.title = currentSeo.title ?? undefined;
+        if (!hasSeoDescription) seoInput.description = currentSeo.description ?? undefined;
+      } catch (seoError: unknown) {
+        // If the lookup fails, fall back to omitting the missing side entirely
+        // (JSON.stringify drops undefined) rather than sending an empty string
+        // that would clear it. Worst case Shopify leaves it unchanged.
+        loggers.product("warn", "Failed to fetch current SEO for preservation", {
+          productId,
+          error: seoError instanceof Error ? seoError.message : String(seoError),
+        });
+        if (!hasSeoTitle) seoInput.title = undefined;
+        if (!hasSeoDescription) seoInput.description = undefined;
+      }
+    }
+
+    mutationInput.seo = seoInput;
+  }
 
   // Only send productType if it has a value OR if user explicitly changed it
   if (params.productType || changedFields.includes('productType')) {

@@ -212,6 +212,65 @@ export class ShopifyContentService {
   }
 
   /**
+   * Build a Shopify SEOInput that preserves the sub-field the caller did NOT send.
+   *
+   * Shopify's productUpdate/collectionUpdate treats `seo` as a unit: sending
+   * `seo: { title }` without a description CLEARS the existing seo.description
+   * (and vice versa). A normal full save sends both fields, but single-field
+   * primary saves — e.g. the Accept & Translate flow that translates only the
+   * meta title back into the primary locale — send just one side. For that
+   * partial case we fetch the current live SEO and carry the missing half over.
+   *
+   * `undefined` means "not sent by the client"; `""` means "user cleared it".
+   * Returns `null` when neither side was sent (caller should omit `seo` entirely).
+   */
+  private async buildPreservedSeo(
+    resourceGid: string,
+    seoTitle: string | undefined,
+    seoDescription: string | undefined,
+  ): Promise<{ title?: string; description?: string } | null> {
+    const hasTitle = seoTitle !== undefined;
+    const hasDescription = seoDescription !== undefined;
+    if (!hasTitle && !hasDescription) return null;
+
+    const seo: { title?: string; description?: string } = {
+      title: seoTitle,
+      description: seoDescription,
+    };
+
+    // Only one side sent → preserve the other from Shopify's current value.
+    if (hasTitle !== hasDescription) {
+      try {
+        const response = await this.admin.graphql(
+          `#graphql
+            query getSeo($id: ID!) {
+              node(id: $id) {
+                ... on Collection { seo { title description } }
+                ... on Product { seo { title description } }
+              }
+            }`,
+          { variables: { id: resourceGid } }
+        );
+        const data = await response.json();
+        const currentSeo = data.data?.node?.seo || {};
+        if (!hasTitle) seo.title = currentSeo.title ?? undefined;
+        if (!hasDescription) seo.description = currentSeo.description ?? undefined;
+      } catch (error: unknown) {
+        // On lookup failure, drop the missing side (JSON.stringify omits undefined)
+        // rather than sending "" and clearing it — Shopify then leaves it unchanged.
+        loggers.translation('warn', '[buildPreservedSeo] Failed to fetch current SEO for preservation', {
+          resourceGid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!hasTitle) seo.title = undefined;
+        if (!hasDescription) seo.description = undefined;
+      }
+    }
+
+    return seo;
+  }
+
+  /**
    * Update a collection
    */
   async updateCollection(id: string, collection: { title?: string; handle?: string; descriptionHtml?: string; seo?: { title?: string; description?: string }; image?: { altText: string } }) {
@@ -768,14 +827,13 @@ export class ShopifyContentService {
           },
         });
       } else if (resourceType === 'Collection') {
+        // Preserve the untouched SEO half on partial saves (see buildPreservedSeo).
+        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
         updatedResource = await this.updateCollection(resourceId, {
           title: updates.title,
           handle: updates.handle,
           descriptionHtml: updates.description,
-          seo: {
-            title: updates.seoTitle,
-            description: updates.metaDescription,
-          },
+          ...(preservedSeo ? { seo: preservedSeo } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 
