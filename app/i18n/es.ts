@@ -1182,6 +1182,7 @@ export const es: Translation = {
     noSourceText: "No hay texto fuente para traducir",
     unknownAction: "Acción desconocida",
     invalidUrlSlug: "Slug de URL inválido: El handle debe contener al menos un carácter alfanumérico",
+    policyAutomaticManagement: "Esta política es gestionada automáticamente por Shopify y no se puede editar. En tu panel de Shopify, ve a Configuración → Políticas y desactiva la gestión automática de esta política; luego inténtalo de nuevo.",
     networkError: "Error de red. Por favor, verifica tu conexión a internet.",
     quotaExceeded: "Cuota de API excedida. Por favor, inténtalo de nuevo más tarde.",
     rateLimitExceeded: "Demasiadas solicitudes. Por favor, espera un momento.",

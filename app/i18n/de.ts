@@ -1180,6 +1180,7 @@ export const de = {
     noSourceText: "Kein Quelltext zum Übersetzen vorhanden",
     unknownAction: "Unbekannte Aktion",
     invalidUrlSlug: "Ungültiger URL-Slug: Handle muss mindestens ein alphanumerisches Zeichen enthalten",
+    policyAutomaticManagement: "Diese Richtlinie wird von Shopify automatisch verwaltet und kann daher nicht bearbeitet werden. Deaktivieren Sie in Ihrem Shopify-Admin unter Einstellungen → Richtlinien die automatische Verwaltung für diese Richtlinie und versuchen Sie es dann erneut.",
     networkError: "Netzwerkfehler. Bitte überprüfen Sie Ihre Internetverbindung.",
     quotaExceeded: "API-Limit erreicht. Bitte versuchen Sie es später erneut.",
     rateLimitExceeded: "Zu viele Anfragen. Bitte warten Sie einen Moment.",

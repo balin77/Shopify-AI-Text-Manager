@@ -1183,6 +1183,7 @@ export const en: Translation = {
     noSourceText: "No source text to translate",
     unknownAction: "Unknown action",
     invalidUrlSlug: "Invalid URL slug: Handle must contain at least one alphanumeric character",
+    policyAutomaticManagement: "This policy is managed automatically by Shopify and can't be edited. In your Shopify admin, go to Settings → Policies and turn off automatic management for this policy, then try again.",
     networkError: "Network error. Please check your internet connection.",
     quotaExceeded: "API quota exceeded. Please try again later.",
     rateLimitExceeded: "Too many requests. Please wait a moment.",

@@ -18,6 +18,11 @@ export function translateErrorMessage(errorMessage: string, t: TranslationString
   const lowerError = errorMessage.toLowerCase();
 
   // Map common error patterns to translation keys
+  // Shopify blocks editing a policy while "automatic management" is on
+  // (e.g. "Automatic management for Privacy Policy must be turned off in order to make changes.")
+  if (lowerError.includes("automatic management") && lowerError.includes("turned off")) {
+    return errors?.policyAutomaticManagement || errorMessage;
+  }
   if (lowerError.includes("graphql error")) {
     return errors?.graphqlError || errorMessage;
   }
