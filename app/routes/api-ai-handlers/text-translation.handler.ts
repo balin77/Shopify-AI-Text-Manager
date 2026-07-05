@@ -14,6 +14,62 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
 import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
+import { writeCookieBannerTranslations } from "~/utils/cookie-banner-availability.server";
+
+/**
+ * COOKIE_BANNER translatable resources are rejected by the pinned stable
+ * `translationsRegister` with "invalid id" — they can only be written through
+ * Shopify's `unstable` endpoint (see app.cookie-banner.tsx and
+ * cookie-banner-availability.server.ts). Cookie-Banner is normalised into the
+ * `templates` content-type family in api.ai.tsx, so its AI translations flow
+ * through the two `contentType === 'templates'` send sites below. Without this
+ * prefix check those sites push the CookieBanner GID at the stable endpoint and
+ * every locale throws "invalid id". The manual save path already routes here.
+ */
+const COOKIE_BANNER_GID_PREFIX = "gid://shopify/CookieBanner/";
+
+/**
+ * Register one foreign-locale translation for a theme-content ("templates")
+ * field. Routes COOKIE_BANNER resources to the `unstable` endpoint (via
+ * writeCookieBannerTranslations, which never throws) and everything else to the
+ * normal pinned-stable `admin.graphql` mutation (which throws on transport
+ * errors, preserving the existing caller catch behaviour). Returns a normalised
+ * accepted/error result so both send sites can share identical handling.
+ */
+async function registerTemplateFieldTranslation(params: {
+  admin: AIActionContext["admin"];
+  session: AIActionContext["session"];
+  resourceId: string;
+  key: string;
+  value: string;
+  locale: string;
+  digest: string;
+}): Promise<{ accepted: boolean; error?: string }> {
+  const { admin, session, resourceId, key, value, locale, digest } = params;
+  const input = [{ key, value, locale, translatableContentDigest: digest }];
+
+  if (resourceId.startsWith(COOKIE_BANNER_GID_PREFIX)) {
+    const res = await writeCookieBannerTranslations(
+      { shop: session.shop, accessToken: session.accessToken },
+      resourceId,
+      [{ key, value, translatableContentDigest: digest, locale }]
+    );
+    return { accepted: res.ok, error: res.error };
+  }
+
+  const response = await admin.graphql(TRANSLATE_CONTENT, {
+    variables: { resourceId, translations: input },
+  });
+  const data = (await response.json()) as ShopifyGraphQLResponse;
+  if (data.errors && data.errors.length > 0) {
+    return { accepted: false, error: JSON.stringify(data.errors) };
+  }
+  const userErrors = data.data?.translationsRegister?.userErrors ?? [];
+  if (userErrors.length > 0) {
+    return { accepted: false, error: JSON.stringify(userErrors) };
+  }
+  return { accepted: true };
+}
 
 export async function handleTranslateField(ctx: AIActionContext): Promise<Response> {
   const { session, admin, db, formData, settings, contentType, itemId } = ctx;
@@ -542,37 +598,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
               } else {
-              const translationInput = [{
+              const result = await registerTemplateFieldTranslation({
+                admin,
+                session,
+                resourceId: fieldResourceId,
                 key: fieldType,
                 value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
-
-              const templateResponse = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: fieldResourceId,
-                  translations: translationInput
-                }
+                locale,
+                digest,
               });
 
-              const templateData = await templateResponse.json() as ShopifyGraphQLResponse;
-
-              if (templateData.errors && templateData.errors.length > 0) {
-                logger.error("[API-AI] Batch: GraphQL error saving template translation", {
-                  context: "AI",
-                  errors: templateData.errors,
-                  locale,
-                  fieldType
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-              } else if ((templateData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+              if (!result.accepted) {
                 logger.error("[API-AI] Batch: Shopify rejected template translation", {
                   context: "AI",
-                  errors: templateData.data?.translationsRegister?.userErrors,
+                  error: result.error,
                   locale,
-                  fieldType
+                  fieldType,
+                  resourceId: fieldResourceId
                 });
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
@@ -1037,38 +1079,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
               } else {
-              const translationInput = [{
+              const result = await registerTemplateFieldTranslation({
+                admin,
+                session,
+                resourceId: fieldResourceId,
                 key: fieldType,
                 value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
-
-              const response = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: fieldResourceId,
-                  translations: translationInput
-                }
+                locale,
+                digest,
               });
 
-              const data = await response.json() as ShopifyGraphQLResponse;
-
-              if (data.errors && data.errors.length > 0) {
-                logger.error("[API-AI] Shopify GraphQL errors", {
+              if (!result.accepted) {
+                logger.error("[API-AI] Shopify rejected translation", {
                   context: "AI",
-                  errors: data.errors,
+                  error: result.error,
                   locale,
                   fieldType,
                   resourceId: fieldResourceId
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-              } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                logger.error("[API-AI] Shopify translation userErrors", {
-                  context: "AI",
-                  errors: data.data?.translationsRegister?.userErrors,
-                  locale,
-                  fieldType
                 });
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
