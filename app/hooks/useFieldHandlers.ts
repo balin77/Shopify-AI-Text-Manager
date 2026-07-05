@@ -255,21 +255,18 @@ const handleSave = () => {
     changedAltTextIndices = getChangedAltTextIndices();
   }
 
-  // If we're saving in the primary locale, clear all translations for changed fields
-  // and update in-memory item values so navigation back shows correct data
+  // If we're saving in the primary locale, mark the changed fields' translations
+  // as deleted so the UI reflects the server-side purge immediately. Drive this
+  // off the already-computed `changedFields` (the exact same list the server uses
+  // to delete) instead of re-deriving from the live item — otherwise a
+  // normalization-only diff on `body` would wrongly hide its translations here
+  // even after the getChangedFields fix keeps the server from deleting them.
   if (currentLanguage === primaryLocale && selectedItem) {
-    effectiveFieldDefinitions.forEach((field) => {
-      const currentValue = editableValues[field.key] || "";
-      const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-
-      // Only clear translations if the value actually changed
-      if (currentValue !== originalValue && field.translationKey) {
-        const translationKey = field.translationKey;
-
-        // Track deleted translation keys for immediate UI update
-        // This ensures that even if revalidation brings back old data, we show empty fields
-        deletedTranslationKeysRef.current.add(translationKey);
-        debugLog.translationClear(`Marked translations for field "${field.key}" (key: ${translationKey}) as deleted`);
+    changedFields.forEach((fieldKey) => {
+      const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+      if (field?.translationKey) {
+        deletedTranslationKeysRef.current.add(field.translationKey);
+        debugLog.translationClear(`Marked translations for field "${fieldKey}" (key: ${field.translationKey}) as deleted`);
       }
     });
 
