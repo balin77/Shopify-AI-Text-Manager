@@ -207,9 +207,16 @@ export async function getCookieBannerTranslations(
   }
 }
 
+// Also request the registered `translations` back — a diagnostic mirror of the
+// remove path. translationsRemove is a confirmed silent no-op for COOKIE_BANNER
+// (accepts the call, no errors, removes nothing); if translationsRegister has the
+// same behaviour then cookie-banner translations would only ever live in our DB
+// and never reach the storefront. We only LOG a zero-count register here (not
+// fail it) so a schema that omits the field on `unstable` can't break saving.
 const REGISTER_MUTATION = `mutation cookieBannerRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
   translationsRegister(resourceId: $resourceId, translations: $translations) {
     userErrors { field message }
+    translations { key locale }
   }
 }`;
 
@@ -236,7 +243,12 @@ export async function writeCookieBannerTranslations(
   if (translations.length === 0) return { ok: true };
   try {
     const data = (await unstableGraphQL(session, REGISTER_MUTATION, { resourceId, translations })) as {
-      data?: { translationsRegister?: { userErrors?: Array<{ message: string }> } };
+      data?: {
+        translationsRegister?: {
+          userErrors?: Array<{ message: string }>;
+          translations?: Array<{ key: string; locale: string }>;
+        };
+      };
       errors?: Array<{ message: string }>;
     };
     if (data.errors?.length) {
@@ -247,6 +259,19 @@ export async function writeCookieBannerTranslations(
     const userErrors = data.data?.translationsRegister?.userErrors ?? [];
     if (userErrors.length) {
       return { ok: false, error: userErrors[0]?.message ?? "Translation rejected" };
+    }
+    // Diagnostic only (see REGISTER_MUTATION comment): warn if Shopify reports it
+    // registered nothing despite a clean response — a possible silent no-op like
+    // translationsRemove. Does NOT fail the save.
+    const registered = data.data?.translationsRegister?.translations?.length ?? 0;
+    if (registered === 0) {
+      logger.warn("[CookieBanner] translationsRegister returned no translations — possible silent no-op (values may not reach the storefront)", {
+        context: "CookieBanner",
+        shop: session.shop,
+        resourceId,
+        keys: translations.map((t) => t.key),
+        locale: translations[0]?.locale,
+      });
     }
     return { ok: true };
   } catch (e) {

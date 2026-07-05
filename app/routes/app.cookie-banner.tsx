@@ -148,9 +148,14 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
     });
   }
 
-  const shopifyErrors: string[] = [];
-  let totalOps = 0;
-  let totalFailed = 0;
+  // Register failures are real errors (auth/schema/validation). Remove failures
+  // are a known Shopify limitation: translationsRemove is a silent no-op for
+  // COOKIE_BANNER (accepts the call, no errors, removes nothing), so they get a
+  // soft, actionable warning rather than a hard error.
+  const registerErrors: string[] = [];
+  const removeFailedKeys: string[] = [];
+  let registerOps = 0;
+  let registerFailed = 0;
   // Track which keys Shopify actually accepted/removed so the DB mirror below
   // only reflects confirmed changes. A remove that no-ops or a register that
   // fails must leave its previous DB row untouched — otherwise the local cache
@@ -160,23 +165,21 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
   const removedKeys = new Set<string>();
 
   for (const [resId, translations] of registerByRes) {
-    totalOps += translations.length;
+    registerOps += translations.length;
     const res = await writeCookieBannerTranslations(cbSession, resId, translations);
     if (res.ok) {
       for (const t of translations) pushedKeys.add(t.key);
     } else {
-      totalFailed += translations.length;
-      shopifyErrors.push(res.error ?? "register failed");
+      registerFailed += translations.length;
+      registerErrors.push(res.error ?? "register failed");
     }
   }
   for (const [resId, keys] of removeByRes) {
-    totalOps += keys.length;
     const res = await removeCookieBannerTranslations(cbSession, resId, keys, [locale]);
     if (res.ok) {
       for (const k of keys) removedKeys.add(k);
     } else {
-      totalFailed += keys.length;
-      shopifyErrors.push(res.error ?? "remove failed");
+      removeFailedKeys.push(...keys);
       logger.warn("[CookieBanner] Save — Shopify did not remove cleared keys", {
         context: "CookieBanner",
         shop: session.shop,
@@ -188,9 +191,10 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
     }
   }
 
-  if (totalOps > 0 && totalFailed >= totalOps) {
+  // Hard error only when EVERY register attempt failed (and nothing else stuck).
+  if (registerOps > 0 && registerFailed >= registerOps && removedKeys.size === 0) {
     return json(
-      { success: false, error: `Shopify rejected all changes: ${shopifyErrors.join("; ")}` },
+      { success: false, error: `Shopify rejected all changes: ${registerErrors.join("; ")}` },
       { status: 500 }
     );
   }
@@ -237,15 +241,24 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
   // `success && actionType === "updateContent"`. Without it the spinner
   // stays spinning forever and the Save button never re-enables.
   //
-  // A partial failure still returns success:true (so the spinner clears and the
-  // confirmed changes stick) but sets `warning` — the editor's save-response
-  // handler renders that as a warning InfoBox (same path as alt-text/DB-cache
-  // partial saves), so the merchant sees that some fields did not persist.
-  if (totalFailed > 0) {
+  // Surface any partial issue as a `warning` — the editor's save-response handler
+  // renders it as a warning InfoBox (same path as alt-text/DB-cache partial saves).
+  // Still success:true so the spinner clears and the confirmed changes stick.
+  const warnings: string[] = [];
+  if (registerErrors.length > 0) {
+    warnings.push(`Some translations could not be saved to Shopify: ${registerErrors.join("; ")}.`);
+  }
+  if (removeFailedKeys.length > 0) {
+    warnings.push(
+      "Cookie-banner translations can't be deleted through the app — Shopify doesn't support removing them for this resource. " +
+        "The cleared value stays on Shopify; to remove it, edit it in your Shopify admin. You can still overwrite the text here."
+    );
+  }
+  if (warnings.length > 0) {
     return json({
       success: true,
       actionType: "updateContent" as const,
-      warning: `Some changes could not be saved to Shopify: ${shopifyErrors.join("; ")}`,
+      warning: warnings.join(" "),
     });
   }
 
