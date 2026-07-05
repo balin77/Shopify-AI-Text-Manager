@@ -3,7 +3,7 @@
  * Centralized service for managing Shopify content via GraphQL API
  */
 
-import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG } from "../../app/graphql/content.mutations";
+import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG, METAFIELDS_DELETE } from "../../app/graphql/content.mutations";
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
@@ -116,6 +116,59 @@ export class ShopifyContentService {
   }
 
   /**
+   * Delete metafields by identifier.
+   *
+   * Setting a SEO metafield (global.title_tag / global.description_tag) to
+   * `value: ""` does NOT clear it on Shopify — it must be deleted by identifier.
+   * Deleting a metafield that doesn't exist is a no-op; userErrors are logged,
+   * not thrown, so a clear that partially fails doesn't abort the whole save.
+   */
+  private async deleteMetafields(ownerId: string, identifiers: Array<{ namespace: string; key: string }>) {
+    if (identifiers.length === 0) return;
+
+    const response = await this.admin.graphql(METAFIELDS_DELETE, {
+      variables: {
+        metafields: identifiers.map((i) => ({ ownerId, namespace: i.namespace, key: i.key })),
+      },
+    });
+
+    const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in deleteMetafields: ${data.errors[0].message}`);
+    }
+    if (data.data?.metafieldsDelete?.userErrors?.length > 0) {
+      loggers.translation('warn', '[deleteMetafields] userErrors while clearing metafields', {
+        ownerId,
+        identifiers,
+        userErrors: data.data.metafieldsDelete.userErrors,
+      });
+    }
+  }
+
+  /**
+   * Split SEO metafields into ones to SET (non-empty) and ones to DELETE (cleared).
+   * `undefined` = not sent by the client → skip entirely.
+   * `""` = user cleared it → delete the metafield (set-to-empty does not clear it).
+   */
+  private splitSeoMetafields(seoTitle?: string, seoDescription?: string) {
+    const toSet: Array<{ namespace: string; key: string; value: string; type: string }> = [];
+    const toDelete: Array<{ namespace: string; key: string }> = [];
+
+    const route = (value: string | undefined, key: string) => {
+      if (value === undefined) return;
+      if (value === "") {
+        toDelete.push({ namespace: "global", key });
+      } else {
+        toSet.push({ namespace: "global", key, value, type: "single_line_text_field" });
+      }
+    };
+
+    route(seoTitle, "title_tag");
+    route(seoDescription, "description_tag");
+    return { toSet, toDelete };
+  }
+
+  /**
    * Update a page
    * Note: Shopify Admin API Page type has no `seo` field.
    * SEO data is stored in metafields: global.title_tag and global.description_tag.
@@ -123,14 +176,7 @@ export class ShopifyContentService {
   async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seoTitle?: string; seoDescription?: string }) {
     // Separate SEO fields from the page input – they go as metafields
     const { seoTitle, seoDescription, ...pageInput } = page;
-
-    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
-    if (seoTitle !== undefined) {
-      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
-    }
-    if (seoDescription !== undefined) {
-      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
-    }
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
     const response = await this.admin.graphql(UPDATE_PAGE, {
       variables: {
@@ -151,6 +197,9 @@ export class ShopifyContentService {
       throw new Error(data.data.pageUpdate.userErrors[0].message);
     }
 
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
+
     return data.data?.pageUpdate?.page;
   }
 
@@ -160,14 +209,7 @@ export class ShopifyContentService {
    */
   async updateBlog(id: string, blog: { title?: string; handle?: string; seoTitle?: string; seoDescription?: string }) {
     const { seoTitle, seoDescription, ...blogInput } = blog;
-
-    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
-    if (seoTitle !== undefined) {
-      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
-    }
-    if (seoDescription !== undefined) {
-      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
-    }
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
     const response = await this.admin.graphql(UPDATE_BLOG, {
       variables: {
@@ -187,6 +229,9 @@ export class ShopifyContentService {
     if (data.data?.blogUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.blogUpdate.userErrors[0].message);
     }
+
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
 
     return data.data?.blogUpdate?.blog;
   }
