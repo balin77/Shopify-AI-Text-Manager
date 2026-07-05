@@ -97,7 +97,21 @@ export async function handleUpdateContent(
     // We iterate over all changed fields and update each metaobject individually.
     if (contentConfig.resourceType === "Metaobject") {
       const { METAOBJECT_UPDATE, TRANSLATE_CONTENT, REMOVE_TRANSLATIONS } = await import("../../graphql/content.mutations");
-      const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
+      const { GET_TRANSLATABLE_CONTENT, GET_SHOP_LOCALES } = await import("../../graphql/content.queries");
+
+      // Foreign locales are only needed when saving the primary locale (to purge
+      // stale translations after the source content changed). Fetch once and
+      // cache across the update loop instead of per metaobject.
+      let foreignLocalesCache: string[] | null = null;
+      const getForeignLocales = async (): Promise<string[]> => {
+        if (foreignLocalesCache) return foreignLocalesCache;
+        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+        const localesData = await localesResponse.json();
+        foreignLocalesCache = (localesData.data?.shopLocales || [])
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+          .map((l: { locale: string }) => l.locale);
+        return foreignLocalesCache!;
+      };
 
       // Collect changed metaobject fields from formData
       const metaobjectUpdates: Array<{ id: string; value: string }> = [];
@@ -165,11 +179,69 @@ export async function handleUpdateContent(
             if (updateData.data?.metaobjectUpdate?.userErrors?.length > 0) {
               errors.push(updateData.data.metaobjectUpdate.userErrors[0].message);
             } else {
-              // Update DB
+              // Mirror the new primary value into the DB `fields` blob, NOT just
+              // displayName. The editor's getFieldValue reads labelField.value
+              // from `fields`, so updating only displayName leaves the UI showing
+              // the stale value until a full re-sync re-fetches from Shopify.
+              const existing = await db.metaobject.findUnique({
+                where: { shop_id: { shop: session.shop, id: update.id } },
+                select: { fields: true },
+              });
+              const existingFields = Array.isArray(existing?.fields)
+                ? (existing!.fields as Array<{ key: string; value: string | null; type: string }>)
+                : [];
+              const nextFields = existingFields.map((f) =>
+                f.key === labelField.key ? { ...f, value: update.value } : f
+              );
               await db.metaobject.update({
                 where: { shop_id: { shop: session.shop, id: update.id } },
-                data: { displayName: update.value, lastSyncedAt: new Date() }
+                data: { displayName: update.value, fields: nextFields, lastSyncedAt: new Date() }
               });
+
+              // Primary content changed → its foreign translations are now stale.
+              // Remove them on Shopify AND locally, mirroring the products /
+              // collections / templates routes. Without this, outdated translations
+              // linger in every foreign locale until the merchant re-translates.
+              const foreignLocales = await getForeignLocales();
+              if (foreignLocales.length > 0) {
+                try {
+                  const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+                    variables: {
+                      resourceId: update.id,
+                      translationKeys: [labelField.key],
+                      locales: foreignLocales,
+                    },
+                  });
+                  const removeData = await removeResponse.json();
+                  if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+                    // Non-fatal: the primary save already succeeded.
+                    logger.warn("[UnifiedContent] translationsRemove errors on metaobject primary change", {
+                      context: "Metaobjects",
+                      id: update.id,
+                      errors: removeData.data.translationsRemove.userErrors,
+                    });
+                  }
+
+                  // Only mirror the removal into the DB after the Shopify call
+                  // returned. If it threw (network), we skip the local purge so
+                  // the DB does not diverge from Shopify (a re-sync would just
+                  // restore the still-present Shopify translation anyway).
+                  await db.metaobjectTranslation.deleteMany({
+                    where: {
+                      shop: session.shop,
+                      metaobjectId: update.id,
+                      key: labelField.key,
+                      locale: { in: foreignLocales },
+                    },
+                  });
+                } catch (removeErr: any) {
+                  logger.warn("[UnifiedContent] translationsRemove failed on metaobject primary change (non-fatal)", {
+                    context: "Metaobjects",
+                    id: update.id,
+                    error: removeErr?.message,
+                  });
+                }
+              }
             }
           } else if (update.value.trim() === "") {
             // Empty value in foreign locale → remove the translation
