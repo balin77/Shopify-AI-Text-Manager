@@ -260,38 +260,66 @@ export async function writeCookieBannerTranslations(
   }
 }
 
+// Request the removed `translations` back, not just userErrors: Shopify's
+// translationsRemove can accept the call and return NO errors while removing
+// nothing (a silent no-op). Without the returned list we cannot tell an actual
+// removal from a no-op, so the caller (and the DB mirror) would wrongly treat a
+// no-op as success — the field vanishes locally but stays on Shopify.
 const REMOVE_MUTATION = `mutation cookieBannerRemove($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
   translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
     userErrors { field message }
+    translations { key locale }
   }
 }`;
 
 /**
  * Remove foreign-locale Cookie-Banner translations via the unstable endpoint —
  * counterpart to writeCookieBannerTranslations for cleared fields.
- * Returns { ok: false, error } on any failure (never throws).
+ * Returns { ok: false, error } on any failure (never throws). `removed` is the
+ * number of translations Shopify reports it actually deleted — 0 with ok:true
+ * means the endpoint no-oped (see REMOVE_MUTATION comment); the caller must NOT
+ * treat that as a successful delete.
  */
 export async function removeCookieBannerTranslations(
   session: CookieBannerSession,
   resourceId: string,
   translationKeys: string[],
   locales: string[]
-): Promise<{ ok: boolean; error?: string }> {
-  if (translationKeys.length === 0) return { ok: true };
+): Promise<{ ok: boolean; removed: number; error?: string }> {
+  if (translationKeys.length === 0) return { ok: true, removed: 0 };
   try {
     const data = (await unstableGraphQL(session, REMOVE_MUTATION, { resourceId, translationKeys, locales })) as {
-      data?: { translationsRemove?: { userErrors?: Array<{ message: string }> } };
+      data?: {
+        translationsRemove?: {
+          userErrors?: Array<{ message: string }>;
+          translations?: Array<{ key: string; locale: string }>;
+        };
+      };
       errors?: Array<{ message: string }>;
     };
     if (data.errors?.length) {
       cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
-      return { ok: false, error: data.errors[0]?.message ?? "Cookie banner temporarily unavailable" };
+      return { ok: false, removed: 0, error: data.errors[0]?.message ?? "Cookie banner temporarily unavailable" };
     }
     const userErrors = data.data?.translationsRemove?.userErrors ?? [];
     if (userErrors.length) {
-      return { ok: false, error: userErrors[0]?.message ?? "Translation removal rejected" };
+      return { ok: false, removed: 0, error: userErrors[0]?.message ?? "Translation removal rejected" };
     }
-    return { ok: true };
+    const removed = data.data?.translationsRemove?.translations?.length ?? 0;
+    if (removed === 0) {
+      // No error, but Shopify removed nothing — the endpoint does not actually
+      // support removing these keys/locales. Surface it as a failure so the DB
+      // stays in sync with Shopify instead of falsely showing the field gone.
+      logger.warn("[CookieBanner] translationsRemove no-op — nothing removed", {
+        context: "CookieBanner",
+        shop: session.shop,
+        resourceId,
+        translationKeys,
+        locales,
+      });
+      return { ok: false, removed: 0, error: "Shopify removed no translations (unsupported for this resource)" };
+    }
+    return { ok: true, removed };
   } catch (e) {
     logger.debug("[CookieBanner] remove threw → unavailable", {
       context: "CookieBanner",
@@ -299,7 +327,7 @@ export async function removeCookieBannerTranslations(
       error: e instanceof Error ? e.message : String(e),
     });
     cache.set(session.shop, { status: "unavailable", expiresAt: Date.now() + TTL_MS });
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, removed: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
