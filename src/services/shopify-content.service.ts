@@ -120,28 +120,51 @@ export class ShopifyContentService {
    *
    * Setting a SEO metafield (global.title_tag / global.description_tag) to
    * `value: ""` does NOT clear it on Shopify — it must be deleted by identifier.
-   * Deleting a metafield that doesn't exist is a no-op; userErrors are logged,
-   * not thrown, so a clear that partially fails doesn't abort the whole save.
+   * Deleting a metafield that doesn't exist is a no-op.
+   *
+   * NEVER throws: this runs inside updatePage/updateBlog/updateArticle AFTER the
+   * main update mutation has already landed, and the caller mirrors the save to
+   * the DB AFTER this returns. A thrown error here would leave Shopify updated
+   * but the DB un-mirrored (and the cleared metafield still present). Instead we
+   * log transport errors, GraphQL errors, and userErrors; a lingering metafield
+   * self-heals on the next reload/sync. Returns true when the delete was
+   * confirmed clean, false otherwise (for future partial-success surfacing).
    */
-  private async deleteMetafields(ownerId: string, identifiers: Array<{ namespace: string; key: string }>) {
-    if (identifiers.length === 0) return;
+  private async deleteMetafields(ownerId: string, identifiers: Array<{ namespace: string; key: string }>): Promise<boolean> {
+    if (identifiers.length === 0) return true;
 
-    const response = await this.admin.graphql(METAFIELDS_DELETE, {
-      variables: {
-        metafields: identifiers.map((i) => ({ ownerId, namespace: i.namespace, key: i.key })),
-      },
-    });
+    try {
+      const response = await this.admin.graphql(METAFIELDS_DELETE, {
+        variables: {
+          metafields: identifiers.map((i) => ({ ownerId, namespace: i.namespace, key: i.key })),
+        },
+      });
 
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in deleteMetafields: ${data.errors[0].message}`);
-    }
-    if (data.data?.metafieldsDelete?.userErrors?.length > 0) {
-      loggers.translation('warn', '[deleteMetafields] userErrors while clearing metafields', {
+      const data = await response.json();
+      if (data.errors?.length > 0) {
+        loggers.translation('warn', '[deleteMetafields] GraphQL error while clearing metafields', {
+          ownerId,
+          identifiers,
+          error: data.errors[0].message,
+        });
+        return false;
+      }
+      if (data.data?.metafieldsDelete?.userErrors?.length > 0) {
+        loggers.translation('warn', '[deleteMetafields] userErrors while clearing metafields', {
+          ownerId,
+          identifiers,
+          userErrors: data.data.metafieldsDelete.userErrors,
+        });
+        return false;
+      }
+      return true;
+    } catch (error: unknown) {
+      loggers.translation('warn', '[deleteMetafields] request failed while clearing metafields', {
         ownerId,
         identifiers,
-        userErrors: data.data.metafieldsDelete.userErrors,
+        error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 
