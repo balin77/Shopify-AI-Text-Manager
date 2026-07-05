@@ -125,9 +125,27 @@ export async function handleUpdateContent(
         return json({ success: true, actionType: "updateContent" });
       }
 
+      // On a primary-locale save the client sends ALL metaobject fields
+      // (buildFieldsForSave does not filter for the primary locale); only the
+      // GIDs listed in `changedFields` actually changed. Restrict processing to
+      // those so we never re-write / purge untouched metaobjects or fire N
+      // redundant Shopify calls. Foreign-locale saves already send only changed
+      // fields (and omit changedFields), so they pass through unchanged. The
+      // per-entry value guard in the loop below is a safety net for flows that
+      // omit changedFields (e.g. accept-and-translate).
+      const changedFieldsStr = getFormString(formData, "changedFields");
+      const changedIds = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : null;
+      const updatesToProcess = (locale === primaryLocale && changedIds && changedIds.length > 0)
+        ? metaobjectUpdates.filter((u) => changedIds.includes(u.id))
+        : metaobjectUpdates;
+
+      if (updatesToProcess.length === 0) {
+        return json({ success: true, actionType: "updateContent" });
+      }
+
       // Block empty primary-locale fields (same protection as templates)
       if (locale === primaryLocale) {
-        const emptyEntries = metaobjectUpdates.filter(u => u.value.trim() === "");
+        const emptyEntries = updatesToProcess.filter(u => u.value.trim() === "");
         if (emptyEntries.length > 0) {
           logger.warn("[UnifiedContent] Blocked metaobject save — empty primary-locale fields", {
             context: "Metaobjects",
@@ -143,7 +161,7 @@ export async function handleUpdateContent(
 
       const errors: string[] = [];
 
-      for (const update of metaobjectUpdates) {
+      for (const update of updatesToProcess) {
         try {
           // Query metaobject to find the label field key
           const metaobjectResponse = await admin.graphql(
@@ -166,6 +184,23 @@ export async function handleUpdateContent(
           }
 
           if (locale === primaryLocale) {
+            // Safety net: skip metaobjects whose value did not actually change.
+            // Guards flows that omit changedFields (accept-and-translate) so we
+            // never purge foreign translations of an untouched entry. Compare
+            // against the stored primary value (label entry in the DB `fields`
+            // blob), which we also reuse below to mirror the new value.
+            const existing = await db.metaobject.findUnique({
+              where: { shop_id: { shop: session.shop, id: update.id } },
+              select: { fields: true },
+            });
+            const existingFields = Array.isArray(existing?.fields)
+              ? (existing!.fields as Array<{ key: string; value: string | null; type: string }>)
+              : [];
+            const oldLabelValue = existingFields.find((f) => f.key === labelField.key)?.value ?? "";
+            if (oldLabelValue === update.value) {
+              continue; // unchanged → nothing to update or purge
+            }
+
             // Update metaobject field directly
             const updateResponse = await admin.graphql(METAOBJECT_UPDATE, {
               variables: {
@@ -183,13 +218,6 @@ export async function handleUpdateContent(
               // displayName. The editor's getFieldValue reads labelField.value
               // from `fields`, so updating only displayName leaves the UI showing
               // the stale value until a full re-sync re-fetches from Shopify.
-              const existing = await db.metaobject.findUnique({
-                where: { shop_id: { shop: session.shop, id: update.id } },
-                select: { fields: true },
-              });
-              const existingFields = Array.isArray(existing?.fields)
-                ? (existing!.fields as Array<{ key: string; value: string | null; type: string }>)
-                : [];
               const nextFields = existingFields.map((f) =>
                 f.key === labelField.key ? { ...f, value: update.value } : f
               );
@@ -339,7 +367,7 @@ export async function handleUpdateContent(
 
       logger.info("[UnifiedContent] Metaobjects updated successfully", {
         context: "Metaobjects",
-        count: metaobjectUpdates.length,
+        count: updatesToProcess.length,
         locale
       });
 

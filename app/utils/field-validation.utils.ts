@@ -732,6 +732,25 @@ export function hasFieldMissingTranslations(
     );
   }
 
+  // Metaobjects: the primary value lives in the matching metaobject entry's
+  // `fields` blob (fieldKey is the metaobject GID), and translations are keyed
+  // by that same GID. primaryHasFieldContent/getFieldValue cannot resolve this
+  // shape (there is no top-level item property), so handle it explicitly —
+  // mirrors the theme branch above. Without this the primary field never gets
+  // the blue "missing translation" highlight.
+  if (contentType === 'metaobjects') {
+    const metaobjects = (selectedItem as unknown as {
+      metaobjects?: Array<{ id: string; displayName?: string | null; fields?: Array<{ key: string; value: string | null }> }>;
+    }).metaobjects;
+    const entry = Array.isArray(metaobjects) ? metaobjects.find(m => m.id === translationKey) : undefined;
+    const labelValue = entry?.fields?.find(f => isMetaobjectLabelField(f.key))?.value;
+    const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? labelValue ?? entry?.displayName ?? undefined;
+    if (!primaryValue || isFieldEmpty(primaryValue)) return false;
+    return foreignLocales.some(locale =>
+      !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)
+    );
+  }
+
   if (!primaryHasFieldContent(selectedItem, translationKey, contentType, overlays)) {
     return false;
   }
