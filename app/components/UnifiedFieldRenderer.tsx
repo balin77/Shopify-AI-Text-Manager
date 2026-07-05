@@ -163,8 +163,13 @@ export function UnifiedFieldRenderer(
       contentType === "metaobjects" ||
       (contentType === "products" && field.key === "title"));
 
+  // Pass the field's actual Shopify translation key (not field.key). The UI field
+  // key and the translation key diverge for some fields — e.g. article "body" →
+  // "body_html", "summary" → "summary_html", page "body" → "body_html". Using
+  // field.key would make hasFieldMissingTranslations look up translations under the
+  // wrong key and report them as permanently missing (blue highlight in primary).
   const fieldHasMissingTranslations = isPrimaryLocale
-    ? hasFieldMissingTranslations(selectedItem, field.key, shopLocales, primaryLocale, contentType as ContentType, validationOverlays)
+    ? hasFieldMissingTranslations(selectedItem, field.translationKey ?? field.key, shopLocales, primaryLocale, contentType as ContentType, validationOverlays)
     : false;
 
   // Custom render function (if provided)
