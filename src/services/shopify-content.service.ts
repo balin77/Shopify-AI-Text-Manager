@@ -238,10 +238,21 @@ export class ShopifyContentService {
 
   /**
    * Update an article
+   * Note: Like Pages/Blogs, Article SEO data is stored in metafields
+   * (global.title_tag, global.description_tag), not a native `seo` field.
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; image?: { altText: string } | null }) {
+  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; seoTitle?: string; seoDescription?: string; image?: { altText: string } | null }) {
+    const { seoTitle, seoDescription, ...articleInput } = article;
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
+
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
-      variables: { id, article }
+      variables: {
+        id,
+        article: {
+          ...articleInput,
+          ...(metafields.length > 0 ? { metafields } : {}),
+        },
+      }
     });
 
     const data = await response.json();
@@ -252,6 +263,9 @@ export class ShopifyContentService {
     if (data.data?.articleUpdate?.userErrors?.length > 0) {
       throw new Error(data.data.articleUpdate.userErrors[0].message);
     }
+
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
 
     return data.data?.articleUpdate?.article;
   }
@@ -852,6 +866,8 @@ export class ShopifyContentService {
           handle: updates.handle,
           body: updates.body,
           summary: updates.summary,
+          ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+          ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 

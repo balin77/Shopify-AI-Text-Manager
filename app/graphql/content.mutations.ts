@@ -96,6 +96,8 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
         image {
           altText
           url
