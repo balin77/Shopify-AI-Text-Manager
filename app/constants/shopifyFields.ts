@@ -49,7 +49,7 @@ export const UI_FIELD_TO_TRANSLATION_KEY: Record<string, string> = {
 export const FIELD_CONFIGS = {
   products: ['title', 'descriptionHtml', 'handle', 'productType', 'seo.title', 'seo.description'],
   collections: ['title', 'descriptionHtml', 'handle', 'seo.title', 'seo.description'],
-  pages: ['title', 'body', 'handle'],
+  pages: ['title', 'body', 'handle', 'seo.title', 'seo.description'],
   blogs: ['title', 'body', 'summary', 'handle', 'seo.title', 'seo.description'],
   policies: ['body'],
   templates: ['title', 'body'],
