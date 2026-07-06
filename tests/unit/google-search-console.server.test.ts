@@ -13,7 +13,10 @@ import {
   getGscAccessToken,
   revokeGoogleToken,
   submitSitemap,
+  findCtrOpportunities,
+  summarizeInspection,
   GscReconnectRequiredError,
+  type SearchAnalyticsRow,
 } from "~/services/google-search-console.server";
 import { encryptApiKey, isEncrypted } from "~/utils/encryption.server";
 
@@ -342,6 +345,92 @@ describe("revokeGoogleToken — best-effort disconnect", () => {
   it("never throws even when Google responds with an error status", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => resp(false, { error: "invalid_token" })));
     await expect(revokeGoogleToken("rt-value")).resolves.toBeUndefined();
+  });
+});
+
+describe("findCtrOpportunities — Search Console page 'Quick wins'", () => {
+  const row = (query: string, page: string, impressions: number, position: number, ctr = 0.01): SearchAnalyticsRow => ({
+    keys: [query, page],
+    clicks: Math.round(impressions * ctr),
+    impressions,
+    ctr,
+    position,
+  });
+
+  it("keeps only rows with impressions >= 200 and position in [4,20]", () => {
+    const rows = [
+      row("in-range", "https://s.com/a", 200, 4), // boundary — kept
+      row("also-in-range", "https://s.com/b", 500, 20), // boundary — kept
+      row("too-few-impressions", "https://s.com/c", 199, 10),
+      row("too-close", "https://s.com/d", 999, 3.9),
+      row("too-far", "https://s.com/e", 999, 20.1),
+    ];
+    const result = findCtrOpportunities(rows);
+    expect(result.map((r) => r.query).sort()).toEqual(["also-in-range", "in-range"].sort());
+  });
+
+  it("sorts by impressions descending and caps at the limit", () => {
+    const rows = [
+      row("low", "https://s.com/low", 250, 10),
+      row("high", "https://s.com/high", 900, 10),
+      row("mid", "https://s.com/mid", 500, 10),
+    ];
+    const result = findCtrOpportunities(rows, 2);
+    expect(result.map((r) => r.query)).toEqual(["high", "mid"]);
+  });
+
+  it("maps keys[0]/keys[1] to query/page and preserves impressions/position/ctr", () => {
+    const [result] = findCtrOpportunities([row("blue shoes", "https://s.com/p/blue-shoes", 300, 8, 0.02)]);
+    expect(result).toEqual({
+      query: "blue shoes",
+      page: "https://s.com/p/blue-shoes",
+      impressions: 300,
+      position: 8,
+      ctr: 0.02,
+    });
+  });
+
+  it("returns an empty list for no rows", () => {
+    expect(findCtrOpportunities([])).toEqual([]);
+  });
+});
+
+describe("summarizeInspection — urlInspection response mapping", () => {
+  it("extracts the indexStatusResult fields the UI needs", () => {
+    const summary = summarizeInspection({
+      indexStatusResult: {
+        verdict: "PASS",
+        coverageState: "Submitted and indexed",
+        robotsTxtState: "ALLOWED",
+        indexingState: "INDEXING_ALLOWED",
+        lastCrawlTime: "2026-06-01T00:00:00Z",
+      },
+      mobileUsabilityResult: { verdict: "NEUTRAL" }, // must be ignored
+    });
+    expect(summary).toEqual({
+      verdict: "PASS",
+      coverageState: "Submitted and indexed",
+      robotsTxtState: "ALLOWED",
+      indexingState: "INDEXING_ALLOWED",
+      lastCrawlTime: "2026-06-01T00:00:00Z",
+    });
+  });
+
+  it("degrades gracefully for a missing/null inspection result", () => {
+    expect(summarizeInspection(null)).toEqual({
+      verdict: "VERDICT_UNSPECIFIED",
+      coverageState: "",
+      robotsTxtState: "",
+      indexingState: "",
+      lastCrawlTime: null,
+    });
+    expect(summarizeInspection({})).toEqual({
+      verdict: "VERDICT_UNSPECIFIED",
+      coverageState: "",
+      robotsTxtState: "",
+      indexingState: "",
+      lastCrawlTime: null,
+    });
   });
 });
 

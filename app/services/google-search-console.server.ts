@@ -365,6 +365,48 @@ export async function querySearchAnalytics(
   return (json.rows ?? []) as SearchAnalyticsRow[];
 }
 
+/** One (query, page) row flagged as a "quick win" — ranks decently but the CTR headroom suggests a title/meta rewrite could pull more clicks. */
+export interface CtrOpportunity {
+  query: string;
+  page: string;
+  impressions: number;
+  position: number;
+  ctr: number;
+}
+
+// Position 4-20 = "found, but not front-of-page-1" — the band where a better
+// title/meta description has the most leverage (position 1-3 already win the
+// click; >20 rarely gets impressions worth optimizing for). 200 impressions
+// is a floor so we don't surface statistical noise from single-digit-view rows.
+const OPPORTUNITY_MIN_IMPRESSIONS = 200;
+const OPPORTUNITY_MIN_POSITION = 4;
+const OPPORTUNITY_MAX_POSITION = 20;
+const OPPORTUNITY_LIMIT = 10;
+
+/**
+ * Filter/rank ["query","page"]-dimension analytics rows down to the top CTR
+ * opportunities. Pure and exported so the ranking logic is unit-testable
+ * without mocking fetch/Prisma.
+ */
+export function findCtrOpportunities(rows: SearchAnalyticsRow[], limit = OPPORTUNITY_LIMIT): CtrOpportunity[] {
+  return rows
+    .filter(
+      (r) =>
+        r.impressions >= OPPORTUNITY_MIN_IMPRESSIONS &&
+        r.position >= OPPORTUNITY_MIN_POSITION &&
+        r.position <= OPPORTUNITY_MAX_POSITION,
+    )
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, limit)
+    .map((r) => ({
+      query: r.keys[0] ?? "",
+      page: r.keys[1] ?? "",
+      impressions: r.impressions,
+      position: r.position,
+      ctr: r.ctr,
+    }));
+}
+
 /**
  * Submit a sitemap to GSC. `sitemapUrl` must be the sitemap's FULL absolute URL
  * (e.g. "https://shop.example.com/sitemap.xml") — the sitemaps.submit API takes
@@ -403,6 +445,32 @@ export async function inspectUrl(
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`GSC urlInspection failed: ${json.error?.message || res.status}`);
   return json.inspectionResult ?? null;
+}
+
+/** Compact shape the "Inspect URL" card actually renders. */
+export interface UrlInspectionSummary {
+  verdict: string; // "PASS" | "PARTIAL" | "FAIL" | "NEUTRAL" | "VERDICT_UNSPECIFIED"
+  coverageState: string;
+  robotsTxtState: string;
+  indexingState: string;
+  lastCrawlTime: string | null;
+}
+
+/**
+ * Reduce the raw (large, deeply nested) urlInspection.index API response down
+ * to the handful of fields the UI needs. The full response also carries
+ * mobileUsabilityResult/richResultsResult/AMP data we don't use — kept pure
+ * and exported so the shape mapping is unit-testable without a live call.
+ */
+export function summarizeInspection(inspectionResult: any): UrlInspectionSummary {
+  const idx = inspectionResult?.indexStatusResult ?? {};
+  return {
+    verdict: idx.verdict || "VERDICT_UNSPECIFIED",
+    coverageState: idx.coverageState || "",
+    robotsTxtState: idx.robotsTxtState || "",
+    indexingState: idx.indexingState || "",
+    lastCrawlTime: idx.lastCrawlTime || null,
+  };
 }
 
 // ── Keyword enrichment ───────────────────────────────────────────────────────

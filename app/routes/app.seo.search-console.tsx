@@ -19,6 +19,7 @@ import {
   Button,
   Banner,
   Select,
+  TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -41,9 +42,14 @@ import {
   signOAuthState,
   defaultDateRange,
   revokeGoogleToken,
+  inspectUrl,
+  findCtrOpportunities,
+  summarizeInspection,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
   type GscSite,
+  type CtrOpportunity,
+  type UrlInspectionSummary,
 } from "../services/google-search-console.server";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
@@ -91,6 +97,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     property: null as string | null,
     email: null as string | null,
     topQueries: [] as SearchAnalyticsRow[],
+    opportunities: [] as CtrOpportunity[],
     needsReconnect: false,
     needsPropertySelection: false,
     availableProperties: [] as GscSite[],
@@ -151,6 +158,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       dimensions: ["query"],
       rowLimit: 25,
     });
+
+    // "Quick wins": a second, page-dimensioned query — only fired once the
+    // first call above proved the token/property are good, so an auth failure
+    // doesn't cost a second wasted GSC request. Best-effort: any failure here
+    // just hides the Quick wins card instead of failing the whole page.
+    try {
+      const pageRows = await querySearchAnalytics(accessToken, propertyUrl, {
+        startDate,
+        endDate,
+        dimensions: ["query", "page"],
+        rowLimit: 1000,
+      });
+      base.opportunities = findCtrOpportunities(pageRows);
+    } catch {
+      base.opportunities = [];
+    }
   } catch (e) {
     if (e instanceof GscReconnectRequiredError) {
       base.needsReconnect = true;
@@ -165,6 +188,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult =
   | { ok: true; kind: "disconnected" | "synced" | "sitemap" | "propertySelected"; count?: number }
+  | { ok: true; kind: "inspected"; inspection: UrlInspectionSummary }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
@@ -228,6 +252,30 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "propertySelected" });
   }
 
+  if (actionType === "inspectUrl") {
+    const rawUrl = getFormString(form, "url").trim();
+    if (!rawUrl) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    try {
+      const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
+      // A bare path (e.g. "/products/foo") has no host of its own — sc-domain:
+      // properties aren't a fetchable origin, so prefix the shop's primary
+      // domain (same resolution the sitemap submit uses) when the merchant
+      // didn't paste a full URL.
+      let inspectionUrl = rawUrl;
+      if (!/^https?:\/\//i.test(inspectionUrl)) {
+        const domain = await getShopPrimaryDomain(admin, session.shop);
+        inspectionUrl = `https://${domain}${inspectionUrl.startsWith("/") ? "" : "/"}${inspectionUrl}`;
+      }
+      const result = await inspectUrl(accessToken, propertyUrl, inspectionUrl);
+      return json<ActionResult>({ ok: true, kind: "inspected", inspection: summarizeInspection(result) });
+    } catch (e) {
+      const reason = e instanceof GscReconnectRequiredError ? "reconnect" : "inspect_failed";
+      return json<ActionResult>({ ok: false, error: reason }, { status: 400 });
+    }
+  }
+
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
 
@@ -238,6 +286,10 @@ export default function SeoSearchConsole() {
   const fetcher = useFetcher<ActionResult>();
   // Property picker (only relevant when data.needsPropertySelection is true).
   const [selectedProperty, setSelectedProperty] = useState(data.availableProperties[0]?.siteUrl || "");
+  // Separate fetcher for the Inspect URL card so its result doesn't get mixed
+  // into (or cleared by) the disconnect/sync/sitemap/property actionMsg banner.
+  const inspectFetcher = useFetcher<ActionResult>();
+  const [inspectValue, setInspectValue] = useState("");
 
   const actionMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -456,9 +508,143 @@ export default function SeoSearchConsole() {
                 </BlockStack>
               </Card>
             )}
+
+            {/* Quick wins: rows that already rank (position 4-20) with real impressions
+                but weak CTR — a title/meta rewrite here has outsized leverage. Hidden
+                entirely when the (best-effort) page-dimensioned query didn't come back. */}
+            {!data.needsPropertySelection && data.opportunities.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {g.quickWinsTitle}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {g.quickWinsHint}
+                  </Text>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colQuery}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colPage}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colImpressions}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colCtr}</Text>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.opportunities.map((row, i) => (
+                          <tr key={`${row.query}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
+                            <td style={{ padding: "6px 8px", maxWidth: "260px" }}>
+                              <Text as="span" variant="bodyMd" truncate>{row.query}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px", maxWidth: "220px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                                {pagePathOnly(row.page)}
+                              </Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.impressions}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{(row.ctr * 100).toFixed(1)}%</Text>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Inspect URL: surfaces the previously-dead inspectUrl() service call so a
+                merchant can check a single page's live indexing status on demand. */}
+            {!data.needsPropertySelection && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {g.inspectTitle}
+                  </Text>
+                  <InlineStack gap="200" blockAlign="end" wrap>
+                    <div style={{ flex: "1 1 320px" }}>
+                      <TextField
+                        label={g.inspectTitle}
+                        labelHidden
+                        autoComplete="off"
+                        placeholder={g.inspectPlaceholder}
+                        value={inspectValue}
+                        onChange={setInspectValue}
+                      />
+                    </div>
+                    <Button
+                      loading={inspectFetcher.state !== "idle"}
+                      disabled={!inspectValue.trim()}
+                      onClick={() =>
+                        inspectFetcher.submit({ actionType: "inspectUrl", url: inspectValue }, { method: "post" })
+                      }
+                    >
+                      {g.inspectButton}
+                    </Button>
+                  </InlineStack>
+                  {inspectFetcher.state === "idle" && inspectFetcher.data && (
+                    inspectFetcher.data.ok && inspectFetcher.data.kind === "inspected" ? (
+                      <BlockStack gap="150">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued">{g.inspectVerdict}:</Text>
+                          <Badge tone={verdictTone(inspectFetcher.data.inspection.verdict)}>
+                            {inspectFetcher.data.inspection.verdict}
+                          </Badge>
+                        </InlineStack>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {g.inspectCoverage}: {inspectFetcher.data.inspection.coverageState || "—"}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {g.inspectLastCrawl}: {inspectFetcher.data.inspection.lastCrawlTime || "—"}
+                        </Text>
+                      </BlockStack>
+                    ) : !inspectFetcher.data.ok ? (
+                      <Banner tone="critical">
+                        {inspectFetcher.data.error === "reconnect" ? g.errorReconnect : g.inspectFailed}
+                      </Banner>
+                    ) : null
+                  )}
+                </BlockStack>
+              </Card>
+            )}
           </>
         )}
       </BlockStack>
     </SeoSectionLayout>
   );
+}
+
+/** Path-only, truncated view of a GSC page URL for the Quick wins table. */
+function pagePathOnly(pageUrl: string): string {
+  try {
+    const path = new URL(pageUrl).pathname;
+    return path.length > 60 ? `${path.slice(0, 57)}...` : path;
+  } catch {
+    return pageUrl;
+  }
+}
+
+/** PASS -> success, everything else (PARTIAL/FAIL/NEUTRAL/unknown) -> a cautionary tone. */
+function verdictTone(verdict: string): "success" | "warning" | "critical" {
+  if (verdict === "PASS") return "success";
+  if (verdict === "FAIL") return "critical";
+  return "warning";
 }
