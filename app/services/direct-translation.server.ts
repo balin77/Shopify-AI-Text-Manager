@@ -217,7 +217,12 @@ export async function deleteItem(db: Db, shop: string, itemId: string) {
 // Translation CRUD (per locale, per item)
 // ---------------------------------------------------------------------------
 
-/** Create or update one item's translation for a locale. */
+/**
+ * Create or update one item's translation for a locale, optionally scoped to a
+ * market. `marketId` "" = global (applies in all markets); a non-empty
+ * gid://shopify/Market/<id> stores a market-specific override that the storefront
+ * layers over the global value for buyers in that market.
+ */
 export async function setTranslation(
   db: Db,
   shop: string,
@@ -225,25 +230,30 @@ export async function setTranslation(
   locale: string,
   targetText: string,
   source: "user" | "ai" = "user",
+  marketId: string = "",
 ) {
   // Guard tenant isolation: the item must belong to this shop.
   const item = await db.directTranslationItem.findFirst({ where: { id: itemId, shop }, select: { id: true } });
   if (!item) throw new Error("Item not found");
 
   const row = await db.directTranslation.upsert({
-    where: { itemId_locale_marketId: { marketId: "",  itemId, locale } },
-    create: { itemId, locale, targetText, source },
+    where: { itemId_locale_marketId: { itemId, locale, marketId } },
+    create: { itemId, locale, targetText, source, marketId },
     update: { targetText, source },
   });
   await bumpVersion(db, shop);
   return row;
 }
 
-/** Delete one item's translation for a locale. */
-export async function deleteTranslation(db: Db, shop: string, itemId: string, locale: string) {
+/**
+ * Delete one item's translation for a locale + market. Scoped by `marketId` so a
+ * market-specific clear falls back to the global value (and clearing the global
+ * value leaves market overrides intact).
+ */
+export async function deleteTranslation(db: Db, shop: string, itemId: string, locale: string, marketId: string = "") {
   const item = await db.directTranslationItem.findFirst({ where: { id: itemId, shop }, select: { id: true } });
   if (!item) return 0;
-  const result = await db.directTranslation.deleteMany({ where: { itemId, locale } });
+  const result = await db.directTranslation.deleteMany({ where: { itemId, locale, marketId } });
   if (result.count > 0) await bumpVersion(db, shop);
   return result.count;
 }
@@ -257,22 +267,35 @@ export async function deleteTranslation(db: Db, shop: string, itemId: string, lo
  * normalizedSource → target. The storefront JS normalizes each rendered text
  * node and looks it up. Returns the cache `version` + `collect` flag too.
  */
-export async function getDictionary(db: Db, shop: string, locale: string) {
+export async function getDictionary(db: Db, shop: string, locale: string, marketId: string = "") {
+  // Load BOTH layers for this locale in a single query: the global row
+  // (marketId "") plus, when a market is requested, that market's override.
+  // The market-specific value wins; otherwise the global value applies
+  // (storefront fallback, mirroring the other content types).
+  const marketFilter = marketId ? ["", marketId] : [""];
   const [settings, items] = await Promise.all([
     getSettings(db, shop),
     db.directTranslationItem.findMany({
       where: { shop },
       select: {
         sourceText: true,
-        translations: { where: { locale }, select: { targetText: true } },
+        translations: {
+          where: { locale, marketId: { in: marketFilter } },
+          select: { targetText: true, marketId: true },
+        },
       },
     }),
   ]);
 
   const entries: Record<string, string> = {};
   for (const it of items) {
-    const tr = it.translations[0];
-    if (tr) entries[it.sourceText] = tr.targetText;
+    // Prefer the market-specific override, fall back to the global row.
+    const market = marketId
+      ? it.translations.find((t: { targetText: string; marketId?: string }) => (t.marketId ?? "") === marketId)
+      : undefined;
+    const global = it.translations.find((t: { targetText: string; marketId?: string }) => (t.marketId ?? "") === "");
+    const chosen = market ?? global;
+    if (chosen) entries[it.sourceText] = chosen.targetText;
   }
 
   return {
@@ -307,10 +330,11 @@ export async function getDictionary(db: Db, shop: string, locale: string) {
 export async function aiAutoTranslateItems(
   db: Db,
   shop: string,
-  params: { items: Array<{ id: string; sourceText: string }>; locales: string[] },
+  params: { items: Array<{ id: string; sourceText: string }>; locales: string[]; marketId?: string },
   translateBatch: (values: string[], from: string, to: string, context: string) => Promise<string[]>,
   onProgress?: (done: number, total: number) => void | Promise<void>,
 ): Promise<Array<Awaited<ReturnType<typeof setTranslation>>>> {
+  const marketId = params.marketId || "";
   // Normalize item sources; drop empties and duplicates (keep first per source).
   const seen = new Set<string>();
   const items: Array<{ id: string; source: string }> = [];
@@ -360,7 +384,7 @@ export async function aiAutoTranslateItems(
           const detected = franc(chunk[i].source, { minLength: 30 });
           if (detected !== "und" && detected !== targetLangIso) continue;
         }
-        rows.push(await setTranslation(db, shop, chunk[i].id, locale, target, "ai"));
+        rows.push(await setTranslation(db, shop, chunk[i].id, locale, target, "ai", marketId));
       }
       done += chunk.length;
       if (onProgress) await onProgress(Math.min(done, total), total);

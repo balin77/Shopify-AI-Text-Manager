@@ -62,6 +62,8 @@ export async function runAiTask(
     locales: string[];
     targetLocaleLabel: string;
     resourceTitle: string;
+    /** Market scope ("" = global). AI writes translations under this market. */
+    marketId?: string;
   },
 ): Promise<number> {
   const { db } = await import("../db.server");
@@ -95,7 +97,7 @@ export async function runAiTask(
     const rows = await dt.aiAutoTranslateItems(
       db,
       shop,
-      { items: params.items, locales: params.locales },
+      { items: params.items, locales: params.locales, marketId: params.marketId || "" },
       translateBatch,
       async (done, t) => {
         // `t` is the post-dedupe total from the service — keep the Task in sync
