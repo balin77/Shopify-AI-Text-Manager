@@ -1834,6 +1834,39 @@ export class BackgroundSyncService {
         }
       }
 
+      // §9.1 Verwaiste-Theme-Cleanup: drop rows for themes that no longer exist
+      // (deleted/deinstalled). translatableResources already stops returning a
+      // deleted theme's resources, so the combination cleanup above catches most;
+      // this is the explicit belt-and-suspenders pass keyed on themeId. Guarded on
+      // a non-empty theme list so an API blip never wipes data. themeId "" (legacy/
+      // theme-agnostic) is always kept.
+      try {
+        const themesResp = await this.gateway.graphql(
+          `#graphql
+            query themeIdsForCleanup { themes(first: 50) { nodes { id } } }`
+        );
+        const themesJson = await themesResp.json();
+        const currentThemeIds: string[] = (themesJson.data?.themes?.nodes ?? [])
+          .map((n: { id?: string }) => n.id)
+          .filter((id: string | undefined): id is string => !!id);
+        if (currentThemeIds.length > 0) {
+          const keep = [...currentThemeIds, ''];
+          const orphanTrans = await db.themeTranslation.deleteMany({
+            where: { shop: this.shop, domain: 'theme', themeId: { notIn: keep } },
+          });
+          const orphanContent = await db.themeContent.deleteMany({
+            where: { shop: this.shop, domain: 'theme', themeId: { notIn: keep } },
+          });
+          if (orphanContent.count > 0 || orphanTrans.count > 0) {
+            logger.info(`[BackgroundSync] 🗑️ Removed orphan-theme rows: ${orphanContent.count} ThemeContent, ${orphanTrans.count} ThemeTranslation`);
+          }
+        } else {
+          logger.warn('[BackgroundSync] Skipping orphan-theme cleanup — GET_THEMES returned no themes (possible API blip)');
+        }
+      } catch (cleanupErr) {
+        logger.warn('[BackgroundSync] Orphan-theme cleanup failed (non-fatal)', { error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
+      }
+
       // Log final database statistics
       const finalStats = await db.themeContent.count({
         where: { shop: this.shop }

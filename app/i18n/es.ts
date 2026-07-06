@@ -301,6 +301,7 @@ export const es: Translation = {
     themeSelectorHelp: "Selecciona el tema cuyo contenido editas/traduces.",
     themeSelectorPublished: "(publicado)",
     themeSwitchNeedsSync: "Este tema aún no se ha sincronizado.",
+    themeSyncNow: "Cargar todas las entradas ahora",
     // Item list
     searchPlaceholder: "Buscar...",
     paginationOf: "de",

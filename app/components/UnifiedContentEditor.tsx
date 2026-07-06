@@ -1058,9 +1058,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               ` }} />
               <Card padding="600">
                 <div style={{ textAlign: "center", padding: "2rem" }}>
-                  <Text as="p" variant="headingLg" tone="subdued">
-                    {t.content?.selectFromList || "Select an item from the list"}
-                  </Text>
+                  {themeSelector && items.length === 0 ? (
+                    // Theme-Auswahl: the selected theme has no synced content yet
+                    // (freshly switched / never synced). Offer a one-click sync.
+                    <BlockStack gap="400" inlineAlign="center">
+                      <Text as="p" variant="headingMd" tone="subdued">
+                        {t.content?.themeSwitchNeedsSync || "This theme hasn't been synced yet."}
+                      </Text>
+                      {revalidator && (
+                        <Button variant="primary" loading={isDiscovering} onClick={handleSyncAll}>
+                          {t.content?.themeSyncNow || "Load all entries now"}
+                        </Button>
+                      )}
+                    </BlockStack>
+                  ) : (
+                    <Text as="p" variant="headingLg" tone="subdued">
+                      {t.content?.selectFromList || "Select an item from the list"}
+                    </Text>
+                  )}
                 </div>
               </Card>
             </div>

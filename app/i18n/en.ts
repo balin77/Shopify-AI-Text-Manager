@@ -302,6 +302,7 @@ export const en: Translation = {
     themeSelectorHelp: "Selects the theme whose content you edit/translate.",
     themeSelectorPublished: "(published)",
     themeSwitchNeedsSync: "This theme hasn't been synced yet.",
+    themeSyncNow: "Load all entries now",
     // Item list
     searchPlaceholder: "Search...",
     paginationOf: "of",

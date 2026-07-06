@@ -11,7 +11,7 @@ import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType } = ctx;
+  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
 
@@ -229,6 +229,27 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // as success: true — the silent-error bug on Theme-Standardinhalte saves.
     for (const [resId, translationInputs] of translationsByResource) {
       if (translationInputs.length === 0) continue;
+
+      // §5.2 Divergenz-Guard: never register foreign translations against a
+      // resource whose embedded theme_id differs from the selected theme —
+      // otherwise a stale/mis-scoped resourceId would silently write into a
+      // FOREIGN theme. Theme-agnostic resources (no theme_id → null) and an unset
+      // selection are always allowed.
+      const resThemeId = extractThemeIdFromResourceId(resId);
+      if (selectedThemeId && resThemeId && resThemeId !== selectedThemeId) {
+        logger.error("[TEMPLATES] Cross-theme write blocked — resource belongs to a different theme than selected", {
+          context: "Templates",
+          resourceId: resId,
+          resThemeId,
+          selectedThemeId,
+          locale,
+        });
+        skippedKeys.push(...translationInputs.map((t) => t.key));
+        shopifyErrors.push(
+          `Refusing to write translations into a different theme than the selected one (resource ${resId}).`
+        );
+        continue;
+      }
 
       logger.info("[TEMPLATES] Sending translations to Shopify", {
         context: "Templates",
