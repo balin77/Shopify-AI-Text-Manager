@@ -53,6 +53,9 @@ interface UnifiedLanguageBarProps {
   /** Callback when the market changes */
   onMarketChange?: (marketId: string) => void;
 
+  /** Allow market selection in the primary locale (DirectTranslations only) */
+  allowPrimaryLocaleMarket?: boolean;
+
   /** Optional: Array of enabled languages */
   enabledLanguages?: string[];
 
@@ -100,6 +103,7 @@ export function UnifiedLanguageBar({
   markets = [],
   selectedMarketId = "",
   onMarketChange,
+  allowPrimaryLocaleMarket = false,
   enabledLanguages,
   onToggleLanguage,
   onTranslateAll,
@@ -164,6 +168,7 @@ export function UnifiedLanguageBar({
             currentLanguage={currentLanguage}
             primaryLocale={primaryLocale}
             onMarketChange={onMarketChange}
+            allowPrimaryLocale={allowPrimaryLocaleMarket}
             t={{
               allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
               selectorLabel: t.marketSelectorLabel || "Market",

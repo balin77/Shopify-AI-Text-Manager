@@ -910,6 +910,9 @@ export default function DirectTranslationsPage() {
                   markets={markets}
                   selectedMarketId={selectedMarketId}
                   onMarketChange={(id) => { void handleMarketChange(id); }}
+                  // DirectTranslations is a custom storefront dictionary: a market
+                  // override is valid for ANY locale, including the primary one.
+                  allowPrimaryLocaleMarket
                   enabledLanguages={Array.from(new Set([primaryLocale, ...enabledLanguages]))}
                   onToggleLanguage={toggleLanguage}
                   showTranslateAll={false}

@@ -20,6 +20,13 @@ interface MarketSelectorProps {
   currentLanguage: string;
   primaryLocale: string;
   onMarketChange: (marketId: string) => void;
+  /**
+   * Allow market selection in the primary locale. Off by default: Shopify's
+   * translatable content has no market-specific primary value. DirectTranslations
+   * is the exception — it is a custom storefront dictionary where a market
+   * override is valid for any locale, including the primary one.
+   */
+  allowPrimaryLocale?: boolean;
   /** i18n strings */
   t: {
     allMarketsGlobal: string;
@@ -33,6 +40,7 @@ export function MarketSelector({
   currentLanguage,
   primaryLocale,
   onMarketChange,
+  allowPrimaryLocale = false,
   t,
 }: MarketSelectorProps) {
   // Nothing to choose from → render nothing (keeps the bar clean).
@@ -46,9 +54,10 @@ export function MarketSelector({
     m.localeCodes.includes(currentLanguage),
   );
 
-  // In the primary locale (or when no market serves this locale) only "global"
-  // is available — show the disabled selector so the control stays in place.
-  const disabled = isPrimaryLocale || applicableMarkets.length === 0;
+  // Disabled in the primary locale (unless the caller opts in, e.g.
+  // DirectTranslations) or when no market serves this locale — only "global"
+  // is available; the disabled control keeps the layout stable.
+  const disabled = (isPrimaryLocale && !allowPrimaryLocale) || applicableMarkets.length === 0;
 
   const options = [
     { label: t.allMarketsGlobal, value: "" },

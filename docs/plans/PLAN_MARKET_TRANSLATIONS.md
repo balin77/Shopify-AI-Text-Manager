@@ -684,9 +684,11 @@ analog `ctrlClickLanguage`).
 > Inhaltstypen — **pro Markt** funktionieren: dieselbe Locale kann pro Markt
 > einen anderen Zielstring liefern, mit dem globalen Wert als Fallback.
 
-Status: **PLAN / noch nicht umgesetzt.** Das Datenmodell ist bereits vorbereitet
-(`DirectTranslation.marketId String @default("")`), aber Save-, Serve- und
-Storefront-Pfad sind komplett global.
+Status: **UMGESETZT & reviewt.** Service-Layering, Proxy, Storefront-Embed/JS und
+Admin-UI sind markt-fähig; der Review-Befund (Primär-Locale-Markt) wurde gefixt,
+indem der Markt-Selector für DirectTranslations auch in der Primär-Locale erlaubt
+ist (Edge Case 4). Der einzige offene Punkt bleibt die `localization.market.id`-
+Verifikation gegen einen echten Store (12.2).
 
 ### 12.1 Warum DirectTranslation ein Sonderfall ist
 Anders als Products/Theme/Metaobjects wird DirectTranslation **nicht über

@@ -294,7 +294,9 @@ export async function getDictionary(db: Db, shop: string, locale: string, market
       ? it.translations.find((t: { targetText: string; marketId?: string }) => (t.marketId ?? "") === marketId)
       : undefined;
     const global = it.translations.find((t: { targetText: string; marketId?: string }) => (t.marketId ?? "") === "");
-    const chosen = market ?? global;
+    // A market row wins only if it actually has text; an (unexpected) empty
+    // market row must not blank out a real global value on the storefront.
+    const chosen = market && market.targetText ? market : global;
     if (chosen) entries[it.sourceText] = chosen.targetText;
   }
 
