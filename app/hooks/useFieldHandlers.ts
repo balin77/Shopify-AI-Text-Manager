@@ -66,6 +66,7 @@ export interface FieldHandlerProps {
   savedPrimaryValuesRef: { current: Record<string, Record<string, string>> };
   originalLoadedValuesRef: { current: Record<string, string> };
   originalTemplateValuesRef: { current: Record<string, string> };
+  baselineValuesRef: { current: Record<string, string> };
   revalidatorRef: { current: { state: string; revalidate: () => void } };
   savedLocaleRef: { current: string | null };
   savedItemIdRef: { current: string | null };
@@ -126,6 +127,7 @@ export interface FieldHandlerProps {
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
+  setBaselineVersion: React.Dispatch<React.SetStateAction<number>>;
   setFieldErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setIsSaving: React.Dispatch<React.SetStateAction<boolean>>;
 }
@@ -194,6 +196,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     savedPrimaryValuesRef,
     originalLoadedValuesRef,
     originalTemplateValuesRef,
+    baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
     savedItemIdRef,
@@ -228,6 +231,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setBaselineVersion,
     setFieldErrors,
     setIsSaving,
   } = props;
@@ -1167,6 +1171,19 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   };
 
 
+
+  // For theme content, adopt the accepted values as the change-detection baseline
+  // NOW, in the same synchronous batch as setEditableValues(newValues) above.
+  // Otherwise the save button flickers active for the whole in-flight primary save:
+  // isLoadingData is not held during a fetcher submit, so editableValues != baseline
+  // reads as dirty until the save response finally resets the baseline. This save is
+  // automatic ("Übernehmen & Übersetzen" auto-saves), so no dirty state should show.
+  if (isThemeContentType(config.contentType)) {
+    baselineValuesRef.current = { ...newValues };
+    setBaselineVersion((v) => v + 1);
+    originalTemplateValuesRef.current = { ...newValues };
+    setTemplateValuesVersion((v) => v + 1);
+  }
 
   // Step 2: Save the primary text first
   // After save completes, the useEffect will trigger the translation

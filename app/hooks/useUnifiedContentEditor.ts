@@ -1610,6 +1610,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 currentLanguage
               );
 
+              // Also update the component-managed translation cache (loadedTranslations
+              // in ThemeContentDomainPage). That cache — NOT resolve()/localTranslationsRef —
+              // is what the component's language-switch effect reads authoritatively and
+              // pushes into the editor via setEditableValue. The direct "translate to all
+              // locales" path updates it through this same callback; the deferred
+              // Accept & Translate path must do the same, or foreign locales render empty
+              // after switching to them (the values are on Shopify but never reach the UI).
+              onTranslateToAllLocalesComplete?.(
+                fieldKey,
+                translations as Record<string, string>
+              );
+
               // If the current language is one of the translated languages, update editableValues
               if (translations[currentLanguage]) {
 
@@ -2043,6 +2055,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedPrimaryValuesRef,
     originalLoadedValuesRef,
     originalTemplateValuesRef,
+    baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
     savedItemIdRef,
@@ -2077,6 +2090,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setBaselineVersion,
     setFieldErrors,
     setIsSaving,
   });
