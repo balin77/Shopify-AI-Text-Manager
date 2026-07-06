@@ -127,9 +127,19 @@ const RAW_WRAP_RE = /^\{%-?\s*raw\s*-?%\}\n?([\s\S]*?)\{%-?\s*endraw\s*-?%\}\s*$
  * theme's Liquid engine, so an untrusted product/collection title or
  * description containing `{{ }}` or `{% %}` would otherwise be interpreted
  * (or corrupt) the template instead of being rendered as plain text. Pure.
+ *
+ * The wrapper alone is NOT escape-proof (review W3): content containing a
+ * literal `{% endraw %}` would terminate the raw block early and everything
+ * after it would execute as Liquid. Since llms.txt is plain text for LLM
+ * consumers, we defang every Liquid opener in the content by inserting a
+ * space (`{%` → `{ %`, `{{` → `{ {`) — visually near-identical, semantically
+ * harmless for readers, and impossible for Liquid to parse as a tag. This is
+ * deliberately NOT reversed by unwrapLlmsTxtFromTheme: the defanged form is
+ * the canonical stored form.
  */
 export function wrapLlmsTxtForTheme(content: string): string {
-  return `{% raw %}\n${content}{% endraw %}\n`;
+  const defanged = content.replace(/\{\{/g, "{ {").replace(/\{%/g, "{ %");
+  return `{% raw %}\n${defanged}{% endraw %}\n`;
 }
 
 /**

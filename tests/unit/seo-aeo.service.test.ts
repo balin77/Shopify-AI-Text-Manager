@@ -134,14 +134,30 @@ describe("llms.txt {% raw %} wrapping (Liquid injection guard)", () => {
     expect(wrapped.trimEnd().endsWith("{% endraw %}")).toBe(true);
   });
 
-  it("content containing Liquid tags ({{ }}, {% %}) survives the wrap/unwrap round-trip untouched", () => {
+  it("defangs Liquid openers in the content so nothing inside can parse as a tag", () => {
     const malicious = "- [{{ product.title }} {% if true %}oops{% endif %}](https://x/products/a)\n";
     const wrapped = wrapLlmsTxtForTheme(malicious);
-    // the dangerous tags are present but inert inside {% raw %} ... {% endraw %}
-    expect(wrapped).toContain("{% raw %}");
-    expect(wrapped).toContain("{% endraw %}");
-    expect(wrapped).toContain(malicious.trim());
-    expect(unwrapLlmsTxtFromTheme(wrapped)).toBe(malicious);
+    expect(wrapped.startsWith("{% raw %}\n")).toBe(true);
+    expect(wrapped.trimEnd().endsWith("{% endraw %}")).toBe(true);
+    // No Liquid opener from the CONTENT survives — only the wrapper's own
+    // raw/endraw tags remain parseable.
+    const body = unwrapLlmsTxtFromTheme(wrapped);
+    expect(body).not.toContain("{{");
+    expect(body).not.toContain("{%");
+    // The defanged forms keep the text human/LLM-readable.
+    expect(body).toContain("{ { product.title }}");
+    expect(body).toContain("{ % if true %}");
+  });
+
+  it("a literal {% endraw %} in the content cannot terminate the raw block early (escape-proof)", () => {
+    const breakout = "before {% endraw %}{{ 1 | plus: 1 }}{% raw %} after\n";
+    const wrapped = wrapLlmsTxtForTheme(breakout);
+    // Exactly ONE parseable endraw remains: the wrapper's own closing tag at
+    // the very end. The content's copy was defanged to "{ % endraw % }".
+    const parseableEndraws = wrapped.match(/\{%\s*endraw\s*%\}/g) ?? [];
+    expect(parseableEndraws).toHaveLength(1);
+    expect(wrapped.trimEnd().endsWith("{% endraw %}")).toBe(true);
+    expect(wrapped).not.toContain("{{ 1 | plus: 1 }}");
   });
 
   it("unwrap is a no-op on content that was never wrapped (pre-existing assets)", () => {

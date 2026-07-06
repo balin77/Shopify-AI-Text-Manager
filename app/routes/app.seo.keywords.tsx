@@ -34,6 +34,7 @@ import {
   listKeywords,
   setKeyword,
   deleteKeyword,
+  MAX_KEYWORD_LENGTH,
   buildTranslatedContentInput,
   TRANSLATED_CONTENT_KEYS,
   type KeywordResourceType,
@@ -231,7 +232,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const resourceId = getFormString(form, "resourceId");
     const keyword = getFormString(form, "keyword");
     const localeInput = getFormString(form, "locale");
-    if (!RESOURCE_TYPES.includes(resourceType) || !resourceId || !keyword.trim()) {
+    if (
+      !RESOURCE_TYPES.includes(resourceType) ||
+      !resourceId ||
+      !keyword.trim() ||
+      keyword.trim().length > MAX_KEYWORD_LENGTH
+    ) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
     // Validate the posted locale server-side against the shop's actual

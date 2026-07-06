@@ -18,6 +18,8 @@ import { getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { isValidShopifyGID } from "~/utils/validation";
+import { meetsPlan } from "~/utils/planUtils";
+import type { Plan } from "~/config/plans";
 import {
   applyBulkMetaDiff,
   BULK_META_FIELDS,
@@ -43,7 +45,17 @@ function isValidDiffEntry(e: unknown): e is BulkMetaDiffEntry {
 }
 
 export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response> {
-  const { session, admin, db, formData } = ctx;
+  const { session, admin, db, formData, settings } = ctx;
+
+  // Plan gate (review W1): the bulk-meta route enforces "basic" in its own
+  // loader/action, but this handler is reachable directly via /api/ai — which
+  // has no route-level plan gate AND exempts seoBulkMeta from the AI-key gate.
+  // Without this check a free-plan shop could drive the Basic feature by
+  // POSTing the diff here.
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  if (!meetsPlan(plan, "basic")) {
+    return json({ success: false, error: "This feature requires the Basic plan or higher." }, { status: 403 });
+  }
 
   const rawDiff = getFormJSON<unknown[]>(formData, "diff");
   if (!Array.isArray(rawDiff) || rawDiff.length === 0) {

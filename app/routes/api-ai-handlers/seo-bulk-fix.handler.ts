@@ -154,12 +154,21 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
     field,
     items,
     seoTitleMaxChars,
-  }).catch((err: unknown) => {
+  }).catch(async (err: unknown) => {
     logger.error("[API-AI] SEO bulk-fix crashed", {
       context: "AI",
       taskId: task.id,
       error: errorMessage(err),
     });
+    // A crash BEFORE the per-item loop (e.g. loadRows failing) would otherwise
+    // leave the task on "running" and the single-flight guard blocking new
+    // runs until task-recovery reaps it (review N3). Best-effort mark failed.
+    await db.task
+      .update({
+        where: { id: task.id },
+        data: { status: "failed", completedAt: new Date(), error: errorMessage(err).substring(0, 1000) },
+      })
+      .catch(() => {});
   });
 
   return json({ success: true, taskId: task.id, total: items.length });

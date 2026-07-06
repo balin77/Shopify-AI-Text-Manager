@@ -34,12 +34,14 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
+import { isValidShopifyGID } from "../utils/validation";
 import type { Plan } from "../config/plans";
 import {
   computeDiff,
   applyBulkMetaDiff,
   loadBulkMetaPage,
   BULK_META_TYPES,
+  BULK_META_FIELDS,
   BULK_META_PAGE_SIZE,
   MAX_SYNC_SAVE,
   type BulkMetaType,
@@ -118,13 +120,16 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   if (!Array.isArray(diff) || diff.length === 0) {
     return json<ActionResult>({ ok: false, error: "empty" }, { status: 400 });
   }
-  // Never trust the client diff blindly, even on the synchronous path.
+  // Never trust the client diff blindly, even on the synchronous path — same
+  // GID + field allowlist checks as the task path (seo-bulk-meta.handler.ts).
   const valid = diff.every(
     (e) =>
       e &&
       typeof e.id === "string" &&
+      isValidShopifyGID(e.id) &&
       (BULK_META_TYPES as string[]).includes(e.type) &&
       typeof e.field === "string" &&
+      (BULK_META_FIELDS as string[]).includes(e.field) &&
       typeof e.value === "string",
   );
   if (!valid) {

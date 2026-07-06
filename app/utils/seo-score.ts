@@ -109,12 +109,25 @@ const NAMED_HTML_ENTITIES: Record<string, string> = {
  * decoded, whitespace is collapsed, and the result trimmed — so HTML that is
  * only tags/whitespace/`&nbsp;` correctly strips down to "" (empty).
  */
+// String.fromCodePoint throws a RangeError above 0x10FFFF (review W4) — and a
+// single malformed entity like `&#99999999;` in ONE item's HTML would then
+// crash the whole seoAudit task / the editor sidebar. Keep the original
+// entity text instead of throwing.
+function decodeCodePoint(code: number, original: string): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return original;
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return original;
+  }
+}
+
 export function stripHtml(html: string | null | undefined): string {
   if (!html) return "";
   return html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, hex: string) => decodeCodePoint(parseInt(hex, 16), m))
+    .replace(/&#(\d+);/g, (m, dec: string) => decodeCodePoint(parseInt(dec, 10), m))
     .replace(/&[a-zA-Z]+;/g, (entity) => NAMED_HTML_ENTITIES[entity] ?? entity)
     .replace(/\s+/g, " ")
     .trim();

@@ -182,9 +182,14 @@ export default function SeoDashboard() {
   const [rescanStarted, setRescanStarted] = useState(false);
   const [rescanBanner, setRescanBanner] = useState<{ tone: "critical"; message: string } | null>(null);
 
+  // Wall-clock stamp of the last successful rescan POST — see the clear-flag
+  // effect below for why time (not just loader flags) is part of the signal.
+  const rescanStartedAtRef = useRef(0);
+
   useEffect(() => {
     if (rescanFetcher.state !== "idle" || !rescanFetcher.data) return;
     if (rescanFetcher.data.success) {
+      rescanStartedAtRef.current = Date.now();
       setRescanStarted(true);
     } else {
       setRescanBanner({ tone: "critical", message: rescanFetcher.data.error || d.scanStartError });
@@ -219,13 +224,20 @@ export default function SeoDashboard() {
     return () => clearInterval(interval);
   }, [scanInProgress]);
 
-  // Once the revalidated loader reports the scan finished, drop the local
-  // "just started" flag so the button re-enables and the banner clears.
+  // Drop the local "just started" flag once a POST-START revalidation reports
+  // no running scan. Keying on `scanRunning` alone deadlocks for fast scans
+  // (review W2): a small shop's detached seoAudit task can finish inside the
+  // first 3s poll window, so the loader reports `scanRunning: false` on every
+  // revalidation and a false→false "transition" never fires an effect keyed
+  // only on that value — leaving the button disabled and the poller running
+  // forever. `trend` gets a fresh array identity on every revalidation, so it
+  // serves as a per-revalidation tick; the 5s grace skips the still-stale
+  // loader data present at click time (first fresh poll lands at ~3s).
   useEffect(() => {
-    if (!scanRunning && rescanStarted) setRescanStarted(false);
-    // Only react to the loader's own scanRunning flag.
+    if (!rescanStarted || scanRunning) return;
+    if (Date.now() - rescanStartedAtRef.current > 5000) setRescanStarted(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanRunning]);
+  }, [scanRunning, rescanStarted, lastScannedAt, trend]);
 
   // "Fix with AI" — posts straight to the shared /api/ai route (same route
   // every other AI action in the app uses), so the server re-audits and runs

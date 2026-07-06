@@ -203,6 +203,14 @@ describe("stripHtml — tag/entity/whitespace normalization shared with keywords
   it("replaces tags with a space so adjacent blocks don't concatenate", () => {
     expect(stripHtml("<p>A</p><p>B</p>")).toBe("A B");
   });
+  it("does not throw on numeric entities beyond the Unicode range (review W4)", () => {
+    // String.fromCodePoint would RangeError on these — one broken entity in a
+    // single item's HTML must not crash the whole audit task or the sidebar.
+    expect(stripHtml("ok &#99999999; still ok")).toBe("ok &#99999999; still ok");
+    expect(stripHtml("ok &#x110000; still ok")).toBe("ok &#x110000; still ok");
+    // In-range entities keep decoding normally.
+    expect(stripHtml("caf&#233;")).toBe("café");
+  });
   it("decodes common named entities, including German umlauts", () => {
     expect(stripHtml("Gr&ouml;&szlig;e &amp; Farbe")).toBe("Größe & Farbe");
     expect(stripHtml("&lt;b&gt;bold&lt;/b&gt; &quot;quoted&quot; &#39;it&#39;s&#39;")).toBe(

@@ -9,7 +9,7 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { setKeyword, type KeywordResourceType } from "../services/seo/keywords.service";
+import { setKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
 import { getFormString } from "../utils/form-data.utils";
 
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
@@ -42,7 +42,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   const resourceType = getFormString(form, "resourceType") as KeywordResourceType;
   const keyword = getFormString(form, "keyword").trim();
 
-  if (!resourceId || !RESOURCE_TYPES.includes(resourceType)) {
+  if (!resourceId || !RESOURCE_TYPES.includes(resourceType) || keyword.length > MAX_KEYWORD_LENGTH) {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
   }
 

@@ -94,6 +94,15 @@ function countOccurrences(haystack: string, needleNormalized: string): number {
   return matches ? matches.length : 0;
 }
 
+/**
+ * Upper bound for a stored keyword (review N4). Real target keywords are a
+ * few words; the cap mainly stops an unbounded string from flowing into AI
+ * prompts (text-generation.handler.ts appends the tracked keyword verbatim,
+ * sanitized but untruncated) and into every analyze pass. Enforced at the
+ * write endpoints (keywords tab + sidebar API), asserted here for reuse.
+ */
+export const MAX_KEYWORD_LENGTH = 120;
+
 /** Normalize a keyword for storage and matching (lowercased, single-spaced). */
 export function normalizeKeyword(keyword: string): string {
   return normalizeForMatch(keyword.trim().replace(/\s+/g, " "));

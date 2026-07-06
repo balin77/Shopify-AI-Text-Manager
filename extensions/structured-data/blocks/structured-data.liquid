@@ -107,7 +107,7 @@
   , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
   , "offers": {
       "@type": "Offer",
-      "price": {{ p_price | times: 0.01 | json }},
+      "price": {{ p_price | divided_by: 100.0 | round: 2 | json }},
       "priceCurrency": {{ p_currency | json }},
       "availability": {% if product.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
       "itemCondition": "https://schema.org/NewCondition",
