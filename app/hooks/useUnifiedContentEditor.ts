@@ -13,7 +13,7 @@ import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
-import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";
+import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -1847,6 +1847,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // reads localTranslationsRef with higher priority than item.translations.
         const savedLocale = savedLocaleRef.current;
         if (savedLocale && savedLocale !== primaryLocale) {
+          // Fold the market the save was submitted under into the overlay key,
+          // exactly like resolve()/onSaveComplete. Without this a market-scoped
+          // save writes under the plain (global) locale key, leaking the market
+          // value into the global layer (and it survives revalidation).
+          const savedLocaleKey = buildLocaleKey(savedLocale, savedMarketIdRef.current);
           effectiveFieldDefinitions.forEach((field) => {
             const value = editableValues[field.key];
             const tKey = field.translationKey;
@@ -1856,9 +1861,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               localTranslationsRef.current[tKey] = {};
             }
             if (value && value.trim()) {
-              localTranslationsRef.current[tKey][savedLocale] = value;
+              localTranslationsRef.current[tKey][savedLocaleKey] = value;
             } else {
-              delete localTranslationsRef.current[tKey][savedLocale];
+              delete localTranslationsRef.current[tKey][savedLocaleKey];
             }
           });
         }
@@ -2150,16 +2155,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return false;
 
+    // Market-aware: a market override may exist without a global row, so fold the
+    // selected market into every lookup (mirrors resolve()). marketId "" keeps the
+    // plain global keys, so global behaviour is unchanged.
+    const marketId = selectedMarketId;
+
     // Phase 4: Check deletedTranslationKeysRef FIRST — if a field was cleared,
     // it should appear untranslated even if item.translations still has old data.
-    if (deletedTranslationKeysRef.current.has(field.translationKey)) {
+    if (deletedTranslationKeysRef.current.has(buildDeletedKey(field.translationKey, marketId))) {
       return false;
     }
 
     // Check localTranslationsRef (from translateFieldToAllLocales / saves)
     // This ensures immediate UI feedback before revalidation completes
-    const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
+    const localeKey = buildLocaleKey(currentLanguage, marketId);
+    const localValue = localTranslationsRef.current[field.translationKey]?.[localeKey];
     if (localValue) {
+      return true;
+    }
+
+    // Market-specific DB row (marketTranslations), if any for the selected market.
+    if (marketId && selectedItem.marketTranslations?.[marketId]?.[field.translationKey]?.[currentLanguage]) {
       return true;
     }
 
