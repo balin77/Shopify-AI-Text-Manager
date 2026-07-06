@@ -12,6 +12,7 @@ import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
 import { db } from '../db.server';
 import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
+import { stripLiquid } from '../utils/liquid-strip';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -1877,10 +1878,20 @@ export class BackgroundSyncService {
     // content; falls back to the resource-type label (covers SHOP, whose keys are
     // meta_title/meta_description rather than a name).
     const NAME_KEYS = ["title", "name", "label", "subject"];
+    // Strip Liquid ({{ }} / {% %}) and the empty brackets/parens it leaves
+    // behind. EMAIL_TEMPLATE names are the full email subject line ("Bestellung
+    // {{name}} bestätigt", "[{{ shop.name }}] …"), so without this the raw Liquid
+    // noise shows in the nav list. Always-on fallback; the AI short title
+    // (aiShortTitle) supersedes it when available. Harmless for the other flat
+    // domains (their names rarely contain Liquid). stripLiquid is shared with the
+    // AI title-excerpt builder (utils/liquid-strip) so both stay in lockstep.
     const deriveName = (content: TranslatableContentItem[], fallback: string): string => {
       for (const nk of NAME_KEYS) {
         const hit = content.find((c) => c.key === nk && c.value && c.value.trim());
-        if (hit?.value) return hit.value.length > 80 ? `${hit.value.slice(0, 77)}…` : hit.value;
+        if (hit?.value) {
+          const cleaned = stripLiquid(hit.value) || hit.value.trim();
+          return cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned;
+        }
       }
       return fallback;
     };

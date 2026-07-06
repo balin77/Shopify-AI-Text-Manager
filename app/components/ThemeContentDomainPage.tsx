@@ -34,6 +34,15 @@ interface ThemeContentDomainPageProps {
     shopLocales: ShopLocale[];
     primaryLocale: string;
     error?: string | null;
+    aiSettings?: {
+      preferredProvider: string | null;
+      hasHuggingfaceApiKey: boolean;
+      hasGeminiApiKey: boolean;
+      hasClaudeApiKey: boolean;
+      hasOpenaiApiKey: boolean;
+      hasGrokApiKey: boolean;
+      hasDeepseekApiKey: boolean;
+    } | null;
   };
   config: ContentEditorConfig;
   apiBasePath: string;
@@ -59,6 +68,59 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+
+  // ── Lazy AI short-title backfill for email notifications ───────────────────
+  // Email-notification templates have no usable name (their groupName is the
+  // full localized subject line). When the page loads and some templates still
+  // lack an AI-generated short title, kick off the batched backfill task once —
+  // the same task/queue path as every other AI run. Titles appear after the
+  // revalidate. Gated on a configured AI key so we never fire a request the
+  // compliance gate would just reject.
+  const titleFetcher = useFetcher<{ success?: boolean; generated?: number }>();
+  const titleGenFiredRef = useRef(false);
+  const hasAiKeyForTitles = useMemo(() => {
+    const s = data.aiSettings;
+    if (!s) return false;
+    // Lowercase to match the server gate (getMissingPreferredKey →
+    // toValidProvider lowercases); a mixed-case stored value must not silently
+    // fall through to the "any key" default and disagree with the server.
+    switch ((s.preferredProvider ?? "").toLowerCase()) {
+      case "claude": return s.hasClaudeApiKey;
+      case "openai": return s.hasOpenaiApiKey;
+      case "gemini": return s.hasGeminiApiKey;
+      case "grok": return s.hasGrokApiKey;
+      case "deepseek": return s.hasDeepseekApiKey;
+      case "huggingface": return s.hasHuggingfaceApiKey;
+      default:
+        return (
+          s.hasClaudeApiKey || s.hasOpenaiApiKey || s.hasGeminiApiKey ||
+          s.hasGrokApiKey || s.hasDeepseekApiKey || s.hasHuggingfaceApiKey
+        );
+    }
+  }, [data.aiSettings]);
+
+  useEffect(() => {
+    if (titleGenFiredRef.current) return;
+    if (data.error || !hasAiKeyForTitles) return;
+    if (!data.themes.some((th) => th.aiTitlePending)) return;
+    titleGenFiredRef.current = true;
+    const fd = new FormData();
+    fd.set("action", "generateTemplateTitles");
+    fd.set("contentType", planContentType);
+    fd.set("itemId", "system");
+    titleFetcher.submit(fd, { method: "POST", action: "/api/ai" });
+  }, [data.themes, data.error, hasAiKeyForTitles, planContentType, titleFetcher]);
+
+  // When the backfill lands, revalidate so the new titles replace the fallbacks.
+  const prevTitleFetcherStateRef = useRef(titleFetcher.state);
+  useEffect(() => {
+    const prev = prevTitleFetcherStateRef.current;
+    prevTitleFetcherStateRef.current = titleFetcher.state;
+    if (!(prev !== "idle" && titleFetcher.state === "idle")) return;
+    if (titleFetcher.data?.success && (titleFetcher.data.generated ?? 0) > 0) {
+      revalidator.revalidate();
+    }
+  }, [titleFetcher.state, titleFetcher.data, revalidator]);
 
   // Append the tab's resource-type scope to lazy-load requests. `rt` is
   // repeatable so multi-type tabs (e.g. Theme-Standardinhalte) work too.

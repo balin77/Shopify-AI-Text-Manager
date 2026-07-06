@@ -50,6 +50,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           resourceTypeLabel: true,
           translatableContent: true,
           appEmbedOwned: true,
+          aiShortTitle: true,
         },
         // Deterministic scan order so first-row-derived fields (groupName/icon)
         // don't flip between reloads.
@@ -70,7 +71,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
       const APP_EMBED = "ONLINE_STORE_THEME_APP_EMBED";
       const groupMap = new Map<
         string,
-        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
+        { groupName: string; aiShortTitle: string | null; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
       >();
       for (const row of allGroupRows) {
         const existing = groupMap.get(row.groupId);
@@ -93,14 +94,16 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
+          groupMap.set(row.groupId, { groupName: row.groupName, aiShortTitle: row.aiShortTitle, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
         }
       }
 
       const themes: ThemeNavItem[] = Array.from(groupMap.entries())
         .map(([groupId, group]) => ({
           id: `group_${groupId}`,
-          title: group.groupName,
+          // Prefer the AI-generated concise title (e.g. "Bestellbestätigung")
+          // over the raw groupName (the full email subject line) when present.
+          title: group.aiShortTitle || group.groupName,
           groupName: group.groupName,
           icon: group.groupIcon,
           groupId,
@@ -111,6 +114,9 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           translatableContent: [] as TranslatableField[],
           translations: [] as { key: string; value: string; locale?: string }[],
           embedTechnical: group.embedTechnical,
+          // Signals the client to lazily kick off the AI title backfill: an
+          // email-notification template that has no short title yet.
+          aiTitlePending: group.resourceType === "EMAIL_TEMPLATE" && !group.aiShortTitle,
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 

@@ -698,6 +698,13 @@ model ThemeContent {
   // selectors/config, so the editor locks them read-only in every locale; other
   // apps' embeds stay editable. Derived from settings_data.json at full sync.
   appEmbedOwned       Boolean  @default(false)
+  // AI-generated concise nav title in the shop's main language. Only set for
+  // rows whose raw name is unusable in a list (currently EMAIL_TEMPLATE, whose
+  // groupName is the full localized email subject line). null = not yet
+  // generated / not applicable. Written once by the title-backfill task and
+  // preserved across syncs (groupName is recomputed every sync, this is not).
+  // The loader prefers this over groupName for the item title.
+  aiShortTitle        String?
   lastSyncedAt        DateTime @default(now())
 
   @@unique([shop, resourceId, groupId])
