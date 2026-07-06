@@ -277,12 +277,14 @@ export async function handleUpdateContent(
               }
             }
           } else if (update.value.trim() === "") {
-            // Empty value in foreign locale → remove the translation
+            // Empty value in foreign locale → remove the translation (market-scoped:
+            // omitting marketIds removes global, a market removes only that override)
             const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
               variables: {
                 resourceId: update.id,
                 translationKeys: [labelField.key],
-                locales: [locale]
+                locales: [locale],
+                marketIds: marketId ? [marketId] : null,
               }
             });
             const removeData = await removeResponse.json();
@@ -295,7 +297,8 @@ export async function handleUpdateContent(
                   shop: session.shop,
                   metaobjectId: update.id,
                   key: labelField.key,
-                  locale
+                  locale,
+                  marketId,
                 }
               });
             }
@@ -320,7 +323,9 @@ export async function handleUpdateContent(
                   key: labelField.key,
                   value: update.value,
                   locale,
-                  translatableContentDigest: digestEntry.digest
+                  translatableContentDigest: digestEntry.digest,
+                  // Market scope: omitted (global) unless a market is selected.
+                  ...(marketId ? { marketId } : {}),
                 }]
               }
             });
@@ -332,11 +337,12 @@ export async function handleUpdateContent(
               const typeId = itemId; // itemId is the metaobject type ID
               await db.metaobjectTranslation.upsert({
                 where: {
-                  shop_metaobjectId_key_locale_marketId: { marketId: "", 
+                  shop_metaobjectId_key_locale_marketId: {
                     shop: session.shop,
                     metaobjectId: update.id,
                     key: labelField.key,
-                    locale
+                    locale,
+                    marketId,
                   }
                 },
                 create: {
@@ -346,7 +352,8 @@ export async function handleUpdateContent(
                   key: labelField.key,
                   value: update.value,
                   locale,
-                  outdated: false
+                  outdated: false,
+                  marketId,
                 },
                 update: {
                   value: update.value,
