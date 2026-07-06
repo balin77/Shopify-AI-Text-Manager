@@ -652,7 +652,6 @@ export class ShopifyContentService {
             id: node.id,
             name: node.name || node.handle || node.id,
             handle: node.handle || '',
-            primary: node.primary === true,
             localeCodes: [...localeSet],
           };
         })

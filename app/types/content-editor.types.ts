@@ -36,8 +36,6 @@ export interface MarketInfo {
   id: string;
   name: string;
   handle: string;
-  /** primary/main market — informational; the translation logic does not branch on it */
-  primary: boolean;
   /** locales this market offers (default + alternate web-presence locales) */
   localeCodes: string[];
 }

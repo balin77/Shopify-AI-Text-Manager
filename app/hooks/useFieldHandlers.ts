@@ -107,7 +107,8 @@ export interface FieldHandlerProps {
       translationKey: string,
       translatedValue: string,
       targetLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      marketIdArg?: string
     ) => TransitionResult;
     onTranslateFieldToAllLocalesComplete: (
       translationKey: string,
@@ -1001,7 +1002,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       translationKey,
       suggestion,
       L,
-      editableValuesRef.current
+      editableValuesRef.current,
+      // Accept & Translate persists GLOBALLY in Phase 1 (foreignForm below has no
+      // marketId), so the overlay must be staged under the global key too.
+      ""
     );
     if (transResult.updatedValues) setEditableValues(transResult.updatedValues);
 
@@ -1426,14 +1430,18 @@ const handleClearAllForLocaleConfirm = () => {
   setEditableValues(clearedValues);
 
   // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-  // reflect the cleared state immediately (yellow highlight + button blinking)
+  // reflect the cleared state immediately (yellow highlight + button blinking).
+  // Market-fold the keys so a market-scoped "clear all for this locale" only
+  // blanks the market overrides and lets resolve() fall back to the global values
+  // (mirrors the market-scoped save above and handleClearField).
+  const clearLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
   effectiveFieldDefinitions.forEach((field) => {
     const tKey = field.translationKey;
     if (localTranslationsRef.current[tKey]) {
-      delete localTranslationsRef.current[tKey][currentLanguage];
+      delete localTranslationsRef.current[tKey][clearLocaleKey];
     }
     // Mark as deleted so resolve() returns empty even if item.translations has old data
-    deletedTranslationKeysRef.current.add(tKey);
+    deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
   });
 
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText

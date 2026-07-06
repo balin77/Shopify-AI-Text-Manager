@@ -99,13 +99,16 @@ export interface UseUiDataLoaderReturn {
 
   // ── Transition methods (Phase 2) ──────────────────────────────────────────
 
-  /** After a single-field translation (translateField) response */
+  /** After a single-field translation (translateField) response.
+   *  Pass marketIdArg to force the overlay's market scope to match the save
+   *  (e.g. "" for globally-saved Accept & Translate); omit to use the current market. */
   onTranslateFieldComplete: (
     fieldKey: string,
     translationKey: string,
     translatedValue: string,
     targetLocale: string,
-    currentEditableValues: Record<string, string>
+    currentEditableValues: Record<string, string>,
+    marketIdArg?: string
   ) => TransitionResult;
 
   /** After translateAll response (all fields → all locales) */
@@ -496,16 +499,22 @@ export function useUiDataLoader(
       translationKey: string,
       translatedValue: string,
       targetLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      // Market the eventual save persists under. MUST match the save's marketId:
+      // pass "" for globally-saved flows (e.g. Accept & Translate → all locales)
+      // and the selected market for market-scoped saves. Defaults to the current
+      // market so market-aware callers can omit it.
+      marketIdArg?: string
     ): TransitionResult => {
       debugLog.transition(
         `onTranslateFieldComplete: field=${fieldKey} locale=${targetLocale} value="${translatedValue.substring(0, 40)}..."`
       );
 
-      // Market-fold the overlay keys so a single-field translation staged in a
-      // market context does not overwrite the global overlay (the eventual save
-      // persists it market-specifically via updateContent).
-      const marketId = selectedMarketIdRef.current;
+      // Market-fold the overlay keys so a translation staged in a market context
+      // does not overwrite the global overlay (and a globally-saved translation is
+      // not stranded under a market key). The overlay key must mirror where the
+      // accompanying save writes.
+      const marketId = marketIdArg ?? selectedMarketIdRef.current;
       const localeKey = buildLocaleKey(targetLocale, marketId);
       const delKey = buildDeletedKey(translationKey, marketId);
 

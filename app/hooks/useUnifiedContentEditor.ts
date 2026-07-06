@@ -1102,6 +1102,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           locale: targetLocale,
           primaryLocale,
         };
+        // Keep the save's market scope in lock-step with the overlay fold done by
+        // onTranslateFieldComplete above (which reads the same market ref).
+        if (targetLocale !== primaryLocale && selectedMarketIdRef.current) {
+          formDataObj.marketId = selectedMarketIdRef.current;
+        }
         Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
         // Ensure the translated field is always included in the save
