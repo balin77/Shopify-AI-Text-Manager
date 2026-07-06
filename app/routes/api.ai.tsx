@@ -13,6 +13,7 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
+import { isThemeContentType } from "~/utils/content-type-groups";
 import {
   VALID_CONTENT_TYPES,
   errorMessage,
@@ -43,6 +44,7 @@ import {
 import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
 import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
+import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
 // Actions that never call an AI provider — they only read/write the DB
 // content cache and/or Shopify directly — so a shop with no AI key
@@ -57,10 +59,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const formData = await request.formData();
     const actionType = getFormString(formData, "action");
     const rawContentType = getFormString(formData, "contentType") || "";
-    if (!VALID_CONTENT_TYPES.has(rawContentType)) {
+    // The theme-content family (system / delivery / sellingPlans /
+    // onlineStoreExtras) shares the Templates ThemeContent data model, item id
+    // shape (`group_<groupId>`) and handler path. They only differ by their
+    // plan-gating contentType, which is NOT in VALID_CONTENT_TYPES and which the
+    // AI handlers don't recognise (persistence branches key on
+    // `contentType === 'templates'`). Normalise the whole family to 'templates'
+    // so the shared handler logic applies uniformly; without this, "Übersetzen"
+    // on these rubrics 400s ("Invalid contentType: sellingPlans").
+    const contentType = isThemeContentType(rawContentType) ? "templates" : rawContentType;
+    if (!VALID_CONTENT_TYPES.has(contentType)) {
       return json({ success: false, error: `Invalid contentType: ${rawContentType}` }, { status: 400 });
     }
-    const contentType = rawContentType;
     const itemId = getFormString(formData, "itemId") || "unknown";
 
     const { db } = await import("../db.server");
@@ -126,6 +136,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleSeoAudit(ctx);
       case "seoBulkMeta":
         return handleSeoBulkMeta(ctx);
+      case "generateTemplateTitles":
+        return handleGenerateTemplateTitles(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }

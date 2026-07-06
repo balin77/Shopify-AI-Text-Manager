@@ -153,18 +153,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
 
     // Presence of conditional content types (drives nav hiding of entitled-but-
-    // empty entries, e.g. Abo-Pläne on a shop without subscriptions, or the
-    // Theme App-Einbettungen / Statische Abschnitte tabs which many shops lack).
+    // empty entries, e.g. the Theme App-Einbettungen tab which many shops lack).
     // Cheap indexed count on (shop, domain).
-    const [sellingPlanRows, themeAppEmbedRows, themeStaticSectionRows] = await Promise.all([
-      db.themeContent.count({ where: { shop: session.shop, domain: "selling_plans" } }),
-      db.themeContent.count({ where: { shop: session.shop, domain: "theme", resourceType: "ONLINE_STORE_THEME_APP_EMBED" } }),
-      db.themeContent.count({ where: { shop: session.shop, domain: "theme", resourceType: "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS" } }),
-    ]);
+    // NOTE: Statische Abschnitte is intentionally NOT conditional — it is always
+    // shown so merchants can discover/add static-section content. Abo-Pläne is
+    // likewise always shown now (gated via canAccessContentType, not hidden when
+    // empty), so merchants on Pro/Max can reach the page and use its reload-all
+    // button to discover newly-created selling plans.
+    const themeAppEmbedRows = await db.themeContent.count({
+      where: { shop: session.shop, domain: "theme", resourceType: "ONLINE_STORE_THEME_APP_EMBED" },
+    });
     const conditionalContent = {
-      sellingPlans: sellingPlanRows > 0,
       themeAppEmbeds: themeAppEmbedRows > 0,
-      themeStaticSections: themeStaticSectionRows > 0,
     };
 
     return json({
@@ -201,7 +201,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,
-      conditionalContent: { sellingPlans: true, themeAppEmbeds: true, themeStaticSections: true },
+      conditionalContent: { themeAppEmbeds: true },
       loaderError: true,
     });
   }

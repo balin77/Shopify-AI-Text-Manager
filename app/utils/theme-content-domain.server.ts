@@ -18,6 +18,26 @@ import { handleTranslateAll } from "~/actions/templates/templates-translate-all.
 import { handleUpdateContent } from "~/actions/templates/templates-update.action";
 import type { TranslatableField, ThemeContentRow, TemplatesActionContext } from "~/actions/templates/shared";
 import type { ThemeNavItem } from "~/types/theme-content-domain";
+import { listThemes, resolveSelectedThemeId, type ThemeOption } from "~/services/theme-selection.server";
+import type { LoaderContext } from "./loader-factory.server";
+
+/**
+ * Resolve the shop's theme list + the selected Theme-GID once per request,
+ * memoised on the loader ctx so loadData (scoping) and extraData (dropdown) share
+ * a single GET_THEMES round-trip.
+ */
+async function getThemeSelection(
+  ctx: LoaderContext,
+): Promise<{ themes: ThemeOption[]; selectedThemeId: string | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cache = ctx as any;
+  if (!cache.__themeSelection) {
+    const themes = await listThemes(ctx.admin);
+    const selectedThemeId = await resolveSelectedThemeId(ctx.session.shop, ctx.admin, themes);
+    cache.__themeSelection = { themes, selectedThemeId };
+  }
+  return cache.__themeSelection;
+}
 
 /**
  * Build a content loader scoped to one ThemeContent domain. Returns lightweight
@@ -36,60 +56,120 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
     itemsKey: "themes" as const,
 
     async loadData(ctx) {
+      // Theme-Auswahl: scope the item list to the selected theme. Legacy rows
+      // (themeId "") and flat rubrics stay visible via the compat-OR.
+      const { selectedThemeId } = await getThemeSelection(ctx);
       const allGroupRows = await ctx.db.themeContent.findMany({
         where: {
           shop: ctx.session.shop,
           domain,
           ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
         },
         select: {
           groupId: true,
           groupName: true,
           groupIcon: true,
           resourceType: true,
+          resourceTypeLabel: true,
           translatableContent: true,
+          appEmbedOwned: true,
+          aiShortTitle: true,
         },
+        // Deterministic scan order so first-row-derived fields (groupName/icon)
+        // don't flip between reloads.
+        orderBy: { groupId: "asc" },
       });
 
       // Aggregate by groupId, counting unique translatable field keys. A group
       // is flagged technical when any of its rows is an App-Embed resource.
+      //
+      // type/typeLabel drive the item-list type filter. They are only meaningful
+      // when a group maps to a SINGLE resource type: for flat domains (selling
+      // plans, system, …) each group is exactly one resource, so it is set. For
+      // the theme domain a group can consolidate rows of DIFFERENT resource
+      // types (e.g. theme-standard mixes ONLINE_STORE_THEME_LOCALE_CONTENT and
+      // ONLINE_STORE_THEME under one pattern-derived groupId) — mixed groups are
+      // marked resourceType=null so they never contribute a (misleading,
+      // order-dependent) type to the filter. The emoji icon still shows.
       const APP_EMBED = "ONLINE_STORE_THEME_APP_EMBED";
       const groupMap = new Map<
         string,
-        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean }
+        { groupName: string; aiShortTitle: string | null; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
       >();
       for (const row of allGroupRows) {
         const existing = groupMap.get(row.groupId);
         const items = Array.isArray(row.translatableContent)
           ? (row.translatableContent as unknown as TranslatableField[])
           : [];
-        const isEmbed = row.resourceType === APP_EMBED;
+        // Only OUR app's embeds are locked read-only (pure technical selectors);
+        // other apps' embeds may hold real translatable labels, so they stay
+        // editable (parity with Translate & Adapt). appEmbedOwned is set at full
+        // sync from the authoritative block.type app-handle.
+        const isOwnedEmbed = row.resourceType === APP_EMBED && row.appEmbedOwned === true;
         if (existing) {
           for (const item of items) if (item.key) existing.uniqueKeys.add(item.key);
-          if (isEmbed) existing.embedTechnical = true;
+          if (isOwnedEmbed) existing.embedTechnical = true;
+          // Downgrade to "mixed" (null) as soon as a second resource type appears.
+          if (existing.resourceType !== null && existing.resourceType !== row.resourceType) {
+            existing.resourceType = null;
+            existing.resourceTypeLabel = null;
+          }
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isEmbed });
+          groupMap.set(row.groupId, { groupName: row.groupName, aiShortTitle: row.aiShortTitle, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
         }
       }
 
       const themes: ThemeNavItem[] = Array.from(groupMap.entries())
         .map(([groupId, group]) => ({
           id: `group_${groupId}`,
-          title: group.groupName,
+          // Prefer the AI-generated concise title (e.g. "Bestellbestätigung")
+          // over the raw groupName (the full email subject line) when present.
+          title: group.aiShortTitle || group.groupName,
           groupName: group.groupName,
           icon: group.groupIcon,
           groupId,
           role: "THEME_GROUP",
           contentCount: group.uniqueKeys.size,
+          type: group.resourceType ?? undefined,
+          iconTooltip: group.resourceTypeLabel ?? undefined,
           translatableContent: [] as TranslatableField[],
           translations: [] as { key: string; value: string; locale?: string }[],
           embedTechnical: group.embedTechnical,
+          // Signals the client to lazily kick off the AI title backfill: an
+          // email-notification template that has no short title yet.
+          aiTitlePending: group.resourceType === "EMAIL_TEMPLATE" && !group.aiShortTitle,
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 
       return { items: themes, ids: [] };
+    },
+
+    // Theme-Auswahl dropdown data. Named `themeOptions` (NOT `themes`, which is
+    // the itemsKey holding the nav list) to avoid a response-key collision.
+    async extraData(ctx) {
+      const { themes, selectedThemeId } = await getThemeSelection(ctx);
+      const mainThemeId = themes.find((t) => String(t.role).toUpperCase() === "MAIN")?.id ?? themes[0]?.id ?? null;
+      // needsThemeSync: a NON-MAIN theme is selected but has no rows stamped with
+      // its own themeId yet (only shared "" / MAIN rows show). The nav list is
+      // therefore not empty, so the items.length===0 empty-state can't surface the
+      // sync prompt — this flag lets the editor prompt a theme-scoped sync anyway
+      // (PLAN_THEME_SELECTION_B_LITE Phase C).
+      let needsThemeSync = false;
+      if (selectedThemeId && selectedThemeId !== mainThemeId) {
+        const own = await ctx.db.themeContent.count({
+          where: {
+            shop: ctx.session.shop,
+            domain,
+            themeId: selectedThemeId,
+            ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          },
+        });
+        needsThemeSync = own === 0;
+      }
+      return { themeOptions: themes, selectedThemeId, mainThemeId, needsThemeSync };
     },
   });
 }
@@ -113,6 +193,10 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
 
     const { db } = await import("../db.server");
 
+    // Theme-Auswahl: scope editor actions to the selected theme so a save/translate
+    // targets the chosen theme's resource (and never a sibling theme's rows).
+    const selectedThemeId = await resolveSelectedThemeId(session.shop, admin);
+
     // Theme sub-tabs share domain="theme" but a key-pattern groupId is not
     // guaranteed unique across resource types — scope to the tab's type(s) so
     // editor actions never touch a sibling tab's rows.
@@ -122,6 +206,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
         groupId,
         domain,
         ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+        ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
       },
     });
 
@@ -134,10 +219,14 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
 
     // Map each field key → owning Shopify resource (a group may span resources).
     const keyToResourceId = new Map<string, string>();
+    const keyToResourceType = new Map<string, string>();
     for (const group of themeGroups) {
       const items = group.translatableContent as unknown as TranslatableField[];
       if (Array.isArray(items)) {
-        for (const item of items) keyToResourceId.set(item.key, group.resourceId);
+        for (const item of items) {
+          keyToResourceId.set(item.key, group.resourceId);
+          if (group.resourceType) keyToResourceType.set(item.key, group.resourceType);
+        }
       }
     }
 
@@ -152,6 +241,8 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
       firstGroup,
       resourceId,
       keyToResourceId,
+      keyToResourceType,
+      selectedThemeId,
     };
 
     try {

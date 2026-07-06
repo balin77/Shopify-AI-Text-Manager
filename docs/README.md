@@ -32,6 +32,7 @@
 | Dokument | Beschreibung |
 |----------|--------------|
 | [SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md](SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md) | Komplette Liste aller Shopify Content-Types |
+| [AI_PROVIDER_BALANCE_FEASIBILITY.md](AI_PROVIDER_BALANCE_FEASIBILITY.md) | Machbarkeitsanalyse: Restguthaben pro AI-Provider in Settings anzeigen (recherchiert, nicht umgesetzt) |
 
 ---
 

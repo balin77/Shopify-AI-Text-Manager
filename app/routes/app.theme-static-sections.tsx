@@ -1,7 +1,8 @@
 /**
  * Theme rubric → "Statische Abschnitte" tab
  * (ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS). Shared/static sections defined in
- * the theme's settings data. Conditional in the nav: hidden when empty.
+ * the theme's settings data. Always shown in the nav (NOT conditional) so
+ * merchants can discover/add static-section content even when none exists yet.
  *
  * One of six Theme sub-tabs sharing domain="theme", scoped by resource type.
  * See app.templates.tsx for the shared-factory pattern.

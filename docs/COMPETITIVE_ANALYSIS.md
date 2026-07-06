@@ -264,6 +264,169 @@ Die ursprüngliche SEO-Tabelle (§2.2) stammt aus 01/2026 und verpasst den **def
 - WritePilot: Paid Plans
 - Smartli: Free / Paid Plans
 
+### 2.4 Variant-Image-Gallery-Apps (Nachtrag 2026-06-29)
+
+Eigene Marktkategorie im Shopify App Store: Apps, die **mehrere Bilder pro
+Variante** zeigen und beim Variantenwechsel die Galerie variantengerecht
+filtern (statt nur ein einzelnes „featured image" pro Variante, wie Shopify
+es nativ kann). ContentPilot liefert dieses Modell als Theme-App-Extension-
+App-Block (`extensions/storefront/blocks/variant-gallery.liquid` +
+`variant-gallery.js/.css`) plus Admin-seitigem **Image Manager**
+(`app/components/image-manager/VariantImageManager.tsx`). Speicher: pro
+Variante eine Bildliste im Metafield `custom.variant_gallery`; die Storefront
+bettet **alle** Galerie-Daten als JSON-Insel ein und schaltet client-seitig
+**ohne zusätzlichen HTTP-Request** um. Plan-Gate: **Pro+** (Free/Basic sehen
+die native Shopify-Galerie unverändert).
+
+> **Zwei Storefront-Varianten:** (a) der **App-Block** `variant-gallery.js`
+> (`cp-variant-gallery`) — schlanke Inline-Galerie (Hauptbild + Thumbnails),
+> die der Merchant manuell im Theme-Editor platziert; (b) der **App-Embed**
+> `variant-gallery-embed.js` (`cp-embed-gallery`) — ersetzt die native Theme-
+> Galerie *in place* und ist die voll ausgestattete Variante: **Lightbox**
+> (natives `<dialog>`) + **Klick-Zoom 2×**, Thumbnail-Carousel mit Pfeilen,
+> Mobile-Dot-Pagination, Video/3D und **Theme-Settings-Inheritance** (Zoom-
+> Modus `lightbox`/`hover`/`none`, Thumbnail-Position/-Layout, Mobile-Thumbs,
+> `media_fit`, `constrain_to_viewport` werden aus Dawn übernommen). Die
+> Feature-Vergleichstabelle unten bezieht sich auf den App-Embed.
+
+#### Wie unsere Bulk-Auto-Zuweisung funktioniert
+
+Nicht nur manuelles Drag-&-Drop — wir haben eine vollwertige **konventions-
+basierte Auto-Zuweisung** (`BulkImageUploadPanel.tsx` + `parseFilenames.ts` +
+`api.update-variant-match-key.tsx`):
+
+1. **Zwei Match-Modi:** Abgleich gegen die Varianten-**SKU** *oder* ein
+   dediziertes `custom.image_key`-Metafield (für Shops, die ihre SKU nicht
+   „verbrauchen" wollen).
+2. **Dateinamen-Konvention** `ProductName_Variant1_Variant2_..._Identifier.ext`:
+   Beim Drop wird jeder Dateiname geparst und **deterministisch** gegen
+   SKU/Image-Key jeder Variante gematcht (Produktname + *alle* Optionssegmente
+   müssen exakt passen). Treffer → automatisch der Variantengalerie zugewiesen;
+   kein Treffer → „unassigned" (manueller Fallback).
+3. **Key-Generator:** Erzeugt SKUs/Image-Keys für *alle* Varianten in einem
+   Klick aus Basisname + Optionswerten (Label-Modus: Wert / Handle / Memory,
+   inkl. Inline-Chip-Overrides) und schreibt sie via `productVariantsBulkUpdate`
+   bzw. `metafieldsSet` nach Shopify zurück.
+4. **Cross-Produkt-Option-Value-Memory:** Merkt sich shop-weit
+   `Optionswert → Segment` (z. B. „Rot" → „Red"), sodass die Konvention über
+   den ganzen Katalog konsistent bleibt — der eigentliche USP für Skalierung.
+
+Unterschied zur Konkurrenz: **Rubik** rät per AI-Bilderkennung (Pixel + Alt-Text/
+Dateiname), **SA Automator** gruppiert per Bildreihenfolge im Produkt-Admin.
+Unser Ansatz ist **deterministisch/konventionsbasiert** — verlässlicher und
+mehr-options-fähig (Color × Size × …), erfordert aber eine Namens-/Key-
+Konvention (die Generator + Memory praktisch auf einen Klick reduzieren). Reine
+**Bild-Inhalts-Erkennung** (Pixel-AI à la Rubik) haben wir bewusst nicht.
+
+#### Funktions-Vergleich
+
+| Feature | ContentPilot (wir) | Rubik | SA Variant Image Automator | NS Color Swatch | Variant Image Wizard | GG Image Slider |
+|---|---|---|---|---|---|---|
+| Mehrere Bilder pro Variante | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Variantengerechtes Filtern beim Umschalten | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Kein Layout-Shift / Pre-Paint-FOUC-Fix | ✅ (`variant-gallery-embed`) | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
+| Client-seitig, kein Extra-Request | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| **Farb-/Bild-Swatches (Produktseite)** | ❌ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| **Swatches auf Collection-Seiten** | ❌ | ⚠️ | ❌ | ✅ | ❌ | ❌ |
+| **Auto-Zuweisung im Bulk** | ✅ (Dateiname↔SKU/Image-Key-Matching) | ✅ AI-Bilderkennung | ✅ per Bildreihenfolge | ⚠️ | ❌ manuell | ⚠️ |
+| **Key-Generator + Cross-Produkt-Memory** | ✅ (Option-Value-Memory, 1-Klick-Keys) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Manuelle Drag-&-Drop-Zuweisung (Fallback) | ✅ (Produkt↔Variante) | ✅ | ❌ (nur automatisch) | ⚠️ | ✅ | ⚠️ |
+| **Zoom / Lightbox / Fullscreen** | ✅ (App-Embed: `<dialog>`-Lightbox + Klick-Zoom 2×) | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Video-Support (YouTube/Vimeo) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 3D-Modell-Support | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
+| **Kombinierte/getrennte Produkt-Listings** ⁴ | ❌ | ⚠️ | ❌ | ✅ | ✅ (Produkt-Gruppierung) | ❌ |
+| Bulk-Upload + WebP-Komprimierung | ✅ (WebP ab Pro) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **AI-Alt-Text + Übersetzung der Alt-Texte** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Mehrsprachiges App-UI | ✅ (de/en/es) | ✅ 15 Spr. | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Built for Shopify | — | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+> ⚠️ = teilweise / nicht beworben / unklar. Quellen siehe §5.
+>
+> ⁴ **Kombinierte/getrennte Produkt-Listings** — zwei gegenläufige Merchandising-
+> Funktionen, die die Grenze „ein Produkt mit Varianten" ↔ „mehrere eigenständige
+> Produkte" auflösen:
+> • **Kombiniert** (combined listing): mehrere *separate* Produkte (z. B. „T-Shirt
+>   Rot", „T-Shirt Blau" als eigene Handles/Inventar/SEO-URLs) werden auf der PDP
+>   über Swatches zu *einer* erlebten Produktseite verknüpft. Motivation: Farben
+>   müssen aus Inventar-/SEO-/Feed-Gründen eigene Produkte sein, sollen sich für
+>   den Kunden aber wie ein Produkt anfühlen. (Shopify bietet inzwischen ein
+>   natives „Combined Listings".)
+> • **Getrennt** (split listing): das Gegenteil — ein Produkt mit Varianten wird
+>   im Storefront in mehrere Einträge gesplittet, z. B. auf der Collection-Seite
+>   pro Farbe eine eigene Kachel mit Variantenbild statt einer Produktkachel.
+>   Motivation: mehr „Regalfläche"/Sichtbarkeit je Variante, direkterer Klickpfad.
+> Das ist eine **Katalog-/Merchandising-Struktur-Funktion**, keine reine Bild-
+> Funktion — daher nur teilweise im Scope einer Variant-Gallery. Wir haben weder
+> Kombinieren noch Splitten (❌); unser Modell arbeitet strikt *innerhalb* eines
+> Produkts. Niedrige Priorität gegenüber den Swatches.
+
+**Preise & Ratings der Wettbewerber (Stand 2026-06, USD/Monat):**
+
+| App | Free | Spanne | Rating (Reviews) | Besonderheit |
+|-----|------|--------|------------------|--------------|
+| Rubik Variant Images & Swatch | ✅ (1 Prod., 50 AI-Bilder) | $25 / $50 / $75 | 5.0 (394) | AI-Auto-Assign, Built for Shopify |
+| SA Variant Image Automator | install frei | $9.90–$49.90 | 4.9 (430+) | Auto-Gruppierung per Bildreihenfolge |
+| NS Color Swatch Variant Images | ✅ | $7.99–$14.99 | 4.9 (104+) | Swatches auch auf Collection-Seiten |
+| Variant Image Wizard + Swatch | ✅ | $4.99–$7.99 | 4.9 (233+) | Günstigster Einstieg, Drag-&-Drop |
+| GG Product Page Image Slider | ✅ | $8.99 | 4.9 (167) | Slider/Lightbox/Zoom, Video/3D |
+| **ContentPilot (wir)** | — (Pro+ €19.90) | Teil der Suite | — | In Content-/Übersetzungs-Suite gebündelt |
+
+#### Einordnung
+
+**Unsere Stärken in dieser Kategorie:**
+- **Kein Einzweck-Add-on, sondern Teil der Suite** — der Merchant zahlt nicht
+  separat $5–$75/Monat nur für Variantenbilder; das Feature kommt als
+  Mehrwert in einem ohnehin gekauften Pro-Plan.
+- **Einzigartig: AI-Alt-Text + Übersetzung der Alt-Texte** — kein reiner
+  Variant-Gallery-Konkurrent übersetzt Bildbeschreibungen mehrsprachig oder
+  generiert sie per AI. Direkter Hebel auf unsere Kern-USPs (Multi-Provider-
+  AI, BYO-Key, breite Übersetzungsabdeckung).
+- **Integrierte WebP-Komprimierung + Bulk-Upload** — die Standalone-Apps
+  fassen nur Zuweisung/Anzeige an, nicht die Bildoptimierung.
+- **Vollwertige Bulk-Auto-Zuweisung** (siehe oben) — deterministisches
+  Dateiname↔SKU/Image-Key-Matching mit Key-Generator und **Cross-Produkt-
+  Option-Value-Memory**. Letztere hat in dieser Form **kein** Konkurrent;
+  sie macht die Zuweisung über den ganzen Katalog hinweg konsistent.
+- **Performance-Parität mit der Spitze** — Pre-Paint-FOUC-Fix
+  (`variant-gallery-embed`), reservierte `aspect-ratio` gegen Layout-Shift,
+  client-seitiges Umschalten ohne Extra-Request (wie Rubik/GG).
+- **Video + 3D-Modelle** — Parität mit den Top-Apps.
+- **Lightbox + Klick-Zoom** — der App-Embed bringt eine selbstgebaute
+  `<dialog>`-Lightbox und 2×-Klick-Zoom mit; der Zoom-Modus wird sogar aus dem
+  Theme-Setting (`image_zoom`: lightbox/hover/none) geerbt. Parität mit NS, GG,
+  SA.
+
+**Echte Lücken (Wettbewerber liefern, wir nicht):**
+1. **Farb-/Bild-Swatches auf der Produktseite** — das ist das *Leitfeature*
+   fast aller Konkurrenten (Rubik, NS, Wizard, SA). Wir zeigen nur Galerie +
+   Thumbnails, keine klick-/hover-baren Variant-Swatches. **Größte Lücke.**
+2. **Swatches auf Collection-Seiten** — NS bewirbt das prominent; verbessert
+   Conversion vor dem PDP-Klick.
+3. **Kein eigener Free/Einstiegs-Tarif** — Konkurrenten holen Merchants ab
+   $4.99 oder gratis ab; bei uns erst ab Pro (€19.90). Da das Feature aber im
+   Suite-Kontext steht, ist das nur bedingt ein Nachteil.
+
+**Kein Gap (Korrekturen 2026-06-29):**
+- *Auto-Zuweisung* ist **vorhanden** — deterministisches Bulk-Matching via
+  SKU/Image-Key + Key-Generator + Cross-Produkt-Option-Value-Memory (siehe
+  „Wie unsere Bulk-Auto-Zuweisung funktioniert"). Wir verzichten lediglich
+  bewusst auf reine **Pixel-AI-Bilderkennung** (Rubik); unser konventions-
+  basierter Weg ist deterministischer und mehr-options-fähig. Optionaler
+  Ausbau: eine AI-**Heuristik** (Alt-Text/Dateiname → Optionswert) als
+  Komfort-Layer *über* dem bestehenden Matching.
+- *Zoom / Lightbox / Fullscreen* ist **vorhanden** — der App-Embed
+  (`variant-gallery-embed.js`) bringt eine `<dialog>`-Lightbox + 2×-Klick-Zoom
+  mit, Modus aus dem Theme geerbt. (Nur der schlanke App-**Block**
+  `variant-gallery.js` hat das nicht — bewusst, er ist die Minimal-Variante.)
+
+**Empfehlung:** Wenn die Kategorie ausgebaut werden soll, ist **Variant-
+Swatches auf der Produktseite** (Lücke #1) der mit Abstand wichtigste — und
+nach den Korrekturen oben praktisch **einzige** — *funktionale* Hebel gegenüber
+der Spitze. Es ist das definierende Feature der Kategorie. Nicht vergessen zu
+*vermarkten*: AI-Alt-Text + Übersetzung der Bildbeschreibungen **und** die
+Cross-Produkt-Memory der Bulk-Zuweisung kann **kein** Variant-Gallery-
+Konkurrent — das sind hier unsere unbesetzten USPs.
+
 ---
 
 ## 3. Fehlende Features
@@ -684,6 +847,15 @@ model ContentTemplate {
 - [StoreSEO](https://apps.shopify.com/storeseo)
 - [Schema Plus for SEO](https://apps.shopify.com/schema-plus)
 
+### Variant-Image-Gallery-Apps
+- [Rubik Variant Images & Swatch](https://apps.shopify.com/rubik-variant-images)
+- [SA Variant Image Automator](https://apps.shopify.com/variant-image-automator)
+- [NS Color Swatch Variant Images](https://apps.shopify.com/ns-product-variants-options)
+- [Variant Image Wizard + Swatch](https://apps.shopify.com/variant-image-wizard)
+- [Easy Variant Images](https://apps.shopify.com/easy-variant-images)
+- [Best Shopify Variant Image Gallery Apps (NestScale)](https://nestscale.com/blog/best-shopify-variant-image-gallery-apps.html)
+- [How to choose a variant images & swatch app (Craftshift, 2026)](https://craftshift.com/how-to-choose-the-right-variant-images-swatch-app-for-shopify-store-2026/)
+
 ### AI Content Generator Apps
 - [ChatGPT-AI Product Description](https://apps.shopify.com/automated-description-writing)
 - [WritePilot ChatGPT AI Content](https://apps.shopify.com/ai-content-generator-by-amasty)
@@ -706,5 +878,8 @@ model ContentTemplate {
 | 2026-05-18 | Preise/Ratings Mai 2026; Image Compression als ✅ (WebP ab Pro) korrigiert; §3.5 Gap-Kontext & Priorisierung ergänzt (Status: nicht eingeplant, Bugs zuerst) |
 | 2026-05-18 | §3.5-Banner nachgezogen: Limit-Befunde 1–4 alle erledigt (Commit 1327432) — Befund 4 via Bild-Quota + WebP-Spreizung Pro 2/Max 6; Template-Verweise auf „zusätzliches Differenzial" entschärft |
 | 2026-06-25 | **Full Translation Coverage ausgeliefert** (T&A-Parität): Checkout-Übersetzung ❌→✅ (§2.1 + Fußnote ³); neue übersetzbare Flächen in §1.2 (E-Mail/Versand/Filter/Shop-Metadaten/Cookie-Banner/Zahlung/Lieferschein/Abo-Pläne); §1.2-Coverage-Tabelle inkl. 3 Flächen über T&A hinaus (PAYMENT_GATEWAY, PACKING_SLIP_TEMPLATE, SELLING_PLAN*); §3.3 Zeile 17 (Checkout) als erledigt markiert; §3.5-Niedrig nachgezogen |
+| 2026-06-29 | **§2.4 Nachtrag — Variant-Image-Gallery-Apps** ergänzt (Web-Recherche 06/2026): Vergleich unseres Variant-Gallery-App-Blocks + Image Managers mit Rubik, SA Variant Image Automator, NS Color Swatch, Variant Image Wizard, GG Image Slider. Stärken: Suite-Bündelung, AI-Alt-Text + Übersetzung der Alt-Texte (unbesetzter USP), WebP/Bulk-Upload, Video/3D, Pre-Paint-FOUC-Fix. Lücken: Produktseiten-**Swatches** (#1), Collection-Swatches, Zoom/Lightbox, kein Free/Einstiegs-Tarif. Quellen in §5 ergänzt. |
+| 2026-06-29 | **§2.4 Korrektur — Lightbox/Zoom** ist vorhanden (war fälschlich als Lücke gelistet): der App-**Embed** `variant-gallery-embed.js` hat eine selbstgebaute `<dialog>`-Lightbox (`_bindLightbox`/`_openLightbox`) + 2×-Klick-Zoom (`_bindScaleZoom`), Zoom-Modus aus Dawns `image_zoom`-Setting geerbt. Erste Analyse hatte nur den schlanken App-**Block** `variant-gallery.js` geprüft. Intro um „Zwei Storefront-Varianten" ergänzt; Lücken-Liste auf nur noch Produktseiten-Swatches + Collection-Swatches + Free-Tarif reduziert. |
+| 2026-06-29 | **§2.4 Korrektur — Bulk-Auto-Zuweisung** ist vorhanden (war fälschlich als Lücke gelistet): deterministisches Dateiname↔SKU/Image-Key-Matching (`BulkImageUploadPanel.tsx`, `parseFilenames.ts`, `api.update-variant-match-key.tsx`) + 1-Klick-Key-Generator + Cross-Produkt-Option-Value-Memory (eigener USP, kein Konkurrent hat das). Neuer Erklär-Block, zwei neue Tabellenzeilen; „Auto-Zuweisung" aus der Lücken-Liste entfernt — bewusster Verzicht nur auf Pixel-AI-Bilderkennung (Rubik). |
 | 2026-06-29 | **§2.2.1 Nachtrag — übersehene & neue Funktionsweisen** ergänzt (Web-Recherche 06/2026): AEO/GEO als definierender 2026-Layer, llms.txt, IndexNow/Instant-Indexing, AI-Crawler-Zugriff (robots.txt), GTIN/Brand im Product-Schema für AI-Shopping, erweiterte Schema-Typen (FAQ/Review/LocalBusiness/Video), internes Linking, manueller Bulk-Meta-Editor, Bild-Dateinamen-SEO, AI-Referral-Tracking, OG/Twitter-Cards, Autopilot-Design-Warnung. Strategie: **mehrsprachige AEO** als unbesetzter USP. Fließt in den SEO-Tab-Plan (`docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md`) ein. |
 

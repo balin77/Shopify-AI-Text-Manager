@@ -38,10 +38,10 @@ function runCommand(command, description) {
 
 function runSilent(command) {
   try {
-    execSync(command, { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
+    const output = execSync(command, { stdio: 'pipe', encoding: 'utf-8' });
+    return { success: true, output };
+  } catch (e) {
+    return { success: false, output: e.stderr?.toString() || e.message || '' };
   }
 }
 
@@ -76,7 +76,13 @@ async function main() {
     '20260113_add_product_image_alt_translations',
   ];
   for (const name of orphanedMigrations) {
-    runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
+    const result = runSilent(`npx prisma migrate resolve --rolled-back ${name}`);
+    // P3011/P3012 = migration not found or not in a resolvable state — expected
+    // once the orphan is gone. Surface anything else so real problems aren't lost.
+    if (!result.success &&
+        !/P301[12]|P3008|not found|cannot be rolled back/i.test(result.output)) {
+      log(`  ↳ ${name}: ${result.output.substring(0, 120)}`, 'yellow');
+    }
   }
 
   // Mark known migrations as applied so prisma doesn't treat them as "failed".
@@ -90,7 +96,13 @@ async function main() {
     '20260224141738_add_metaobjects_and_missing_columns',
   ];
   for (const name of knownAppliedMigrations) {
-    runSilent(`npx prisma migrate resolve --applied ${name}`);
+    const result = runSilent(`npx prisma migrate resolve --applied ${name}`);
+    // P3008 = already recorded as applied (steady state after baseline). Stay
+    // quiet; only surface unexpected failures so real errors are visible again.
+    if (!result.success &&
+        !/P3008|already recorded as applied/i.test(result.output)) {
+      log(`  ↳ Could not resolve ${name}: ${result.output.substring(0, 120)}`, 'yellow');
+    }
   }
 
   // Diagnostic only: report (do NOT mutate) any migration rows still in a

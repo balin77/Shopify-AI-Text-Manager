@@ -17,6 +17,9 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
+import { db } from "~/db.server";
+import { listThemes, pickMainThemeId, resolveSelectedThemeId } from "~/services/theme-selection.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 
 // Probe target list. Includes resource types we already cover, so we can find
 // where Shopify hides things like Cookie-Banner. COOKIE_BANNER is documented
@@ -98,6 +101,28 @@ interface CookieHintHit {
   locale: string;
 }
 
+/**
+ * Theme-Selection 404 diagnostic. Answers WHY /api/theme-content/theme/* returns
+ * 404 "Group not found" after the theme-selection feature: the read path scopes
+ * rows to `themeId IN (resolvedSelectedThemeId, "")`. This block surfaces the
+ * three values that must line up — the resolved selection, the themeIds actually
+ * stored on the rows, and the themeId embedded in Shopify's live resourceIds.
+ */
+interface ThemeSelectionDiag {
+  themes: Array<{ id: string; name: string; role: string }>;
+  mainThemeId: string | null;
+  storedSelectedThemeId: string | null;
+  resolvedSelectedThemeId: string | null;
+  /** DISTINCT ThemeContent.themeId (domain=theme) + row counts. */
+  dbThemeContentByThemeId: Array<{ themeId: string; count: number }>;
+  /** DISTINCT ThemeTranslation.themeId (domain=theme) + row counts. */
+  dbThemeTranslationByThemeId: Array<{ themeId: string; count: number }>;
+  /** Sample live resourceIds per theme resource type + the extracted Theme-GID. */
+  resourceThemeIds: Array<{ resourceType: string; resourceId: string; extractedThemeId: string | null }>;
+  /** Human-readable conclusion computed server-side. */
+  verdict: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -107,6 +132,24 @@ interface ProbeReport {
   resources: ResourceReport[];
   cookieHints: CookieHintHit[];
   writeTest: WriteTestReport;
+  themeSelectionDiag?: ThemeSelectionDiag;
+  themeFetchWorkaround?: ThemeFetchWorkaround;
+}
+
+/**
+ * Empirical test of whether an UNPUBLISHED theme's translatable content can be
+ * reached at all — and via which API. Answers the "is there a workaround?"
+ * question with hard data from this shop rather than forum consensus.
+ */
+interface ThemeFetchWorkaround {
+  targetTheme: { id: string; name: string; role: string } | null;
+  /** translatableResource(resourceId) with the theme_id rewritten to the target theme. */
+  translationsApiRewrite: { resourceId: string; contentCount: number; error?: string };
+  /** translatableResourcesByIds([rewritten id]). */
+  translationsApiByIds: { contentCount: number; error?: string };
+  /** theme(id: target){ files(locales/*) } — the theme-files API is per-theme. */
+  themeFilesRead: Array<{ theme: "MAIN" | "target"; filename: string; found: boolean; byteSize: number; sampleKeys: string[]; error?: string }>;
+  verdict: string;
 }
 
 const PROBE_QUERY = `#graphql
@@ -138,6 +181,42 @@ const TRANSLATIONS_REGISTER = `#graphql
     translationsRegister(resourceId: $resourceId, translations: $translations) {
       translations { key value locale }
       userErrors { field message }
+    }
+  }
+`;
+
+// Single-resource translatable-content lookup (no locale filter) — used to test
+// whether rewriting theme_id in a resourceId reaches a different theme.
+const SINGLE_TRANSLATABLE_QUERY = `#graphql
+  query singleTranslatable($resourceId: ID!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent { key value digest locale }
+    }
+  }
+`;
+
+const BY_IDS_TRANSLATABLE_QUERY = `#graphql
+  query byIdsTranslatable($resourceIds: [ID!]!) {
+    translatableResourcesByIds(resourceIds: $resourceIds, first: 5) {
+      edges { node { resourceId translatableContent { key value locale } } }
+    }
+  }
+`;
+
+// Theme-files API is addressed per Theme-GID and works for UNPUBLISHED themes.
+const THEME_FILES_QUERY = `#graphql
+  query themeFiles($id: ID!, $filenames: [String!]!) {
+    theme(id: $id) {
+      id
+      name
+      role
+      files(filenames: $filenames, first: 10) {
+        nodes {
+          filename
+          body { ... on OnlineStoreThemeFileBodyText { content } }
+        }
+      }
     }
   }
 `;
@@ -288,6 +367,234 @@ export async function action({ request }: ActionFunctionArgs) {
     // Small pause to be gentle on the translation rate-limit (forum thread:
     // community.shopify.dev/t/translatable-resource-rate-limit/15107).
     await new Promise((res) => setTimeout(res, 250));
+  }
+
+  // ── Theme-Selection 404 diagnostic ─────────────────────────────────────────
+  // Reads (never writes) the three things that must line up for
+  // /api/theme-content/theme/* to return rows instead of 404.
+  try {
+    const themes = await listThemes(admin);
+    const mainThemeId = pickMainThemeId(themes);
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { selectedThemeId: true },
+    });
+    const storedSelectedThemeId = settings?.selectedThemeId ?? null;
+    const resolvedSelectedThemeId = await resolveSelectedThemeId(session.shop, admin, themes);
+
+    // What themeIds are actually stored on the theme-domain rows?
+    const [contentGroups, translationGroups] = await Promise.all([
+      db.themeContent.groupBy({
+        by: ["themeId"],
+        where: { shop: session.shop, domain: "theme" },
+        _count: { _all: true },
+      }),
+      db.themeTranslation.groupBy({
+        by: ["themeId"],
+        where: { shop: session.shop, domain: "theme" },
+        _count: { _all: true },
+      }),
+    ]);
+    const toCounts = (g: Array<{ themeId: string; _count: { _all: number } }>) =>
+      g.map((x) => ({ themeId: x.themeId, count: x._count._all })).sort((a, b) => b.count - a.count);
+    const dbThemeContentByThemeId = toCounts(contentGroups as Array<{ themeId: string; _count: { _all: number } }>);
+    const dbThemeTranslationByThemeId = toCounts(translationGroups as Array<{ themeId: string; _count: { _all: number } }>);
+
+    // Sample a few live resourceIds per theme resource type and show the Theme-GID
+    // we extract from each (this is exactly what the sync stamps onto the row).
+    const THEME_DIAG_TYPES = [
+      "ONLINE_STORE_THEME_JSON_TEMPLATE",
+      "ONLINE_STORE_THEME_SECTION_GROUP",
+      "ONLINE_STORE_THEME_APP_EMBED",
+      "ONLINE_STORE_THEME_SETTINGS_CATEGORY",
+      "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
+      "ONLINE_STORE_THEME_LOCALE_CONTENT",
+    ];
+    const resourceThemeIds: Array<{ resourceType: string; resourceId: string; extractedThemeId: string | null }> = [];
+    for (const rt of THEME_DIAG_TYPES) {
+      try {
+        const resp = await admin.graphql(PROBE_QUERY, { variables: { first: 3, resourceType: rt } });
+        const d = (await resp.json()) as { data?: { translatableResources?: { edges: Array<{ node: { resourceId: string } }> } }; errors?: Array<{ message: string }> };
+        if (d.errors?.length) {
+          resourceThemeIds.push({ resourceType: rt, resourceId: `(error: ${d.errors[0].message})`, extractedThemeId: null });
+          continue;
+        }
+        for (const edge of d.data?.translatableResources?.edges ?? []) {
+          resourceThemeIds.push({
+            resourceType: rt,
+            resourceId: edge.node.resourceId,
+            extractedThemeId: extractThemeIdFromResourceId(edge.node.resourceId),
+          });
+        }
+      } catch (e) {
+        resourceThemeIds.push({ resourceType: rt, resourceId: `(exception: ${e instanceof Error ? e.message : String(e)})`, extractedThemeId: null });
+      }
+      await new Promise((res) => setTimeout(res, 250));
+    }
+
+    // Compute a verdict: which stored rows would be INVISIBLE to the read path.
+    let verdict: string;
+    if (!resolvedSelectedThemeId) {
+      verdict = "resolvedSelectedThemeId is null → themeScope is empty {} → NO theme filter is applied. A 404 is NOT caused by theme scoping; look elsewhere (migration not applied? column missing? empty DB?).";
+    } else {
+      const visible = new Set([resolvedSelectedThemeId, ""]);
+      const invisible = dbThemeContentByThemeId.filter((x) => !visible.has(x.themeId));
+      if (dbThemeContentByThemeId.length === 0) {
+        verdict = "No theme-domain ThemeContent rows exist at all for this shop → the theme has never been synced (or was wiped). Expected 404 until a full theme sync runs.";
+      } else if (invisible.length === 0) {
+        verdict = `All stored themeIds are visible (either "" or the resolved selection ${resolvedSelectedThemeId}). Theme scoping is NOT the 404 cause here.`;
+      } else {
+        verdict =
+          `ROOT CAUSE CONFIRMED: ${invisible.reduce((n, x) => n + x.count, 0)} ThemeContent row(s) are stored under themeId(s) ` +
+          `[${invisible.map((x) => `"${x.themeId}" (${x.count})`).join(", ")}] which are NEITHER "" NOR the resolved selection ` +
+          `"${resolvedSelectedThemeId}". The read path (themeId IN ["${resolvedSelectedThemeId}", ""]) filters them out → 404.`;
+      }
+    }
+
+    report.themeSelectionDiag = {
+      themes,
+      mainThemeId,
+      storedSelectedThemeId,
+      resolvedSelectedThemeId,
+      dbThemeContentByThemeId,
+      dbThemeTranslationByThemeId,
+      resourceThemeIds,
+      verdict,
+    };
+  } catch (e) {
+    logger.error("[TRANSLATION-PROBE] theme-selection diag failed", { context: "TranslationProbe", error: e instanceof Error ? e.message : String(e) });
+    report.themeSelectionDiag = {
+      themes: [],
+      mainThemeId: null,
+      storedSelectedThemeId: null,
+      resolvedSelectedThemeId: null,
+      dbThemeContentByThemeId: [],
+      dbThemeTranslationByThemeId: [],
+      resourceThemeIds: [],
+      verdict: `Diagnostic failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // ── Theme-fetch workaround test ─────────────────────────────────────────────
+  // Empirically answers: can an UNPUBLISHED theme's translatable content be
+  // reached, and via which API? (1) translations API with a rewritten theme_id
+  // (expected: empty), (2) translatableResourcesByIds (expected: empty),
+  // (3) theme-files API per Theme-GID (expected: returns the target theme).
+  try {
+    const tsd = report.themeSelectionDiag;
+    const themesList = tsd?.themes ?? [];
+    const mainId = tsd?.mainThemeId ?? null;
+    // Prefer the resolved selection if it's non-MAIN; else any non-MAIN theme.
+    const targetTheme =
+      (tsd?.resolvedSelectedThemeId && tsd.resolvedSelectedThemeId !== mainId
+        ? themesList.find((t) => t.id === tsd.resolvedSelectedThemeId)
+        : undefined) ??
+      themesList.find((t) => t.id !== mainId && String(t.role).toUpperCase() !== "MAIN") ??
+      null;
+
+    const wa: ThemeFetchWorkaround = {
+      targetTheme: targetTheme ?? null,
+      translationsApiRewrite: { resourceId: "", contentCount: 0 },
+      translationsApiByIds: { contentCount: 0 },
+      themeFilesRead: [],
+      verdict: "",
+    };
+
+    const numericOf = (gid: string) => gid.split("/").pop() || gid;
+
+    if (!targetTheme) {
+      wa.verdict = "No non-MAIN theme available to test — cannot probe the unpublished-theme workaround.";
+    } else {
+      const targetNumeric = numericOf(targetTheme.id);
+
+      // (1)+(2): rewrite theme_id on a real resourceId to point at the target theme.
+      const srcEntry = (tsd?.resourceThemeIds ?? []).find(
+        (r) => r.extractedThemeId && /[?&]theme_id=\d+/.test(r.resourceId)
+      );
+      if (!srcEntry) {
+        wa.translationsApiRewrite = { resourceId: "(no source resourceId with theme_id found)", contentCount: 0, error: "skipped" };
+        wa.translationsApiByIds = { contentCount: 0, error: "skipped" };
+      } else {
+        const rewritten = srcEntry.resourceId.replace(/([?&]theme_id=)\d+/, `$1${targetNumeric}`);
+        wa.translationsApiRewrite.resourceId = rewritten;
+        try {
+          const r1 = await admin.graphql(SINGLE_TRANSLATABLE_QUERY, { variables: { resourceId: rewritten } });
+          const d1 = (await r1.json()) as { data?: { translatableResource?: { translatableContent?: unknown[] } }; errors?: Array<{ message: string }> };
+          if (d1.errors?.length) wa.translationsApiRewrite.error = d1.errors.map((e) => e.message).join(" | ");
+          else wa.translationsApiRewrite.contentCount = d1.data?.translatableResource?.translatableContent?.length ?? 0;
+        } catch (e) {
+          wa.translationsApiRewrite.error = e instanceof Error ? e.message : String(e);
+        }
+        await new Promise((res) => setTimeout(res, 250));
+        try {
+          const r2 = await admin.graphql(BY_IDS_TRANSLATABLE_QUERY, { variables: { resourceIds: [rewritten] } });
+          const d2 = (await r2.json()) as { data?: { translatableResourcesByIds?: { edges: Array<{ node: { translatableContent?: unknown[] } }> } }; errors?: Array<{ message: string }> };
+          if (d2.errors?.length) wa.translationsApiByIds.error = d2.errors.map((e) => e.message).join(" | ");
+          else wa.translationsApiByIds.contentCount = (d2.data?.translatableResourcesByIds?.edges ?? []).reduce((n, ed) => n + (ed.node.translatableContent?.length ?? 0), 0);
+        } catch (e) {
+          wa.translationsApiByIds.error = e instanceof Error ? e.message : String(e);
+        }
+      }
+
+      // (3): read locale files from BOTH MAIN and the target theme via theme-files API.
+      const localeFilenames = [
+        `locales/${primaryLocale}.default.json`,
+        ...enabledLocales.filter((l) => l !== primaryLocale).map((l) => `locales/${l}.json`),
+      ];
+      const readThemeFiles = async (label: "MAIN" | "target", themeGid: string) => {
+        try {
+          const r = await admin.graphql(THEME_FILES_QUERY, { variables: { id: themeGid, filenames: localeFilenames } });
+          const d = (await r.json()) as {
+            data?: { theme?: { files?: { nodes: Array<{ filename: string; body?: { content?: string } }> } } };
+            errors?: Array<{ message: string }>;
+          };
+          if (d.errors?.length) {
+            wa.themeFilesRead.push({ theme: label, filename: "(query)", found: false, byteSize: 0, sampleKeys: [], error: d.errors.map((e) => e.message).join(" | ") });
+            return;
+          }
+          const nodes = d.data?.theme?.files?.nodes ?? [];
+          if (nodes.length === 0) {
+            wa.themeFilesRead.push({ theme: label, filename: localeFilenames.join(", "), found: false, byteSize: 0, sampleKeys: [] });
+            return;
+          }
+          for (const n of nodes) {
+            let sampleKeys: string[] = [];
+            try {
+              const parsed = JSON.parse(n.body?.content ?? "{}");
+              sampleKeys = Object.keys(parsed).slice(0, 8);
+            } catch { /* non-JSON or truncated */ }
+            wa.themeFilesRead.push({ theme: label, filename: n.filename, found: true, byteSize: n.body?.content?.length ?? 0, sampleKeys });
+          }
+        } catch (e) {
+          wa.themeFilesRead.push({ theme: label, filename: "(exception)", found: false, byteSize: 0, sampleKeys: [], error: e instanceof Error ? e.message : String(e) });
+        }
+      };
+      if (mainId) await readThemeFiles("MAIN", mainId);
+      await new Promise((res) => setTimeout(res, 250));
+      await readThemeFiles("target", targetTheme.id);
+
+      // Verdict
+      const translApiReached = wa.translationsApiRewrite.contentCount > 0 || wa.translationsApiByIds.contentCount > 0;
+      const targetFilesFound = wa.themeFilesRead.some((f) => f.theme === "target" && f.found);
+      if (translApiReached) {
+        wa.verdict = `UNEXPECTED: the translations API returned content for the target theme (rewrite=${wa.translationsApiRewrite.contentCount}, byIds=${wa.translationsApiByIds.contentCount}). Per-theme reads via the translations API may be possible after all — re-evaluate before restricting to MAIN.`;
+      } else if (targetFilesFound) {
+        wa.verdict = `CONFIRMED: translations API cannot reach the unpublished theme "${targetTheme.name}" (rewrite=0, byIds=0${wa.translationsApiRewrite.error ? `, err="${wa.translationsApiRewrite.error}"` : ""}), BUT the theme-files API returns its locale file(s). → Option B (rebuild theme content on the theme-files API) is technically viable for unpublished themes.`;
+      } else {
+        wa.verdict = `Translations API returned nothing for the target theme AND the theme-files read found no locale files (${wa.themeFilesRead.filter((f) => f.theme === "target").map((f) => f.error ?? "empty").join("; ") || "empty"}). If the theme-files error is a scope/permission issue, that's fixable; if the theme genuinely has no locale files, there is nothing to edit there.`;
+      }
+    }
+
+    report.themeFetchWorkaround = wa;
+  } catch (e) {
+    logger.error("[TRANSLATION-PROBE] theme-fetch workaround test failed", { context: "TranslationProbe", error: e instanceof Error ? e.message : String(e) });
+    report.themeFetchWorkaround = {
+      targetTheme: null,
+      translationsApiRewrite: { resourceId: "", contentCount: 0, error: e instanceof Error ? e.message : String(e) },
+      translationsApiByIds: { contentCount: 0, error: "aborted" },
+      themeFilesRead: [],
+      verdict: `Workaround test failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
 
   // Optional write test against SHOP — answers "do app writes override the

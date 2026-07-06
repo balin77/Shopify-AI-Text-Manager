@@ -278,7 +278,11 @@ export const UpdatePlanSchema = z.object({
 /**
  * Schema for query parameters in api.sync-content.tsx
  */
-const VALID_SYNC_TYPES = ['collections', 'articles', 'pages', 'policies', 'themes'] as const;
+const VALID_SYNC_TYPES = [
+  'collections', 'articles', 'pages', 'policies', 'themes',
+  // Discovery-capable list-button targets (BackgroundSyncService.syncAll phases).
+  'metaobjects', 'system', 'delivery', 'onlineStoreExtras', 'sellingPlans', 'menus',
+] as const;
 export const SyncContentQuerySchema = z.object({
   types: z
     .string()

@@ -33,6 +33,7 @@ import {
 } from "../utils/cookie-banner-availability.server";
 import { getFormString } from "../utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 
 export const loader = makeThemeDomainLoader("customer_privacy", "COOKIE_BANNER");
 
@@ -148,57 +149,86 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
     });
   }
 
-  const shopifyErrors: string[] = [];
-  let totalOps = 0;
-  let totalFailed = 0;
+  // Register failures are real errors (auth/schema/validation). Remove failures
+  // are a known Shopify limitation: translationsRemove is a silent no-op for
+  // COOKIE_BANNER (accepts the call, no errors, removes nothing), so they get a
+  // soft, actionable warning rather than a hard error.
+  const registerErrors: string[] = [];
+  const removeFailedKeys: string[] = [];
+  let registerOps = 0;
+  let registerFailed = 0;
+  // Track which keys Shopify actually accepted/removed so the DB mirror below
+  // only reflects confirmed changes. A remove that no-ops or a register that
+  // fails must leave its previous DB row untouched — otherwise the local cache
+  // claims a change Shopify never made (cleared entries looked deleted locally
+  // while they survived on Shopify).
+  const pushedKeys = new Set<string>();
+  const removedKeys = new Set<string>();
 
   for (const [resId, translations] of registerByRes) {
-    totalOps += translations.length;
+    registerOps += translations.length;
     const res = await writeCookieBannerTranslations(cbSession, resId, translations);
-    if (!res.ok) {
-      totalFailed += translations.length;
-      shopifyErrors.push(res.error ?? "register failed");
+    if (res.ok) {
+      for (const t of translations) pushedKeys.add(t.key);
+    } else {
+      registerFailed += translations.length;
+      registerErrors.push(res.error ?? "register failed");
     }
   }
   for (const [resId, keys] of removeByRes) {
-    totalOps += keys.length;
     const res = await removeCookieBannerTranslations(cbSession, resId, keys, [locale]);
-    if (!res.ok) {
-      totalFailed += keys.length;
-      shopifyErrors.push(res.error ?? "remove failed");
+    if (res.ok) {
+      for (const k of keys) removedKeys.add(k);
+    } else {
+      removeFailedKeys.push(...keys);
+      logger.warn("[CookieBanner] Save — Shopify did not remove cleared keys", {
+        context: "CookieBanner",
+        shop: session.shop,
+        groupId,
+        locale,
+        keys,
+        error: res.error,
+      });
     }
   }
 
-  if (totalOps > 0 && totalFailed >= totalOps) {
+  // Hard error only when EVERY register attempt failed (and nothing else stuck).
+  if (registerOps > 0 && registerFailed >= registerOps && removedKeys.size === 0) {
     return json(
-      { success: false, error: `Shopify rejected all changes: ${shopifyErrors.join("; ")}` },
+      { success: false, error: `Shopify rejected all changes: ${registerErrors.join("; ")}` },
       { status: 500 }
     );
   }
 
-  // Mirror handleUpdateContent's local-DB step so the editor sees its own save.
+  // Mirror handleUpdateContent's local-DB step so the editor sees its own save —
+  // but ONLY for keys Shopify confirmed. A cleared key that Shopify did not
+  // remove keeps its DB row (revalidation then correctly shows it still present).
   for (const [key, value] of Object.entries(updatedFields)) {
     const resId = keyToResourceId.get(key);
     if (!resId) continue;
     if (value === "") {
+      if (!removedKeys.has(key)) continue;
       await db.themeTranslation.deleteMany({
         where: { shop: session.shop, groupId, key, locale, domain: "customer_privacy" },
       });
     } else {
+      if (!pushedKeys.has(key)) continue;
       await db.themeTranslation.upsert({
         where: {
-          shop_resourceId_groupId_key_locale: {
+          shop_resourceId_groupId_key_locale_themeId: {
             shop: session.shop,
             resourceId: resId,
             groupId,
             key,
             locale,
+            themeId: extractThemeIdFromResourceId(resId) ?? "",
           },
         },
         create: {
           shop: session.shop,
           groupId,
           resourceId: resId,
+          themeId: extractThemeIdFromResourceId(resId) ?? "",
           domain: "customer_privacy",
           locale,
           key,
@@ -213,6 +243,28 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
   // (useUnifiedContentEditor) only clears `isSaving` when it sees
   // `success && actionType === "updateContent"`. Without it the spinner
   // stays spinning forever and the Save button never re-enables.
+  //
+  // Surface any partial issue as a `warning` — the editor's save-response handler
+  // renders it as a warning InfoBox (same path as alt-text/DB-cache partial saves).
+  // Still success:true so the spinner clears and the confirmed changes stick.
+  const warnings: string[] = [];
+  if (registerErrors.length > 0) {
+    warnings.push(`Some translations could not be saved to Shopify: ${registerErrors.join("; ")}.`);
+  }
+  if (removeFailedKeys.length > 0) {
+    warnings.push(
+      "Cookie-banner translations can't be deleted through the app — Shopify doesn't support removing them for this resource. " +
+        "The cleared value stays on Shopify; to remove it, edit it in your Shopify admin. You can still overwrite the text here."
+    );
+  }
+  if (warnings.length > 0) {
+    return json({
+      success: true,
+      actionType: "updateContent" as const,
+      warning: warnings.join(" "),
+    });
+  }
+
   return json({ success: true, actionType: "updateContent" as const });
 }
 

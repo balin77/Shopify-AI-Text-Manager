@@ -734,18 +734,129 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+
+    // ========================================================================
+    // FOREIGN LOCALE PATH
+    // The accepted alt-text is in a foreign language `L`. Mirror the text-field
+    // fix: keep it EXACTLY in `L`, translate it into the primary language and
+    // save that as the base image alt-text (this field only, so no deletion of
+    // existing foreign alt-text translations), and translate it into the OTHER
+    // foreign locales (source = `L`). Do NOT overwrite the item's base altText
+    // with the foreign value.
+    // ========================================================================
+    if (currentLanguage !== primaryLocale) {
+      const L = currentLanguage;
+      const requestItemId = selectedItemId;
+      setOriginalAltTexts(newAltTexts);
+      const targetOthers = enabledLanguages.filter(l => l !== primaryLocale && l !== L);
+
+      // Persist the accepted foreign alt-text EXACTLY in `L`.
+      const saveForeignExact = () => {
+        const foreignForm: Record<string, string> = {
+          action: "updateContent",
+          itemId: requestItemId,
+          locale: L,
+          primaryLocale,
+        };
+        foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
+        savedLocaleRef.current = L;
+        isSavePendingRef.current = true;
+        isSaveFromTranslateRef.current = true;
+        safeSubmit(foreignForm, { method: "POST" });
+      };
+
+      // Translate the accepted foreign alt-text into the primary language.
+      submitAIAction(
+        {
+          action: "translateAltText",
+          itemId: requestItemId,
+          productId: item.id,
+          productTitle: item.title || "",
+          imageIndex: String(imageIndex),
+          sourceAltText: suggestion,
+          targetLocale: primaryLocale,
+          // Server uses `primaryLocale` purely as the SOURCE language.
+          primaryLocale: L,
+        },
+        `altText_${imageIndex}`,
+        (result) => {
+          if (selectedItemIdRef.current !== requestItemId) return;
+          const primaryTranslated = ((result.translatedAltText as string) || "").trim();
+
+          // 1. Save the accepted foreign alt-text exactly in `L`.
+          saveForeignExact();
+
+          // 2. Save the primary base alt-text (this image only, no deletion trigger).
+          if (primaryTranslated) {
+            const primaryForm: Record<string, string> = {
+              action: "updateContent",
+              itemId: requestItemId,
+              locale: primaryLocale,
+              primaryLocale,
+            };
+            primaryForm.imageAltTexts = JSON.stringify({ [imageIndex]: primaryTranslated });
+            // Products reject a primary-locale update without a non-empty title.
+            if (config.contentType === "products") {
+              primaryForm.title = getItemFieldValue(item, "title", primaryLocale, config);
+            }
+            // Do NOT set savedLocaleRef to primaryLocale. Save A (locale L) was
+            // submitted immediately and this save is queued behind it; the
+            // save-response effect reads the single shared savedLocaleRef, and
+            // overwriting it to primary would both misprocess save A and write
+            // the FOREIGN alt-text (held in imageAltTextsRef) into the primary
+            // in-memory image (a leak). The server still persists this as the
+            // primary base alt-text via the form `locale` field.
+            isSavePendingRef.current = true;
+            isSaveFromTranslateRef.current = true;
+            safeSubmit(primaryForm, { method: "POST" });
+          }
+
+          // 3. Translate into the OTHER foreign locales directly from `L`.
+          if (targetOthers.length > 0) {
+            submitAIAction(
+              {
+                action: "translateAltTextToAllLocales",
+                itemId: requestItemId,
+                productId: item.id,
+                productTitle: item.title || "",
+                imageIndex: String(imageIndex),
+                sourceAltText: suggestion,
+                targetLocales: JSON.stringify(targetOthers),
+                primaryLocale: L,
+              },
+              `altText_${imageIndex}`,
+              () => {
+                if (revalidatorRef.current.state === 'idle') {
+                  try { revalidatorRef.current.revalidate(); } catch {}
+                }
+              }
+            );
+          }
+        },
+        () => {
+          // Translating into the primary language failed — still keep the
+          // accepted foreign alt-text saved.
+          if (selectedItemIdRef.current !== requestItemId) return;
+          saveForeignExact();
+        }
+      );
+      return;
+    }
+
+    // ========================================================================
+    // PRIMARY LOCALE PATH (unchanged)
+    // ========================================================================
     // Immediately update the in-memory item so the fallback display
     // (images[index]?.altText) shows the correct value even if imageAltTexts
     // state gets cleared during revalidation cycles.
     if (item.images?.[imageIndex]) {
       item.images[imageIndex].altText = suggestion;
     }
-
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
 
     // Check target locales first
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);

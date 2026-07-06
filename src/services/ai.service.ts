@@ -891,6 +891,66 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
   }
 
   /**
+   * Generate short, concise menu-style titles for a batch of content excerpts in
+   * one AI call. Built for Shopify email-notification templates, whose only
+   * human-readable field is the localized subject line (e.g. "Bestellung
+   * {{name}} bestätigt") — far too long/noisy for a nav list. We ask the model
+   * to distill each excerpt into a 2-4 word notification name in the shop's main
+   * language ("Bestellbestätigung", "Versandbestätigung", …), mirroring what
+   * Shopify's own Translate & Adapt shows (those are private Shopify i18n
+   * strings, not exposed by the API — see the EMAIL_TEMPLATE probe findings).
+   *
+   * Mirrors translateBatchValues: numbered list in, JSON array out, 1:1 length
+   * assertion (fail loud on drift so a partial/misaligned result is never
+   * persisted as success).
+   */
+  async generateTitlesBatch(excerpts: string[], targetLocale: string): Promise<string[]> {
+    if (excerpts.length === 0) return [];
+
+    const toName = localeName(targetLocale);
+
+    loggers.ai('info', `[AI-SERVICE] Generating batch of ${excerpts.length} short titles`, {
+      targetLocale,
+      count: excerpts.length,
+    });
+
+    const numbered = excerpts
+      .map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 800, allowNewlines: true })}`)
+      .join('\n\n');
+
+    const prompt = `You are labelling Shopify email notification templates for a navigation list. For each numbered template excerpt below, return a SHORT, concise title in ${toName} (${targetLocale}) that names the KIND of notification — like a menu label, not the literal subject line. Style examples (German): "Bestellbestätigung", "Versandbestätigung", "Zahlungserinnerung".
+
+Templates:
+${numbered}
+
+Requirements:
+- Output language: ${toName} (${targetLocale})
+- 2-4 words per title, describing the notification TYPE (not the raw subject)
+- No Liquid variables ({{ }} or {% %}), no shop/customer names, no order numbers, no trailing punctuation
+- Return ONLY a JSON array of strings, in the same order, with exactly ${excerpts.length} items
+
+Respond in JSON format: ["title1", "title2", ...]`;
+
+    loggers.ai('debug', '[AI-SERVICE] Batch title prompt', { prompt: prompt.substring(0, 500) });
+
+    const responseText = await this.askAI(prompt);
+
+    loggers.ai('debug', '[AI-SERVICE] Batch title response', { response: responseText.substring(0, 500) });
+
+    const parsed = this.parseJSONResponse(responseText);
+    if (!Array.isArray(parsed)) {
+      loggers.ai('error', '[AI-SERVICE] Batch title response was not a JSON array', { responseLength: responseText.length });
+      throw new Error('AI batch title generation did not return a JSON array');
+    }
+    if (parsed.length !== excerpts.length) {
+      loggers.ai('error', `[AI-SERVICE] Batch title length mismatch: expected ${excerpts.length}, got ${parsed.length}`, { responseLength: responseText.length });
+      throw new Error(`AI batch title generation returned ${parsed.length} titles, expected ${excerpts.length}`);
+    }
+    loggers.ai('info', `[AI-SERVICE] Batch title generation successful: ${parsed.length} titles`);
+    return parsed.map((s) => String(s).trim());
+  }
+
+  /**
    * Permissive recovery for a malformed `["a", "b", ...]` response when the
    * model forgot to escape a straight " inside one of the values (common with
    * typographic content like German „Foo"). Strict JSON.parse rejects the

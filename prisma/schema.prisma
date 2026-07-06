@@ -42,6 +42,24 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // How to handle Shopify's richtext rule ("all top level nodes must be
+  // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
+  // (e.g. Brand information → brand_description). Merchant-selectable in Settings.
+  //   "autofix"   (default) — try the save; if Shopify rejects for this reason,
+  //               normalize the offending value's top-level HTML and retry once.
+  //   "normalize" — always normalize HTML-bearing theme-settings values before
+  //               pushing, no retry round-trip.
+  //   "error"     — never rewrite merchant HTML; surface a clear instruction.
+  themeRichtextMode String @default("autofix")
+
+  // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
+  // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
+  // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
+  // published (MAIN) theme — backwards compatible with the pre-selection
+  // behaviour. Validated against GET_THEMES on every read
+  // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
+  selectedThemeId   String?
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
@@ -683,12 +701,30 @@ model ThemeContent {
   groupName           String // "Article", "Collection", "Cart", etc.
   groupIcon           String // "📝", "📂", "🛒", etc.
   translatableContent Json // Array of translatable items with keys and values
+  // True only for ONLINE_STORE_THEME_APP_EMBED rows that belong to OUR app
+  // (block.type app-handle matches contentpilot). Our embeds are pure technical
+  // selectors/config, so the editor locks them read-only in every locale; other
+  // apps' embeds stay editable. Derived from settings_data.json at full sync.
+  appEmbedOwned       Boolean  @default(false)
+  // AI-generated concise nav title in the shop's main language. Only set for
+  // rows whose raw name is unusable in a list (currently EMAIL_TEMPLATE, whose
+  // groupName is the full localized email subject line). null = not yet
+  // generated / not applicable. Written once by the title-backfill task and
+  // preserved across syncs (groupName is recomputed every sync, this is not).
+  // The loader prefers this over groupName for the item title.
+  aiShortTitle        String?
+  // Shopify Theme-GID this row belongs to ("gid://shopify/OnlineStoreTheme/<id>").
+  // "" = Legacy/vor der Theme-Auswahl-Migration (Backfill-Kandidat). Derived at
+  // sync time from the theme_id embedded in the resourceId GID (see
+  // app/utils/theme-id.ts), falling back to the active MAIN theme.
+  themeId             String   @default("")
   lastSyncedAt        DateTime @default(now())
 
-  @@unique([shop, resourceId, groupId])
+  @@unique([shop, resourceId, groupId, themeId])
   @@index([shop])
   @@index([shop, groupId])
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([lastSyncedAt])
 }
 
@@ -704,14 +740,18 @@ model ThemeTranslation {
   value      String  @db.Text
   locale     String // "en", "fr", "es", "it", etc.
   outdated   Boolean @default(false)
+  // Shopify Theme-GID this translation belongs to. Mirrors ThemeContent.themeId
+  // (see there). "" = Legacy/vor der Theme-Auswahl-Migration.
+  themeId    String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, groupId, key, locale])
+  @@unique([shop, resourceId, groupId, key, locale, themeId])
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([locale])
 }
 

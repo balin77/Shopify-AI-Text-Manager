@@ -96,6 +96,8 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
         image {
           altText
           url
@@ -211,6 +213,31 @@ export const METAFIELDS_SET = `#graphql
         key
         value
         type
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * METAFIELDS DELETE — remove metafield values by identifier.
+ *
+ * Setting a metafield to `value: ""` via metafieldsSet does NOT clear it on
+ * Shopify. To actually remove a metafield (e.g. clearing a page/blog SEO
+ * title_tag / description_tag on the primary locale), it must be deleted by
+ * its { ownerId, namespace, key } identifier. Deleting a non-existent
+ * metafield is a no-op.
+ */
+export const METAFIELDS_DELETE = `#graphql
+  mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields {
+        ownerId
+        namespace
+        key
       }
       userErrors {
         field

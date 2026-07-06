@@ -743,6 +743,86 @@ export function useProductSubResources({
     return sourceData;
   }, [selectedItem]);
 
+  // Merge a translations map ({ resourceId: { key: value } }) into option/metafield state.
+  const applyTranslationsToState = useCallback((
+    item: TranslatableContentItem,
+    translations: Record<string, Record<string, string>>,
+  ) => {
+    setOptionTranslations(prev => {
+      const updated = { ...prev };
+      for (const opt of item.options || []) {
+        const optTrans = translations[opt.id];
+        if (optTrans?.name) {
+          if (!updated[opt.id]) updated[opt.id] = { name: "", values: [] };
+          updated[opt.id] = { ...updated[opt.id], name: optTrans.name };
+        }
+        const valueTranslations = [...(updated[opt.id]?.values || [])];
+        for (let i = 0; i < opt.values.length; i++) {
+          const valTrans = translations[opt.values[i].id];
+          if (valTrans?.name) valueTranslations[i] = valTrans.name;
+        }
+        if (updated[opt.id]) updated[opt.id] = { ...updated[opt.id], values: valueTranslations };
+      }
+      return updated;
+    });
+    setMetafieldTranslations(prev => {
+      const updated = { ...prev };
+      for (const mf of item.metafields || []) {
+        const mfTrans = translations[mf.id];
+        if (mfTrans?.value) updated[mf.id] = mfTrans.value;
+      }
+      return updated;
+    });
+  }, []);
+
+  // Run a SINGLE field/option translate as its own request.
+  //
+  // These must NOT share the hook's `fetcher`: firing several at once (e.g. the
+  // user translates a name + multiple values simultaneously) makes each
+  // fetcher.submit() replace the previous in-flight request, so only the last
+  // response reaches fetcher.data — every other field's spinner then hangs
+  // forever. A dedicated fetch per call gives each its own lifecycle and clears
+  // its own spinner in `finally`.
+  const runIndividualTranslate = useCallback(async (
+    fieldId: string,
+    sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }>,
+  ) => {
+    const item = selectedItem;
+    if (!item) return;
+    const resourceId = item.id;
+
+    const fd = new FormData();
+    fd.set("sourceData", JSON.stringify(sourceData));
+    fd.set("itemId", resourceId);
+    fd.set("primaryLocale", primaryLocale);
+    fd.set("fieldId", fieldId);
+    if (isPrimaryLocale) {
+      // Primary locale: translate to ALL foreign locales (saved server-side).
+      fd.set("action", "translateSubResourceToAllLocales");
+    } else {
+      fd.set("action", "translateSubResources");
+      fd.set("targetLocale", currentLanguage);
+    }
+
+    try {
+      const resp = await fetch("/app/products", { method: "POST", body: fd });
+      const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
+      if (data?.success && data.translations) {
+        applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
+      }
+      // Primary-locale translate saves to foreign locales server-side and returns
+      // no translations — revalidate so locale-pulsing state refreshes.
+      if (isPrimaryLocale && revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
+      setHasChanges(false);
+    } catch {
+      // Spinner is still cleared in finally; translation state simply isn't updated.
+    } finally {
+      markSubResourceCompleted(resourceId, fieldId);
+    }
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState]);
+
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
     if (sourceData.length === 0) return;
@@ -752,33 +832,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    // If primary locale, translate to all foreign locales
-    if (isPrimaryLocale) {
-      fetcher.submit(
-        {
-          action: "translateSubResourceToAllLocales",
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem?.id || "",
-          primaryLocale,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    } else {
-      // Foreign locale: translate from primary to this locale only
-      fetcher.submit(
-        {
-          action: "translateSubResources",
-          targetLocale: currentLanguage,
-          primaryLocale,
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem?.id || "",
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    }
-  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [buildSourceData, selectedItem?.id, runIndividualTranslate]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
     if (!selectedItem) return;
@@ -812,33 +869,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    // If primary locale, translate to all foreign locales
-    if (isPrimaryLocale) {
-      fetcher.submit(
-        {
-          action: "translateSubResourceToAllLocales",
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem.id,
-          primaryLocale,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    } else {
-      // Foreign locale: translate from primary to this locale only
-      fetcher.submit(
-        {
-          action: "translateSubResources",
-          targetLocale: currentLanguage,
-          primaryLocale,
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem.id,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    }
-  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [selectedItem, runIndividualTranslate]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
     if (isPrimaryLocale || !selectedItem) return;
@@ -858,18 +892,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    fetcher.submit(
-      {
-        action: "translateSubResources",
-        targetLocale: currentLanguage,
-        primaryLocale,
-        sourceData: JSON.stringify(sourceData),
-        itemId: selectedItem.id,
-        fieldId, // Send fieldId so server can echo it back
-      },
-      { method: "POST", action: "/app/products" }
-    );
-  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [isPrimaryLocale, selectedItem, runIndividualTranslate]);
 
   const translateAllSubResources = useCallback(() => {
     if (isPrimaryLocale || !selectedItem) return;

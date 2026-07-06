@@ -4,8 +4,9 @@
  * Extracted from UnifiedContentEditor to keep each file focused on one concern.
  */
 
+import type { ReactElement } from "react";
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { Text } from "@shopify/polaris";
+import { Text, Tooltip } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
@@ -33,6 +34,8 @@ export interface FieldRendererProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /** If true, the read-only reason is app-embed technical content — swaps the tooltip hint. */
+  embedTechnical?: boolean;
   /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
   fieldError?: string;
   onGenerateAI?: () => void;
@@ -72,6 +75,7 @@ export function UnifiedFieldRenderer(
     disableGeneration,
     isFallbackValue,
     readOnly,
+    embedTechnical,
     fieldError,
     onGenerateAI,
     onFormatAI,
@@ -162,8 +166,13 @@ export function UnifiedFieldRenderer(
       contentType === "metaobjects" ||
       (contentType === "products" && field.key === "title"));
 
+  // Pass the field's actual Shopify translation key (not field.key). The UI field
+  // key and the translation key diverge for some fields — e.g. article "body" →
+  // "body_html", "summary" → "summary_html", page "body" → "body_html". Using
+  // field.key would make hasFieldMissingTranslations look up translations under the
+  // wrong key and report them as permanently missing (blue highlight in primary).
   const fieldHasMissingTranslations = isPrimaryLocale
-    ? hasFieldMissingTranslations(selectedItem, field.key, shopLocales, primaryLocale, contentType as ContentType, validationOverlays)
+    ? hasFieldMissingTranslations(selectedItem, field.translationKey ?? field.key, shopLocales, primaryLocale, contentType as ContentType, validationOverlays)
     : false;
 
   // Custom render function (if provided)
@@ -271,9 +280,27 @@ export function UnifiedFieldRenderer(
 
   const shouldShowClear = !(field.key === "title" && isPrimaryLocale);
 
+  // Read-only fields get a hover tooltip explaining why they can't be edited.
+  // App-embed technical fields (CSS selectors / config) are locked in EVERY
+  // locale, so they get a dedicated hint; other read-only fields (main language
+  // of resource-backed rubrics like Abo-Pläne) get the primary-read-only hint.
+  const readOnlyHint = String(
+    embedTechnical
+      ? (t.content?.appEmbedReadOnlyHint ||
+         "Technical app-embed element — it can't be edited in the main language or in translations, because changing it would break the embed.")
+      : (t.content?.primaryReadOnlyHint ||
+         "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.")
+  );
+  const withReadOnlyTooltip = (el: ReactElement): ReactElement =>
+    readOnly ? (
+      <Tooltip content={readOnlyHint} dismissOnMouseOut preferredPosition="above">
+        <div>{el}</div>
+      </Tooltip>
+    ) : el;
+
   // HTML Field
   if (field.type === "html") {
-    return (
+    return withReadOnlyTooltip(
       <AIEditableHTMLField
         label={label}
         value={value}
@@ -308,7 +335,7 @@ export function UnifiedFieldRenderer(
   }
 
   // Default: Use AIEditableField for text, slug, textarea, number
-  return (
+  return withReadOnlyTooltip(
     <AIEditableField
       label={label}
       value={value}

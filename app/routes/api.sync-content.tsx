@@ -4,7 +4,7 @@ import { authenticate } from "../shopify.server";
 import { ContentSyncService } from "../services/content-sync.service";
 import { BackgroundSyncService } from "../services/background-sync.service";
 import { db } from "../db.server";
-import { getPlanLimits, type Plan } from "../utils/planUtils";
+import { getPlanLimits, getSyncScope, canAccessContentType, type Plan } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 import { SyncContentQuerySchema } from "~/utils/validation";
 
@@ -99,6 +99,113 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Themes sync failed', { context: "SyncContent", error: err.message });
             results.themes = 0;
+          })
+      );
+      // Phase C (PLAN_THEME_SELECTION_B_LITE): the full sync above enumerates ONLY
+      // the published theme (translatableResources cannot list other themes), so a
+      // merchant-selected NON-MAIN theme is populated via the theme-scoped path.
+      // Runs alongside the MAIN sync; each sync's cleanup is scoped to its own
+      // theme(s), so they never touch each other's rows.
+      promises.push(
+        (async () => {
+          const { getCachedThemes, resolveSelectedThemeId, pickMainThemeId } = await import("../services/theme-selection.server");
+          const themes = await getCachedThemes(admin, session.shop);
+          const mainId = pickMainThemeId(themes);
+          const selected = await resolveSelectedThemeId(session.shop, admin, themes);
+          if (selected && selected !== mainId) {
+            results.selectedTheme = await bgSyncService.syncTheme(selected);
+          }
+        })().catch(err => {
+          logger.error('[SYNC-CONTENT] Selected-theme sync failed', { context: "SyncContent", error: err.message });
+        })
+      );
+    }
+
+    // Discovery for the remaining BackgroundSyncService.syncAll() phases, so the
+    // list-level "sync from Shopify" button can find newly-created resources for
+    // these content types too. Plan-gated off the same source of truth as
+    // syncAll() (getSyncScope / canAccessContentType) so a click can never pull
+    // content the plan isn't entitled to.
+    const scope = getSyncScope(plan);
+
+    if (types.includes('metaobjects') && scope.metaobjects.enabled) {
+      promises.push(
+        (async () => {
+          const { MetaobjectSyncService } = await import("../services/metaobject-sync.service");
+          const r = await new MetaobjectSyncService(admin, session.shop).syncAll();
+          results.metaobjects = r.metaobjects;
+        })().catch(err => {
+          logger.error('[SYNC-CONTENT] Metaobjects sync failed', { context: "SyncContent", error: err.message });
+          results.metaobjects = 0;
+        })
+      );
+    }
+
+    if (types.includes('menus') && scope.menus.enabled) {
+      promises.push(
+        syncService.syncAllMenus()
+          .then(count => { results.menus = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Menus sync failed', { context: "SyncContent", error: err.message });
+            results.menus = 0;
+          })
+      );
+    }
+
+    if (types.includes('system') && canAccessContentType(plan, 'system')) {
+      promises.push(
+        bgSyncService.syncSystemContent()
+          .then(count => { results.system = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] System sync failed', { context: "SyncContent", error: err.message });
+            results.system = 0;
+          })
+      );
+    }
+
+    if (types.includes('delivery') && canAccessContentType(plan, 'delivery')) {
+      promises.push(
+        bgSyncService.syncDeliveryContent()
+          .then(count => { results.delivery = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Delivery sync failed', { context: "SyncContent", error: err.message });
+            results.delivery = 0;
+          })
+      );
+    }
+
+    if (types.includes('sellingPlans') && canAccessContentType(plan, 'sellingPlans')) {
+      promises.push(
+        bgSyncService.syncSellingPlans()
+          .then(count => { results.sellingPlans = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Selling-Plans sync failed', { context: "SyncContent", error: err.message });
+            results.sellingPlans = 0;
+          })
+      );
+    }
+
+    // Online-Store extras (filters + shop metadata) are entitled on every tier.
+    if (types.includes('onlineStoreExtras')) {
+      promises.push(
+        bgSyncService.syncOnlineStoreExtras()
+          .then(count => { results.onlineStoreExtras = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Online-Store-Extras sync failed', { context: "SyncContent", error: err.message });
+            results.onlineStoreExtras = 0;
+          })
+      );
+      // The Cookie-Banner tab's config.contentType is also "onlineStoreExtras",
+      // but its content is synced by a SEPARATE phase. Mirror syncAll() and run
+      // syncCookieBanner() here too, otherwise the Cookie-Banner tab's list-level
+      // sync would discover nothing for that tab. It gracefully no-ops when its
+      // (unstable) endpoint is unreachable, so it is safe to run unconditionally.
+      promises.push(
+        bgSyncService.syncCookieBanner()
+          .then(count => { results.cookieBanner = count; })
+          .catch(err => {
+            logger.error('[SYNC-CONTENT] Cookie-Banner sync failed', { context: "SyncContent", error: err.message });
+            results.cookieBanner = 0;
           })
       );
     }

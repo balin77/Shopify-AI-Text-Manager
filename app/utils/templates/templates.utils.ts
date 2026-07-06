@@ -13,8 +13,14 @@ export function keyToFilename(key: string): string | null {
   if (pageMatch) return `templates/${pageMatch[1]}.json`;
 
   // section.{name}.json.* → templates/{name}.json (name can contain dots, e.g. "product.stoffwaren-anna")
+  // Section-group keys carry their theme-root folder ("sections/header-group"), so the
+  // name already encodes a full path and must NOT be prefixed with templates/. Ordinary
+  // JSON templates never contain a slash, so a "/" reliably distinguishes the two.
   const sectionMatch = key.match(/^section\.(.+?)\.json\./);
-  if (sectionMatch) return `templates/${sectionMatch[1]}.json`;
+  if (sectionMatch) {
+    const name = sectionMatch[1];
+    return name.includes("/") ? `${name}.json` : `templates/${name}.json`;
+  }
 
   // collections.json.* → templates/list-collections.json (Shopify's default name)
   if (key.startsWith("collections.json.")) return "templates/list-collections.json";

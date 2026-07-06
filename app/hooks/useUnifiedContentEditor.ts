@@ -1541,7 +1541,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const currentItemId = selectedItemIdRef.current;
         if (currentItemId) {
           const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
-          if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
+          // Only adopt the primary snapshot as the change-detection baseline when
+          // the user is actually VIEWING the primary locale. The foreign-locale
+          // Accept & Translate flow populates savedPrimaryValuesRef purely as a
+          // display overlay while the user is on a foreign locale — using it as
+          // the baseline there would wrongly flag the field dirty (the overlay
+          // holds the primary value, but editableValues holds the foreign value).
+          if (
+            primarySnapshot &&
+            Object.keys(primarySnapshot).length > 0 &&
+            currentLanguageRef.current === primaryLocale
+          ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
           } else {
@@ -1598,6 +1608,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 shopifyKey,
                 translations as Record<string, string>,
                 currentLanguage
+              );
+
+              // Also update the component-managed translation cache (loadedTranslations
+              // in ThemeContentDomainPage). That cache — NOT resolve()/localTranslationsRef —
+              // is what the component's language-switch effect reads authoritatively and
+              // pushes into the editor via setEditableValue. The direct "translate to all
+              // locales" path updates it through this same callback; the deferred
+              // Accept & Translate path must do the same, or foreign locales render empty
+              // after switching to them (the values are on Shopify but never reach the UI).
+              onTranslateToAllLocalesComplete?.(
+                fieldKey,
+                translations as Record<string, string>
               );
 
               // If the current language is one of the translated languages, update editableValues
@@ -1724,6 +1746,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
       // If this save was triggered by a copy action, clear the field loading state.
+      const wasCopySave = !!pendingCopyFieldKeyRef.current;
       if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
@@ -1752,6 +1775,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           String(fetcher.data.warning),
           "warning",
           t.common?.warning || "Warning"
+        );
+      } else if (wasCopySave) {
+        // Copy ("Übertragen") confirmed persisted to Shopify.
+        showInfoBox(
+          t.common?.copiedToShopify || "Successfully transferred to Shopify",
+          "success",
+          t.common?.success || "Success"
         );
       } else if (!wasTranslateSave) {
         showInfoBox(
@@ -1821,6 +1851,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
+
+      // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
+      // buttons keep spinning forever after a failed Shopify save.
+      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -2018,6 +2055,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedPrimaryValuesRef,
     originalLoadedValuesRef,
     originalTemplateValuesRef,
+    baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
     savedItemIdRef,
@@ -2052,6 +2090,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setBaselineVersion,
     setFieldErrors,
     setIsSaving,
   });

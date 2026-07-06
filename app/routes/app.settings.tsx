@@ -19,6 +19,7 @@ import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
+import { SettingsRichtextTab } from "../components/SettingsRichtextTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
@@ -495,6 +496,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
+
+        // Theme-settings richtext handling: "autofix" | "normalize" | "error"
+        themeRichtextMode: settings.themeRichtextMode || 'autofix',
       },
       instructions: {
         // General (Writing Style Instructions)
@@ -695,6 +699,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { shop: session.shop },
         update: { seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
         create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
+      });
+
+      return json({ success: true, actionType });
+    } else if (actionType === "saveRichtextMode") {
+      const mode = String(formData.get("themeRichtextMode") || "");
+      if (!["autofix", "normalize", "error"].includes(mode)) {
+        return json({ success: false, error: "Invalid richtext mode", actionType }, { status: 400 });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { themeRichtextMode: mode },
+        create: { shop: session.shop, themeRichtextMode: mode, preferredProvider: "claude" },
       });
 
       return json({ success: true, actionType });
@@ -900,7 +917,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -910,13 +927,13 @@ export default function SettingsPage() {
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -927,7 +944,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -984,6 +1001,7 @@ export default function SettingsPage() {
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
       { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
+      { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
@@ -1178,6 +1196,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
+                onClick={() => handleSectionChange("richtext")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "richtext" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "richtext" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "richtext" ? "semibold" : "regular"}>
+                  {t.settings.richtextFormatting || "Rich-text formatting"}
+                </Text>
+              </button>
+              <button
                 onClick={() => handleSectionChange("plan")}
                 style={{
                   width: "100%",
@@ -1352,6 +1389,16 @@ export default function SettingsPage() {
                   t={t}
                   shopDisplayName={shopDisplayName}
                   onHasChangesChange={setHasAIChanges}                />
+              )}
+
+              {/* Rich-text formatting (theme-settings richtext handling) */}
+              {selectedSection === "richtext" && (
+                <SettingsRichtextTab
+                  settings={settings}
+                  fetcher={fetcher}
+                  t={t}
+                  onHasChangesChange={setHasAIChanges}
+                />
               )}
 
               {/* Plan Settings */}

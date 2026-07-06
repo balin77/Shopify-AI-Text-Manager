@@ -25,7 +25,7 @@ vi.mock('~/services/sync-utils', () => ({
 }));
 vi.mock('~/services/content-sync.service', () => ({ ContentSyncService: class {} }));
 
-import { extractAppEmbedBlockId, prettifyAppEmbedType } from '~/services/background-sync.service';
+import { extractAppEmbedBlockId, appEmbedGroupId, prettifyAppEmbedType, isOwnAppEmbedType } from '~/services/background-sync.service';
 
 describe('extractAppEmbedBlockId', () => {
   it('reads the blockId shared by an embed resource\'s keys', () => {
@@ -39,6 +39,30 @@ describe('extractAppEmbedBlockId', () => {
   it('returns null when no key follows the block.<id>.* shape', () => {
     expect(extractAppEmbedBlockId([{ key: 'name' }, { key: 'title' }])).toBeNull();
     expect(extractAppEmbedBlockId([])).toBeNull();
+  });
+});
+
+describe('appEmbedGroupId', () => {
+  // The two blocks of one app share a resourceId tail (everything after "?"),
+  // so keying the group by resourceId collapsed switcher + gallery into one
+  // entry. Keying by blockId keeps them apart.
+  it('keys by blockId so two blocks of the same app stay distinct', () => {
+    const switcher = appEmbedGroupId(
+      'gid://shopify/OnlineStoreThemeAppEmbed/123?12221302618087021987',
+      '12221302618087021987'
+    );
+    const gallery = appEmbedGroupId(
+      'gid://shopify/OnlineStoreThemeAppEmbed/123?8064757537981474425',
+      '8064757537981474425'
+    );
+    expect(switcher).toBe('app_embed_12221302618087021987');
+    expect(gallery).toBe('app_embed_8064757537981474425');
+    expect(switcher).not.toBe(gallery);
+  });
+
+  it('falls back to the resourceId tail when no blockId is present', () => {
+    expect(appEmbedGroupId('gid://shopify/OnlineStoreThemeAppEmbed/999?x', null))
+      .toBe('app_embed_999');
   });
 });
 
@@ -60,5 +84,24 @@ describe('prettifyAppEmbedType', () => {
     expect(prettifyAppEmbedType('shopify://shop/...')).toBeNull();
     expect(prettifyAppEmbedType(undefined)).toBeNull();
     expect(prettifyAppEmbedType(42)).toBeNull();
+  });
+});
+
+describe('isOwnAppEmbedType', () => {
+  it('matches our own app-embed blocks (prod + dev handles)', () => {
+    expect(isOwnAppEmbedType('shopify://apps/contentpilot-ai/blocks/locale-switcher/abcd')).toBe(true);
+    expect(isOwnAppEmbedType('shopify://apps/contentpilot-ai-dev/blocks/variant-gallery/ef56')).toBe(true);
+  });
+
+  it('does NOT match other apps\' embeds (they stay editable)', () => {
+    expect(isOwnAppEmbedType('shopify://apps/klaviyo/blocks/signup-form/1234')).toBe(false);
+    expect(isOwnAppEmbedType('shopify://apps/judgeme-reviews/blocks/widget/9999')).toBe(false);
+  });
+
+  it('returns false for non-app-block types and non-strings', () => {
+    expect(isOwnAppEmbedType('text')).toBe(false);
+    expect(isOwnAppEmbedType('shopify://shop/...')).toBe(false);
+    expect(isOwnAppEmbedType(undefined)).toBe(false);
+    expect(isOwnAppEmbedType(42)).toBe(false);
   });
 });

@@ -51,6 +51,25 @@ interface CookieHintHit {
   locale: string;
 }
 
+interface ThemeSelectionDiag {
+  themes: Array<{ id: string; name: string; role: string }>;
+  mainThemeId: string | null;
+  storedSelectedThemeId: string | null;
+  resolvedSelectedThemeId: string | null;
+  dbThemeContentByThemeId: Array<{ themeId: string; count: number }>;
+  dbThemeTranslationByThemeId: Array<{ themeId: string; count: number }>;
+  resourceThemeIds: Array<{ resourceType: string; resourceId: string; extractedThemeId: string | null }>;
+  verdict: string;
+}
+
+interface ThemeFetchWorkaround {
+  targetTheme: { id: string; name: string; role: string } | null;
+  translationsApiRewrite: { resourceId: string; contentCount: number; error?: string };
+  translationsApiByIds: { contentCount: number; error?: string };
+  themeFilesRead: Array<{ theme: "MAIN" | "target"; filename: string; found: boolean; byteSize: number; sampleKeys: string[]; error?: string }>;
+  verdict: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -60,6 +79,8 @@ interface ProbeReport {
   resources: ResourceReport[];
   cookieHints?: CookieHintHit[];
   writeTest: WriteTestReport;
+  themeSelectionDiag?: ThemeSelectionDiag;
+  themeFetchWorkaround?: ThemeFetchWorkaround;
 }
 
 function formatMarkdown(report: ProbeReport): string {
@@ -72,6 +93,79 @@ function formatMarkdown(report: ProbeReport): string {
   lines.push(`- Enabled locales: ${report.enabledLocales.join(", ") || "(none)"}`);
   lines.push(`- API version: ${report.apiVersion}`);
   lines.push(``);
+
+  const tsd = report.themeSelectionDiag;
+  if (tsd) {
+    lines.push(`## Theme-Selection 404 diagnostic`);
+    lines.push(``);
+    lines.push(`**Verdict:** ${tsd.verdict}`);
+    lines.push(``);
+    lines.push(`- Stored \`AISettings.selectedThemeId\`: ${tsd.storedSelectedThemeId === null ? "(null → MAIN fallback)" : `\`${tsd.storedSelectedThemeId}\``}`);
+    lines.push(`- Resolved selection (read scope): ${tsd.resolvedSelectedThemeId === null ? "(null → no theme filter)" : `\`${tsd.resolvedSelectedThemeId}\``}`);
+    lines.push(`- MAIN theme id: ${tsd.mainThemeId === null ? "(none)" : `\`${tsd.mainThemeId}\``}`);
+    lines.push(``);
+    lines.push(`Installed themes:`);
+    if (tsd.themes.length === 0) {
+      lines.push(`- (none returned by GET_THEMES)`);
+    } else {
+      for (const t of tsd.themes) lines.push(`  - \`${t.id}\` — ${t.name} [${t.role}]`);
+    }
+    lines.push(``);
+    lines.push(`Stored \`ThemeContent.themeId\` (domain=theme):`);
+    if (tsd.dbThemeContentByThemeId.length === 0) {
+      lines.push(`- (no rows)`);
+    } else {
+      for (const x of tsd.dbThemeContentByThemeId) lines.push(`  - ${x.themeId === "" ? '"" (legacy/theme-agnostic)' : `\`${x.themeId}\``} — ${x.count} rows`);
+    }
+    lines.push(``);
+    lines.push(`Stored \`ThemeTranslation.themeId\` (domain=theme):`);
+    if (tsd.dbThemeTranslationByThemeId.length === 0) {
+      lines.push(`- (no rows)`);
+    } else {
+      for (const x of tsd.dbThemeTranslationByThemeId) lines.push(`  - ${x.themeId === "" ? '"" (legacy/theme-agnostic)' : `\`${x.themeId}\``} — ${x.count} rows`);
+    }
+    lines.push(``);
+    lines.push(`Theme-GID extracted from live resourceIds (what a sync would stamp):`);
+    lines.push(``);
+    lines.push(`| Resource type | resourceId (truncated) | extracted themeId |`);
+    lines.push(`|---|---|---|`);
+    for (const r of tsd.resourceThemeIds) {
+      const rid = r.resourceId.length > 90 ? `${r.resourceId.slice(0, 87)}…` : r.resourceId;
+      lines.push(`| \`${r.resourceType}\` | \`${rid.replace(/\|/g, "\\|")}\` | ${r.extractedThemeId === null ? "(none)" : `\`${r.extractedThemeId}\``} |`);
+    }
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  const wa = report.themeFetchWorkaround;
+  if (wa) {
+    lines.push(`## Unpublished-theme fetch workaround test`);
+    lines.push(``);
+    lines.push(`**Verdict:** ${wa.verdict}`);
+    lines.push(``);
+    lines.push(`- Target theme (non-MAIN): ${wa.targetTheme ? `\`${wa.targetTheme.id}\` — ${wa.targetTheme.name} [${wa.targetTheme.role}]` : "(none)"}`);
+    lines.push(``);
+    lines.push(`**1) Translations API with rewritten \`theme_id\`:**`);
+    lines.push(`- resourceId tried: \`${wa.translationsApiRewrite.resourceId || "(none)"}\``);
+    lines.push(`- \`translatableResource\` → ${wa.translationsApiRewrite.contentCount} content entries${wa.translationsApiRewrite.error ? ` (error: ${wa.translationsApiRewrite.error})` : ""}`);
+    lines.push(`- \`translatableResourcesByIds\` → ${wa.translationsApiByIds.contentCount} content entries${wa.translationsApiByIds.error ? ` (error: ${wa.translationsApiByIds.error})` : ""}`);
+    lines.push(``);
+    lines.push(`**2) Theme-files API (per Theme-GID):**`);
+    if (wa.themeFilesRead.length === 0) {
+      lines.push(`- (not run)`);
+    } else {
+      lines.push(``);
+      lines.push(`| Theme | File | Found | Bytes | Sample top-level keys | Error |`);
+      lines.push(`|---|---|---|---:|---|---|`);
+      for (const f of wa.themeFilesRead) {
+        lines.push(`| ${f.theme} | \`${f.filename}\` | ${f.found ? "✅" : "❌"} | ${f.byteSize} | ${f.sampleKeys.map((k) => `\`${k}\``).join(", ") || "—"} | ${f.error ? f.error.replace(/\|/g, "\\|") : "—"} |`);
+      }
+    }
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+  }
 
   lines.push(`## Per-resource summary`);
   lines.push(``);

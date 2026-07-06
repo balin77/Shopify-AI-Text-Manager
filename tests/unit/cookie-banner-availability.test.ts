@@ -11,6 +11,7 @@ import {
   getCookieBannerAvailability,
   getCookieBannerResources,
   writeCookieBannerTranslations,
+  removeCookieBannerTranslations,
   __clearCookieBannerCache,
 } from '~/utils/cookie-banner-availability.server';
 
@@ -175,6 +176,76 @@ describe('writeCookieBannerTranslations', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
 
     const res = await writeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', tx);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('ECONNRESET');
+  });
+});
+
+describe('removeCookieBannerTranslations', () => {
+  beforeEach(() => {
+    __clearCookieBannerCache();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('no-ops (no fetch) when there are no keys to remove', async () => {
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', [], ['de']);
+    expect(res).toEqual({ ok: true, removed: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns ok with the removed count when Shopify actually removes translations', async () => {
+    global.fetch = mockFetchJson({
+      data: { translationsRemove: { userErrors: [], translations: [{ key: 'policy_link_text', locale: 'de' }] } },
+    }) as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
+    expect(res).toEqual({ ok: true, removed: 1 });
+  });
+
+  it('treats a no-op (no errors, nothing removed) as failure so the DB stays in sync', async () => {
+    // The exact symptom: Shopify accepts the call, returns no errors, but removes
+    // nothing — the field would look deleted locally while surviving on Shopify.
+    global.fetch = mockFetchJson({
+      data: { translationsRemove: { userErrors: [], translations: [] } },
+    }) as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
+    expect(res.ok).toBe(false);
+    expect(res.removed).toBe(0);
+    expect(res.error).toBeTruthy();
+  });
+
+  it('surfaces Shopify userErrors as a failure', async () => {
+    global.fetch = mockFetchJson({
+      data: { translationsRemove: { userErrors: [{ message: 'Translation removal rejected' }], translations: [] } },
+    }) as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('Translation removal rejected');
+  });
+
+  it('marks the shop unavailable on a schema-level GraphQL error', async () => {
+    global.fetch = mockFetchJson({ errors: [{ message: 'invalid id' }] }) as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
+    expect(res.ok).toBe(false);
+
+    const noFetch = vi.fn();
+    global.fetch = noFetch as unknown as typeof fetch;
+    expect(await getCookieBannerAvailability(session)).toBe('unavailable');
+    expect(noFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns ok:false (never throws) on a network blip', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as unknown as typeof fetch;
+
+    const res = await removeCookieBannerTranslations(session, 'gid://shopify/CookieBanner/1', ['policy_link_text'], ['de']);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('ECONNRESET');
   });

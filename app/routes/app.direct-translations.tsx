@@ -744,6 +744,8 @@ export default function DirectTranslationsPage() {
                 paginationOf: t.content?.paginationOf || "of",
                 paginationPrevious: t.content?.paginationPrevious || "Previous",
                 paginationNext: t.content?.paginationNext || "Next",
+                sortTooltip: t.content?.sortTooltip,
+                reloadAllTooltip: t.content?.reloadAllTooltip,
               }}
             />
           </div>
