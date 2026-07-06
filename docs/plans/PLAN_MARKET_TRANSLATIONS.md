@@ -5,9 +5,11 @@
 > Shopify unterstützt das nativ über das optionale Feld `marketId` in
 > `TranslationInput` und `marketIds` in `translationsRemove`.
 
-Status: **PHASE 1 UMGESETZT** (Products, Collections, Pages, Articles, Policies) —
-Theme/Metaobjects/Alt-Text/DirectTranslation (Phase 2) sind im Datenmodell bereits
-markt-fähig, aber ihre Save-Pfade schreiben weiterhin global.
+Status: **VOLLSTÄNDIG UMGESETZT** für alle Textinhalte —
+Products, Collections, Pages, Articles, Policies (Phase 1), Metaobjects,
+Theme-Content (alle 6+ Rubriken: Templates, System, Delivery,
+Online-Store-Extras, Selling-Plans, …) und Produktbild-Alt-Text.
+Jede Phase wurde extern reviewt und die gefundenen Bugs gefixt.
 Sprache des Plans: Deutsch · Ziel-Leser: Entwickler, der es direkt umsetzt.
 
 > **Umsetzungshinweise (bei Implementierung ergänzt):**
@@ -17,9 +19,19 @@ Sprache des Plans: Deutsch · Ziel-Leser: Entwickler, der es direkt umsetzt.
 >   die Ziel-API 2025-10. **Feldnamen (`enabled`, `webPresences`) im GraphiQL der
 >   gepinnten Version gegenprüfen**, falls Märkte nicht laden — `loadMarkets()`
 >   degradiert bei Fehlern bewusst zu `[]` (Feature bleibt unsichtbar).
-> - AI-Bulk-Übersetzungen (Translate-All, Accept & Translate → alle Locales)
->   schreiben in Phase 1 weiterhin **global**; markt-spezifisch sind manuelles
->   Speichern, Single-Field-Translate, Copy-to-Field und Clear.
+> - AI-Bulk-Übersetzungen (Translate-All, Accept & Translate → alle Locales,
+>   Bulk-Alt-Text) schreiben bewusst weiterhin **global** (vermeidet die
+>   Locale×Markt-Kombinatorik). Markt-spezifisch sind: manuelles Speichern,
+>   Single-Field-Translate, Copy-to-Field, Clear und einzelnes Alt-Text-Edit/
+>   -Translate. Der globale Wert dient dabei überall als Fallback.
+> - **Primär-Quelltext-Änderung** löscht nur die *globalen* Foreign-Translations
+>   (auf Shopify UND DB); markt-spezifische Overrides bleiben erhalten (Shopify
+>   markiert sie „outdated") — konsistent auf beiden Seiten, keine Divergenz.
+> - **Cookie-Banner** (Customer-Privacy-API) hat keine Markt-Dimension → Selector
+>   dort ausgeblendet. **DirectTranslation** ist per Design global (Storefront-
+>   Wörterbuch, gilt auf allen Seiten) → keine Markt-UI.
+> - Alt-Text lebt im eigenen Bild-Subsystem (`useEditorAltText`); Markt-Auswahl
+>   nur bei Shops mit mehreren Märkten sichtbar.
 
 ---
 
