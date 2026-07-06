@@ -61,7 +61,27 @@ export function normalizeThemeGid(raw: string | null | undefined): string | null
  */
 export function extractThemeIdFromResourceId(resourceId: string | null | undefined): string | null {
   if (!resourceId) return null;
-  const match = String(resourceId).match(/[?&]theme_id=([^&]+)/);
-  if (!match) return null;
-  return normalizeThemeGid(match[1]);
+  const rid = String(resourceId);
+
+  // Preferred form: theme carried as a ?theme_id= query param — JSON templates,
+  // section groups, settings categories, app embeds.
+  const paramMatch = rid.match(/[?&]theme_id=([^&]+)/);
+  if (paramMatch) return normalizeThemeGid(paramMatch[1]);
+
+  // Object-id form: OnlineStoreThemeLocaleContent / …SettingsDataSections /
+  // (legacy) OnlineStoreTheme embed the theme as the GID's trailing NUMERIC
+  // object id and carry NO ?theme_id= param (verified via the translation probe:
+  //   gid://shopify/OnlineStoreThemeSettingsDataSections/<themeNum>
+  //   gid://shopify/OnlineStoreThemeLocaleContent/<themeNum> ).
+  // Extracting it here is what keeps the "Static sections" and "Theme content"
+  // tabs scoped to the SELECTED theme: without it these rows were stamped
+  // themeId="" and leaked into every theme via the read compat-OR, so a non-MAIN
+  // theme's tab showed the MAIN theme's content. The longer type names precede
+  // the bare "OnlineStoreTheme" alternative so the correct one matches.
+  const objMatch = rid.match(
+    /\/(?:OnlineStoreThemeLocaleContent|OnlineStoreThemeSettingsDataSections|OnlineStoreTheme)\/(\d+)(?:$|[?&#])/,
+  );
+  if (objMatch) return normalizeThemeGid(objMatch[1]);
+
+  return null;
 }

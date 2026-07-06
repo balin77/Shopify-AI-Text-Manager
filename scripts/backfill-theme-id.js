@@ -55,9 +55,19 @@ function normalizeThemeGid(raw) {
 
 function extractThemeIdFromResourceId(resourceId) {
   if (!resourceId) return null;
-  const match = String(resourceId).match(/[?&]theme_id=([^&]+)/);
-  if (!match) return null;
-  return normalizeThemeGid(match[1]);
+  const rid = String(resourceId);
+  // Preferred: ?theme_id= param (JSON templates, section groups, settings
+  // categories, app embeds).
+  const paramMatch = rid.match(/[?&]theme_id=([^&]+)/);
+  if (paramMatch) return normalizeThemeGid(paramMatch[1]);
+  // Object-id form: LocaleContent / SettingsDataSections / (legacy) Theme embed
+  // the theme as the trailing numeric object id (no ?theme_id=). Mirror of
+  // app/utils/theme-id.ts — kept in sync manually.
+  const objMatch = rid.match(
+    /\/(?:OnlineStoreThemeLocaleContent|OnlineStoreThemeSettingsDataSections|OnlineStoreTheme)\/(\d+)(?:$|[?&#])/,
+  );
+  if (objMatch) return normalizeThemeGid(objMatch[1]);
+  return null;
 }
 
 /**

@@ -61,9 +61,24 @@ describe('extractThemeIdFromResourceId', () => {
     expect(extractThemeIdFromResourceId(rid)).toBe(GID(42));
   });
 
-  it('returns null when no theme_id is embedded (fallback path)', () => {
-    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreTheme/1')).toBeNull();
+  it('extracts the theme from the OBJECT-ID form (no ?theme_id= param)', () => {
+    // These resource types embed the theme as the GID's trailing numeric id.
+    // Without this they were stamped themeId="" and leaked across themes.
+    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreThemeSettingsDataSections/185716670792')).toBe(GID(185716670792));
+    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreThemeLocaleContent/185716670792')).toBe(GID(185716670792));
+    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreTheme/1')).toBe(GID(1));
+  });
+
+  it('does NOT mistake a JSON-template name for an object-id theme', () => {
+    // JsonTemplate object-id is a template name (or carries ?theme_id=), never a
+    // bare theme number — must not match the object-id branch.
+    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreThemeJsonTemplate/article')).toBeNull();
+    expect(extractThemeIdFromResourceId('gid://shopify/OnlineStoreThemeJsonTemplate/article?theme_id=42')).toBe(GID(42));
+  });
+
+  it('returns null for a non-theme resource', () => {
     expect(extractThemeIdFromResourceId('gid://shopify/Product/1?foo=bar')).toBeNull();
+    expect(extractThemeIdFromResourceId('gid://shopify/Product/185716670792')).toBeNull();
   });
 
   it('returns null for empty input', () => {
