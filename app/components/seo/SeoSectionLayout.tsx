@@ -10,9 +10,10 @@
  */
 
 import type { ReactNode } from "react";
-import { Card, BlockStack, Text, InlineStack } from "@shopify/polaris";
+import { Card, BlockStack, Text, InlineStack, Button } from "@shopify/polaris";
 import { usePlan } from "../../contexts/PlanContext";
 import { useI18n } from "../../contexts/I18nContext";
+import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { meetsPlan } from "../../utils/planUtils";
 import { SEO_SECTIONS } from "../../config/seo-sections";
 import { PLAN_DISPLAY_NAMES } from "../../config/plans";
@@ -31,6 +32,7 @@ interface SeoSectionStrings {
 export function SeoSectionLayout({ sectionId, children }: SeoSectionLayoutProps) {
   const { plan } = usePlan();
   const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
 
   const section = SEO_SECTIONS.find((s) => s.id === sectionId);
   const sections = (t.seo as { sections?: Record<string, SeoSectionStrings> }).sections;
@@ -62,12 +64,22 @@ export function SeoSectionLayout({ sectionId, children }: SeoSectionLayoutProps)
       {locked ? (
         <Card>
           <div style={{ padding: "1rem", textAlign: "center" }}>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              {(t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
-                "{plan}",
-                PLAN_DISPLAY_NAMES[section!.planGate!],
-              ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section!.planGate!]} to use this feature.`}
-            </Text>
+            <BlockStack gap="300" inlineAlign="center">
+              <Text as="p" variant="bodyMd" tone="subdued">
+                {(t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
+                  "{plan}",
+                  PLAN_DISPLAY_NAMES[section!.planGate!],
+                ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section!.planGate!]} to use this feature.`}
+              </Text>
+              <Button
+                variant="primary"
+                onClick={() =>
+                  handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "plan" }) })
+                }
+              >
+                {(t.settings as { upgradePlan?: string }).upgradePlan || "Upgrade Plan"}
+              </Button>
+            </BlockStack>
           </div>
         </Card>
       ) : (

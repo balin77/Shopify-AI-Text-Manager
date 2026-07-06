@@ -7,7 +7,7 @@ import {
   renderJsonLdScript,
   type JsonLd,
 } from "../services/structured-data.service";
-import { computeSeoScore, scoreTone, scoreLabelKey } from "../utils/seo-score";
+import { computeSeoScore, scoreTone, scoreLabelKey, progressTone } from "../utils/seo-score";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -142,7 +142,7 @@ export function SeoSidebar({
 
         {/* Progress Bar */}
         <div>
-          <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score) as any} size="small" />
+          <ProgressBar progress={analysis.score} tone={progressTone(analysis.score)} size="small" />
         </div>
 
         {/* Issues Summary */}

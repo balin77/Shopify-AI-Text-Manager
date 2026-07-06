@@ -25,6 +25,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import {
   listRedirects,
@@ -101,18 +102,56 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 };
 
 export default function SeoRedirects() {
-  const { redirects, hasNextPage, endCursor, q, hits } = useLoaderData<typeof loader>();
+  const {
+    redirects: loaderRedirects,
+    hasNextPage: loaderHasNextPage,
+    endCursor: loaderEndCursor,
+    q,
+    hits,
+  } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
+  const confirm = useConfirm();
   const r = (t.seo as any).redirectsPage;
 
   const createFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
+  // Dedicated fetcher for "Load more" — GET requests to the same loader, kept
+  // separate from rowFetcher (used for 404-hit row actions/deletes) so paging
+  // never cancels/gets cancelled by an unrelated row action.
+  const loadMoreFetcher = useFetcher<typeof loader>();
 
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [search, setSearch] = useState(q);
   const [hitTargets, setHitTargets] = useState<Record<string, string>>({});
+
+  // Client-side accumulated redirect list so "Load more" appends a page
+  // instead of the navigation replacing it. Re-synced to the server's first
+  // page whenever the loader re-runs (new search, or a mutation revalidated
+  // this route) — otherwise stale/deleted rows could linger in the list.
+  const [items, setItems] = useState(loaderRedirects);
+  const [cursor, setCursor] = useState(loaderEndCursor);
+  const [hasMore, setHasMore] = useState(loaderHasNextPage);
+  // Which row's delete is in flight — lets the shared rowFetcher show a
+  // spinner on the correct button instead of every row reacting the same way.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setItems(loaderRedirects);
+    setCursor(loaderEndCursor);
+    setHasMore(loaderHasNextPage);
+  }, [loaderRedirects, loaderEndCursor, loaderHasNextPage]);
+
+  // Append the next page once the load-more fetcher resolves.
+  useEffect(() => {
+    if (loadMoreFetcher.state === "idle" && loadMoreFetcher.data) {
+      const data = loadMoreFetcher.data;
+      setItems((prev) => [...prev, ...data.redirects]);
+      setCursor(data.endCursor);
+      setHasMore(data.hasNextPage);
+    }
+  }, [loadMoreFetcher.state, loadMoreFetcher.data]);
 
   // Clear the create form once a creation succeeds.
   useEffect(() => {
@@ -122,27 +161,54 @@ export default function SeoRedirects() {
     }
   }, [createFetcher.state, createFetcher.data]);
 
+  // rowFetcher going idle means whatever row action was in flight finished.
+  useEffect(() => {
+    if (rowFetcher.state === "idle") setPendingDeleteId(null);
+  }, [rowFetcher.state]);
+
   const createError =
     createFetcher.data && !createFetcher.data.ok
       ? r.errors[createFetcher.data.error] || r.errors.createFailed
       : null;
 
-  // Row actions (create-from-404 / dismiss) report failures through rowFetcher;
-  // surface them too, otherwise a rejected create (e.g. empty target) is silent.
+  // Row actions (create-from-404 / dismiss / delete) report failures through
+  // rowFetcher; surface them too, otherwise a rejected action is silent.
   const rowError =
     rowFetcher.data && !rowFetcher.data.ok
       ? r.errors[rowFetcher.data.error] || r.errors.createFailed
       : null;
 
   const submitSearch = () => {
-    handleNavigate("/app/seo/redirects", { searchParams: new URLSearchParams(search ? { q: search } : {}) });
+    const params = new URLSearchParams();
+    // Always set q explicitly (even empty) so clearing the field actually
+    // clears a previously-searched term instead of handleNavigate carrying
+    // the stale one over from the current URL. Always drop "after" too, so a
+    // new search never starts from a stale pagination cursor.
+    params.set("q", search);
+    params.set("after", "");
+    handleNavigate("/app/seo/redirects", { searchParams: params });
   };
 
   const loadMore = () => {
-    const params: Record<string, string> = {};
-    if (q) params.q = q;
-    if (endCursor) params.after = endCursor;
-    handleNavigate("/app/seo/redirects", { searchParams: new URLSearchParams(params) });
+    if (!cursor) return;
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    params.set("after", cursor);
+    loadMoreFetcher.load(`/app/seo/redirects?${params.toString()}`);
+  };
+
+  const handleDeleteRedirect = async (redirect: { id: string; path: string }) => {
+    const ok = await confirm({
+      title: r.deleteConfirmTitle || "Delete this redirect?",
+      message:
+        r.deleteConfirmBody ||
+        `This will permanently delete the redirect from "${redirect.path}". This can't be undone.`,
+      confirmLabel: r.deleteButton,
+      destructive: true,
+    });
+    if (!ok) return;
+    setPendingDeleteId(redirect.id);
+    rowFetcher.submit({ actionType: "deleteRedirect", id: redirect.id }, { method: "post" });
   };
 
   return (
@@ -296,7 +362,7 @@ export default function SeoRedirects() {
             </InlineStack>
 
             {/* Redirect list */}
-            {redirects.length === 0 ? (
+            {items.length === 0 ? (
               <Text as="p" tone="subdued">
                 {r.noRedirects}
               </Text>
@@ -315,7 +381,7 @@ export default function SeoRedirects() {
                     </tr>
                   </thead>
                   <tbody>
-                    {redirects.map((redirect) => (
+                    {items.map((redirect) => (
                       <tr key={redirect.id} style={{ borderBottom: "1px solid #f1f2f3" }}>
                         <td style={{ padding: "6px 8px", maxWidth: "280px" }}>
                           <Text as="span" variant="bodyMd" truncate>{redirect.path}</Text>
@@ -327,12 +393,9 @@ export default function SeoRedirects() {
                           <Button
                             variant="plain"
                             tone="critical"
-                            onClick={() =>
-                              rowFetcher.submit(
-                                { actionType: "deleteRedirect", id: redirect.id },
-                                { method: "post" },
-                              )
-                            }
+                            loading={rowFetcher.state !== "idle" && pendingDeleteId === redirect.id}
+                            disabled={rowFetcher.state !== "idle" && pendingDeleteId !== redirect.id}
+                            onClick={() => handleDeleteRedirect(redirect)}
                           >
                             {r.deleteButton}
                           </Button>
@@ -344,9 +407,11 @@ export default function SeoRedirects() {
               </div>
             )}
 
-            {hasNextPage && (
+            {hasMore && (
               <InlineStack align="center">
-                <Button onClick={loadMore}>{r.loadMore}</Button>
+                <Button onClick={loadMore} loading={loadMoreFetcher.state !== "idle"}>
+                  {r.loadMore}
+                </Button>
               </InlineStack>
             )}
           </BlockStack>

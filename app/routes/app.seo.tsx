@@ -8,14 +8,15 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLocation } from "@remix-run/react";
-import { Text } from "@shopify/polaris";
+import { Outlet, useLocation, useNavigation } from "@remix-run/react";
+import { Text, Card, BlockStack, SkeletonBodyText } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { meetsPlan } from "../utils/planUtils";
-import { SEO_SECTIONS, getActiveSeoSection } from "../config/seo-sections";
+import { SEO_SECTIONS, getActiveSeoSection, isSeoPath } from "../config/seo-sections";
+import { PLAN_DISPLAY_NAMES } from "../config/plans";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Auth-gate the whole SEO tab; section data is loaded by each child route.
@@ -29,6 +30,7 @@ interface SeoSectionStrings {
 
 export default function SeoLayout() {
   const location = useLocation();
+  const navigation = useNavigation();
   const { t } = useI18n();
   const { plan } = usePlan();
   const { handleNavigate } = useAppNavigation();
@@ -36,6 +38,21 @@ export default function SeoLayout() {
   const active = getActiveSeoSection(location.pathname);
   const sectionStrings =
     (t.seo as { sections?: Record<string, SeoSectionStrings> }).sections ?? {};
+
+  // Section-switch loading feedback: loaders like analyzeStore re-run on every
+  // tab click with no visual feedback otherwise. Only swap the outlet for a
+  // skeleton when the *target* of the in-flight navigation is itself within
+  // /app/seo — the sub-nav (rendered above) stays interactive throughout.
+  const isSeoSectionLoading =
+    navigation.state !== "idle" && isSeoPath(navigation.location?.pathname ?? "");
+
+  const lockedTitle = (section: (typeof SEO_SECTIONS)[number]) =>
+    section.planGate
+      ? (t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
+          "{plan}",
+          PLAN_DISPLAY_NAMES[section.planGate],
+        ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section.planGate]} to use this feature.`
+      : undefined;
 
   return (
     <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto", width: "100%" }}>
@@ -59,6 +76,7 @@ export default function SeoLayout() {
               role="tab"
               aria-selected={isActive}
               aria-current={isActive ? "page" : undefined}
+              title={locked ? lockedTitle(section) : undefined}
               style={{
                 background: "none",
                 border: "none",
@@ -81,7 +99,16 @@ export default function SeoLayout() {
         })}
       </div>
 
-      <Outlet />
+      {isSeoSectionLoading ? (
+        <Card>
+          <BlockStack gap="400">
+            <SkeletonBodyText lines={3} />
+            <SkeletonBodyText lines={5} />
+          </BlockStack>
+        </Card>
+      ) : (
+        <Outlet />
+      )}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone } from "../utils/seo-score";
 import {
@@ -190,6 +191,7 @@ const DENSITY_TONE: Record<DensityBand, "success" | "warning" | "critical" | und
 export default function SeoKeywords() {
   const { keywords, pickers } = useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const confirm = useConfirm();
   const k = (t.seo as any).keywordsPage;
 
   const saveFetcher = useFetcher<ActionResult>();
@@ -198,6 +200,9 @@ export default function SeoKeywords() {
   const [type, setType] = useState<KeywordResourceType>("Product");
   const [itemId, setItemId] = useState("");
   const [keyword, setKeywordInput] = useState("");
+  // Which row's delete is in flight — the rowFetcher is shared across rows,
+  // so this is what lets us spinner the right button and disable the rest.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (saveFetcher.state === "idle" && saveFetcher.data?.ok && saveFetcher.data.kind === "saved") {
@@ -205,6 +210,24 @@ export default function SeoKeywords() {
       setItemId("");
     }
   }, [saveFetcher.state, saveFetcher.data]);
+
+  useEffect(() => {
+    if (rowFetcher.state === "idle") setPendingDeleteId(null);
+  }, [rowFetcher.state]);
+
+  const handleDeleteKeyword = async (row: { id: string; keyword: string }) => {
+    const ok = await confirm({
+      title: k.deleteConfirmTitle || "Stop tracking this keyword?",
+      message:
+        k.deleteConfirmBody ||
+        `This will remove "${row.keyword}" from tracked keywords. This can't be undone.`,
+      confirmLabel: k.delete,
+      destructive: true,
+    });
+    if (!ok) return;
+    setPendingDeleteId(row.id);
+    rowFetcher.submit({ actionType: "deleteKeyword", id: row.id }, { method: "post" });
+  };
 
   const items = pickers[type] ?? [];
   const itemOptions = [
@@ -344,12 +367,9 @@ export default function SeoKeywords() {
                           <Button
                             variant="plain"
                             tone="critical"
-                            onClick={() =>
-                              rowFetcher.submit(
-                                { actionType: "deleteKeyword", id: row.id },
-                                { method: "post" },
-                              )
-                            }
+                            loading={rowFetcher.state !== "idle" && pendingDeleteId === row.id}
+                            disabled={rowFetcher.state !== "idle" && pendingDeleteId !== row.id}
+                            onClick={() => handleDeleteKeyword(row)}
                           >
                             {k.delete}
                           </Button>
