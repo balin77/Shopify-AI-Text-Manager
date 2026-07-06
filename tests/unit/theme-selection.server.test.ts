@@ -19,7 +19,7 @@ vi.mock("~/utils/logger.server", () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { resolveSelectedThemeId, pickMainThemeId, setSelectedThemeId } from "~/services/theme-selection.server";
+import { resolveSelectedThemeId, pickMainThemeId, setSelectedThemeId, clearThemesCache } from "~/services/theme-selection.server";
 
 const GID = (n: number) => `gid://shopify/OnlineStoreTheme/${n}`;
 
@@ -39,6 +39,9 @@ const THEMES = [
 beforeEach(() => {
   findUnique.mockReset();
   upsert.mockReset();
+  // resolveSelectedThemeId now memoises the theme list per shop; clear it so
+  // each case sees its own adminReturning(...) instead of a prior test's cache.
+  clearThemesCache("shop.myshopify.com");
 });
 
 describe("pickMainThemeId", () => {

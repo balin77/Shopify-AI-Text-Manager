@@ -45,6 +45,58 @@ export async function listThemes(admin: Admin): Promise<ThemeOption[]> {
   }
 }
 
+// The theme list changes rarely (install/publish/delete) but resolveSelectedThemeId
+// runs on EVERY /api/theme-content GET *and* POST (per-locale preloads), so an
+// uncached listThemes fires dozens of identical GET_THEMES calls when a merchant
+// clicks through the item list — tripping Shopify's GraphQL rate limit (429).
+// Cache per shop with a short TTL + in-flight dedup, mirroring getCachedShopLocales.
+interface CachedThemes {
+  themes: ThemeOption[];
+  timestamp: number;
+}
+const THEMES_CACHE = new Map<string, CachedThemes>();
+const THEMES_CACHE_TTL_MS = 60 * 1000; // 60s
+const THEMES_IN_FLIGHT = new Map<string, Promise<ThemeOption[]>>();
+
+/**
+ * Cached variant of listThemes, keyed by shop. Concurrent requests for the same
+ * shop share one fetch. Call clearThemesCache(shop) after a theme mutation.
+ */
+export async function getCachedThemes(admin: Admin, shop: string): Promise<ThemeOption[]> {
+  const now = Date.now();
+  const cached = THEMES_CACHE.get(shop);
+  if (cached && now - cached.timestamp < THEMES_CACHE_TTL_MS) {
+    return cached.themes;
+  }
+
+  const existing = THEMES_IN_FLIGHT.get(shop);
+  if (existing) return existing;
+
+  const fetchPromise = (async (): Promise<ThemeOption[]> => {
+    try {
+      const themes = await listThemes(admin);
+      // listThemes already swallows errors → []. Only cache a non-empty list so a
+      // transient API failure doesn't pin an empty list (and hide the dropdown /
+      // force MAIN fallback) for the whole TTL; empty falls back to stale below.
+      if (themes.length > 0) {
+        THEMES_CACHE.set(shop, { themes, timestamp: Date.now() });
+        return themes;
+      }
+      return cached?.themes ?? themes;
+    } finally {
+      THEMES_IN_FLIGHT.delete(shop);
+    }
+  })();
+
+  THEMES_IN_FLIGHT.set(shop, fetchPromise);
+  return fetchPromise;
+}
+
+/** Invalidate the cached theme list for a shop (after a theme selection change). */
+export function clearThemesCache(shop: string): void {
+  THEMES_CACHE.delete(shop);
+}
+
 /** The MAIN (published) theme's GID from a theme list, or the first theme, or null. */
 export function pickMainThemeId(themes: ThemeOption[]): string | null {
   const main = themes.find((t) => String(t.role).toUpperCase() === "MAIN");
@@ -65,7 +117,9 @@ export async function resolveSelectedThemeId(
   admin: Admin,
   themes?: ThemeOption[],
 ): Promise<string | null> {
-  const themeList = themes ?? (await listThemes(admin));
+  // Cached fetch when the caller didn't pre-fetch — this is the hot path
+  // (per-request in api.theme-content) that must not hit Shopify every time.
+  const themeList = themes ?? (await getCachedThemes(admin, shop));
 
   const settings = await db.aISettings.findUnique({
     where: { shop },
@@ -106,6 +160,11 @@ export async function setSelectedThemeId(
     create: { shop, selectedThemeId: value },
     update: { selectedThemeId: value },
   });
+
+  // Drop the cached list so the next resolveSelectedThemeId re-fetches fresh —
+  // otherwise a just-installed-and-selected theme (absent from the stale cached
+  // list) would fail the membership check and wrongly fall back to MAIN.
+  clearThemesCache(shop);
 
   return { ok: true, selectedThemeId: value };
 }

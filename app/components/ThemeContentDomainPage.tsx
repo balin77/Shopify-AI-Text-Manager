@@ -220,8 +220,15 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           body: formData,
         });
 
+        // Do NOT swallow a failed load into an empty result: returning []
+        // here caches the locale as "loaded, no translations", so it is never
+        // retried and its real translations vanish from the UI until a full
+        // reload. On a rate-limit/error burst (e.g. clicking quickly through the
+        // list → Shopify 429) this silently blanked foreign locales. Throw so the
+        // allSettled entry is `rejected` → the locale stays uncached and reloads
+        // on the next select.
         if (!response.ok) {
-          return { locale: locale.locale, translations: [] };
+          throw new Error(`loadTranslations failed (${response.status})`);
         }
 
         const data = await response.json();
