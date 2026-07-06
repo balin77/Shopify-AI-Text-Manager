@@ -6,6 +6,7 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleTranslateAll(
@@ -193,12 +194,13 @@ export async function handleTranslateAll(
         successfulUpserts.map(({ key, locale, value, resId }) =>
           db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale: {
+              shop_resourceId_groupId_key_locale_themeId: {
                 shop: session.shop,
                 resourceId: resId,
                 groupId: groupId,
                 key: key,
                 locale: locale,
+                themeId: extractThemeIdFromResourceId(resId) ?? "",
               },
             },
             update: { value: value, updatedAt: new Date() },
@@ -206,6 +208,7 @@ export async function handleTranslateAll(
               shop: session.shop,
               groupId: groupId,
               resourceId: resId,
+              themeId: extractThemeIdFromResourceId(resId) ?? "",
               domain: domain,
               locale: locale,
               key: key,

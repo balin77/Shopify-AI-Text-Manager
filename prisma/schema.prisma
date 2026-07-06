@@ -52,6 +52,14 @@ model AISettings {
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
 
+  // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
+  // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
+  // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
+  // published (MAIN) theme — backwards compatible with the pre-selection
+  // behaviour. Validated against GET_THEMES on every read
+  // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
+  selectedThemeId   String?
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
@@ -698,12 +706,18 @@ model ThemeContent {
   // selectors/config, so the editor locks them read-only in every locale; other
   // apps' embeds stay editable. Derived from settings_data.json at full sync.
   appEmbedOwned       Boolean  @default(false)
+  // Shopify Theme-GID this row belongs to ("gid://shopify/OnlineStoreTheme/<id>").
+  // "" = Legacy/vor der Theme-Auswahl-Migration (Backfill-Kandidat). Derived at
+  // sync time from the theme_id embedded in the resourceId GID (see
+  // app/utils/theme-id.ts), falling back to the active MAIN theme.
+  themeId             String   @default("")
   lastSyncedAt        DateTime @default(now())
 
-  @@unique([shop, resourceId, groupId])
+  @@unique([shop, resourceId, groupId, themeId])
   @@index([shop])
   @@index([shop, groupId])
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([lastSyncedAt])
 }
 
@@ -719,14 +733,18 @@ model ThemeTranslation {
   value      String  @db.Text
   locale     String // "en", "fr", "es", "it", etc.
   outdated   Boolean @default(false)
+  // Shopify Theme-GID this translation belongs to. Mirrors ThemeContent.themeId
+  // (see there). "" = Legacy/vor der Theme-Auswahl-Migration.
+  themeId    String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, groupId, key, locale])
+  @@unique([shop, resourceId, groupId, key, locale, themeId])
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([locale])
 }
 

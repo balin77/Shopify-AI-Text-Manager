@@ -34,6 +34,9 @@ interface ThemeContentDomainPageProps {
     shopLocales: ShopLocale[];
     primaryLocale: string;
     error?: string | null;
+    /** Theme-Auswahl: installed themes + resolved selection (from the loader). */
+    themeOptions?: { id: string; name: string; role: string }[];
+    selectedThemeId?: string | null;
   };
   config: ContentEditorConfig;
   apiBasePath: string;
@@ -54,7 +57,7 @@ interface ThemeContentDomainPageProps {
 }
 
 export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner }: ThemeContentDomainPageProps) {
-  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error } = data;
+  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error, themeOptions, selectedThemeId } = data;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -936,6 +939,47 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const selectedEmbedTechnical =
     !!selectedGroupId && themes.some((item: ThemeNavItem) => item.groupId === selectedGroupId && item.embedTechnical);
 
+  // Theme-Auswahl: labeled dropdown options + change handler.
+  const themeSelectOptions = useMemo(
+    () =>
+      (themeOptions ?? []).map((th) => ({
+        value: th.id,
+        label:
+          String(th.role).toUpperCase() === "MAIN"
+            ? `${th.name} ${t.content?.themeSelectorPublished || "(published)"}`
+            : th.name,
+      })),
+    [themeOptions, t]
+  );
+
+  const handleThemeChange = useCallback(
+    (themeId: string) => {
+      if (themeId === selectedThemeId) return;
+      const formData = new FormData();
+      formData.append("themeId", themeId);
+      fetch("/api/select-theme", { method: "POST", body: formData })
+        .then((r) => r.json())
+        .then((res) => {
+          if (!res?.success) {
+            showInfoBox(res?.error || "Failed to switch theme", "critical", t.content?.error || "Error");
+            return;
+          }
+          // Theme changed → drop caches + selection so the now theme-scoped loader
+          // repopulates the list/editor for the newly selected theme.
+          setSelectedGroupId(null);
+          setLoadedThemes({});
+          setLoadedTranslations({});
+          setFieldPagination({});
+          hasSelectedInitialItem.current = false;
+          revalidator.revalidate();
+        })
+        .catch(() => {
+          showInfoBox(t.content?.error || "Error", "critical", t.content?.error || "Error");
+        });
+    },
+    [selectedThemeId, revalidator, showInfoBox, t]
+  );
+
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -973,6 +1017,11 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           sortOptions={[
             { field: "title", label: "Title" },
           ]}
+          themeSelector={
+            themeSelectOptions.length > 1 && selectedThemeId
+              ? { options: themeSelectOptions, selectedThemeId, onChange: handleThemeChange }
+              : undefined
+          }
         />
         </div>
       </div>

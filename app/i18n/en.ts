@@ -297,6 +297,11 @@ export const en: Translation = {
     page: "Page",
     previousPage: "Previous page",
     nextPage: "Next page",
+    // Theme selection
+    themeSelectorLabel: "Theme",
+    themeSelectorHelp: "Selects the theme whose content you edit/translate.",
+    themeSelectorPublished: "(published)",
+    themeSwitchNeedsSync: "This theme hasn't been synced yet.",
     // Item list
     searchPlaceholder: "Search...",
     paginationOf: "of",
