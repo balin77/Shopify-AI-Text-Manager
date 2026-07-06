@@ -12,6 +12,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
   const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
+  // Market scope for market-specific ("Translate & Adapt") theme translations.
+  // Primary-locale theme content is always global, so only foreign locales carry it.
+  const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
   // Resolve the theme file that owns a translatable key's PRIMARY value.
   // JSON-template keys (section.*, collections.json.*) live in templates/*.json.
@@ -85,7 +88,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
   const metadataKeys = new Set([
     "action", "itemId", "locale", "primaryLocale", "changedFields",
-    "imageAltTexts", "changedAltTextIndices", "contentType",
+    "imageAltTexts", "changedAltTextIndices", "contentType", "marketId",
   ]);
   let formFieldCount = 0;
   formData.forEach((_value, key) => { if (!metadataKeys.has(key)) formFieldCount++; });
@@ -238,7 +241,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       try {
         const response = await admin.graphql(TRANSLATE_CONTENT, {
-          variables: { resourceId: resId, translations: translationInputs },
+          variables: {
+            resourceId: resId,
+            translations: marketId
+              ? translationInputs.map((t) => ({ ...t, marketId }))
+              : translationInputs,
+          },
         });
         const data = await response.json();
 
@@ -320,7 +328,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       try {
         const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
-          variables: { resourceId: resId, translationKeys: keysToDelete, locales: [locale] },
+          variables: { resourceId: resId, translationKeys: keysToDelete, locales: [locale], marketIds: marketId ? [marketId] : null },
         });
         const removeData = await removeResponse.json();
 
@@ -861,9 +869,10 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         }
       }
 
-      // STEP B: Delete from local DB
+      // STEP B: Delete from local DB. Global-scoped (marketId "") to mirror the
+      // global-only Shopify removal — market overrides survive on both sides.
       const deleteResult = await db.themeTranslation.deleteMany({
-        where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain },
+        where: { shop: session.shop, groupId: groupId, key: { in: savedChangedFields }, domain: domain, marketId: "" },
       });
       logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
     } else {
@@ -908,12 +917,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       dbOps.push(
         db.themeTranslation.upsert({
           where: {
-            shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
+            shop_resourceId_groupId_key_locale_marketId: {
               shop: session.shop,
               resourceId: keyResId,
               groupId: groupId,
               key: key,
               locale: locale,
+              marketId,
             },
           },
           update: { value: value, updatedAt: new Date() },
@@ -925,6 +935,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             locale: locale,
             key: key,
             value: value,
+            marketId,
           },
         })
       );
@@ -933,7 +944,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     if (keysToDelete.length > 0) {
       dbOps.push(
         db.themeTranslation.deleteMany({
-          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: domain },
+          where: { shop: session.shop, groupId: groupId, key: { in: keysToDelete }, locale: locale, domain: domain, marketId },
         })
       );
     }

@@ -273,6 +273,9 @@ export default function CookieBannerPage() {
       config={COOKIE_BANNER_CONFIG}
       apiBasePath="/api/theme-content/customer_privacy"
       planContentType="onlineStoreExtras"
+      // Cookie-banner writes via the Customer Privacy API, which has no market
+      // scoping — hide the market selector so no market-scoped state is created.
+      disableMarketSelector
     />
   );
 }
