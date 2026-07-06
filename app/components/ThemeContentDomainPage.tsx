@@ -46,6 +46,8 @@ interface ThemeContentDomainPageProps {
     /** Theme-Auswahl: installed themes + resolved selection (from the loader). */
     themeOptions?: { id: string; name: string; role: string }[];
     selectedThemeId?: string | null;
+    /** Selected non-MAIN theme has no own synced rows yet → prompt a theme-scoped sync. */
+    needsThemeSync?: boolean;
   };
   config: ContentEditorConfig;
   apiBasePath: string;
@@ -66,7 +68,7 @@ interface ThemeContentDomainPageProps {
 }
 
 export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner }: ThemeContentDomainPageProps) {
-  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error, themeOptions, selectedThemeId } = data;
+  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error, themeOptions, selectedThemeId, needsThemeSync } = data;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -1088,7 +1090,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           ]}
           themeSelector={
             themeSelectOptions.length > 1 && selectedThemeId
-              ? { options: themeSelectOptions, selectedThemeId, onChange: handleThemeChange }
+              ? { options: themeSelectOptions, selectedThemeId, onChange: handleThemeChange, needsThemeSync: !!needsThemeSync }
               : undefined
           }
         />

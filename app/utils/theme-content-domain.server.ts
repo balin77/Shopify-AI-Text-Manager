@@ -151,7 +151,25 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
     // the itemsKey holding the nav list) to avoid a response-key collision.
     async extraData(ctx) {
       const { themes, selectedThemeId } = await getThemeSelection(ctx);
-      return { themeOptions: themes, selectedThemeId };
+      const mainThemeId = themes.find((t) => String(t.role).toUpperCase() === "MAIN")?.id ?? themes[0]?.id ?? null;
+      // needsThemeSync: a NON-MAIN theme is selected but has no rows stamped with
+      // its own themeId yet (only shared "" / MAIN rows show). The nav list is
+      // therefore not empty, so the items.length===0 empty-state can't surface the
+      // sync prompt — this flag lets the editor prompt a theme-scoped sync anyway
+      // (PLAN_THEME_SELECTION_B_LITE Phase C).
+      let needsThemeSync = false;
+      if (selectedThemeId && selectedThemeId !== mainThemeId) {
+        const own = await ctx.db.themeContent.count({
+          where: {
+            shop: ctx.session.shop,
+            domain,
+            themeId: selectedThemeId,
+            ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          },
+        });
+        needsThemeSync = own === 0;
+      }
+      return { themeOptions: themes, selectedThemeId, mainThemeId, needsThemeSync };
     },
   });
 }

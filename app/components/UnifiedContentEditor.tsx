@@ -160,6 +160,9 @@ interface UnifiedContentEditorProps {
     options: { label: string; value: string }[];
     selectedThemeId: string;
     onChange: (themeId: string) => void;
+    /** Non-MAIN theme with no own synced rows → surface the sync prompt even when
+     * shared "" rows keep the nav list non-empty (PLAN_THEME_SELECTION_B_LITE). */
+    needsThemeSync?: boolean;
   };
 }
 
@@ -1058,9 +1061,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               ` }} />
               <Card padding="600">
                 <div style={{ textAlign: "center", padding: "2rem" }}>
-                  {themeSelector && items.length === 0 ? (
+                  {themeSelector && (items.length === 0 || themeSelector.needsThemeSync) ? (
                     // Theme-Auswahl: the selected theme has no synced content yet
                     // (freshly switched / never synced). Offer a one-click sync.
+                    // `needsThemeSync` also covers the case where shared "" rows
+                    // keep the nav non-empty but the selected theme's own content
+                    // is still missing.
                     <BlockStack gap="400" inlineAlign="center">
                       <Text as="p" variant="headingMd" tone="subdued">
                         {t.content?.themeSwitchNeedsSync || "This theme hasn't been synced yet."}
