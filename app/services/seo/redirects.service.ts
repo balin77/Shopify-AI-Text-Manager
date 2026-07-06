@@ -207,6 +207,67 @@ export async function analyze404(db: PrismaClient, shop: string): Promise<Analyz
   return { newCount, topPaths: top };
 }
 
+// ── 404-beacon rate limiting (per-shop token bucket) ─────────────────────────
+//
+// The beacon (proxy.seo-404.tsx) is triggered by ordinary storefront visitors
+// hitting a 404 page — Shopify's app-proxy HMAC proves the request came
+// through the proxy, but it does nothing to bound HOW OFTEN one shop's
+// storefront can fire it, and every hit costs 2-3 DB queries (record404Hit).
+// A bot crawling a scraped list of dead links, or a themed page looping the
+// beacon, must not translate into unbounded DB load. A simple token bucket
+// per shop caps sustained throughput while still allowing a normal burst
+// (e.g. a merchant testing several broken links in a row).
+//
+// Single-process-in-memory rationale: same as the OAuth nonce store in
+// google-search-console.server.ts — server.js documents that this app
+// currently deploys as a single Node process (Procfile:
+// `web: npm run start:production`; no replica/scale config), so a
+// module-level Map is sufficient. Multi-instance would need a shared store
+// (e.g. Redis) since each replica would otherwise keep its own independent
+// bucket per shop.
+const BUCKET_CAPACITY = 30; // max burst tokens per shop
+const BUCKET_REFILL_PER_MIN = 10; // steady-state tokens/min per shop
+const BUCKET_STALE_MS = 60 * 60 * 1000; // 1h idle -> bucket is dropped, not refilled forever
+
+interface TokenBucket {
+  tokens: number;
+  lastRefillAt: number; // ms (from the injectable clock)
+}
+
+const hitBuckets = new Map<string, TokenBucket>();
+
+/** Drop buckets for shops that haven't hit the beacon in over an hour — bounds Map growth across all shops ever seen. */
+function purgeStaleBuckets(now: number): void {
+  for (const [shop, bucket] of hitBuckets) {
+    if (now - bucket.lastRefillAt > BUCKET_STALE_MS) hitBuckets.delete(shop);
+  }
+}
+
+/**
+ * Token-bucket rate limit for the 404 beacon, keyed per shop. Returns true
+ * (and consumes one token) when the hit is allowed, false when the shop's
+ * bucket is drained. `now` is injectable so tests can fast-forward refills
+ * deterministically instead of sleeping on the wall clock.
+ */
+export function allow404Hit(shop: string, now: number = Date.now()): boolean {
+  purgeStaleBuckets(now);
+
+  let bucket = hitBuckets.get(shop);
+  if (!bucket) {
+    bucket = { tokens: BUCKET_CAPACITY, lastRefillAt: now };
+    hitBuckets.set(shop, bucket);
+  } else {
+    const elapsedMs = Math.max(0, now - bucket.lastRefillAt);
+    const refill = (elapsedMs / 60_000) * BUCKET_REFILL_PER_MIN;
+    bucket.tokens = Math.min(BUCKET_CAPACITY, bucket.tokens + refill);
+    bucket.lastRefillAt = now;
+  }
+
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
 // ── Native Shopify redirects (Admin API) ─────────────────────────────────────
 
 export interface ListRedirectsResult {

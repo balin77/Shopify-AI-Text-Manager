@@ -12,11 +12,19 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { record404Hit } from "../services/seo/redirects.service";
+import { record404Hit, allow404Hit } from "../services/seo/redirects.service";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);
   if (!session) return json({ ok: false }, { status: 200 });
+
+  // Rate-limit BEFORE any DB work (a flood of 404s otherwise costs 2-3 queries
+  // each). Over-limit requests still get the ordinary 200/no-store response —
+  // the storefront beacon must never learn it was throttled, and it never
+  // throws (see allow404Hit's doc comment for the single-process rationale).
+  if (!allow404Hit(session.shop)) {
+    return json({ ok: true }, { status: 200, headers: { "Cache-Control": "no-store" } });
+  }
 
   let body: { path?: string; referrer?: string };
   try {

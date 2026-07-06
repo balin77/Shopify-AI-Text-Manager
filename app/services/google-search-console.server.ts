@@ -12,7 +12,7 @@
  * connection so the merchant is prompted to reconnect.
  */
 
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
 
@@ -88,14 +88,25 @@ function stateSecret(): string {
 }
 
 export function signOAuthState(payload: { shop: string; host: string; customDomain?: string | null }): string {
-  const body = Buffer.from(JSON.stringify({ ...payload, ts: Date.now() })).toString("base64url");
+  // A random per-state nonce lets consumeOAuthState() enforce single-use
+  // (replay) semantics below — the signature alone only proves authenticity,
+  // not that this exact state hasn't already been redeemed.
+  const body = Buffer.from(JSON.stringify({ ...payload, ts: Date.now(), nonce: randomUUID() })).toString(
+    "base64url",
+  );
   const sig = createHmac("sha256", stateSecret()).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
 
-export function verifyOAuthState(
-  state: string,
-): { shop: string; host: string; customDomain: string | null } | null {
+interface VerifiedOAuthState {
+  shop: string;
+  host: string;
+  customDomain: string | null;
+  nonce: string | null;
+}
+
+/** Shared signature/TTL check. Does not consume the nonce — see consumeOAuthState(). */
+function verifySignedState(state: string): VerifiedOAuthState | null {
   const [body, sig] = (state || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", stateSecret()).update(body).digest("base64url");
@@ -110,10 +121,72 @@ export function verifyOAuthState(
       shop: data.shop,
       host: typeof data.host === "string" ? data.host : "",
       customDomain: typeof data.customDomain === "string" ? data.customDomain : null,
+      // Absent on states signed before this nonce field existed (pre-deploy
+      // grace — see consumeOAuthState()).
+      nonce: typeof data.nonce === "string" ? data.nonce : null,
     };
   } catch {
     return null;
   }
+}
+
+export function verifyOAuthState(
+  state: string,
+): { shop: string; host: string; customDomain: string | null } | null {
+  const verified = verifySignedState(state);
+  if (!verified) return null;
+  return { shop: verified.shop, host: verified.host, customDomain: verified.customDomain };
+}
+
+// ── Single-use nonce store (OAuth-state replay protection) ──────────────────
+//
+// This app deploys as a single Node process: server.js documents (see the
+// R4-C2 comment there, "the app is currently deployed as a single `web`
+// process (Procfile: `web: npm run start:production`; no replica/scale
+// config)") that every in-process singleton in this codebase relies on that
+// assumption. A plain in-memory Map is therefore sufficient here too — it
+// only needs to prevent a nonce being redeemed twice on the ONE process
+// handling all callbacks. If this app is ever scaled to multiple instances,
+// the upgrade path is a DB-backed nonce table (e.g. a UsedOAuthNonce model
+// with a unique constraint on `nonce`) shared across instances, exactly as
+// server.js recommends a Postgres advisory lock for the other singletons.
+const consumedNonces = new Map<string, number>(); // nonce -> expiresAt (ms)
+
+/** Drop nonces whose state would have expired anyway — bounds the Map to ~STATE_TTL_MS worth of entries. */
+function purgeExpiredNonces(now: number): void {
+  for (const [nonce, expiresAt] of consumedNonces) {
+    if (expiresAt <= now) consumedNonces.delete(nonce);
+  }
+}
+
+/**
+ * Verify the signed OAuth state AND atomically mark its nonce consumed, so a
+ * second callback replaying the exact same `state` value (same code request
+ * repeated, tab duplicated, network retry replayed by an attacker who
+ * observed the redirect) is rejected instead of re-running the connect flow.
+ * Returns null on an invalid/expired/tampered state OR a replay.
+ *
+ * Backward-compat / rollout grace: a state signed by the previous deploy (no
+ * `nonce` claim yet) is accepted on TTL + signature alone, exactly like
+ * before — it cannot be tracked for single-use, but every state is at most
+ * STATE_TTL_MS (10 min) old before it expires naturally, so the replay window
+ * for that one-deploy transition period is bounded and small. Once fully
+ * rolled out, all newly-issued states carry a nonce and get full single-use
+ * enforcement.
+ */
+export function consumeOAuthState(
+  state: string,
+): { shop: string; host: string; customDomain: string | null } | null {
+  const verified = verifySignedState(state);
+  if (!verified) return null;
+
+  const now = Date.now();
+  purgeExpiredNonces(now);
+  if (verified.nonce) {
+    if (consumedNonces.has(verified.nonce)) return null; // replay
+    consumedNonces.set(verified.nonce, now + STATE_TTL_MS);
+  }
+  return { shop: verified.shop, host: verified.host, customDomain: verified.customDomain };
 }
 
 export function buildGscAuthUrl(state: string): string | null {

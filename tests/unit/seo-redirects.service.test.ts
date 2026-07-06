@@ -4,6 +4,7 @@ import {
   normalize404Path,
   record404Hit,
   analyze404,
+  allow404Hit,
   MAX_404_HITS_PER_SHOP,
 } from "~/services/seo/redirects.service";
 
@@ -116,6 +117,89 @@ describe("record404Hit", () => {
     expect(calls.count).not.toHaveBeenCalled();
     expect(calls.findMany).not.toHaveBeenCalled();
     expect(calls.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("allow404Hit — per-shop token bucket for the 404 beacon", () => {
+  // Buckets live in a module-level Map with no reset export, so each test
+  // uses its own shop id to stay isolated from other tests in this file.
+  const T0 = Date.parse("2026-07-01T00:00:00Z");
+
+  it("allows a burst up to capacity (30) and blocks the next hit", () => {
+    const shop = "burst.myshopify.com";
+    for (let i = 0; i < 30; i++) {
+      expect(allow404Hit(shop, T0)).toBe(true);
+    }
+    expect(allow404Hit(shop, T0)).toBe(false);
+  });
+
+  it("stays blocked while drained and no time has passed", () => {
+    const shop = "drained.myshopify.com";
+    for (let i = 0; i < 30; i++) allow404Hit(shop, T0);
+    expect(allow404Hit(shop, T0)).toBe(false);
+    expect(allow404Hit(shop, T0)).toBe(false);
+  });
+
+  it("refills over time at 10 tokens/min (fake clock, no real sleeps)", () => {
+    const shop = "refill.myshopify.com";
+    for (let i = 0; i < 30; i++) allow404Hit(shop, T0);
+    expect(allow404Hit(shop, T0)).toBe(false); // drained
+
+    // 30s later => 5 tokens refilled (10/min * 0.5min).
+    const t1 = T0 + 30_000;
+    expect(allow404Hit(shop, t1)).toBe(true);
+    expect(allow404Hit(shop, t1)).toBe(true);
+    expect(allow404Hit(shop, t1)).toBe(true);
+    expect(allow404Hit(shop, t1)).toBe(true);
+    expect(allow404Hit(shop, t1)).toBe(true);
+    expect(allow404Hit(shop, t1)).toBe(false); // only 5 available, 6th denied
+
+    // A full minute after THAT (tokens were fully drained again at t1) =>
+    // 10 more tokens refill (10/min * 1min).
+    const t2 = t1 + 60_000;
+    for (let i = 0; i < 10; i++) {
+      expect(allow404Hit(shop, t2)).toBe(true);
+    }
+    expect(allow404Hit(shop, t2)).toBe(false);
+
+    // A long idle period afterward refills back up to the capacity cap (30),
+    // never beyond it.
+    const t3 = t2 + 10 * 60_000; // 10 min later => 100 tokens worth, capped at 30
+    for (let i = 0; i < 30; i++) {
+      expect(allow404Hit(shop, t3)).toBe(true);
+    }
+    expect(allow404Hit(shop, t3)).toBe(false);
+  });
+
+  it("isolates buckets per shop — draining one shop does not affect another", () => {
+    const shopA = "isolation-a.myshopify.com";
+    const shopB = "isolation-b.myshopify.com";
+    for (let i = 0; i < 30; i++) allow404Hit(shopA, T0);
+    expect(allow404Hit(shopA, T0)).toBe(false);
+    // shopB's bucket is untouched and full.
+    expect(allow404Hit(shopB, T0)).toBe(true);
+  });
+
+  it("cleans up stale (idle > 1h) buckets without disrupting a still-active shop", () => {
+    const idleShop = "idle.myshopify.com";
+    const activeShop = "active.myshopify.com";
+
+    // idleShop hits once, then goes quiet.
+    expect(allow404Hit(idleShop, T0)).toBe(true);
+
+    // activeShop stays active across the same window, refilling normally.
+    const tLater = T0 + 90 * 60 * 1000; // 90 min later — idleShop is now stale (>1h)
+    expect(allow404Hit(activeShop, tLater)).toBe(true);
+
+    // idleShop's stale bucket gets purged on the next access; it comes back
+    // with a fresh full bucket rather than an error or a leftover state.
+    for (let i = 0; i < 30; i++) {
+      expect(allow404Hit(idleShop, tLater)).toBe(true);
+    }
+    expect(allow404Hit(idleShop, tLater)).toBe(false);
+
+    // activeShop's own budget was never disturbed by idleShop's cleanup.
+    expect(allow404Hit(activeShop, tLater)).toBe(true);
   });
 });
 

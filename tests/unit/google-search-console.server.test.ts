@@ -1,8 +1,10 @@
+import { createHmac } from "node:crypto";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getGscOAuthConfig,
   signOAuthState,
   verifyOAuthState,
+  consumeOAuthState,
   buildGscAuthUrl,
   exchangeCodeForTokens,
   refreshAccessToken,
@@ -86,6 +88,59 @@ describe("OAuth state signing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("consumeOAuthState — single-use OAuth state (replay protection)", () => {
+  it("verifies and consumes a fresh state", () => {
+    const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    expect(consumeOAuthState(state)).toEqual({ shop: "s.myshopify.com", host: "h", customDomain: null });
+  });
+
+  it("rejects a second consume of the same state (replay)", () => {
+    const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    expect(consumeOAuthState(state)).not.toBeNull();
+    expect(consumeOAuthState(state)).toBeNull();
+  });
+
+  it("does not block a DIFFERENT state for the same shop (nonces are per-state, not per-shop)", () => {
+    const state1 = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    const state2 = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    expect(consumeOAuthState(state1)).not.toBeNull();
+    expect(consumeOAuthState(state2)).not.toBeNull();
+  });
+
+  it("accepts a legacy state signed without a nonce field (pre-deploy grace) on TTL alone", () => {
+    const body = Buffer.from(JSON.stringify({ shop: "s.myshopify.com", host: "h", ts: Date.now() })).toString(
+      "base64url",
+    );
+    const sig = createHmac("sha256", "test-api-secret").update(body).digest("base64url");
+    const legacyState = `${body}.${sig}`;
+    expect(consumeOAuthState(legacyState)).toEqual({ shop: "s.myshopify.com", host: "h", customDomain: null });
+    // A legacy (nonce-less) state has nothing to track for single-use, so a
+    // second consume within the TTL is NOT rejected as a replay — documented
+    // as the accepted one-deploy grace window.
+    expect(consumeOAuthState(legacyState)).toEqual({ shop: "s.myshopify.com", host: "h", customDomain: null });
+  });
+
+  it("rejects an expired state even though it was never consumed", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-29T00:00:00Z"));
+      const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+      vi.advanceTimersByTime(11 * 60 * 1000);
+      expect(consumeOAuthState(state)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects a tampered state without consuming any nonce", () => {
+    const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    const tampered = state.slice(0, -2) + (state.endsWith("aa") ? "bb" : "aa");
+    expect(consumeOAuthState(tampered)).toBeNull();
+    // The tamper attempt must not have burned the real state's nonce either.
+    expect(consumeOAuthState(state)).not.toBeNull();
   });
 });
 

@@ -14,7 +14,7 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { logger } from "~/utils/logger.server";
 import {
-  verifyOAuthState,
+  consumeOAuthState,
   exchangeCodeForTokens,
   listSites,
   pickProperty,
@@ -38,10 +38,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error");
 
-  const verified = state ? verifyOAuthState(state) : null;
+  // consumeOAuthState (not verifyOAuthState) so a second callback replaying
+  // the same state — the request retried, the tab duplicated, or an attacker
+  // who observed the redirect — is rejected instead of re-running connect.
+  const verified = state ? consumeOAuthState(state) : null;
   if (!verified) {
-    // No trustworthy shop/host to bounce back to — fail safe to login.
-    logger.warn("[GSC callback] invalid or missing OAuth state");
+    // No trustworthy shop/host to bounce back to — fail safe to login. Also
+    // reached on a replayed state (nonce already consumed).
+    logger.warn("[GSC callback] invalid, missing, or already-used OAuth state");
     return redirect("/auth/login");
   }
   const { shop, host, customDomain } = verified;
