@@ -333,12 +333,46 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           failedDeleteKeys.push(...keysToDelete);
           shopifyErrors.push(removeData.data.translationsRemove.userErrors[0].message);
         } else {
-          logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
-            context: "Templates",
-            resourceId: resId,
-            keyCount: keysToDelete.length,
-            locale,
-          });
+          // Shopify can return NO userErrors yet remove NOTHING — some resources
+          // (EMAIL_TEMPLATE et al.) silently no-op translationsRemove exactly like
+          // COOKIE_BANNER does. The mutation echoes back the translations it
+          // actually deleted, so confirm every cleared key is present. A key that
+          // is not echoed never left Shopify and must NOT be deleted from the
+          // local DB (failedDeleteKeys → excluded from the DB deleteMany below) —
+          // otherwise the field looks gone locally while it survives on the
+          // storefront and the save is reported as success (the silent-delete bug).
+          // Foreign saves only send CHANGED fields (buildFieldsForSave filters out
+          // unchanged/empty ones), so every key here genuinely had a value to
+          // remove — an empty echo is a real failure, not a "nothing to do".
+          const removedKeys = new Set(
+            (removeData.data?.translationsRemove?.translations ?? []).map(
+              (t: { key: string }) => t.key
+            )
+          );
+          const notRemoved = keysToDelete.filter((k) => !removedKeys.has(k));
+          if (notRemoved.length > 0) {
+            logger.error("[TEMPLATES] Shopify returned no error but removed no translation for cleared keys", {
+              context: "Templates",
+              resourceId: resId,
+              locale,
+              notRemovedKeys: notRemoved,
+              removedCount: removedKeys.size,
+            });
+            failedDeleteKeys.push(...notRemoved);
+            shopifyErrors.push(
+              `Shopify did not remove ${notRemoved.length} cleared translation(s) although it reported no error: ${notRemoved
+                .slice(0, 5)
+                .join(", ")}`
+            );
+          }
+          if (notRemoved.length < keysToDelete.length) {
+            logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
+              context: "Templates",
+              resourceId: resId,
+              keyCount: keysToDelete.length - notRemoved.length,
+              locale,
+            });
+          }
         }
       } catch (removeError) {
         const errorMsg = removeError instanceof Error ? removeError.message : String(removeError);
