@@ -41,6 +41,10 @@ const LONG_RUNNING_TASK_TYPES = [
   'templates',
   'metaobjects',
   'menus',
+  // SEO Audit Dashboard "Fix with AI" bulk action (seo-bulk-fix.handler.ts) —
+  // up to 100 sequential AI generations + Shopify saves, same shape as
+  // bulkAIGeneration, so it needs the same generous stuck-task threshold.
+  'seoBulkFix',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

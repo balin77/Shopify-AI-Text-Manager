@@ -40,6 +40,7 @@ import {
   handleTranslateAllAltTextsToAllLocales,
   handleTranslateAllAltTextsForLocale,
 } from "./api-ai-handlers/alt-text.handler";
+import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -108,6 +109,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
         return handleTranslateAllAltTextsForLocale(ctx);
+      case "seoBulkFix":
+        return handleSeoBulkFix(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }

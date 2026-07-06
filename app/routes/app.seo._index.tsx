@@ -9,7 +9,8 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useEffect, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -27,6 +28,15 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone, progressTone, seoTitleEffectiveLimit } from "../utils/seo-score";
 import { analyzeStore, type AuditType } from "../services/seo/audit.service";
 import type { Plan } from "../config/plans";
+
+// Problem-bucket codes the "Fix with AI" button supports today — must match
+// FIXABLE_CODE_TO_FIELD in api-ai-handlers/seo-bulk-fix.handler.ts.
+const AI_FIXABLE_PROBLEM_CODES = new Set([
+  "seoTitleMissing",
+  "seoTitleTooLong",
+  "metaDescriptionMissing",
+  "metaDescriptionLength",
+]);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -49,7 +59,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
     plan,
   });
-  return json({ audit });
+
+  // Cheap existence check so "Fix with AI" renders disabled after a reload
+  // instead of only reacting to the button click in THIS tab (the handler's
+  // own single-flight check is the source of truth; this is just so the UI
+  // doesn't invite a second click that the server would reject anyway).
+  const runningBulkFix = await db.task.findFirst({
+    where: { shop: session.shop, type: "seoBulkFix", status: "running" },
+    select: { id: true },
+  });
+
+  return json({ audit, bulkFixRunning: !!runningBulkFix });
 };
 
 /** Editor list route per audited type — target of the row deep-link. */
@@ -61,13 +81,54 @@ const TYPE_PATH: Record<AuditType, string> = {
 };
 
 export default function SeoDashboard() {
-  const { audit } = useLoaderData<typeof loader>();
+  const { audit, bulkFixRunning } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const d = (t.seo as any).dashboard;
 
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
+  };
+
+  // "Fix with AI" — posts straight to the shared /api/ai route (same route
+  // every other AI action in the app uses), so the server re-audits and runs
+  // the same bulk-AI pipeline as alt-text bulk generation. The button only
+  // triggers the run; progress lives in the Tasks tab (heartbeat-updated Task
+  // row), not in this fetcher.
+  const fixFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const [fixingCode, setFixingCode] = useState<string | null>(null);
+  const [fixBanner, setFixBanner] = useState<{ tone: "success" | "critical"; message: string } | null>(null);
+  // Once the server confirms a run started (or is already running), disable
+  // every Fix button for the rest of this page view — mirrors the server's
+  // single-flight guard (only one seoBulkFix task per shop at a time).
+  const [fixStarted, setFixStarted] = useState(false);
+
+  useEffect(() => {
+    if (fixFetcher.state !== "idle" || !fixFetcher.data) return;
+    if (fixFetcher.data.success) {
+      setFixBanner({ tone: "success", message: d.bulkFixStarted });
+      setFixStarted(true);
+    } else {
+      setFixBanner({ tone: "critical", message: fixFetcher.data.error || d.bulkFixError });
+    }
+    setFixingCode(null);
+    // Only re-run when the fetcher settles with new data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixFetcher.state, fixFetcher.data]);
+
+  const disableFixButtons = bulkFixRunning || fixStarted;
+
+  const handleFixWithAi = (problemCode: string) => {
+    if (disableFixButtons || fixFetcher.state !== "idle") return;
+    setFixingCode(problemCode);
+    const formData = new FormData();
+    formData.append("action", "seoBulkFix");
+    // seoBulkFix spans every content type and re-derives affected items
+    // server-side; "products" is just a valid placeholder to satisfy /api/ai's
+    // generic contentType gate.
+    formData.append("contentType", "products");
+    formData.append("problemCode", problemCode);
+    fixFetcher.submit(formData, { method: "post", action: "/api/ai" });
   };
 
   if (audit.totalScanned === 0) {
@@ -94,6 +155,13 @@ export default function SeoDashboard() {
               .replace("{total}", String(audit.totalAvailable))}
           </Banner>
         )}
+
+        {fixBanner && (
+          <Banner tone={fixBanner.tone} onDismiss={() => setFixBanner(null)}>
+            {fixBanner.message}
+          </Banner>
+        )}
+        {!fixBanner && bulkFixRunning && <Banner tone="info">{d.bulkFixRunning}</Banner>}
 
         {/* Headline score + distribution */}
         <InlineStack gap="400" align="start" blockAlign="stretch" wrap>
@@ -187,9 +255,21 @@ export default function SeoDashboard() {
                   <Text as="span" variant="bodyMd">
                     {d.problems[p.code] || p.code}
                   </Text>
-                  <Badge tone="attention">
-                    {d.affectedItems.replace("{count}", String(p.count))}
-                  </Badge>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Badge tone="attention">
+                      {d.affectedItems.replace("{count}", String(p.count))}
+                    </Badge>
+                    {AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
+                      <Button
+                        size="slim"
+                        onClick={() => handleFixWithAi(p.code)}
+                        disabled={disableFixButtons || fixFetcher.state !== "idle"}
+                        loading={fixingCode === p.code && fixFetcher.state !== "idle"}
+                      >
+                        {d.fixWithAi}
+                      </Button>
+                    )}
+                  </InlineStack>
                 </InlineStack>
               ))}
             </BlockStack>

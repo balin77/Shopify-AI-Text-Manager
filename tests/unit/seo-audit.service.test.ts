@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyzeStore } from "~/services/seo/audit.service";
+import { analyzeStore, MAX_PROBLEM_BUCKET_ITEMS } from "~/services/seo/audit.service";
 
 /**
  * Bucket + distribution correctness for the store audit (Phase 1 / A2), driven
@@ -92,6 +92,19 @@ describe("analyzeStore", () => {
     // most common first
     expect(audit.problems[0].code).toBe("seoTitleMissing");
 
+    // Bucket item refs (Fix-with-AI): the affected ids/types are carried
+    // alongside the count so the bulk-fix handler knows what to regenerate.
+    const seoTitleMissingBucket = audit.problems.find((p) => p.code === "seoTitleMissing");
+    expect(seoTitleMissingBucket?.items).toEqual(
+      expect.arrayContaining([
+        { type: "product", id: "gid-P2" },
+        { type: "page", id: "gid-PG1" },
+      ]),
+    );
+    expect(seoTitleMissingBucket?.items.length).toBe(2);
+    const metaDescriptionMissingBucket = audit.problems.find((p) => p.code === "metaDescriptionMissing");
+    expect(metaDescriptionMissingBucket?.items).toEqual([{ type: "product", id: "gid-P2" }]);
+
     // worst offender is the lowest score with issues (P2 @ 50)
     expect(audit.worstOffenders[0].id).toBe("gid-P2");
     expect(audit.worstOffenders.every((r) => r.issueCount > 0)).toBe(true);
@@ -173,5 +186,53 @@ describe("analyzeStore — duplicate SEO title/description detection", () => {
     // inflate duplicateSeoTitle/duplicateSeoDescription.
     expect(Object.fromEntries(audit.problems.map((p) => [p.code, p.count])).duplicateSeoTitle).toBe(2);
     expect(audit.problems.find((p) => p.code === "duplicateSeoDescription")).toBeUndefined();
+  });
+
+  it("carries typed item refs for the duplicate-SEO buckets too", async () => {
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db: makeDupDb(),
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    const duplicateSeoTitleBucket = audit.problems.find((p) => p.code === "duplicateSeoTitle");
+    expect(duplicateSeoTitleBucket?.items).toEqual(
+      expect.arrayContaining([
+        { type: "product", id: "gid-P1" },
+        { type: "product", id: "gid-P2" },
+      ]),
+    );
+    expect(duplicateSeoTitleBucket?.items.length).toBe(2);
+  });
+});
+
+describe("analyzeStore — problem bucket item cap", () => {
+  it("caps the per-bucket item ref list at MAX_PROBLEM_BUCKET_ITEMS while keeping the true count", async () => {
+    const total = MAX_PROBLEM_BUCKET_ITEMS + 5;
+    const products = Array.from({ length: total }, (_, i) => ({
+      id: `gid-P${i}`,
+      title: U(40, `T${i}-`),
+      descriptionHtml: A(200),
+      seoTitle: "", // every product is missing its seoTitle -> all land in one bucket
+      seoDescription: U(140, `D${i}-`),
+      featuredImageUrl: null,
+      featuredImageAlt: null,
+    }));
+    const db = {
+      product: { count: async () => products.length, findMany: async () => products },
+      productImage: { groupBy: async () => [] },
+      collection: { count: async () => 0, findMany: async () => [] },
+      article: { count: async () => 0, findMany: async () => [] },
+      page: { count: async () => 0, findMany: async () => [] },
+    } as any;
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+
+    const bucket = audit.problems.find((p) => p.code === "seoTitleMissing");
+    expect(bucket?.count).toBe(total); // true total, uncapped
+    expect(bucket?.items.length).toBe(MAX_PROBLEM_BUCKET_ITEMS); // ref list capped
   });
 });

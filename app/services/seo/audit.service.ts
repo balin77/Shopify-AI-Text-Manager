@@ -39,11 +39,22 @@ export interface AuditTypeStat {
   poor: number;
 }
 
+/** Per-bucket cap on how many affected-item refs are carried for the "Fix with
+ * AI" bulk actions (SEO tab). `count` always stays the TRUE total — only the
+ * `items` ref list is capped, so a bucket with thousands of affected items
+ * still reports its real size while the bulk-fix handler gets a bounded,
+ * cheap-to-persist batch to work from. */
+export const MAX_PROBLEM_BUCKET_ITEMS = 100;
+
 export interface AuditProblemBucket {
   /** i18n key under t.seo.dashboard.problems.* */
   code: string;
-  /** Number of items affected (not findings). */
+  /** Number of items affected (not findings) — the TRUE total, never capped. */
   count: number;
+  /** Affected item refs, capped at MAX_PROBLEM_BUCKET_ITEMS. Consumed by the
+   * "Fix with AI" bulk handler (seo-bulk-fix.handler.ts) to know WHICH items
+   * to regenerate without trusting client-supplied ids. */
+  items: { type: AuditType; id: string }[];
 }
 
 export interface AuditAggregate {
@@ -425,14 +436,35 @@ export async function analyzeStore(
   const totalScanned = scored.length;
   const distribution = { good: 0, medium: 0, poor: 0 };
   const bucketCounts = new Map<string, number>();
+  // Capped, per-bucket item refs — see MAX_PROBLEM_BUCKET_ITEMS. Kept separate
+  // from bucketCounts so the count stays the TRUE total even once a bucket's
+  // item list has filled up.
+  const bucketItems = new Map<string, { type: AuditType; id: string }[]>();
+  // id -> type lookup so the duplicate-SEO buckets below (built from
+  // seoTitleGroups/seoDescriptionGroups, which only track ids) can also carry
+  // typed item refs, same as every other bucket.
+  const typeById = new Map<string, AuditType>();
   let scoreSum = 0;
+
+  const addBucketItem = (code: string, type: AuditType, id: string) => {
+    let items = bucketItems.get(code);
+    if (!items) {
+      items = [];
+      bucketItems.set(code, items);
+    }
+    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) items.push({ type, id });
+  };
 
   for (const { row, buckets } of scored) {
     scoreSum += row.score;
     if (row.score >= 70) distribution.good += 1;
     else if (row.score >= 40) distribution.medium += 1;
     else distribution.poor += 1;
-    for (const b of buckets) bucketCounts.set(b, (bucketCounts.get(b) ?? 0) + 1);
+    typeById.set(row.id, row.type);
+    for (const b of buckets) {
+      bucketCounts.set(b, (bucketCounts.get(b) ?? 0) + 1);
+      addBucketItem(b, row.type, row.id);
+    }
   }
 
   const averageScore = totalScanned > 0 ? Math.round(scoreSum / totalScanned) : 0;
@@ -442,11 +474,23 @@ export async function analyzeStore(
   // one other item — a group of size 1 is unique, not a duplicate.
   let duplicateSeoTitleCount = 0;
   for (const ids of seoTitleGroups.values()) {
-    if (ids.length > 1) duplicateSeoTitleCount += ids.length;
+    if (ids.length > 1) {
+      duplicateSeoTitleCount += ids.length;
+      for (const id of ids) {
+        const type = typeById.get(id);
+        if (type) addBucketItem("duplicateSeoTitle", type, id);
+      }
+    }
   }
   let duplicateSeoDescriptionCount = 0;
   for (const ids of seoDescriptionGroups.values()) {
-    if (ids.length > 1) duplicateSeoDescriptionCount += ids.length;
+    if (ids.length > 1) {
+      duplicateSeoDescriptionCount += ids.length;
+      for (const id of ids) {
+        const type = typeById.get(id);
+        if (type) addBucketItem("duplicateSeoDescription", type, id);
+      }
+    }
   }
   if (duplicateSeoTitleCount > 0) {
     bucketCounts.set("duplicateSeoTitle", duplicateSeoTitleCount);
@@ -456,7 +500,7 @@ export async function analyzeStore(
   }
 
   const problems: AuditProblemBucket[] = [...bucketCounts.entries()]
-    .map(([code, count]) => ({ code, count }))
+    .map(([code, count]) => ({ code, count, items: bucketItems.get(code) ?? [] }))
     .sort((a, b) => b.count - a.count);
 
   const worstOffenders = scored
