@@ -253,12 +253,43 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           skippedKeys.push(...translationInputs.map((t) => t.key));
           shopifyErrors.push(errors[0].message);
         } else {
-          logger.info("[TEMPLATES] Shopify translations registered successfully", {
-            context: "Templates",
-            locale,
-            resourceId: resId,
-            fieldCount: translationInputs.length,
-          });
+          // Shopify can return NO userErrors yet register NOTHING — App-Embed keys
+          // (ONLINE_STORE_THEME_APP_EMBED) silently no-op this way. The mutation
+          // echoes back the translations it actually stored, so confirm every key
+          // we sent is present. A missing key never persisted on Shopify and must
+          // NOT be mirrored into the local DB (skippedKeys → excluded from the DB
+          // upsert below) — otherwise the DB shows a value the storefront never
+          // received and the save is reported as success (the silent-save bug).
+          const registeredKeys = new Set(
+            (data.data?.translationsRegister?.translations ?? []).map(
+              (t: { key: string }) => t.key
+            )
+          );
+          const notPersisted = translationInputs.filter((t) => !registeredKeys.has(t.key));
+          if (notPersisted.length > 0) {
+            logger.error("[TEMPLATES] Shopify returned no error but registered no translation for some keys", {
+              context: "Templates",
+              resourceId: resId,
+              locale,
+              missingKeys: notPersisted.map((t) => t.key),
+              registeredCount: registeredKeys.size,
+            });
+            skippedKeys.push(...notPersisted.map((t) => t.key));
+            shopifyErrors.push(
+              `Shopify did not store ${notPersisted.length} translation(s) although it reported no error: ${notPersisted
+                .slice(0, 5)
+                .map((t) => t.key)
+                .join(", ")}`
+            );
+          }
+          if (notPersisted.length < translationInputs.length) {
+            logger.info("[TEMPLATES] Shopify translations registered successfully", {
+              context: "Templates",
+              locale,
+              resourceId: resId,
+              fieldCount: translationInputs.length - notPersisted.length,
+            });
+          }
         }
       } catch (registerError) {
         const errorMsg = registerError instanceof Error ? registerError.message : String(registerError);
