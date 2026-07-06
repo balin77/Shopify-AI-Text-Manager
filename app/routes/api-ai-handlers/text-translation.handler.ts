@@ -639,7 +639,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
+                    shop_resourceId_groupId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
@@ -772,7 +773,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    shop_resourceId_key_locale_marketId: { marketId: "", 
+                    shop_resourceId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
@@ -893,7 +895,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 const metaType = itemId.replace('metaobject_type_', '');
                 await db.metaobjectTranslation.upsert({
                   where: {
-                    shop_metaobjectId_key_locale_marketId: { marketId: "", 
+                    shop_metaobjectId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       metaobjectId: metaobjectGid,
                       key: metaLabelKey,
@@ -1128,7 +1131,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
+                    shop_resourceId_groupId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
@@ -1260,7 +1264,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    shop_resourceId_key_locale_marketId: { marketId: "", 
+                    shop_resourceId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
@@ -1386,7 +1391,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 const metaType = itemId.replace('metaobject_type_', '');
                 await db.metaobjectTranslation.upsert({
                   where: {
-                    shop_metaobjectId_key_locale_marketId: { marketId: "", 
+                    shop_metaobjectId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       metaobjectId: metaobjectGid,
                       key: metaLabelKey,

@@ -214,7 +214,8 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
       if (!pushedKeys.has(key)) continue;
       await db.themeTranslation.upsert({
         where: {
-          shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
+          shop_resourceId_groupId_key_locale_marketId: {
+            marketId: "",
             shop: session.shop,
             resourceId: resId,
             groupId,
