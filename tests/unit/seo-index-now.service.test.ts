@@ -9,6 +9,8 @@ import {
   collectStoreUrls,
   drainQueue,
   enqueueIndexNowUrl,
+  enqueueResource,
+  getEnabledConfig,
   provisionIndexNow,
   INDEXNOW_MAX_URLS_PER_REQUEST,
 } from "~/services/seo/index-now.service";
@@ -154,6 +156,85 @@ describe("provisionIndexNow — idempotent", () => {
     const r = await provisionIndexNow(db, "s");
     expect(r).toEqual({ key: "EXISTING", keyLocation: "https://s/k" });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("submitUrls — fetch timeout", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("passes an AbortSignal (10s timeout) to fetch", async () => {
+    const fetchMock = vi.fn(async (_url: any, init: any) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      return { ok: true, status: 200 };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await submitUrls("s", "KEY", "https://s/k", ["https://s/products/a"]);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+});
+
+describe("getEnabledConfig — single-query gate for webhooks", () => {
+  it("returns null when there is no config row", async () => {
+    const findUnique = vi.fn(async () => null);
+    const db = { seoIndexNowConfig: { findUnique } } as any;
+    expect(await getEnabledConfig(db, "s")).toBeNull();
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null when the config exists but is disabled", async () => {
+    const db = {
+      seoIndexNowConfig: { findUnique: async () => ({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: false }) },
+    } as any;
+    expect(await getEnabledConfig(db, "s")).toBeNull();
+  });
+
+  it("returns the config row when enabled, in a single query", async () => {
+    const findUnique = vi.fn(async () => ({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: true }));
+    const db = { seoIndexNowConfig: { findUnique } } as any;
+    const config = await getEnabledConfig(db, "s");
+    expect(config).toEqual({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: true });
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("enqueueResource — preloaded config avoids a second config query", () => {
+  it("upserts the queue row directly (no config re-fetch) when a config is passed", async () => {
+    const configFindUnique = vi.fn();
+    const upsert = vi.fn(async (_args: any) => ({}));
+    const db = {
+      seoIndexNowConfig: { findUnique: configFindUnique },
+      seoIndexNowQueue: { upsert },
+    } as any;
+    const preloaded = { shop: "s", key: "K", keyLocation: "https://s/k", enabled: true } as any;
+    await enqueueResource(db, "s", "s.myshopify.com", "product", "blue-shoe", preloaded);
+    expect(configFindUnique).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const args = upsert.mock.calls[0][0];
+    expect(args.create.url).toBe("https://s.myshopify.com/products/blue-shoe");
+  });
+
+  it("is a no-op when the passed-in config is null (disabled/missing)", async () => {
+    const upsert = vi.fn();
+    const db = { seoIndexNowConfig: { findUnique: vi.fn() }, seoIndexNowQueue: { upsert } } as any;
+    await enqueueResource(db, "s", "s.myshopify.com", "product", "blue-shoe", null);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("falls back to loading the config itself when none is passed (back-compat)", async () => {
+    const upsert = vi.fn(async () => ({}));
+    const db = {
+      seoIndexNowConfig: { findUnique: async () => ({ shop: "s", key: "K", keyLocation: "https://s/k", enabled: true }) },
+      seoIndexNowQueue: { upsert },
+    } as any;
+    await enqueueResource(db, "s", "s.myshopify.com", "product", "blue-shoe");
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a no-op when the handle is empty, regardless of config", async () => {
+    const upsert = vi.fn();
+    const db = { seoIndexNowConfig: { findUnique: vi.fn() }, seoIndexNowQueue: { upsert } } as any;
+    await enqueueResource(db, "s", "s.myshopify.com", "product", "", { shop: "s", key: "K", keyLocation: "k", enabled: true } as any);
+    expect(upsert).not.toHaveBeenCalled();
   });
 });
 

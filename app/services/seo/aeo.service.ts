@@ -119,6 +119,29 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
   return lines.join("\n").trimEnd() + "\n";
 }
 
+const RAW_WRAP_RE = /^\{%-?\s*raw\s*-?%\}\n?([\s\S]*?)\{%-?\s*endraw\s*-?%\}\s*$/;
+
+/**
+ * Wrap generated llms.txt content in a Liquid `{% raw %}` block before it is
+ * written to `templates/llms.txt.liquid`. The file is served through the
+ * theme's Liquid engine, so an untrusted product/collection title or
+ * description containing `{{ }}` or `{% %}` would otherwise be interpreted
+ * (or corrupt) the template instead of being rendered as plain text. Pure.
+ */
+export function wrapLlmsTxtForTheme(content: string): string {
+  return `{% raw %}\n${content}{% endraw %}\n`;
+}
+
+/**
+ * Inverse of `wrapLlmsTxtForTheme` — strip the `{% raw %}` wrapper so a caller
+ * reading the asset back sees the original Markdown. Content written before
+ * this wrapper existed has no wrapper and is returned unchanged. Pure.
+ */
+export function unwrapLlmsTxtFromTheme(content: string): string {
+  const m = content.match(RAW_WRAP_RE);
+  return m ? m[1] : content;
+}
+
 // ── robots.txt AI-crawler audit ──────────────────────────────────────────────
 
 interface RobotsGroup {
@@ -167,13 +190,24 @@ function parseRobots(txt: string): RobotsGroup[] {
 
 export interface RobotsCrawlerStatus {
   crawler: string;
+  /** Fully blocked: `Disallow: /` (no overriding `Allow: /`) — kept as-is for
+   *  backward compatibility with existing consumers of this shape. */
   blocked: boolean;
+  /**
+   * Some `Disallow` rule applies to this crawler's group (or the `*` fallback)
+   * but the site isn't fully blocked — e.g. `Disallow: /products/`. This still
+   * hides real storefront content from the crawler, just not everything, so it
+   * is surfaced separately rather than folded into `blocked`.
+   */
+  partiallyBlocked: boolean;
 }
 
 /**
- * Audit live robots.txt content for AI crawlers that are fully blocked
- * (a matching `User-agent` group — or the `*` fallback — with `Disallow: /` and
- * no overriding `Allow: /`). Pure.
+ * Audit live robots.txt content for AI crawlers that are blocked, distinguishing
+ * a full block (a matching `User-agent` group — or the `*` fallback — with
+ * `Disallow: /` and no overriding `Allow: /`) from a partial block (some other
+ * non-empty `Disallow` rule in that group, e.g. `Disallow: /products/`, which
+ * still hides storefront content from the crawler). Pure.
  */
 export function auditRobotsTxt(robotsTxt: string): RobotsCrawlerStatus[] {
   const groups = parseRobots(robotsTxt || "");
@@ -183,13 +217,17 @@ export function auditRobotsTxt(robotsTxt: string): RobotsCrawlerStatus[] {
     if (exact) return exact;
     return groups.find((g) => g.agents.includes("*")) ?? null;
   };
-  const isBlocked = (g: RobotsGroup | null): boolean => {
-    if (!g) return false;
+  const statusFor = (g: RobotsGroup | null): { blocked: boolean; partiallyBlocked: boolean } => {
+    if (!g) return { blocked: false, partiallyBlocked: false };
     const blocksRoot = g.rules.some((r) => r.type === "disallow" && r.path === "/");
     const allowsRoot = g.rules.some((r) => r.type === "allow" && r.path === "/");
-    return blocksRoot && !allowsRoot;
+    if (blocksRoot && !allowsRoot) return { blocked: true, partiallyBlocked: false };
+    // `Disallow:` with an empty value means "allow everything" per the spec —
+    // only a non-empty path is a real (partial) restriction.
+    const hasPartialDisallow = g.rules.some((r) => r.type === "disallow" && r.path.trim() !== "");
+    return { blocked: false, partiallyBlocked: hasPartialDisallow };
   };
-  return AI_CRAWLERS.map((crawler) => ({ crawler, blocked: isBlocked(groupFor(crawler)) }));
+  return AI_CRAWLERS.map((crawler) => ({ crawler, ...statusFor(groupFor(crawler)) }));
 }
 
 // ── Theme file I/O (Admin GraphQL) ───────────────────────────────────────────
@@ -277,7 +315,12 @@ export async function generateAndUpsertLlmsTxt(
     collections: collections.map((c: any) => ({ title: c.title, handle: c.handle })),
   });
 
-  const { userErrors } = await upsertThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME, content);
+  const { userErrors } = await upsertThemeFile(
+    admin,
+    themeId,
+    LLMS_TEMPLATE_FILENAME,
+    wrapLlmsTxtForTheme(content),
+  );
   if (userErrors.length > 0) return { ok: false, error: "upsert_failed" };
   return { ok: true };
 }
@@ -285,13 +328,20 @@ export async function generateAndUpsertLlmsTxt(
 export interface AeoAnalysis {
   llmsTxtExists: boolean;
   blockedCrawlers: string[];
+  /** AI crawlers with a non-empty `Disallow` rule that doesn't block the whole
+   *  site (see `RobotsCrawlerStatus.partiallyBlocked`). Additive field — older
+   *  consumers that only read `blockedCrawlers` are unaffected. */
+  partiallyBlockedCrawlers: string[];
   robotsAuditAvailable: boolean;
 }
 
+/** Fetches involved in the AEO audit must not hang the route forever. */
+const FETCH_TIMEOUT_MS = 10_000;
+
 /**
  * Read-only AEO status: does llms.txt exist in the theme, and which AI crawlers
- * does the live robots.txt block. Best-effort: failures degrade to empty, never
- * throw at the route.
+ * does the live robots.txt block (fully or partially). Best-effort: failures
+ * degrade to empty, never throw at the route.
  */
 export async function analyzeAeo(
   admin: AdminApiContext,
@@ -302,24 +352,30 @@ export async function analyzeAeo(
     const themeId = await getMainThemeId(admin);
     if (themeId) {
       const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
-      llmsTxtExists = !!existing && existing.trim().length > 0;
+      llmsTxtExists = !!existing && unwrapLlmsTxtFromTheme(existing).trim().length > 0;
     }
   } catch {
     /* leave false */
   }
 
   let blockedCrawlers: string[] = [];
+  let partiallyBlockedCrawlers: string[] = [];
   let robotsAuditAvailable = false;
   try {
-    const res = await fetch(`https://${shop}/robots.txt`, { redirect: "follow" });
+    const res = await fetch(`https://${shop}/robots.txt`, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (res.ok) {
       const txt = await res.text();
-      blockedCrawlers = auditRobotsTxt(txt).filter((s) => s.blocked).map((s) => s.crawler);
+      const statuses = auditRobotsTxt(txt);
+      blockedCrawlers = statuses.filter((s) => s.blocked).map((s) => s.crawler);
+      partiallyBlockedCrawlers = statuses.filter((s) => s.partiallyBlocked).map((s) => s.crawler);
       robotsAuditAvailable = true;
     }
   } catch {
     /* audit unavailable */
   }
 
-  return { llmsTxtExists, blockedCrawlers, robotsAuditAvailable };
+  return { llmsTxtExists, blockedCrawlers, partiallyBlockedCrawlers, robotsAuditAvailable };
 }

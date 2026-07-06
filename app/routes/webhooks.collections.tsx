@@ -45,6 +45,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 /**
+ * SEO tab Phase 8: best-effort IndexNow enqueue for a collection's storefront
+ * URL. Best-effort — never let it break the webhook. `getEnabledConfig` does a
+ * single (PK-indexed) query that both gates ("is IndexNow on for this shop")
+ * and feeds `enqueueResource`, so shops without IndexNow skip the handle
+ * lookup entirely and enabled shops don't load the config row twice.
+ */
+async function enqueueCollectionForIndexNow(db: any, shop: string, collectionId: string): Promise<void> {
+  try {
+    const { getEnabledConfig, enqueueResource } = await import("../services/seo/index-now.service");
+    const config = await getEnabledConfig(db, shop);
+    if (!config) return;
+    const coll = await db.collection.findUnique({ where: { id: collectionId }, select: { handle: true } });
+    if (coll?.handle) await enqueueResource(db, shop, shop, "collection", coll.handle, config);
+  } catch { /* ignore */ }
+}
+
+/**
  * Process webhook in the background
  */
 async function processWebhookAsync(
@@ -64,17 +81,13 @@ async function processWebhookAsync(
 
     if (topic === "COLLECTIONS_CREATE" || topic === "COLLECTIONS_UPDATE") {
       await syncService.syncCollection(collectionId);
-      // SEO tab Phase 8: queue the changed URL for IndexNow. Best-effort —
-      // never let it break the webhook. Check the (cheap, PK-indexed) enabled
-      // flag FIRST so shops without IndexNow skip the handle lookup entirely.
-      try {
-        const { isIndexNowEnabled, enqueueResource } = await import("../services/seo/index-now.service");
-        if (await isIndexNowEnabled(db, shop)) {
-          const coll = await db.collection.findUnique({ where: { id: collectionId }, select: { handle: true } });
-          if (coll?.handle) await enqueueResource(db, shop, shop, "collection", coll.handle);
-        }
-      } catch { /* ignore */ }
+      await enqueueCollectionForIndexNow(db, shop, collectionId);
     } else if (topic === "COLLECTIONS_DELETE") {
+      // IndexNow is meant to be told about removed URLs too, so we must
+      // enqueue BEFORE deleteCollection wipes the cache row: Shopify's
+      // collections/delete payload carries only the numeric id, not the
+      // handle, so the handle has to come from our own cache while it exists.
+      await enqueueCollectionForIndexNow(db, shop, collectionId);
       await syncService.deleteCollection(collectionId);
     }
 

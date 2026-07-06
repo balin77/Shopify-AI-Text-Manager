@@ -33,6 +33,8 @@ export const KEY_PROXY_PATH = "/apps/contentpilot/indexnow-key";
 export const INDEXNOW_MAX_URLS_PER_REQUEST = 10000;
 /** Cap on how many storefront URLs a single bulk submit gathers per type. */
 export const URL_COLLECT_CAP = 5000;
+/** The submit fetch must not hang a webhook/route forever. */
+const FETCH_TIMEOUT_MS = 10_000;
 
 export type IndexNowResourceType = "product" | "collection" | "page";
 
@@ -90,9 +92,10 @@ export async function getIndexNowConfig(db: PrismaClient, shop: string) {
 }
 
 /**
- * Cheap PK-indexed check used by webhooks to short-circuit BEFORE the (otherwise
- * wasted) handle lookup for the vast majority of shops that never enabled
- * IndexNow. Selects a single column on the shop-PK row.
+ * Cheap PK-indexed check used where only the boolean is needed (e.g. a route
+ * that doesn't also need the key/keyLocation). Selects a single column on the
+ * shop-PK row. Webhooks needing both the gate AND the config row should use
+ * `getEnabledConfig` instead, to avoid loading the config twice.
  */
 export async function isIndexNowEnabled(db: PrismaClient, shop: string): Promise<boolean> {
   const config = await db.seoIndexNowConfig.findUnique({
@@ -100,6 +103,19 @@ export async function isIndexNowEnabled(db: PrismaClient, shop: string): Promise
     select: { enabled: true },
   });
   return !!config?.enabled;
+}
+
+export type IndexNowConfig = Awaited<ReturnType<typeof getIndexNowConfig>>;
+
+/**
+ * Load the config and return it only when IndexNow is enabled, otherwise
+ * `null`. Lets a caller (e.g. a webhook) do a *single* query that both gates
+ * ("is IndexNow on for this shop") and feeds `enqueueResource`, instead of the
+ * previous `isIndexNowEnabled` + `enqueueResource` double-query per webhook.
+ */
+export async function getEnabledConfig(db: PrismaClient, shop: string): Promise<IndexNowConfig | null> {
+  const config = await getIndexNowConfig(db, shop);
+  return config?.enabled ? config : null;
 }
 
 export async function provisionIndexNow(
@@ -143,6 +159,7 @@ export async function submitUrls(
         method: "POST",
         headers: { "Content-Type": "application/json; charset=utf-8" },
         body: JSON.stringify(buildSubmitBody(host, key, keyLocation, chunk)),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       // IndexNow: 200 OK / 202 Accepted both mean success.
       if (res.ok) submitted += chunk.length;
@@ -156,10 +173,7 @@ export async function submitUrls(
 
 // ── Incremental queue (fed by webhooks, drained on demand) ───────────────────
 
-/** Enqueue a changed URL — no-op unless IndexNow is configured + enabled. */
-export async function enqueueIndexNowUrl(db: PrismaClient, shop: string, url: string): Promise<void> {
-  const config = await getIndexNowConfig(db, shop);
-  if (!config || !config.enabled) return;
+async function upsertQueueUrl(db: PrismaClient, shop: string, url: string): Promise<void> {
   await db.seoIndexNowQueue.upsert({
     where: { shop_urlHash: { shop, urlHash: urlHash(url) } },
     create: { shop, url, urlHash: urlHash(url) },
@@ -167,16 +181,37 @@ export async function enqueueIndexNowUrl(db: PrismaClient, shop: string, url: st
   });
 }
 
-/** Convenience used by webhooks: build the URL and enqueue it (best-effort). */
+/** Enqueue a changed URL — no-op unless IndexNow is configured + enabled. */
+export async function enqueueIndexNowUrl(db: PrismaClient, shop: string, url: string): Promise<void> {
+  const config = await getIndexNowConfig(db, shop);
+  if (!config || !config.enabled) return;
+  await upsertQueueUrl(db, shop, url);
+}
+
+/**
+ * Convenience used by webhooks: build the URL and enqueue it (best-effort).
+ *
+ * `config` is optional: pass the row already loaded via `getEnabledConfig` to
+ * skip a redundant config lookup (the common webhook path — see
+ * webhooks.products / webhooks.collections). When omitted, falls back to
+ * `enqueueIndexNowUrl`, which loads the config itself.
+ */
 export async function enqueueResource(
   db: PrismaClient,
   shop: string,
   host: string,
   type: IndexNowResourceType,
   handle: string,
+  config?: IndexNowConfig | null,
 ): Promise<void> {
   if (!handle) return;
-  await enqueueIndexNowUrl(db, shop, storefrontUrl(host, type, handle));
+  const url = storefrontUrl(host, type, handle);
+  if (config !== undefined) {
+    if (!config) return;
+    await upsertQueueUrl(db, shop, url);
+    return;
+  }
+  await enqueueIndexNowUrl(db, shop, url);
 }
 
 export async function getQueueCount(db: PrismaClient, shop: string): Promise<number> {

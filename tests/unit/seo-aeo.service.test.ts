@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildLlmsTxt, auditRobotsTxt, AI_CRAWLERS } from "~/services/seo/aeo.service";
+import {
+  buildLlmsTxt,
+  auditRobotsTxt,
+  AI_CRAWLERS,
+  wrapLlmsTxtForTheme,
+  unwrapLlmsTxtFromTheme,
+} from "~/services/seo/aeo.service";
 
 /** Phase 7 AEO pure logic: llms.txt generation + robots.txt AI-crawler audit. */
 
@@ -82,5 +88,64 @@ describe("auditRobotsTxt", () => {
     const blocked = blockedFor(txt);
     expect(blocked).not.toContain("GPTBot");
     expect(blocked).toContain("PerplexityBot"); // still caught by the wildcard
+  });
+
+  describe("partial blocks", () => {
+    const partialFor = (txt: string) =>
+      auditRobotsTxt(txt).filter((s) => s.partiallyBlocked).map((s) => s.crawler);
+
+    it("flags a crawler-specific partial block (e.g. Disallow: /products/)", () => {
+      const txt = "User-agent: GPTBot\nDisallow: /products/\n";
+      const statuses = auditRobotsTxt(txt);
+      const gptbot = statuses.find((s) => s.crawler === "GPTBot")!;
+      expect(gptbot.blocked).toBe(false);
+      expect(gptbot.partiallyBlocked).toBe(true);
+      // not fully blocked, so it must not show up in the legacy `blocked` list
+      expect(statuses.filter((s) => s.blocked).map((s) => s.crawler)).not.toContain("GPTBot");
+    });
+
+    it("flags a wildcard partial block for every AI crawler", () => {
+      const partial = partialFor("User-agent: *\nDisallow: /collections/\n");
+      expect(partial.sort()).toEqual([...AI_CRAWLERS].sort());
+    });
+
+    it("a fully-blocked crawler is not also reported as partially blocked", () => {
+      const statuses = auditRobotsTxt("User-agent: GPTBot\nDisallow: /\n");
+      const gptbot = statuses.find((s) => s.crawler === "GPTBot")!;
+      expect(gptbot.blocked).toBe(true);
+      expect(gptbot.partiallyBlocked).toBe(false);
+    });
+
+    it("an empty Disallow value (allow-all) is not a partial block", () => {
+      expect(partialFor("User-agent: *\nDisallow:\n")).toEqual([]);
+    });
+
+    it("stays empty for a fully permissive robots.txt", () => {
+      expect(partialFor("")).toEqual([]);
+      expect(partialFor("User-agent: *\nAllow: /\n")).toEqual([]);
+    });
+  });
+});
+
+describe("llms.txt {% raw %} wrapping (Liquid injection guard)", () => {
+  it("wraps content in a {% raw %} / {% endraw %} block", () => {
+    const wrapped = wrapLlmsTxtForTheme("# Shop\n\n- [A](https://x/products/a)\n");
+    expect(wrapped.startsWith("{% raw %}\n")).toBe(true);
+    expect(wrapped.trimEnd().endsWith("{% endraw %}")).toBe(true);
+  });
+
+  it("content containing Liquid tags ({{ }}, {% %}) survives the wrap/unwrap round-trip untouched", () => {
+    const malicious = "- [{{ product.title }} {% if true %}oops{% endif %}](https://x/products/a)\n";
+    const wrapped = wrapLlmsTxtForTheme(malicious);
+    // the dangerous tags are present but inert inside {% raw %} ... {% endraw %}
+    expect(wrapped).toContain("{% raw %}");
+    expect(wrapped).toContain("{% endraw %}");
+    expect(wrapped).toContain(malicious.trim());
+    expect(unwrapLlmsTxtFromTheme(wrapped)).toBe(malicious);
+  });
+
+  it("unwrap is a no-op on content that was never wrapped (pre-existing assets)", () => {
+    const plain = "# Shop\n\n- [A](https://x/products/a)\n";
+    expect(unwrapLlmsTxtFromTheme(plain)).toBe(plain);
   });
 });
