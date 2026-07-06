@@ -1302,8 +1302,13 @@ export class BackgroundSyncService {
         // Strategy C (MVP) — rewrite the published theme's enumerated ids onto the
         // target theme. Documented limitation: target-unique categories/embeds are
         // missed (full solution parses settings_schema/settings_data.json).
+        // Only ids that actually carry a theme_id= param are rewritten: an id
+        // without it would otherwise be passed through unchanged and fetch MAIN's
+        // content, which we'd then mislabel as the target theme.
         const mainIds = await this.enumerateMainResourceIds(resourceType);
-        ids = mainIds.map((rid) => rid.replace(/([?&]theme_id=)\d+/, `$1${num}`));
+        ids = mainIds
+          .filter((rid) => /[?&]theme_id=\d+/.test(rid))
+          .map((rid) => rid.replace(/([?&]theme_id=)\d+/, `$1${num}`));
       } else {
         return [];
       }
@@ -1429,6 +1434,14 @@ export class BackgroundSyncService {
 
       // Track all synced theme content combinations for cleanup
       const syncedCombinations = new Set<string>();
+      // Track which theme(s) this run actually enumerated. The combination
+      // cleanup below only ever considers rows belonging to these themes, so a
+      // FULL sync (which enumerates ONLY the published theme) never deletes rows
+      // that a theme-scoped syncTheme() wrote for another theme — and a scoped
+      // sync never touches any theme but its target. Critical: without this, the
+      // periodic full sync wipes every non-MAIN row (their combos are absent
+      // from the MAIN-only syncedCombinations).
+      const syncedThemeIds = new Set<string>();
 
       // Track fetched translations to avoid duplicate API calls
       const translationCache = new Map<string, ShopifyTranslation[]>();
@@ -1796,6 +1809,7 @@ export class BackgroundSyncService {
               // (deterministic resourceIds carry no ?theme_id=); otherwise it is
               // extracted from the GID ('' = theme-agnostic).
               const themeId = targetThemeId ?? (extractThemeIdFromResourceId(resource.resourceId) ?? '');
+              syncedThemeIds.add(themeId);
               // Promote any pre-existing legacy row (themeId="") for this resource to
               // its real Theme-GID FIRST, so the upsert below UPDATEs it instead of
               // creating a duplicate. This makes a theme-aware sync that runs before
@@ -1981,9 +1995,10 @@ export class BackgroundSyncService {
         // domain so the System / Online-Store-Extras / Selling-Plans rubrics,
         // which share this table, are never swept by a theme-only sync).
         const existingThemeContent = await db.themeContent.findMany({
-          // Theme-scoped: only THIS theme's rows are cleanup candidates, so a
-          // scoped sync never sweeps another theme's (e.g. MAIN's) content.
-          where: { shop: this.shop, domain: 'theme', ...(targetThemeId ? { themeId: targetThemeId } : {}) },
+          // Only rows of the theme(s) enumerated THIS run are cleanup candidates.
+          // Full sync enumerates only MAIN → never sweeps a scoped theme's rows;
+          // scoped sync only its target → never sweeps MAIN's.
+          where: { shop: this.shop, domain: 'theme', themeId: { in: [...syncedThemeIds] } },
           select: { resourceId: true, groupId: true }
         });
 
@@ -2006,7 +2021,7 @@ export class BackgroundSyncService {
               where: {
                 shop: this.shop,
                 domain: 'theme',
-                ...(targetThemeId ? { themeId: targetThemeId } : {}),
+                themeId: { in: [...syncedThemeIds] },
                 OR: deleteConditions,
               },
             }),
@@ -2014,7 +2029,7 @@ export class BackgroundSyncService {
               where: {
                 shop: this.shop,
                 domain: 'theme',
-                ...(targetThemeId ? { themeId: targetThemeId } : {}),
+                themeId: { in: [...syncedThemeIds] },
                 OR: deleteConditions,
               },
             }),
