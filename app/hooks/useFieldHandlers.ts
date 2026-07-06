@@ -73,6 +73,7 @@ export interface FieldHandlerProps {
   baselineValuesRef: { current: Record<string, string> };
   revalidatorRef: { current: { state: string; revalidate: () => void } };
   savedLocaleRef: { current: string | null };
+  savedMarketIdRef: { current: string };
   savedItemIdRef: { current: string | null };
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
@@ -209,6 +210,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
@@ -344,6 +346,7 @@ const handleSave = () => {
 
   // Skip next data load to prevent revalidation from overwriting cleared/saved values.
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
+  savedMarketIdRef.current = selectedMarketId;
   savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
   setIsSaving(true); // Drive spinner — fetcher.state is unreliable due to React 18 batching
@@ -571,6 +574,7 @@ const handleTranslateField = (fieldKey: string) => {
         }
 
         savedLocaleRef.current = targetLocale;
+        savedMarketIdRef.current = selectedMarketId;
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
@@ -1022,6 +1026,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // due to stale originalLoadedValuesRef timing during async callbacks).
     foreignForm[fieldKey] = suggestion;
     savedLocaleRef.current = L;
+    savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
@@ -1109,6 +1114,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           // this as primary via the form `locale` field, and processing the
           // response under `primaryLocale` would pick a stale primary baseline.
           savedLocaleRef.current = L;
+          savedMarketIdRef.current = selectedMarketId;
           savedItemIdRef.current = requestItemId;
           isSavePendingRef.current = true;
           isSaveFromTranslateRef.current = true;
@@ -1520,6 +1526,7 @@ const handleClearAllForLocaleConfirm = () => {
   // Submit save and set tracking refs
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
   isSavePendingRef.current = true;
   safeSubmit(formDataObj, { method: "POST" });
 };
@@ -1660,6 +1667,7 @@ const handleCopyField = (fieldKey: string): void => {
   pendingCopyFieldKeyRef.current = fieldKey;
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
   // Track WHICH item is being saved so the save-response handler's
   // `isSavedItemCurrent` guard passes. Without this, savedItemIdRef stays null
   // (cleared by a prior save) → the handler early-returns before reaching

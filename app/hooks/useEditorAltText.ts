@@ -42,6 +42,7 @@ interface UseEditorAltTextProps {
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
   savedLocaleRef: React.MutableRefObject<string | null>;
+  savedMarketIdRef: React.MutableRefObject<string>;
   isSavePendingRef: React.MutableRefObject<boolean>;
   isSaveFromTranslateRef: React.MutableRefObject<boolean>;
   revalidatorRef: React.MutableRefObject<{ state: string; revalidate: () => void }>;
@@ -112,6 +113,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     buildFieldsForSave,
     safeSubmit,
     savedLocaleRef,
+    savedMarketIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     revalidatorRef,
@@ -279,6 +281,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
     savedLocaleRef.current = currentLanguage;
+    savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
@@ -390,6 +393,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
               savedLocaleRef.current = currentLanguage;
+              savedMarketIdRef.current = selectedMarketId;
               isSavePendingRef.current = true;
               isSaveFromTranslateRef.current = true;
               safeSubmit(formDataObj, { method: "POST" });
@@ -719,6 +723,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
     savedLocaleRef.current = currentLanguage;
+    savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
 
@@ -773,6 +778,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         };
         foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
         savedLocaleRef.current = L;
+        savedMarketIdRef.current = "";
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(foreignForm, { method: "POST" });
@@ -885,6 +891,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
       savedLocaleRef.current = primaryLocale;
+      savedMarketIdRef.current = "";
       isSavePendingRef.current = true;
       safeSubmit(formDataObj, { method: "POST" });
       setOriginalAltTexts(newAltTexts);
@@ -905,6 +912,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
     savedLocaleRef.current = primaryLocale;
+    savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
     setOriginalAltTexts(newAltTexts);

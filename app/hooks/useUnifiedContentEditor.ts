@@ -472,6 +472,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
+  // Market a save was SUBMITTED under (pinned at submit time, like savedLocaleRef).
+  // The alt-text onSaveComplete mirror must tag rows with the submitted market —
+  // NOT the live selectedMarketId, which may differ if the save was global (bulk /
+  // Accept & Translate) or the user switched market mid-save.
+  const savedMarketIdRef = useRef<string>("");
 
   // Ref to track the ITEM ID that was active when the save was initiated.
   // Allows response handlers to detect if the user navigated away before
@@ -483,6 +488,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedMarketId: string;
     savedItemId: string | null;
   }>>([]);
 
@@ -535,6 +541,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
     savedLocaleRef,
+    savedMarketIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     revalidatorRef,
@@ -583,6 +590,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItem,
     shopLocales,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
@@ -1116,6 +1124,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
 
         savedLocaleRef.current = targetLocale;
+        // Legacy translateField auto-save carries marketId when foreign (see above).
+        savedMarketIdRef.current = targetLocale !== primaryLocale ? selectedMarketIdRef.current : "";
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
       }
@@ -1239,6 +1249,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     savedLocaleRef.current = currentLanguage;
+    // This bulk alt auto-save (generate-all) writes globally — see formDataObj above
+    // (no marketId) — so the mirror must tag the saved alt as global too.
+    savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
@@ -1492,8 +1505,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       } else {
         // Mirror the saved alt-text into the in-memory translations, scoped to
-        // the market it was saved under so market and global entries coexist.
-        const savedMarketId = selectedMarketIdRef.current;
+        // the market the save was SUBMITTED under (savedMarketIdRef, pinned at
+        // submit time) — not the live market, which may differ for a global save
+        // (bulk / Accept & Translate) or after a mid-save market switch.
+        const savedMarketId = savedMarketIdRef.current;
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
@@ -1992,6 +2007,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Restore metadata for this queued save
       savedLocaleRef.current = next.savedLocale;
+      savedMarketIdRef.current = next.savedMarketId;
       savedItemIdRef.current = next.savedItemId;
       isSavePendingRef.current = true;
 
@@ -2085,6 +2101,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
