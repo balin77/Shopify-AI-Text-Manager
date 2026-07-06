@@ -5,8 +5,9 @@
  *  - Native URL redirects via Shopify's `urlRedirect*` Admin API (live, small,
  *    paginated — no catalog sweep). Requires `write_online_store_navigation`.
  *  - A self-hosted 404 collector (`Seo404Hit`) fed by the storefront app-embed
- *    beacon, because Shopify exposes no 404 logs via API. Mirrors the
- *    DirectTranslationCandidate FIFO pattern.
+ *    beacon, because Shopify exposes no 404 logs via API. Loosely inspired by
+ *    the DirectTranslationCandidate upsert-increment pattern, but pruning is
+ *    lowest-count-then-oldest (not pure FIFO) — see record404Hit.
  *
  * `validateRedirect` and `record404Hit` are pure / DB-only so they are unit
  * tested without a live Admin API.
@@ -24,7 +25,7 @@ import {
   URL_REDIRECT_DELETE,
 } from "../../graphql/content.mutations";
 
-/** Max distinct 404 rows kept per shop (oldest-untouched pruned). */
+/** Max distinct 404 rows kept per shop (lowest-count, then oldest, pruned). */
 export const MAX_404_HITS_PER_SHOP = 1000;
 
 export interface RedirectInput {
@@ -55,19 +56,30 @@ export function validateRedirect({ path, target }: RedirectInput): string | null
   return null;
 }
 
-/** Normalize a storefront path for hashing/storage (strip origin, trim, lower-host-less). */
+/**
+ * Normalize a storefront path for hashing/storage (strip origin, trim,
+ * lower-host-less). The query string is dropped ENTIRELY (not just tracking
+ * params such as utm_ / fbclid / gclid) — 404 dedup is purely path-based, and
+ * every hit naturally carries a distinct query string (random cache-busters,
+ * referral params, ...) that would otherwise fragment one broken path into
+ * unbounded rows. The path itself stays case-preserved (unlike hosts, paths
+ * can be case-sensitive on some storefronts).
+ */
 export function normalize404Path(raw: string): string {
   let path = (raw ?? "").trim();
   if (!path) return "";
-  // Strip an accidental absolute URL down to path+query.
+  // Strip an accidental absolute URL down to just the path.
   try {
     if (/^https?:\/\//i.test(path)) {
       const u = new URL(path);
-      path = u.pathname + u.search;
+      path = u.pathname;
     }
   } catch {
     /* keep the raw value */
   }
+  // Relative input (no scheme) may still carry "?...": drop it too.
+  const queryIdx = path.indexOf("?");
+  if (queryIdx >= 0) path = path.slice(0, queryIdx);
   if (!path.startsWith("/")) path = "/" + path;
   // Collapse trailing slash (except root) so "/x" and "/x/" are one row.
   if (path.length > 1 && path.endsWith("/")) path = path.replace(/\/+$/, "");
@@ -89,8 +101,10 @@ export interface Hit404 {
 }
 
 /**
- * Record a storefront 404. Upsert-increments the (shop, pathHash) row and FIFO-
- * prunes the shop down to MAX_404_HITS_PER_SHOP. Returns false for empty input.
+ * Record a storefront 404. Upsert-increments the (shop, pathHash) row and, for
+ * newly-created rows, prunes the shop down to MAX_404_HITS_PER_SHOP by
+ * evicting the lowest-count / oldest-lastSeen rows first. Returns false for
+ * empty input.
  */
 export async function record404Hit(
   db: PrismaClient,
@@ -102,24 +116,40 @@ export async function record404Hit(
   const hash = pathHash(path);
   const referrer = input.referrer ? String(input.referrer).slice(0, 2000) : null;
 
-  await db.seo404Hit.upsert({
+  const row = await db.seo404Hit.upsert({
     where: { shop_pathHash: { shop, pathHash: hash } },
     // A dismissed/redirected path that recurs advances count/lastSeen but keeps
     // its status (so the merchant's decision isn't silently undone).
     create: { shop, path, pathHash: hash, referrer },
-    update: { count: { increment: 1 }, lastSeenAt: new Date(), referrer },
+    // A follow-up hit with no referrer (e.g. direct navigation / referrer
+    // stripped by the browser) must not clobber a referrer recorded earlier —
+    // only overwrite it when this hit actually carried one.
+    update: {
+      count: { increment: 1 },
+      lastSeenAt: new Date(),
+      ...(referrer !== null ? { referrer } : {}),
+    },
+    select: { count: true },
   });
 
-  const total = await db.seo404Hit.count({ where: { shop } });
-  if (total > MAX_404_HITS_PER_SHOP) {
-    const stale = await db.seo404Hit.findMany({
-      where: { shop },
-      orderBy: { lastSeenAt: "asc" },
-      take: total - MAX_404_HITS_PER_SHOP,
-      select: { id: true },
-    });
-    if (stale.length) {
-      await db.seo404Hit.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
+  // Only run the prune check for a brand-new row (count === 1). Existing rows
+  // just increment in place — they never grow the table — so checking the
+  // shop's total on every single hit is wasted work on the hot beacon path.
+  if (row.count === 1) {
+    const total = await db.seo404Hit.count({ where: { shop } });
+    if (total > MAX_404_HITS_PER_SHOP) {
+      const stale = await db.seo404Hit.findMany({
+        where: { shop },
+        // Evict the least-significant rows first: lowest hit count, then
+        // oldest lastSeenAt as a tiebreaker — so one-off flood noise dies
+        // before a path merchants are actually still hitting repeatedly.
+        orderBy: [{ count: "asc" }, { lastSeenAt: "asc" }],
+        take: total - MAX_404_HITS_PER_SHOP,
+        select: { id: true },
+      });
+      if (stale.length) {
+        await db.seo404Hit.deleteMany({ where: { id: { in: stale.map((s) => s.id) } } });
+      }
     }
   }
   return true;

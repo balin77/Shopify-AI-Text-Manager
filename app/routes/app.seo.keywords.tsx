@@ -119,6 +119,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitle: c?.seoTitle ?? "",
       metaDescription: c?.metaDescription ?? "",
       bodyHtml: c?.bodyHtml ?? "",
+      // Product/Collection H1s come from the title (themes render it as the
+      // page H1); Article/Page may also carry an explicit <h1> in the body.
+      resourceType: row.resourceType as KeywordResourceType,
     });
     return {
       id: row.id,

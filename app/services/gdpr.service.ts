@@ -157,16 +157,24 @@ export async function redactCustomerData(
 
   logger.info(`[GDPR] Redacting data for customer ${customer.id} from shop ${shop_domain}`);
 
+  // R5-G2: mirror exportCustomerData's defensive parsing — an unguarded
+  // BigInt(customer.id) throws on an empty/non-numeric/placeholder value
+  // (e.g. Shopify's compliance test payload), which made this handler 500
+  // instead of redacting what it safely can.
+  const userIdBig = toBigIntOrNull(customer?.id);
+  const orConditions: Array<Record<string, unknown>> = [];
+  if (customer?.email) orConditions.push({ email: customer.email });
+  if (userIdBig !== null) orConditions.push({ userId: userIdBig });
+
   // Delete all sessions for this customer
-  const deleted = await db.session.deleteMany({
-    where: {
-      shop: shop_domain,
-      OR: [
-        { email: customer.email },
-        { userId: BigInt(customer.id) },
-      ],
-    },
-  });
+  const deleted = orConditions.length === 0
+    ? { count: 0 }
+    : await db.session.deleteMany({
+      where: {
+        shop: shop_domain,
+        OR: orConditions,
+      },
+    });
 
   logger.info(`[GDPR] Redacted ${deleted.count} sessions for customer ${customer.id}`);
 }

@@ -247,9 +247,8 @@ export default function SeoSearchConsole() {
       }
       if (fetcher.data.kind === "sitemap") return { tone: "success" as const, msg: g.sitemapSubmitted };
       if (fetcher.data.kind === "disconnected") return { tone: "info" as const, msg: g.disconnected };
-      // NEW STRING (not in i18n yet — see report; suggested key: searchConsolePage.propertySaved)
       if (fetcher.data.kind === "propertySelected") {
-        return { tone: "success" as const, msg: "Search Console property saved." };
+        return { tone: "success" as const, msg: g.propertySaved };
       }
     } else {
       const map: Record<string, string> = {
@@ -270,8 +269,7 @@ export default function SeoSearchConsole() {
         {data.statusParam === "connected" && <Banner tone="success">{g.connectedBanner}</Banner>}
         {data.statusParam === "denied" && <Banner tone="warning">{g.deniedBanner}</Banner>}
         {data.statusParam === "select_property" && (
-          // NEW STRING (not in i18n yet — see report; suggested key: searchConsolePage.selectPropertyBanner)
-          <Banner tone="info">Connected. Please choose your Search Console property below.</Banner>
+          <Banner tone="info">{g.selectPropertyBanner}</Banner>
         )}
         {(data.statusParam === "error" || data.statusParam === "no_sites" || data.statusParam === "no_refresh_token") && (
           <Banner tone="critical">{g.connectErrorBanner}</Banner>
@@ -361,19 +359,15 @@ export default function SeoSearchConsole() {
             {data.needsPropertySelection && (
               <Card>
                 <BlockStack gap="300">
-                  {/* NEW STRINGS (not in i18n yet — see report; suggested keys:
-                      searchConsolePage.selectPropertyTitle / selectPropertyBody /
-                      selectPropertyButton / selectPropertyEmpty) */}
                   <Text as="h3" variant="headingMd">
-                    Select your Search Console property
+                    {g.selectPropertyTitle}
                   </Text>
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    We couldn't automatically match a verified property to this store's domain. Choose the
-                    correct one below.
+                    {g.selectPropertyBody}
                   </Text>
                   {data.availableProperties.length === 0 ? (
                     <Text as="p" tone="subdued">
-                      No verified properties were found on this Google account.
+                      {g.selectPropertyEmpty}
                     </Text>
                   ) : (
                     <InlineStack gap="200" blockAlign="end" wrap>
@@ -397,7 +391,7 @@ export default function SeoSearchConsole() {
                           )
                         }
                       >
-                        Save property
+                        {g.selectPropertyButton}
                       </Button>
                     </InlineStack>
                   )}

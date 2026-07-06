@@ -8,6 +8,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { stripHtml } from "../../utils/seo-score";
 
 export type KeywordResourceType = "Product" | "Collection" | "Article" | "Page";
 
@@ -17,6 +18,12 @@ export interface KeywordOnPageInput {
   seoTitle?: string | null;
   metaDescription?: string | null;
   bodyHtml?: string | null;
+  /**
+   * Determines the H1 source (see analyzeOnPage doc below). Optional so
+   * existing callers keep working — when omitted, the more permissive
+   * article/page behavior (title OR an explicit body <h1>) is used.
+   */
+  resourceType?: KeywordResourceType;
 }
 
 export interface KeywordFinding {
@@ -46,34 +53,50 @@ export interface KeywordOnPageResult {
   score: number;
 }
 
-function stripTags(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 /** Extract the first H1's text from raw HTML (BEFORE stripping the whole body). */
 function extractH1(html: string): string {
   const m = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-  return m ? stripTags(m[1]) : "";
+  return m ? stripHtml(m[1]) : "";
 }
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function countOccurrences(haystackLower: string, needleLower: string): number {
-  if (!needleLower) return 0;
-  const re = new RegExp(escapeRegExp(needleLower), "g");
-  const matches = haystackLower.match(re);
+/**
+ * Unicode-aware "whole word(s)" match: the keyword must be bounded by
+ * start/end-of-string or a non-letter/non-digit character on each side, so
+ * "tee" no longer matches inside "Garantee" (R-keywords-1). A multi-word
+ * keyword (escaped, so its internal literal space survives) still matches
+ * across a single space, e.g. "blue shoes" inside "...blue shoes...".
+ * `giu` flags: global (for counting), case-insensitive, unicode (so
+ * `\p{L}`/`\p{N}` property escapes are valid and match non-ASCII letters).
+ */
+function buildWordBoundaryRegex(needleNormalized: string): RegExp {
+  const escaped = escapeRegExp(needleNormalized);
+  return new RegExp(`(?<=^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "giu");
+}
+
+/** Case/diacritic-normalize for matching — NFC so composed vs. combining-mark
+ *  spellings of the same character (e.g. umlauts) compare equal. */
+function normalizeForMatch(s: string): string {
+  return s.normalize("NFC").toLocaleLowerCase();
+}
+
+function containsWord(haystack: string, needleNormalized: string): boolean {
+  if (!needleNormalized) return false;
+  return buildWordBoundaryRegex(needleNormalized).test(haystack);
+}
+
+function countOccurrences(haystack: string, needleNormalized: string): number {
+  if (!needleNormalized) return 0;
+  const matches = haystack.match(buildWordBoundaryRegex(needleNormalized));
   return matches ? matches.length : 0;
 }
 
 /** Normalize a keyword for storage and matching (lowercased, single-spaced). */
 export function normalizeKeyword(keyword: string): string {
-  return keyword.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalizeForMatch(keyword.trim().replace(/\s+/g, " "));
 }
 
 export function analyzeOnPage(input: KeywordOnPageInput): KeywordOnPageResult {
@@ -83,25 +106,36 @@ export function analyzeOnPage(input: KeywordOnPageInput): KeywordOnPageResult {
   const metaDescription = input.metaDescription ?? "";
   const rawBody = input.bodyHtml ?? "";
 
-  const h1Text = extractH1(rawBody);
-  const bodyText = stripTags(rawBody);
+  const bodyText = stripHtml(rawBody);
 
-  const titleL = title.toLowerCase();
-  const seoTitleL = seoTitle.toLowerCase();
-  const metaL = metaDescription.toLowerCase();
-  const h1L = h1Text.toLowerCase();
-  const bodyL = bodyText.toLowerCase();
+  const titleL = normalizeForMatch(title);
+  const seoTitleL = normalizeForMatch(seoTitle);
+  const metaL = normalizeForMatch(metaDescription);
+  const bodyL = normalizeForMatch(bodyText);
+
+  // R-keywords-2: Shopify themes render the item's TITLE as the storefront H1
+  // (product/collection descriptionHtml never contains a real h1), so scanning
+  // only descriptionHtml for `<h1>` unfairly penalized every product/collection.
+  // For products/collections the effective H1 is the title. Articles/pages MAY
+  // additionally contain an authored `<h1>` in the body — kept as an extra
+  // signal for those types (and as the permissive default when the caller
+  // hasn't been updated to pass `resourceType` yet).
+  const includeBodyH1 = input.resourceType !== "Product" && input.resourceType !== "Collection";
+  const explicitH1Text = includeBodyH1 ? extractH1(rawBody) : "";
+  const explicitH1L = normalizeForMatch(explicitH1Text);
+
+  const titleHasKeyword = containsWord(titleL, keyword);
 
   const presence = {
-    title: !!keyword && titleL.includes(keyword),
-    seoTitle: !!keyword && seoTitleL.includes(keyword),
-    metaDescription: !!keyword && metaL.includes(keyword),
-    h1: !!keyword && h1L.includes(keyword),
-    body: !!keyword && bodyL.includes(keyword),
+    title: titleHasKeyword,
+    seoTitle: containsWord(seoTitleL, keyword),
+    metaDescription: containsWord(metaL, keyword),
+    h1: titleHasKeyword || (!!explicitH1L && containsWord(explicitH1L, keyword)),
+    body: containsWord(bodyL, keyword),
   };
 
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
-  const occurrences = keyword ? countOccurrences(bodyL, keyword) : 0;
+  const occurrences = countOccurrences(bodyL, keyword);
   const keywordWords = keyword ? keyword.split(/\s+/).filter(Boolean).length : 1;
 
   const densityPct =
@@ -115,8 +149,8 @@ export function analyzeOnPage(input: KeywordOnPageInput): KeywordOnPageResult {
 
   let firstPositionPct: number | null = null;
   if (presence.body && bodyText.length > 0) {
-    const idx = bodyL.indexOf(keyword);
-    firstPositionPct = idx >= 0 ? Math.round((idx / bodyText.length) * 100) : null;
+    const match = buildWordBoundaryRegex(keyword).exec(bodyL);
+    firstPositionPct = match ? Math.round((match.index / bodyText.length) * 100) : null;
   }
 
   // Findings (codes → t.seo.keywordsPage.findings.*)

@@ -4,6 +4,8 @@ import {
   scoreTone,
   scoreLabelKey,
   progressTone,
+  seoTitleEffectiveLimit,
+  stripHtml,
   DEFAULT_SEO_TITLE_LIMIT,
 } from "~/utils/seo-score";
 
@@ -164,6 +166,71 @@ describe("exclusions drop the criterion from maxScore", () => {
     // applicable max = title15 + seo15 + meta20 = 50; earned 15+0+20 = 35 → 70
     expect(r.score).toBe(70);
     expect(r.findings.some((f) => f.code.startsWith("description"))).toBe(false);
+  });
+});
+
+describe("seoTitleEffectiveLimit — suffix-adjusted budget with a floor", () => {
+  it("returns the default 60 when there is no suffix", () => {
+    expect(seoTitleEffectiveLimit(undefined)).toBe(60);
+    expect(seoTitleEffectiveLimit(null)).toBe(60);
+    expect(seoTitleEffectiveLimit("")).toBe(60);
+  });
+  it("subtracts the suffix length", () => {
+    expect(seoTitleEffectiveLimit(" – Patis Universe")).toBe(60 - " – Patis Universe".length);
+  });
+  it("floors at 20 instead of going to zero/negative for a long suffix", () => {
+    expect(seoTitleEffectiveLimit("A".repeat(60))).toBe(20);
+    expect(seoTitleEffectiveLimit("A".repeat(100))).toBe(20);
+  });
+});
+
+describe("computeSeoScore defensively clamps a caller-computed limit <= 0", () => {
+  it("a suffix long enough to drive the inline formula to 0 doesn't make every seoTitle 'too long'", () => {
+    const base = {
+      title: "A".repeat(40),
+      description: "D".repeat(200),
+      metaDescription: "M".repeat(140),
+      totalImages: 0,
+      imagesWithAlt: 0,
+    };
+    // Mirrors a caller still using the un-clamped `suffix ? 60 - suffix.length : 60`.
+    const r = computeSeoScore({ ...base, seoTitle: "S".repeat(15), seoTitleEffectiveLimit: 0 });
+    expect(r.findings.find((f) => f.code.startsWith("seoTitle"))?.code).toBe("seoTitleGood");
+  });
+});
+
+describe("stripHtml — tag/entity/whitespace normalization shared with keywords.service", () => {
+  it("replaces tags with a space so adjacent blocks don't concatenate", () => {
+    expect(stripHtml("<p>A</p><p>B</p>")).toBe("A B");
+  });
+  it("decodes common named entities, including German umlauts", () => {
+    expect(stripHtml("Gr&ouml;&szlig;e &amp; Farbe")).toBe("Größe & Farbe");
+    expect(stripHtml("&lt;b&gt;bold&lt;/b&gt; &quot;quoted&quot; &#39;it&#39;s&#39;")).toBe(
+      `<b>bold</b> "quoted" 'it's'`,
+    );
+  });
+  it("decodes numeric (decimal + hex) entities", () => {
+    expect(stripHtml("&#65;&#x42;")).toBe("AB");
+  });
+  it("collapses whitespace and trims", () => {
+    expect(stripHtml("  a   \n\t  b  ")).toBe("a b");
+  });
+  it("a body of only whitespace/tags/&nbsp; strips down to empty", () => {
+    expect(stripHtml("<div>   </div>\n<p>&nbsp;</p>")).toBe("");
+    expect(stripHtml(null)).toBe("");
+    expect(stripHtml(undefined)).toBe("");
+  });
+
+  it("computeSeoScore treats a whitespace/tag-only description as missing (descriptionMissing)", () => {
+    const r = computeSeoScore({
+      title: "A".repeat(40),
+      description: "<p>&nbsp;</p>   ",
+      seoTitle: "S".repeat(40),
+      metaDescription: "M".repeat(140),
+      totalImages: 0,
+      imagesWithAlt: 0,
+    });
+    expect(r.findings.find((f) => f.code.startsWith("description"))?.code).toBe("descriptionMissing");
   });
 });
 

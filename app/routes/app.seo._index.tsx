@@ -24,7 +24,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
-import { scoreTone, progressTone } from "../utils/seo-score";
+import { scoreTone, progressTone, seoTitleEffectiveLimit } from "../utils/seo-score";
 import { analyzeStore, type AuditType } from "../services/seo/audit.service";
 import type { Plan } from "../config/plans";
 
@@ -44,9 +44,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   const suffix =
     settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
-  const seoTitleEffectiveLimit = suffix ? 60 - suffix.length : 60;
-
-  const audit = await analyzeStore(session.shop, { db, seoTitleEffectiveLimit, plan });
+  const audit = await analyzeStore(session.shop, {
+    db,
+    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
+    plan,
+  });
   return json({ audit });
 };
 

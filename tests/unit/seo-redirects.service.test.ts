@@ -34,8 +34,12 @@ describe("validateRedirect", () => {
 });
 
 describe("normalize404Path", () => {
-  it("strips an absolute URL to path+query", () => {
-    expect(normalize404Path("https://shop.com/foo/bar?x=1")).toBe("/foo/bar?x=1");
+  it("strips an absolute URL's query string entirely (path-only dedup)", () => {
+    expect(normalize404Path("https://shop.com/foo/bar?x=1")).toBe("/foo/bar");
+  });
+  it("strips a query string on a bare relative path too (utm_*/fbclid/gclid etc.)", () => {
+    expect(normalize404Path("/foo/bar?utm_source=x&fbclid=abc")).toBe("/foo/bar");
+    expect(normalize404Path("foo?x=1")).toBe("/foo");
   });
   it("adds a leading slash and trims trailing slashes", () => {
     expect(normalize404Path("foo")).toBe("/foo");
@@ -48,9 +52,9 @@ describe("normalize404Path", () => {
   });
 });
 
-function makeDb(total: number, stale: Array<{ id: string }> = []) {
+function makeDb(total: number, stale: Array<{ id: string }> = [], upsertResult: { count: number } = { count: 1 }) {
   const calls = {
-    upsert: vi.fn(async (_args: any) => ({})),
+    upsert: vi.fn(async (_args: any) => upsertResult),
     count: vi.fn(async (_args: any) => total),
     findMany: vi.fn(async (_args: any) => stale),
     deleteMany: vi.fn(async (_args: any) => ({ count: stale.length })),
@@ -75,22 +79,42 @@ describe("record404Hit", () => {
     expect(typeof arg.where.shop_pathHash.pathHash).toBe("string");
     expect(arg.create.path).toBe("/missing"); // trailing slash trimmed
     expect(arg.update.count).toEqual({ increment: 1 });
+    expect(arg.update.referrer).toBe("http://ref");
   });
 
-  it("FIFO-prunes the oldest rows once over the cap", async () => {
+  it("does not overwrite a known referrer with a null one on a follow-up hit", async () => {
+    const { db, calls } = makeDb(1);
+    await record404Hit(db, "s.myshopify.com", { path: "/x" }); // no referrer this time
+    const arg = calls.upsert.mock.calls[0][0];
+    expect(arg.create.referrer).toBeNull(); // still fine on first-ever creation
+    expect(arg.update).not.toHaveProperty("referrer"); // must NOT clobber an existing one
+  });
+
+  it("evicts by lowest count first, then oldest lastSeenAt, once over the cap", async () => {
     const stale = [{ id: "a" }, { id: "b" }];
-    const { db, calls } = makeDb(MAX_404_HITS_PER_SHOP + 2, stale);
+    // Only new rows (upsert count === 1) trigger the prune check.
+    const { db, calls } = makeDb(MAX_404_HITS_PER_SHOP + 2, stale, { count: 1 });
     await record404Hit(db, "s.myshopify.com", { path: "/x" });
     expect(calls.findMany).toHaveBeenCalled();
     const pruneArgs = calls.findMany.mock.calls[0][0];
-    expect(pruneArgs.orderBy).toEqual({ lastSeenAt: "asc" });
+    expect(pruneArgs.orderBy).toEqual([{ count: "asc" }, { lastSeenAt: "asc" }]);
     expect(pruneArgs.take).toBe(2);
     expect(calls.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["a", "b"] } } });
   });
 
   it("does not prune when under the cap", async () => {
-    const { db, calls } = makeDb(5);
+    const { db, calls } = makeDb(5, [], { count: 1 });
     await record404Hit(db, "s.myshopify.com", { path: "/x" });
+    expect(calls.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the prune check entirely for a repeat hit (count > 1) — only new rows probe the total", async () => {
+    // Total is deliberately over the cap; if the (expensive) prune check ran
+    // on every hit it would still show up as a `count` call.
+    const { db, calls } = makeDb(MAX_404_HITS_PER_SHOP + 5, [], { count: 5 });
+    await record404Hit(db, "s.myshopify.com", { path: "/x" });
+    expect(calls.count).not.toHaveBeenCalled();
+    expect(calls.findMany).not.toHaveBeenCalled();
     expect(calls.deleteMany).not.toHaveBeenCalled();
   });
 });

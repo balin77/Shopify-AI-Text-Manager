@@ -63,6 +63,98 @@ describe("analyzeOnPage — presence + score", () => {
   });
 });
 
+describe("analyzeOnPage — word-boundary matching (R-keywords-1)", () => {
+  it("does NOT match a keyword as a substring of a longer word", () => {
+    const r = analyzeOnPage({ keyword: "tee", title: "Garantee inside" });
+    expect(r.presence.title).toBe(false);
+  });
+
+  it("matches the same keyword as a whole word elsewhere", () => {
+    const r = analyzeOnPage({ keyword: "tee", title: "Buy a tee today" });
+    expect(r.presence.title).toBe(true);
+  });
+
+  it("matches a multi-word keyword across a single space", () => {
+    const r = analyzeOnPage({ keyword: "blue shoes", title: "Best Blue Shoes Ever" });
+    expect(r.presence.title).toBe(true);
+  });
+
+  it("does not match a multi-word keyword split across two spaces/other words", () => {
+    const r = analyzeOnPage({ keyword: "blue shoes", title: "Blue suede shoes" });
+    expect(r.presence.title).toBe(false);
+  });
+
+  it("matches umlaut keywords written as HTML entities in the body (NFC-normalized)", () => {
+    const r = analyzeOnPage({
+      keyword: "Größe",
+      bodyHtml: "<p>Bitte die richtige Gr&ouml;&szlig;e w&auml;hlen.</p>",
+    });
+    expect(r.presence.body).toBe(true);
+  });
+
+  it("treats regex-special characters in the keyword literally (e.g. 'c++')", () => {
+    const r = analyzeOnPage({ keyword: "c++", title: "Learn c++ fast" });
+    expect(r.presence.title).toBe(true);
+    // A plain "c" must not falsely match inside "c++" (word-boundary, not substring).
+    const noMatch = analyzeOnPage({ keyword: "c++", title: "Learn c fast" });
+    expect(noMatch.presence.title).toBe(false);
+  });
+});
+
+describe("analyzeOnPage — H1 source depends on resourceType (R-keywords-2)", () => {
+  it("for a Product, the effective H1 is the title — descriptionHtml having no <h1> no longer penalizes it", () => {
+    const r = analyzeOnPage({
+      keyword: "widget",
+      resourceType: "Product",
+      title: "Best Widget",
+      bodyHtml: "<p>Plain description, no heading markup at all.</p>",
+    });
+    expect(r.presence.h1).toBe(true);
+    expect(r.findings.find((f) => f.code === "notInH1")).toBeUndefined();
+  });
+
+  it("for a Product, an explicit <h1> in the body is NOT consulted — only the title counts", () => {
+    const r = analyzeOnPage({
+      keyword: "gadget",
+      resourceType: "Product",
+      title: "Best Widget",
+      bodyHtml: "<h1>Gadget heading merchants shouldn't rely on</h1>",
+    });
+    expect(r.presence.h1).toBe(false);
+  });
+
+  it("for a Collection, the effective H1 is likewise the title", () => {
+    const r = analyzeOnPage({
+      keyword: "shoes",
+      resourceType: "Collection",
+      title: "Shoes Collection",
+      bodyHtml: "<p>no heading here</p>",
+    });
+    expect(r.presence.h1).toBe(true);
+  });
+
+  it("for an Article, an explicit body <h1> is an additional signal alongside the title", () => {
+    const r = analyzeOnPage({
+      keyword: "alpha",
+      resourceType: "Article",
+      title: "Untitled post",
+      bodyHtml: "<h1>The Alpha Release</h1><p>body</p>",
+    });
+    expect(r.presence.h1).toBe(true);
+  });
+
+  it("notInH1 still fires for an Article missing the keyword in both title and body <h1>", () => {
+    const r = analyzeOnPage({
+      keyword: "missing",
+      resourceType: "Article",
+      title: "Untitled post",
+      bodyHtml: "<h1>The Alpha Release</h1><p>body</p>",
+    });
+    expect(r.presence.h1).toBe(false);
+    expect(r.findings.find((f) => f.code === "notInH1")).toBeTruthy();
+  });
+});
+
 describe("analyzeOnPage — density bands", () => {
   const body = (n: number, occ: number) =>
     `<p>${"word ".repeat(n - occ)}${"widget ".repeat(occ)}</p>`;

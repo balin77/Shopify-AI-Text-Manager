@@ -82,6 +82,19 @@ const FINDING_TO_BUCKET: Record<string, string> = {
   someImagesMissingAlt: "imagesMissingAlt",
 };
 
+/** Normalize a value for cross-item duplicate comparison (trim + lowercase). */
+function normalizeForDuplicateCheck(value: string | null | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+/** Append `id` to the group keyed by `key` in `map` — empty keys are never grouped. */
+function addToDuplicateGroup(map: Map<string, string[]>, key: string, id: string): void {
+  if (!key) return;
+  const group = map.get(key);
+  if (group) group.push(id);
+  else map.set(key, [id]);
+}
+
 /** Order the worst-offender / problem lists deterministically. */
 const WORST_OFFENDERS_CAP = 50;
 
@@ -147,14 +160,24 @@ export async function analyzeStore(
   let totalAvailable = 0;
   let capped = false;
 
+  // Store-wide duplicate detection (finding #5): key = normalized value,
+  // value = ids of every item sharing it. A key groups ANY item whose
+  // effective SEO title / SEO description normalizes to it, regardless of
+  // content type — a product and a page with the same SEO title are just as
+  // duplicate to Google as two products would be.
+  const seoTitleGroups = new Map<string, string[]>();
+  const seoDescriptionGroups = new Map<string, string[]>();
+
   const take = MAX_AUDIT_ITEMS_PER_TYPE;
 
   // ---- Products (+ alt coverage via groupBy) ----------------------------
   if (wants("product")) {
     const [count, products] = await Promise.all([
-      db.product.count({ where: { shop } }),
+      // Only ACTIVE products are storefront-publishable — DRAFT/ARCHIVED ones
+      // can't rank and shouldn't be audited. Mirrors hreflang.service.ts.
+      db.product.count({ where: { shop, status: "ACTIVE" } }),
       db.product.findMany({
-        where: { shop },
+        where: { shop, status: "ACTIVE" },
         select: {
           id: true,
           title: true,
@@ -173,6 +196,17 @@ export async function analyzeStore(
 
     const productIds = products.map((p) => p.id);
     // Alt coverage in two grouped reads (no per-product include).
+    //
+    // R-audit-9 (assessed; intentionally NOT changed): this `not: ""` check
+    // does not TRIM, so a gallery image whose alt is whitespace-only (" ")
+    // counts as "has alt" here, while the featured-image fallback below (via
+    // `nonEmpty()`, which does trim) would treat the same value as missing.
+    // Prisma's typed groupBy has no server-side trim; fixing it needs a raw
+    // SQL query, which is disproportionate for what is a rare edge case
+    // (whitespace-only alt text is not something any real editor UI writes
+    // unprompted). Documenting the discrepancy here rather than "fixing" it by
+    // loosening the featured-image check, since the featured-image path's
+    // trim is free (single value, no SQL) and IS the more correct behavior.
     const [totalByProduct, withAltByProduct] = await Promise.all([
       db.productImage.groupBy({
         by: ["productId"],
@@ -215,12 +249,23 @@ export async function analyzeStore(
       );
       scored.push(item);
       tallyStat(stat, item.row.score);
+      // SERP title falls back to the item title when no seoTitle is set —
+      // that's what Google actually shows, so that's what must match/collide.
+      addToDuplicateGroup(
+        seoTitleGroups,
+        normalizeForDuplicateCheck(nonEmpty(p.seoTitle) ? p.seoTitle : p.title),
+        p.id,
+      );
+      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(p.seoDescription), p.id);
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
   }
 
   // ---- Collections ------------------------------------------------------
+  // NOTE (finding #6): Collection has no `published`/status column in
+  // schema.prisma (unlike Product's "ACTIVE"/"DRAFT"/"ARCHIVED"), so there is
+  // nothing to filter on here — every cached row is audited, as before.
   if (wants("collection")) {
     const [count, collections] = await Promise.all([
       db.collection.count({ where: { shop } }),
@@ -261,12 +306,20 @@ export async function analyzeStore(
       );
       scored.push(item);
       tallyStat(stat, item.row.score);
+      addToDuplicateGroup(
+        seoTitleGroups,
+        normalizeForDuplicateCheck(nonEmpty(c.seoTitle) ? c.seoTitle : c.title),
+        c.id,
+      );
+      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(c.seoDescription), c.id);
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
   }
 
   // ---- Articles ---------------------------------------------------------
+  // NOTE (finding #6): Article has no `published`/status column in
+  // schema.prisma, so (as with Collection) every cached row is audited.
   if (wants("article")) {
     const [count, articles] = await Promise.all([
       db.article.count({ where: { shop } }),
@@ -307,12 +360,20 @@ export async function analyzeStore(
       );
       scored.push(item);
       tallyStat(stat, item.row.score);
+      addToDuplicateGroup(
+        seoTitleGroups,
+        normalizeForDuplicateCheck(nonEmpty(a.seoTitle) ? a.seoTitle : a.title),
+        a.id,
+      );
+      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(a.seoDescription), a.id);
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
   }
 
   // ---- Pages (no images) ------------------------------------------------
+  // NOTE (finding #6): Page has no `published`/status column in
+  // schema.prisma either, so every cached row is audited.
   if (wants("page")) {
     const [count, pages] = await Promise.all([
       db.page.count({ where: { shop } }),
@@ -349,6 +410,12 @@ export async function analyzeStore(
       );
       scored.push(item);
       tallyStat(stat, item.row.score);
+      addToDuplicateGroup(
+        seoTitleGroups,
+        normalizeForDuplicateCheck(nonEmpty(pg.seoTitle) ? pg.seoTitle : pg.title),
+        pg.id,
+      );
+      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(pg.seoDescription), pg.id);
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
@@ -369,6 +436,24 @@ export async function analyzeStore(
   }
 
   const averageScore = totalScanned > 0 ? Math.round(scoreSum / totalScanned) : 0;
+
+  // Finding #5: store-wide duplicate SEO title / description. An item is
+  // "affected" if it shares its (normalized, non-empty) value with at least
+  // one other item — a group of size 1 is unique, not a duplicate.
+  let duplicateSeoTitleCount = 0;
+  for (const ids of seoTitleGroups.values()) {
+    if (ids.length > 1) duplicateSeoTitleCount += ids.length;
+  }
+  let duplicateSeoDescriptionCount = 0;
+  for (const ids of seoDescriptionGroups.values()) {
+    if (ids.length > 1) duplicateSeoDescriptionCount += ids.length;
+  }
+  if (duplicateSeoTitleCount > 0) {
+    bucketCounts.set("duplicateSeoTitle", duplicateSeoTitleCount);
+  }
+  if (duplicateSeoDescriptionCount > 0) {
+    bucketCounts.set("duplicateSeoDescription", duplicateSeoDescriptionCount);
+  }
 
   const problems: AuditProblemBucket[] = [...bucketCounts.entries()]
     .map(([code, count]) => ({ code, count }))

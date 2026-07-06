@@ -7,7 +7,13 @@ import {
   renderJsonLdScript,
   type JsonLd,
 } from "../services/structured-data.service";
-import { computeSeoScore, scoreTone, scoreLabelKey, progressTone } from "../utils/seo-score";
+import {
+  computeSeoScore,
+  scoreTone,
+  scoreLabelKey,
+  progressTone,
+  seoTitleEffectiveLimit,
+} from "../utils/seo-score";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -68,7 +74,7 @@ export function SeoSidebar({
   const [showDetails, setShowDetails] = useState(false);
 
   // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
-  const seoTitleEffectiveLimit = seoTitleSuffix ? 60 - seoTitleSuffix.length : 60;
+  const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix);
 
   // Scoring is computed by the shared pure function (app/utils/seo-score.ts) so
   // the Sidebar and the store-wide Audit-Dashboard never drift. The function
@@ -83,7 +89,7 @@ export function SeoSidebar({
       totalImages,
       excludeDescription,
       excludeImages,
-      seoTitleEffectiveLimit,
+      seoTitleEffectiveLimit: effectiveSeoTitleLimit,
     });
 
     const issues: SeoIssue[] = result.findings.map((f) => {
@@ -101,7 +107,7 @@ export function SeoSidebar({
     );
 
     return { score: result.score, issues, recommendations };
-  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, seoTitleEffectiveLimit]);
+  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, effectiveSeoTitleLimit]);
 
   const getScoreColor = scoreTone;
 

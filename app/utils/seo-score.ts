@@ -14,9 +14,13 @@
  *    (Title 15 / SEO-Title 15 / Description 20 / Meta 20 / Alt 30; normalization
  *    `round(score / maxScore * 100)`). The ≥70 / ≥40 tone thresholds live here too,
  *    as the single source for both Sidebar and Dashboard.
- *  - `seoTitleEffectiveLimit` is computed by the **caller**
- *    (`seoTitleSuffix ? 60 - suffix.length : 60`, exactly as in api.ai.tsx), so the
- *    suffix-aware limit stays consistent across the app.
+ *  - `seoTitleEffectiveLimit` (the suffix-adjusted budget) is computed by the
+ *    **caller** — some callers (app.seo._index.tsx, SeoSidebar.tsx) still inline
+ *    `suffix ? 60 - suffix.length : 60`; new/updated callers should use the
+ *    exported `seoTitleEffectiveLimit()` helper below instead, which floors the
+ *    result so a long suffix can't drive it to zero/negative. computeSeoScore
+ *    also clamps defensively so an un-migrated caller's raw `<= 0` value can't
+ *    make every seoTitle score as "too long".
  */
 
 export type SeoSeverity = "error" | "warning" | "success";
@@ -58,6 +62,64 @@ export interface SeoScoreResult {
 /** Default SEO title character budget when no shop-name suffix is configured. */
 export const DEFAULT_SEO_TITLE_LIMIT = 60;
 
+/** Floor for the suffix-adjusted SEO-title budget (see seoTitleEffectiveLimit). */
+const MIN_SEO_TITLE_LIMIT = 20;
+
+/**
+ * Suffix-adjusted SEO-title character budget. Callers historically inlined
+ * `suffix ? 60 - suffix.length : 60` (app.seo._index.tsx, SeoSidebar.tsx) with
+ * no floor, so a long enough shop-name suffix drove the limit to zero or
+ * negative — which would make EVERY seoTitle "too long" (limit <= 0 means no
+ * length can satisfy `0 < length <= limit`). Clamp to a sensible minimum
+ * instead. Callers should switch to this helper instead of the inline formula.
+ */
+export function seoTitleEffectiveLimit(suffix: string | null | undefined): number {
+  const suffixLength = suffix?.length ?? 0;
+  return Math.max(MIN_SEO_TITLE_LIMIT, DEFAULT_SEO_TITLE_LIMIT - suffixLength);
+}
+
+// Named HTML entities stripHtml() decodes. Kept intentionally small — the
+// common punctuation entities plus the German umlaut entities this app's
+// merchant content regularly contains (descriptions/meta authored in German).
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+  "&nbsp;": " ",
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&apos;": "'",
+  "&auml;": "ä",
+  "&ouml;": "ö",
+  "&uuml;": "ü",
+  "&Auml;": "Ä",
+  "&Ouml;": "Ö",
+  "&Uuml;": "Ü",
+  "&szlig;": "ß",
+};
+
+/**
+ * Strip HTML down to plain text for scoring/matching. Shared by seo-score.ts
+ * and keywords.service.ts so "how long is the description really" and
+ * "does the keyword appear in the body" never disagree.
+ *
+ * Tags are replaced with a SPACE (not "") so adjacent block elements don't
+ * concatenate into one word (e.g. `<p>A</p><p>B</p>` → "A B", not "AB").
+ * Numeric entities (decimal + hex) and the common named entities above are
+ * decoded, whitespace is collapsed, and the result trimmed — so HTML that is
+ * only tags/whitespace/`&nbsp;` correctly strips down to "" (empty).
+ */
+export function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&[a-zA-Z]+;/g, (entity) => NAMED_HTML_ENTITIES[entity] ?? entity)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Compute the SEO score for one resource. Pure: no i18n, no DOM, no Shopify.
  * Mirrors the former SeoSidebar `useMemo` exactly so Sidebar and Dashboard agree.
@@ -72,8 +134,14 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
     totalImages = 0,
     excludeDescription = false,
     excludeImages = false,
-    seoTitleEffectiveLimit = DEFAULT_SEO_TITLE_LIMIT,
+    seoTitleEffectiveLimit: rawSeoTitleEffectiveLimit = DEFAULT_SEO_TITLE_LIMIT,
   } = input;
+
+  // Defensive clamp: callers still compute the suffix-adjusted limit inline
+  // (see seoTitleEffectiveLimit() above, which they should switch to) — a
+  // limit <= 0 must not silently mean "any seoTitle length is fine".
+  const seoTitleEffectiveLimit =
+    rawSeoTitleEffectiveLimit > 0 ? rawSeoTitleEffectiveLimit : MIN_SEO_TITLE_LIMIT;
 
   const findings: SeoScoreFinding[] = [];
   let score = 0;
@@ -107,7 +175,7 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
   let descriptionLength = 0;
   if (!excludeDescription) {
     maxScore += 20;
-    descriptionLength = description.replace(/<[^>]*>/g, "").length;
+    descriptionLength = stripHtml(description).length;
     if (descriptionLength >= 150) {
       score += 20;
       findings.push({ code: "descriptionGood", severity: "success", points: 20 });

@@ -330,8 +330,8 @@ describe("revokeGoogleToken — best-effort disconnect", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://oauth2.googleapis.com/revoke");
-    expect(init.method).toBe("POST");
-    expect(String(init.body)).toContain("token=rt-value");
+    expect(init?.method).toBe("POST");
+    expect(String(init?.body)).toContain("token=rt-value");
   });
 
   it("never throws — a network error must not block disconnect", async () => {
@@ -363,6 +363,6 @@ describe("submitSitemap — requires a full absolute sitemap URL", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(encodeURIComponent("https://example.com/sitemap.xml"));
-    expect(init.method).toBe("PUT");
+    expect(init?.method).toBe("PUT");
   });
 });

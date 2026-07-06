@@ -9,29 +9,40 @@ import { analyzeStore } from "~/services/seo/audit.service";
  */
 
 const A = (n: number) => "A".repeat(n);
+// Length-preserving but UNIQUE filler — a tag prefix followed by "A" padding,
+// so items can share a target length (for score-boundary assertions) without
+// accidentally colliding on content (which would trip the new duplicate-SEO
+// detection and make bucket assertions non-deterministic).
+const U = (n: number, tag: string) => (tag + A(Math.max(0, n - tag.length))).slice(0, n);
 
-function makeDb() {
+function makeDb(capture?: { productArgs: any[] }) {
   const products = [
     // Perfect (no images → image criterion skipped, still 100/70-applicable)
-    { id: "gid-P1", title: A(40), descriptionHtml: A(200), seoTitle: A(40), seoDescription: A(140), featuredImageUrl: null, featuredImageAlt: null },
+    { id: "gid-P1", title: U(40, "T1-"), descriptionHtml: A(200), seoTitle: U(40, "ST1-"), seoDescription: U(140, "D1-"), featuredImageUrl: null, featuredImageAlt: null },
     // Missing seo-title + meta
-    { id: "gid-P2", title: A(40), descriptionHtml: A(200), seoTitle: "", seoDescription: "", featuredImageUrl: null, featuredImageAlt: null },
+    { id: "gid-P2", title: U(40, "T2-"), descriptionHtml: A(200), seoTitle: "", seoDescription: "", featuredImageUrl: null, featuredImageAlt: null },
     // 1-of-2 images carry alt (via groupBy stub below)
-    { id: "gid-P3", title: A(40), descriptionHtml: A(200), seoTitle: A(40), seoDescription: A(140), featuredImageUrl: null, featuredImageAlt: null },
+    { id: "gid-P3", title: U(40, "T3-"), descriptionHtml: A(200), seoTitle: U(40, "ST3-"), seoDescription: U(140, "D3-"), featuredImageUrl: null, featuredImageAlt: null },
   ];
   const collections = [
     // Description too short
-    { id: "gid-C1", title: A(40), descriptionHtml: A(50), seoTitle: A(40), seoDescription: A(140), imageUrl: "http://img", imageAltText: "alt" },
+    { id: "gid-C1", title: U(40, "TC1-"), descriptionHtml: A(50), seoTitle: U(40, "STC1-"), seoDescription: U(140, "DC1-"), imageUrl: "http://img", imageAltText: "alt" },
   ];
   const pages = [
     // Missing seo-title
-    { id: "gid-PG1", title: A(40), body: A(200), seoTitle: "", seoDescription: A(140) },
+    { id: "gid-PG1", title: U(40, "TPG1-"), body: A(200), seoTitle: "", seoDescription: U(140, "DPG1-") },
   ];
 
   return {
     product: {
-      count: async () => products.length,
-      findMany: async () => products,
+      count: async (args: any) => {
+        capture?.productArgs.push(args);
+        return products.length;
+      },
+      findMany: async (args: any) => {
+        capture?.productArgs.push(args);
+        return products;
+      },
     },
     productImage: {
       // First call (no AND) = totals; second call (AND alt filters) = with-alt.
@@ -101,5 +112,66 @@ describe("analyzeStore", () => {
     const types = audit.byType.map((s) => s.type).sort();
     expect(types).toEqual(["collection", "product"]);
     expect(audit.totalScanned).toBe(4); // 3 products + 1 collection
+  });
+
+  it("only queries ACTIVE products (finding #6 — DRAFT/ARCHIVED aren't storefront-visible)", async () => {
+    const capture = { productArgs: [] as any[] };
+    await analyzeStore("shop.myshopify.com", {
+      db: makeDb(capture),
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    expect(capture.productArgs.length).toBeGreaterThan(0);
+    for (const args of capture.productArgs) {
+      expect(args.where.status).toBe("ACTIVE");
+    }
+  });
+});
+
+describe("analyzeStore — duplicate SEO title/description detection", () => {
+  function makeDupDb() {
+    const products = [
+      // P1 and P2 share the same seoTitle → both affected.
+      { id: "gid-P1", title: U(40, "T1-"), descriptionHtml: A(200), seoTitle: "Shared SEO Title", seoDescription: U(140, "D1-"), featuredImageUrl: null, featuredImageAlt: null },
+      { id: "gid-P2", title: U(40, "T2-"), descriptionHtml: A(200), seoTitle: "  Shared SEO Title  ", seoDescription: U(140, "D2-"), featuredImageUrl: null, featuredImageAlt: null },
+      // P3 has a unique seoTitle → not affected.
+      { id: "gid-P3", title: U(40, "T3-"), descriptionHtml: A(200), seoTitle: "Unique Title Three", seoDescription: U(140, "D3-"), featuredImageUrl: null, featuredImageAlt: null },
+      // P4 and P5 both leave seoTitle empty and have DIFFERENT titles → no
+      // false positive: two independently-empty seoTitles must not collide
+      // with each other, and neither counts as a duplicate of P1/P2 by
+      // accidentally falling back to an empty string.
+      { id: "gid-P4", title: U(40, "T4-"), descriptionHtml: A(200), seoTitle: "", seoDescription: "", featuredImageUrl: null, featuredImageAlt: null },
+      { id: "gid-P5", title: U(40, "T5-"), descriptionHtml: A(200), seoTitle: "", seoDescription: "", featuredImageUrl: null, featuredImageAlt: null },
+    ];
+    return {
+      product: { count: async () => products.length, findMany: async () => products },
+      productImage: { groupBy: async () => [] },
+      collection: { count: async () => 0, findMany: async () => [] },
+      article: { count: async () => 0, findMany: async () => [] },
+      page: { count: async () => 0, findMany: async () => [] },
+    } as any;
+  }
+
+  it("flags items sharing a normalized (trim+lowercase) non-empty SEO title", async () => {
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db: makeDupDb(),
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    const problems = Object.fromEntries(audit.problems.map((p) => [p.code, p.count]));
+    expect(problems.duplicateSeoTitle).toBe(2); // P1 + P2 only
+  });
+
+  it("does not treat two independently-empty SEO titles as duplicates of each other", async () => {
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db: makeDupDb(),
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    // P4/P5 both fall back to their (unique) titles, and empty
+    // seoDescriptions never enter the group at all — neither should ever
+    // inflate duplicateSeoTitle/duplicateSeoDescription.
+    expect(Object.fromEntries(audit.problems.map((p) => [p.code, p.count])).duplicateSeoTitle).toBe(2);
+    expect(audit.problems.find((p) => p.code === "duplicateSeoDescription")).toBeUndefined();
   });
 });
