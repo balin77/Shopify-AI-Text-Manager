@@ -8,11 +8,9 @@
  * text-generation.handler.ts's handleGenerateAIText builds its prompt
  * (character limits, writing-style/format/instructions injection,
  * sanitizePromptInput), persisting through the SAME Shopify mutation paths the
- * single-item editor uses (ShopifyContentService for Collection/Page, a
+ * single-item editor uses (ShopifyContentService for Collection/Page/Article, a
  * minimal partial productUpdate for Product), and updating the DB content
  * cache so the audit immediately reflects the fix on the next reload.
- *
- * Article is a documented exception — see persistField()'s "article" branch.
  */
 
 import { json } from "@remix-run/node";
@@ -526,18 +524,11 @@ async function persistField(params: PersistArgs): Promise<void> {
       break;
     }
     case "article": {
-      // KNOWN, PRE-EXISTING GAP (not introduced here): ArticleInput has no
-      // seo/metafields plumbing in content.mutations.ts's UPDATE_ARTICLE
-      // (unlike Page/Blog, which write global.title_tag/description_tag
-      // metafields inline). The single-item editor has this exact same
-      // limitation — ShopifyContentService.updateContent's 'Article' branch
-      // never forwards seoTitle/metaDescription to updateArticle() either, it
-      // only ever reaches the DB. This mirrors that existing behavior rather
-      // than silently fixing it here (fixing it means adding metafields
-      // support to a shared mutation/service used by other content types,
-      // which is out of scope for this feature). The audit dashboard still
-      // reflects the fix immediately since it reads the same DB cache; the
-      // live Shopify snippet needs that follow-up gap closed separately.
+      // Article SEO title/description are stored the same way as Page/Blog —
+      // as global.title_tag/description_tag metafields, written inline by
+      // updateArticle() (see ShopifyContentService.updateArticle).
+      const articleInput = field === "seoTitle" ? { seoTitle: value } : { seoDescription: value };
+      await contentService.updateArticle(id, articleInput);
       await db.article.update({
         where: { shop_id: { shop, id } },
         data:

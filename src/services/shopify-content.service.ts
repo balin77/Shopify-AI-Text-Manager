@@ -193,10 +193,30 @@ export class ShopifyContentService {
 
   /**
    * Update an article
+   * Note: Like Pages/Blogs, Article SEO data is stored in metafields
+   * (global.title_tag, global.description_tag) — ArticleUpdateInput accepts
+   * a `metafields` array just like PageUpdateInput/BlogUpdateInput.
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; image?: { altText: string } | null }) {
+  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; image?: { altText: string } | null; seoTitle?: string; seoDescription?: string }) {
+    // Separate SEO fields from the article input – they go as metafields
+    const { seoTitle, seoDescription, ...articleInput } = article;
+
+    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
+    if (seoTitle !== undefined) {
+      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
+    }
+    if (seoDescription !== undefined) {
+      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
+    }
+
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
-      variables: { id, article }
+      variables: {
+        id,
+        article: {
+          ...articleInput,
+          ...(metafields.length > 0 ? { metafields } : {}),
+        },
+      }
     });
 
     const data = await response.json();
@@ -749,6 +769,8 @@ export class ShopifyContentService {
           body: updates.body,
           summary: updates.summary,
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
+          ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+          ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
         });
 
         // Update database
