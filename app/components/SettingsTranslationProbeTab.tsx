@@ -62,6 +62,14 @@ interface ThemeSelectionDiag {
   verdict: string;
 }
 
+interface ThemeFetchWorkaround {
+  targetTheme: { id: string; name: string; role: string } | null;
+  translationsApiRewrite: { resourceId: string; contentCount: number; error?: string };
+  translationsApiByIds: { contentCount: number; error?: string };
+  themeFilesRead: Array<{ theme: "MAIN" | "target"; filename: string; found: boolean; byteSize: number; sampleKeys: string[]; error?: string }>;
+  verdict: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -72,6 +80,7 @@ interface ProbeReport {
   cookieHints?: CookieHintHit[];
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
+  themeFetchWorkaround?: ThemeFetchWorkaround;
 }
 
 function formatMarkdown(report: ProbeReport): string {
@@ -123,6 +132,35 @@ function formatMarkdown(report: ProbeReport): string {
     for (const r of tsd.resourceThemeIds) {
       const rid = r.resourceId.length > 90 ? `${r.resourceId.slice(0, 87)}…` : r.resourceId;
       lines.push(`| \`${r.resourceType}\` | \`${rid.replace(/\|/g, "\\|")}\` | ${r.extractedThemeId === null ? "(none)" : `\`${r.extractedThemeId}\``} |`);
+    }
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  const wa = report.themeFetchWorkaround;
+  if (wa) {
+    lines.push(`## Unpublished-theme fetch workaround test`);
+    lines.push(``);
+    lines.push(`**Verdict:** ${wa.verdict}`);
+    lines.push(``);
+    lines.push(`- Target theme (non-MAIN): ${wa.targetTheme ? `\`${wa.targetTheme.id}\` — ${wa.targetTheme.name} [${wa.targetTheme.role}]` : "(none)"}`);
+    lines.push(``);
+    lines.push(`**1) Translations API with rewritten \`theme_id\`:**`);
+    lines.push(`- resourceId tried: \`${wa.translationsApiRewrite.resourceId || "(none)"}\``);
+    lines.push(`- \`translatableResource\` → ${wa.translationsApiRewrite.contentCount} content entries${wa.translationsApiRewrite.error ? ` (error: ${wa.translationsApiRewrite.error})` : ""}`);
+    lines.push(`- \`translatableResourcesByIds\` → ${wa.translationsApiByIds.contentCount} content entries${wa.translationsApiByIds.error ? ` (error: ${wa.translationsApiByIds.error})` : ""}`);
+    lines.push(``);
+    lines.push(`**2) Theme-files API (per Theme-GID):**`);
+    if (wa.themeFilesRead.length === 0) {
+      lines.push(`- (not run)`);
+    } else {
+      lines.push(``);
+      lines.push(`| Theme | File | Found | Bytes | Sample top-level keys | Error |`);
+      lines.push(`|---|---|---|---:|---|---|`);
+      for (const f of wa.themeFilesRead) {
+        lines.push(`| ${f.theme} | \`${f.filename}\` | ${f.found ? "✅" : "❌"} | ${f.byteSize} | ${f.sampleKeys.map((k) => `\`${k}\``).join(", ") || "—"} | ${f.error ? f.error.replace(/\|/g, "\\|") : "—"} |`);
+      }
     }
     lines.push(``);
     lines.push(`---`);

@@ -133,6 +133,23 @@ interface ProbeReport {
   cookieHints: CookieHintHit[];
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
+  themeFetchWorkaround?: ThemeFetchWorkaround;
+}
+
+/**
+ * Empirical test of whether an UNPUBLISHED theme's translatable content can be
+ * reached at all — and via which API. Answers the "is there a workaround?"
+ * question with hard data from this shop rather than forum consensus.
+ */
+interface ThemeFetchWorkaround {
+  targetTheme: { id: string; name: string; role: string } | null;
+  /** translatableResource(resourceId) with the theme_id rewritten to the target theme. */
+  translationsApiRewrite: { resourceId: string; contentCount: number; error?: string };
+  /** translatableResourcesByIds([rewritten id]). */
+  translationsApiByIds: { contentCount: number; error?: string };
+  /** theme(id: target){ files(locales/*) } — the theme-files API is per-theme. */
+  themeFilesRead: Array<{ theme: "MAIN" | "target"; filename: string; found: boolean; byteSize: number; sampleKeys: string[]; error?: string }>;
+  verdict: string;
 }
 
 const PROBE_QUERY = `#graphql
@@ -164,6 +181,42 @@ const TRANSLATIONS_REGISTER = `#graphql
     translationsRegister(resourceId: $resourceId, translations: $translations) {
       translations { key value locale }
       userErrors { field message }
+    }
+  }
+`;
+
+// Single-resource translatable-content lookup (no locale filter) — used to test
+// whether rewriting theme_id in a resourceId reaches a different theme.
+const SINGLE_TRANSLATABLE_QUERY = `#graphql
+  query singleTranslatable($resourceId: ID!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent { key value locale }
+    }
+  }
+`;
+
+const BY_IDS_TRANSLATABLE_QUERY = `#graphql
+  query byIdsTranslatable($resourceIds: [ID!]!) {
+    translatableResourcesByIds(resourceIds: $resourceIds, first: 5) {
+      edges { node { resourceId translatableContent { key value locale } } }
+    }
+  }
+`;
+
+// Theme-files API is addressed per Theme-GID and works for UNPUBLISHED themes.
+const THEME_FILES_QUERY = `#graphql
+  query themeFiles($id: ID!, $filenames: [String!]!) {
+    theme(id: $id) {
+      id
+      name
+      role
+      files(filenames: $filenames, first: 10) {
+        nodes {
+          filename
+          body { ... on OnlineStoreThemeFileBodyText { content } }
+        }
+      }
     }
   }
 `;
@@ -419,6 +472,128 @@ export async function action({ request }: ActionFunctionArgs) {
       dbThemeTranslationByThemeId: [],
       resourceThemeIds: [],
       verdict: `Diagnostic failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // ── Theme-fetch workaround test ─────────────────────────────────────────────
+  // Empirically answers: can an UNPUBLISHED theme's translatable content be
+  // reached, and via which API? (1) translations API with a rewritten theme_id
+  // (expected: empty), (2) translatableResourcesByIds (expected: empty),
+  // (3) theme-files API per Theme-GID (expected: returns the target theme).
+  try {
+    const tsd = report.themeSelectionDiag;
+    const themesList = tsd?.themes ?? [];
+    const mainId = tsd?.mainThemeId ?? null;
+    // Prefer the resolved selection if it's non-MAIN; else any non-MAIN theme.
+    const targetTheme =
+      (tsd?.resolvedSelectedThemeId && tsd.resolvedSelectedThemeId !== mainId
+        ? themesList.find((t) => t.id === tsd.resolvedSelectedThemeId)
+        : undefined) ??
+      themesList.find((t) => t.id !== mainId && String(t.role).toUpperCase() !== "MAIN") ??
+      null;
+
+    const wa: ThemeFetchWorkaround = {
+      targetTheme: targetTheme ?? null,
+      translationsApiRewrite: { resourceId: "", contentCount: 0 },
+      translationsApiByIds: { contentCount: 0 },
+      themeFilesRead: [],
+      verdict: "",
+    };
+
+    const numericOf = (gid: string) => gid.split("/").pop() || gid;
+
+    if (!targetTheme) {
+      wa.verdict = "No non-MAIN theme available to test — cannot probe the unpublished-theme workaround.";
+    } else {
+      const targetNumeric = numericOf(targetTheme.id);
+
+      // (1)+(2): rewrite theme_id on a real resourceId to point at the target theme.
+      const srcEntry = (tsd?.resourceThemeIds ?? []).find(
+        (r) => r.extractedThemeId && /[?&]theme_id=\d+/.test(r.resourceId)
+      );
+      if (!srcEntry) {
+        wa.translationsApiRewrite = { resourceId: "(no source resourceId with theme_id found)", contentCount: 0, error: "skipped" };
+        wa.translationsApiByIds = { contentCount: 0, error: "skipped" };
+      } else {
+        const rewritten = srcEntry.resourceId.replace(/([?&]theme_id=)\d+/, `$1${targetNumeric}`);
+        wa.translationsApiRewrite.resourceId = rewritten;
+        try {
+          const r1 = await admin.graphql(SINGLE_TRANSLATABLE_QUERY, { variables: { resourceId: rewritten } });
+          const d1 = (await r1.json()) as { data?: { translatableResource?: { translatableContent?: unknown[] } }; errors?: Array<{ message: string }> };
+          if (d1.errors?.length) wa.translationsApiRewrite.error = d1.errors.map((e) => e.message).join(" | ");
+          else wa.translationsApiRewrite.contentCount = d1.data?.translatableResource?.translatableContent?.length ?? 0;
+        } catch (e) {
+          wa.translationsApiRewrite.error = e instanceof Error ? e.message : String(e);
+        }
+        await new Promise((res) => setTimeout(res, 250));
+        try {
+          const r2 = await admin.graphql(BY_IDS_TRANSLATABLE_QUERY, { variables: { resourceIds: [rewritten] } });
+          const d2 = (await r2.json()) as { data?: { translatableResourcesByIds?: { edges: Array<{ node: { translatableContent?: unknown[] } }> } }; errors?: Array<{ message: string }> };
+          if (d2.errors?.length) wa.translationsApiByIds.error = d2.errors.map((e) => e.message).join(" | ");
+          else wa.translationsApiByIds.contentCount = (d2.data?.translatableResourcesByIds?.edges ?? []).reduce((n, ed) => n + (ed.node.translatableContent?.length ?? 0), 0);
+        } catch (e) {
+          wa.translationsApiByIds.error = e instanceof Error ? e.message : String(e);
+        }
+      }
+
+      // (3): read locale files from BOTH MAIN and the target theme via theme-files API.
+      const localeFilenames = [
+        `locales/${primaryLocale}.default.json`,
+        ...enabledLocales.filter((l) => l !== primaryLocale).map((l) => `locales/${l}.json`),
+      ];
+      const readThemeFiles = async (label: "MAIN" | "target", themeGid: string) => {
+        try {
+          const r = await admin.graphql(THEME_FILES_QUERY, { variables: { id: themeGid, filenames: localeFilenames } });
+          const d = (await r.json()) as {
+            data?: { theme?: { files?: { nodes: Array<{ filename: string; body?: { content?: string } }> } } };
+            errors?: Array<{ message: string }>;
+          };
+          if (d.errors?.length) {
+            wa.themeFilesRead.push({ theme: label, filename: "(query)", found: false, byteSize: 0, sampleKeys: [], error: d.errors.map((e) => e.message).join(" | ") });
+            return;
+          }
+          const nodes = d.data?.theme?.files?.nodes ?? [];
+          if (nodes.length === 0) {
+            wa.themeFilesRead.push({ theme: label, filename: localeFilenames.join(", "), found: false, byteSize: 0, sampleKeys: [] });
+            return;
+          }
+          for (const n of nodes) {
+            let sampleKeys: string[] = [];
+            try {
+              const parsed = JSON.parse(n.body?.content ?? "{}");
+              sampleKeys = Object.keys(parsed).slice(0, 8);
+            } catch { /* non-JSON or truncated */ }
+            wa.themeFilesRead.push({ theme: label, filename: n.filename, found: true, byteSize: n.body?.content?.length ?? 0, sampleKeys });
+          }
+        } catch (e) {
+          wa.themeFilesRead.push({ theme: label, filename: "(exception)", found: false, byteSize: 0, sampleKeys: [], error: e instanceof Error ? e.message : String(e) });
+        }
+      };
+      if (mainId) await readThemeFiles("MAIN", mainId);
+      await new Promise((res) => setTimeout(res, 250));
+      await readThemeFiles("target", targetTheme.id);
+
+      // Verdict
+      const translApiReached = wa.translationsApiRewrite.contentCount > 0 || wa.translationsApiByIds.contentCount > 0;
+      const targetFilesFound = wa.themeFilesRead.some((f) => f.theme === "target" && f.found);
+      if (translApiReached) {
+        wa.verdict = `UNEXPECTED: the translations API returned content for the target theme (rewrite=${wa.translationsApiRewrite.contentCount}, byIds=${wa.translationsApiByIds.contentCount}). Per-theme reads via the translations API may be possible after all — re-evaluate before restricting to MAIN.`;
+      } else if (targetFilesFound) {
+        wa.verdict = `CONFIRMED: translations API cannot reach the unpublished theme "${targetTheme.name}" (rewrite=0, byIds=0${wa.translationsApiRewrite.error ? `, err="${wa.translationsApiRewrite.error}"` : ""}), BUT the theme-files API returns its locale file(s). → Option B (rebuild theme content on the theme-files API) is technically viable for unpublished themes.`;
+      } else {
+        wa.verdict = `Translations API returned nothing for the target theme AND the theme-files read found no locale files (${wa.themeFilesRead.filter((f) => f.theme === "target").map((f) => f.error ?? "empty").join("; ") || "empty"}). If the theme-files error is a scope/permission issue, that's fixable; if the theme genuinely has no locale files, there is nothing to edit there.`;
+      }
+    }
+
+    report.themeFetchWorkaround = wa;
+  } catch (e) {
+    logger.error("[TRANSLATION-PROBE] theme-fetch workaround test failed", { context: "TranslationProbe", error: e instanceof Error ? e.message : String(e) });
+    report.themeFetchWorkaround = {
+      targetTheme: null,
+      translationsApiRewrite: { resourceId: "", contentCount: 0, error: e instanceof Error ? e.message : String(e) },
+      translationsApiByIds: { contentCount: 0, error: "aborted" },
+      themeFilesRead: [],
+      verdict: `Workaround test failed: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 
