@@ -1,5 +1,6 @@
-import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar } from "@shopify/polaris";
-import { useState, useMemo } from "react";
+import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
+import { useState, useMemo, useEffect } from "react";
+import { useFetcher } from "@remix-run/react";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import {
@@ -14,6 +15,11 @@ import {
   progressTone,
   seoTitleEffectiveLimit,
 } from "../utils/seo-score";
+import {
+  analyzeOnPage,
+  type KeywordResourceType,
+  type DensityBand,
+} from "../services/seo/keywords.service";
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -45,6 +51,17 @@ interface SeoSidebarProps {
    * feedback is shown. Omit it and the sidebar behaves exactly as before.
    */
   structuredData?: JsonLd | null;
+  /**
+   * Optional target-keyword tracking (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5 / A6
+   * companion). When BOTH resourceId and resourceType are provided, a collapsible
+   * "Target keyword" section is shown: it loads/saves the one tracked keyword for
+   * this item (via /api/seo-keyword) and shows live on-page presence/density
+   * feedback computed from the current edited title/seoTitle/metaDescription/
+   * description as the merchant types. Omit either prop and the section is not
+   * rendered — existing callers are unaffected.
+   */
+  resourceId?: string;
+  resourceType?: KeywordResourceType;
 }
 
 export function SeoSidebar({
@@ -58,6 +75,8 @@ export function SeoSidebar({
   excludeDescription = false,
   excludeImages = false,
   structuredData = null,
+  resourceId,
+  resourceType,
 }: SeoSidebarProps) {
   const { t } = useI18n();
   const [showJsonLd, setShowJsonLd] = useState(false);
@@ -75,6 +94,82 @@ export function SeoSidebar({
 
   // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
   const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix);
+
+  // ── Target keyword (collapsible, only when the caller supplies both ids) ──
+  const keywordTrackingEnabled = !!resourceId && !!resourceType;
+  const [showKeywordSection, setShowKeywordSection] = useState(false);
+  const [keywordInput, setKeywordInput] = useState("");
+  const [trackedKeyword, setTrackedKeyword] = useState<string | null>(null);
+  const [keywordSaved, setKeywordSaved] = useState(false);
+  const keywordLoadFetcher = useFetcher<{ keyword: string | null }>();
+  const keywordSaveFetcher = useFetcher<{ ok: boolean; keyword?: string | null; error?: string }>();
+
+  // Reload the tracked keyword whenever the selected item changes. Fetching
+  // eagerly (not gated on showKeywordSection) means the badges below are
+  // ready the moment the merchant expands the section.
+  useEffect(() => {
+    setKeywordSaved(false);
+    if (!resourceId || !resourceType) {
+      setTrackedKeyword(null);
+      setKeywordInput("");
+      return;
+    }
+    keywordLoadFetcher.load(`/api/seo-keyword?resourceId=${encodeURIComponent(resourceId)}`);
+    // keywordLoadFetcher is intentionally omitted — Remix fetchers are stable,
+    // but including it would re-trigger the effect on every fetcher state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resourceId, resourceType]);
+
+  useEffect(() => {
+    if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
+      const loaded = keywordLoadFetcher.data.keyword ?? "";
+      setTrackedKeyword(keywordLoadFetcher.data.keyword ?? null);
+      setKeywordInput(loaded);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
+
+  useEffect(() => {
+    if (keywordSaveFetcher.state === "idle" && keywordSaveFetcher.data?.ok) {
+      setTrackedKeyword(keywordSaveFetcher.data.keyword ?? null);
+      setKeywordSaved(true);
+      const timeout = setTimeout(() => setKeywordSaved(false), 2000);
+      return () => clearTimeout(timeout);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywordSaveFetcher.state, keywordSaveFetcher.data]);
+
+  const handleSaveKeyword = () => {
+    if (!resourceId || !resourceType) return;
+    keywordSaveFetcher.submit(
+      { resourceId, resourceType, keyword: keywordInput },
+      { method: "post", action: "/api/seo-keyword" },
+    );
+  };
+
+  // Live on-page analysis of the TRACKED (saved) keyword against the current
+  // edited field values — so toggling between title/description drafts updates
+  // the badges immediately without re-saving the keyword itself.
+  const keywordAnalysis = useMemo(() => {
+    if (!trackedKeyword) return null;
+    return analyzeOnPage({
+      keyword: trackedKeyword,
+      title,
+      seoTitle,
+      metaDescription,
+      bodyHtml: description,
+      resourceType,
+    });
+  }, [trackedKeyword, title, seoTitle, metaDescription, description, resourceType]);
+
+  const densityTone: Record<DensityBand, "success" | "warning" | "critical" | undefined> = {
+    ok: "success",
+    low: "warning",
+    high: "critical",
+    none: undefined,
+  };
+
+  const kw = (t.seo as any).keywordsPage;
 
   // Scoring is computed by the shared pure function (app/utils/seo-score.ts) so
   // the Sidebar and the store-wide Audit-Dashboard never drift. The function
@@ -348,6 +443,69 @@ export function SeoSidebar({
                     ? t.seo?.copied || "Copied!"
                     : t.seo?.copyJsonLd || "Copy <script> tag"}
                 </Button>
+              </BlockStack>
+            )}
+          </BlockStack>
+        )}
+
+        {/* Target keyword — only when the caller supplies resourceId + resourceType */}
+        {keywordTrackingEnabled && (
+          <BlockStack gap="200">
+            <Button
+              onClick={() => setShowKeywordSection((v) => !v)}
+              variant="plain"
+              size="slim"
+            >
+              {showKeywordSection
+                ? t.seo?.targetKeywordHide || "Hide target keyword"
+                : t.seo?.targetKeywordShow || "Show target keyword"}
+            </Button>
+            {showKeywordSection && (
+              <BlockStack gap="200">
+                <TextField
+                  label={t.seo?.targetKeywordLabel || "Target keyword"}
+                  autoComplete="off"
+                  placeholder={t.seo?.targetKeywordPlaceholder || "e.g. blue running shoes"}
+                  value={keywordInput}
+                  onChange={setKeywordInput}
+                  disabled={keywordLoadFetcher.state !== "idle"}
+                />
+                <InlineStack gap="200" blockAlign="center">
+                  <Button
+                    size="slim"
+                    onClick={handleSaveKeyword}
+                    loading={keywordSaveFetcher.state !== "idle"}
+                  >
+                    {keywordSaved
+                      ? t.seo?.targetKeywordSaved || "Saved"
+                      : t.seo?.targetKeywordSave || "Save"}
+                  </Button>
+                  {!keywordInput.trim() && trackedKeyword && (
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {t.seo?.targetKeywordRemoveHint || "Clear the field and save to stop tracking this keyword."}
+                    </Text>
+                  )}
+                </InlineStack>
+
+                {keywordAnalysis && (
+                  <BlockStack gap="200">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Badge tone={scoreTone(keywordAnalysis.score) as any}>
+                        {`${t.seo?.targetKeywordScoreLabel || "On-page score"}: ${keywordAnalysis.score}`}
+                      </Badge>
+                      <Badge tone={densityTone[keywordAnalysis.densityBand]}>
+                        {`${kw?.density?.[keywordAnalysis.densityBand] ?? keywordAnalysis.densityBand} (${keywordAnalysis.densityPct}%)`}
+                      </Badge>
+                    </InlineStack>
+                    <InlineStack gap="100" wrap>
+                      {(["title", "seoTitle", "metaDescription", "body"] as const).map((key) => (
+                        <Badge key={key} tone={keywordAnalysis.presence[key] ? "success" : undefined}>
+                          {kw?.presence?.[key] ?? key}
+                        </Badge>
+                      ))}
+                    </InlineStack>
+                  </BlockStack>
+                )}
               </BlockStack>
             )}
           </BlockStack>

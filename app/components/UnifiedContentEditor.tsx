@@ -28,6 +28,7 @@ import {
   buildArticleJsonLd,
   type JsonLd,
 } from "../services/structured-data.service";
+import type { KeywordResourceType } from "../services/seo/keywords.service";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { usePlan } from "../contexts/PlanContext";
@@ -408,6 +409,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       }
     }
 
+    // Target-keyword tracking is per-item (locale ""), not per-translation, so
+    // it's only offered while editing the primary locale — matches the pattern
+    // used elsewhere in this file (e.g. handleClearAllClick vs ...ForLocaleClick).
+    const keywordResourceType =
+      !isBlogContainer && state.currentLanguage === primaryLocale
+        ? getKeywordResourceType(config.contentType)
+        : undefined;
+
     return (
       <SeoSidebar
         title={editableValues.title || ""}
@@ -420,6 +429,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         excludeDescription={isBlogContainer}
         excludeImages={isBlogContainer}
         structuredData={structuredData}
+        resourceId={keywordResourceType ? item.id : undefined}
+        resourceType={keywordResourceType}
       />
     );
   };
@@ -1199,6 +1210,19 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
   }
 
   return "";
+}
+
+// Target-keyword tracking (SeoKeyword model) only covers these four content
+// types — everything else (policies, templates, metaobjects, ...) returns
+// undefined so the sidebar's "Target keyword" section stays hidden for them.
+function getKeywordResourceType(contentType: string): KeywordResourceType | undefined {
+  const map: Record<string, KeywordResourceType> = {
+    products: "Product",
+    collections: "Collection",
+    blogs: "Article",
+    pages: "Page",
+  };
+  return map[contentType];
 }
 
 function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {

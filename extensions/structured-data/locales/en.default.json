@@ -1,7 +1,8 @@
 {
   "blocks": {
     "structured_data": {
-      "name": "JSON-LD Structured Data"
+      "name": "JSON-LD Structured Data",
+      "enable_faq_label": "FAQ (product pages, from the \"custom.faq\" metafield)"
     },
     "social_meta": {
       "name": "Open Graph / Twitter Cards",

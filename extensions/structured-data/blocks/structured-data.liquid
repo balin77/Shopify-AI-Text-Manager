@@ -15,6 +15,7 @@
   assign want_collection = block.settings.enable_collection
   assign want_article = block.settings.enable_article
   assign want_breadcrumb = block.settings.enable_breadcrumb
+  assign want_faq = block.settings.enable_faq
 
   assign logo_url = ''
   if block.settings.logo
@@ -123,6 +124,49 @@
   {%- endif -%}
 }
 </script>
+{%- endif -%}
+
+{%- comment -%}
+  FAQ (plan §C2): opt-in (`enable_faq`, default false), product pages only.
+  Sourced from the product metafield `custom.faq` (type `json`, a list of
+  `{question, answer}`) via `METAFIELDS_SET` — no admin API call needed here,
+  it's read straight off the native `product` object. Built into a `capture`
+  first so we only emit the <script> block when at least one entry has both a
+  non-blank question and answer (an empty `mainEntity` is invalid FAQPage
+  markup); the comma between entries is placed via a counter (not join/split)
+  since question/answer text can contain any character. Every value goes
+  through `| json` per this block's escaping convention.
+{%- endcomment -%}
+{%- if want_faq and request.page_type == 'product' and product -%}
+  {%- assign faq_items = product.metafields.custom.faq.value -%}
+  {%- capture faq_body -%}
+    {%- assign faq_printed = 0 -%}
+    {%- for faq_item in faq_items -%}
+      {%- if faq_item.question != blank and faq_item.answer != blank -%}
+        {%- if faq_printed > 0 -%},{%- endif -%}
+        {
+          "@type": "Question",
+          "name": {{ faq_item.question | json }},
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": {{ faq_item.answer | json }}
+          }
+        }
+        {%- assign faq_printed = faq_printed | plus: 1 -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endcapture -%}
+  {%- if faq_body != blank -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {{ faq_body }}
+  ]
+}
+</script>
+  {%- endif -%}
 {%- endif -%}
 
 {%- if want_collection and request.page_type == 'collection' and collection -%}
@@ -244,7 +288,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb) for Google rich results. Enable once - markup is generated automatically per page."
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
     },
     {
       "type": "checkbox",
@@ -275,6 +319,13 @@
       "id": "enable_breadcrumb",
       "label": "Breadcrumb list",
       "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_faq",
+      "label": "FAQ (product pages, from the \"custom.faq\" metafield)",
+      "info": "Off by default - only enable once the product metafield \"custom.faq\" (a list of question/answer pairs) is populated.",
+      "default": false
     },
     {
       "type": "header",

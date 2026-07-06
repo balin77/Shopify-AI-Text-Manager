@@ -81,6 +81,11 @@ export interface ProductInput {
   available?: boolean | null;
   ratingValue?: number | null;
   ratingCount?: number | null;
+  /** Upper bound of the rating scale (Shopify's standard `reviews.rating`
+   *  metafield stores this as `.value.scale_max`); mirrored into
+   *  AggregateRating.bestRating, defaulting to 5 like the storefront Liquid
+   *  block (plan §C2). */
+  ratingScaleMax?: number | null;
   /** Raw barcode (UPC/EAN/ISBN/JAN) — mapped to gtin8/12/13/14 via gtinProps(). */
   gtin?: string | null;
   mpn?: string | null;
@@ -188,6 +193,11 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
     });
   }
 
+  // Mirrors the storefront Liquid block's `reviews.rating`/`reviews.rating_count`
+  // read (plan §C2): only Shopify's standard rating metafields (populated by
+  // Judge.me/Loox/etc. review apps that write them) are covered — an app's
+  // proprietary namespace (e.g. `loox.avg_rating`) is a known, documented
+  // limit and is not read here or in the theme extension.
   let aggregateRating: JsonLd | undefined;
   if (
     p.ratingValue != null &&
@@ -198,6 +208,7 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
     aggregateRating = {
       "@type": "AggregateRating",
       ratingValue: p.ratingValue,
+      bestRating: p.ratingScaleMax ?? 5,
       reviewCount: p.ratingCount,
     };
   }
@@ -295,6 +306,37 @@ export function buildBreadcrumbJsonLd(
   };
 }
 
+export interface FaqEntry {
+  question: string;
+  answer: string;
+}
+
+/**
+ * FAQPage JSON-LD (plan §C2) from a list of {question, answer} pairs — the
+ * shape stored in the product metafield `custom.faq` (type `json`). Entries
+ * with an empty/blank question or answer are filtered out; returns `null`
+ * when nothing valid remains so callers can skip rendering entirely (same
+ * convention as buildBreadcrumbJsonLd).
+ */
+export function buildFaqJsonLd(entries: FaqEntry[] | null | undefined): JsonLd | null {
+  const valid = (entries || []).filter(
+    (e) => e && String(e.question ?? "").trim() !== "" && String(e.answer ?? "").trim() !== "",
+  );
+  if (valid.length === 0) return null;
+  return {
+    "@context": SCHEMA_CTX,
+    "@type": "FAQPage",
+    mainEntity: valid.map((e) => ({
+      "@type": "Question",
+      name: e.question,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: e.answer,
+      },
+    })),
+  };
+}
+
 // ─────────────────────────── validation ────────────────────────────────────
 
 export interface JsonLdWarning {
@@ -365,6 +407,34 @@ export function validateJsonLd(jsonLd: JsonLd | null): JsonLdWarning[] {
         severity: "warning",
         message:
           "Product has no GTIN/MPN — reduces matchability in Google/AI shopping results.",
+      });
+    }
+    // Rating is genuinely optional (plan §C2) — no warning for its plain
+    // absence, only when it's present but malformed/incomplete.
+    const aggregateRating = jsonLd.aggregateRating as JsonLd | undefined;
+    if (aggregateRating) {
+      if (!aggregateRating.ratingValue) {
+        w.push({
+          severity: "warning",
+          message: "AggregateRating is missing ratingValue.",
+        });
+      }
+      const reviewCount = aggregateRating.reviewCount as number | undefined;
+      if (reviewCount == null || reviewCount <= 0) {
+        w.push({
+          severity: "warning",
+          message: "AggregateRating has no reviewCount (or it is 0).",
+        });
+      }
+    }
+  }
+
+  if (type === "FAQPage") {
+    const mainEntity = jsonLd.mainEntity as unknown[] | undefined;
+    if (!mainEntity || mainEntity.length === 0) {
+      w.push({
+        severity: "error",
+        message: "FAQPage has no questions (mainEntity is empty).",
       });
     }
   }

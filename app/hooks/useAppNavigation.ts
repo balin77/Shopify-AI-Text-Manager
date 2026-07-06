@@ -25,6 +25,11 @@ import { useNavigate } from "@remix-run/react";
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */
   searchParams?: URLSearchParams;
+  /** Replace the current history entry instead of pushing a new one — useful
+   * for filter-style params (e.g. a locale picker) where every change
+   * shouldn't add its own back-button stop. Defaults to false (push), so
+   * existing callers are unaffected. */
+  replace?: boolean;
 }
 
 /**
@@ -76,7 +81,7 @@ export function useAppNavigation() {
     // path is resolved in-app by Remix, so there is no risk of the browser
     // resolving it against admin.shopify.com (the reason the old hard-reload
     // implementation built an absolute URL).
-    navigate(pathWithParams);
+    navigate(pathWithParams, options.replace ? { replace: true } : undefined);
   }, [navigate]);
 
   return { handleNavigate };

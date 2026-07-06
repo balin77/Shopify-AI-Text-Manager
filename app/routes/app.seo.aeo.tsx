@@ -59,6 +59,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       gated: true,
       llmsTxtExists: false,
       blockedCrawlers: [] as string[],
+      // Keep this shape in sync with the analysis branch below — TS infers
+      // the loader's return type as the common shape across both `json()`
+      // calls, so a field missing here (like this one previously) silently
+      // disappears from `useLoaderData`'s type in the non-gated branch too.
+      partiallyBlockedCrawlers: [] as string[],
       robotsAuditAvailable: false,
       themesUrl: "",
     });
@@ -151,18 +156,41 @@ export default function SeoAeo() {
                 <Text as="p" tone="subdued">
                   {a.robotsUnavailable}
                 </Text>
-              ) : data.blockedCrawlers.length === 0 ? (
+              ) : data.blockedCrawlers.length === 0 && data.partiallyBlockedCrawlers.length === 0 ? (
                 <Banner tone="success">{a.robotsAllAllowed}</Banner>
               ) : (
                 <BlockStack gap="200">
-                  <Banner tone="warning">{a.robotsBlocked}</Banner>
-                  <InlineStack gap="100" wrap>
-                    {data.blockedCrawlers.map((c) => (
-                      <Badge key={c} tone="critical">
-                        {c}
-                      </Badge>
-                    ))}
-                  </InlineStack>
+                  {data.blockedCrawlers.length > 0 && (
+                    <>
+                      <Banner tone="warning">{a.robotsBlocked}</Banner>
+                      <InlineStack gap="100" wrap>
+                        {data.blockedCrawlers.map((c) => (
+                          <Badge key={c} tone="critical">
+                            {c}
+                          </Badge>
+                        ))}
+                      </InlineStack>
+                    </>
+                  )}
+                  {/* Distinct from a full block (plan §C2 follow-up): some path is
+                      disallowed for these crawlers, but the site isn't fully
+                      blocked — still worth a look, so it gets its own
+                      warning-tone section instead of being folded into the
+                      fully-blocked list above. */}
+                  {data.partiallyBlockedCrawlers.length > 0 && (
+                    <>
+                      <Banner tone="warning" title={a.partiallyBlockedTitle}>
+                        {a.partiallyBlockedBody}
+                      </Banner>
+                      <InlineStack gap="100" wrap>
+                        {data.partiallyBlockedCrawlers.map((c) => (
+                          <Badge key={c} tone="attention">
+                            {c}
+                          </Badge>
+                        ))}
+                      </InlineStack>
+                    </>
+                  )}
                   <Text as="p" variant="bodySm" tone="subdued">
                     {a.robotsFixHint}
                   </Text>

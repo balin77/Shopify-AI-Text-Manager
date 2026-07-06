@@ -11,6 +11,14 @@
  *
  * The theme-editor deep-link uses the app client_id (SHOPIFY_API_KEY) and the
  * block handle `structured-data`, per A3.
+ *
+ * Preview/storefront drift (documented, not a bug — plan §C1/§C2): the
+ * product preview is built from the DB cache, which has neither
+ * `ProductVariant.barcode` (GTIN) nor the Shopify standard review-app rating
+ * metafields (`reviews.rating` / `reviews.rating_count`). The preview simply
+ * omits `gtin*`/`aggregateRating` in that case — the storefront Liquid block
+ * still emits them in full from native/metafield data, so there is no drift
+ * in what actually ships, only in what this in-app preview can show.
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";

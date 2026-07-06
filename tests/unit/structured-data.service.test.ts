@@ -7,6 +7,7 @@ import {
   buildCollectionJsonLd,
   buildArticleJsonLd,
   buildBreadcrumbJsonLd,
+  buildFaqJsonLd,
   validateJsonLd,
   renderJsonLdScript,
   gtinProps,
@@ -89,6 +90,35 @@ describe("buildProductJsonLd", () => {
       shop,
     );
     expect(ld.aggregateRating).toBeUndefined();
+  });
+
+  it("aggregateRating: bestRating defaults to 5 when ratingScaleMax is absent, mirroring the Liquid block", () => {
+    const ld = buildProductJsonLd(
+      { title: "Mug", handle: "mug", ratingValue: 4.2, ratingCount: 3 },
+      shop,
+    );
+    expect(ld.aggregateRating).toEqual({
+      "@type": "AggregateRating",
+      ratingValue: 4.2,
+      bestRating: 5,
+      reviewCount: 3,
+    });
+  });
+
+  it("aggregateRating: uses the provided ratingScaleMax as bestRating", () => {
+    const ld = buildProductJsonLd(
+      { title: "Mug", handle: "mug", ratingValue: 8.5, ratingCount: 3, ratingScaleMax: 10 },
+      shop,
+    );
+    expect((ld.aggregateRating as any).bestRating).toBe(10);
+  });
+
+  it("byte-parity: no ratingValue/ratingCount/ratingScaleMax adds no aggregateRating key at all", () => {
+    const ld = buildProductJsonLd(
+      { title: "Mug", handle: "mug", price: 19.9, currency: "EUR", available: true },
+      shop,
+    );
+    expect("aggregateRating" in ld).toBe(false);
   });
 
   it("byte-parity: gtin/mpn/brandUrl/priceValidUntil absent add no new keys", () => {
@@ -225,6 +255,40 @@ describe("buildBreadcrumbJsonLd", () => {
   });
 });
 
+describe("buildFaqJsonLd", () => {
+  it("builds a FAQPage with one Question/acceptedAnswer per entry", () => {
+    const ld = buildFaqJsonLd([
+      { question: "Does it ship internationally?", answer: "Yes, worldwide." },
+      { question: "What is the warranty?", answer: "2 years." },
+    ])!;
+    expect(ld["@context"]).toBe("https://schema.org");
+    expect(ld["@type"]).toBe("FAQPage");
+    const entities = ld.mainEntity as any[];
+    expect(entities).toHaveLength(2);
+    expect(entities[0]).toEqual({
+      "@type": "Question",
+      name: "Does it ship internationally?",
+      acceptedAnswer: { "@type": "Answer", text: "Yes, worldwide." },
+    });
+  });
+
+  it("filters out entries with an empty/blank question or answer", () => {
+    const ld = buildFaqJsonLd([
+      { question: "", answer: "Yes." },
+      { question: "Q?", answer: "   " },
+      { question: "Real question?", answer: "Real answer." },
+    ])!;
+    expect((ld.mainEntity as any[]).map((e) => e.name)).toEqual(["Real question?"]);
+  });
+
+  it("returns null when no valid entries remain", () => {
+    expect(buildFaqJsonLd([])).toBeNull();
+    expect(buildFaqJsonLd(null)).toBeNull();
+    expect(buildFaqJsonLd(undefined)).toBeNull();
+    expect(buildFaqJsonLd([{ question: "", answer: "" }])).toBeNull();
+  });
+});
+
 describe("validateJsonLd", () => {
   it("flags missing product image/offers", () => {
     const w = validateJsonLd(
@@ -280,6 +344,38 @@ describe("validateJsonLd", () => {
     );
     const msgs = validateJsonLd(ld).map((w) => w.message).join(" ");
     expect(msgs).toMatch(/availability/);
+  });
+  it("does not warn about rating when it's simply absent (rating is optional)", () => {
+    const ld = buildProductJsonLd(
+      { title: "X", handle: "x", descriptionHtml: "desc", featuredImageUrl: "i", price: 1, currency: "USD", available: true, mpn: "MPN-1" },
+      shop,
+    );
+    const msgs = validateJsonLd(ld).map((w) => w.message).join(" ");
+    expect(msgs).not.toMatch(/[Rr]ating/);
+  });
+  it("warns when aggregateRating is present but incomplete (missing ratingValue / zero reviewCount)", () => {
+    const w = validateJsonLd({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: "X",
+      image: "i",
+      description: "d",
+      offers: { "@type": "Offer", priceCurrency: "USD", availability: "https://schema.org/InStock" },
+      mpn: "MPN-1",
+      aggregateRating: { "@type": "AggregateRating", reviewCount: 0 },
+    });
+    const msgs = w.map((x) => x.message).join(" ");
+    expect(msgs).toMatch(/ratingValue/);
+    expect(msgs).toMatch(/reviewCount/);
+  });
+
+  it("FAQPage with an empty mainEntity is an error", () => {
+    const w = validateJsonLd({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: [] });
+    expect(w.some((x) => x.severity === "error" && /FAQPage/.test(x.message))).toBe(true);
+  });
+  it("a populated FAQPage validates clean", () => {
+    const ld = buildFaqJsonLd([{ question: "Q?", answer: "A." }]);
+    expect(validateJsonLd(ld)).toEqual([]);
   });
 });
 
