@@ -44,7 +44,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.warn("[GSC callback] invalid or missing OAuth state");
     return redirect("/auth/login");
   }
-  const { shop, host } = verified;
+  const { shop, host, customDomain } = verified;
 
   if (oauthError || !code) {
     logger.warn("[GSC callback] OAuth denied/aborted", { context: "GSC", error: oauthError || "no_code" });
@@ -55,24 +55,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { db } = await import("../db.server");
     const tokens = await exchangeCodeForTokens(code);
     const sites = await listSites(tokens.accessToken);
-    const property = pickProperty(sites, shop);
-    if (!property) {
+    if (sites.length === 0) {
       return redirect(appReturn(shop, host, "no_sites"));
     }
+    // customDomain travels in the signed OAuth state (captured when the flow
+    // started, see app.seo.search-console.tsx) so a custom-domain store still
+    // matches its verified property here. `property` is null when NEITHER the
+    // shop domain nor the custom domain matches any verified site — pickProperty
+    // deliberately refuses to guess sites[0] in that case (see its doc comment).
+    const property = pickProperty(sites, shop, customDomain);
     const email = emailFromIdToken(tokens.idToken);
+    // Empty-string sentinel: propertyUrl is a required (non-nullable) column,
+    // so "no property picked yet" is represented as "" rather than a schema
+    // migration. The Search Console section renders a property picker whenever
+    // it reads back an empty propertyUrl.
+    const propertyToStore = property ?? "";
 
     if (tokens.refreshToken) {
-      await saveGscConnection(db, shop, { propertyUrl: property, refreshToken: tokens.refreshToken, email });
+      await saveGscConnection(db, shop, { propertyUrl: propertyToStore, refreshToken: tokens.refreshToken, email });
     } else if (await getGscConnection(db, shop)) {
       // Google omits the refresh_token when the user already granted consent and
       // no new one was minted — keep the stored token, just refresh property/email.
-      await updateGscProperty(db, shop, property, email);
+      await updateGscProperty(db, shop, propertyToStore, email);
     } else {
       // No refresh token and no prior connection → cannot persist; ask to retry.
       return redirect(appReturn(shop, host, "no_refresh_token"));
     }
 
-    return redirect(appReturn(shop, host, "connected"));
+    return redirect(appReturn(shop, host, property ? "connected" : "select_property"));
   } catch (e) {
     logger.error("[GSC callback] connection failed", {
       context: "GSC",

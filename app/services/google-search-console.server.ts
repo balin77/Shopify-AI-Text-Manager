@@ -18,8 +18,16 @@ import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 const GSC_API = "https://www.googleapis.com/webmasters/v3";
 const GSC_INSPECT_API = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
+
+// Every outbound call to Google is a request-response cycle the merchant is
+// waiting on (a Remix loader/action). Without a timeout, a stalled TCP
+// connection to Google would hang the request indefinitely. Analytics queries
+// get a longer budget — they aggregate rows server-side on Google's end.
+const FETCH_TIMEOUT_MS = 10_000;
+const ANALYTICS_FETCH_TIMEOUT_MS = 15_000;
 
 // webmasters.readonly = analytics/inspection; webmasters = sitemaps.submit.
 // openid+email so we can show which Google account is connected.
@@ -63,16 +71,31 @@ export function isGscConfigured(): boolean {
 // ── Signed OAuth state (CSRF + carries shop/host) ────────────────────────────
 
 function stateSecret(): string {
-  return process.env.SHOPIFY_API_SECRET || process.env.ENCRYPTION_KEY || "dev-only-state-secret";
+  const secret = process.env.SHOPIFY_API_SECRET || process.env.ENCRYPTION_KEY;
+  if (secret) return secret;
+  // A hardcoded fallback would let anyone forge a valid-looking OAuth state
+  // (CSRF) if this ever ran in production without SHOPIFY_API_SECRET or
+  // ENCRYPTION_KEY set — both should always be present in production (see
+  // scripts/validate-env.js). Fail loudly there instead of signing with a
+  // secret an attacker can read straight out of this file. Non-production
+  // keeps the fallback so local dev works with a bare-bones .env.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "GSC OAuth state secret is not configured: set SHOPIFY_API_SECRET or ENCRYPTION_KEY in production",
+    );
+  }
+  return "dev-only-state-secret";
 }
 
-export function signOAuthState(payload: { shop: string; host: string }): string {
+export function signOAuthState(payload: { shop: string; host: string; customDomain?: string | null }): string {
   const body = Buffer.from(JSON.stringify({ ...payload, ts: Date.now() })).toString("base64url");
   const sig = createHmac("sha256", stateSecret()).update(body).digest("base64url");
   return `${body}.${sig}`;
 }
 
-export function verifyOAuthState(state: string): { shop: string; host: string } | null {
+export function verifyOAuthState(
+  state: string,
+): { shop: string; host: string; customDomain: string | null } | null {
   const [body, sig] = (state || "").split(".");
   if (!body || !sig) return null;
   const expected = createHmac("sha256", stateSecret()).update(body).digest("base64url");
@@ -83,7 +106,11 @@ export function verifyOAuthState(state: string): { shop: string; host: string } 
     const data = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     if (typeof data.shop !== "string" || typeof data.ts !== "number") return null;
     if (Date.now() - data.ts > STATE_TTL_MS) return null;
-    return { shop: data.shop, host: typeof data.host === "string" ? data.host : "" };
+    return {
+      shop: data.shop,
+      host: typeof data.host === "string" ? data.host : "",
+      customDomain: typeof data.customDomain === "string" ? data.customDomain : null,
+    };
   } catch {
     return null;
   }
@@ -127,6 +154,7 @@ export async function exchangeCodeForTokens(code: string): Promise<TokenResult> 
       redirect_uri: cfg.redirectUri,
       grant_type: "authorization_code",
     }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json.access_token) {
@@ -152,6 +180,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<string> 
       client_secret: cfg.clientSecret,
       grant_type: "refresh_token",
     }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json.access_token) {
@@ -159,6 +188,25 @@ export async function refreshAccessToken(refreshToken: string): Promise<string> 
     throw new Error(`Google token refresh failed: ${json.error || res.status}`);
   }
   return json.access_token;
+}
+
+/**
+ * Best-effort revoke of a refresh token at Google (called on disconnect). Never
+ * throws — a revoke failure (network blip, token already revoked, Google
+ * outage) must not block deleting the local connection; the merchant's intent
+ * to disconnect must always succeed locally regardless of Google's reachability.
+ */
+export async function revokeGoogleToken(refreshToken: string): Promise<void> {
+  try {
+    await fetch(GOOGLE_REVOKE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: refreshToken }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    // Best-effort only — see doc comment above.
+  }
 }
 
 /** Best-effort email from an OpenID id_token (no signature verification needed — display only). */
@@ -245,6 +293,7 @@ export interface GscSite {
 export async function listSites(accessToken: string): Promise<GscSite[]> {
   const res = await fetch(`${GSC_API}/sites`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`GSC listSites failed: ${json.error?.message || res.status}`);
@@ -254,7 +303,14 @@ export async function listSites(accessToken: string): Promise<GscSite[]> {
 /**
  * Pick the GSC property that best matches a shop. Prefers a domain property or a
  * URL-prefix property whose host contains the shop's domain (myshopify or
- * custom); falls back to the first verified site.
+ * custom).
+ *
+ * Deliberately does NOT fall back to `sites[0]` when nothing matches: the
+ * merchant's Google account can have any number of unrelated verified
+ * properties (other stores, personal sites), and silently picking the first
+ * one would submit sitemaps / read analytics for the wrong website. Returning
+ * null here tells the caller to store the connection without a property and
+ * let the merchant pick the right one explicitly.
  */
 export function pickProperty(sites: GscSite[], shop: string, customDomain?: string | null): string | null {
   if (sites.length === 0) return null;
@@ -263,12 +319,12 @@ export function pickProperty(sites: GscSite[], shop: string, customDomain?: stri
     const s = siteUrl.toLowerCase();
     return needles.some((n) => s.includes(n));
   };
-  // Prefer a matching domain property, then a matching URL property, then first.
+  // Prefer a matching domain property, then a matching URL property.
   const domainMatch = sites.find((s) => s.siteUrl.startsWith("sc-domain:") && matches(s.siteUrl));
   if (domainMatch) return domainMatch.siteUrl;
   const urlMatch = sites.find((s) => matches(s.siteUrl));
   if (urlMatch) return urlMatch.siteUrl;
-  return sites[0].siteUrl;
+  return null;
 }
 
 export interface SearchAnalyticsRow {
@@ -302,19 +358,31 @@ export async function querySearchAnalytics(
       rowLimit: opts.rowLimit ?? 25,
       dataState: "final", // GSC has 2–3d latency; only settled data
     }),
+    signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`GSC searchAnalytics failed: ${json.error?.message || res.status}`);
   return (json.rows ?? []) as SearchAnalyticsRow[];
 }
 
+/**
+ * Submit a sitemap to GSC. `sitemapUrl` must be the sitemap's FULL absolute URL
+ * (e.g. "https://shop.example.com/sitemap.xml") — the sitemaps.submit API takes
+ * this as the resource identifier, not a path relative to the property. This
+ * holds even for `sc-domain:` (domain) properties: the sitemap itself is still
+ * served over https from the store's host, only the *property* is domain-scoped.
+ */
 export async function submitSitemap(
   accessToken: string,
   propertyUrl: string,
-  feedpath: string,
+  sitemapUrl: string,
 ): Promise<void> {
-  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/sitemaps/${encodeURIComponent(feedpath)}`;
-  const res = await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}` } });
+  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/sitemaps/${encodeURIComponent(sitemapUrl)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok && res.status !== 204) {
     const json: any = await res.json().catch(() => ({}));
     throw new Error(`GSC submitSitemap failed: ${json.error?.message || res.status}`);
@@ -330,6 +398,7 @@ export async function inspectUrl(
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ inspectionUrl, siteUrl: propertyUrl }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`GSC urlInspection failed: ${json.error?.message || res.status}`);

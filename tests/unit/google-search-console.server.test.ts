@@ -11,6 +11,8 @@ import {
   defaultDateRange,
   enrichKeywordsFromGsc,
   getGscAccessToken,
+  revokeGoogleToken,
+  submitSitemap,
   GscReconnectRequiredError,
 } from "~/services/google-search-console.server";
 import { encryptApiKey, isEncrypted } from "~/utils/encryption.server";
@@ -52,7 +54,15 @@ describe("getGscOAuthConfig", () => {
 describe("OAuth state signing", () => {
   it("round-trips shop + host", () => {
     const state = signOAuthState({ shop: "s.myshopify.com", host: "aG9zdA" });
-    expect(verifyOAuthState(state)).toEqual({ shop: "s.myshopify.com", host: "aG9zdA" });
+    expect(verifyOAuthState(state)).toEqual({ shop: "s.myshopify.com", host: "aG9zdA", customDomain: null });
+  });
+  it("round-trips a custom domain so the callback can match it in pickProperty", () => {
+    const state = signOAuthState({ shop: "s.myshopify.com", host: "h", customDomain: "shop.example.com" });
+    expect(verifyOAuthState(state)).toEqual({
+      shop: "s.myshopify.com",
+      host: "h",
+      customDomain: "shop.example.com",
+    });
   });
   it("rejects a tampered signature", () => {
     const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
@@ -73,6 +83,34 @@ describe("OAuth state signing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("OAuth state secret — production must not use the dev fallback", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("throws in production when neither SHOPIFY_API_SECRET nor ENCRYPTION_KEY is set", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SHOPIFY_API_SECRET", "");
+    vi.stubEnv("ENCRYPTION_KEY", "");
+    expect(() => signOAuthState({ shop: "s.myshopify.com", host: "h" })).toThrow(
+      /OAuth state secret is not configured/i,
+    );
+  });
+
+  it("still works in production when SHOPIFY_API_SECRET is set", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SHOPIFY_API_SECRET", "shpss_real_secret");
+    vi.stubEnv("ENCRYPTION_KEY", "");
+    const state = signOAuthState({ shop: "s.myshopify.com", host: "h" });
+    expect(verifyOAuthState(state)).toEqual({ shop: "s.myshopify.com", host: "h", customDomain: null });
+  });
+
+  it("falls back to the dev-only secret outside production", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("SHOPIFY_API_SECRET", "");
+    vi.stubEnv("ENCRYPTION_KEY", "");
+    expect(() => signOAuthState({ shop: "s.myshopify.com", host: "h" })).not.toThrow();
   });
 });
 
@@ -155,8 +193,9 @@ describe("pickProperty", () => {
   it("falls back to a matching URL property", () => {
     expect(pickProperty(sites, "foo.myshopify.com")).toBe("https://foo.myshopify.com/");
   });
-  it("falls back to the first site when nothing matches", () => {
-    expect(pickProperty(sites, "other.myshopify.com")).toBe("sc-domain:example.com");
+  it("does NOT guess sites[0] when nothing matches shop or custom domain — returns null so the caller can prompt the merchant", () => {
+    expect(pickProperty(sites, "other.myshopify.com")).toBeNull();
+    expect(pickProperty(sites, "other.myshopify.com", "unrelated.com")).toBeNull();
   });
   it("returns null for no sites", () => {
     expect(pickProperty([], "foo.myshopify.com")).toBeNull();
@@ -278,5 +317,52 @@ describe("getGscAccessToken — recovery paths", () => {
     } as any;
     await expect(getGscAccessToken(db, "s")).rejects.toBeInstanceOf(GscReconnectRequiredError);
     expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "s" } });
+  });
+});
+
+describe("revokeGoogleToken — best-effort disconnect", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("posts the refresh token form-encoded to Google's revoke endpoint", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    await revokeGoogleToken("rt-value");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://oauth2.googleapis.com/revoke");
+    expect(init.method).toBe("POST");
+    expect(String(init.body)).toContain("token=rt-value");
+  });
+
+  it("never throws — a network error must not block disconnect", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
+    await expect(revokeGoogleToken("rt-value")).resolves.toBeUndefined();
+  });
+
+  it("never throws even when Google responds with an error status", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => resp(false, { error: "invalid_token" })));
+    await expect(revokeGoogleToken("rt-value")).resolves.toBeUndefined();
+  });
+});
+
+describe("submitSitemap — requires a full absolute sitemap URL", () => {
+  beforeEach(() => {
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "cid");
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "csec");
+    vi.stubEnv("GOOGLE_OAUTH_REDIRECT_URI", "https://app.example.com/auth/google/callback");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("PUTs the encoded full https sitemap URL, not a bare relative path", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, {}, 204));
+    vi.stubGlobal("fetch", fetchMock);
+    await submitSitemap("at", "sc-domain:example.com", "https://example.com/sitemap.xml");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(encodeURIComponent("https://example.com/sitemap.xml"));
+    expect(init.method).toBe("PUT");
   });
 });

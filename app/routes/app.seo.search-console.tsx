@@ -7,6 +7,7 @@
  * OAuth), then view top queries, sync keyword rankings, and submit the sitemap.
  */
 
+import { useState } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
@@ -17,6 +18,7 @@ import {
   Badge,
   Button,
   Banner,
+  Select,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -24,19 +26,24 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
+import { tryDecryptApiKey } from "../utils/encryption.server";
 import {
   isGscConfigured,
   getGscConnection,
   getGscAccessToken,
   deleteGscConnection,
+  updateGscProperty,
   querySearchAnalytics,
   submitSitemap,
+  listSites,
   enrichKeywordsFromGsc,
   buildGscAuthUrl,
   signOAuthState,
   defaultDateRange,
+  revokeGoogleToken,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
+  type GscSite,
 } from "../services/google-search-console.server";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
@@ -47,8 +54,30 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
   return (settings?.subscriptionPlan || "free") as Plan;
 }
 
+// Same shop-primary-domain lookup pattern as app.seo.aeo.tsx. Needed to (a)
+// carry the shop's custom domain in the OAuth state so the callback can match
+// it against verified GSC properties (pickProperty), and (b) build the FULL
+// sitemap URL the sitemaps.submit API requires (GSC rejects relative paths).
+const SHOP_DOMAIN_QUERY = `#graphql
+  query seoSearchConsoleShopDomain {
+    shop {
+      primaryDomain { host }
+    }
+  }
+`;
+
+async function getShopPrimaryDomain(admin: any, fallbackShop: string): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_DOMAIN_QUERY);
+    const j: any = await res.json();
+    return j?.data?.shop?.primaryDomain?.host || fallbackShop;
+  } catch {
+    return fallbackShop;
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const url = new URL(request.url);
   const host = url.searchParams.get("host") || "";
@@ -63,6 +92,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     email: null as string | null,
     topQueries: [] as SearchAnalyticsRow[],
     needsReconnect: false,
+    needsPropertySelection: false,
+    availableProperties: [] as GscSite[],
     error: null as string | null,
     statusParam,
   };
@@ -73,16 +104,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isGscConfigured()) return json(base);
   base.configured = true;
 
-  const buildConnect = () => buildGscAuthUrl(signOAuthState({ shop: session.shop, host }));
+  // Only fetched when we're actually about to build a connect/reconnect URL —
+  // avoids an extra Admin GraphQL call on every load of an already-connected,
+  // healthy section.
+  const buildConnect = async () => {
+    const primaryHost = await getShopPrimaryDomain(admin, session.shop);
+    const customDomain = primaryHost !== session.shop ? primaryHost : null;
+    return buildGscAuthUrl(signOAuthState({ shop: session.shop, host, customDomain }));
+  };
 
   const connection = await getGscConnection(db, session.shop);
   if (!connection) {
-    return json({ ...base, connectUrl: buildConnect() });
+    return json({ ...base, connectUrl: await buildConnect() });
   }
 
   base.connected = true;
-  base.property = connection.propertyUrl;
+  base.property = connection.propertyUrl || null;
   base.email = connection.email;
+
+  if (!connection.propertyUrl) {
+    // OAuth succeeded but no verified property matched the shop's myshopify or
+    // custom domain (see pickProperty) — the connection was stored with the ""
+    // sentinel. Fetch the merchant's verified properties so the UI can render
+    // a picker instead of guessing.
+    try {
+      const { accessToken } = await getGscAccessToken(db, session.shop);
+      base.needsPropertySelection = true;
+      base.availableProperties = await listSites(accessToken);
+    } catch (e) {
+      if (e instanceof GscReconnectRequiredError) {
+        base.needsReconnect = true;
+        base.connectUrl = await buildConnect();
+      } else {
+        base.error = "fetch_failed";
+      }
+    }
+    return json(base);
+  }
 
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
@@ -96,7 +154,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   } catch (e) {
     if (e instanceof GscReconnectRequiredError) {
       base.needsReconnect = true;
-      base.connectUrl = buildConnect();
+      base.connectUrl = await buildConnect();
     } else {
       base.error = "fetch_failed";
     }
@@ -106,11 +164,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 type ActionResult =
-  | { ok: true; kind: "disconnected" | "synced" | "sitemap"; count?: number }
+  | { ok: true; kind: "disconnected" | "synced" | "sitemap" | "propertySelected"; count?: number }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
   const plan = await loadPlan(db, session.shop);
@@ -122,6 +180,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   const actionType = getFormString(form, "actionType");
 
   if (actionType === "disconnect") {
+    // Best-effort revoke at Google before dropping the local row — the
+    // merchant's "disconnect" intent must succeed locally even if Google is
+    // unreachable (revokeGoogleToken never throws), but we shouldn't leave a
+    // live grant at Google when the merchant explicitly asked to disconnect.
+    const connection = await getGscConnection(db, session.shop);
+    if (connection) {
+      const refresh = tryDecryptApiKey(connection.refreshToken, "gsc-refresh-token");
+      if (refresh) await revokeGoogleToken(refresh);
+    }
     await deleteGscConnection(db, session.shop);
     return json<ActionResult>({ ok: true, kind: "disconnected" });
   }
@@ -139,12 +206,26 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   if (actionType === "submitSitemap") {
     try {
       const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
-      await submitSitemap(accessToken, propertyUrl, "sitemap.xml");
+      // The sitemaps.submit API needs the sitemap's FULL absolute URL, not a
+      // relative path — this holds even for sc-domain: properties (the
+      // sitemap file itself is always served from the store's https host).
+      const domain = await getShopPrimaryDomain(admin, session.shop);
+      const sitemapUrl = `https://${domain}/sitemap.xml`;
+      await submitSitemap(accessToken, propertyUrl, sitemapUrl);
       return json<ActionResult>({ ok: true, kind: "sitemap" });
     } catch (e) {
       const reason = e instanceof GscReconnectRequiredError ? "reconnect" : "sitemap_failed";
       return json<ActionResult>({ ok: false, error: reason }, { status: 400 });
     }
+  }
+
+  if (actionType === "selectProperty") {
+    const propertyUrl = getFormString(form, "propertyUrl");
+    if (!propertyUrl) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    await updateGscProperty(db, session.shop, propertyUrl);
+    return json<ActionResult>({ ok: true, kind: "propertySelected" });
   }
 
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
@@ -155,6 +236,8 @@ export default function SeoSearchConsole() {
   const { t } = useI18n();
   const g = (t.seo as any).searchConsolePage;
   const fetcher = useFetcher<ActionResult>();
+  // Property picker (only relevant when data.needsPropertySelection is true).
+  const [selectedProperty, setSelectedProperty] = useState(data.availableProperties[0]?.siteUrl || "");
 
   const actionMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -164,6 +247,10 @@ export default function SeoSearchConsole() {
       }
       if (fetcher.data.kind === "sitemap") return { tone: "success" as const, msg: g.sitemapSubmitted };
       if (fetcher.data.kind === "disconnected") return { tone: "info" as const, msg: g.disconnected };
+      // NEW STRING (not in i18n yet — see report; suggested key: searchConsolePage.propertySaved)
+      if (fetcher.data.kind === "propertySelected") {
+        return { tone: "success" as const, msg: "Search Console property saved." };
+      }
     } else {
       const map: Record<string, string> = {
         reconnect: g.errorReconnect,
@@ -182,6 +269,10 @@ export default function SeoSearchConsole() {
         {/* Status from the OAuth bounce-back */}
         {data.statusParam === "connected" && <Banner tone="success">{g.connectedBanner}</Banner>}
         {data.statusParam === "denied" && <Banner tone="warning">{g.deniedBanner}</Banner>}
+        {data.statusParam === "select_property" && (
+          // NEW STRING (not in i18n yet — see report; suggested key: searchConsolePage.selectPropertyBanner)
+          <Banner tone="info">Connected. Please choose your Search Console property below.</Banner>
+        )}
         {(data.statusParam === "error" || data.statusParam === "no_sites" || data.statusParam === "no_refresh_token") && (
           <Banner tone="critical">{g.connectErrorBanner}</Banner>
         )}
@@ -226,10 +317,12 @@ export default function SeoSearchConsole() {
                       </Text>
                       <Badge tone="success">{g.statusConnected}</Badge>
                     </InlineStack>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {g.property}: {data.property}
-                      {data.email ? ` · ${data.email}` : ""}
-                    </Text>
+                    {data.property && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {g.property}: {data.property}
+                        {data.email ? ` · ${data.email}` : ""}
+                      </Text>
+                    )}
                   </BlockStack>
                   <Button
                     onClick={() => fetcher.submit({ actionType: "disconnect" }, { method: "post" })}
@@ -247,77 +340,128 @@ export default function SeoSearchConsole() {
                   </Banner>
                 )}
 
-                <InlineStack gap="200">
-                  <Button
-                    loading={fetcher.state !== "idle"}
-                    onClick={() => fetcher.submit({ actionType: "sync" }, { method: "post" })}
-                  >
-                    {g.syncKeywords}
-                  </Button>
-                  <Button
-                    onClick={() => fetcher.submit({ actionType: "submitSitemap" }, { method: "post" })}
-                  >
-                    {g.submitSitemap}
-                  </Button>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h3" variant="headingMd">
-                  {g.topQueries}
-                </Text>
-                {data.error === "fetch_failed" ? (
-                  <Text as="p" tone="subdued">
-                    {g.errorGeneric}
-                  </Text>
-                ) : data.topQueries.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    {g.noQueries}
-                  </Text>
-                ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
-                          <th style={{ padding: "6px 8px" }}>
-                            <Text as="span" variant="bodySm" tone="subdued">{g.colQuery}</Text>
-                          </th>
-                          <th style={{ padding: "6px 8px" }}>
-                            <Text as="span" variant="bodySm" tone="subdued">{g.colClicks}</Text>
-                          </th>
-                          <th style={{ padding: "6px 8px" }}>
-                            <Text as="span" variant="bodySm" tone="subdued">{g.colImpressions}</Text>
-                          </th>
-                          <th style={{ padding: "6px 8px" }}>
-                            <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.topQueries.map((row, i) => (
-                          <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                            <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
-                              <Text as="span" variant="bodyMd" truncate>{row.keys[0]}</Text>
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <Text as="span" variant="bodySm">{row.clicks}</Text>
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <Text as="span" variant="bodySm">{row.impressions}</Text>
-                            </td>
-                            <td style={{ padding: "6px 8px" }}>
-                              <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                {!data.needsPropertySelection && (
+                  <InlineStack gap="200">
+                    <Button
+                      loading={fetcher.state !== "idle"}
+                      onClick={() => fetcher.submit({ actionType: "sync" }, { method: "post" })}
+                    >
+                      {g.syncKeywords}
+                    </Button>
+                    <Button
+                      onClick={() => fetcher.submit({ actionType: "submitSitemap" }, { method: "post" })}
+                    >
+                      {g.submitSitemap}
+                    </Button>
+                  </InlineStack>
                 )}
               </BlockStack>
             </Card>
+
+            {data.needsPropertySelection && (
+              <Card>
+                <BlockStack gap="300">
+                  {/* NEW STRINGS (not in i18n yet — see report; suggested keys:
+                      searchConsolePage.selectPropertyTitle / selectPropertyBody /
+                      selectPropertyButton / selectPropertyEmpty) */}
+                  <Text as="h3" variant="headingMd">
+                    Select your Search Console property
+                  </Text>
+                  <Text as="p" variant="bodyMd" tone="subdued">
+                    We couldn't automatically match a verified property to this store's domain. Choose the
+                    correct one below.
+                  </Text>
+                  {data.availableProperties.length === 0 ? (
+                    <Text as="p" tone="subdued">
+                      No verified properties were found on this Google account.
+                    </Text>
+                  ) : (
+                    <InlineStack gap="200" blockAlign="end" wrap>
+                      <div style={{ minWidth: "280px" }}>
+                        <Select
+                          label="Property"
+                          labelHidden
+                          options={data.availableProperties.map((s) => ({ label: s.siteUrl, value: s.siteUrl }))}
+                          value={selectedProperty}
+                          onChange={setSelectedProperty}
+                        />
+                      </div>
+                      <Button
+                        variant="primary"
+                        disabled={!selectedProperty}
+                        loading={fetcher.state !== "idle"}
+                        onClick={() =>
+                          fetcher.submit(
+                            { actionType: "selectProperty", propertyUrl: selectedProperty },
+                            { method: "post" },
+                          )
+                        }
+                      >
+                        Save property
+                      </Button>
+                    </InlineStack>
+                  )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {!data.needsPropertySelection && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {g.topQueries}
+                  </Text>
+                  {data.error === "fetch_failed" ? (
+                    <Text as="p" tone="subdued">
+                      {g.errorGeneric}
+                    </Text>
+                  ) : data.topQueries.length === 0 ? (
+                    <Text as="p" tone="subdued">
+                      {g.noQueries}
+                    </Text>
+                  ) : (
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
+                            <th style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">{g.colQuery}</Text>
+                            </th>
+                            <th style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">{g.colClicks}</Text>
+                            </th>
+                            <th style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">{g.colImpressions}</Text>
+                            </th>
+                            <th style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.topQueries.map((row, i) => (
+                            <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
+                              <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
+                                <Text as="span" variant="bodyMd" truncate>{row.keys[0]}</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{row.clicks}</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{row.impressions}</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </BlockStack>
+              </Card>
+            )}
           </>
         )}
       </BlockStack>
