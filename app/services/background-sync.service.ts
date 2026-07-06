@@ -1251,11 +1251,155 @@ export class BackgroundSyncService {
   }
 
   /**
+   * Theme-scoped sync (PLAN_THEME_SELECTION_B_LITE): populate ThemeContent/
+   * ThemeTranslation for a SPECIFIC theme — including UNPUBLISHED themes that
+   * `translatableResources` never enumerates. Resource ids are constructed/
+   * derived per theme (see enumerateThemeResourcesFor) and their content fetched
+   * via translatableResourcesByIds; rows are stamped with themeId = themeGid and
+   * cleanup is scoped to that theme, so MAIN's rows are never touched.
+   * Coalesces concurrent runs per (shop, theme).
+   */
+  async syncTheme(themeGid: string, onProgress?: ProgressCallback): Promise<number> {
+    const key = `${this.shop}::${themeGid}`;
+    const inFlight = inFlightThemeSyncs.get(key);
+    if (inFlight) {
+      logger.debug(`[BackgroundSync] Theme-scoped sync already running for ${key} — coalescing`);
+      return inFlight;
+    }
+    const run = this.runFullThemeSync(onProgress, themeGid);
+    inFlightThemeSyncs.set(key, run);
+    try {
+      return await run;
+    } finally {
+      inFlightThemeSyncs.delete(key);
+    }
+  }
+
+  /**
+   * Build the translatable-resource set for a SPECIFIC theme (incl. unpublished),
+   * which `translatableResources(resourceType:…)` cannot enumerate (it only ever
+   * returns the published theme). Three strategies by resourceId shape
+   * (PLAN_THEME_SELECTION_B_LITE §2.1); content+digest then fetched via
+   * translatableResourcesByIds. Returns [] on hard failure (caller skips type).
+   */
+  private async enumerateThemeResourcesFor(resourceType: string, targetThemeGid: string): Promise<ThemeResource[]> {
+    const num = targetThemeGid.split('/').pop() || targetThemeGid;
+    let ids: string[] = [];
+    try {
+      if (resourceType === 'ONLINE_STORE_THEME_LOCALE_CONTENT') {
+        // Strategy A — deterministic: the theme-num IS the object id.
+        ids = [`gid://shopify/OnlineStoreThemeLocaleContent/${num}`];
+      } else if (resourceType === 'ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS') {
+        ids = [`gid://shopify/OnlineStoreThemeSettingsDataSections/${num}`];
+      } else if (resourceType === 'ONLINE_STORE_THEME_JSON_TEMPLATE') {
+        // Strategy B — derive template names from the theme's files.
+        const names = await this.listThemeFileBasenames(targetThemeGid, 'templates/*.json', /^templates\//);
+        ids = names.map((n) => `gid://shopify/OnlineStoreThemeJsonTemplate/${n}?theme_id=${num}`);
+      } else if (resourceType === 'ONLINE_STORE_THEME_SECTION_GROUP') {
+        const names = await this.listThemeFileBasenames(targetThemeGid, 'sections/*.json', /^sections\//);
+        ids = names.map((n) => `gid://shopify/OnlineStoreThemeSectionGroup/${n}?theme_id=${num}`);
+      } else if (resourceType === 'ONLINE_STORE_THEME_SETTINGS_CATEGORY' || resourceType === 'ONLINE_STORE_THEME_APP_EMBED') {
+        // Strategy C (MVP) — rewrite the published theme's enumerated ids onto the
+        // target theme. Documented limitation: target-unique categories/embeds are
+        // missed (full solution parses settings_schema/settings_data.json).
+        const mainIds = await this.enumerateMainResourceIds(resourceType);
+        ids = mainIds.map((rid) => rid.replace(/([?&]theme_id=)\d+/, `$1${num}`));
+      } else {
+        return [];
+      }
+    } catch (e) {
+      logger.warn(`[BackgroundSync] enumerateThemeResourcesFor(${resourceType}) failed`, { error: e instanceof Error ? e.message : String(e) });
+      return [];
+    }
+    if (ids.length === 0) return [];
+    return this.fetchTranslatableByIds(ids);
+  }
+
+  /** Read a theme's file basenames matching a glob (templates/*.json → "article"). */
+  private async listThemeFileBasenames(themeGid: string, glob: string, stripPrefix: RegExp): Promise<string[]> {
+    const resp = await this.gateway.graphql(
+      `#graphql
+        query themeFileList($themeId: ID!, $filenames: [String!]!) {
+          theme(id: $themeId) { files(filenames: $filenames, first: 250) { nodes { filename } } }
+        }`,
+      { variables: { themeId: themeGid, filenames: [glob] } }
+    );
+    const data = await resp.json();
+    if (data.errors) {
+      logger.warn(`[BackgroundSync] theme file list failed for ${glob}`, { error: data.errors[0]?.message });
+      return [];
+    }
+    const nodes: Array<{ filename: string }> = data.data?.theme?.files?.nodes ?? [];
+    return nodes
+      .map((n) => n.filename.replace(stripPrefix, '').replace(/\.json$/, ''))
+      .filter((n) => n.length > 0);
+  }
+
+  /** Enumerate the PUBLISHED theme's resourceIds for a type (rewrite strategy). */
+  private async enumerateMainResourceIds(resourceType: string): Promise<string[]> {
+    const out: string[] = [];
+    let hasNext = true;
+    let cursor: string | null = null;
+    while (hasNext) {
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query mainResourceIds($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
+            translatableResources(first: $first, resourceType: $resourceType, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              edges { node { resourceId } }
+            }
+          }`,
+        { variables: { first: 250, resourceType, after: cursor } }
+      );
+      const data = await resp.json();
+      if (data.errors) break;
+      const conn = data.data?.translatableResources;
+      for (const e of conn?.edges ?? []) out.push(e.node.resourceId);
+      hasNext = conn?.pageInfo?.hasNextPage || false;
+      cursor = conn?.pageInfo?.endCursor || null;
+    }
+    return out;
+  }
+
+  /** Fetch translatableContent+digest for constructed resourceIds (batched). */
+  private async fetchTranslatableByIds(ids: string[]): Promise<ThemeResource[]> {
+    const BATCH = 50;
+    const out: ThemeResource[] = [];
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const slice = ids.slice(i, i + BATCH);
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query translatableByIds($ids: [ID!]!, $first: Int!) {
+            translatableResourcesByIds(resourceIds: $ids, first: $first) {
+              edges { node { resourceId translatableContent { key value digest locale } } }
+            }
+          }`,
+        { variables: { ids: slice, first: slice.length } }
+      );
+      const data = await resp.json();
+      if (data.errors) {
+        logger.warn('[BackgroundSync] translatableResourcesByIds failed', { error: data.errors[0]?.message });
+        continue;
+      }
+      for (const e of data.data?.translatableResourcesByIds?.edges ?? []) {
+        const node = e.node;
+        if (node?.translatableContent && node.translatableContent.length > 0) {
+          out.push({ resourceId: node.resourceId, translatableContent: node.translatableContent } as ThemeResource);
+        }
+      }
+      // Gentle on the translation rate-limit (same 250ms cadence as the sync).
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return out;
+  }
+
+  /**
    * The actual full theme sync. Do not call directly — go through
-   * syncAllThemes() so the per-shop coalescing guard applies.
+   * syncAllThemes() (full/MAIN) or syncTheme() (scoped) so the coalescing guard
+   * applies. `targetThemeId` set → theme-scoped mode (see syncTheme).
    * This is complex as it groups theme resources by patterns
    */
-  private async runFullThemeSync(onProgress?: ProgressCallback): Promise<number> {
+  private async runFullThemeSync(onProgress?: ProgressCallback, targetThemeId?: string): Promise<number> {
     logger.debug(`[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
 
     try {
@@ -1309,6 +1453,12 @@ export class BackgroundSyncService {
         }
 
         try {
+          let resources: ThemeResource[];
+          if (targetThemeId) {
+            // Theme-scoped sync: construct/derive THIS theme's resource set
+            // (translatableResources only ever returns the published theme).
+            resources = await this.enumerateThemeResourcesFor(resourceTypeConfig.type, targetThemeId);
+          } else {
           // Implement pagination to handle large datasets
           let hasNextPage = true;
           let cursor: string | null = null;
@@ -1369,7 +1519,8 @@ export class BackgroundSyncService {
             }
           }
 
-          const resources = allResourcesForType;
+          resources = allResourcesForType;
+          }
 
           // Skip if no resources found
           if (resources.length === 0) {
@@ -1641,8 +1792,10 @@ export class BackgroundSyncService {
               syncedCombinations.add(combinationKey);
 
               // Upsert theme content. themeId scopes the row to the theme this
-              // resource belongs to (extracted from its GID; '' = theme-agnostic).
-              const themeId = extractThemeIdFromResourceId(resource.resourceId) ?? '';
+              // resource belongs to. Theme-scoped sync forces the target theme
+              // (deterministic resourceIds carry no ?theme_id=); otherwise it is
+              // extracted from the GID ('' = theme-agnostic).
+              const themeId = targetThemeId ?? (extractThemeIdFromResourceId(resource.resourceId) ?? '');
               // Promote any pre-existing legacy row (themeId="") for this resource to
               // its real Theme-GID FIRST, so the upsert below UPDATEs it instead of
               // creating a duplicate. This makes a theme-aware sync that runs before
@@ -1803,6 +1956,13 @@ export class BackgroundSyncService {
       // Health check: refuse to wipe local data when Shopify returns 0 theme resources.
       // Same pattern as syncAllPages / syncAllPolicies.
       if (syncedCombinations.size === 0) {
+        // Theme-scoped: a target theme may legitimately have no translatable
+        // resources — do NOT run the MAIN-scoped data-loss abort (which counts
+        // ALL theme rows incl. MAIN) and do NOT clean up. Just no-op.
+        if (targetThemeId) {
+          logger.debug(`[BackgroundSync] Theme-scoped sync: no resources for theme ${targetThemeId} — nothing to do`);
+          return 0;
+        }
         const localThemeCount = await db.themeContent.count({ where: { shop: this.shop, domain: 'theme' } });
         if (localThemeCount > 0) {
           logger.error(`[BackgroundSync] 🔴 ABORTING theme sync: Shopify returned 0 theme resources but ${localThemeCount} exist locally. Possible API outage.`);
@@ -1821,7 +1981,9 @@ export class BackgroundSyncService {
         // domain so the System / Online-Store-Extras / Selling-Plans rubrics,
         // which share this table, are never swept by a theme-only sync).
         const existingThemeContent = await db.themeContent.findMany({
-          where: { shop: this.shop, domain: 'theme' },
+          // Theme-scoped: only THIS theme's rows are cleanup candidates, so a
+          // scoped sync never sweeps another theme's (e.g. MAIN's) content.
+          where: { shop: this.shop, domain: 'theme', ...(targetThemeId ? { themeId: targetThemeId } : {}) },
           select: { resourceId: true, groupId: true }
         });
 
@@ -1844,6 +2006,7 @@ export class BackgroundSyncService {
               where: {
                 shop: this.shop,
                 domain: 'theme',
+                ...(targetThemeId ? { themeId: targetThemeId } : {}),
                 OR: deleteConditions,
               },
             }),
@@ -1851,6 +2014,7 @@ export class BackgroundSyncService {
               where: {
                 shop: this.shop,
                 domain: 'theme',
+                ...(targetThemeId ? { themeId: targetThemeId } : {}),
                 OR: deleteConditions,
               },
             }),
@@ -1866,7 +2030,9 @@ export class BackgroundSyncService {
       // this is the explicit belt-and-suspenders pass keyed on themeId. Guarded on
       // a non-empty theme list so an API blip never wipes data. themeId "" (legacy/
       // theme-agnostic) is always kept.
-      try {
+      // Skipped in theme-scoped mode: it operates across ALL themes, which is a
+      // full-sync concern (and would add a GET_THEMES round-trip to every switch).
+      if (!targetThemeId) try {
         const THEME_CAP = 250;
         const themesResp = await this.gateway.graphql(
           `#graphql
