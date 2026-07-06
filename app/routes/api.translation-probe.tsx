@@ -17,6 +17,9 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
+import { db } from "~/db.server";
+import { listThemes, pickMainThemeId, resolveSelectedThemeId } from "~/services/theme-selection.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 
 // Probe target list. Includes resource types we already cover, so we can find
 // where Shopify hides things like Cookie-Banner. COOKIE_BANNER is documented
@@ -98,6 +101,28 @@ interface CookieHintHit {
   locale: string;
 }
 
+/**
+ * Theme-Selection 404 diagnostic. Answers WHY /api/theme-content/theme/* returns
+ * 404 "Group not found" after the theme-selection feature: the read path scopes
+ * rows to `themeId IN (resolvedSelectedThemeId, "")`. This block surfaces the
+ * three values that must line up — the resolved selection, the themeIds actually
+ * stored on the rows, and the themeId embedded in Shopify's live resourceIds.
+ */
+interface ThemeSelectionDiag {
+  themes: Array<{ id: string; name: string; role: string }>;
+  mainThemeId: string | null;
+  storedSelectedThemeId: string | null;
+  resolvedSelectedThemeId: string | null;
+  /** DISTINCT ThemeContent.themeId (domain=theme) + row counts. */
+  dbThemeContentByThemeId: Array<{ themeId: string; count: number }>;
+  /** DISTINCT ThemeTranslation.themeId (domain=theme) + row counts. */
+  dbThemeTranslationByThemeId: Array<{ themeId: string; count: number }>;
+  /** Sample live resourceIds per theme resource type + the extracted Theme-GID. */
+  resourceThemeIds: Array<{ resourceType: string; resourceId: string; extractedThemeId: string | null }>;
+  /** Human-readable conclusion computed server-side. */
+  verdict: string;
+}
+
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -107,6 +132,7 @@ interface ProbeReport {
   resources: ResourceReport[];
   cookieHints: CookieHintHit[];
   writeTest: WriteTestReport;
+  themeSelectionDiag?: ThemeSelectionDiag;
 }
 
 const PROBE_QUERY = `#graphql
@@ -288,6 +314,112 @@ export async function action({ request }: ActionFunctionArgs) {
     // Small pause to be gentle on the translation rate-limit (forum thread:
     // community.shopify.dev/t/translatable-resource-rate-limit/15107).
     await new Promise((res) => setTimeout(res, 250));
+  }
+
+  // ── Theme-Selection 404 diagnostic ─────────────────────────────────────────
+  // Reads (never writes) the three things that must line up for
+  // /api/theme-content/theme/* to return rows instead of 404.
+  try {
+    const themes = await listThemes(admin);
+    const mainThemeId = pickMainThemeId(themes);
+    const settings = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { selectedThemeId: true },
+    });
+    const storedSelectedThemeId = settings?.selectedThemeId ?? null;
+    const resolvedSelectedThemeId = await resolveSelectedThemeId(session.shop, admin, themes);
+
+    // What themeIds are actually stored on the theme-domain rows?
+    const [contentGroups, translationGroups] = await Promise.all([
+      db.themeContent.groupBy({
+        by: ["themeId"],
+        where: { shop: session.shop, domain: "theme" },
+        _count: { _all: true },
+      }),
+      db.themeTranslation.groupBy({
+        by: ["themeId"],
+        where: { shop: session.shop, domain: "theme" },
+        _count: { _all: true },
+      }),
+    ]);
+    const toCounts = (g: Array<{ themeId: string; _count: { _all: number } }>) =>
+      g.map((x) => ({ themeId: x.themeId, count: x._count._all })).sort((a, b) => b.count - a.count);
+    const dbThemeContentByThemeId = toCounts(contentGroups as Array<{ themeId: string; _count: { _all: number } }>);
+    const dbThemeTranslationByThemeId = toCounts(translationGroups as Array<{ themeId: string; _count: { _all: number } }>);
+
+    // Sample a few live resourceIds per theme resource type and show the Theme-GID
+    // we extract from each (this is exactly what the sync stamps onto the row).
+    const THEME_DIAG_TYPES = [
+      "ONLINE_STORE_THEME_JSON_TEMPLATE",
+      "ONLINE_STORE_THEME_SECTION_GROUP",
+      "ONLINE_STORE_THEME_APP_EMBED",
+      "ONLINE_STORE_THEME_SETTINGS_CATEGORY",
+      "ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS",
+      "ONLINE_STORE_THEME_LOCALE_CONTENT",
+    ];
+    const resourceThemeIds: Array<{ resourceType: string; resourceId: string; extractedThemeId: string | null }> = [];
+    for (const rt of THEME_DIAG_TYPES) {
+      try {
+        const resp = await admin.graphql(PROBE_QUERY, { variables: { first: 3, resourceType: rt } });
+        const d = (await resp.json()) as { data?: { translatableResources?: { edges: Array<{ node: { resourceId: string } }> } }; errors?: Array<{ message: string }> };
+        if (d.errors?.length) {
+          resourceThemeIds.push({ resourceType: rt, resourceId: `(error: ${d.errors[0].message})`, extractedThemeId: null });
+          continue;
+        }
+        for (const edge of d.data?.translatableResources?.edges ?? []) {
+          resourceThemeIds.push({
+            resourceType: rt,
+            resourceId: edge.node.resourceId,
+            extractedThemeId: extractThemeIdFromResourceId(edge.node.resourceId),
+          });
+        }
+      } catch (e) {
+        resourceThemeIds.push({ resourceType: rt, resourceId: `(exception: ${e instanceof Error ? e.message : String(e)})`, extractedThemeId: null });
+      }
+      await new Promise((res) => setTimeout(res, 250));
+    }
+
+    // Compute a verdict: which stored rows would be INVISIBLE to the read path.
+    let verdict: string;
+    if (!resolvedSelectedThemeId) {
+      verdict = "resolvedSelectedThemeId is null → themeScope is empty {} → NO theme filter is applied. A 404 is NOT caused by theme scoping; look elsewhere (migration not applied? column missing? empty DB?).";
+    } else {
+      const visible = new Set([resolvedSelectedThemeId, ""]);
+      const invisible = dbThemeContentByThemeId.filter((x) => !visible.has(x.themeId));
+      if (dbThemeContentByThemeId.length === 0) {
+        verdict = "No theme-domain ThemeContent rows exist at all for this shop → the theme has never been synced (or was wiped). Expected 404 until a full theme sync runs.";
+      } else if (invisible.length === 0) {
+        verdict = `All stored themeIds are visible (either "" or the resolved selection ${resolvedSelectedThemeId}). Theme scoping is NOT the 404 cause here.`;
+      } else {
+        verdict =
+          `ROOT CAUSE CONFIRMED: ${invisible.reduce((n, x) => n + x.count, 0)} ThemeContent row(s) are stored under themeId(s) ` +
+          `[${invisible.map((x) => `"${x.themeId}" (${x.count})`).join(", ")}] which are NEITHER "" NOR the resolved selection ` +
+          `"${resolvedSelectedThemeId}". The read path (themeId IN ["${resolvedSelectedThemeId}", ""]) filters them out → 404.`;
+      }
+    }
+
+    report.themeSelectionDiag = {
+      themes,
+      mainThemeId,
+      storedSelectedThemeId,
+      resolvedSelectedThemeId,
+      dbThemeContentByThemeId,
+      dbThemeTranslationByThemeId,
+      resourceThemeIds,
+      verdict,
+    };
+  } catch (e) {
+    logger.error("[TRANSLATION-PROBE] theme-selection diag failed", { context: "TranslationProbe", error: e instanceof Error ? e.message : String(e) });
+    report.themeSelectionDiag = {
+      themes: [],
+      mainThemeId: null,
+      storedSelectedThemeId: null,
+      resolvedSelectedThemeId: null,
+      dbThemeContentByThemeId: [],
+      dbThemeTranslationByThemeId: [],
+      resourceThemeIds: [],
+      verdict: `Diagnostic failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
 
   // Optional write test against SHOP — answers "do app writes override the
