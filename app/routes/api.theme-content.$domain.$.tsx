@@ -17,9 +17,10 @@ import {
   handleThemeContentActionResponse,
   isThemeContentDomain,
 } from "~/services/theme-content-api.server";
+import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const domain = params.domain;
   const groupId = params["*"];
 
@@ -39,7 +40,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   try {
     const { db } = await import("../db.server");
-    return await loadThemeGroupResponse({ db, shop: session.shop, domain, groupId, page, limit, search, resourceTypes });
+    const selectedThemeId = (await resolveSelectedThemeId(session.shop, admin)) ?? undefined;
+    return await loadThemeGroupResponse({ db, shop: session.shop, domain, groupId, page, limit, search, resourceTypes, selectedThemeId });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[API-THEME-CONTENT] Error loading group", { context: "ThemeContent", domain, groupId, error: msg });
@@ -63,7 +65,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const formData = await request.formData();
     const resourceTypes = formData.getAll("rt").map(String);
     const { db } = await import("../db.server");
-    return await handleThemeContentActionResponse({ db, admin, session, formData, domain, groupId, resourceTypes });
+    const selectedThemeId = (await resolveSelectedThemeId(session.shop, admin)) ?? undefined;
+    return await handleThemeContentActionResponse({ db, admin, session, formData, domain, groupId, resourceTypes, selectedThemeId });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[API-THEME-CONTENT-ACTION] Error", { context: "ThemeContent", domain, error: msg, stack: error instanceof Error ? error.stack : undefined });

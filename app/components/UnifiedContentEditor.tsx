@@ -150,6 +150,20 @@ interface UnifiedContentEditorProps {
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
   extraMissingPrimaryIds?: Set<string>;
+
+  /**
+   * Optional: Theme-Auswahl. Only rendered for theme-content types
+   * (isThemeContentType) and when more than one theme exists. Lets the merchant
+   * pick which installed theme's content is edited/translated.
+   */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    selectedThemeId: string;
+    onChange: (themeId: string) => void;
+    /** Non-MAIN theme with no own synced rows → surface the sync prompt even when
+     * shared "" rows keep the nav list non-empty (PLAN_THEME_SELECTION_B_LITE). */
+    needsThemeSync?: boolean;
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -174,6 +188,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     isFieldsLoading = false,
     revalidator,
     sortOptions,
+    themeSelector,
     subResourceState,
     subResourceHandlers,
     showImageManager,
@@ -249,6 +264,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // refresh.) Falls back to a plain revalidate for content types without a
   // discovery endpoint.
   const [isDiscovering, setIsDiscovering] = useState(false);
+  // True once a sync-from-Shopify has been attempted for the current theme. Lets
+  // the empty-state distinguish "not synced yet" from "synced, genuinely empty"
+  // (a theme can legitimately have 0 entries in a tab). Reset on theme switch.
+  const [syncAttempted, setSyncAttempted] = useState(false);
   const handleSyncAll = useCallback(async () => {
     if (!revalidator) return;
     const ct = config.contentType;
@@ -272,9 +291,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       console.error("[UnifiedContentEditor] sync-from-Shopify failed:", err);
     } finally {
       setIsDiscovering(false);
+      setSyncAttempted(true);
       revalidator.revalidate();
     }
   }, [revalidator, config.contentType]);
+
+  // A theme switch means a different data set — forget the previous theme's
+  // sync-attempt so its empty-state starts from "not synced yet" again.
+  const themeSelectorThemeId = themeSelector?.selectedThemeId;
+  useEffect(() => {
+    setSyncAttempted(false);
+  }, [themeSelectorThemeId]);
 
   // Check if a global AI action is currently running (affects all fields)
   // Uses global AI operations store — spinners persist across item navigation.
@@ -525,6 +552,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
+          themeSelector={
+            themeSelector && isThemeContentType(config.contentType) && themeSelector.options.length > 1
+              ? {
+                  options: themeSelector.options,
+                  value: themeSelector.selectedThemeId,
+                  onChange: themeSelector.onChange,
+                  disabled: isDiscovering || revalidator?.state === "loading",
+                  label: t.content?.themeSelectorLabel || "Theme",
+                  helpText: t.content?.themeSelectorHelp,
+                }
+              : undefined
+          }
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",
@@ -1044,9 +1083,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               ` }} />
               <Card padding="600">
                 <div style={{ textAlign: "center", padding: "2rem" }}>
-                  <Text as="p" variant="headingLg" tone="subdued">
-                    {t.content?.selectFromList || "Select an item from the list"}
-                  </Text>
+                  {themeSelector && (items.length === 0 || themeSelector.needsThemeSync) ? (
+                    // Theme-Auswahl: the selected theme has no content in this tab.
+                    // Before a sync attempt this reads as "not synced yet" + a
+                    // primary sync button; AFTER an attempt that still returns
+                    // nothing, it reads as "genuinely empty" + a secondary retry,
+                    // so the "not synced" text doesn't get stuck forever on a theme
+                    // that simply has no entries here.
+                    <BlockStack gap="400" inlineAlign="center">
+                      <Text as="p" variant="headingMd" tone="subdued">
+                        {syncAttempted
+                          ? (t.content?.themeNoEntries || "No entries for this theme in this section.")
+                          : (t.content?.themeSwitchNeedsSync || "This theme hasn't been synced yet.")}
+                      </Text>
+                      {revalidator && (
+                        <Button
+                          variant={syncAttempted ? "secondary" : "primary"}
+                          loading={isDiscovering}
+                          onClick={handleSyncAll}
+                        >
+                          {syncAttempted
+                            ? (t.content?.themeSyncRetry || "Sync again")
+                            : (t.content?.themeSyncNow || "Load all entries now")}
+                        </Button>
+                      )}
+                    </BlockStack>
+                  ) : (
+                    <Text as="p" variant="headingLg" tone="subdued">
+                      {t.content?.selectFromList || "Select an item from the list"}
+                    </Text>
+                  )}
                 </div>
               </Card>
             </div>

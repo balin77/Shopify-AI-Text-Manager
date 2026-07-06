@@ -6,6 +6,8 @@ import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
+import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
@@ -358,10 +360,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     const templateKeyToResourceId = new Map<string, string>();
     if (contentType === 'templates' && itemId) {
       templateGroupId = itemId.replace("group_", "");
+      // Theme-Auswahl: scope to the selected theme so key→resourceId mapping uses
+      // the chosen theme's resources (legacy/flat rows with themeId "" stay in).
+      const selectedThemeId = await resolveSelectedThemeId(session.shop, admin);
       const themeContentRows = await db.themeContent.findMany({
         where: {
           shop: session.shop,
-          groupId: templateGroupId
+          groupId: templateGroupId,
+          ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
         }
       });
       if (themeContentRows.length > 0) {
@@ -639,13 +645,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale_marketId: {
+                    shop_resourceId_groupId_key_locale_themeId_marketId: {
                       marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
                       key: fieldType,
-                      locale: locale
+                      locale: locale,
+                      themeId: extractThemeIdFromResourceId(fieldResourceId) ?? ""
                     }
                   },
                   update: {
@@ -660,6 +667,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     groupId: templateGroupId,
                     domain: templateDomain,
                     resourceId: fieldResourceId,
+                    themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
                     value: translatedValue
@@ -1131,13 +1139,14 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale_marketId: {
+                    shop_resourceId_groupId_key_locale_themeId_marketId: {
                       marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
                       key: fieldType,
-                      locale: locale
+                      locale: locale,
+                      themeId: extractThemeIdFromResourceId(fieldResourceId) ?? ""
                     }
                   },
                   update: {
@@ -1152,6 +1161,7 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                     groupId: templateGroupId,
                     domain: templateDomain,
                     resourceId: fieldResourceId,
+                    themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
                     value: translatedValue

@@ -101,6 +101,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             results.themes = 0;
           })
       );
+      // Phase C (PLAN_THEME_SELECTION_B_LITE): the full sync above enumerates ONLY
+      // the published theme (translatableResources cannot list other themes), so a
+      // merchant-selected NON-MAIN theme is populated via the theme-scoped path.
+      // Runs alongside the MAIN sync; each sync's cleanup is scoped to its own
+      // theme(s), so they never touch each other's rows.
+      promises.push(
+        (async () => {
+          const { getCachedThemes, resolveSelectedThemeId, pickMainThemeId } = await import("../services/theme-selection.server");
+          const themes = await getCachedThemes(admin, session.shop);
+          const mainId = pickMainThemeId(themes);
+          const selected = await resolveSelectedThemeId(session.shop, admin, themes);
+          if (selected && selected !== mainId) {
+            results.selectedTheme = await bgSyncService.syncTheme(selected);
+          }
+        })().catch(err => {
+          logger.error('[SYNC-CONTENT] Selected-theme sync failed', { context: "SyncContent", error: err.message });
+        })
+      );
     }
 
     // Discovery for the remaining BackgroundSyncService.syncAll() phases, so the

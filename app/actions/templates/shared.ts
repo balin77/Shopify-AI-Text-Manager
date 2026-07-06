@@ -39,4 +39,9 @@ export interface TemplatesActionContext {
   keyToResourceId: Map<string, string>;
   /** Maps each translatable field key → the Shopify resource type that owns it */
   keyToResourceType: Map<string, string>;
+  /**
+   * Theme-Auswahl: the Shopify Theme-GID this request is scoped to (null = no
+   * selection / MAIN). Reads should include legacy rows (themeId "") too.
+   */
+  selectedThemeId?: string | null;
 }

@@ -304,6 +304,14 @@ export const en: Translation = {
     page: "Page",
     previousPage: "Previous page",
     nextPage: "Next page",
+    // Theme selection
+    themeSelectorLabel: "Theme",
+    themeSelectorHelp: "Selects the theme whose content you edit/translate.",
+    themeSelectorPublished: "(published)",
+    themeSwitchNeedsSync: "This theme hasn't been synced yet.",
+    themeSyncNow: "Load all entries now",
+    themeNoEntries: "No entries for this theme in this section.",
+    themeSyncRetry: "Sync again",
     // Item list
     searchPlaceholder: "Search...",
     paginationOf: "of",

@@ -18,6 +18,26 @@ import { handleTranslateAll } from "~/actions/templates/templates-translate-all.
 import { handleUpdateContent } from "~/actions/templates/templates-update.action";
 import type { TranslatableField, ThemeContentRow, TemplatesActionContext } from "~/actions/templates/shared";
 import type { ThemeNavItem } from "~/types/theme-content-domain";
+import { listThemes, resolveSelectedThemeId, type ThemeOption } from "~/services/theme-selection.server";
+import type { LoaderContext } from "./loader-factory.server";
+
+/**
+ * Resolve the shop's theme list + the selected Theme-GID once per request,
+ * memoised on the loader ctx so loadData (scoping) and extraData (dropdown) share
+ * a single GET_THEMES round-trip.
+ */
+async function getThemeSelection(
+  ctx: LoaderContext,
+): Promise<{ themes: ThemeOption[]; selectedThemeId: string | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cache = ctx as any;
+  if (!cache.__themeSelection) {
+    const themes = await listThemes(ctx.admin);
+    const selectedThemeId = await resolveSelectedThemeId(ctx.session.shop, ctx.admin, themes);
+    cache.__themeSelection = { themes, selectedThemeId };
+  }
+  return cache.__themeSelection;
+}
 
 /**
  * Build a content loader scoped to one ThemeContent domain. Returns lightweight
@@ -36,11 +56,15 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
     itemsKey: "themes" as const,
 
     async loadData(ctx) {
+      // Theme-Auswahl: scope the item list to the selected theme. Legacy rows
+      // (themeId "") and flat rubrics stay visible via the compat-OR.
+      const { selectedThemeId } = await getThemeSelection(ctx);
       const allGroupRows = await ctx.db.themeContent.findMany({
         where: {
           shop: ctx.session.shop,
           domain,
           ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
         },
         select: {
           groupId: true,
@@ -50,6 +74,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           resourceTypeLabel: true,
           translatableContent: true,
           appEmbedOwned: true,
+          aiShortTitle: true,
         },
         // Deterministic scan order so first-row-derived fields (groupName/icon)
         // don't flip between reloads.
@@ -70,7 +95,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
       const APP_EMBED = "ONLINE_STORE_THEME_APP_EMBED";
       const groupMap = new Map<
         string,
-        { groupName: string; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
+        { groupName: string; aiShortTitle: string | null; groupIcon: string; uniqueKeys: Set<string>; embedTechnical: boolean; resourceType: string | null; resourceTypeLabel: string | null }
       >();
       for (const row of allGroupRows) {
         const existing = groupMap.get(row.groupId);
@@ -93,14 +118,16 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
+          groupMap.set(row.groupId, { groupName: row.groupName, aiShortTitle: row.aiShortTitle, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
         }
       }
 
       const themes: ThemeNavItem[] = Array.from(groupMap.entries())
         .map(([groupId, group]) => ({
           id: `group_${groupId}`,
-          title: group.groupName,
+          // Prefer the AI-generated concise title (e.g. "Bestellbestätigung")
+          // over the raw groupName (the full email subject line) when present.
+          title: group.aiShortTitle || group.groupName,
           groupName: group.groupName,
           icon: group.groupIcon,
           groupId,
@@ -111,10 +138,38 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           translatableContent: [] as TranslatableField[],
           translations: [] as { key: string; value: string; locale?: string }[],
           embedTechnical: group.embedTechnical,
+          // Signals the client to lazily kick off the AI title backfill: an
+          // email-notification template that has no short title yet.
+          aiTitlePending: group.resourceType === "EMAIL_TEMPLATE" && !group.aiShortTitle,
         }))
         .sort((a, b) => a.title.localeCompare(b.title));
 
       return { items: themes, ids: [] };
+    },
+
+    // Theme-Auswahl dropdown data. Named `themeOptions` (NOT `themes`, which is
+    // the itemsKey holding the nav list) to avoid a response-key collision.
+    async extraData(ctx) {
+      const { themes, selectedThemeId } = await getThemeSelection(ctx);
+      const mainThemeId = themes.find((t) => String(t.role).toUpperCase() === "MAIN")?.id ?? themes[0]?.id ?? null;
+      // needsThemeSync: a NON-MAIN theme is selected but has no rows stamped with
+      // its own themeId yet (only shared "" / MAIN rows show). The nav list is
+      // therefore not empty, so the items.length===0 empty-state can't surface the
+      // sync prompt — this flag lets the editor prompt a theme-scoped sync anyway
+      // (PLAN_THEME_SELECTION_B_LITE Phase C).
+      let needsThemeSync = false;
+      if (selectedThemeId && selectedThemeId !== mainThemeId) {
+        const own = await ctx.db.themeContent.count({
+          where: {
+            shop: ctx.session.shop,
+            domain,
+            themeId: selectedThemeId,
+            ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          },
+        });
+        needsThemeSync = own === 0;
+      }
+      return { themeOptions: themes, selectedThemeId, mainThemeId, needsThemeSync };
     },
   });
 }
@@ -138,6 +193,10 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
 
     const { db } = await import("../db.server");
 
+    // Theme-Auswahl: scope editor actions to the selected theme so a save/translate
+    // targets the chosen theme's resource (and never a sibling theme's rows).
+    const selectedThemeId = await resolveSelectedThemeId(session.shop, admin);
+
     // Theme sub-tabs share domain="theme" but a key-pattern groupId is not
     // guaranteed unique across resource types — scope to the tab's type(s) so
     // editor actions never touch a sibling tab's rows.
@@ -147,6 +206,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
         groupId,
         domain,
         ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+        ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
       },
     });
 
@@ -182,6 +242,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
       resourceId,
       keyToResourceId,
       keyToResourceType,
+      selectedThemeId,
     };
 
     try {

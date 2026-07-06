@@ -7,6 +7,7 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
@@ -110,13 +111,14 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     // Shopify succeeded — now save to local DB
     await db.themeTranslation.upsert({
       where: {
-        shop_resourceId_groupId_key_locale_marketId: {
+        shop_resourceId_groupId_key_locale_themeId_marketId: {
           marketId: "",
           shop: session.shop,
           resourceId: fieldResId,
           groupId: groupId,
           key: fieldType,
           locale: targetLocale,
+          themeId: extractThemeIdFromResourceId(fieldResId) ?? "",
         },
       },
       update: { value: translatedValue, updatedAt: new Date() },
@@ -124,6 +126,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
         shop: session.shop,
         groupId: groupId,
         resourceId: fieldResId,
+        themeId: extractThemeIdFromResourceId(fieldResId) ?? "",
         domain: domain,
         locale: targetLocale,
         key: fieldType,
@@ -277,13 +280,14 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
         pendingUpserts.map(({ locale, value }) =>
           db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale_marketId: {
+              shop_resourceId_groupId_key_locale_themeId_marketId: {
                 marketId: "",
                 shop: session.shop,
                 resourceId: fieldResId2,
                 groupId: groupId,
                 key: fieldType,
                 locale: locale,
+                themeId: extractThemeIdFromResourceId(fieldResId2) ?? "",
               },
             },
             update: { value: value, updatedAt: new Date() },
@@ -291,6 +295,7 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
               shop: session.shop,
               groupId: groupId,
               resourceId: fieldResId2,
+              themeId: extractThemeIdFromResourceId(fieldResId2) ?? "",
               domain: domain,
               locale: locale,
               key: fieldType,

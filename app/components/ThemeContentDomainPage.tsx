@@ -35,6 +35,20 @@ interface ThemeContentDomainPageProps {
     primaryLocale: string;
     markets?: MarketInfo[];
     error?: string | null;
+    aiSettings?: {
+      preferredProvider: string | null;
+      hasHuggingfaceApiKey: boolean;
+      hasGeminiApiKey: boolean;
+      hasClaudeApiKey: boolean;
+      hasOpenaiApiKey: boolean;
+      hasGrokApiKey: boolean;
+      hasDeepseekApiKey: boolean;
+    } | null;
+    /** Theme-Auswahl: installed themes + resolved selection (from the loader). */
+    themeOptions?: { id: string; name: string; role: string }[];
+    selectedThemeId?: string | null;
+    /** Selected non-MAIN theme has no own synced rows yet → prompt a theme-scoped sync. */
+    needsThemeSync?: boolean;
   };
   config: ContentEditorConfig;
   apiBasePath: string;
@@ -62,7 +76,7 @@ interface ThemeContentDomainPageProps {
 }
 
 export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner, disableMarketSelector }: ThemeContentDomainPageProps) {
-  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, markets, error } = data;
+  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, markets, error, themeOptions, selectedThemeId, needsThemeSync } = data;
   // Markets to expose to the editor — suppressed for rubrics whose save path
   // cannot scope by market (see disableMarketSelector).
   const effectiveMarkets = disableMarketSelector ? [] : markets;
@@ -70,6 +84,59 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
+
+  // ── Lazy AI short-title backfill for email notifications ───────────────────
+  // Email-notification templates have no usable name (their groupName is the
+  // full localized subject line). When the page loads and some templates still
+  // lack an AI-generated short title, kick off the batched backfill task once —
+  // the same task/queue path as every other AI run. Titles appear after the
+  // revalidate. Gated on a configured AI key so we never fire a request the
+  // compliance gate would just reject.
+  const titleFetcher = useFetcher<{ success?: boolean; generated?: number }>();
+  const titleGenFiredRef = useRef(false);
+  const hasAiKeyForTitles = useMemo(() => {
+    const s = data.aiSettings;
+    if (!s) return false;
+    // Lowercase to match the server gate (getMissingPreferredKey →
+    // toValidProvider lowercases); a mixed-case stored value must not silently
+    // fall through to the "any key" default and disagree with the server.
+    switch ((s.preferredProvider ?? "").toLowerCase()) {
+      case "claude": return s.hasClaudeApiKey;
+      case "openai": return s.hasOpenaiApiKey;
+      case "gemini": return s.hasGeminiApiKey;
+      case "grok": return s.hasGrokApiKey;
+      case "deepseek": return s.hasDeepseekApiKey;
+      case "huggingface": return s.hasHuggingfaceApiKey;
+      default:
+        return (
+          s.hasClaudeApiKey || s.hasOpenaiApiKey || s.hasGeminiApiKey ||
+          s.hasGrokApiKey || s.hasDeepseekApiKey || s.hasHuggingfaceApiKey
+        );
+    }
+  }, [data.aiSettings]);
+
+  useEffect(() => {
+    if (titleGenFiredRef.current) return;
+    if (data.error || !hasAiKeyForTitles) return;
+    if (!data.themes.some((th) => th.aiTitlePending)) return;
+    titleGenFiredRef.current = true;
+    const fd = new FormData();
+    fd.set("action", "generateTemplateTitles");
+    fd.set("contentType", planContentType);
+    fd.set("itemId", "system");
+    titleFetcher.submit(fd, { method: "POST", action: "/api/ai" });
+  }, [data.themes, data.error, hasAiKeyForTitles, planContentType, titleFetcher]);
+
+  // When the backfill lands, revalidate so the new titles replace the fallbacks.
+  const prevTitleFetcherStateRef = useRef(titleFetcher.state);
+  useEffect(() => {
+    const prev = prevTitleFetcherStateRef.current;
+    prevTitleFetcherStateRef.current = titleFetcher.state;
+    if (!(prev !== "idle" && titleFetcher.state === "idle")) return;
+    if (titleFetcher.data?.success && (titleFetcher.data.generated ?? 0) > 0) {
+      revalidator.revalidate();
+    }
+  }, [titleFetcher.state, titleFetcher.data, revalidator]);
 
   // Append the tab's resource-type scope to lazy-load requests. `rt` is
   // repeatable so multi-type tabs (e.g. Theme-Standardinhalte) work too.
@@ -178,8 +245,15 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           body: formData,
         });
 
+        // Do NOT swallow a failed load into an empty result: returning []
+        // here caches the locale as "loaded, no translations", so it is never
+        // retried and its real translations vanish from the UI until a full
+        // reload. On a rate-limit/error burst (e.g. clicking quickly through the
+        // list → Shopify 429) this silently blanked foreign locales. Throw so the
+        // allSettled entry is `rejected` → the locale stays uncached and reloads
+        // on the next select.
         if (!response.ok) {
-          return { locale: locale.locale, translations: [] };
+          throw new Error(`loadTranslations failed (${response.status})`);
         }
 
         const data = await response.json();
@@ -960,6 +1034,47 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   const selectedEmbedTechnical =
     !!selectedGroupId && themes.some((item: ThemeNavItem) => item.groupId === selectedGroupId && item.embedTechnical);
 
+  // Theme-Auswahl: labeled dropdown options + change handler.
+  const themeSelectOptions = useMemo(
+    () =>
+      (themeOptions ?? []).map((th) => ({
+        value: th.id,
+        label:
+          String(th.role).toUpperCase() === "MAIN"
+            ? `${th.name} ${t.content?.themeSelectorPublished || "(published)"}`
+            : th.name,
+      })),
+    [themeOptions, t]
+  );
+
+  const handleThemeChange = useCallback(
+    (themeId: string) => {
+      if (themeId === selectedThemeId) return;
+      const formData = new FormData();
+      formData.append("themeId", themeId);
+      fetch("/api/select-theme", { method: "POST", body: formData })
+        .then((r) => r.json())
+        .then((res) => {
+          if (!res?.success) {
+            showInfoBox(res?.error || "Failed to switch theme", "critical", t.content?.error || "Error");
+            return;
+          }
+          // Theme changed → drop caches + selection so the now theme-scoped loader
+          // repopulates the list/editor for the newly selected theme.
+          setSelectedGroupId(null);
+          setLoadedThemes({});
+          setLoadedTranslations({});
+          setFieldPagination({});
+          hasSelectedInitialItem.current = false;
+          revalidator.revalidate();
+        })
+        .catch(() => {
+          showInfoBox(t.content?.error || "Error", "critical", t.content?.error || "Error");
+        });
+    },
+    [selectedThemeId, revalidator, showInfoBox, t]
+  );
+
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -997,6 +1112,11 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           sortOptions={[
             { field: "title", label: "Title" },
           ]}
+          themeSelector={
+            themeSelectOptions.length > 1 && selectedThemeId
+              ? { options: themeSelectOptions, selectedThemeId, onChange: handleThemeChange, needsThemeSync: !!needsThemeSync }
+              : undefined
+          }
         />
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
+import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
 
 // Lightweight preview of the currently running tasks, used by the hover card
 // on the "Tasks" navigation badge. Only the top few active tasks are returned
@@ -62,23 +63,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return json({ tasks: [], totalCount: 0, error: "Database error" }, { status: 500 });
     }
   } catch (authError: unknown) {
-    logger.error("Authentication error in running-tasks-list", {
-      error: authError instanceof Error ? authError.message : String(authError),
-    });
-
-    const errStatus = authError instanceof Response ? authError.status : undefined;
-
-    if (errStatus === 429) {
-      logger.warn("Rate limit hit on running-tasks-list, returning empty list");
-      return json(
-        { tasks: [], totalCount: 0, warning: "Rate limited" },
-        { status: 200, headers: { "Retry-After": "60" } }
-      );
-    }
-
-    return json(
-      { tasks: [], totalCount: 0, error: "Authentication failed" },
-      { status: errStatus || 401 }
-    );
+    return handlePolledAuthError(authError, { tasks: [], totalCount: 0 });
   }
 };

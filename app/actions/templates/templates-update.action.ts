@@ -2,14 +2,16 @@ import { json } from "@remix-run/node";
 import { ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
+import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { TRANSLATE_CONTENT, REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
-import { GET_THEMES, GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
+import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
 import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
-  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType } = ctx;
+  const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
   // Market scope for market-specific ("Translate & Adapt") theme translations.
@@ -231,6 +233,27 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     for (const [resId, translationInputs] of translationsByResource) {
       if (translationInputs.length === 0) continue;
 
+      // §5.2 Divergenz-Guard: never register foreign translations against a
+      // resource whose embedded theme_id differs from the selected theme —
+      // otherwise a stale/mis-scoped resourceId would silently write into a
+      // FOREIGN theme. Theme-agnostic resources (no theme_id → null) and an unset
+      // selection are always allowed.
+      const resThemeId = extractThemeIdFromResourceId(resId);
+      if (selectedThemeId && resThemeId && resThemeId !== selectedThemeId) {
+        logger.error("[TEMPLATES] Cross-theme write blocked — resource belongs to a different theme than selected", {
+          context: "Templates",
+          resourceId: resId,
+          resThemeId,
+          selectedThemeId,
+          locale,
+        });
+        skippedKeys.push(...translationInputs.map((t) => t.key));
+        shopifyErrors.push(
+          `Refusing to write translations into a different theme than the selected one (resource ${resId}).`
+        );
+        continue;
+      }
+
       logger.info("[TEMPLATES] Sending translations to Shopify", {
         context: "Templates",
         resourceId: resId,
@@ -341,12 +364,46 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
           failedDeleteKeys.push(...keysToDelete);
           shopifyErrors.push(removeData.data.translationsRemove.userErrors[0].message);
         } else {
-          logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
-            context: "Templates",
-            resourceId: resId,
-            keyCount: keysToDelete.length,
-            locale,
-          });
+          // Shopify can return NO userErrors yet remove NOTHING — some resources
+          // (EMAIL_TEMPLATE et al.) silently no-op translationsRemove exactly like
+          // COOKIE_BANNER does. The mutation echoes back the translations it
+          // actually deleted, so confirm every cleared key is present. A key that
+          // is not echoed never left Shopify and must NOT be deleted from the
+          // local DB (failedDeleteKeys → excluded from the DB deleteMany below) —
+          // otherwise the field looks gone locally while it survives on the
+          // storefront and the save is reported as success (the silent-delete bug).
+          // Foreign saves only send CHANGED fields (buildFieldsForSave filters out
+          // unchanged/empty ones), so every key here genuinely had a value to
+          // remove — an empty echo is a real failure, not a "nothing to do".
+          const removedKeys = new Set(
+            (removeData.data?.translationsRemove?.translations ?? []).map(
+              (t: { key: string }) => t.key
+            )
+          );
+          const notRemoved = keysToDelete.filter((k) => !removedKeys.has(k));
+          if (notRemoved.length > 0) {
+            logger.error("[TEMPLATES] Shopify returned no error but removed no translation for cleared keys", {
+              context: "Templates",
+              resourceId: resId,
+              locale,
+              notRemovedKeys: notRemoved,
+              removedCount: removedKeys.size,
+            });
+            failedDeleteKeys.push(...notRemoved);
+            shopifyErrors.push(
+              `Shopify did not remove ${notRemoved.length} cleared translation(s) although it reported no error: ${notRemoved
+                .slice(0, 5)
+                .join(", ")}`
+            );
+          }
+          if (notRemoved.length < keysToDelete.length) {
+            logger.info("[TEMPLATES] Cleared translations removed from Shopify", {
+              context: "Templates",
+              resourceId: resId,
+              keyCount: keysToDelete.length - notRemoved.length,
+              locale,
+            });
+          }
         }
       } catch (removeError) {
         const errorMsg = removeError instanceof Error ? removeError.message : String(removeError);
@@ -491,26 +548,29 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       }
 
       if (keysByFilename.size > 0) {
-        const themesResponse = await admin.graphql(GET_THEMES, { variables: { first: 10 } });
-        const themesData = await themesResponse.json();
-        const mainTheme = themesData.data?.themes?.edges?.find(
-          (edge: { node: { role: string } }) => edge.node.role === "MAIN"
-        );
+        // Theme-Auswahl: push primary-locale changes to the theme the merchant
+        // selected. Reuse the selection already resolved for this request (the same
+        // value the §5.2 foreign-path guard uses) so Primary + Foreign target ONE
+        // theme and we avoid a redundant GET_THEMES; resolve only if the caller did
+        // not provide it. resolveSelectedThemeId falls back to MAIN when
+        // unset/invalid (see PLAN_THEME_SELECTION §5).
+        const themeId =
+          selectedThemeId !== undefined
+            ? selectedThemeId
+            : await resolveSelectedThemeId(session.shop, admin);
 
-        if (!mainTheme) {
-          logger.error("[TEMPLATES] No MAIN theme found — cannot push primary locale changes", {
+        if (!themeId) {
+          logger.error("[TEMPLATES] No theme found — cannot push primary locale changes", {
             context: "Templates",
           });
           return json(
             {
               success: false,
-              error: "No active (MAIN) theme found. Cannot save primary locale changes to Shopify.",
+              error: "No theme found. Cannot save primary locale changes to Shopify.",
             },
             { status: 500 }
           );
         }
-
-        const themeId = mainTheme.node.id;
         // If a default-locale file is involved, also request it by glob so we get
         // the theme's ACTUAL default-locale file even when its name differs from
         // our constructed locales/<primaryLocale>.default.json (locale casing, or
@@ -795,13 +855,13 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       }
 
       if (hasChanges) {
-        await db.themeContent.update({
+        // updateMany: the unique key now carries themeId, but group.resourceId is
+        // already theme-specific, so (shop, resourceId, groupId) targets the right row.
+        await db.themeContent.updateMany({
           where: {
-            shop_resourceId_groupId: {
-              shop: session.shop,
-              resourceId: group.resourceId,
-              groupId: groupId,
-            },
+            shop: session.shop,
+            resourceId: group.resourceId,
+            groupId: groupId,
           },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           data: { translatableContent: content as any, lastSyncedAt: new Date() },
@@ -914,15 +974,17 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
     for (const [key, value] of entriesToUpsert) {
       const keyResId = keyToResourceId.get(key) || resourceId;
+      const keyThemeId = extractThemeIdFromResourceId(keyResId) ?? "";
       dbOps.push(
         db.themeTranslation.upsert({
           where: {
-            shop_resourceId_groupId_key_locale_marketId: {
+            shop_resourceId_groupId_key_locale_themeId_marketId: {
               shop: session.shop,
               resourceId: keyResId,
               groupId: groupId,
               key: key,
               locale: locale,
+              themeId: keyThemeId,
               marketId,
             },
           },
@@ -931,6 +993,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             shop: session.shop,
             groupId: groupId,
             resourceId: keyResId,
+            themeId: keyThemeId,
             domain: domain,
             locale: locale,
             key: key,

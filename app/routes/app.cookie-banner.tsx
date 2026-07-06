@@ -33,6 +33,7 @@ import {
 } from "../utils/cookie-banner-availability.server";
 import { getFormString } from "../utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 
 export const loader = makeThemeDomainLoader("customer_privacy", "COOKIE_BANNER");
 
@@ -214,19 +215,21 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
       if (!pushedKeys.has(key)) continue;
       await db.themeTranslation.upsert({
         where: {
-          shop_resourceId_groupId_key_locale_marketId: {
+          shop_resourceId_groupId_key_locale_themeId_marketId: {
             marketId: "",
             shop: session.shop,
             resourceId: resId,
             groupId,
             key,
             locale,
+            themeId: extractThemeIdFromResourceId(resId) ?? "",
           },
         },
         create: {
           shop: session.shop,
           groupId,
           resourceId: resId,
+          themeId: extractThemeIdFromResourceId(resId) ?? "",
           domain: "customer_privacy",
           locale,
           key,

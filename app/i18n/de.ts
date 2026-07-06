@@ -301,6 +301,14 @@ export const de = {
     page: "Seite",
     previousPage: "Vorherige Seite",
     nextPage: "Nächste Seite",
+    // Theme-Auswahl (Theme Selection)
+    themeSelectorLabel: "Theme",
+    themeSelectorHelp: "Wählt das Theme, dessen Inhalte du bearbeitest/übersetzt.",
+    themeSelectorPublished: "(publiziert)",
+    themeSwitchNeedsSync: "Für dieses Theme wurde noch nicht synchronisiert.",
+    themeSyncNow: "Jetzt alle Einträge laden",
+    themeNoEntries: "Für dieses Theme sind hier keine Einträge vorhanden.",
+    themeSyncRetry: "Erneut synchronisieren",
     // Item list
     searchPlaceholder: "Suchen...",
     paginationOf: "von",

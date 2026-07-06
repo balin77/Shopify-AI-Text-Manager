@@ -23,6 +23,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const dbm = vi.hoisted(() => ({
   themeContentFindMany: vi.fn(),
   themeContentUpdate: vi.fn().mockResolvedValue({}),
+  themeContentUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   themeTranslationFindMany: vi.fn().mockResolvedValue([]),
   themeTranslationCreate: vi.fn(),
   themeTranslationUpdate: vi.fn(),
@@ -32,7 +33,7 @@ const dbm = vi.hoisted(() => ({
 
 vi.mock('~/db.server', () => ({
   db: {
-    themeContent: { findMany: dbm.themeContentFindMany, update: dbm.themeContentUpdate },
+    themeContent: { findMany: dbm.themeContentFindMany, update: dbm.themeContentUpdate, updateMany: dbm.themeContentUpdateMany },
     themeTranslation: {
       findMany: dbm.themeTranslationFindMany,
       create: dbm.themeTranslationCreate,
@@ -115,7 +116,7 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => 
     const result = await svc.syncSingleThemeGroup('product');
 
     expect(syncAllSpy).not.toHaveBeenCalled();
-    expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1); // known resource refreshed
+    expect(dbm.themeContentUpdateMany).toHaveBeenCalledTimes(1); // known resource refreshed
     expect(result.themeContent).toEqual(existing);
   });
 
@@ -145,7 +146,7 @@ describe('BackgroundSyncService.syncSingleThemeGroup() — refresh only', () => 
       where: { shop, groupId: 'splan_1' },
     });
     expect(dbm.themeTranslationFindMany.mock.calls[0][0].where).not.toHaveProperty('domain');
-    expect(dbm.themeContentUpdate).toHaveBeenCalledTimes(1);
+    expect(dbm.themeContentUpdateMany).toHaveBeenCalledTimes(1);
     expect(result.themeContent).toEqual(existing);
   });
 });

@@ -52,6 +52,14 @@ model AISettings {
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
 
+  // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
+  // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
+  // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
+  // published (MAIN) theme — backwards compatible with the pre-selection
+  // behaviour. Validated against GET_THEMES on every read
+  // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
+  selectedThemeId   String?
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
@@ -711,12 +719,25 @@ model ThemeContent {
   // selectors/config, so the editor locks them read-only in every locale; other
   // apps' embeds stay editable. Derived from settings_data.json at full sync.
   appEmbedOwned       Boolean  @default(false)
+  // AI-generated concise nav title in the shop's main language. Only set for
+  // rows whose raw name is unusable in a list (currently EMAIL_TEMPLATE, whose
+  // groupName is the full localized email subject line). null = not yet
+  // generated / not applicable. Written once by the title-backfill task and
+  // preserved across syncs (groupName is recomputed every sync, this is not).
+  // The loader prefers this over groupName for the item title.
+  aiShortTitle        String?
+  // Shopify Theme-GID this row belongs to ("gid://shopify/OnlineStoreTheme/<id>").
+  // "" = Legacy/vor der Theme-Auswahl-Migration (Backfill-Kandidat). Derived at
+  // sync time from the theme_id embedded in the resourceId GID (see
+  // app/utils/theme-id.ts), falling back to the active MAIN theme.
+  themeId             String   @default("")
   lastSyncedAt        DateTime @default(now())
 
-  @@unique([shop, resourceId, groupId])
+  @@unique([shop, resourceId, groupId, themeId])
   @@index([shop])
   @@index([shop, groupId])
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([lastSyncedAt])
 }
 
@@ -732,6 +753,9 @@ model ThemeTranslation {
   value      String  @db.Text
   locale     String // "en", "fr", "es", "it", etc.
   outdated   Boolean @default(false)
+  // Shopify Theme-GID this translation belongs to. Mirrors ThemeContent.themeId
+  // (see there). "" = Legacy/vor der Theme-Auswahl-Migration.
+  themeId    String  @default("")
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
   marketId   String  @default("")
@@ -739,11 +763,16 @@ model ThemeTranslation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Explicit map: the auto-generated name would exceed Postgres's 63-char limit.
-  @@unique([shop, resourceId, groupId, key, locale, marketId], map: "ThemeTranslation_shop_res_group_key_locale_market_key")
+  // Unique key folds BOTH the theme (Theme-Auswahl) and market (Translate &
+  // Adapt) dimensions. Explicit map: the auto-generated name would exceed
+  // Postgres's 63-char limit. Built by migration 20260706140000 (after both the
+  // theme-id and market-id migrations, which each create a transient one-sided
+  // index the reconciliation migration replaces).
+  @@unique([shop, resourceId, groupId, key, locale, themeId, marketId], map: "ThemeTranslation_shop_res_grp_key_loc_theme_market_key")
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([locale])
 }
 

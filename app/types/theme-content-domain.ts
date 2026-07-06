@@ -40,4 +40,9 @@ export interface ThemeNavItem {
    * translating it may break the embed.
    */
   embedTechnical?: boolean;
+  /**
+   * True for an email-notification template that has no AI short title yet.
+   * The System page uses this to lazily trigger the title-backfill task.
+   */
+  aiTitlePending?: boolean;
 }
