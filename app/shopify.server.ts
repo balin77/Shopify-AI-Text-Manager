@@ -177,6 +177,7 @@ logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
+import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -203,6 +204,11 @@ const enhancedAuthenticate = {
     // because the standalone server.js cleanup jobs run under plain node and
     // cannot import this TS service / redactShopData.
     ShopReaperService.getInstance().start();
+
+    // Bootstrap the daily GSC keyword auto-sync sweep once per process (same
+    // idempotent-start reasoning as ShopReaperService above — it also needs
+    // TS imports, here enrichKeywordsFromGsc + planUtils).
+    GscAutoSyncService.getInstance().start();
 
     return { admin, session };
   }

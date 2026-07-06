@@ -103,6 +103,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     availableProperties: [] as GscSite[],
     error: null as string | null,
     statusParam,
+    // Stamped by app/services/seo/gsc-auto-sync.service.ts (or a manual
+    // "Sync keyword rankings" click) — trivially available on the connection
+    // row already loaded below, so surfaced here for the auto-sync note.
+    lastKeywordSyncAt: null as string | null,
   };
 
   const plan = await loadPlan(db, session.shop);
@@ -128,6 +132,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   base.connected = true;
   base.property = connection.propertyUrl || null;
   base.email = connection.email;
+  base.lastKeywordSyncAt = connection.lastKeywordSyncAt ? connection.lastKeywordSyncAt.toISOString() : null;
 
   if (!connection.propertyUrl) {
     // OAuth succeeded but no verified property matched the shop's myshopify or
@@ -391,19 +396,30 @@ export default function SeoSearchConsole() {
                 )}
 
                 {!data.needsPropertySelection && (
-                  <InlineStack gap="200">
-                    <Button
-                      loading={fetcher.state !== "idle"}
-                      onClick={() => fetcher.submit({ actionType: "sync" }, { method: "post" })}
-                    >
-                      {g.syncKeywords}
-                    </Button>
-                    <Button
-                      onClick={() => fetcher.submit({ actionType: "submitSitemap" }, { method: "post" })}
-                    >
-                      {g.submitSitemap}
-                    </Button>
-                  </InlineStack>
+                  <BlockStack gap="150">
+                    <InlineStack gap="200">
+                      <Button
+                        loading={fetcher.state !== "idle"}
+                        onClick={() => fetcher.submit({ actionType: "sync" }, { method: "post" })}
+                      >
+                        {g.syncKeywords}
+                      </Button>
+                      <Button
+                        onClick={() => fetcher.submit({ actionType: "submitSitemap" }, { method: "post" })}
+                      >
+                        {g.submitSitemap}
+                      </Button>
+                    </InlineStack>
+                    {/* Merchant-facing note: app/services/seo/gsc-auto-sync.service.ts
+                        also syncs rankings automatically once a day, independent of
+                        this button. */}
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {g.autoSyncNote}
+                      {data.lastKeywordSyncAt
+                        ? ` · ${g.lastSyncedLabel}: ${new Date(data.lastKeywordSyncAt).toLocaleDateString()}`
+                        : ""}
+                    </Text>
+                  </BlockStack>
                 )}
               </BlockStack>
             </Card>

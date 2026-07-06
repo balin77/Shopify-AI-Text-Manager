@@ -923,6 +923,14 @@ model GoogleSearchConsoleConnection {
   email        String? // connected Google account (display only)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  // Last time app/services/seo/gsc-auto-sync.service.ts (or the merchant's
+  // manual "Sync keyword rankings" button) wrote GSC data onto SeoKeyword
+  // rows. Null = never synced. Drives the daily auto-sync's "is this
+  // connection due" query; also stamped (with a backoff, see the service's
+  // doc comment) on plan-gate/no-keywords skips and sync errors so a shop
+  // that can't be synced doesn't get retried on every tick.
+  lastKeywordSyncAt DateTime?
 }
 
 // SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
