@@ -95,7 +95,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 export default function SeoIndexNow() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const n = (t.seo as any).indexNowPage;
+  const n = t.seo.indexNowPage;
   const fetcher = useFetcher<ActionResult>();
 
   const msg = (() => {

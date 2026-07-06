@@ -156,7 +156,7 @@ export default function SeoDashboard() {
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
-  const d = (t.seo as any).dashboard;
+  const d = t.seo.dashboard;
 
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
@@ -420,7 +420,7 @@ export default function SeoDashboard() {
               {audit.problems.map((p) => (
                 <InlineStack key={p.code} gap="200" align="space-between" blockAlign="center">
                   <Text as="span" variant="bodyMd">
-                    {d.problems[p.code] || p.code}
+                    {(d.problems as Record<string, string>)[p.code] || p.code}
                   </Text>
                   <InlineStack gap="200" blockAlign="center">
                     <Badge tone="attention">

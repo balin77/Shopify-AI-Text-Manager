@@ -287,7 +287,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 export default function SeoSearchConsole() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const g = (t.seo as any).searchConsolePage;
+  const g = t.seo.searchConsolePage;
   const fetcher = useFetcher<ActionResult>();
   // Property picker (only relevant when data.needsPropertySelection is true).
   const [selectedProperty, setSelectedProperty] = useState(data.availableProperties[0]?.siteUrl || "");

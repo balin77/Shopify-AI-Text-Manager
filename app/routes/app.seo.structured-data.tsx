@@ -144,7 +144,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function SeoStructuredData() {
   const { previews, themeEditorUrl, themeEditorUrlSocialMeta } = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const s = (t.seo as any).structuredDataPage;
+  const s = t.seo.structuredDataPage;
 
   const schemaTypeKeys = [
     "schemaProduct",
@@ -208,7 +208,7 @@ export default function SeoStructuredData() {
             <InlineStack gap="200" wrap>
               {schemaTypeKeys.map((k) => (
                 <Badge key={k} tone="success">
-                  {s[k]}
+                  {(s as Record<string, string>)[k]}
                 </Badge>
               ))}
             </InlineStack>
@@ -235,7 +235,7 @@ export default function SeoStructuredData() {
               previews.map((block) => (
                 <BlockStack key={block.labelKey} gap="100">
                   <Text as="p" variant="headingSm">
-                    {s[block.labelKey]}
+                    {(s as Record<string, string>)[block.labelKey]}
                   </Text>
                   {block.warnings.length === 0 ? (
                     <Badge tone="success">{t.seo.structuredDataValid}</Badge>

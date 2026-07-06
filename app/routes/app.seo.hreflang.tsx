@@ -48,7 +48,7 @@ export default function SeoHreflang() {
   const { result } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
-  const h = (t.seo as any).hreflangPage;
+  const h = t.seo.hreflangPage;
 
   const openInEditor = (type: HreflangType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
@@ -95,7 +95,7 @@ export default function SeoHreflang() {
               key={loc.locale}
               loc={loc}
               h={h}
-              types={(t.seo as any).dashboard.types}
+              types={t.seo.dashboard.types}
               onOpen={openInEditor}
             />
           ))

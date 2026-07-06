@@ -280,7 +280,7 @@ export default function SeoKeywords() {
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
-  const k = (t.seo as any).keywordsPage;
+  const k = t.seo.keywordsPage;
 
   const saveFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();

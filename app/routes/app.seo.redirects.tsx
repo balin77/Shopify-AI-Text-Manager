@@ -113,7 +113,7 @@ export default function SeoRedirects() {
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
-  const r = (t.seo as any).redirectsPage;
+  const r = t.seo.redirectsPage;
 
   const createFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
@@ -169,14 +169,14 @@ export default function SeoRedirects() {
 
   const createError =
     createFetcher.data && !createFetcher.data.ok
-      ? r.errors[createFetcher.data.error] || r.errors.createFailed
+      ? (r.errors as Record<string, string>)[createFetcher.data.error] || r.errors.createFailed
       : null;
 
   // Row actions (create-from-404 / dismiss / delete) report failures through
   // rowFetcher; surface them too, otherwise a rejected action is silent.
   const rowError =
     rowFetcher.data && !rowFetcher.data.ok
-      ? r.errors[rowFetcher.data.error] || r.errors.createFailed
+      ? (r.errors as Record<string, string>)[rowFetcher.data.error] || r.errors.createFailed
       : null;
 
   const submitSearch = () => {

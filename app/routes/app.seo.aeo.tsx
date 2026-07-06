@@ -100,7 +100,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
-  const a = (t.seo as any).aeoPage;
+  const a = t.seo.aeoPage;
   const fetcher = useFetcher<ActionResult>();
 
   const genMsg = (() => {

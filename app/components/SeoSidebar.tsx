@@ -169,7 +169,7 @@ export function SeoSidebar({
     none: undefined,
   };
 
-  const kw = (t.seo as any).keywordsPage;
+  const kw = t.seo.keywordsPage;
 
   // Scoring is computed by the shared pure function (app/utils/seo-score.ts) so
   // the Sidebar and the store-wide Audit-Dashboard never drift. The function
