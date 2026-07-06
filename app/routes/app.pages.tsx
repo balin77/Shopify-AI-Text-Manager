@@ -100,7 +100,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function PagesPage() {
-  const { pages, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { pages, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -112,6 +112,7 @@ export default function PagesPage() {
     items: pages as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,

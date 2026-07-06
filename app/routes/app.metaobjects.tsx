@@ -131,7 +131,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function MetaobjectsPage() {
-  const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { metaobjects, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const entryFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -152,6 +152,7 @@ export default function MetaobjectsPage() {
         ...item,
         metaobjects: loaded.metaobjects,
         translations: loaded.translations,
+        marketTranslations: loaded.marketTranslations,
         contentCount: loaded.contentCount ?? item.contentCount,
       };
     });
@@ -176,6 +177,7 @@ export default function MetaobjectsPage() {
     items: augmentedMetaobjects as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,

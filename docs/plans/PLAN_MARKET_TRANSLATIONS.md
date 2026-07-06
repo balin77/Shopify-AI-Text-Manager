@@ -5,8 +5,34 @@
 > Shopify unterstützt das nativ über das optionale Feld `marketId` in
 > `TranslationInput` und `marketIds` in `translationsRemove`.
 
-Status: **PLAN / noch nicht umgesetzt**
+Status: **VOLLSTÄNDIG UMGESETZT** für alle Textinhalte —
+Products, Collections, Pages, Articles, Policies (Phase 1), Metaobjects,
+Theme-Content (alle 6+ Rubriken: Templates, System, Delivery,
+Online-Store-Extras, Selling-Plans, …) und Produktbild-Alt-Text.
+Jede Phase wurde extern reviewt und die gefundenen Bugs gefixt.
 Sprache des Plans: Deutsch · Ziel-Leser: Entwickler, der es direkt umsetzt.
+
+> **Umsetzungshinweise (bei Implementierung ergänzt):**
+> - Getrackter Shop-Config ist `shopify.app.prod.toml` (kein `shopify.app.toml`);
+>   dort wurde `read_markets` ergänzt.
+> - `GET_MARKETS` nutzt die `webPresences`-Connection + `rootUrls { locale }` für
+>   die Ziel-API 2025-10. **Feldnamen (`enabled`, `webPresences`) im GraphiQL der
+>   gepinnten Version gegenprüfen**, falls Märkte nicht laden — `loadMarkets()`
+>   degradiert bei Fehlern bewusst zu `[]` (Feature bleibt unsichtbar).
+> - AI-Bulk-Übersetzungen (Translate-All, Accept & Translate → alle Locales,
+>   Bulk-Alt-Text) schreiben bewusst weiterhin **global** (vermeidet die
+>   Locale×Markt-Kombinatorik). Markt-spezifisch sind: manuelles Speichern,
+>   Single-Field-Translate, Copy-to-Field, Clear und einzelnes Alt-Text-Edit/
+>   -Translate. Der globale Wert dient dabei überall als Fallback.
+> - **Primär-Quelltext-Änderung** löscht nur die *globalen* Foreign-Translations
+>   (auf Shopify UND DB); markt-spezifische Overrides bleiben erhalten (Shopify
+>   markiert sie „outdated") — konsistent auf beiden Seiten, keine Divergenz.
+> - **Cookie-Banner** (Customer-Privacy-API) hat keine Markt-Dimension → Selector
+>   dort ausgeblendet. **DirectTranslation** ist aktuell noch global (Storefront-
+>   Wörterbuch); die markt-spezifische Erweiterung ist als eigener Plan in
+>   **Abschnitt 12** ausgearbeitet (noch nicht umgesetzt).
+> - Alt-Text lebt im eigenen Bild-Subsystem (`useEditorAltText`); Markt-Auswahl
+>   nur bei Shops mit mehreren Märkten sichtbar.
 
 ---
 
@@ -648,3 +674,211 @@ analog `ctrlClickLanguage`).
 | `app/types/content-editor.types.ts` | `MarketInfo`-Typ, Prop-Erweiterungen |
 | `shopify.app.toml` | `read_markets`-Scope |
 | Loader `app.{products,collections,pages,blogs,policies}.tsx` | `loadMarkets()` |
+
+---
+
+## 12. Erweiterung: DirectTranslation markt-spezifisch (eigener Plan)
+
+> Ziel: Das Direktübersetzungs-Wörterbuch (Storefront-Text-Replacement für
+> Nicht-Shopify-Felder wie 3rd-Party-Widgets) soll — wie alle anderen
+> Inhaltstypen — **pro Markt** funktionieren: dieselbe Locale kann pro Markt
+> einen anderen Zielstring liefern, mit dem globalen Wert als Fallback.
+
+Status: **UMGESETZT & reviewt.** Service-Layering, Proxy, Storefront-Embed/JS und
+Admin-UI sind markt-fähig; der Review-Befund (Primär-Locale-Markt) wurde gefixt,
+indem der Markt-Selector für DirectTranslations auch in der Primär-Locale erlaubt
+ist (Edge Case 4). Der einzige offene Punkt bleibt die `localization.market.id`-
+Verifikation gegen einen echten Store (12.2).
+
+### 12.1 Warum DirectTranslation ein Sonderfall ist
+Anders als Products/Theme/Metaobjects wird DirectTranslation **nicht über
+Shopify-`translationsRegister`** ausgespielt, sondern über ein **eigenes
+App-Proxy-Wörterbuch**, das die Theme-App-Embed-JS clientseitig auf gerenderten
+Text anwendet. Es gibt daher **keine Shopify-Markt-Semantik** — wir bauen die
+Markt-Dimension vollständig selbst:
+
+- **Persistenz:** `DirectTranslation`-Zeile pro `(itemId, locale, marketId)`.
+- **Auslieferung:** Der Proxy muss wissen, **in welchem Markt der Käufer gerade
+  ist**, und das markt-spezifische über das globale Wörterbuch legen.
+- **Kein Fallback durch Shopify:** Das Fallback (Markt → global) bauen wir im
+  `getDictionary()` nach.
+
+### 12.2 Kern-Herausforderung: Markt-Kontext von der Storefront
+Der aktuelle Flow kennt nur die Locale
+(`proxy.dynamic-translations.tsx` → `?locale=<iso>`). Für Markt-Betrieb muss der
+**Käufer-Markt** vom Theme bis zum Proxy durchgereicht werden.
+
+Shopify stellt den aktuellen Markt in Liquid über das globale `localization`-
+Objekt bereit (verfügbar auch im App-Embed-Block, `target: body`):
+- `localization.market.id` → numerische Markt-ID (entspricht dem Admin-GID
+  `gid://shopify/Market/<id>`).
+- `localization.market.handle` → stabiler Handle (z. B. `"us"`).
+
+**Empfohlener Weg (A) — GID direkt konstruieren, kein Server-Lookup:**
+Der Liquid-Block injiziert `localization.market.id`; die Storefront sendet
+`&market=<id>`; der Proxy baut `gid://shopify/Market/<id>` und matcht damit die
+gespeicherte `marketId`.
+> **Zu verifizieren:** dass `localization.market.id` in der Ziel-Theme-Umgebung
+> exakt der numerischen ID des Admin-GID entspricht (im Test-Store: gespeicherte
+> `marketId` mit dem Storefront-Wert vergleichen). Falls das Format abweicht →
+> Weg (B).
+
+**Fallback-Weg (B) — Handle→GID-Mapping am Proxy:** Storefront sendet
+`&market=<handle>` (aus `localization.market.handle`); der Proxy resolved
+Handle→GID über eine **gecachte** Markets-Map (aus `loadMarkets()`, analog
+`shop-locales-cache.server.ts` mit TTL), um nicht bei jedem Storefront-Request
+die Admin-API zu treffen. Robuster gegen ID-Format-Unterschiede, aber ein
+zusätzlicher Cache.
+
+Beide Wege behandeln fehlendes `market` (kein Markt / altes Embed) als **global**
+→ rückwärtskompatibel.
+
+**Sicherheit:** Der `market`-Parameter ist käufer-kontrolliert, selektiert aber
+nur eine Teilmenge der **shop-eigenen** Daten (kein Privileg-Escalation). Der
+Proxy-HMAC (`authenticate.public.appProxy`) sichert weiterhin den Shop. `market`
+nur auf Format validieren (GID-/Handle-Regex).
+
+### 12.3 Datenmodell (bereits vorhanden)
+`DirectTranslation`:
+```prisma
+  marketId String @default("")   // "" = global, sonst gid://shopify/Market/<id>
+  @@unique([itemId, locale, marketId])   // bereits migriert
+```
+Optional für Serve-Performance: `@@index([itemId, locale, marketId])` (der
+Unique-Index deckt Prefix-Lookups `(itemId, locale)` bereits ab — Index nur
+ergänzen, falls Query-Pläne es zeigen).
+
+### 12.4 Service-Änderungen (`app/services/direct-translation.server.ts`)
+
+**`getDictionary(db, shop, locale, marketId = "")` — Markt-Layering (`:260`):**
+Statt nur `translations where { locale }` beide Ebenen laden und mergen:
+```ts
+db.directTranslationItem.findMany({
+  where: { shop },
+  select: {
+    sourceText: true,
+    // global + markt-spezifisch für diese Locale in EINER Query:
+    translations: {
+      where: { locale, marketId: { in: marketId ? ["", marketId] : [""] } },
+      select: { targetText: true, marketId: true },
+    },
+  },
+});
+// Merge: globaler Eintrag zuerst, markt-spezifischer überschreibt.
+for (const it of items) {
+  const global = it.translations.find(t => t.marketId === "");
+  const market = marketId ? it.translations.find(t => t.marketId === marketId) : undefined;
+  const chosen = market ?? global;
+  if (chosen) entries[it.sourceText] = chosen.targetText;
+}
+```
+→ Markt-Wert schlägt global; fehlt der Markt-Wert, greift global (Fallback).
+
+**`setTranslation(..., marketId = "")` (`:221`)** und
+**`deleteTranslation(..., marketId = "")` (`:243`):** `marketId` in den
+Unique-Key (`itemId_locale_marketId`) aufnehmen — bei `setTranslation` in
+`where` **und** `create`. **Wichtig:** `deleteTranslation` filtert aktuell nur
+`{ itemId, locale }` (`:246`) — das würde markt-übergreifend löschen; unbedingt
+`marketId` in den `where` aufnehmen.
+
+**`transfer` / `AI` (`translateBatch`, `:290+`):** `marketId` durchreichen; sie
+schreiben in den **gewählten Markt** (oder global, wenn keiner gewählt). Bulk
+„alle Sprachen" bleibt an den gewählten Markt gebunden (keine Locale×Markt-
+Explosion — es ist immer genau ein Markt aktiv).
+
+**Version/Cache:** `bumpVersion()` ist shop-global — jede Markt-Änderung
+invalidiert alle Storefront-Caches (die dann ihr markt-spezifisches Wörterbuch
+neu laden). Korrekt, minimale Über-Invalidierung. Keine Änderung nötig.
+
+### 12.5 Proxy (`app/routes/proxy.dynamic-translations.tsx`)
+- `market`-Query-Param lesen, validieren (leer erlaubt = global), zu GID
+  normalisieren (Weg A: `gid://shopify/Market/${market}`; Weg B: Handle→GID
+  über Cache).
+- `getDictionary(db, session.shop, locale, marketId)` aufrufen.
+- Edge-Cache: Da die URL nun `&market=` enthält, ist der `Cache-Control`-Cache
+  **automatisch pro Markt** gekeyt — keine weitere Änderung.
+
+### 12.6 Storefront (`extensions/storefront/`)
+**`blocks/direct-translation.liquid`** — Config um Markt erweitern:
+```liquid
+"market": {{ localization.market.id | json }},
+"marketHandle": {{ localization.market.handle | json }},
+```
+**`assets/direct-translation.js`:**
+- Beim Fetch (`:313`) `&market=` anhängen:
+  `endpoint + "?locale=" + enc(locale||primary) + "&market=" + enc(cfg.market||"")`.
+- **localStorage-Cache-Key markt-bewusst** (`:50`): `cacheKey` und `reportedKey`
+  um den Markt erweitern (`"contentpilot_dt_" + localeKey + "_" + marketKey`),
+  damit ein Markt-/Länder-Wechsel im selben Browser nicht das falsche (fremde)
+  Wörterbuch anzeigt.
+- Collector (`collect-strings`, `:175`) bleibt **markt-agnostisch** (Kandidaten
+  sind nur entdeckte Quellstrings; die Markt-Dimension entsteht erst beim
+  Übersetzen). `market` dort nicht nötig.
+
+### 12.7 Admin-UI (`app/routes/app.direct-translations.tsx`)
+`markets` ist bereits in den Loader-Daten (die Route nutzt `createContentLoader`
+→ Factory liefert `markets`). Zu ergänzen:
+- **Markt-Selector** (den bestehenden `MarketSelector` oder ein schlankes
+  `Select` wiederverwenden), gefiltert auf Märkte, die die gewählte Locale
+  anbieten (`localeCodes.includes(locale)`), plus Default „Alle Märkte (global)".
+- **Editing pro (Locale, Markt):** Bei gewähltem Markt zeigt die Zeile den
+  markt-spezifischen Wert; fehlt er, den **geerbten globalen Wert** (Badge „vom
+  globalen Wert geerbt", analog `content.market.inheritedFromGlobal`).
+- Actions `save` / `deleteTranslation` / `transfer` / `ai` (`:178–232`) um
+  `marketId` (aus dem Formular) erweitern und an die Service-Funktionen reichen.
+- Die Item-Liste (`listItems`, `:159`) lädt `translations: true` (alle Zeilen) —
+  im Client nach `(locale, marketId)` gruppieren, damit global- und Markt-Zeilen
+  nebeneinander sichtbar/filterbar sind.
+- **Löschsemantik** (analog Edge Case 7): globalen Wert löschen lässt
+  markt-spezifische bestehen; markt-spezifisch löschen fällt auf global zurück.
+
+### 12.8 Edge Cases & Risiken
+1. **`localization.market.id`-Format** — Hauptrisiko (siehe 12.2). Verifizieren;
+   bei Abweichung Handle-Weg (B). Bei falschem Markt-Param liefert `getDictionary`
+   einfach nur die globale Ebene (kein Crash).
+2. **Markt ohne Overrides** → Storefront erhält globales Wörterbuch (Fallback).
+3. **Cache-Vergiftung vermeiden:** localStorage-Key MUSS den Markt enthalten,
+   sonst sieht ein Käufer nach Markt-Wechsel das gecachte Fremd-Wörterbuch.
+4. **Primärmarkt:** darf markt-spezifische Overrides bekommen (anders als bei
+   den Shopify-Inhaltstypen, wo die Primär-Locale global ist) — DirectTranslation
+   hat keine „Primär-Locale"-Sperre; der Markt gilt pro Locale. Der Merchant
+   lässt den Primärmarkt üblicherweise global.
+5. **Performance:** `getDictionary` lädt jetzt zwei Ebenen; die `IN ["", market]`-
+   Query bleibt eine einzige `findMany`. Bei sehr vielen Items ggf. Index (12.3).
+6. **Multi-Tenant:** unverändert shop-scoped (`where: { shop }` bleibt).
+
+### 12.9 Schrittweiser Umsetzungsplan
+1. **Verifikation (½ Tag):** `localization.market.id` im Test-Store gegen die
+   gespeicherte `marketId` gegenprüfen → Weg A oder B festlegen.
+2. **Service (½ Tag):** `getDictionary`-Layering; `setTranslation`/
+   `deleteTranslation`/`transfer`/`ai` um `marketId` (inkl. des fehlenden
+   `marketId`-Filters in `deleteTranslation`).
+3. **Proxy (¼ Tag):** `market`-Param → GID → `getDictionary(..., marketId)`.
+4. **Storefront (½ Tag):** Liquid-Injection + JS-Fetch-Param + markt-bewusster
+   localStorage-Key.
+5. **Admin-UI (1 Tag):** Markt-Selector, per-Markt-Editing mit Fallback-Badge,
+   `marketId` in allen Actions.
+6. **Test & Politur (½ Tag):** Testplan 12.10.
+
+### 12.10 Testplan (Dev-Store mit ≥ 2 Märkten, gemeinsame Locale)
+1. Item + globale Übersetzung (`fr`) → beide Märkte zeigen sie auf der Storefront.
+2. Markt UK wählen, `fr`-Override setzen → UK-Storefront zeigt Override, US zeigt
+   weiter global.
+3. Markt US (ohne Override) → globaler Wert (Fallback).
+4. Markt-Override löschen → UK fällt zurück auf global.
+5. Globalen Wert löschen → Markt-Override bleibt bestehen.
+6. Browser-Markt/-Land wechseln (Selector) → localStorage liefert das richtige
+   markt-spezifische Wörterbuch (kein Stale-Cross-Market).
+7. `version`-Bump: Nach jeder Änderung revalidieren alle Storefront-Clients.
+8. Regression: kein `market`-Param (altes Embed) → identisch zu heute (global).
+
+### 12.11 Betroffene Dateien
+| Datei | Änderung |
+|-------|----------|
+| `app/services/direct-translation.server.ts` | `getDictionary`-Layering; `setTranslation`/`deleteTranslation`/`transfer`/`ai` +`marketId` |
+| `app/routes/proxy.dynamic-translations.tsx` | `market`-Param → GID → `getDictionary(marketId)` |
+| `extensions/storefront/blocks/direct-translation.liquid` | `localization.market.id`/`.handle` injizieren |
+| `extensions/storefront/assets/direct-translation.js` | `&market=` im Fetch; localStorage-Key +Markt |
+| `app/routes/app.direct-translations.tsx` | Markt-Selector, per-Markt-Editing, `marketId` in Actions |
+| `app/utils/markets-cache.server.ts` *(nur Weg B)* | **neu** — Handle→GID-Cache mit TTL |
+| `prisma/schema.prisma` *(optional)* | `@@index([itemId, locale, marketId])` bei Bedarf |

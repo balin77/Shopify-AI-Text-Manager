@@ -215,7 +215,8 @@ async function handleCookieBannerUpdate({ request }: ActionFunctionArgs) {
       if (!pushedKeys.has(key)) continue;
       await db.themeTranslation.upsert({
         where: {
-          shop_resourceId_groupId_key_locale_themeId: {
+          shop_resourceId_groupId_key_locale_themeId_marketId: {
+            marketId: "",
             shop: session.shop,
             resourceId: resId,
             groupId,
@@ -276,6 +277,9 @@ export default function CookieBannerPage() {
       config={COOKIE_BANNER_CONFIG}
       apiBasePath="/api/theme-content/customer_privacy"
       planContentType="onlineStoreExtras"
+      // Cookie-banner writes via the Customer Privacy API, which has no market
+      // scoping — hide the market selector so no market-scoped state is created.
+      disableMarketSelector
     />
   );
 }

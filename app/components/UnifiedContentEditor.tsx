@@ -621,6 +621,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   selectedItem={selectedItem}
                   contentType={config.contentType}
                   onLanguageChange={handlers.handleLanguageChange}
+                  markets={state.markets}
+                  selectedMarketId={state.selectedMarketId}
+                  onMarketChange={handlers.handleMarketChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
                   validationOverlays={validationOverlays}
@@ -645,6 +648,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     clearAll: t.content?.clearAll || "Clear All",
                     sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                     reloadItemTooltip: t.content?.reloadItemTooltip,
+                    allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
+                    marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
                   }}
                 />
               </div>
@@ -661,6 +666,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     contentType={config.contentType}
                     hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
                     onLanguageChange={handlers.handleLanguageChange}
+                    markets={state.markets}
+                    selectedMarketId={state.selectedMarketId}
+                    onMarketChange={handlers.handleMarketChange}
                     enabledLanguages={state.enabledLanguages}
                     onToggleLanguage={handlers.handleToggleLanguage}
                     onTranslateAll={handlers.handleTranslateAll}
@@ -674,6 +682,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
                       translating: t.content?.translating || "Translating...",
+                      allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
+                      marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
                     }}
                   />
                 </Card>

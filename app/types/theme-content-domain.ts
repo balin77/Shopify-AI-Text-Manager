@@ -12,6 +12,8 @@ export interface ThemeTranslationRecord {
   key: string;
   value: string;
   locale?: string;
+  /** Market scope ("" / undefined = global). Present on rows loaded from the DB. */
+  marketId?: string;
 }
 
 /** A theme navigation item returned by the domain loader (one per group). */

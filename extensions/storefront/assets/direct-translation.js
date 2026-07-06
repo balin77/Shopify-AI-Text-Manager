@@ -39,6 +39,11 @@
   var locale = cfg.locale || "";
   var primary = cfg.primaryLocale || "";
   var localeKey = locale.toLowerCase();
+  // Current market (Shopify localization.market.id, numeric) — drives
+  // market-specific direct translations. Empty on shops without markets / older
+  // embeds → the server serves the global dictionary (backward compatible).
+  var market = cfg.market != null ? String(cfg.market) : "";
+  var marketKey = market || "0";
   var debug = !!cfg.debug;
   var log = debug
     ? function () { try { console.log.apply(console, ["[ContentPilot DT]"].concat([].slice.call(arguments))); } catch (e) {} }
@@ -47,7 +52,9 @@
   var endpoint = cfg.endpoint || "/apps/contentpilot/dynamic-translations";
   var collectEndpoint = cfg.collectEndpoint || "/apps/contentpilot/collect-strings";
   var addEndpoint = cfg.addEndpoint || "/apps/contentpilot/direct-add";
-  var cacheKey = "contentpilot_dt_" + localeKey;
+  // Market is part of the cache key so a buyer switching market/country in the
+  // same browser never sees another market's cached dictionary.
+  var cacheKey = "contentpilot_dt_" + localeKey + "_" + marketKey;
   var reportedKey = "contentpilot_dt_reported_" + localeKey;
 
   // Visual capture tool: shown ONLY in the theme editor preview
@@ -310,7 +317,7 @@
 
   function fetchDict() {
     if (!translateActive && !captureRequested) return Promise.resolve(null);
-    return fetch(endpoint + "?locale=" + encodeURIComponent(locale || primary), {
+    return fetch(endpoint + "?locale=" + encodeURIComponent(locale || primary) + "&market=" + encodeURIComponent(market), {
       headers: { Accept: "application/json" },
       credentials: "omit",
     })

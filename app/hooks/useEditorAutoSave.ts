@@ -33,6 +33,7 @@ interface UseEditorAutoSaveProps {
   selectedItem: any;
   shopLocales: ShopLocale[];
   savedLocaleRef: React.MutableRefObject<string | null>;
+  savedMarketIdRef: React.MutableRefObject<string>;
   savedItemIdRef: React.MutableRefObject<string | null>;
   isSavePendingRef: React.MutableRefObject<boolean>;
   isSaveFromTranslateRef: React.MutableRefObject<boolean>;
@@ -48,6 +49,7 @@ interface UseEditorAutoSaveProps {
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedMarketId: string;
     savedItemId: string | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
@@ -78,6 +80,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     effectiveFieldDefinitions,
     selectedItem,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
@@ -118,6 +121,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         formData,
         options: options || { method: "POST" },
         savedLocale: savedLocaleRef.current,
+        savedMarketId: savedMarketIdRef.current,
         savedItemId: savedItemIdRef.current,
       });
       return;

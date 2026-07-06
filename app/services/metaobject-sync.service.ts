@@ -408,7 +408,8 @@ export class MetaobjectSyncService {
                 upsertOps.push(
                   db.metaobjectTranslation.upsert({
                     where: {
-                      shop_metaobjectId_key_locale: {
+                      shop_metaobjectId_key_locale_marketId: {
+                        marketId: "",
                         shop: this.shop,
                         metaobjectId,
                         key: trans.key,

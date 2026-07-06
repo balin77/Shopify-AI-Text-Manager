@@ -40,7 +40,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "../components/unified/UnifiedLanguageBar";
-import type { ShopLocale, TranslatableItem, ContentType } from "../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useConfirm } from "../contexts/ConfirmContext";
@@ -58,7 +58,7 @@ import { isValidLocale } from "../utils/validation";
 interface DirectTranslationDTO {
   id: string;
   sourceText: string;
-  translations: Array<{ locale: string; targetText: string; source: string }>;
+  translations: Array<{ locale: string; targetText: string; source: string; marketId?: string }>;
 }
 
 interface TargetLocale {
@@ -88,7 +88,7 @@ export const loader = createContentLoader({
     const items = rows.map((r) => ({
       id: r.id,
       sourceText: r.sourceText,
-      translations: r.translations.map((t) => ({ locale: t.locale, targetText: t.targetText, source: t.source })),
+      translations: r.translations.map((t) => ({ locale: t.locale, targetText: t.targetText, source: t.source, marketId: t.marketId ?? "" })),
     }));
     return { items, ids: items.map((i) => i.id) };
   },
@@ -143,6 +143,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: false, error: "Direct translations require the Max plan", actionType }, { status: 403 });
   }
 
+  // Market scope for market-specific direct translations. "" = global (default).
+  // Validated to the stored GID form; anything else falls back to global so a
+  // malformed value can never create a market row the storefront won't match.
+  const rawMarketId = (getFormString(formData, "marketId") || "").trim();
+  const marketId = /^gid:\/\/shopify\/Market\/\d+$/.test(rawMarketId) ? rawMarketId : "";
+
   // Resolve published, non-primary target locales + the primary (source) locale.
   const resolveLocales = () => resolvePrimaryAndTargets(admin);
 
@@ -184,8 +190,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         const id = await ensureItem(itemId, sourceText);
         if (locale && isValidLocale(locale)) {
-          if (targetText.trim()) await dt.setTranslation(db, session.shop, id, locale, targetText, "user");
-          else await dt.deleteTranslation(db, session.shop, id, locale);
+          if (targetText.trim()) await dt.setTranslation(db, session.shop, id, locale, targetText, "user", marketId);
+          else await dt.deleteTranslation(db, session.shop, id, locale, marketId);
         }
         return json({ success: true, actionType, itemId: id });
       }
@@ -201,7 +207,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const itemId = getFormString(formData, "itemId") || "";
         const locale = (getFormString(formData, "locale") || "").trim();
         if (itemId && locale && isValidLocale(locale)) {
-          await dt.deleteTranslation(db, session.shop, itemId, locale);
+          await dt.deleteTranslation(db, session.shop, itemId, locale, marketId);
         }
         return json({ success: true, actionType, itemId });
       }
@@ -219,7 +225,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const locales = scope === "all" ? enabledTargets(targets) : locale ? [locale] : [];
         const normalized = dt.normalizeSource(sourceText);
         for (const l of locales) {
-          if (isValidLocale(l)) await dt.setTranslation(db, session.shop, id, l, normalized, "user");
+          if (isValidLocale(l)) await dt.setTranslation(db, session.shop, id, l, normalized, "user", marketId);
         }
         return json({ success: true, actionType, itemId: id });
       }
@@ -244,6 +250,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           locales,
           targetLocaleLabel: scope === "all" ? "all" : locale,
           resourceTitle: dt.normalizeSource(sourceText).slice(0, 80),
+          marketId,
         }).catch(() => {});
         return json({ success: true, actionType, itemId: id, started: true });
       }
@@ -324,12 +331,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, themeEditorEmbedUrl, error } =
+  const { items, primaryLocale, targetLocales, markets, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, themeEditorEmbedUrl, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
       primaryLocale: string;
       targetLocales: TargetLocale[];
+      markets: MarketInfo[];
       collect: boolean;
       ignoreTranslateNo: boolean;
       filterByLanguage: boolean;
@@ -359,6 +367,24 @@ export default function DirectTranslationsPage() {
     [targetLocales, appLocale],
   );
   const [currentLanguage, setCurrentLanguage] = useState<string>(sortedTargets[0]?.locale || "");
+  // Selected market ("" = global / all markets). Market-specific translations
+  // override the global value for buyers in that market (storefront fallback).
+  const [selectedMarketId, setSelectedMarketId] = useState<string>("");
+
+  // Resolve the effective target text for (item, locale, market): the
+  // market-specific override if present, otherwise the global value (inherited).
+  const resolveTargetText = useCallback(
+    (item: DirectTranslationDTO | null, language: string, marketId: string): string => {
+      if (!item) return "";
+      if (marketId) {
+        const m = item.translations.find((x) => x.locale === language && (x.marketId ?? "") === marketId);
+        if (m && m.targetText) return m.targetText;
+      }
+      const g = item.translations.find((x) => x.locale === language && (x.marketId ?? "") === "");
+      return g?.targetText || "";
+    },
+    [],
+  );
   // Ctrl/Cmd-click toggles a language off (excluded from "translate all" + shown
   // critical) — handled by the shared UnifiedLanguageBar.
   const [enabledLanguages, setEnabledLanguages] = useState<Set<string>>(
@@ -422,14 +448,14 @@ export default function DirectTranslationsPage() {
         setBaseTarget("");
         return;
       }
-      const tr = item.translations.find((x) => x.locale === language);
+      const resolved = resolveTargetText(item, language, selectedMarketId);
       setDraftSource(item.sourceText);
       setBaseSource(item.sourceText);
-      setDraftTarget(tr?.targetText || "");
-      setBaseTarget(tr?.targetText || "");
+      setDraftTarget(resolved);
+      setBaseTarget(resolved);
       setEditingSource(false);
     },
-    [],
+    [resolveTargetText, selectedMarketId],
   );
 
   // Auto-select the first item once.
@@ -486,13 +512,38 @@ export default function DirectTranslationsPage() {
       // immediately when nothing is dirty / App Bridge is unavailable).
       await confirmNavigation();
       setCurrentLanguage(language);
+      // If the selected market does not serve the new locale, fall back to global
+      // (a market-specific translation only makes sense for locales it offers).
+      let effectiveMarket = selectedMarketId;
+      if (selectedMarketId) {
+        const m = markets.find((mk) => mk.id === selectedMarketId);
+        if (!m || !m.localeCodes.includes(language)) {
+          effectiveMarket = "";
+          setSelectedMarketId("");
+        }
+      }
       if (!isNew && selectedItem) {
-        const tr = selectedItem.translations.find((x) => x.locale === language);
-        setDraftTarget(tr?.targetText || "");
-        setBaseTarget(tr?.targetText || "");
+        const resolved = resolveTargetText(selectedItem, language, effectiveMarket);
+        setDraftTarget(resolved);
+        setBaseTarget(resolved);
       }
     },
-    [currentLanguage, isNew, selectedItem],
+    [currentLanguage, isNew, selectedItem, selectedMarketId, markets, resolveTargetText],
+  );
+
+  const handleMarketChange = useCallback(
+    async (marketId: string) => {
+      if (marketId === selectedMarketId) return;
+      await confirmNavigation();
+      setSelectedMarketId(marketId);
+      // Re-resolve the editor for the new market (market override → global fallback).
+      if (!isNew && selectedItem) {
+        const resolved = resolveTargetText(selectedItem, currentLanguage, marketId);
+        setDraftTarget(resolved);
+        setBaseTarget(resolved);
+      }
+    },
+    [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText],
   );
 
   const hasChanges =
@@ -508,8 +559,12 @@ export default function DirectTranslationsPage() {
   const listItems = useMemo(
     () =>
       items.map((i) => {
+        // Coverage in the list reflects the GLOBAL layer (marketId ""); a
+        // market-only override does not count a locale as globally translated.
         const presentLocales = new Set(
-          i.translations.filter((tr) => tr.targetText.trim()).map((tr) => tr.locale),
+          i.translations
+            .filter((tr) => tr.targetText.trim() && (tr.marketId ?? "") === "")
+            .map((tr) => tr.locale),
         );
         const missingLocales = targetLocales.filter((l) => !presentLocales.has(l.locale));
         const n = presentLocales.size;
@@ -561,8 +616,9 @@ export default function DirectTranslationsPage() {
       sourceText: draftSource,
       locale: currentLanguage,
       targetText: draftTarget,
+      marketId: selectedMarketId,
     });
-  }, [submit, isNew, selectedId, draftSource, currentLanguage, draftTarget]);
+  }, [submit, isNew, selectedId, draftSource, currentLanguage, draftTarget, selectedMarketId]);
 
   const handleDiscard = useCallback(() => {
     if (isNew) {
@@ -586,16 +642,16 @@ export default function DirectTranslationsPage() {
         // the new id the moment the action response comes back (below).
         queuedForNewRef.current = { scope, locale: currentLanguage };
       }
-      submit({ action: "ai", itemId, sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
+      submit({ action: "ai", itemId, sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList, marketId: selectedMarketId });
     },
-    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList, addPending],
+    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList, addPending, selectedMarketId],
   );
 
   const handleTransfer = useCallback(
     (scope: "this" | "all") => {
-      submit({ action: "transfer", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList });
+      submit({ action: "transfer", itemId: isNew ? "" : selectedId || "", sourceText: draftSource, scope, locale: currentLanguage, locales: enabledList, marketId: selectedMarketId });
     },
-    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList],
+    [submit, isNew, selectedId, draftSource, currentLanguage, enabledList, selectedMarketId],
   );
 
   // Sidebar trash button: removes the WHOLE item (all locales). Used by the
@@ -851,12 +907,22 @@ export default function DirectTranslationsPage() {
                   contentType={"directTranslations" as ContentType}
                   hasChanges={hasChanges}
                   onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
+                  markets={markets}
+                  selectedMarketId={selectedMarketId}
+                  onMarketChange={(id) => { void handleMarketChange(id); }}
+                  // DirectTranslations is a custom storefront dictionary: a market
+                  // override is valid for ANY locale, including the primary one.
+                  allowPrimaryLocaleMarket
                   enabledLanguages={Array.from(new Set([primaryLocale, ...enabledLanguages]))}
                   onToggleLanguage={toggleLanguage}
                   showTranslateAll={false}
                   showReloadButton={false}
                   validationVersion={validationVersion}
-                  t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
+                  t={{
+                    primaryLocaleSuffix: t.content?.primaryLanguageSuffix,
+                    allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
+                    marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                  }}
                 />
               </Card>
 

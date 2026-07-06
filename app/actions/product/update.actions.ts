@@ -29,6 +29,8 @@ interface UpdateProductParams {
   productType?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
+  /** Market scope ("" = global). Only applies to foreign-locale text saves. */
+  marketId?: string;
 }
 
 /**
@@ -93,6 +95,8 @@ export async function handleUpdateProduct(
     productType: getFormStringOrNull(formData, "productType") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
+    // Primary-locale saves are always global; only foreign locales carry a market.
+    marketId: locale !== primaryLocale ? (getFormStringOrNull(formData, "marketId") ?? "") : "",
   };
 
   logger.info("Product update requested", {
@@ -177,6 +181,8 @@ async function updateImageAltTexts(
   });
 
   const failedAltTextIndices: number[] = [];
+  // Market scope for foreign-locale alt-text ("" = global; primary is always global).
+  const marketId = params.locale !== params.primaryLocale ? (params.marketId || "") : "";
 
   // Get product images from Shopify
   const productResponse = await gateway.graphql(
@@ -310,8 +316,8 @@ async function updateImageAltTexts(
         try {
           const removeResponse = await gateway.graphql(
             `#graphql
-              mutation removeAltTextTranslation($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+              mutation removeAltTextTranslation($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
                   userErrors {
                     field
                     message
@@ -327,6 +333,7 @@ async function updateImageAltTexts(
                 resourceId: mediaImageId,
                 translationKeys: ["alt"],
                 locales: [params.locale],
+                marketIds: marketId ? [marketId] : null,
               },
             }
           );
@@ -398,6 +405,7 @@ async function updateImageAltTexts(
                       value: altTextValue,
                       locale: params.locale,
                       translatableContentDigest: altDigest,
+                      ...(marketId ? { marketId } : {}),
                     },
                   ],
                 },
@@ -438,17 +446,17 @@ async function updateImageAltTexts(
         } else {
           const altTextValue = String(altText ?? "");
           if (altTextValue.trim() === "") {
-            // Empty value: delete the translation record from DB
+            // Empty value: delete the (market-scoped) translation record from DB
             await db.productImageAltTranslation.deleteMany({
-              where: { imageId: dbImage.id, locale: params.locale },
+              where: { imageId: dbImage.id, locale: params.locale, marketId },
             });
-            loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale });
+            loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale, marketId: marketId || '(global)' });
           } else {
             // Atomic upsert to avoid race condition between findUnique + create
             await db.productImageAltTranslation.upsert({
-              where: { imageId_locale: { imageId: dbImage.id, locale: params.locale } },
+              where: { imageId_locale_marketId: { imageId: dbImage.id, locale: params.locale, marketId } },
               update: { altText: altTextValue },
-              create: { imageId: dbImage.id, locale: params.locale, altText: altTextValue },
+              create: { imageId: dbImage.id, locale: params.locale, altText: altTextValue, marketId },
             });
             loggers.product("debug", "Upserted alt-text translation in DB", { index, locale: params.locale });
           }
@@ -485,9 +493,11 @@ async function updateTranslatedProduct(
   params: UpdateProductParams,
   shop: string
 ): Promise<Response> {
+  const marketId = params.marketId || "";
   loggers.product("info", "Updating translated product", {
     productId,
     locale: params.locale,
+    marketId: marketId || "(global)",
   });
 
   // First, fetch translatable content to get digests
@@ -673,7 +683,10 @@ async function updateTranslatedProduct(
       {
         variables: {
           resourceId: productId,
-          translations: translationsInput,
+          // Add marketId to each input for a market-specific override; omit for global.
+          translations: marketId
+            ? translationsInput.map((t) => ({ ...t, marketId }))
+            : translationsInput,
         },
       }
     );
@@ -704,8 +717,8 @@ async function updateTranslatedProduct(
   if (translationsToDelete.length > 0) {
     const response = await gateway.graphql(
       `#graphql
-        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
             userErrors {
               field
               message
@@ -721,6 +734,9 @@ async function updateTranslatedProduct(
           resourceId: productId,
           translationKeys: translationsToDelete,
           locales: [params.locale],
+          // Market-scoped removal keeps the global translation intact; global
+          // removal (marketId "") omits marketIds.
+          marketIds: marketId ? [marketId] : null,
         },
       }
     );
@@ -763,12 +779,13 @@ async function updateTranslatedProduct(
       for (const translation of [...translationsInput, ...dbOnlyTranslations]) {
         await tx.contentTranslation.upsert({
           where: {
-            // Unique constraint is: @@unique([shop, resourceId, key, locale])
-            shop_resourceId_key_locale: {
+            // Unique constraint: @@unique([shop, resourceId, key, locale, marketId])
+            shop_resourceId_key_locale_marketId: {
               shop: product.shop,
               resourceId: productId,
               key: translation.key,
               locale: translation.locale,
+              marketId,
             },
           },
           update: {
@@ -784,17 +801,19 @@ async function updateTranslatedProduct(
             value: translation.value,
             locale: translation.locale,
             digest: null,
+            marketId,
           },
         });
       }
 
-      // Delete translations that were cleared by the user
+      // Delete translations that were cleared by the user (scoped to this market)
       for (const key of translationsToDelete) {
         await tx.contentTranslation.deleteMany({
           where: {
             resourceId: productId,
             resourceType: "Product",
             locale: params.locale,
+            marketId,
             key: key,
           },
         });
@@ -1077,6 +1096,9 @@ async function updatePrimaryProduct(
                 where: {
                   resourceId: productId,
                   resourceType: "Product",
+                  // Global only — mirrors the global-only Shopify removal so market
+                  // overrides are preserved on both sides (no DB/Shopify divergence).
+                  marketId: "",
                   key: key,
                   locale: { in: foreignLocales },
                 },
@@ -1213,6 +1235,9 @@ async function updatePrimaryProduct(
                 await tx.productImageAltTranslation.deleteMany({
                   where: {
                     imageId: imageId,
+                    // Global-scoped to mirror the global-only Shopify removal —
+                    // market-specific alt overrides survive on both sides.
+                    marketId: "",
                     locale: { in: foreignLocales },
                   },
                 });

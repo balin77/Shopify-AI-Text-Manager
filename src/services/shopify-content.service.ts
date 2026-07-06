@@ -4,11 +4,12 @@
  */
 
 import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG, METAFIELDS_DELETE } from "../../app/graphql/content.mutations";
-import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
+import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { isAuthError } from './ai.service';
 import type { PrismaClient } from "@prisma/client";
+import type { MarketInfo } from "../../app/types/content-editor.types";
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
@@ -436,7 +437,7 @@ export class ShopifyContentService {
           });
         }
         await db.contentTranslation.deleteMany({
-          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
+          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale, marketId: "" },
         });
         return { saved: true };
       }
@@ -470,7 +471,7 @@ export class ShopifyContentService {
       }
 
       await db.contentTranslation.upsert({
-        where: { shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale } },
+        where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: 'image_alt_text', locale, marketId: "" } },
         update: { value: altText, digest: altDigest, resourceType },
         create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: altDigest },
       });
@@ -512,19 +513,27 @@ export class ShopifyContentService {
     resourceId: string;
     translationKeys: string[];
     foreignLocales: string[];
+    /**
+     * Market scope for the removal. "" (or undefined) = remove the GLOBAL
+     * translation (marketIds omitted). Non-empty = remove only the
+     * market-specific override for that market (marketIds: [marketId]); the
+     * global translation survives.
+     */
+    marketId?: string;
   }) {
     const { resourceId, translationKeys, foreignLocales } = params;
+    const marketId = params.marketId || "";
 
     if (translationKeys.length === 0 || foreignLocales.length === 0) {
       return { success: true };
     }
 
-    loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales });
+    loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales, marketId: marketId || '(global)' });
 
     const response = await this.admin.graphql(
       `#graphql
-        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
             userErrors {
               field
               message
@@ -540,6 +549,9 @@ export class ShopifyContentService {
           resourceId,
           translationKeys,
           locales: foreignLocales,
+          // Omit (null) for global removal; a single-element array for a
+          // market-specific removal.
+          marketIds: marketId ? [marketId] : null,
         },
       }
     );
@@ -589,6 +601,74 @@ export class ShopifyContentService {
   }
 
   /**
+   * Load the shop's markets and the locales each one serves.
+   *
+   * Backs the market-specific translation feature. NEVER throws: if the
+   * `read_markets` scope is missing, the API errors, or the shop has no markets,
+   * this returns `{ markets: [] }` so the loader can keep rendering and the UI
+   * simply hides the market selector (Edge Case 10 in the plan). Only markets
+   * that (a) are enabled and (b) actually serve at least one locale are returned —
+   * a market with no web-presence locale can never display a market-specific
+   * translation on the storefront.
+   */
+  async loadMarkets(): Promise<{ markets: MarketInfo[] }> {
+    try {
+      const response = await this.admin.graphql(GET_MARKETS, {
+        variables: { first: 100 },
+      });
+
+      if (!response.ok) {
+        loggers.translation('warn', `[loadMarkets] Shopify API HTTP ${response.status} — hiding market selector`);
+        return { markets: [] };
+      }
+
+      const data = await response.json();
+      if (data.errors?.length > 0) {
+        // Most commonly a missing `read_markets` scope, or a field-name drift on
+        // a different API version. Degrade gracefully rather than break the loader.
+        loggers.translation('warn', `[loadMarkets] GraphQL error — hiding market selector`, { error: data.errors[0]?.message });
+        return { markets: [] };
+      }
+
+      const edges = data.data?.markets?.edges || [];
+      const markets: MarketInfo[] = edges
+        .map((edge: any): MarketInfo | null => {
+          const node = edge?.node;
+          if (!node?.id) return null;
+          // Skip disabled markets — they never render on the storefront.
+          if (node.enabled === false) return null;
+
+          // Union the locales served across all of this market's web presences.
+          const localeSet = new Set<string>();
+          const wpEdges = node.webPresences?.edges || [];
+          for (const wpEdge of wpEdges) {
+            const rootUrls = wpEdge?.node?.rootUrls || [];
+            for (const root of rootUrls) {
+              if (root?.locale) localeSet.add(root.locale);
+            }
+          }
+
+          return {
+            id: node.id,
+            name: node.name || node.handle || node.id,
+            handle: node.handle || '',
+            localeCodes: [...localeSet],
+          };
+        })
+        // Keep only markets that serve at least one locale — a market with no
+        // web-presence locale can never display a market-specific translation.
+        .filter((m: MarketInfo | null): m is MarketInfo => m !== null && m.localeCodes.length > 0);
+
+      return { markets };
+    } catch (error) {
+      loggers.translation('warn', `[loadMarkets] Unexpected error — hiding market selector`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { markets: [] };
+    }
+  }
+
+  /**
    * Update content in Shopify and database
    * Handles both primary locale updates and translations
    * When updating primary locale, deletes all translations for changed fields
@@ -603,8 +683,17 @@ export class ShopifyContentService {
     shop: string;
     policyType?: string;
     changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
+    /**
+     * Market scope for this save. "" (or undefined) = global (applies to all
+     * markets, legacy behaviour). Non-empty = gid://shopify/Market/<id>, saving a
+     * market-specific override that layers over the global translation for the
+     * same locale. Only meaningful for foreign locales — the primary locale is
+     * always global (Shopify forbids market-specific primary content).
+     */
+    marketId?: string;
   }) {
     const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields } = params;
+    const marketId = params.marketId || "";
 
     if (locale !== primaryLocale) {
       // Handle translations
@@ -682,12 +771,17 @@ export class ShopifyContentService {
         }
       }
 
-      // Save non-empty translations to Shopify
+      // Save non-empty translations to Shopify. When a market is selected, add
+      // marketId to each TranslationInput so Shopify stores a market-specific
+      // override (omitting it means "all markets" = global). Response does not
+      // echo marketId back, so we track it ourselves for the DB mirror below.
       if (translationsInput.length > 0) {
         const response = await this.admin.graphql(TRANSLATE_CONTENT, {
           variables: {
             resourceId,
-            translations: translationsInput
+            translations: marketId
+              ? translationsInput.map((t) => ({ ...t, marketId }))
+              : translationsInput,
           }
         });
 
@@ -704,12 +798,16 @@ export class ShopifyContentService {
         }
       }
 
-      // Delete cleared translations from Shopify
+      // Delete cleared translations from Shopify. Scope the removal to the
+      // selected market: with marketId set, only the market-specific override is
+      // removed (the global translation survives and the field falls back to it);
+      // without it, the global translation is removed.
       if (translationsToDelete.length > 0) {
         await this.deleteAllTranslationsForKeys({
           resourceId,
           translationKeys: translationsToDelete,
           foreignLocales: [locale],
+          marketId,
         });
       }
 
@@ -724,15 +822,16 @@ export class ShopifyContentService {
       const runDbTransaction = async () => {
         // @ts-expect-error Prisma interactive transaction types
         await db.$transaction(async (tx: PrismaClient) => {
-          // Upsert translations saved to Shopify
+          // Upsert translations saved to Shopify (marketId "" = global)
           for (const translation of translationsInput) {
             await tx.contentTranslation.upsert({
               where: {
-                shop_resourceId_key_locale: {
+                shop_resourceId_key_locale_marketId: {
                   shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
+                  marketId,
                 },
               },
               update: {
@@ -748,6 +847,7 @@ export class ShopifyContentService {
                 value: translation.value,
                 locale: translation.locale,
                 digest: translation.translatableContentDigest || null,
+                marketId,
               },
             });
           }
@@ -756,11 +856,12 @@ export class ShopifyContentService {
           for (const translation of dbOnlyTranslations) {
             await tx.contentTranslation.upsert({
               where: {
-                shop_resourceId_key_locale: {
+                shop_resourceId_key_locale_marketId: {
                   shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
+                  marketId,
                 },
               },
               update: {
@@ -776,11 +877,14 @@ export class ShopifyContentService {
                 value: translation.value,
                 locale: translation.locale,
                 digest: null,
+                marketId,
               },
             });
           }
 
-          // Delete cleared translations from database (single batch call)
+          // Delete cleared translations from database (single batch call).
+          // Scoped to the current market so clearing a market-specific value does
+          // not touch the global row (and vice-versa).
           if (translationsToDelete.length > 0) {
             await tx.contentTranslation.deleteMany({
               where: {
@@ -788,6 +892,7 @@ export class ShopifyContentService {
                 resourceId,
                 resourceType,
                 locale,
+                marketId,
                 key: { in: translationsToDelete },
               },
             });
@@ -1001,12 +1106,16 @@ export class ShopifyContentService {
               foreignLocales,
             });
 
-            // Delete from database (single batch call instead of N×M loop)
+            // Delete from database (single batch call instead of N×M loop).
+            // Scoped to global (marketId "") to mirror the global-only Shopify
+            // removal above: market-specific overrides survive both sides (Shopify
+            // flags them outdated), matching the plan's market-independence rule.
             await db.contentTranslation.deleteMany({
               where: {
                 shop,
                 resourceId,
                 resourceType,
+                marketId: "",
                 key: { in: translationKeysToDelete },
                 locale: { in: foreignLocales },
               },
@@ -1309,7 +1418,7 @@ export class ShopifyContentService {
         await db.$transaction(async (tx: PrismaClient) => {
           for (const p of saved) {
             await tx.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale: { shop, resourceId, key: p.translationKey, locale: p.locale } },
+              where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: p.translationKey, locale: p.locale, marketId: "" } },
               update: { value: p.value, digest: p.digest, resourceType },
               create: { shop, resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
             });

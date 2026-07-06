@@ -279,6 +279,13 @@ export const en: Translation = {
     translating: "Translating...",
     clearAll: "Clear All",
     sendImageToAI: "Send image to AI",
+    // Market-specific translations ("Translate & Adapt")
+    market: {
+      allMarketsGlobal: "All markets (global)",
+      selectorLabel: "Market",
+      inheritedFromGlobal: "Inherited from global value",
+      primaryDisabledHint: "Market selection only for translations",
+    },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Fields in the primary language must not be empty. If a field is saved empty, Shopify removes it permanently and it can never be restored. Please fill in all fields before saving.",
     // Clear all modal

@@ -95,7 +95,7 @@ async function persistAltText(
       });
       if (!isPrimary) {
         await tx.productImageAltTranslation.upsert({
-          where: { imageId_locale: { imageId: img.id, locale } },
+          where: { imageId_locale_marketId: { marketId: "",  imageId: img.id, locale } },
           create: { imageId: img.id, locale, altText },
           update: { altText },
         });

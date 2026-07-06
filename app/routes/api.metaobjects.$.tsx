@@ -104,12 +104,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       fields: metaobj.fields as any,
     }));
 
-    // Format translations for UI
-    const translationsArray = translations.map(t => ({
-      key: t.metaobjectId, // Use metaobject ID as translation key
-      value: t.value,
-      locale: t.locale,
-    }));
+    // Format translations for UI. Global rows (marketId "") feed the per-item
+    // `translations` array exactly as before; market-specific rows are surfaced
+    // as `marketTranslations` so resolve() can layer them over the global value.
+    // Metaobject translations are keyed by metaobjectId (that is the field's
+    // translationKey in the editor), so the market lookup is
+    //   marketTranslations[marketId][metaobjectId][locale].
+    const translationsArray = translations
+      .filter(t => (t.marketId ?? "") === "")
+      .map(t => ({
+        key: t.metaobjectId, // Use metaobject ID as translation key
+        value: t.value,
+        locale: t.locale,
+      }));
+    const marketTranslations: Record<string, Record<string, Record<string, string>>> = {};
+    for (const t of translations) {
+      if ((t.marketId ?? "") === "") continue;
+      const byKey = (marketTranslations[t.marketId] ??= {});
+      const byLocale = (byKey[t.metaobjectId] ??= {});
+      byLocale[t.locale] = t.value;
+    }
 
     logger.debug("[API-METAOBJECTS-LOADER] Metaobjects loaded from DB", {
       context: "Metaobjects",
@@ -131,7 +145,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       definitionId: definition.id,
       role: 'METAOBJECT_TYPE',
       metaobjects: formattedMetaobjects,
-      translations: translationsArray, // Include translations from DB
+      translations: translationsArray, // Include translations from DB (global rows)
+      marketTranslations, // Market-specific rows: [marketId][metaobjectId][locale]
       contentCount: totalCount,
       // Pagination metadata
       pagination: {
@@ -291,6 +306,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const primaryLocale = getFormString(formData, "primaryLocale");
         const metaobjectId = getFormString(formData, "metaobjectId");
         const updatedValue = getFormString(formData, "updatedValue");
+        // Market scope for market-specific translations (foreign locales only).
+        const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
         if (!metaobjectId) {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
@@ -435,6 +452,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   shop: session.shop,
                   metaobjectId,
                   key: labelField.key,
+                  // Global only — mirror the global-only Shopify removal so market
+                  // overrides survive on both sides (no divergence).
+                  marketId: "",
                   locale: { in: foreignLocales },
                 },
               });
@@ -491,7 +511,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   key: labelField.key,
                   value: updatedValue,
                   locale: locale,
-                  translatableContentDigest: digestEntry.digest
+                  translatableContentDigest: digestEntry.digest,
+                  ...(marketId ? { marketId } : {}),
                 }
               ]
             }
@@ -508,14 +529,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             }, { status: 500 });
           }
 
-          // Update DB: Upsert translation
+          // Update DB: Upsert translation (market-scoped)
           await db.metaobjectTranslation.upsert({
             where: {
-              shop_metaobjectId_key_locale: {
+              shop_metaobjectId_key_locale_marketId: {
                 shop: session.shop,
                 metaobjectId,
                 key: labelField.key,
-                locale
+                locale,
+                marketId,
               }
             },
             create: {
@@ -525,7 +547,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               key: labelField.key,
               value: updatedValue,
               locale,
-              outdated: false
+              outdated: false,
+              marketId,
             },
             update: {
               value: updatedValue,

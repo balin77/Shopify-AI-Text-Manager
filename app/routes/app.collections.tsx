@@ -148,7 +148,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function CollectionsPage() {
-  const { collections, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { collections, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -160,6 +160,7 @@ export default function CollectionsPage() {
     items: collections as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,

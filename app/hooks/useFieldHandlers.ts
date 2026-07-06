@@ -9,7 +9,7 @@
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
@@ -22,6 +22,7 @@ import type {
   TranslationStrings,
   InfoBoxTone,
   FieldDefinition,
+  MarketInfo,
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
 
@@ -42,6 +43,9 @@ export interface FieldHandlerProps {
   selectedItemId: string | null;
   selectedItem: TranslatableContentItem | undefined;
   currentLanguage: string;
+  /** Selected market ("" = global). Threaded into save/clear so market-specific
+   *  edits persist under the right market dimension. */
+  selectedMarketId: string;
   hasChanges: boolean;
   hasAltTextChanges: boolean;
   enabledLanguages: string[];
@@ -69,6 +73,7 @@ export interface FieldHandlerProps {
   baselineValuesRef: { current: Record<string, string> };
   revalidatorRef: { current: { state: string; revalidate: () => void } };
   savedLocaleRef: { current: string | null };
+  savedMarketIdRef: { current: string };
   savedItemIdRef: { current: string | null };
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
@@ -103,7 +108,8 @@ export interface FieldHandlerProps {
       translationKey: string,
       translatedValue: string,
       targetLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      marketIdArg?: string
     ) => TransitionResult;
     onTranslateFieldToAllLocalesComplete: (
       translationKey: string,
@@ -115,6 +121,9 @@ export interface FieldHandlerProps {
   // State setters
   setSelectedItemId: React.Dispatch<React.SetStateAction<string | null>>;
   setCurrentLanguage: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedMarketId: React.Dispatch<React.SetStateAction<string>>;
+  /** All markets (for the language-change reset guard). */
+  markets: MarketInfo[];
   setEditableValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setHtmlModes: React.Dispatch<React.SetStateAction<Record<string, "html" | "rendered">>>;
@@ -146,6 +155,7 @@ export interface FieldHandlers {
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
   handleLanguageChange: (locale: string) => void;
+  handleMarketChange: (marketId: string) => void;
   handleToggleLanguage: (locale: string) => void;
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
@@ -174,6 +184,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     selectedItemId,
     selectedItem,
     currentLanguage,
+    selectedMarketId,
     hasChanges,
     hasAltTextChanges,
     enabledLanguages,
@@ -199,6 +210,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
@@ -219,6 +231,8 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
+    setSelectedMarketId,
+    markets,
     setEditableValues,
     setAiSuggestions,
     setHtmlModes,
@@ -286,6 +300,12 @@ const handleSave = () => {
     primaryLocale,
   };
 
+  // Market scope for market-specific translations (foreign locales only; the
+  // primary locale is always global).
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
+
   // Pass policyType for ShopPolicy primary locale updates (required by Shopify API)
   if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
     formDataObj.policyType = selectedItem.type;
@@ -326,6 +346,7 @@ const handleSave = () => {
 
   // Skip next data load to prevent revalidation from overwriting cleared/saved values.
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
+  savedMarketIdRef.current = selectedMarketId;
   savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
   setIsSaving(true); // Drive spinner — fetcher.state is unreliable due to React 18 batching
@@ -540,6 +561,9 @@ const handleTranslateField = (fieldKey: string) => {
           locale: targetLocale,
           primaryLocale,
         };
+        // Single-field translate auto-saves to the current (foreign) locale —
+        // scope it to the selected market so the override lands correctly.
+        if (selectedMarketId) formDataObj.marketId = selectedMarketId;
         Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
         // Ensure the translated field is always included in the save.
@@ -550,6 +574,7 @@ const handleTranslateField = (fieldKey: string) => {
         }
 
         savedLocaleRef.current = targetLocale;
+        savedMarketIdRef.current = selectedMarketId;
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
@@ -981,7 +1006,10 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       translationKey,
       suggestion,
       L,
-      editableValuesRef.current
+      editableValuesRef.current,
+      // Accept & Translate persists GLOBALLY in Phase 1 (foreignForm below has no
+      // marketId), so the overlay must be staged under the global key too.
+      ""
     );
     if (transResult.updatedValues) setEditableValues(transResult.updatedValues);
 
@@ -998,6 +1026,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     // due to stale originalLoadedValuesRef timing during async callbacks).
     foreignForm[fieldKey] = suggestion;
     savedLocaleRef.current = L;
+    savedMarketIdRef.current = selectedMarketId;
     savedItemIdRef.current = requestItemId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
@@ -1085,6 +1114,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
           // this as primary via the form `locale` field, and processing the
           // response under `primaryLocale` would pick a stale primary baseline.
           savedLocaleRef.current = L;
+          savedMarketIdRef.current = selectedMarketId;
           savedItemIdRef.current = requestItemId;
           isSavePendingRef.current = true;
           isSaveFromTranslateRef.current = true;
@@ -1204,6 +1234,27 @@ const handleLanguageChange = async (locale: string) => {
     await confirmNavigation();
   }
   setCurrentLanguage(locale);
+  // If the currently-selected market does not serve the new locale, fall back to
+  // "global" — a market-specific translation only makes sense for locales the
+  // market actually offers (and the primary locale is always global).
+  if (selectedMarketId && locale === primaryLocale) {
+    setSelectedMarketId("");
+  } else if (selectedMarketId) {
+    const market = markets.find((m) => m.id === selectedMarketId);
+    if (!market || !market.localeCodes.includes(locale)) {
+      setSelectedMarketId("");
+    }
+  }
+};
+
+const handleMarketChange = async (marketId: string) => {
+  if (marketId === selectedMarketId) return;
+  // Market switch behaves like a locale switch "light": no server round-trip, but
+  // unsaved edits would be lost on re-resolve, so guard them the same way.
+  if (hasChanges || isSavingCurrentItem) {
+    await confirmNavigation();
+  }
+  setSelectedMarketId(marketId);
 };
 
 const handleToggleLanguage = (locale: string) => {
@@ -1293,14 +1344,17 @@ const handleClearField = useCallback((fieldKey: string) => {
     const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
     if (field) {
       const tKey = field.translationKey;
+      // Market-fold the overlay + deleted keys so clearing a market-specific
+      // value does not blank the global value (resolve() then falls back to it).
+      const localeKey = buildLocaleKey(currentLanguage, selectedMarketId);
       if (localTranslationsRef.current[tKey]) {
-        delete localTranslationsRef.current[tKey][currentLanguage];
+        delete localTranslationsRef.current[tKey][localeKey];
       }
       // Mark as deleted so resolve() returns empty even if item.translations has old data
-      deletedTranslationKeysRef.current.add(tKey);
+      deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
     }
   }
-}, [fallbackFieldsRef, currentLanguage, primaryLocale, effectiveFieldDefinitions]);
+}, [fallbackFieldsRef, currentLanguage, selectedMarketId, primaryLocale, effectiveFieldDefinitions]);
 
 const handleClearAllClick = useCallback(() => {
   setIsClearAllModalOpen(true);
@@ -1382,14 +1436,18 @@ const handleClearAllForLocaleConfirm = () => {
   setEditableValues(clearedValues);
 
   // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-  // reflect the cleared state immediately (yellow highlight + button blinking)
+  // reflect the cleared state immediately (yellow highlight + button blinking).
+  // Market-fold the keys so a market-scoped "clear all for this locale" only
+  // blanks the market overrides and lets resolve() fall back to the global values
+  // (mirrors the market-scoped save above and handleClearField).
+  const clearLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
   effectiveFieldDefinitions.forEach((field) => {
     const tKey = field.translationKey;
     if (localTranslationsRef.current[tKey]) {
-      delete localTranslationsRef.current[tKey][currentLanguage];
+      delete localTranslationsRef.current[tKey][clearLocaleKey];
     }
     // Mark as deleted so resolve() returns empty even if item.translations has old data
-    deletedTranslationKeysRef.current.add(tKey);
+    deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
   });
 
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
@@ -1416,6 +1474,11 @@ const handleClearAllForLocaleConfirm = () => {
     locale: currentLanguage,
     primaryLocale,
   };
+  // Clearing all fields for the current locale is market-scoped: it removes only
+  // the selected market's overrides, leaving the global translations intact.
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
 
   // Send only fields that had a non-empty translated value (those need deletion)
   effectiveFieldDefinitions.forEach((field) => {
@@ -1463,6 +1526,7 @@ const handleClearAllForLocaleConfirm = () => {
   // Submit save and set tracking refs
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
   isSavePendingRef.current = true;
   safeSubmit(formDataObj, { method: "POST" });
 };
@@ -1592,6 +1656,10 @@ const handleCopyField = (fieldKey: string): void => {
     locale: currentLanguage,
     primaryLocale,
   };
+  // Copy-to-field persists to the current (foreign) locale under the selected market.
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
   Object.assign(formDataObj, buildFieldsForSave(newValues, currentLanguage));
   formDataObj[fieldKey] = primaryValue;
 
@@ -1599,6 +1667,7 @@ const handleCopyField = (fieldKey: string): void => {
   pendingCopyFieldKeyRef.current = fieldKey;
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
   // Track WHICH item is being saved so the save-response handler's
   // `isSavedItemCurrent` guard passes. Without this, savedItemIdRef stays null
   // (cleared by a prior save) → the handler early-returns before reaching
@@ -1669,6 +1738,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,

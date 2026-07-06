@@ -518,11 +518,12 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            shop_resourceId_key_locale: {
+            shop_resourceId_key_locale_marketId: {
               shop: this.shop,
               resourceId: pageData.id,
               key: t.key,
               locale: t.locale,
+              marketId: "",
             },
           },
           create: {
@@ -812,11 +813,12 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            shop_resourceId_key_locale: {
+            shop_resourceId_key_locale_marketId: {
               shop: this.shop,
               resourceId: policyData.id,
               key: t.key,
               locale: t.locale,
+              marketId: "",
             },
           },
           create: {

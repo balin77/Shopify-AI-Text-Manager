@@ -179,7 +179,7 @@ export const loader = createContentLoader({
             altText: img.altText,
             mediaId: img.mediaId ?? null,
             altTextTranslations: img.altTextTranslations
-              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
+              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText, marketId: t.marketId ?? "" }))
               : [],
           }))
         : [],
@@ -299,7 +299,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -326,6 +326,7 @@ export default function ProductsPage() {
     items: products as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,

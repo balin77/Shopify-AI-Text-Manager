@@ -17,8 +17,9 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/conten
 import type { ValidationOverlays } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType, ContentImage } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, ContentImage, MarketInfo } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];
@@ -27,6 +28,12 @@ interface MobileToolbarProps {
   selectedItem: TranslatableItem | null;
   contentType: ContentType;
   onLanguageChange: (locale: string) => void;
+  /** Markets for the market selector ([] hides it) */
+  markets?: MarketInfo[];
+  /** Selected market ("" = global) */
+  selectedMarketId?: string;
+  /** Callback when the market changes */
+  onMarketChange?: (marketId: string) => void;
   enabledLanguages?: string[];
   isLoadingData?: boolean;
   validationOverlays?: ValidationOverlays;
@@ -61,6 +68,8 @@ interface MobileToolbarProps {
     clearAll?: string;
     sendImageToAI?: string;
     reloadItemTooltip?: string;
+    allMarketsGlobal?: string;
+    marketSelectorLabel?: string;
   };
 }
 
@@ -71,6 +80,9 @@ export function MobileToolbar({
   selectedItem,
   contentType,
   onLanguageChange,
+  markets = [],
+  selectedMarketId = "",
+  onMarketChange,
   enabledLanguages,
   isLoadingData = false,
   validationOverlays,
@@ -213,6 +225,25 @@ export function MobileToolbar({
           <HelpTooltip helpKey="mobileToolbarActions" position="below" />
         </div>
       </div>
+
+      {/* Market selector — its own full-width row below the toolbar. Only shown
+          for foreign locales when the shop has markets (MarketSelector itself
+          guards the primary-locale / no-applicable-market cases). */}
+      {onMarketChange && markets.length > 0 && currentLanguage !== primaryLocale && (
+        <div style={{ marginTop: "0.5rem" }}>
+          <MarketSelector
+            markets={markets}
+            selectedMarketId={selectedMarketId}
+            currentLanguage={currentLanguage}
+            primaryLocale={primaryLocale}
+            onMarketChange={onMarketChange}
+            t={{
+              allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
+              selectorLabel: t.marketSelectorLabel || "Market",
+            }}
+          />
+        </div>
+      )}
     </Card>
   );
 }
