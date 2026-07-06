@@ -437,7 +437,7 @@ export class ShopifyContentService {
           });
         }
         await db.contentTranslation.deleteMany({
-          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
+          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale, marketId: "" },
         });
         return { saved: true };
       }
@@ -1106,12 +1106,16 @@ export class ShopifyContentService {
               foreignLocales,
             });
 
-            // Delete from database (single batch call instead of N×M loop)
+            // Delete from database (single batch call instead of N×M loop).
+            // Scoped to global (marketId "") to mirror the global-only Shopify
+            // removal above: market-specific overrides survive both sides (Shopify
+            // flags them outdated), matching the plan's market-independence rule.
             await db.contentTranslation.deleteMany({
               where: {
                 shop,
                 resourceId,
                 resourceType,
+                marketId: "",
                 key: { in: translationKeysToDelete },
                 locale: { in: foreignLocales },
               },

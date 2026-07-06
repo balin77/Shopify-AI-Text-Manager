@@ -452,6 +452,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   shop: session.shop,
                   metaobjectId,
                   key: labelField.key,
+                  // Global only — mirror the global-only Shopify removal so market
+                  // overrides survive on both sides (no divergence).
+                  marketId: "",
                   locale: { in: foreignLocales },
                 },
               });

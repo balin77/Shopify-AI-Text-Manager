@@ -1092,6 +1092,9 @@ async function updatePrimaryProduct(
                 where: {
                   resourceId: productId,
                   resourceType: "Product",
+                  // Global only — mirrors the global-only Shopify removal so market
+                  // overrides are preserved on both sides (no DB/Shopify divergence).
+                  marketId: "",
                   key: key,
                   locale: { in: foreignLocales },
                 },

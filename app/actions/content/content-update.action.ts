@@ -264,6 +264,9 @@ export async function handleUpdateContent(
                       shop: session.shop,
                       metaobjectId: update.id,
                       key: labelField.key,
+                      // Global only — mirror the global-only Shopify removal so
+                      // market overrides survive on both sides (no divergence).
+                      marketId: "",
                       locale: { in: foreignLocales },
                     },
                   });
