@@ -70,23 +70,6 @@ interface ThemeFetchWorkaround {
   verdict: string;
 }
 
-interface ThemeWriteTest {
-  attempted: boolean;
-  note?: string;
-  targetTheme: { id: string; name: string; role: string } | null;
-  translationsRegister?: {
-    resourceId: string; key: string; locale: string; digestFound: boolean;
-    priorValue: string | null; taggedValue: string; wrote: boolean;
-    readBackOnTarget: string | null; valueOnMain: string | null;
-    isolationOk: boolean; cleanedUp: boolean; errors: string[];
-  };
-  themeFilesUpsert?: {
-    themeId: string; filename: string; wrote: boolean; existsOnTarget: boolean;
-    existsOnMain: boolean; cleanedUp: boolean; scopeBlocked: boolean; errors: string[];
-  };
-  verdict: string;
-}
-
 interface ProbeReport {
   generatedAt: string;
   shop: string;
@@ -98,7 +81,6 @@ interface ProbeReport {
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
   themeFetchWorkaround?: ThemeFetchWorkaround;
-  themeWriteTest?: ThemeWriteTest;
 }
 
 function formatMarkdown(report: ProbeReport): string {
@@ -181,44 +163,6 @@ function formatMarkdown(report: ProbeReport): string {
       }
     }
     lines.push(``);
-    lines.push(`---`);
-    lines.push(``);
-  }
-
-  const tw = report.themeWriteTest;
-  if (tw) {
-    lines.push(`## Reversible theme WRITE test (unpublished theme)`);
-    lines.push(``);
-    if (!tw.attempted) {
-      lines.push(`Not attempted.${tw.note ? ` ${tw.note}` : ""}`);
-    } else {
-      lines.push(`**Verdict:** ${tw.verdict}`);
-      lines.push(``);
-      lines.push(`- Target theme: ${tw.targetTheme ? `\`${tw.targetTheme.id}\` — ${tw.targetTheme.name} [${tw.targetTheme.role}]` : "(none)"}`);
-      lines.push(``);
-      const a = tw.translationsRegister;
-      if (a) {
-        lines.push(`**A) translationsRegister (Option B-lite):**`);
-        lines.push(`- resourceId: \`${a.resourceId}\``);
-        lines.push(`- key: \`${a.key || "(none)"}\` · locale: \`${a.locale}\` · digest found: ${a.digestFound ? "yes" : "no"}`);
-        lines.push(`- wrote tagged value: ${a.wrote ? "✅" : "❌"} · read back on target: ${a.readBackOnTarget === a.taggedValue ? "✅ matches" : `❌ (${a.readBackOnTarget === null ? "absent" : "different"})`}`);
-        lines.push(`- value on MAIN theme: ${a.valueOnMain === a.taggedValue ? "❌ LEAKED to MAIN" : "✅ not present on MAIN"}`);
-        lines.push(`- isolation OK: ${a.isolationOk ? "✅" : "❌"} · cleaned up: ${a.cleanedUp ? "✅" : "❌ (manual cleanup may be needed!)"}`);
-        if (a.priorValue !== null) lines.push(`- restored prior value: \`${a.priorValue}\``);
-        if (a.errors.length) { lines.push(`- errors:`); for (const e of a.errors) lines.push(`  - ${e}`); }
-        lines.push(``);
-      }
-      const b = tw.themeFilesUpsert;
-      if (b) {
-        lines.push(`**B) themeFilesUpsert (Option B):**`);
-        lines.push(`- theme: \`${b.themeId}\` · file: \`${b.filename}\``);
-        lines.push(`- wrote: ${b.wrote ? "✅" : "❌"} · exists on target: ${b.existsOnTarget ? "✅" : "❌"} · exists on MAIN: ${b.existsOnMain ? "❌ LEAKED" : "✅ no"}`);
-        lines.push(`- cleaned up (deleted): ${b.cleanedUp ? "✅" : "❌ (manual cleanup may be needed!)"}`);
-        lines.push(`- scope blocked (write_themes): ${b.scopeBlocked ? "⛔ YES — Protected Scope Exemption required" : "no"}`);
-        if (b.errors.length) { lines.push(`- errors:`); for (const e of b.errors) lines.push(`  - ${e}`); }
-        lines.push(``);
-      }
-    }
     lines.push(`---`);
     lines.push(``);
   }
@@ -309,7 +253,6 @@ export function SettingsTranslationProbeTab() {
   const [report, setReport] = useState<ProbeReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [includeWriteTest, setIncludeWriteTest] = useState(false);
-  const [includeThemeWriteTest, setIncludeThemeWriteTest] = useState(false);
 
   const runProbe = useCallback(async () => {
     setLoading(true);
@@ -317,7 +260,6 @@ export function SettingsTranslationProbeTab() {
     try {
       const fd = new FormData();
       if (includeWriteTest) fd.set("writeTest", "true");
-      if (includeThemeWriteTest) fd.set("themeWriteTest", "true");
       const r = await fetch("/api/translation-probe", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = (await r.json()) as { success: boolean; report?: ProbeReport; error?: string };
@@ -328,7 +270,7 @@ export function SettingsTranslationProbeTab() {
     } finally {
       setLoading(false);
     }
-  }, [includeWriteTest, includeThemeWriteTest]);
+  }, [includeWriteTest]);
 
   const markdown = useMemo(() => (report ? formatMarkdown(report) : ""), [report]);
 
@@ -363,11 +305,6 @@ export function SettingsTranslationProbeTab() {
             label="Also run write test (registers one tagged SHOP override — see banner)"
             checked={includeWriteTest}
             onChange={(checked) => setIncludeWriteTest(checked)}
-          />
-          <Checkbox
-            label="Also run reversible THEME write test (unpublished theme): writes + removes a tagged translation and a throwaway theme file, verifies per-theme isolation, then restores. Self-cleaning."
-            checked={includeThemeWriteTest}
-            onChange={(checked) => setIncludeThemeWriteTest(checked)}
           />
           <InlineStack gap="200">
             <Button onClick={runProbe} loading={loading} variant="primary">

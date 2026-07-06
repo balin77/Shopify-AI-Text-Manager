@@ -20,17 +20,6 @@ import { logger } from "~/utils/logger.server";
 import { db } from "~/db.server";
 import { listThemes, pickMainThemeId, resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
-import { REMOVE_TRANSLATIONS, UPSERT_THEME_FILES } from "~/graphql/content.mutations";
-
-// themeFilesDelete is not defined in content.mutations (upsert is prepared-but-inactive);
-// declared here for the reversible theme-file write test only.
-const DELETE_THEME_FILES = `#graphql
-  mutation deleteThemeFiles($themeId: ID!, $files: [String!]!) {
-    themeFilesDelete(themeId: $themeId, files: $files) {
-      userErrors { field message }
-    }
-  }
-`;
 
 // Probe target list. Includes resource types we already cover, so we can find
 // where Shopify hides things like Cookie-Banner. COOKIE_BANNER is documented
@@ -145,47 +134,6 @@ interface ProbeReport {
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
   themeFetchWorkaround?: ThemeFetchWorkaround;
-  themeWriteTest?: ThemeWriteTest;
-}
-
-/**
- * Reversible write test against the UNPUBLISHED target theme. Proves per-theme
- * WRITE (not just read) via both candidate paths, then restores original state:
- *  - Option B-lite: translationsRegister with a rewritten theme_id resourceId,
- *    verified isolated (target got it, MAIN did not), then removed/restored.
- *  - Option B: themeFilesUpsert of a throwaway inert snippet, verified present
- *    on target and absent on MAIN, then deleted. Surfaces a write_themes scope
- *    block if the app lacks the Protected Scope Exemption.
- */
-interface ThemeWriteTest {
-  attempted: boolean;
-  note?: string;
-  targetTheme: { id: string; name: string; role: string } | null;
-  translationsRegister?: {
-    resourceId: string;
-    key: string;
-    locale: string;
-    digestFound: boolean;
-    priorValue: string | null;
-    taggedValue: string;
-    wrote: boolean;
-    readBackOnTarget: string | null;
-    valueOnMain: string | null;
-    isolationOk: boolean;
-    cleanedUp: boolean;
-    errors: string[];
-  };
-  themeFilesUpsert?: {
-    themeId: string;
-    filename: string;
-    wrote: boolean;
-    existsOnTarget: boolean;
-    existsOnMain: boolean;
-    cleanedUp: boolean;
-    scopeBlocked: boolean;
-    errors: string[];
-  };
-  verdict: string;
 }
 
 /**
@@ -324,7 +272,6 @@ export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData().catch(() => null);
   const wantsWriteTest = formData?.get("writeTest") === "true";
-  const wantsThemeWriteTest = formData?.get("themeWriteTest") === "true";
 
   logger.info("[TRANSLATION-PROBE] Starting", { context: "TranslationProbe", shop: session.shop, writeTest: wantsWriteTest });
 
@@ -648,128 +595,6 @@ export async function action({ request }: ActionFunctionArgs) {
       themeFilesRead: [],
       verdict: `Workaround test failed: ${e instanceof Error ? e.message : String(e)}`,
     };
-  }
-
-  // ── Reversible theme WRITE test (gated on themeWriteTest=true) ───────────────
-  if (wantsThemeWriteTest) {
-    const wa = report.themeFetchWorkaround;
-    const tw: ThemeWriteTest = { attempted: true, targetTheme: wa?.targetTheme ?? null, verdict: "" };
-    const targetResourceId = wa?.translationsApiRewrite.resourceId ?? "";
-    if (!wa?.targetTheme || !targetResourceId || targetResourceId.startsWith("(")) {
-      tw.attempted = false;
-      tw.note = "No usable non-MAIN target theme / rewritten resourceId from the workaround test — cannot run the theme write test.";
-      report.themeWriteTest = tw;
-    } else {
-      const ts = Date.now();
-      const mainId = report.themeSelectionDiag?.mainThemeId ?? null;
-      const mainNumeric = mainId ? mainId.split("/").pop() : null;
-      const mainResourceId = mainNumeric ? targetResourceId.replace(/([?&]theme_id=)\d+/, `$1${mainNumeric}`) : null;
-      const locale = enabledLocales.find((l) => l !== primaryLocale) || "de";
-      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-      // ── Part A: translationsRegister (Option B-lite) ──
-      const trReg = {
-        resourceId: targetResourceId, key: "", locale, digestFound: false,
-        priorValue: null as string | null, taggedValue: `__cp_theme_probe_${ts}`,
-        wrote: false, readBackOnTarget: null as string | null, valueOnMain: null as string | null,
-        isolationOk: false, cleanedUp: false, errors: [] as string[],
-      };
-      try {
-        const r = await admin.graphql(SHOP_TRANSLATIONS_QUERY, { variables: { resourceId: targetResourceId, locale } });
-        const d = (await r.json()) as { data?: { translatableResource?: { translatableContent?: Array<{ key: string; digest: string }>; translations?: Array<{ key: string; value: string }> } }; errors?: Array<{ message: string }> };
-        if (d.errors?.length) trReg.errors.push(...d.errors.map((e) => e.message));
-        const content = d.data?.translatableResource?.translatableContent ?? [];
-        const first = content.find((c) => c.digest) ?? null;
-        if (!first) {
-          trReg.errors.push("No translatable content with a digest on the target resource — cannot write.");
-        } else {
-          trReg.key = first.key;
-          trReg.digestFound = true;
-          trReg.priorValue = (d.data?.translatableResource?.translations ?? []).find((t) => t.key === first.key)?.value ?? null;
-
-          const wr = await admin.graphql(TRANSLATIONS_REGISTER, { variables: { resourceId: targetResourceId, translations: [{ key: first.key, value: trReg.taggedValue, locale, translatableContentDigest: first.digest }] } });
-          const wd = (await wr.json()) as { data?: { translationsRegister?: { userErrors: Array<{ field?: string[]; message: string }> } }; errors?: Array<{ message: string }> };
-          const uerr = wd.data?.translationsRegister?.userErrors ?? [];
-          if (wd.errors?.length) trReg.errors.push(...wd.errors.map((e) => e.message));
-          if (uerr.length) trReg.errors.push(...uerr.map((e) => `${(e.field ?? []).join(".")}: ${e.message}`));
-          trReg.wrote = uerr.length === 0 && !(wd.errors?.length);
-
-          await sleep(250);
-          const rb = await admin.graphql(SHOP_TRANSLATIONS_QUERY, { variables: { resourceId: targetResourceId, locale } });
-          const rbd = (await rb.json()) as { data?: { translatableResource?: { translations?: Array<{ key: string; value: string }> } } };
-          trReg.readBackOnTarget = (rbd.data?.translatableResource?.translations ?? []).find((t) => t.key === first.key)?.value ?? null;
-
-          if (mainResourceId) {
-            const rm = await admin.graphql(SHOP_TRANSLATIONS_QUERY, { variables: { resourceId: mainResourceId, locale } });
-            const rmd = (await rm.json()) as { data?: { translatableResource?: { translations?: Array<{ key: string; value: string }> } } };
-            trReg.valueOnMain = (rmd.data?.translatableResource?.translations ?? []).find((t) => t.key === first.key)?.value ?? null;
-          }
-          trReg.isolationOk = trReg.readBackOnTarget === trReg.taggedValue && trReg.valueOnMain !== trReg.taggedValue;
-
-          // Cleanup — restore prior value if there was one, else remove the test key.
-          await sleep(250);
-          if (trReg.priorValue !== null) {
-            const rr = await admin.graphql(TRANSLATIONS_REGISTER, { variables: { resourceId: targetResourceId, translations: [{ key: first.key, value: trReg.priorValue, locale, translatableContentDigest: first.digest }] } });
-            const rrd = (await rr.json()) as { data?: { translationsRegister?: { userErrors: unknown[] } }; errors?: unknown[] };
-            trReg.cleanedUp = !(rrd.data?.translationsRegister?.userErrors?.length) && !(rrd.errors?.length);
-          } else {
-            const rem = await admin.graphql(REMOVE_TRANSLATIONS, { variables: { resourceId: targetResourceId, translationKeys: [first.key], locales: [locale] } });
-            const remd = (await rem.json()) as { data?: { translationsRemove?: { userErrors: unknown[] } }; errors?: unknown[] };
-            trReg.cleanedUp = !(remd.data?.translationsRemove?.userErrors?.length) && !(remd.errors?.length);
-          }
-        }
-      } catch (e) {
-        trReg.errors.push(e instanceof Error ? e.message : String(e));
-      }
-      tw.translationsRegister = trReg;
-
-      // ── Part B: themeFilesUpsert (Option B) — throwaway inert snippet ──
-      await sleep(250);
-      const tf = {
-        themeId: wa.targetTheme.id, filename: `snippets/cp-probe-${ts}.liquid`,
-        wrote: false, existsOnTarget: false, existsOnMain: false, cleanedUp: false, scopeBlocked: false, errors: [] as string[],
-      };
-      try {
-        const up = await admin.graphql(UPSERT_THEME_FILES, { variables: { themeId: tf.themeId, files: [{ filename: tf.filename, body: { type: "TEXT", value: `{% comment %} ContentPilot probe ${ts} — safe to delete {% endcomment %}` } }] } });
-        const upd = (await up.json()) as { data?: { themeFilesUpsert?: { upsertedThemeFiles?: Array<{ filename: string }>; userErrors: Array<{ field?: string[]; message: string }> } }; errors?: Array<{ message: string }> };
-        if (upd.errors?.length) tf.errors.push(...upd.errors.map((e) => e.message));
-        const uerr = upd.data?.themeFilesUpsert?.userErrors ?? [];
-        if (uerr.length) tf.errors.push(...uerr.map((e) => `${(e.field ?? []).join(".")}: ${e.message}`));
-        tf.wrote = (upd.data?.themeFilesUpsert?.upsertedThemeFiles?.length ?? 0) > 0;
-        tf.scopeBlocked = /access denied|write_themes|scope|not approved|protected|unauthorized/.test(tf.errors.join(" | ").toLowerCase());
-
-        await sleep(250);
-        const rt = await admin.graphql(THEME_FILES_QUERY, { variables: { id: tf.themeId, filenames: [tf.filename] } });
-        const rtd = (await rt.json()) as { data?: { theme?: { files?: { nodes: unknown[] } } } };
-        tf.existsOnTarget = (rtd.data?.theme?.files?.nodes?.length ?? 0) > 0;
-
-        if (mainId) {
-          const rmn = await admin.graphql(THEME_FILES_QUERY, { variables: { id: mainId, filenames: [tf.filename] } });
-          const rmnd = (await rmn.json()) as { data?: { theme?: { files?: { nodes: unknown[] } } } };
-          tf.existsOnMain = (rmnd.data?.theme?.files?.nodes?.length ?? 0) > 0;
-        }
-
-        if (tf.wrote || tf.existsOnTarget) {
-          const del = await admin.graphql(DELETE_THEME_FILES, { variables: { themeId: tf.themeId, files: [tf.filename] } });
-          const dd = (await del.json()) as { data?: { themeFilesDelete?: { userErrors: unknown[] } }; errors?: unknown[] };
-          tf.cleanedUp = !(dd.data?.themeFilesDelete?.userErrors?.length) && !(dd.errors?.length);
-        } else {
-          tf.cleanedUp = true; // nothing was written → nothing to clean
-        }
-      } catch (e) {
-        tf.errors.push(e instanceof Error ? e.message : String(e));
-      }
-      tw.themeFilesUpsert = tf;
-
-      // ── Verdict ──
-      const aOk = !!(trReg.isolationOk && trReg.cleanedUp);
-      const bOk = !!(tf.existsOnTarget && !tf.existsOnMain && tf.cleanedUp);
-      tw.verdict =
-        `Option B-lite (translationsRegister, rewritten theme_id): ${aOk ? "✅ per-theme WRITE works and is isolated to the unpublished theme (test cleaned up)." : `❌ not proven (wrote=${trReg.wrote}, readBackOnTarget=${trReg.readBackOnTarget === trReg.taggedValue}, isolated=${trReg.isolationOk}, cleanedUp=${trReg.cleanedUp}${trReg.errors.length ? `, errors: ${trReg.errors.join("; ")}` : ""}).`} ` +
-        `Option B (themeFilesUpsert): ${bOk ? "✅ theme-file write+delete works on the unpublished theme." : tf.scopeBlocked ? "⛔ blocked — the app lacks the write_themes Protected Scope Exemption (expected; see content.mutations.ts). Option B needs that approval." : `❌ not proven (wrote=${tf.wrote}, existsOnTarget=${tf.existsOnTarget}, cleanedUp=${tf.cleanedUp}${tf.errors.length ? `, errors: ${tf.errors.join("; ")}` : ""}).`}`;
-
-      report.themeWriteTest = tw;
-    }
   }
 
   // Optional write test against SHOP — answers "do app writes override the
