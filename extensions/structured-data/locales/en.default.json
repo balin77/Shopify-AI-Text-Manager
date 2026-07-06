@@ -2,6 +2,10 @@
   "blocks": {
     "structured_data": {
       "name": "JSON-LD Structured Data"
+    },
+    "social_meta": {
+      "name": "Open Graph / Twitter Cards",
+      "default_og_image_label": "Default share image (used when a page has no image of its own)"
     }
   }
 }

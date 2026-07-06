@@ -9,7 +9,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -20,9 +20,12 @@ import {
   TextField,
   Select,
   Banner,
+  IndexTable,
+  Autocomplete,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone } from "../utils/seo-score";
@@ -191,9 +194,18 @@ const DENSITY_TONE: Record<DensityBand, "success" | "warning" | "critical" | und
   none: undefined,
 };
 
+/** Editor list route per resource type — target of the row's "open in editor" deep-link. */
+const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
+  Product: "/app/products",
+  Collection: "/app/collections",
+  Article: "/app/blog",
+  Page: "/app/pages",
+};
+
 export default function SeoKeywords() {
   const { keywords, pickers } = useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
   const k = (t.seo as any).keywordsPage;
 
@@ -202,6 +214,9 @@ export default function SeoKeywords() {
 
   const [type, setType] = useState<KeywordResourceType>("Product");
   const [itemId, setItemId] = useState("");
+  // Text typed into the item Autocomplete's TextField — separate from itemId
+  // so the field can show a human-readable label while itemId stores the id.
+  const [itemInputValue, setItemInputValue] = useState("");
   const [keyword, setKeywordInput] = useState("");
   // Which row's delete is in flight — the rowFetcher is shared across rows,
   // so this is what lets us spinner the right button and disable the rest.
@@ -211,6 +226,7 @@ export default function SeoKeywords() {
     if (saveFetcher.state === "idle" && saveFetcher.data?.ok && saveFetcher.data.kind === "saved") {
       setKeywordInput("");
       setItemId("");
+      setItemInputValue("");
     }
   }, [saveFetcher.state, saveFetcher.data]);
 
@@ -233,13 +249,27 @@ export default function SeoKeywords() {
   };
 
   const items = pickers[type] ?? [];
-  const itemOptions = [
-    { label: k.selectItem, value: "" },
-    ...items.map((i) => ({ label: i.title || i.id, value: i.id })),
-  ];
+  // Full option list for the current type (Autocomplete filters this client-side
+  // as the merchant types — no "select an item" placeholder entry needed since
+  // an empty text field naturally shows every loaded item).
+  const itemOptions = useMemo(
+    () => items.map((i) => ({ label: i.title || i.id, value: i.id })),
+    [items],
+  );
+  const filteredItemOptions = useMemo(() => {
+    const q = itemInputValue.trim().toLowerCase();
+    if (!q) return itemOptions;
+    return itemOptions.filter((o) => o.label.toLowerCase().includes(q));
+  }, [itemOptions, itemInputValue]);
   const typeOptions = RESOURCE_TYPES.map((rt) => ({ label: k.types[rt], value: rt }));
 
   const canSave = !!itemId && !!keyword.trim();
+
+  const openInEditor = (row: { resourceType: string; resourceId: string }) => {
+    const path = KEYWORD_TYPE_PATH[row.resourceType as KeywordResourceType];
+    if (!path) return;
+    handleNavigate(path, { searchParams: new URLSearchParams({ select: row.resourceId }) });
+  };
 
   return (
     <SeoSectionLayout sectionId="keywords">
@@ -262,11 +292,35 @@ export default function SeoKeywords() {
                   onChange={(v) => {
                     setType(v as KeywordResourceType);
                     setItemId("");
+                    setItemInputValue("");
                   }}
                 />
               </div>
               <div style={{ flex: "1 1 240px" }}>
-                <Select label={k.itemLabel} options={itemOptions} value={itemId} onChange={setItemId} />
+                <Autocomplete
+                  options={filteredItemOptions}
+                  selected={itemId ? [itemId] : []}
+                  onSelect={(selected) => {
+                    const id = selected[0] ?? "";
+                    setItemId(id);
+                    const match = itemOptions.find((o) => o.value === id);
+                    setItemInputValue(match ? match.label : "");
+                  }}
+                  textField={
+                    <Autocomplete.TextField
+                      label={k.itemLabel}
+                      autoComplete="off"
+                      placeholder={k.selectItem}
+                      value={itemInputValue}
+                      onChange={(value) => {
+                        setItemInputValue(value);
+                        // Typing invalidates the previously selected id until a
+                        // new option is chosen from the (re-filtered) list.
+                        if (itemId) setItemId("");
+                      }}
+                    />
+                  }
+                />
               </div>
               <div style={{ flex: "1 1 200px" }}>
                 <TextField
@@ -312,32 +366,24 @@ export default function SeoKeywords() {
                 {k.noKeywords}
               </Text>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{k.colItem}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{k.colKeyword}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{k.colScore}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{k.colDensity}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{k.colPresence}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {keywords.map((row) => (
-                      <tr key={row.id} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                        <td style={{ padding: "6px 8px", maxWidth: "240px" }}>
+              <BlockStack gap="200">
+                <IndexTable
+                  itemCount={keywords.length}
+                  selectable={false}
+                  headings={[
+                    { title: k.colItem },
+                    { title: k.colKeyword },
+                    { title: k.colScore },
+                    { title: k.colDensity },
+                    { title: k.colPresence },
+                    { title: k.colGscPosition },
+                    { title: "" },
+                  ]}
+                >
+                  {keywords.map((row, index) => (
+                    <IndexTable.Row id={row.id} key={row.id} position={index}>
+                      <IndexTable.Cell>
+                        <div style={{ maxWidth: "240px" }}>
                           <Text as="span" variant="bodyMd" truncate>
                             {row.itemMissing ? k.itemMissing : row.itemTitle || row.resourceId}
                           </Text>
@@ -345,28 +391,42 @@ export default function SeoKeywords() {
                             {" "}
                             {k.types[row.resourceType as KeywordResourceType] || row.resourceType}
                           </Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Text as="span" variant="bodyMd">{row.keyword}</Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Badge tone={DENSITY_TONE[row.densityBand as DensityBand]}>
-                            {`${k.density[row.densityBand]} (${row.densityPct}%)`}
-                          </Badge>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <InlineStack gap="100" wrap>
-                            {(["title", "h1", "metaDescription", "seoTitle", "body"] as const).map((key) => (
-                              <Badge key={key} tone={row.presence[key] ? "success" : undefined}>
-                                {k.presence[key]}
-                              </Badge>
-                            ))}
-                          </InlineStack>
-                        </td>
-                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                        </div>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd">{row.keyword}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Badge tone={DENSITY_TONE[row.densityBand as DensityBand]}>
+                          {`${k.density[row.densityBand]} (${row.densityPct}%)`}
+                        </Badge>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <InlineStack gap="100" wrap>
+                          {(["title", "h1", "metaDescription", "seoTitle", "body"] as const).map((key) => (
+                            <Badge key={key} tone={row.presence[key] ? "success" : undefined}>
+                              {k.presence[key]}
+                            </Badge>
+                          ))}
+                        </InlineStack>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd" tone={row.gscPosition == null ? "subdued" : undefined}>
+                          {row.gscPosition == null ? "–" : row.gscPosition.toFixed(1)}
+                        </Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <InlineStack gap="200" align="end" wrap={false}>
+                          <Button
+                            variant="plain"
+                            onClick={() => openInEditor(row)}
+                            disabled={row.itemMissing}
+                          >
+                            {k.openInEditor}
+                          </Button>
                           <Button
                             variant="plain"
                             tone="critical"
@@ -376,12 +436,15 @@ export default function SeoKeywords() {
                           >
                             {k.delete}
                           </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </InlineStack>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {k.gscHint}
+                </Text>
+              </BlockStack>
             )}
           </BlockStack>
         </Card>

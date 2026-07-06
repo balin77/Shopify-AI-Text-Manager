@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { analyzeStore, MAX_PROBLEM_BUCKET_ITEMS } from "~/services/seo/audit.service";
+import {
+  analyzeStore,
+  MAX_PROBLEM_BUCKET_ITEMS,
+  saveAuditSnapshot,
+  getLatestAuditSnapshot,
+  getAuditTrend,
+  MAX_SNAPSHOTS_PER_SHOP,
+  type AuditAggregate,
+} from "~/services/seo/audit.service";
 
 /**
  * Bucket + distribution correctness for the store audit (Phase 1 / A2), driven
@@ -234,5 +242,199 @@ describe("analyzeStore — problem bucket item cap", () => {
     const bucket = audit.problems.find((p) => p.code === "seoTitleMissing");
     expect(bucket?.count).toBe(total); // true total, uncapped
     expect(bucket?.items.length).toBe(MAX_PROBLEM_BUCKET_ITEMS); // ref list capped
+  });
+});
+
+// ─── Snapshot persistence (SEO Audit Dashboard caching, Anhang B) ──────────
+
+const SAMPLE_AUDIT: AuditAggregate = {
+  totalScanned: 3,
+  totalAvailable: 3,
+  averageScore: 77,
+  distribution: { good: 2, medium: 1, poor: 0 },
+  byType: [{ type: "product", count: 3, avgScore: 77, good: 2, medium: 1, poor: 0 }],
+  problems: [{ code: "seoTitleMissing", count: 1, items: [{ type: "product", id: "gid-1" }] }],
+  worstOffenders: [{ id: "gid-1", type: "product", title: "T", score: 50, issueCount: 2 }],
+  capped: false,
+};
+
+/** Hand-rolled seoScoreSnapshot delegate stub, recording create/findMany/findFirst/deleteMany calls. */
+function makeSnapshotDb(rows: { id: string; shop: string; createdAt: Date; averageScore: number; totalScanned: number; totalAvailable: number; capped: boolean; payload: string }[] = []) {
+  const calls: { method: string; args: any }[] = [];
+  const db = {
+    seoScoreSnapshot: {
+      create: async ({ data }: any) => {
+        calls.push({ method: "create", args: data });
+        const row = { id: `snap-${rows.length + 1}`, createdAt: new Date(), ...data };
+        rows.push(row);
+        return row;
+      },
+      findFirst: async ({ where, orderBy }: any) => {
+        calls.push({ method: "findFirst", args: { where, orderBy } });
+        const matching = rows.filter((r) => r.shop === where.shop);
+        matching.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        return matching[0] ?? null;
+      },
+      findMany: async ({ where, orderBy, select, take }: any) => {
+        calls.push({ method: "findMany", args: { where, orderBy, select, take } });
+        let matching = rows.filter((r) => r.shop === where.shop);
+        matching.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        if (take) matching = matching.slice(0, take);
+        if (select) {
+          return matching.map((r) => {
+            const picked: any = {};
+            for (const key of Object.keys(select)) picked[key] = (r as any)[key];
+            return picked;
+          });
+        }
+        return matching;
+      },
+      deleteMany: async ({ where }: any) => {
+        calls.push({ method: "deleteMany", args: where });
+        const before = rows.length;
+        const keepIds = new Set<string>(where.id?.notIn ?? []);
+        const remaining = rows.filter((r) => !(r.shop === where.shop && !keepIds.has(r.id)));
+        rows.length = 0;
+        rows.push(...remaining);
+        return { count: before - remaining.length };
+      },
+    },
+  } as any;
+  return { db, rows, calls };
+}
+
+describe("saveAuditSnapshot", () => {
+  it("persists averageScore/totalScanned/totalAvailable/capped alongside the JSON payload", async () => {
+    const { db, rows } = makeSnapshotDb();
+    await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      shop: "shop.myshopify.com",
+      averageScore: 77,
+      totalScanned: 3,
+      totalAvailable: 3,
+      capped: false,
+    });
+    expect(JSON.parse(rows[0].payload)).toEqual(SAMPLE_AUDIT);
+  });
+
+  it("prunes down to the newest MAX_SNAPSHOTS_PER_SHOP rows per shop", async () => {
+    const now = Date.now();
+    const existing = Array.from({ length: MAX_SNAPSHOTS_PER_SHOP }, (_, i) => ({
+      id: `old-${i}`,
+      shop: "shop.myshopify.com",
+      createdAt: new Date(now - (MAX_SNAPSHOTS_PER_SHOP - i) * 1000),
+      averageScore: 50,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    }));
+    const { db, rows } = makeSnapshotDb(existing);
+
+    await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
+
+    expect(rows).toHaveLength(MAX_SNAPSHOTS_PER_SHOP);
+    // The oldest pre-existing row must be the one pruned away.
+    expect(rows.find((r) => r.id === "old-0")).toBeUndefined();
+  });
+
+  it("does not touch another shop's snapshots when pruning", async () => {
+    const now = Date.now();
+    const existing = Array.from({ length: MAX_SNAPSHOTS_PER_SHOP }, (_, i) => ({
+      id: `mine-${i}`,
+      shop: "shop-a.myshopify.com",
+      createdAt: new Date(now - (MAX_SNAPSHOTS_PER_SHOP - i) * 1000),
+      averageScore: 50,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    }));
+    existing.push({
+      id: "other-shop-row",
+      shop: "shop-b.myshopify.com",
+      createdAt: new Date(now - 999999),
+      averageScore: 10,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    });
+    const { db, rows } = makeSnapshotDb(existing);
+
+    await saveAuditSnapshot(db, "shop-a.myshopify.com", SAMPLE_AUDIT);
+
+    expect(rows.find((r) => r.id === "other-shop-row")).toBeDefined();
+  });
+});
+
+describe("getLatestAuditSnapshot", () => {
+  it("returns null when no snapshot exists yet", async () => {
+    const { db } = makeSnapshotDb();
+    expect(await getLatestAuditSnapshot(db, "shop.myshopify.com")).toBeNull();
+  });
+
+  it("returns the latest snapshot parsed back into an AuditAggregate", async () => {
+    const { db } = makeSnapshotDb();
+    await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
+
+    const snapshot = await getLatestAuditSnapshot(db, "shop.myshopify.com");
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.audit).toEqual(SAMPLE_AUDIT);
+    expect(snapshot!.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("returns null (not a throw) when the stored payload is corrupt JSON", async () => {
+    const { db } = makeSnapshotDb([
+      {
+        id: "corrupt-1",
+        shop: "shop.myshopify.com",
+        createdAt: new Date(),
+        averageScore: 1,
+        totalScanned: 1,
+        totalAvailable: 1,
+        capped: false,
+        payload: "{not valid json",
+      },
+    ]);
+    expect(await getLatestAuditSnapshot(db, "shop.myshopify.com")).toBeNull();
+  });
+});
+
+describe("getAuditTrend", () => {
+  it("returns lightweight points oldest -> newest, select-minimized (no payload)", async () => {
+    const now = Date.now();
+    const existing = [
+      { id: "s1", shop: "shop.myshopify.com", createdAt: new Date(now - 2000), averageScore: 60, totalScanned: 5, totalAvailable: 5, capped: false, payload: "{}" },
+      { id: "s2", shop: "shop.myshopify.com", createdAt: new Date(now - 1000), averageScore: 70, totalScanned: 5, totalAvailable: 5, capped: false, payload: "{}" },
+      { id: "s3", shop: "shop.myshopify.com", createdAt: new Date(now), averageScore: 80, totalScanned: 6, totalAvailable: 6, capped: false, payload: "{}" },
+    ];
+    const { db } = makeSnapshotDb(existing);
+
+    const trend = await getAuditTrend(db, "shop.myshopify.com");
+    expect(trend.map((p) => p.averageScore)).toEqual([60, 70, 80]);
+    expect(trend[0]).not.toHaveProperty("payload");
+    expect(trend[0]).toHaveProperty("createdAt");
+    expect(trend[0]).toHaveProperty("totalScanned");
+  });
+
+  it("respects the limit argument", async () => {
+    const now = Date.now();
+    const existing = Array.from({ length: 10 }, (_, i) => ({
+      id: `s${i}`,
+      shop: "shop.myshopify.com",
+      createdAt: new Date(now - (10 - i) * 1000),
+      averageScore: i,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    }));
+    const { db } = makeSnapshotDb(existing);
+
+    const trend = await getAuditTrend(db, "shop.myshopify.com", 3);
+    expect(trend.map((p) => p.averageScore)).toEqual([7, 8, 9]);
   });
 });

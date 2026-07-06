@@ -201,7 +201,7 @@ export async function redactCustomerData(
  *      DirectTranslationItem, DirectTranslationCandidate,
  *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
- *      SeoIndexNowQueue                           (all scoped by `shop`)
+ *      SeoIndexNowQueue, SeoScoreSnapshot          (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -436,6 +436,12 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${indexNowQueueDeleted.count} IndexNow queue rows`);
+
+    // SEO Audit Dashboard: persisted analyzeStore() snapshots (shop-scoped).
+    const seoScoreSnapshotsDeleted = await tx.seoScoreSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoScoreSnapshotsDeleted.count} SEO score snapshots`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

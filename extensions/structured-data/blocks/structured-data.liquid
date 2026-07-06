@@ -67,6 +67,30 @@
     # Shopify "rating" metafield value is a rating object: .rating / .scale_max
     assign r_obj = product.metafields.reviews.rating.value
     assign r_count = product.metafields.reviews.rating_count.value
+
+    # GTIN/Brand/Offer completeness (plan §C1): barcode is a native
+    # ProductVariant property (no metafield scope/sync needed). Non-digit
+    # separators (spaces/hyphens) are stripped before length-matching to
+    # gtin8/12/13/14; any other non-empty length falls back to generic gtin.
+    assign p_gtin = p_var.barcode | default: '' | remove: '-' | remove: ' '
+    assign p_gtin_len = p_gtin | size
+    assign p_gtin_key = ''
+    if p_gtin_len == 8
+      assign p_gtin_key = 'gtin8'
+    elsif p_gtin_len == 12
+      assign p_gtin_key = 'gtin12'
+    elsif p_gtin_len == 13
+      assign p_gtin_key = 'gtin13'
+    elsif p_gtin_len == 14
+      assign p_gtin_key = 'gtin14'
+    elsif p_gtin != ''
+      assign p_gtin_key = 'gtin'
+    endif
+    assign p_mpn = product.metafields.custom.mpn.value
+    # priceValidUntil defaults to "one year from now" here (the pure
+    # structured-data.service.ts keeps this clock-free for testability and
+    # only emits it when a caller supplies one).
+    assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
   -%}
 <script type="application/ld+json">
 {
@@ -77,12 +101,16 @@
   {%- if p_desc != '' -%}, "description": {{ p_desc | json }}{%- endif -%}
   {%- if p_img != '' -%}, "image": {{ p_img | json }}{%- endif -%}
   {%- if p_var and p_var.sku != blank -%}, "sku": {{ p_var.sku | json }}{%- endif -%}
+  {%- if p_gtin_key != '' -%}, "{{ p_gtin_key }}": {{ p_gtin | json }}{%- endif -%}
+  {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
   , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
   , "offers": {
       "@type": "Offer",
       "price": {{ p_price | times: 0.01 | json }},
       "priceCurrency": {{ p_currency | json }},
       "availability": {% if product.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
+      "itemCondition": "https://schema.org/NewCondition",
+      "priceValidUntil": {{ p_valid_until | json }},
       "url": {{ p_url | json }}
     }
   {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}

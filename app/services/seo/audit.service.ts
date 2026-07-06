@@ -552,3 +552,104 @@ function tallyStat(stat: MutStat, score: number): void {
 function finalizeStat(stat: MutStat): void {
   stat.avgScore = stat.count > 0 ? Math.round(stat._sum / stat.count) : 0;
 }
+
+// ─── Snapshot persistence (SEO Audit Dashboard caching, Anhang B) ──────────
+//
+// analyzeStore() is a full content-cache scan (up to 4×MAX_AUDIT_ITEMS_PER_TYPE
+// rows + groupBys) — too expensive to run on every dashboard visit. These
+// helpers let the "seoAudit" Task runner (seo-audit.handler.ts) persist a
+// point-in-time result and let the dashboard loader read the latest one
+// instead of re-scanning synchronously.
+
+/** Keep only the newest N snapshots per shop — a history, not an unbounded log. */
+export const MAX_SNAPSHOTS_PER_SHOP = 30;
+
+export interface AuditSnapshot {
+  audit: AuditAggregate;
+  createdAt: Date;
+}
+
+/**
+ * Persist one snapshot and prune older rows beyond MAX_SNAPSHOTS_PER_SHOP for
+ * this shop. Prune happens here (not a cron) so retention is enforced at the
+ * single write path, with no separate scheduled job to keep in sync.
+ */
+export async function saveAuditSnapshot(
+  db: PrismaClient,
+  shop: string,
+  audit: AuditAggregate,
+): Promise<void> {
+  await db.seoScoreSnapshot.create({
+    data: {
+      shop,
+      averageScore: audit.averageScore,
+      totalScanned: audit.totalScanned,
+      totalAvailable: audit.totalAvailable,
+      capped: audit.capped,
+      payload: JSON.stringify(audit),
+    },
+  });
+
+  // Prune: find the id of the Nth-newest row and delete everything older.
+  // Two small queries beat a single DELETE ... OFFSET (not portable in
+  // Prisma) and keep the cap exact even under concurrent writes.
+  const keep = await db.seoScoreSnapshot.findMany({
+    where: { shop },
+    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    take: MAX_SNAPSHOTS_PER_SHOP,
+  });
+  if (keep.length === MAX_SNAPSHOTS_PER_SHOP) {
+    await db.seoScoreSnapshot.deleteMany({
+      where: { shop, id: { notIn: keep.map((r) => r.id) } },
+    });
+  }
+}
+
+/**
+ * Latest snapshot for a shop, or null if none exists yet or the stored
+ * payload is corrupt (defensive JSON.parse — a bad row must never 500 the
+ * dashboard, just fall back to "no snapshot").
+ */
+export async function getLatestAuditSnapshot(
+  db: PrismaClient,
+  shop: string,
+): Promise<AuditSnapshot | null> {
+  const row = await db.seoScoreSnapshot.findFirst({
+    where: { shop },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!row) return null;
+
+  try {
+    const audit = JSON.parse(row.payload) as AuditAggregate;
+    return { audit, createdAt: row.createdAt };
+  } catch {
+    return null;
+  }
+}
+
+export interface AuditTrendPoint {
+  createdAt: Date;
+  averageScore: number;
+  totalScanned: number;
+}
+
+/**
+ * Lightweight history for the dashboard's trend chart — select-minimized
+ * (never touches `payload`) so this stays cheap even with the full 30-row cap.
+ * Returned oldest -> newest (chart reading order).
+ */
+export async function getAuditTrend(
+  db: PrismaClient,
+  shop: string,
+  limit: number = MAX_SNAPSHOTS_PER_SHOP,
+): Promise<AuditTrendPoint[]> {
+  const rows = await db.seoScoreSnapshot.findMany({
+    where: { shop },
+    select: { createdAt: true, averageScore: true, totalScanned: true },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.reverse();
+}

@@ -41,6 +41,7 @@ import {
   handleTranslateAllAltTextsForLocale,
 } from "./api-ai-handlers/alt-text.handler";
 import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
+import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -65,7 +66,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Compliance gate: never send merchant content to a third-party AI through
     // an operator key. Block early with an actionable code if the shop has no
     // own API key for its preferred provider.
-    const missingKey = getMissingPreferredKey(settings);
+    // "seoAudit" is exempt — it only re-reads the DB content cache (no
+    // provider call at all), so a shop with no AI key configured yet must
+    // still be able to see/refresh its SEO score.
+    const missingKey = actionType === "seoAudit" ? null : getMissingPreferredKey(settings);
     if (missingKey) {
       return noAiKeyResponse(settings, missingKey);
     }
@@ -111,6 +115,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleTranslateAllAltTextsForLocale(ctx);
       case "seoBulkFix":
         return handleSeoBulkFix(ctx);
+      case "seoAudit":
+        return handleSeoAudit(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }

@@ -81,6 +81,17 @@ export interface ProductInput {
   available?: boolean | null;
   ratingValue?: number | null;
   ratingCount?: number | null;
+  /** Raw barcode (UPC/EAN/ISBN/JAN) — mapped to gtin8/12/13/14 via gtinProps(). */
+  gtin?: string | null;
+  mpn?: string | null;
+  /** Brand homepage/profile URL, added to Brand.url when set. */
+  brandUrl?: string | null;
+  /** Defaults to "https://schema.org/NewCondition" when an Offer is built. */
+  itemCondition?: string | null;
+  /** ISO date string; only emitted on the Offer when the caller provides one
+   *  (kept clock-free here for purity/testability — the storefront Liquid
+   *  block defaults it to "now + 1 year" itself). */
+  priceValidUntil?: string | null;
 }
 
 export interface CollectionInput {
@@ -125,6 +136,29 @@ export function buildOrganizationJsonLd(shop: ShopInfo): JsonLd {
   });
 }
 
+/**
+ * Maps a raw barcode (UPC/EAN/ISBN/JAN) to the correct schema.org gtin*
+ * property: strips everything but digits, then picks gtin8/12/13/14 by
+ * length, falling back to the generic `gtin` for any other non-empty
+ * length. Returns {} for an empty/non-digit barcode so callers can spread
+ * the result straight into a JSON-LD object without an extra branch.
+ */
+export function gtinProps(barcode: string | null | undefined): Record<string, string> {
+  const digits = String(barcode ?? "").replace(/\D/g, "");
+  if (!digits) return {};
+  const key =
+    digits.length === 8
+      ? "gtin8"
+      : digits.length === 12
+      ? "gtin12"
+      : digits.length === 13
+      ? "gtin13"
+      : digits.length === 14
+      ? "gtin14"
+      : "gtin";
+  return { [key]: digits };
+}
+
 export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
   const url = absoluteUrl(shop.domain, `/products/${p.handle}`);
   const description =
@@ -146,6 +180,11 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
           ? "https://schema.org/InStock"
           : "https://schema.org/OutOfStock",
       url: url || undefined,
+      // AEO/shopping-feed completeness (plan §C1): default to "new" rather
+      // than omitting — Google/AI shopping surfaces treat a missing
+      // itemCondition as a data-quality flag.
+      itemCondition: p.itemCondition || "https://schema.org/NewCondition",
+      priceValidUntil: p.priceValidUntil || undefined,
     });
   }
 
@@ -163,6 +202,14 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
     };
   }
 
+  // Built manually (not compact()) so the shape is byte-identical to before
+  // when brandUrl is absent: just { "@type": "Brand", name }.
+  let brand: JsonLd | undefined;
+  if (p.vendor || shop.name) {
+    brand = { "@type": "Brand", name: p.vendor || shop.name };
+    if (p.brandUrl) brand.url = p.brandUrl;
+  }
+
   return compact({
     "@context": SCHEMA_CTX,
     "@type": "Product",
@@ -171,10 +218,9 @@ export function buildProductJsonLd(p: ProductInput, shop: ShopInfo): JsonLd {
     image: p.featuredImageUrl || undefined,
     sku: p.sku || undefined,
     url: url || undefined,
-    brand:
-      p.vendor || shop.name
-        ? { "@type": "Brand", name: p.vendor || shop.name }
-        : undefined,
+    ...gtinProps(p.gtin),
+    mpn: p.mpn || undefined,
+    brand,
     offers,
     aggregateRating,
   });
@@ -293,10 +339,32 @@ export function validateJsonLd(jsonLd: JsonLd | null): JsonLdWarning[] {
         severity: "warning",
         message: "No Offer (price/availability) — required for price snippets.",
       });
-    } else if (!offers.priceCurrency) {
+    } else {
+      if (!offers.priceCurrency) {
+        w.push({
+          severity: "warning",
+          message: "Offer is missing priceCurrency.",
+        });
+      }
+      if (!offers.availability) {
+        w.push({
+          severity: "warning",
+          message: "Offer is missing availability.",
+        });
+      }
+    }
+    if (
+      !jsonLd.gtin &&
+      !jsonLd.gtin8 &&
+      !jsonLd.gtin12 &&
+      !jsonLd.gtin13 &&
+      !jsonLd.gtin14 &&
+      !jsonLd.mpn
+    ) {
       w.push({
         severity: "warning",
-        message: "Offer is missing priceCurrency.",
+        message:
+          "Product has no GTIN/MPN — reduces matchability in Google/AI shopping results.",
       });
     }
   }

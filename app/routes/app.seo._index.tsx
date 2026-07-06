@@ -1,16 +1,25 @@
 /**
- * SEO Audit Dashboard (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 1).
+ * SEO Audit Dashboard (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 1, snapshot
+ * caching per Anhang B).
  *
  * Reads the DB content cache (never a live API sweep) via analyzeStore, scores
  * every item with the shared pure computeSeoScore, and presents store-wide
  * aggregates: average score, distribution, score-by-type, the most common
  * problems, and a worst-offenders list whose rows deep-link into the editor
  * (?select=<GID>) through useAppNavigation so Shopify session params survive.
+ *
+ * analyzeStore() itself is expensive (up to 4×1000 rows + groupBys), so the
+ * loader no longer calls it on every visit: it reads the latest persisted
+ * SeoScoreSnapshot instead (audit.service.ts), falling back to one inline
+ * scan only when no snapshot exists yet (first visit). Refreshing the score
+ * is a detached "seoAudit" Task (seo-audit.handler.ts, triggered via the
+ * "Rescan" button below) — the same fire-and-forget + heartbeat pattern the
+ * "Fix with AI" bulk action uses.
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -26,7 +35,14 @@ import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone, progressTone, seoTitleEffectiveLimit } from "../utils/seo-score";
-import { analyzeStore, type AuditType } from "../services/seo/audit.service";
+import {
+  analyzeStore,
+  saveAuditSnapshot,
+  getLatestAuditSnapshot,
+  getAuditTrend,
+  type AuditType,
+  type AuditTrendPoint,
+} from "../services/seo/audit.service";
 import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
@@ -54,22 +70,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   const suffix =
     settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
-  const audit = await analyzeStore(session.shop, {
-    db,
-    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
-    plan,
-  });
+  const effectiveLimit = seoTitleEffectiveLimit(suffix);
 
-  // Cheap existence check so "Fix with AI" renders disabled after a reload
-  // instead of only reacting to the button click in THIS tab (the handler's
-  // own single-flight check is the source of truth; this is just so the UI
+  let snapshot = await getLatestAuditSnapshot(db, session.shop);
+  if (!snapshot) {
+    // First-ever visit for this shop: no snapshot yet. Run the scan inline
+    // ONCE so this load still works, and persist it immediately so every
+    // subsequent visit (and the trend chart) is instantly cached from here on.
+    const audit = await analyzeStore(session.shop, { db, seoTitleEffectiveLimit: effectiveLimit, plan });
+    await saveAuditSnapshot(db, session.shop, audit);
+    snapshot = { audit, createdAt: new Date() };
+  }
+
+  const trend = await getAuditTrend(db, session.shop);
+
+  // Cheap existence checks so the buttons render disabled/loading after a
+  // reload instead of only reacting to the click in THIS tab (the handlers'
+  // own single-flight checks are the source of truth; this is just so the UI
   // doesn't invite a second click that the server would reject anyway).
-  const runningBulkFix = await db.task.findFirst({
-    where: { shop: session.shop, type: "seoBulkFix", status: "running" },
-    select: { id: true },
-  });
+  const [runningBulkFix, runningScan] = await Promise.all([
+    db.task.findFirst({
+      where: { shop: session.shop, type: "seoBulkFix", status: "running" },
+      select: { id: true },
+    }),
+    db.task.findFirst({
+      where: { shop: session.shop, type: "seoAudit", status: "running" },
+      select: { id: true },
+    }),
+  ]);
 
-  return json({ audit, bulkFixRunning: !!runningBulkFix });
+  return json({
+    audit: snapshot.audit,
+    lastScannedAt: snapshot.createdAt.toISOString(),
+    trend,
+    bulkFixRunning: !!runningBulkFix,
+    scanRunning: !!runningScan,
+  });
 };
 
 /** Editor list route per audited type — target of the row deep-link. */
@@ -81,7 +117,7 @@ const TYPE_PATH: Record<AuditType, string> = {
 };
 
 export default function SeoDashboard() {
-  const { audit, bulkFixRunning } = useLoaderData<typeof loader>();
+  const { audit, lastScannedAt, trend, bulkFixRunning, scanRunning } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const d = (t.seo as any).dashboard;
@@ -89,6 +125,60 @@ export default function SeoDashboard() {
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
   };
+
+  // "Rescan" — kicks off the detached "seoAudit" Task (seo-audit.handler.ts)
+  // through the same shared /api/ai route every other AI action uses.
+  // contentType is a valid-but-unused placeholder to satisfy /api/ai's
+  // generic contentType gate, same trick handleFixWithAi below uses; seoAudit
+  // itself is a non-AI, shop-wide action.
+  const rescanFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const [rescanStarted, setRescanStarted] = useState(false);
+  const [rescanBanner, setRescanBanner] = useState<{ tone: "critical"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (rescanFetcher.state !== "idle" || !rescanFetcher.data) return;
+    if (rescanFetcher.data.success) {
+      setRescanStarted(true);
+    } else {
+      setRescanBanner({ tone: "critical", message: rescanFetcher.data.error || d.scanStartError });
+    }
+    // Only re-run when the fetcher settles with new data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rescanFetcher.state, rescanFetcher.data]);
+
+  const scanInProgress = scanRunning || rescanStarted;
+
+  const handleRescan = () => {
+    if (scanInProgress || rescanFetcher.state !== "idle") return;
+    setRescanBanner(null);
+    const formData = new FormData();
+    formData.append("action", "seoAudit");
+    formData.append("contentType", "products");
+    rescanFetcher.submit(formData, { method: "post", action: "/api/ai" });
+  };
+
+  // While a scan is running, cheaply re-poll the loader so the stale
+  // snapshot/trend picked up on this page load gets refreshed once the
+  // detached runner completes — same pattern as app.tasks.tsx's auto-refresh.
+  const revalidator = useRevalidator();
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
+
+  useEffect(() => {
+    if (!scanInProgress) return;
+    const interval = setInterval(() => {
+      revalidatorRef.current.revalidate();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [scanInProgress]);
+
+  // Once the revalidated loader reports the scan finished, drop the local
+  // "just started" flag so the button re-enables and the banner clears.
+  useEffect(() => {
+    if (!scanRunning && rescanStarted) setRescanStarted(false);
+    // Only react to the loader's own scanRunning flag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanRunning]);
 
   // "Fix with AI" — posts straight to the shared /api/ai route (same route
   // every other AI action in the app uses), so the server re-audits and runs
@@ -163,6 +253,28 @@ export default function SeoDashboard() {
         )}
         {!fixBanner && bulkFixRunning && <Banner tone="info">{d.bulkFixRunning}</Banner>}
 
+        {rescanBanner && (
+          <Banner tone={rescanBanner.tone} onDismiss={() => setRescanBanner(null)}>
+            {rescanBanner.message}
+          </Banner>
+        )}
+        {!rescanBanner && scanInProgress && <Banner tone="info">{d.scanRunning}</Banner>}
+
+        {/* Last-scanned caption + Rescan trigger */}
+        <InlineStack gap="200" align="space-between" blockAlign="center">
+          <Text as="p" variant="bodySm" tone="subdued">
+            {d.lastScanned.replace("{time}", new Date(lastScannedAt).toLocaleString())}
+          </Text>
+          <Button
+            size="slim"
+            onClick={handleRescan}
+            disabled={scanInProgress || rescanFetcher.state !== "idle"}
+            loading={rescanFetcher.state !== "idle"}
+          >
+            {d.rescan}
+          </Button>
+        </InlineStack>
+
         {/* Headline score + distribution */}
         <InlineStack gap="400" align="start" blockAlign="stretch" wrap>
           <div style={{ flex: "1 1 220px" }}>
@@ -182,6 +294,14 @@ export default function SeoDashboard() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {d.itemsScanned}: {audit.totalScanned}
                 </Text>
+                {trend.length >= 2 && (
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {d.trendTitle}
+                    </Text>
+                    <TrendChart points={trend} />
+                  </BlockStack>
+                )}
               </BlockStack>
             </Card>
           </div>
@@ -369,5 +489,60 @@ function DistributionRow({
         </Text>
       </div>
     </InlineStack>
+  );
+}
+
+/**
+ * Minimal inline sparkline of averageScore over time — a plain SVG polyline,
+ * no charting library (the trend has at most MAX_SNAPSHOTS_PER_SHOP=30
+ * points, so there's nothing here that needs one). `points` is already
+ * oldest -> newest (getAuditTrend's contract).
+ *
+ * Only `averageScore` is rendered, so the prop type accepts the loader's
+ * json()-serialized trend (where `createdAt` is a string, not a Date) without
+ * needing to re-widen AuditTrendPoint itself.
+ */
+function TrendChart({ points }: { points: Pick<AuditTrendPoint, "averageScore">[] }) {
+  const width = 240;
+  const height = 40;
+  const padding = 4;
+
+  const scores = points.map((p) => p.averageScore);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  // Avoid a zero-height range collapsing every point onto one flat line's
+  // midpoint in a visually confusing way — treat a flat trend as its own case.
+  const range = max - min || 1;
+
+  const coords = points.map((p, i) => {
+    const x = padding + (i / (points.length - 1)) * (width - padding * 2);
+    const y = height - padding - ((p.averageScore - min) / range) * (height - padding * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const latest = scores[scores.length - 1];
+  const first = scores[0];
+  // Rising, falling, or flat vs. the oldest point in the window — colors the
+  // line the same way the score badges elsewhere on this page are toned.
+  const lineColor = latest > first ? "#008060" : latest < first ? "#D82C0D" : "#8A8A8A";
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`${first} -> ${latest}`}
+      style={{ display: "block" }}
+    >
+      <polyline
+        fill="none"
+        stroke={lineColor}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        points={coords.join(" ")}
+      />
+    </svg>
   );
 }

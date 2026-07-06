@@ -126,12 +126,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const themeEditorUrl = apiKey
     ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/structured-data`
     : `https://${shop}/admin/themes/current/editor?context=apps`;
+  const themeEditorUrlSocialMeta = apiKey
+    ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/social-meta`
+    : `https://${shop}/admin/themes/current/editor?context=apps`;
 
-  return json({ previews, themeEditorUrl });
+  return json({ previews, themeEditorUrl, themeEditorUrlSocialMeta });
 };
 
 export default function SeoStructuredData() {
-  const { previews, themeEditorUrl } = useLoaderData<typeof loader>();
+  const { previews, themeEditorUrl, themeEditorUrlSocialMeta } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const s = (t.seo as any).structuredDataPage;
 
@@ -156,6 +159,21 @@ export default function SeoStructuredData() {
             <InlineStack>
               <Button url={themeEditorUrl} target="_blank" variant="primary">
                 {s.activateInThemeEditor}
+              </Button>
+            </InlineStack>
+          </BlockStack>
+        </Card>
+
+        {/* Open Graph / Twitter Cards (plan §C4) */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">
+              {s.ogTitle}
+            </Text>
+            <Banner tone="info">{s.ogBody}</Banner>
+            <InlineStack>
+              <Button url={themeEditorUrlSocialMeta} target="_blank" variant="primary">
+                {s.ogActivate}
               </Button>
             </InlineStack>
           </BlockStack>

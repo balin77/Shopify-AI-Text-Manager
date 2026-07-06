@@ -21,6 +21,7 @@ import {
   Button,
   TextField,
   Banner,
+  IndexTable,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -230,78 +231,73 @@ export default function SeoRedirects() {
                 {r.no404s}
               </Text>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{r.hitPathColumn}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{r.hitCountColumn}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px", minWidth: "260px" }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {hits.map((hit) => (
-                      <tr key={hit.id} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                        <td style={{ padding: "6px 8px", maxWidth: "300px" }}>
-                          <Text as="span" variant="bodyMd" truncate>
-                            {hit.path}
-                          </Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Text as="span" variant="bodySm">{hit.count}</Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <InlineStack gap="200" blockAlign="center" wrap={false}>
-                            <div style={{ flex: 1, minWidth: "140px" }}>
-                              <TextField
-                                label=""
-                                labelHidden
-                                autoComplete="off"
-                                placeholder={r.targetForHitPlaceholder}
-                                value={hitTargets[hit.id] ?? ""}
-                                onChange={(v) => setHitTargets((m) => ({ ...m, [hit.id]: v }))}
-                              />
-                            </div>
-                            <Button
-                              variant="primary"
-                              size="slim"
-                              disabled={!(hitTargets[hit.id] ?? "").trim()}
-                              onClick={() =>
-                                rowFetcher.submit(
-                                  {
-                                    actionType: "createFromHit",
-                                    path: hit.path,
-                                    target: hitTargets[hit.id] ?? "",
-                                    hitId: hit.id,
-                                  },
-                                  { method: "post" },
-                                )
-                              }
-                            >
-                              {r.createRedirectFromHit}
-                            </Button>
-                            <Button
-                              size="slim"
-                              onClick={() =>
-                                rowFetcher.submit(
-                                  { actionType: "dismiss404", hitId: hit.id },
-                                  { method: "post" },
-                                )
-                              }
-                            >
-                              {r.dismiss}
-                            </Button>
-                          </InlineStack>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <IndexTable
+                itemCount={hits.length}
+                selectable={false}
+                headings={[
+                  { title: r.hitPathColumn },
+                  { title: r.hitCountColumn },
+                  { title: "" },
+                ]}
+              >
+                {hits.map((hit, index) => (
+                  <IndexTable.Row id={hit.id} key={hit.id} position={index}>
+                    <IndexTable.Cell>
+                      <div style={{ maxWidth: "300px" }}>
+                        <Text as="span" variant="bodyMd" truncate>
+                          {hit.path}
+                        </Text>
+                      </div>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" variant="bodySm">{hit.count}</Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <InlineStack gap="200" blockAlign="center" wrap={false}>
+                        <div style={{ flex: 1, minWidth: "140px" }}>
+                          <TextField
+                            label=""
+                            labelHidden
+                            autoComplete="off"
+                            placeholder={r.targetForHitPlaceholder}
+                            value={hitTargets[hit.id] ?? ""}
+                            onChange={(v) => setHitTargets((m) => ({ ...m, [hit.id]: v }))}
+                          />
+                        </div>
+                        <Button
+                          variant="primary"
+                          size="slim"
+                          disabled={!(hitTargets[hit.id] ?? "").trim()}
+                          onClick={() =>
+                            rowFetcher.submit(
+                              {
+                                actionType: "createFromHit",
+                                path: hit.path,
+                                target: hitTargets[hit.id] ?? "",
+                                hitId: hit.id,
+                              },
+                              { method: "post" },
+                            )
+                          }
+                        >
+                          {r.createRedirectFromHit}
+                        </Button>
+                        <Button
+                          size="slim"
+                          onClick={() =>
+                            rowFetcher.submit(
+                              { actionType: "dismiss404", hitId: hit.id },
+                              { method: "post" },
+                            )
+                          }
+                        >
+                          {r.dismiss}
+                        </Button>
+                      </InlineStack>
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
             )}
           </BlockStack>
         </Card>
@@ -367,44 +363,43 @@ export default function SeoRedirects() {
                 {r.noRedirects}
               </Text>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{r.pathColumn}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }}>
-                        <Text as="span" variant="bodySm" tone="subdued">{r.targetColumn}</Text>
-                      </th>
-                      <th style={{ padding: "6px 8px" }} />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((redirect) => (
-                      <tr key={redirect.id} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                        <td style={{ padding: "6px 8px", maxWidth: "280px" }}>
-                          <Text as="span" variant="bodyMd" truncate>{redirect.path}</Text>
-                        </td>
-                        <td style={{ padding: "6px 8px", maxWidth: "280px" }}>
-                          <Text as="span" variant="bodyMd" truncate>{redirect.target}</Text>
-                        </td>
-                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                          <Button
-                            variant="plain"
-                            tone="critical"
-                            loading={rowFetcher.state !== "idle" && pendingDeleteId === redirect.id}
-                            disabled={rowFetcher.state !== "idle" && pendingDeleteId !== redirect.id}
-                            onClick={() => handleDeleteRedirect(redirect)}
-                          >
-                            {r.deleteButton}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <IndexTable
+                itemCount={items.length}
+                selectable={false}
+                headings={[
+                  { title: r.pathColumn },
+                  { title: r.targetColumn },
+                  { title: "" },
+                ]}
+              >
+                {items.map((redirect, index) => (
+                  <IndexTable.Row id={redirect.id} key={redirect.id} position={index}>
+                    <IndexTable.Cell>
+                      <div style={{ maxWidth: "280px" }}>
+                        <Text as="span" variant="bodyMd" truncate>{redirect.path}</Text>
+                      </div>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <div style={{ maxWidth: "280px" }}>
+                        <Text as="span" variant="bodyMd" truncate>{redirect.target}</Text>
+                      </div>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <InlineStack align="end">
+                        <Button
+                          variant="plain"
+                          tone="critical"
+                          loading={rowFetcher.state !== "idle" && pendingDeleteId === redirect.id}
+                          disabled={rowFetcher.state !== "idle" && pendingDeleteId !== redirect.id}
+                          onClick={() => handleDeleteRedirect(redirect)}
+                        >
+                          {r.deleteButton}
+                        </Button>
+                      </InlineStack>
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
             )}
 
             {hasMore && (

@@ -9,6 +9,7 @@ import {
   buildBreadcrumbJsonLd,
   validateJsonLd,
   renderJsonLdScript,
+  gtinProps,
 } from "~/services/structured-data.service";
 
 const shop = {
@@ -88,6 +89,76 @@ describe("buildProductJsonLd", () => {
       shop,
     );
     expect(ld.aggregateRating).toBeUndefined();
+  });
+
+  it("byte-parity: gtin/mpn/brandUrl/priceValidUntil absent add no new keys", () => {
+    const ld = buildProductJsonLd(
+      { title: "Mug", handle: "mug", price: 19.9, currency: "EUR", available: true },
+      shop,
+    );
+    expect(ld.gtin).toBeUndefined();
+    expect(ld.gtin8).toBeUndefined();
+    expect(ld.gtin12).toBeUndefined();
+    expect(ld.gtin13).toBeUndefined();
+    expect(ld.gtin14).toBeUndefined();
+    expect(ld.mpn).toBeUndefined();
+    expect((ld.brand as any).url).toBeUndefined();
+    expect(Object.keys(ld.brand as any)).toEqual(["@type", "name"]);
+    expect((ld.offers as any).priceValidUntil).toBeUndefined();
+    // itemCondition always defaults once an Offer exists (plan §C1).
+    expect((ld.offers as any).itemCondition).toBe(
+      "https://schema.org/NewCondition",
+    );
+  });
+
+  it("emits gtin*/mpn/brand.url/itemCondition/priceValidUntil when provided", () => {
+    const ld = buildProductJsonLd(
+      {
+        title: "Mug",
+        handle: "mug",
+        price: 19.9,
+        currency: "EUR",
+        available: true,
+        gtin: "614-141-000-012", // 12 digits once stripped
+        mpn: "MPN-1",
+        brandUrl: "https://acme.example.com",
+        itemCondition: "https://schema.org/UsedCondition",
+        priceValidUntil: "2027-01-01",
+      },
+      shop,
+    );
+    expect(ld.gtin12).toBe("614141000012");
+    expect(ld.gtin).toBeUndefined();
+    expect(ld.mpn).toBe("MPN-1");
+    expect((ld.brand as any).url).toBe("https://acme.example.com");
+    expect((ld.offers as any).itemCondition).toBe(
+      "https://schema.org/UsedCondition",
+    );
+    expect((ld.offers as any).priceValidUntil).toBe("2027-01-01");
+  });
+});
+
+describe("gtinProps", () => {
+  it("maps 8/12/13/14-digit barcodes to gtin8/12/13/14", () => {
+    expect(gtinProps("12345678")).toEqual({ gtin8: "12345678" });
+    expect(gtinProps("123456789012")).toEqual({ gtin12: "123456789012" });
+    expect(gtinProps("1234567890123")).toEqual({ gtin13: "1234567890123" });
+    expect(gtinProps("12345678901234")).toEqual({ gtin14: "12345678901234" });
+  });
+  it("falls back to a generic gtin for any other non-empty length", () => {
+    expect(gtinProps("123456789")).toEqual({ gtin: "123456789" });
+    expect(gtinProps("123")).toEqual({ gtin: "123" });
+  });
+  it("strips non-digit characters before measuring length", () => {
+    expect(gtinProps("1234-5678")).toEqual({ gtin8: "12345678" });
+    expect(gtinProps("614 141 000 012")).toEqual({ gtin12: "614141000012" });
+  });
+  it("returns {} for empty/null/undefined/non-digit-only input", () => {
+    expect(gtinProps("")).toEqual({});
+    expect(gtinProps(null)).toEqual({});
+    expect(gtinProps(undefined)).toEqual({});
+    expect(gtinProps("abc")).toEqual({});
+    expect(gtinProps("--  --")).toEqual({});
   });
 });
 
@@ -177,11 +248,38 @@ describe("validateJsonLd", () => {
           price: 1,
           currency: "USD",
           available: true,
+          // C1: "complete" now also requires a GTIN or MPN (AEO/shopping-feed
+          // matchability) — see the noGtin warning below.
+          mpn: "MPN-1",
         },
         shop,
       ),
     );
     expect(w).toEqual([]);
+  });
+  it("flags noGtin when a Product has no gtin*/mpn", () => {
+    const ld = buildProductJsonLd(
+      {
+        title: "X",
+        handle: "x",
+        descriptionHtml: "desc",
+        featuredImageUrl: "i",
+        price: 1,
+        currency: "USD",
+        available: true,
+      },
+      shop,
+    );
+    const msgs = validateJsonLd(ld).map((w) => w.message).join(" ");
+    expect(msgs).toMatch(/GTIN\/MPN/);
+  });
+  it("flags offerNoAvailability when an Offer has no availability", () => {
+    const ld = buildProductJsonLd(
+      { title: "X", handle: "x", price: 1, currency: "USD", mpn: "MPN-1" },
+      shop,
+    );
+    const msgs = validateJsonLd(ld).map((w) => w.message).join(" ");
+    expect(msgs).toMatch(/availability/);
   });
 });
 
