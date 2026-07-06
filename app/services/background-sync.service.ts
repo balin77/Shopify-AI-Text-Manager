@@ -1299,9 +1299,19 @@ export class BackgroundSyncService {
         const names = await this.listThemeFileBasenames(targetThemeGid, 'sections/*.json', /^sections\//);
         ids = names.map((n) => `gid://shopify/OnlineStoreThemeSectionGroup/${n}?theme_id=${num}`);
       } else if (resourceType === 'ONLINE_STORE_THEME_SETTINGS_CATEGORY' || resourceType === 'ONLINE_STORE_THEME_APP_EMBED') {
-        // Strategy C (MVP) — rewrite the published theme's enumerated ids onto the
-        // target theme. Documented limitation: target-unique categories/embeds are
-        // missed (full solution parses settings_schema/settings_data.json).
+        // Strategy C — rewrite the published theme's enumerated ids onto the
+        // target theme's theme_id. Robust for categories/embeds that exist in
+        // BOTH themes: a rewritten id that the target theme lacks simply returns
+        // empty content from translatableResourcesByIds and is skipped (no junk
+        // rows). The only gap is target-UNIQUE settings categories / app embeds
+        // (present on the target but not MAIN). Reconstructing THOSE ids is
+        // intentionally NOT attempted: a SETTINGS_CATEGORY id embeds the RESOLVED
+        // category label (e.g. "Brand+information", not the `t:` schema key) plus
+        // first_setting_id, so building one requires parsing config/settings_schema.json
+        // AND resolving its t:-labels against the theme's schema-locale file; an
+        // APP_EMBED id embeds a non-reconstructable app_embed_<hash>. Both are
+        // fragile for marginal value (tiny content volume; categories/apps are
+        // largely shared across a shop's themes). See PLAN_THEME_SELECTION_B_LITE §7.
         // Only ids that actually carry a theme_id= param are rewritten: an id
         // without it would otherwise be passed through unchanged and fetch MAIN's
         // content, which we'd then mislabel as the target theme.

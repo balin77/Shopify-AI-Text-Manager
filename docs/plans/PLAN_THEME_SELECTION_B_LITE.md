@@ -201,8 +201,16 @@ Indizes existieren bereits (PR #2). Backfill-Script `scripts/backfill-theme-id.j
 ---
 
 ## 7. Risiken / offene Punkte
-- **Strategie-C-Lücke** (SETTINGS_CATEGORY/APP_EMBED theme-unique): MVP verpasst sie → als bekannte
-  Einschränkung dokumentieren, Vollausbau als Follow-up.
+- **Strategie-C-Lücke** (SETTINGS_CATEGORY/APP_EMBED theme-unique): Der Rewrite deckt alle in MAIN
+  **und** Ziel vorhandenen Kategorien/Embeds ab (ungültige Rewrites liefern leeren Content → werden
+  übersprungen, kein DB-Müll). **Nur target-unique** Kategorien/Embeds fehlen. **Vollausbau bewusst
+  NICHT umgesetzt** (Stand: entschieden nach Analyse): der `SETTINGS_CATEGORY`-`resourceId` enthält
+  das **aufgelöste** Kategorie-Label (`Brand+information`, nicht den `t:`-Schema-Key) + `first_setting_id`
+  — konstruierbar nur über Parsen von `config/settings_schema.json` **plus** Auflösen der `t:`-Labels
+  gegen die Schema-Locale-Datei; `APP_EMBED` trägt zusätzlich einen nicht rekonstruierbaren
+  `app_embed_<hash>`. Fragil bei marginalem Nutzen (winziges Content-Volumen; Kategorien/Apps sind
+  über die Themes eines Shops meist identisch). Falls je gebraucht: als isoliertes Follow-up mit
+  Label-Resolver angehen.
 - **`translatableResourcesByIds`-Batch-Limits/Rate-Limit:** Batchgröße konservativ (z. B. 50) + die
   bestehende 250-ms-Pausen-/Coalescing-Logik wiederverwenden (Translation-Rate-Limit ist streng).
 - **Kosten bei vielen Themes:** nur MAIN + gewähltes Theme syncen, nicht alle (§3.2).
