@@ -231,7 +231,7 @@ export async function setTranslation(
   if (!item) throw new Error("Item not found");
 
   const row = await db.directTranslation.upsert({
-    where: { itemId_locale: { itemId, locale } },
+    where: { itemId_locale_marketId: { marketId: "",  itemId, locale } },
     create: { itemId, locale, targetText, source },
     update: { targetText, source },
   });

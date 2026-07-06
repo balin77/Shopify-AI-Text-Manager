@@ -119,7 +119,7 @@ async function translateMetaobjectEntries(params: {
         // Upsert DB
         await db.metaobjectTranslation.upsert({
           where: {
-            shop_metaobjectId_key_locale: {
+            shop_metaobjectId_key_locale_marketId: { marketId: "", 
               shop: session.shop,
               metaobjectId: gid,
               key: labelField.key,

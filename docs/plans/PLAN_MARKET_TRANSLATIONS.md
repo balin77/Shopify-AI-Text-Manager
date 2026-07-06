@@ -5,8 +5,21 @@
 > Shopify unterstützt das nativ über das optionale Feld `marketId` in
 > `TranslationInput` und `marketIds` in `translationsRemove`.
 
-Status: **PLAN / noch nicht umgesetzt**
+Status: **PHASE 1 UMGESETZT** (Products, Collections, Pages, Articles, Policies) —
+Theme/Metaobjects/Alt-Text/DirectTranslation (Phase 2) sind im Datenmodell bereits
+markt-fähig, aber ihre Save-Pfade schreiben weiterhin global.
 Sprache des Plans: Deutsch · Ziel-Leser: Entwickler, der es direkt umsetzt.
+
+> **Umsetzungshinweise (bei Implementierung ergänzt):**
+> - Getrackter Shop-Config ist `shopify.app.prod.toml` (kein `shopify.app.toml`);
+>   dort wurde `read_markets` ergänzt.
+> - `GET_MARKETS` nutzt die `webPresences`-Connection + `rootUrls { locale }` für
+>   die Ziel-API 2025-10. **Feldnamen (`enabled`, `webPresences`) im GraphiQL der
+>   gepinnten Version gegenprüfen**, falls Märkte nicht laden — `loadMarkets()`
+>   degradiert bei Fehlern bewusst zu `[]` (Feature bleibt unsichtbar).
+> - AI-Bulk-Übersetzungen (Translate-All, Accept & Translate → alle Locales)
+>   schreiben in Phase 1 weiterhin **global**; markt-spezifisch sind manuelles
+>   Speichern, Single-Field-Translate, Copy-to-Field und Clear.
 
 ---
 

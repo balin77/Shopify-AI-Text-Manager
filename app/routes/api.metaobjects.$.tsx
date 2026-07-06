@@ -511,7 +511,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           // Update DB: Upsert translation
           await db.metaobjectTranslation.upsert({
             where: {
-              shop_metaobjectId_key_locale: {
+              shop_metaobjectId_key_locale_marketId: { marketId: "", 
                 shop: session.shop,
                 metaobjectId,
                 key: labelField.key,

@@ -181,7 +181,10 @@ model DirectTranslation {
   source     String   @default("user")
   updatedAt  DateTime @updatedAt
 
-  @@unique([itemId, locale])
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId   String   @default("")
+
+  @@unique([itemId, locale, marketId])
 }
 
 // Untranslated strings discovered on the storefront (opt-in collector), pending
@@ -414,10 +417,13 @@ model ProductImageAltTranslation {
   locale  String // "en", "fr", "es", "it", etc.
   altText String @db.Text
 
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([imageId, locale])
+  @@unique([imageId, locale, marketId])
   @@index([imageId])
   @@index([locale])
 }
@@ -661,13 +667,20 @@ model ContentTranslation {
   locale String // "en", "fr", "es", "it", etc.
   digest String? // Shopify digest for updates
 
+  // Market dimension (Shopify "Translate & Adapt"): "" = global (all markets,
+  // legacy behaviour). Non-empty = gid://shopify/Market/<id>, a market-specific
+  // override of the global translation for the same locale. Sentinel "" (not
+  // NULL) so the composite unique key treats "one global row" deterministically
+  // across DB engines — NULLs are considered distinct in unique constraints.
+  marketId String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, key, locale])
+  @@unique([shop, resourceId, key, locale, marketId])
   // shop-prefixed so lookups stay within one tenant's index range instead of
   // scanning across all shops' rows for a (resourceId, locale) pair.
-  @@index([shop, resourceId, locale])
+  @@index([shop, resourceId, locale, marketId])
   @@index([resourceType])
   @@index([locale])
   @@index([shop, resourceType])
@@ -720,10 +733,14 @@ model ThemeTranslation {
   locale     String // "en", "fr", "es", "it", etc.
   outdated   Boolean @default(false)
 
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId   String  @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, groupId, key, locale])
+  // Explicit map: the auto-generated name would exceed Postgres's 63-char limit.
+  @@unique([shop, resourceId, groupId, key, locale, marketId], map: "ThemeTranslation_shop_res_group_key_locale_market_key")
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
   @@index([shop, domain])
@@ -778,10 +795,13 @@ model MetaobjectTranslation {
   locale       String // "en", "fr", "es", "it", etc.
   outdated     Boolean @default(false)
 
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId     String  @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, metaobjectId, key, locale])
+  @@unique([shop, metaobjectId, key, locale, marketId])
   @@index([shop, metaobjectId])
   @@index([shop, type, locale]) // For efficient type-specific locale queries
   @@index([locale])

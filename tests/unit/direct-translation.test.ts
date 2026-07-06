@@ -112,7 +112,8 @@ describe("setTranslation()", () => {
 
     await setTranslation(db, "s", "item1", "de", "Bewertung", "user");
     expect(upsert).toHaveBeenCalledTimes(1);
-    expect(upsert.mock.calls[0][0].where.itemId_locale).toEqual({ itemId: "item1", locale: "de" });
+    // Unique key now carries the market dimension; direct translations are global ("").
+    expect(upsert.mock.calls[0][0].where.itemId_locale_marketId).toEqual({ itemId: "item1", locale: "de", marketId: "" });
     expect(settingsUpsert).toHaveBeenCalledTimes(1);
   });
 

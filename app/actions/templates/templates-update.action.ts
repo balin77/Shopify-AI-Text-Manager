@@ -908,7 +908,7 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       dbOps.push(
         db.themeTranslation.upsert({
           where: {
-            shop_resourceId_groupId_key_locale: {
+            shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
               shop: session.shop,
               resourceId: keyResId,
               groupId: groupId,

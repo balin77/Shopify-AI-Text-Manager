@@ -318,7 +318,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         for (const [key, value] of Object.entries(updatedFields)) {
           await db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale: {
+              shop_resourceId_groupId_key_locale_marketId: { marketId: "", 
                 shop: session.shop,
                 resourceId,
                 groupId,

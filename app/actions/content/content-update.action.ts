@@ -27,6 +27,10 @@ export async function handleUpdateContent(
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");
   const changedFieldsDebug = getFormString(formData, "changedFields");
+  // Market scope for market-specific ("Translate & Adapt") translations.
+  // Primary-locale saves are always global — Shopify forbids market-specific
+  // primary content — so the marketId only applies to foreign-locale saves.
+  const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
   logger.debug('[UnifiedContent] updateContent', { resourceType: contentConfig.resourceType, itemId, locale, primaryLocale });
 
@@ -45,6 +49,7 @@ export async function handleUpdateContent(
       productFormData.set("productId", itemId);
       productFormData.set("locale", locale);
       productFormData.set("primaryLocale", primaryLocale);
+      if (marketId) productFormData.set("marketId", marketId);
 
       // Map field names
       const fieldMapping: Record<string, string> = {
@@ -327,7 +332,7 @@ export async function handleUpdateContent(
               const typeId = itemId; // itemId is the metaobject type ID
               await db.metaobjectTranslation.upsert({
                 where: {
-                  shop_metaobjectId_key_locale: {
+                  shop_metaobjectId_key_locale_marketId: { marketId: "", 
                     shop: session.shop,
                     metaobjectId: update.id,
                     key: labelField.key,
@@ -436,6 +441,7 @@ export async function handleUpdateContent(
       shop: session.shop,
       policyType,
       changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
+      marketId,
     });
 
     return json({ ...result, actionType: "updateContent" });

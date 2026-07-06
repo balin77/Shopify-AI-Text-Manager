@@ -61,6 +61,9 @@ interface TaskData {
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
+  // Markets for the "Translate & Adapt" market selector. Empty when the shop has
+  // no extra markets or the read_markets scope is missing → selector stays hidden.
+  const markets = props.markets ?? [];
   const { refresh: refreshTaskCount } = useTaskCount();
   const revalidator = useRevalidator();
   // IMPORTANT: useRevalidator() returns an unstable reference that changes on
@@ -90,6 +93,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [hasRestored, setHasRestored] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
+  // Selected market for market-specific translations ("" = all markets / global).
+  const [selectedMarketId, setSelectedMarketId] = useState<string>("");
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
@@ -134,12 +139,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,
+      selectedMarketIdRef,
     },
     templateValuesVersion,
     setTemplateValuesVersion,
     baselineVersion,
     setBaselineVersion,
   } = dataLoader;
+
+  // Keep the data loader's market ref in sync so resolve()/transitions see the
+  // current market synchronously (updated on render, before any effect runs).
+  selectedMarketIdRef.current = selectedMarketId;
 
   // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
@@ -433,6 +443,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Track previous language to detect language changes
   const prevCurrentLanguageRef = useRef<string>(currentLanguage);
+  // Tracks the market the data-loading effect last resolved for. A market switch
+  // re-resolves all fields (same as a locale switch) without a server round-trip.
+  const prevSelectedMarketIdRef = useRef<string>(selectedMarketId);
 
   // Track previous item ID for data loading (separate from image loading ref to avoid race condition)
   const prevItemIdForDataLoadRef = useRef<string | null>(null);
@@ -629,11 +642,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
+    const marketChanged = prevSelectedMarketIdRef.current !== selectedMarketId;
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
     const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
 
-    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
+    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -646,6 +660,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
+    prevSelectedMarketIdRef.current = selectedMarketId;
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
@@ -707,7 +722,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
+  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -2012,6 +2027,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,
@@ -2033,6 +2049,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItemId,
     selectedItem,
     currentLanguage,
+    selectedMarketId,
     hasChanges,
     hasAltTextChanges,
     enabledLanguages,
@@ -2078,6 +2095,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
+    setSelectedMarketId,
+    markets,
     setEditableValues,
     setAiSuggestions,
     setHtmlModes,
@@ -2210,6 +2229,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const state: EditorState = {
     selectedItemId,
     currentLanguage,
+    selectedMarketId,
+    markets,
     editableValues,
     aiSuggestions,
     htmlModes,
@@ -2245,6 +2266,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,

@@ -15,7 +15,9 @@ import type { AISettings } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import { logger } from "./logger.server";
 import type { ShopifyGraphQLClient } from "../services/sync-types";
-import type { ShopLocale } from "../types/content-editor.types";
+import type { ShopLocale, MarketInfo, MarketTranslations } from "../types/content-editor.types";
+import { ShopifyContentService } from "../../src/services/shopify-content.service";
+import { buildMarketTranslations } from "./market-translations.server";
 
 // ============================================================================
 // Types
@@ -83,19 +85,27 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       const { loadAISettingsForValidation } = await import("./loader-helpers");
       const { getCachedShopLocales } = await import("./shop-locales-cache.server");
 
-      const [shopLocales, aiSettings] = await Promise.all([
+      const [shopLocales, aiSettings, marketsResult] = await Promise.all([
         getCachedShopLocales(admin, session.shop),
         loadAISettingsForValidation(db, session.shop),
+        // Markets power the "Translate & Adapt" market selector. Degrades to []
+        // on missing scope / API error so the loader never breaks (Edge Case 10).
+        new ShopifyContentService(admin as never).loadMarkets(),
       ]);
       const primaryLocale = shopLocales.find((l: ShopLocale) => l.primary)?.locale || "en";
+      const markets: MarketInfo[] = marketsResult.markets;
 
       const ctx: LoaderContext = { admin, session, db, shopLocales, primaryLocale, aiSettings };
 
       // Route-specific: load items
       const { items, ids } = await config.loadData(ctx);
 
-      // Common: load + group translations
+      // Common: load + group translations. Split by market dimension: global rows
+      // (marketId "") stay in the per-item `translations` array exactly as before;
+      // market-specific rows (marketId !== "") are surfaced as a separate nested
+      // lookup so resolve() can layer them on top of the global values.
       let translationsByResource: Record<string, unknown[]> = {};
+      let marketRowsByResource: Record<string, { marketId: string; key: string; locale: string; value: string }[]> = {};
       if (config.resourceType && ids.length > 0) {
         const resourceTypeFilter = Array.isArray(config.resourceType)
           ? { in: config.resourceType }
@@ -103,7 +113,10 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         const allTranslations = await db.contentTranslation.findMany({
           where: { shop: session.shop, resourceType: resourceTypeFilter, resourceId: { in: ids } },
         });
-        translationsByResource = groupBy(allTranslations, "resourceId");
+        const globalRows = allTranslations.filter((t) => (t.marketId ?? "") === "");
+        const marketRows = allTranslations.filter((t) => (t.marketId ?? "") !== "");
+        translationsByResource = groupBy(globalRows, "resourceId");
+        marketRowsByResource = groupBy(marketRows, "resourceId") as typeof marketRowsByResource;
       }
 
       // Attach translations to items
@@ -112,6 +125,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       const itemsWithTranslations = items.map((item) => ({
         ...item,
         translations: (item as { translations?: unknown }).translations || translationsByResource[item.id] || [],
+        marketTranslations: buildMarketTranslations(marketRowsByResource[item.id] || []),
       }));
 
       // Optional: extra data
@@ -121,6 +135,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         shop: string;
         shopLocales: ShopLocale[];
         primaryLocale: string;
+        markets: MarketInfo[];
         error: string | null;
         aiSettings: AISettingsForValidation | null;
       } & E;
@@ -130,6 +145,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         shop: session.shop,
         shopLocales,
         primaryLocale,
+        markets,
         error: null,
         aiSettings,
         ...extra,
@@ -165,6 +181,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
           shop: session.shop,
           shopLocales: [],
           primaryLocale: "en",
+          markets: [],
           error: "Session expired. Please refresh the page to reconnect.",
           aiSettings: null,
           ...(config.errorFallback || {}),
@@ -189,6 +206,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         shop: string;
         shopLocales: ShopLocale[];
         primaryLocale: string;
+        markets: MarketInfo[];
         error: string | null;
         aiSettings: AISettingsForValidation | null;
       } & E;
@@ -198,6 +216,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
         shop: session.shop,
         shopLocales: [],
         primaryLocale: "en",
+        markets: [],
         error: errorMessage,
         aiSettings: null,
         ...(config.errorFallback || {}),

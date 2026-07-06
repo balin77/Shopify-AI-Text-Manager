@@ -629,7 +629,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
             if (shopifySaved && dbImage) {
               try {
                 const existing = await db.productImageAltTranslation.findUnique({
-                  where: { imageId_locale: { imageId: dbImage.id, locale } },
+                  where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
                 });
                 if (existing) {
                   await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
@@ -916,7 +916,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
           if (shopifySaved) {
             try {
               const existing = await db.productImageAltTranslation.findUnique({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
+                where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
               });
               if (existing) {
                 await db.productImageAltTranslation.update({
@@ -1177,7 +1177,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
         if (shopifySaved) {
           try {
             const existing = await db.productImageAltTranslation.findUnique({
-              where: { imageId_locale: { imageId: dbImage.id, locale: targetLocale } },
+              where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale: targetLocale } },
             });
             if (existing) {
               await db.productImageAltTranslation.update({
