@@ -30,6 +30,7 @@ import {
   ChoiceList,
   Tooltip,
   Spinner,
+  Select,
 } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
@@ -114,6 +115,20 @@ interface UnifiedItemListProps {
   /** Optional: Sort options to show in the sort dropdown */
   sortOptions?: SortOption[];
 
+  /**
+   * Optional: Theme-Auswahl dropdown, rendered as its own section directly under
+   * the search field. The caller decides visibility (theme-content types with
+   * >1 theme); when passed it is shown.
+   */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    value: string;
+    onChange: (themeId: string) => void;
+    disabled?: boolean;
+    label: string;
+    helpText?: string;
+  };
+
   /** Optional: Show a "+" add button before the search field (default: false) */
   showAddButton?: boolean;
 
@@ -177,6 +192,7 @@ export function UnifiedItemList({
   planLimit,
   onSyncAll,
   isSyncing = false,
+  themeSelector,
   sortOptions,
   showAddButton = false,
   onAddItem,
@@ -713,6 +729,18 @@ export function UnifiedItemList({
                 prefix={<Icon source={SearchIcon} />}
                 clearButton
                 onClearButtonClick={() => handleSearchChange("")}
+              />
+            )}
+
+            {/* Theme selector — own section directly under the search (Theme-Auswahl) */}
+            {themeSelector && (
+              <Select
+                label={themeSelector.label}
+                options={themeSelector.options}
+                value={themeSelector.value}
+                onChange={themeSelector.onChange}
+                disabled={themeSelector.disabled}
+                helpText={themeSelector.helpText}
               />
             )}
 

@@ -150,6 +150,17 @@ interface UnifiedContentEditorProps {
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
   extraMissingPrimaryIds?: Set<string>;
+
+  /**
+   * Optional: Theme-Auswahl. Only rendered for theme-content types
+   * (isThemeContentType) and when more than one theme exists. Lets the merchant
+   * pick which installed theme's content is edited/translated.
+   */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    selectedThemeId: string;
+    onChange: (themeId: string) => void;
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -174,6 +185,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     isFieldsLoading = false,
     revalidator,
     sortOptions,
+    themeSelector,
     subResourceState,
     subResourceHandlers,
     showImageManager,
@@ -525,6 +537,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
+          themeSelector={
+            themeSelector && isThemeContentType(config.contentType) && themeSelector.options.length > 1
+              ? {
+                  options: themeSelector.options,
+                  value: themeSelector.selectedThemeId,
+                  onChange: themeSelector.onChange,
+                  disabled: isDiscovering || revalidator?.state === "loading",
+                  label: t.content?.themeSelectorLabel || "Theme",
+                  helpText: t.content?.themeSelectorHelp,
+                }
+              : undefined
+          }
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",
@@ -1034,9 +1058,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               ` }} />
               <Card padding="600">
                 <div style={{ textAlign: "center", padding: "2rem" }}>
-                  <Text as="p" variant="headingLg" tone="subdued">
-                    {t.content?.selectFromList || "Select an item from the list"}
-                  </Text>
+                  {themeSelector && items.length === 0 ? (
+                    // Theme-Auswahl: the selected theme has no synced content yet
+                    // (freshly switched / never synced). Offer a one-click sync.
+                    <BlockStack gap="400" inlineAlign="center">
+                      <Text as="p" variant="headingMd" tone="subdued">
+                        {t.content?.themeSwitchNeedsSync || "This theme hasn't been synced yet."}
+                      </Text>
+                      {revalidator && (
+                        <Button variant="primary" loading={isDiscovering} onClick={handleSyncAll}>
+                          {t.content?.themeSyncNow || "Load all entries now"}
+                        </Button>
+                      )}
+                    </BlockStack>
+                  ) : (
+                    <Text as="p" variant="headingLg" tone="subdued">
+                      {t.content?.selectFromList || "Select an item from the list"}
+                    </Text>
+                  )}
                 </div>
               </Card>
             </div>

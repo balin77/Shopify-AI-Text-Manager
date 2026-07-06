@@ -16,6 +16,17 @@ import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
+
+/**
+ * Prisma `where` fragment scoping ThemeContent/ThemeTranslation reads to the
+ * merchant-selected theme. Legacy rows (themeId "") are always included so the
+ * flat rubrics (system/delivery/…) and not-yet-backfilled rows stay visible
+ * (see PLAN_THEME_SELECTION §4.3). Returns {} when no theme is selected.
+ */
+function themeScope(selectedThemeId?: string) {
+  return selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {};
+}
 
 /** Domains that share the ThemeContent model. */
 // "customer_privacy" is the data path for the Cookie-Banner rubric — named after
@@ -62,8 +73,10 @@ export async function loadThemeGroupResponse(opts: {
    * its resource type(s) to keep one tab from leaking another's fields.
    */
   resourceTypes?: string[];
+  /** Shopify Theme-GID to scope the read to (Theme-Auswahl). null/undefined = no scope. */
+  selectedThemeId?: string;
 }): Promise<Response> {
-  const { db, shop, domain, groupId, page, limit, search, resourceTypes } = opts;
+  const { db, shop, domain, groupId, page, limit, search, resourceTypes, selectedThemeId } = opts;
 
   const themeGroups = await db.themeContent.findMany({
     where: {
@@ -71,6 +84,7 @@ export async function loadThemeGroupResponse(opts: {
       groupId,
       domain,
       ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+      ...themeScope(selectedThemeId),
     },
   });
 
@@ -153,8 +167,10 @@ export async function handleThemeContentActionResponse(opts: {
   groupId: string;
   /** See loadThemeGroupResponse — scopes a Theme sub-tab to its resource type(s). */
   resourceTypes?: string[];
+  /** Shopify Theme-GID to scope reads/writes to (Theme-Auswahl). */
+  selectedThemeId?: string;
 }): Promise<Response> {
-  const { db, admin, session, formData, domain, groupId, resourceTypes } = opts;
+  const { db, admin, session, formData, domain, groupId, resourceTypes, selectedThemeId } = opts;
   const actionType = getFormString(formData, "action");
 
   const themeGroups = await db.themeContent.findMany({
@@ -163,6 +179,7 @@ export async function handleThemeContentActionResponse(opts: {
       groupId,
       domain,
       ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+      ...themeScope(selectedThemeId),
     },
   });
 
@@ -177,7 +194,7 @@ export async function handleThemeContentActionResponse(opts: {
     case "loadTranslations": {
       const locale = getFormString(formData, "locale");
       const translations = await db.themeTranslation.findMany({
-        where: { shop: session.shop, groupId, locale, domain },
+        where: { shop: session.shop, groupId, locale, domain, ...themeScope(selectedThemeId) },
       });
       return json({ success: true, translations, locale });
     }
@@ -301,8 +318,11 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
             }
           }
           if (hasChanges) {
-            await db.themeContent.update({
-              where: { shop_resourceId_groupId: { shop: session.shop, resourceId: group.resourceId, groupId } },
+            // updateMany: the unique key now carries themeId, but group.resourceId
+            // is already theme-specific, so (shop, resourceId, groupId) targets the
+            // right row(s) without needing it.
+            await db.themeContent.updateMany({
+              where: { shop: session.shop, resourceId: group.resourceId, groupId },
               data: { translatableContent: content, lastSyncedAt: new Date() },
             });
           }
@@ -310,24 +330,27 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
 
         if (changedFields.length > 0) {
           await db.themeTranslation.deleteMany({
-            where: { shop: session.shop, groupId, key: { in: changedFields }, domain },
+            where: { shop: session.shop, groupId, key: { in: changedFields }, domain, ...themeScope(selectedThemeId) },
           });
         }
         return json({ success: true });
       } else {
+        // The row's themeId is derived from its resourceId GID (mirrors sync).
+        const rowThemeId = extractThemeIdFromResourceId(resourceId) ?? "";
         for (const [key, value] of Object.entries(updatedFields)) {
           await db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale: {
+              shop_resourceId_groupId_key_locale_themeId: {
                 shop: session.shop,
                 resourceId,
                 groupId,
                 key,
                 locale,
+                themeId: rowThemeId,
               },
             },
             update: { value: value as string, updatedAt: new Date() },
-            create: { shop: session.shop, groupId, resourceId, domain, locale, key, value: value as string },
+            create: { shop: session.shop, groupId, resourceId, themeId: rowThemeId, domain, locale, key, value: value as string },
           });
         }
         return json({ success: true });

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail } from "@shopify/polaris";
+import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail, Select } from "@shopify/polaris";
 import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import type { UnifiedItem } from "./UnifiedItemList";
 
@@ -24,6 +24,15 @@ interface UnifiedItemListMobileProps {
   };
   /** Optional: Custom render for list item */
   renderItem?: (item: UnifiedItem, isSelected: boolean) => React.ReactNode;
+  /** Optional: Theme-Auswahl dropdown (parity with desktop UnifiedItemList). */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    value: string;
+    onChange: (themeId: string) => void;
+    disabled?: boolean;
+    label: string;
+    helpText?: string;
+  };
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -38,6 +47,7 @@ export function UnifiedItemListMobile({
   onItemSelect,
   resourceName,
   renderItem,
+  themeSelector,
   t = {},
 }: UnifiedItemListMobileProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -185,6 +195,18 @@ export function UnifiedItemListMobile({
                 autoFocus
               />
             </div>
+
+            {/* Theme selector — parity with desktop (Theme-Auswahl) */}
+            {themeSelector && (
+              <Select
+                label={themeSelector.label}
+                options={themeSelector.options}
+                value={themeSelector.value}
+                onChange={themeSelector.onChange}
+                disabled={themeSelector.disabled}
+                helpText={themeSelector.helpText}
+              />
+            )}
 
             {/* Item Count */}
             <Text as="p" variant="bodySm" tone="subdued">

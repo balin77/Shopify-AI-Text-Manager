@@ -18,6 +18,26 @@ import { handleTranslateAll } from "~/actions/templates/templates-translate-all.
 import { handleUpdateContent } from "~/actions/templates/templates-update.action";
 import type { TranslatableField, ThemeContentRow, TemplatesActionContext } from "~/actions/templates/shared";
 import type { ThemeNavItem } from "~/types/theme-content-domain";
+import { listThemes, resolveSelectedThemeId, type ThemeOption } from "~/services/theme-selection.server";
+import type { LoaderContext } from "./loader-factory.server";
+
+/**
+ * Resolve the shop's theme list + the selected Theme-GID once per request,
+ * memoised on the loader ctx so loadData (scoping) and extraData (dropdown) share
+ * a single GET_THEMES round-trip.
+ */
+async function getThemeSelection(
+  ctx: LoaderContext,
+): Promise<{ themes: ThemeOption[]; selectedThemeId: string | null }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cache = ctx as any;
+  if (!cache.__themeSelection) {
+    const themes = await listThemes(ctx.admin);
+    const selectedThemeId = await resolveSelectedThemeId(ctx.session.shop, ctx.admin, themes);
+    cache.__themeSelection = { themes, selectedThemeId };
+  }
+  return cache.__themeSelection;
+}
 
 /**
  * Build a content loader scoped to one ThemeContent domain. Returns lightweight
@@ -36,11 +56,15 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
     itemsKey: "themes" as const,
 
     async loadData(ctx) {
+      // Theme-Auswahl: scope the item list to the selected theme. Legacy rows
+      // (themeId "") and flat rubrics stay visible via the compat-OR.
+      const { selectedThemeId } = await getThemeSelection(ctx);
       const allGroupRows = await ctx.db.themeContent.findMany({
         where: {
           shop: ctx.session.shop,
           domain,
           ...(resourceTypeFilter ? { resourceType: { in: resourceTypeFilter } } : {}),
+          ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
         },
         select: {
           groupId: true,
@@ -122,6 +146,13 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
 
       return { items: themes, ids: [] };
     },
+
+    // Theme-Auswahl dropdown data. Named `themeOptions` (NOT `themes`, which is
+    // the itemsKey holding the nav list) to avoid a response-key collision.
+    async extraData(ctx) {
+      const { themes, selectedThemeId } = await getThemeSelection(ctx);
+      return { themeOptions: themes, selectedThemeId };
+    },
   });
 }
 
@@ -144,6 +175,10 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
 
     const { db } = await import("../db.server");
 
+    // Theme-Auswahl: scope editor actions to the selected theme so a save/translate
+    // targets the chosen theme's resource (and never a sibling theme's rows).
+    const selectedThemeId = await resolveSelectedThemeId(session.shop, admin);
+
     // Theme sub-tabs share domain="theme" but a key-pattern groupId is not
     // guaranteed unique across resource types — scope to the tab's type(s) so
     // editor actions never touch a sibling tab's rows.
@@ -153,6 +188,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
         groupId,
         domain,
         ...(resourceTypes && resourceTypes.length > 0 ? { resourceType: { in: resourceTypes } } : {}),
+        ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
       },
     });
 
@@ -188,6 +224,7 @@ export function makeThemeContentRouteAction(domain: string, resourceTypes?: stri
       resourceId,
       keyToResourceId,
       keyToResourceType,
+      selectedThemeId,
     };
 
     try {
