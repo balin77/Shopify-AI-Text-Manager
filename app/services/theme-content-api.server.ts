@@ -89,6 +89,41 @@ export async function loadThemeGroupResponse(opts: {
   });
 
   if (themeGroups.length === 0) {
+    // Phase A graceful degradation (PLAN_THEME_SELECTION_B_LITE §3.4): if this
+    // group exists for the shop under a DIFFERENT theme (data is present, just
+    // not synced for the selected theme), return an EMPTY group + needsThemeSync
+    // hint instead of a hard 404. Without this, selecting a theme whose content
+    // hasn't been synced (e.g. an unpublished theme) makes every such group
+    // 404 in the browser. A true 404 is reserved for a groupId that does not
+    // exist for the shop under any theme at all.
+    // Existence probe: does this group exist for the shop under ANY theme? No
+    // theme scope and no resourceType filter here — this only distinguishes
+    // "exists, wrong theme" (→ graceful empty) from "unknown group" (→ 404).
+    const anyThemeRow = selectedThemeId
+      ? await db.themeContent.findFirst({
+          where: { shop, groupId, domain },
+          select: { groupName: true, groupIcon: true },
+        })
+      : null;
+    if (anyThemeRow) {
+      return json(
+        {
+          theme: {
+            id: `group_${groupId}`,
+            title: anyThemeRow.groupName,
+            name: anyThemeRow.groupName,
+            icon: anyThemeRow.groupIcon,
+            groupId,
+            role: "THEME_GROUP",
+            translatableContent: [],
+            contentCount: 0,
+            needsThemeSync: true,
+            pagination: { page: 1, limit, totalCount: 0, totalPages: 0, hasNextPage: false, hasPreviousPage: false },
+          },
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    }
     return json({ success: false, error: "Group not found" }, { status: 404 });
   }
 
