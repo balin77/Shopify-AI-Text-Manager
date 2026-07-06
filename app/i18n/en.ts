@@ -303,6 +303,8 @@ export const en: Translation = {
     themeSelectorPublished: "(published)",
     themeSwitchNeedsSync: "This theme hasn't been synced yet.",
     themeSyncNow: "Load all entries now",
+    themeNoEntries: "No entries for this theme in this section.",
+    themeSyncRetry: "Sync again",
     // Item list
     searchPlaceholder: "Search...",
     paginationOf: "of",
