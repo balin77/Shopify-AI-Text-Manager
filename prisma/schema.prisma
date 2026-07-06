@@ -693,6 +693,11 @@ model ThemeContent {
   groupName           String // "Article", "Collection", "Cart", etc.
   groupIcon           String // "📝", "📂", "🛒", etc.
   translatableContent Json // Array of translatable items with keys and values
+  // True only for ONLINE_STORE_THEME_APP_EMBED rows that belong to OUR app
+  // (block.type app-handle matches contentpilot). Our embeds are pure technical
+  // selectors/config, so the editor locks them read-only in every locale; other
+  // apps' embeds stay editable. Derived from settings_data.json at full sync.
+  appEmbedOwned       Boolean  @default(false)
   lastSyncedAt        DateTime @default(now())
 
   @@unique([shop, resourceId, groupId])

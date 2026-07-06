@@ -49,6 +49,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
           resourceType: true,
           resourceTypeLabel: true,
           translatableContent: true,
+          appEmbedOwned: true,
         },
         // Deterministic scan order so first-row-derived fields (groupName/icon)
         // don't flip between reloads.
@@ -76,10 +77,14 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
         const items = Array.isArray(row.translatableContent)
           ? (row.translatableContent as unknown as TranslatableField[])
           : [];
-        const isEmbed = row.resourceType === APP_EMBED;
+        // Only OUR app's embeds are locked read-only (pure technical selectors);
+        // other apps' embeds may hold real translatable labels, so they stay
+        // editable (parity with Translate & Adapt). appEmbedOwned is set at full
+        // sync from the authoritative block.type app-handle.
+        const isOwnedEmbed = row.resourceType === APP_EMBED && row.appEmbedOwned === true;
         if (existing) {
           for (const item of items) if (item.key) existing.uniqueKeys.add(item.key);
-          if (isEmbed) existing.embedTechnical = true;
+          if (isOwnedEmbed) existing.embedTechnical = true;
           // Downgrade to "mixed" (null) as soon as a second resource type appears.
           if (existing.resourceType !== null && existing.resourceType !== row.resourceType) {
             existing.resourceType = null;
@@ -88,7 +93,7 @@ export function makeThemeDomainLoader(domain: string, logPrefix: string, resourc
         } else {
           const keys = new Set<string>();
           for (const item of items) if (item.key) keys.add(item.key);
-          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
+          groupMap.set(row.groupId, { groupName: row.groupName, groupIcon: row.groupIcon, uniqueKeys: keys, embedTechnical: isOwnedEmbed, resourceType: row.resourceType, resourceTypeLabel: row.resourceTypeLabel });
         }
       }
 

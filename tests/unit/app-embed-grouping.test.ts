@@ -25,7 +25,7 @@ vi.mock('~/services/sync-utils', () => ({
 }));
 vi.mock('~/services/content-sync.service', () => ({ ContentSyncService: class {} }));
 
-import { extractAppEmbedBlockId, appEmbedGroupId, prettifyAppEmbedType } from '~/services/background-sync.service';
+import { extractAppEmbedBlockId, appEmbedGroupId, prettifyAppEmbedType, isOwnAppEmbedType } from '~/services/background-sync.service';
 
 describe('extractAppEmbedBlockId', () => {
   it('reads the blockId shared by an embed resource\'s keys', () => {
@@ -84,5 +84,24 @@ describe('prettifyAppEmbedType', () => {
     expect(prettifyAppEmbedType('shopify://shop/...')).toBeNull();
     expect(prettifyAppEmbedType(undefined)).toBeNull();
     expect(prettifyAppEmbedType(42)).toBeNull();
+  });
+});
+
+describe('isOwnAppEmbedType', () => {
+  it('matches our own app-embed blocks (prod + dev handles)', () => {
+    expect(isOwnAppEmbedType('shopify://apps/contentpilot-ai/blocks/locale-switcher/abcd')).toBe(true);
+    expect(isOwnAppEmbedType('shopify://apps/contentpilot-ai-dev/blocks/variant-gallery/ef56')).toBe(true);
+  });
+
+  it('does NOT match other apps\' embeds (they stay editable)', () => {
+    expect(isOwnAppEmbedType('shopify://apps/klaviyo/blocks/signup-form/1234')).toBe(false);
+    expect(isOwnAppEmbedType('shopify://apps/judgeme-reviews/blocks/widget/9999')).toBe(false);
+  });
+
+  it('returns false for non-app-block types and non-strings', () => {
+    expect(isOwnAppEmbedType('text')).toBe(false);
+    expect(isOwnAppEmbedType('shopify://shop/...')).toBe(false);
+    expect(isOwnAppEmbedType(undefined)).toBe(false);
+    expect(isOwnAppEmbedType(42)).toBe(false);
   });
 });

@@ -34,6 +34,8 @@ export interface FieldRendererProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /** If true, the read-only reason is app-embed technical content — swaps the tooltip hint. */
+  embedTechnical?: boolean;
   /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
   fieldError?: string;
   onGenerateAI?: () => void;
@@ -73,6 +75,7 @@ export function UnifiedFieldRenderer(
     disableGeneration,
     isFallbackValue,
     readOnly,
+    embedTechnical,
     fieldError,
     onGenerateAI,
     onFormatAI,
@@ -277,11 +280,16 @@ export function UnifiedFieldRenderer(
 
   const shouldShowClear = !(field.key === "title" && isPrimaryLocale);
 
-  // Read-only fields (main language of resource-backed rubrics like Abo-Pläne)
-  // get a hover tooltip explaining why they can't be edited here.
+  // Read-only fields get a hover tooltip explaining why they can't be edited.
+  // App-embed technical fields (CSS selectors / config) are locked in EVERY
+  // locale, so they get a dedicated hint; other read-only fields (main language
+  // of resource-backed rubrics like Abo-Pläne) get the primary-read-only hint.
   const readOnlyHint = String(
-    t.content?.primaryReadOnlyHint ||
-    "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."
+    embedTechnical
+      ? (t.content?.appEmbedReadOnlyHint ||
+         "Technical app-embed element — it can't be edited in the main language or in translations, because changing it would break the embed.")
+      : (t.content?.primaryReadOnlyHint ||
+         "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.")
   );
   const withReadOnlyTooltip = (el: ReactElement): ReactElement =>
     readOnly ? (

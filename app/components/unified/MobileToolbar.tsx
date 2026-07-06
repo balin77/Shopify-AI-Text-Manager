@@ -36,6 +36,8 @@ interface MobileToolbarProps {
   onTranslateAll: () => void;
   onClearAll: () => void;
   onToggleSendImageToAI?: () => void;
+  /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
+  disableBulkActions?: boolean;
 
   // Send image to AI feature
   sendImageToAI?: boolean;
@@ -76,6 +78,7 @@ export function MobileToolbar({
   onTranslateAll,
   onClearAll,
   onToggleSendImageToAI,
+  disableBulkActions = false,
   sendImageToAI = false,
   images = [],
   featuredImage,
@@ -173,6 +176,7 @@ export function MobileToolbar({
             <ActionList
               actionRole="menuitem"
               items={[
+                ...(disableBulkActions ? [] : [
                 {
                   content: isTranslating
                     ? (t.translating || "Translating...")
@@ -191,6 +195,7 @@ export function MobileToolbar({
                   },
                   destructive: true,
                 },
+                ]),
                 // Send image to AI checkbox (only in main language for products/collections/blogs with images)
                 ...((currentLanguage === primaryLocale &&
                    (contentType === "products" || contentType === "collections" || contentType === "blogs") &&

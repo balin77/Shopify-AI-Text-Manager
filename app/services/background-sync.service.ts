@@ -46,6 +46,8 @@ interface ThemeContentItem extends TranslatableContentItem {
   _groupId: string;
   _groupName: string;
   _groupIcon: string;
+  /** APP_EMBED only: true when the embed belongs to our own app (see isOwnAppEmbedType). */
+  _appEmbedOwned?: boolean;
 }
 
 /** Theme translatable resource from Shopify */
@@ -194,6 +196,21 @@ export function prettifyAppEmbedType(type: unknown): string | null {
   const app = titleizeHandle(m[1]);
   const block = titleizeHandle(m[2]);
   return block ? `${app} – ${block}` : app;
+}
+
+/**
+ * Whether an app-embed block `type` belongs to OUR app. The app-handle segment
+ * of `shopify://apps/<app-handle>/blocks/...` carries our handle (e.g.
+ * "contentpilot-ai" in prod, "contentpilot-ai-dev" in dev — both contain
+ * "contentpilot"). Matching the authoritative handle (not the lossy display
+ * name) keeps other apps' embeds editable while locking ours. Normalized so
+ * handle punctuation/casing variants still match.
+ */
+export function isOwnAppEmbedType(type: unknown): boolean {
+  if (typeof type !== 'string') return false;
+  const m = type.match(/^shopify:\/\/apps\/([^/]+)\/blocks\//);
+  if (!m) return false;
+  return m[1].toLowerCase().replace(/[^a-z0-9]/g, '').includes('contentpilot');
 }
 
 export interface SyncStats {
@@ -853,8 +870,8 @@ export class BackgroundSyncService {
    * translatable keys. Best-effort: returns an empty map on any error so the
    * sync falls back to generic names.
    */
-  private async fetchAppEmbedNameMap(): Promise<Map<string, string>> {
-    const map = new Map<string, string>();
+  private async fetchAppEmbedNameMap(): Promise<Map<string, { name?: string; owned: boolean }>> {
+    const map = new Map<string, { name?: string; owned: boolean }>();
     try {
       // Mirror the proven GET_THEME_FILES shape (content.queries.ts): `files`
       // is a connection and REQUIRES `first`/`last`, and we filter to the MAIN
@@ -897,8 +914,10 @@ export class BackgroundSyncService {
       const blocks = parsed?.current?.blocks;
       if (blocks && typeof blocks === 'object') {
         for (const [blockId, block] of Object.entries(blocks)) {
-          const name = prettifyAppEmbedType((block as { type?: unknown })?.type);
-          if (name) map.set(blockId, name);
+          const type = (block as { type?: unknown })?.type;
+          const name = prettifyAppEmbedType(type);
+          const owned = isOwnAppEmbedType(type);
+          if (name || owned) map.set(blockId, { name: name ?? undefined, owned });
         }
       }
       logger.debug(`[BackgroundSync] app-embed name map built: ${map.size} block(s) named (current.blocks: ${blocks ? Object.keys(blocks).length : 0})`);
@@ -1269,7 +1288,7 @@ export class BackgroundSyncService {
       // App-embed naming: blockId→name map from settings_data.json (lazily
       // fetched on the first APP_EMBED resource), plus a counter for embeds we
       // can't resolve a name for.
-      let appEmbedNames: Map<string, string> | null = null;
+      let appEmbedNames: Map<string, { name?: string; owned: boolean }> | null = null;
       let appEmbedFallbackCount = 0;
 
       // Fetch resources for each working resource type
@@ -1387,13 +1406,16 @@ export class BackgroundSyncService {
               }
               const blockId = extractAppEmbedBlockId(resource.translatableContent || []);
               const groupKey = appEmbedGroupId(resource.resourceId, blockId);
-              const derivedName = blockId ? appEmbedNames.get(blockId) : undefined;
-              const appEmbedGroupName = derivedName || `App-Einbettung ${++appEmbedFallbackCount}`;
+              const embedInfo = blockId ? appEmbedNames.get(blockId) : undefined;
+              const appEmbedGroupName = embedInfo?.name || `App-Einbettung ${++appEmbedFallbackCount}`;
+              // Lock only OUR embeds (technical selectors); other apps stay editable.
+              const appEmbedOwned = embedInfo?.owned ?? false;
               contentByGroup[groupKey] = (resource.translatableContent || []).map((item) => ({
                 ...item,
                 _groupId: groupKey,
                 _groupName: appEmbedGroupName,
                 _groupIcon: '🔌',
+                _appEmbedOwned: appEmbedOwned,
               }));
             } else {
             const unmatchedContent: TranslatableContentItem[] = [];
@@ -1634,6 +1656,7 @@ export class BackgroundSyncService {
                   groupIcon,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
                   translatableContent: items as any,
+                  appEmbedOwned: firstItem._appEmbedOwned ?? false,
                   lastSyncedAt: new Date(),
                 },
                 update: {
@@ -1644,6 +1667,7 @@ export class BackgroundSyncService {
                   groupIcon,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
                   translatableContent: items as any,
+                  appEmbedOwned: firstItem._appEmbedOwned ?? false,
                   lastSyncedAt: new Date(),
                 },
               });

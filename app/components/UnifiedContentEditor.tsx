@@ -286,6 +286,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning
     || loadingFieldKeys.has("__translateAll__");
 
+  // App-embed groups are technical content (CSS selectors / config). Editing or
+  // translating them would break the embed on the storefront, so we lock every
+  // field — in the primary language AND in all foreign locales — while still
+  // showing the items (parity with Translate & Adapt). Server loader marks the
+  // group with `embedTechnical` (theme-content-domain.server.ts).
+  const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
+
   // Translated resource names for the item list
   const resourceNames = (t.content?.resourceNames || {}) as Record<string, string>;
   const translatedResourceName = {
@@ -581,6 +588,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   validationVersion={helpers.validationVersion}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
+                  disableBulkActions={isEmbedTechnical}
                   onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
                   sendImageToAI={state.sendImageToAI}
                   images={state.images}
@@ -618,7 +626,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     onToggleLanguage={handlers.handleToggleLanguage}
                     onTranslateAll={handlers.handleTranslateAll}
                     isTranslating={isAllLocalesActionRunning}
-                    showTranslateAll={true}
+                    showTranslateAll={!isEmbedTechnical}
                     showReloadButton={true}
                     isLoadingData={state.isLoadingData}
                     validationOverlays={validationOverlays}
@@ -640,7 +648,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     <InlineStack gap="200">
                       {state.currentLanguage === primaryLocale ? (
                         <>
-                          {/* Primary locale: Translate to ALL foreign languages */}
+                          {/* Primary locale: Translate to ALL foreign languages.
+                              Hidden for app-embed technical groups — translating
+                              CSS selectors / config would break the embed. */}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleTranslateAll}
                             loading={isAllLocalesActionRunning}
@@ -651,8 +662,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
-                          {/* Clear All: hidden for templates when primary edit is not enabled */}
-                          {!(isThemeContentType(config.contentType) && !ENABLE_THEME_PRIMARY_EDIT) && (
+                          )}
+                          {/* Clear All: hidden for templates when primary edit is not
+                              enabled, and for app-embed technical groups. */}
+                          {!isEmbedTechnical && !(isThemeContentType(config.contentType) && !ENABLE_THEME_PRIMARY_EDIT) && (
                             <Button
                               onClick={handlers.handleClearAllClick}
                               size="slim"
@@ -673,7 +686,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         </>
                       ) : (
                         <>
-                          {/* Foreign locale: Translate ONLY this locale */}
+                          {/* Foreign locale: Translate ONLY this locale. Hidden for
+                              app-embed technical groups (locked in every locale). */}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleTranslateAllForLocale}
                             loading={isPerLocaleActionRunning || isAllLocalesActionRunning}
@@ -684,6 +699,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
+                          )}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleClearAllForLocaleClick}
                             size="slim"
@@ -691,6 +708,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           >
                             🗑️ {t.content?.clearAll || "Clear All"}
                           </Button>
+                          )}
                         </>
                       )}
                     </InlineStack>
@@ -834,6 +852,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         && state.currentLanguage === primaryLocale
                         && (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates");
 
+                      // App-embed technical fields are locked in every locale.
+                      const isFieldReadOnly = isTemplatePrimaryReadOnly || isEmbedTechnical;
+
                       return fieldDefinitions.map((field) => {
                         if (field.type === "image-gallery" && imageGalleryReplacement) {
                           return <div key={field.key}>{imageGalleryReplacement}</div>;
@@ -853,17 +874,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           disableGeneration={isThemeContentType(config.contentType)}
                           isFallbackValue={state.fallbackFields?.has(field.key) || false}
                           fieldError={state.fieldErrors?.[field.key]}
-                          readOnly={isTemplatePrimaryReadOnly}
-                          onGenerateAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
-                          onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
-                          onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
-                          onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
-                          onCopy={field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined}
-                          onCopyToAllLocales={field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined}
+                          readOnly={isFieldReadOnly}
+                          embedTechnical={isEmbedTechnical}
+                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
+                          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
+                          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
+                          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+                          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
+                          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
                           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                          onClear={isTemplatePrimaryReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
+                          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
                           htmlMode={state.htmlModes[field.key] || "rendered"}
                           onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
                           shopLocales={shopLocales}
