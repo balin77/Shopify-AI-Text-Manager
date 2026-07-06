@@ -237,7 +237,59 @@ export async function listKeywords(db: PrismaClient, shop: string): Promise<SeoK
   });
 }
 
-/** Delete a keyword row — scoped to the shop so one shop can't delete another's. */
+/** Delete a keyword row — scoped to the shop so one shop can't delete another's.
+ *  No `locale` parameter: `id` is already the row's own primary key (one row per
+ *  locale), so it's unambiguous without it. */
 export async function deleteKeyword(db: PrismaClient, shop: string, id: string): Promise<void> {
   await db.seoKeyword.deleteMany({ where: { id, shop } });
 }
+
+// ── Locale-aware analysis input ─────────────────────────────────────────────
+
+/** A flat ContentTranslation row, as selected by the keywords loader's batched
+ *  findMany over [resourceIds] x [locales] x the four SEO-relevant keys. */
+export interface TranslationRow {
+  resourceId: string;
+  locale: string;
+  key: string; // "title" | "meta_title" | "meta_description" | "body_html"
+  value: string;
+}
+
+/** ContentTranslation.key for each analyzeOnPage input field — mirrors
+ *  hreflang.service.ts's TRANSLATION_KEYS / audit.service.ts's FIELD_TO_KEY
+ *  (same four Shopify translation keys the sync pipeline writes for every
+ *  audited resource type: Product, Collection, Article, Page). */
+const CONTENT_TRANSLATION_KEY: Record<keyof TranslatedItemContent, string> = {
+  title: "title",
+  seoTitle: "meta_title",
+  metaDescription: "meta_description",
+  bodyHtml: "body_html",
+};
+
+export interface TranslatedItemContent {
+  title: string;
+  seoTitle: string;
+  metaDescription: string;
+  bodyHtml: string;
+}
+
+/**
+ * Build the analyzeOnPage input for one (resourceId, locale) pair from its
+ * ContentTranslation rows (already filtered/grouped to that single pair by the
+ * caller). Untranslated fields fall back to "" — NOT the primary-locale value
+ * — so the analysis honestly reports the keyword as missing rather than
+ * crediting a translation that was never made.
+ */
+export function buildTranslatedContentInput(rowsForItem: TranslationRow[]): TranslatedItemContent {
+  const get = (key: string) => rowsForItem.find((r) => r.key === key)?.value ?? "";
+  return {
+    title: get(CONTENT_TRANSLATION_KEY.title),
+    seoTitle: get(CONTENT_TRANSLATION_KEY.seoTitle),
+    metaDescription: get(CONTENT_TRANSLATION_KEY.metaDescription),
+    bodyHtml: get(CONTENT_TRANSLATION_KEY.bodyHtml),
+  };
+}
+
+/** The ContentTranslation.key values buildTranslatedContentInput reads — used
+ *  by the loader to scope its findMany's `key: { in: ... }` filter. */
+export const TRANSLATED_CONTENT_KEYS: string[] = Object.values(CONTENT_TRANSLATION_KEY);

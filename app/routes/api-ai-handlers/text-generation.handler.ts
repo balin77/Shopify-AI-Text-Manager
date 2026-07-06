@@ -142,6 +142,14 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   // straight from the content editor's `selectedItem.id`, e.g. db.product.id),
   // and locale "" is the primary-locale row the keywords feature manages, so
   // this lookup matches keys 1:1 with no normalization needed.
+  //
+  // Locale dimension (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5b): `mainLanguage`
+  // here is a human-readable display name (e.g. "German"), not a Shopify
+  // locale code, and this handler always generates content in the PRIMARY
+  // language — locale "" therefore stays correct. If a future translation-
+  // generation flow starts passing an explicit target locale/language code
+  // through `ctx`/formData, the lookup below should switch to that locale's
+  // SeoKeyword row instead of hardcoding "".
   const trackedKeywordRow = ["title", "seoTitle", "metaDescription", "description"].includes(fieldType)
     ? await db.seoKeyword.findUnique({
         where: { shop_resourceId_locale: { shop: session.shop, resourceId: itemId, locale: "" } },

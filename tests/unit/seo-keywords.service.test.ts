@@ -4,6 +4,9 @@ import {
   normalizeKeyword,
   setKeyword,
   deleteKeyword,
+  listKeywords,
+  buildTranslatedContentInput,
+  type TranslationRow,
 } from "~/services/seo/keywords.service";
 
 /**
@@ -209,5 +212,69 @@ describe("persistence helpers", () => {
     const db = { seoKeyword: { deleteMany } } as any;
     await deleteKeyword(db, "s.myshopify.com", "kw1");
     expect(deleteMany).toHaveBeenCalledWith({ where: { id: "kw1", shop: "s.myshopify.com" } });
+  });
+
+  // Locale dimension (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5b).
+  it("setKeyword upserts on the [shop, resourceId, locale] key for a non-primary locale", async () => {
+    const upsert = vi.fn(async (_args: any) => ({}));
+    const db = { seoKeyword: { upsert } } as any;
+    await setKeyword(db, "s.myshopify.com", {
+      resourceType: "Product",
+      resourceId: "gid://shopify/Product/1",
+      keyword: "chaussures bleues",
+      locale: "fr",
+    });
+    const arg = upsert.mock.calls[0][0];
+    expect(arg.where.shop_resourceId_locale).toEqual({
+      shop: "s.myshopify.com",
+      resourceId: "gid://shopify/Product/1",
+      locale: "fr",
+    });
+    expect(arg.create.locale).toBe("fr");
+  });
+
+  it("listKeywords returns rows across all locales, including the locale field", async () => {
+    const rows = [
+      { id: "1", resourceType: "Product", resourceId: "p1", keyword: "widget", locale: "", gscPosition: null, gscClicks: null, gscImpressions: null, gscCtr: null, updatedAt: new Date() },
+      { id: "2", resourceType: "Product", resourceId: "p1", keyword: "gadget", locale: "fr", gscPosition: null, gscClicks: null, gscImpressions: null, gscCtr: null, updatedAt: new Date() },
+    ];
+    const findMany = vi.fn(async (_args: any) => rows);
+    const db = { seoKeyword: { findMany } } as any;
+    const result = await listKeywords(db, "s.myshopify.com");
+    // No locale filter — every locale for the shop comes back in one call.
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: "s.myshopify.com" });
+    expect(result.map((r) => r.locale)).toEqual(["", "fr"]);
+  });
+});
+
+describe("buildTranslatedContentInput", () => {
+  const rows: TranslationRow[] = [
+    { resourceId: "p1", locale: "fr", key: "title", value: "Titre FR" },
+    { resourceId: "p1", locale: "fr", key: "meta_description", value: "Description FR" },
+    // A different locale/resource row in the same batch must not leak in —
+    // the caller is expected to pre-filter to one (resourceId, locale) pair.
+    { resourceId: "p1", locale: "de", key: "title", value: "Titel DE" },
+  ];
+
+  it("maps ContentTranslation keys to the analyzeOnPage input shape", () => {
+    const input = buildTranslatedContentInput(rows.filter((r) => r.locale === "fr"));
+    expect(input).toEqual({
+      title: "Titre FR",
+      seoTitle: "",
+      metaDescription: "Description FR",
+      bodyHtml: "",
+    });
+  });
+
+  it("falls back to empty string for untranslated fields rather than any primary value", () => {
+    const input = buildTranslatedContentInput([]);
+    expect(input).toEqual({ title: "", seoTitle: "", metaDescription: "", bodyHtml: "" });
+  });
+
+  it("the empty-fallback input analyzes as keyword-missing (not silently passing)", () => {
+    const input = buildTranslatedContentInput([]);
+    const result = analyzeOnPage({ keyword: "widget", ...input, resourceType: "Product" });
+    expect(result.score).toBe(0);
+    expect(result.presence).toEqual({ title: false, seoTitle: false, metaDescription: false, h1: false, body: false });
   });
 });

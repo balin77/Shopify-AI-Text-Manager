@@ -34,9 +34,13 @@ import {
   listKeywords,
   setKeyword,
   deleteKeyword,
+  buildTranslatedContentInput,
+  TRANSLATED_CONTENT_KEYS,
   type KeywordResourceType,
   type DensityBand,
+  type TranslationRow,
 } from "../services/seo/keywords.service";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getFormString } from "../utils/form-data.utils";
 
 /** Items shown per type in the add-keyword picker. */
@@ -56,9 +60,17 @@ interface ItemContent {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
+
+  // Shop locales (60s-cached) drive both the add-form's locale picker and the
+  // per-row translated-content analysis below. Primary locale is stored as ""
+  // in SeoKeyword (existing convention) — its real Shopify code is only used
+  // for display (the Locale column badge).
+  const shopLocales = await getCachedShopLocales(admin, shop);
+  const primaryLocale = shopLocales.find((l: any) => l.primary);
+  const secondaryLocales = shopLocales.filter((l: any) => !l.primary && l.published);
 
   const rows = await listKeywords(db, shop);
 
@@ -114,14 +126,50 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null,
   ]);
 
+  // Locale rows (locale !== "") are analyzed against their TRANSLATED content
+  // (ContentTranslation), not the base table — a merchant tracking a keyword
+  // for the French edition of a product needs to know if the FRENCH title/meta
+  // actually contain it, not the German original. One batched findMany over
+  // every (resourceId, locale) pair the tracked rows touch, then indexed below.
+  const localeRows = rows.filter((row) => row.locale !== "");
+  const translationIndex = new Map<string, TranslationRow[]>();
+  if (localeRows.length > 0) {
+    const resourceIds = Array.from(new Set(localeRows.map((row) => row.resourceId)));
+    const locales = Array.from(new Set(localeRows.map((row) => row.locale)));
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceId: { in: resourceIds },
+        locale: { in: locales },
+        key: { in: TRANSLATED_CONTENT_KEYS },
+      },
+      select: { resourceId: true, locale: true, key: true, value: true },
+    });
+    for (const t of translations) {
+      const bucketKey = `${t.resourceId}::${t.locale}`;
+      let bucket = translationIndex.get(bucketKey);
+      if (!bucket) {
+        bucket = [];
+        translationIndex.set(bucketKey, bucket);
+      }
+      bucket.push(t);
+    }
+  }
+
   const keywords = rows.map((row) => {
     const c = content.get(row.resourceId);
+    const analysisInput =
+      row.locale === ""
+        ? {
+            title: c?.title ?? "",
+            seoTitle: c?.seoTitle ?? "",
+            metaDescription: c?.metaDescription ?? "",
+            bodyHtml: c?.bodyHtml ?? "",
+          }
+        : buildTranslatedContentInput(translationIndex.get(`${row.resourceId}::${row.locale}`) ?? []);
     const analysis = analyzeOnPage({
       keyword: row.keyword,
-      title: c?.title ?? "",
-      seoTitle: c?.seoTitle ?? "",
-      metaDescription: c?.metaDescription ?? "",
-      bodyHtml: c?.bodyHtml ?? "",
+      ...analysisInput,
       // Product/Collection H1s come from the title (themes render it as the
       // page H1); Article/Page may also carry an explicit <h1> in the body.
       resourceType: row.resourceType as KeywordResourceType,
@@ -131,6 +179,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       resourceType: row.resourceType,
       resourceId: row.resourceId,
       keyword: row.keyword,
+      locale: row.locale,
+      // Display code for the Locale column badge: primary rows are stored as
+      // "" so they show the shop's actual primary locale code, not a blank badge.
+      localeDisplay: row.locale || primaryLocale?.locale || "",
       itemTitle: c?.title ?? "",
       itemMissing: !c,
       score: analysis.score,
@@ -156,13 +208,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     Page: pages,
   };
 
-  return json({ keywords, pickers });
+  // Locale options for the add-form's Select: primary first (value "" — the
+  // SeoKeyword convention), then published secondaries by their Shopify code.
+  const localeOptions = [
+    { locale: "", name: primaryLocale?.name ?? primaryLocale?.locale ?? "", primary: true },
+    ...secondaryLocales.map((l: any) => ({ locale: String(l.locale), name: String(l.name), primary: false })),
+  ];
+
+  return json({ keywords, pickers, localeOptions });
 };
 
 type ActionResult = { ok: true; kind: "saved" | "deleted" } | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const form = await request.formData();
   const actionType = getFormString(form, "actionType");
@@ -171,10 +230,24 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const resourceType = getFormString(form, "resourceType") as KeywordResourceType;
     const resourceId = getFormString(form, "resourceId");
     const keyword = getFormString(form, "keyword");
+    const localeInput = getFormString(form, "locale");
     if (!RESOURCE_TYPES.includes(resourceType) || !resourceId || !keyword.trim()) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    await setKeyword(db, session.shop, { resourceType, resourceId, keyword });
+    // Validate the posted locale server-side against the shop's actual
+    // published locales — "" (primary) is always accepted without a lookup.
+    let locale = "";
+    if (localeInput) {
+      const shopLocales = await getCachedShopLocales(admin, session.shop);
+      const isPublishedSecondary = shopLocales.some(
+        (l: any) => !l.primary && l.published && l.locale === localeInput,
+      );
+      if (!isPublishedSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      locale = localeInput;
+    }
+    await setKeyword(db, session.shop, { resourceType, resourceId, keyword, locale });
     return json<ActionResult>({ ok: true, kind: "saved" });
   }
 
@@ -203,7 +276,7 @@ const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
 };
 
 export default function SeoKeywords() {
-  const { keywords, pickers } = useLoaderData<typeof loader>();
+  const { keywords, pickers, localeOptions } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -218,6 +291,9 @@ export default function SeoKeywords() {
   // so the field can show a human-readable label while itemId stores the id.
   const [itemInputValue, setItemInputValue] = useState("");
   const [keyword, setKeywordInput] = useState("");
+  // "" = primary locale (default). Not reset after save, same as `type`, so
+  // tracking several keywords in a row for the same secondary locale is quick.
+  const [locale, setLocale] = useState("");
   // Which row's delete is in flight — the rowFetcher is shared across rows,
   // so this is what lets us spinner the right button and disable the rest.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -262,6 +338,14 @@ export default function SeoKeywords() {
     return itemOptions.filter((o) => o.label.toLowerCase().includes(q));
   }, [itemOptions, itemInputValue]);
   const typeOptions = RESOURCE_TYPES.map((rt) => ({ label: k.types[rt], value: rt }));
+  const localeSelectOptions = useMemo(
+    () =>
+      localeOptions.map((l) => ({
+        label: l.primary ? `${l.name} (${k.localePrimary})` : l.name,
+        value: l.locale,
+      })),
+    [localeOptions, k.localePrimary],
+  );
 
   const canSave = !!itemId && !!keyword.trim();
 
@@ -331,13 +415,21 @@ export default function SeoKeywords() {
                   onChange={setKeywordInput}
                 />
               </div>
+              <div style={{ minWidth: "160px" }}>
+                <Select
+                  label={k.localeLabel}
+                  options={localeSelectOptions}
+                  value={locale}
+                  onChange={setLocale}
+                />
+              </div>
               <Button
                 variant="primary"
                 disabled={!canSave}
                 loading={saveFetcher.state !== "idle"}
                 onClick={() =>
                   saveFetcher.submit(
-                    { actionType: "setKeyword", resourceType: type, resourceId: itemId, keyword },
+                    { actionType: "setKeyword", resourceType: type, resourceId: itemId, keyword, locale },
                     { method: "post" },
                   )
                 }
@@ -373,6 +465,7 @@ export default function SeoKeywords() {
                   headings={[
                     { title: k.colItem },
                     { title: k.colKeyword },
+                    { title: k.colLocale },
                     { title: k.colScore },
                     { title: k.colDensity },
                     { title: k.colPresence },
@@ -395,6 +488,9 @@ export default function SeoKeywords() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Text as="span" variant="bodyMd">{row.keyword}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Badge>{row.localeDisplay || "–"}</Badge>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
