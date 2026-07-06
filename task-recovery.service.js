@@ -50,6 +50,10 @@ const LONG_RUNNING_TASK_TYPES = [
   // shops; give it the same generous stuck-task threshold as other detached
   // Task runners rather than the short default cutoff.
   'seoAudit',
+  // Manual bulk-meta editor's large-batch save (Anhang C3, seo-bulk-meta.handler.ts) —
+  // up to 500 sequential Shopify saves + DB updates, same shape as seoBulkFix
+  // minus the AI call, so it needs the same generous stuck-task threshold.
+  'seoBulkMeta',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

@@ -65,6 +65,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "tool",
   },
   {
+    id: "bulkMeta",
+    path: "/app/seo/bulk-meta",
+    icon: "📝",
+    labelKey: "bulkMeta",
+    kind: "tool",
+    planGate: "basic",
+  },
+  {
     id: "searchConsole",
     path: "/app/seo/search-console",
     icon: "📈",
