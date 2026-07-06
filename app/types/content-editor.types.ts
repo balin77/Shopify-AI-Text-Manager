@@ -58,6 +58,8 @@ export type MarketTranslations = Record<
 export interface AltTextTranslation {
   locale: string;
   altText: string;
+  /** Market scope ("" / undefined = global). Non-empty = market-specific alt text. */
+  marketId?: string;
 }
 
 export interface ContentImage {

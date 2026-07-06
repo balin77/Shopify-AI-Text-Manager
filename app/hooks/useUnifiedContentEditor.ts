@@ -525,6 +525,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItemRef,
     selectedItemIdRef,
     currentLanguage,
+    selectedMarketId,
     primaryLocale,
     shopLocales,
     config,
@@ -1490,6 +1491,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         }
       } else {
+        // Mirror the saved alt-text into the in-memory translations, scoped to
+        // the market it was saved under so market and global entries coexist.
+        const savedMarketId = selectedMarketIdRef.current;
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
@@ -1498,13 +1502,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 item.images[index].altTextTranslations = [];
               }
               item.images[index].altTextTranslations = item.images[index].altTextTranslations.filter(
-                (t: AltTextTranslation) => t.locale !== savedLocale
+                (t: AltTextTranslation) => !(t.locale === savedLocale && (t.marketId ?? "") === savedMarketId)
               );
               item.images[index].altTextTranslations.push({
                 locale: savedLocale,
                 altText: altText,
+                marketId: savedMarketId,
               });
-              debugLog.response(' Updated alt-text translation for image', index, 'locale:', savedLocale);
+              debugLog.response(' Updated alt-text translation for image', index, 'locale:', savedLocale, 'market:', savedMarketId || '(global)');
             }
           }
         }

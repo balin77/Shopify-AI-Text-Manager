@@ -181,6 +181,8 @@ async function updateImageAltTexts(
   });
 
   const failedAltTextIndices: number[] = [];
+  // Market scope for foreign-locale alt-text ("" = global; primary is always global).
+  const marketId = params.locale !== params.primaryLocale ? (params.marketId || "") : "";
 
   // Get product images from Shopify
   const productResponse = await gateway.graphql(
@@ -314,8 +316,8 @@ async function updateImageAltTexts(
         try {
           const removeResponse = await gateway.graphql(
             `#graphql
-              mutation removeAltTextTranslation($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+              mutation removeAltTextTranslation($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
                   userErrors {
                     field
                     message
@@ -331,6 +333,7 @@ async function updateImageAltTexts(
                 resourceId: mediaImageId,
                 translationKeys: ["alt"],
                 locales: [params.locale],
+                marketIds: marketId ? [marketId] : null,
               },
             }
           );
@@ -402,6 +405,7 @@ async function updateImageAltTexts(
                       value: altTextValue,
                       locale: params.locale,
                       translatableContentDigest: altDigest,
+                      ...(marketId ? { marketId } : {}),
                     },
                   ],
                 },
@@ -442,17 +446,17 @@ async function updateImageAltTexts(
         } else {
           const altTextValue = String(altText ?? "");
           if (altTextValue.trim() === "") {
-            // Empty value: delete the translation record from DB
+            // Empty value: delete the (market-scoped) translation record from DB
             await db.productImageAltTranslation.deleteMany({
-              where: { imageId: dbImage.id, locale: params.locale },
+              where: { imageId: dbImage.id, locale: params.locale, marketId },
             });
-            loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale });
+            loggers.product("debug", "Deleted alt-text translation from DB", { index, locale: params.locale, marketId: marketId || '(global)' });
           } else {
             // Atomic upsert to avoid race condition between findUnique + create
             await db.productImageAltTranslation.upsert({
-              where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale: params.locale } },
+              where: { imageId_locale_marketId: { imageId: dbImage.id, locale: params.locale, marketId } },
               update: { altText: altTextValue },
-              create: { imageId: dbImage.id, locale: params.locale, altText: altTextValue },
+              create: { imageId: dbImage.id, locale: params.locale, altText: altTextValue, marketId },
             });
             loggers.product("debug", "Upserted alt-text translation in DB", { index, locale: params.locale });
           }
@@ -1231,6 +1235,9 @@ async function updatePrimaryProduct(
                 await tx.productImageAltTranslation.deleteMany({
                   where: {
                     imageId: imageId,
+                    // Global-scoped to mirror the global-only Shopify removal —
+                    // market-specific alt overrides survive on both sides.
+                    marketId: "",
                     locale: { in: foreignLocales },
                   },
                 });

@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
-import { getItemFieldValue } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
 import type {
   ShopLocale,
@@ -31,6 +31,8 @@ interface UseEditorAltTextProps {
   selectedItemRef: React.MutableRefObject<any>;
   selectedItemIdRef: React.MutableRefObject<string | null>;
   currentLanguage: string;
+  /** Selected market ("" = global). Alt text is resolved/saved per market. */
+  selectedMarketId: string;
   primaryLocale: string;
   shopLocales: ShopLocale[];
   config: ContentEditorConfig;
@@ -100,6 +102,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     selectedItemRef,
     selectedItemIdRef,
     currentLanguage,
+    selectedMarketId,
     primaryLocale,
     shopLocales,
     config,
@@ -254,11 +257,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setImageAltTexts(newAltTexts);
     setOriginalAltTexts(newAltTexts);
 
-    // Write to overlay so switching away and back to this locale shows correct value immediately
-    if (!localAltTextOverlayRef.current[currentLanguage]) {
-      localAltTextOverlayRef.current[currentLanguage] = {};
+    // Write to overlay (market-folded) so switching away and back to this
+    // locale/market shows the correct value immediately.
+    const copyOverlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    if (!localAltTextOverlayRef.current[copyOverlayKey]) {
+      localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
-    localAltTextOverlayRef.current[currentLanguage][imageIndex] = sourceAltText;
+    localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
@@ -269,6 +274,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       locale: currentLanguage,
       primaryLocale,
     };
+    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
     Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
@@ -379,6 +385,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
                 locale: currentLanguage,
                 primaryLocale,
               };
+              if (selectedMarketId) formDataObj.marketId = selectedMarketId;
               Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
               formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
@@ -703,6 +710,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       locale: currentLanguage,
       primaryLocale,
     };
+    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
 
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
@@ -951,25 +959,46 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       setImageAltTexts({});
       setOriginalAltTexts({});
     } else {
-      // Load translated alt-texts — check overlay first (from copy ops), then DB
+      // Load translated alt-texts. When a market is selected, prefer the
+      // market-specific value (overlay then DB); if absent, fall back to the
+      // global value — mirroring the storefront + the main resolve() chain. When
+      // no market is selected, this reduces to the original global-only lookup.
       const translatedAltTexts: Record<number, string> = {};
-      const overlayForLocale = localAltTextOverlayRef.current[currentLanguage] || {};
+      const marketOverlay = selectedMarketId
+        ? (localAltTextOverlayRef.current[buildLocaleKey(currentLanguage, selectedMarketId)] || {})
+        : {};
+      const globalOverlay = localAltTextOverlayRef.current[currentLanguage] || {};
       allImages.forEach((img: ContentImage, index: number) => {
-        if (overlayForLocale[index] !== undefined) {
-          translatedAltTexts[index] = overlayForLocale[index];
+        // 1. Market layer (overlay → DB)
+        if (selectedMarketId) {
+          if (marketOverlay[index] !== undefined) {
+            translatedAltTexts[index] = marketOverlay[index];
+            return;
+          }
+          const marketDb = img.altTextTranslations?.find(
+            (t) => t.locale === currentLanguage && (t.marketId ?? "") === selectedMarketId
+          );
+          if (marketDb) {
+            translatedAltTexts[index] = marketDb.altText;
+            return;
+          }
+        }
+        // 2. Global layer (overlay → DB) — the inherited fallback in a market.
+        if (globalOverlay[index] !== undefined) {
+          translatedAltTexts[index] = globalOverlay[index];
           return;
         }
-        const translation = img.altTextTranslations?.find(
-          (t: { locale: string }) => t.locale === currentLanguage
+        const globalDb = img.altTextTranslations?.find(
+          (t) => t.locale === currentLanguage && (t.marketId ?? "") === ""
         );
-        if (translation) {
-          translatedAltTexts[index] = translation.altText;
+        if (globalDb) {
+          translatedAltTexts[index] = globalDb.altText;
         }
       });
       setImageAltTexts(translatedAltTexts);
       setOriginalAltTexts({ ...translatedAltTexts });
     }
-  }, [currentLanguage, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     // State

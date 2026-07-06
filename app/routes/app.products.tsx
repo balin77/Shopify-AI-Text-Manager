@@ -179,7 +179,7 @@ export const loader = createContentLoader({
             altText: img.altText,
             mediaId: img.mediaId ?? null,
             altTextTranslations: img.altTextTranslations
-              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
+              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText, marketId: t.marketId ?? "" }))
               : [],
           }))
         : [],
