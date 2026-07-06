@@ -21,7 +21,15 @@ const THEME_GID_PREFIX = "gid://shopify/OnlineStoreTheme/";
  */
 export function normalizeThemeGid(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const value = decodeURIComponent(String(raw)).trim();
+  // decodeURIComponent throws URIError on malformed percent-encoding (e.g. a
+  // stray "%"). Fall back to the raw value so a single bad resourceId can never
+  // abort a sync or a write. Mirrors scripts/backfill-theme-id.js.
+  let value: string;
+  try {
+    value = decodeURIComponent(String(raw)).trim();
+  } catch {
+    value = String(raw).trim();
+  }
   if (!value) return null;
 
   // Already a full OnlineStoreTheme GID → return as-is.

@@ -1642,6 +1642,31 @@ export class BackgroundSyncService {
               // Upsert theme content. themeId scopes the row to the theme this
               // resource belongs to (extracted from its GID; '' = theme-agnostic).
               const themeId = extractThemeIdFromResourceId(resource.resourceId) ?? '';
+              // Promote any pre-existing legacy row (themeId="") for this resource to
+              // its real Theme-GID FIRST, so the upsert below UPDATEs it instead of
+              // creating a duplicate. This makes a theme-aware sync that runs before
+              // scripts/backfill-theme-id.js self-healing (no duplicate rows, and the
+              // backfill then finds nothing left to do). At most one legacy row
+              // exists per (shop,resourceId,groupId) and per (…,key,locale), so the
+              // updateMany cannot collide on the first promotion; wrapped non-fatal
+              // for the pathological interrupted-migration case.
+              if (themeId) {
+                try {
+                  await db.themeContent.updateMany({
+                    where: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' },
+                    data: { themeId },
+                  });
+                  await db.themeTranslation.updateMany({
+                    where: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' },
+                    data: { themeId },
+                  });
+                } catch (promoteErr) {
+                  logger.warn('[BackgroundSync] Legacy themeId promotion skipped (non-fatal)', {
+                    resourceId: resource.resourceId,
+                    error: promoteErr instanceof Error ? promoteErr.message : String(promoteErr),
+                  });
+                }
+              }
               await db.themeContent.upsert({
                 where: {
                   shop_resourceId_groupId_themeId: {
@@ -1841,15 +1866,20 @@ export class BackgroundSyncService {
       // a non-empty theme list so an API blip never wipes data. themeId "" (legacy/
       // theme-agnostic) is always kept.
       try {
+        const THEME_CAP = 250;
         const themesResp = await this.gateway.graphql(
           `#graphql
-            query themeIdsForCleanup { themes(first: 50) { nodes { id } } }`
+            query themeIdsForCleanup { themes(first: ${THEME_CAP}) { nodes { id } } }`
         );
         const themesJson = await themesResp.json();
         const currentThemeIds: string[] = (themesJson.data?.themes?.nodes ?? [])
           .map((n: { id?: string }) => n.id)
           .filter((id: string | undefined): id is string => !!id);
-        if (currentThemeIds.length > 0) {
+        if (currentThemeIds.length >= THEME_CAP) {
+          // Enumeration was capped — we may not have the full theme list, so a
+          // notIn delete could wipe valid rows. Skip cleanup this run.
+          logger.warn(`[BackgroundSync] Skipping orphan-theme cleanup — theme count hit the ${THEME_CAP} cap (list may be truncated)`);
+        } else if (currentThemeIds.length > 0) {
           const keep = [...currentThemeIds, ''];
           const orphanTrans = await db.themeTranslation.deleteMany({
             where: { shop: this.shop, domain: 'theme', themeId: { notIn: keep } },

@@ -507,10 +507,15 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
 
       if (keysByFilename.size > 0) {
         // Theme-Auswahl: push primary-locale changes to the theme the merchant
-        // selected (resolveSelectedThemeId falls back to MAIN when unset/invalid).
-        // Replaces the former hard MAIN-only lookup so Primary and Foreign writes
-        // target the SAME theme (see PLAN_THEME_SELECTION §5).
-        const themeId = await resolveSelectedThemeId(session.shop, admin);
+        // selected. Reuse the selection already resolved for this request (the same
+        // value the §5.2 foreign-path guard uses) so Primary + Foreign target ONE
+        // theme and we avoid a redundant GET_THEMES; resolve only if the caller did
+        // not provide it. resolveSelectedThemeId falls back to MAIN when
+        // unset/invalid (see PLAN_THEME_SELECTION §5).
+        const themeId =
+          selectedThemeId !== undefined
+            ? selectedThemeId
+            : await resolveSelectedThemeId(session.shop, admin);
 
         if (!themeId) {
           logger.error("[TEMPLATES] No theme found — cannot push primary locale changes", {

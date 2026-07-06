@@ -70,14 +70,29 @@ async function backfillFromResourceId(model, label) {
     select: { id: true, resourceId: true },
   });
   let updated = 0;
+  let deletedRedundant = 0;
   for (const row of rows) {
     const themeId = extractThemeIdFromResourceId(row.resourceId);
-    if (themeId) {
+    if (!themeId) continue;
+    try {
       await model.update({ where: { id: row.id }, data: { themeId } });
       updated++;
+    } catch (err) {
+      // P2002 = unique violation: a row with the real themeId already exists
+      // (a theme-aware sync ran before this backfill and created the GID-keyed
+      // row). The legacy "" row is now redundant → delete it instead of crashing.
+      if (err && err.code === 'P2002') {
+        await model.delete({ where: { id: row.id } });
+        deletedRedundant++;
+      } else {
+        throw err;
+      }
     }
   }
-  console.log(`  [${label}] step (a) extracted theme_id for ${updated}/${rows.length} legacy rows`);
+  console.log(
+    `  [${label}] step (a) extracted theme_id for ${updated}/${rows.length} legacy rows` +
+      (deletedRedundant ? `; removed ${deletedRedundant} redundant duplicate(s)` : ''),
+  );
   return updated;
 }
 

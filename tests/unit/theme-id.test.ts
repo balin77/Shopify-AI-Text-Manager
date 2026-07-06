@@ -34,6 +34,14 @@ describe('normalizeThemeGid', () => {
     expect(normalizeThemeGid('')).toBeNull();
     expect(normalizeThemeGid('not-a-theme')).toBeNull();
   });
+
+  it('does not throw on malformed percent-encoding (falls back to raw)', () => {
+    // decodeURIComponent("%") throws URIError — the helper must swallow it so a
+    // single bad resourceId can never abort a sync/write.
+    expect(() => normalizeThemeGid('100%')).not.toThrow();
+    expect(normalizeThemeGid('100%')).toBeNull();
+    expect(() => extractThemeIdFromResourceId('gid://x?theme_id=50%')).not.toThrow();
+  });
 });
 
 describe('extractThemeIdFromResourceId', () => {
