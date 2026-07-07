@@ -71,30 +71,36 @@ export function MarketSelector({
     ...applicableMarkets.map((m) => ({ label: m.name, value: m.id })),
   ];
 
-  // Explain the greyed-out state in the primary locale; otherwise describe what
-  // the selector does. Wraps the control so the hint is reachable even when the
-  // <Select> itself is disabled (disabled inputs swallow hover events).
-  const tooltipContent =
-    disabled && isPrimaryLocale && !allowPrimaryLocale
-      ? t.primaryDisabledHint ||
-        "Market selection is only available in a translation language — switch to a target language first."
-      : t.tooltip ||
-        "Pick a market to translate this language specifically for it. Without a selection the global value applies to all markets.";
+  // Only the primary locale gets a tooltip — it explains why the control is
+  // greyed out there. Foreign locales have a usable selector and need no hint.
+  // Show only the first clause (before the dash) per product decision. Wraps the
+  // control so the hint is reachable even though the disabled <Select> swallows
+  // hover events.
+  const showPrimaryHint = disabled && isPrimaryLocale && !allowPrimaryLocale;
+  const primaryHint = (
+    t.primaryDisabledHint || "Market selection is only available in a translation language"
+  )
+    .split(/\s[–—-]\s/)[0]
+    .trim();
 
-  return (
-    <Tooltip content={tooltipContent} preferredPosition="below" dismissOnMouseOut>
-      <div style={{ minWidth: "12rem" }}>
-        <Select
-          label={t.selectorLabel}
-          labelHidden
-          options={options}
-          // If the selected market no longer applies (locale changed), the value
-          // falls back to "" so the control never shows a stale selection.
-          value={disabled ? "" : selectedMarketId}
-          onChange={onMarketChange}
-          disabled={disabled}
-        />
-      </div>
-    </Tooltip>
+  const control = (
+    <div style={{ minWidth: "12rem" }}>
+      <Select
+        label={t.selectorLabel}
+        labelHidden
+        options={options}
+        // If the selected market no longer applies (locale changed), the value
+        // falls back to "" so the control never shows a stale selection.
+        value={disabled ? "" : selectedMarketId}
+        onChange={onMarketChange}
+        disabled={disabled}
+      />
+    </div>
   );
+
+  return showPrimaryHint ? (
+    <Tooltip content={primaryHint} preferredPosition="below" dismissOnMouseOut>
+      {control}
+    </Tooltip>
+  ) : control;
 }
