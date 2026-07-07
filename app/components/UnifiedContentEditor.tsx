@@ -650,6 +650,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     reloadItemTooltip: t.content?.reloadItemTooltip,
                     allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                    marketTooltip: t.content?.market?.tooltip,
+                    marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
                   }}
                 />
               </div>
@@ -684,6 +686,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       translating: t.content?.translating || "Translating...",
                       allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                       marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                      marketTooltip: t.content?.market?.tooltip,
+                      marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
                     }}
                   />
                 </Card>

@@ -70,6 +70,8 @@ interface MobileToolbarProps {
     reloadItemTooltip?: string;
     allMarketsGlobal?: string;
     marketSelectorLabel?: string;
+    marketTooltip?: string;
+    marketPrimaryDisabledHint?: string;
   };
 }
 
@@ -240,6 +242,8 @@ export function MobileToolbar({
             t={{
               allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
               selectorLabel: t.marketSelectorLabel || "Market",
+              tooltip: t.marketTooltip,
+              primaryDisabledHint: t.marketPrimaryDisabledHint,
             }}
           />
         </div>

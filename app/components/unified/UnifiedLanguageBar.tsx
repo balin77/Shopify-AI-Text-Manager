@@ -89,6 +89,8 @@ interface UnifiedLanguageBarProps {
     translating?: string;
     allMarketsGlobal?: string;
     marketSelectorLabel?: string;
+    marketTooltip?: string;
+    marketPrimaryDisabledHint?: string;
   };
 }
 
@@ -172,6 +174,8 @@ export function UnifiedLanguageBar({
             t={{
               allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
               selectorLabel: t.marketSelectorLabel || "Market",
+              tooltip: t.marketTooltip,
+              primaryDisabledHint: t.marketPrimaryDisabledHint,
             }}
           />
         )}

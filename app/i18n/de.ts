@@ -281,7 +281,8 @@ export const de = {
       allMarketsGlobal: "Alle Märkte (global)",
       selectorLabel: "Markt",
       inheritedFromGlobal: "Vom globalen Wert geerbt",
-      primaryDisabledHint: "Marktauswahl nur für Übersetzungen",
+      primaryDisabledHint: "Marktauswahl nur in einer Übersetzungssprache verfügbar – wechsle zuerst zu einer Zielsprache.",
+      tooltip: "Wähle einen Markt, um diese Sprache abweichend für ihn zu übersetzen. Ohne Auswahl gilt der globale Wert für alle Märkte.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",

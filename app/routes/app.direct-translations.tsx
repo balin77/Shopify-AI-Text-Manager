@@ -922,6 +922,8 @@ export default function DirectTranslationsPage() {
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix,
                     allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                    marketTooltip: t.content?.market?.tooltip,
+                    marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
                   }}
                 />
               </Card>
