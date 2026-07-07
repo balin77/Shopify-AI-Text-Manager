@@ -16,6 +16,7 @@ import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
 import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
 import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
+import { SettingsGlossaryTab } from "../components/SettingsGlossaryTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
@@ -31,7 +32,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { sanitizeHTML } from "../utils/sanitizer";
-import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
+import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
@@ -61,13 +62,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
-    // Fetch shop's primary locale and display name
+    // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
       `#graphql
         query getShopInfo {
           shopLocales {
             locale
+            name
             primary
+            published
           }
           shop {
             name
@@ -76,7 +79,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const localesData = await localesResponse.json();
-    const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
+      localesData.data.shopLocales || [];
+    const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -437,6 +442,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { metafieldsLastScanAt: true },
     });
 
+    // Glossary tab: entries incl. per-locale fixed translations.
+    const { listGlossaryEntries } = await import("../../src/services/glossary.service");
+    const glossaryEntries = (await listGlossaryEntries(session.shop)).map((e) => ({
+      id: e.id,
+      sourceTerm: e.sourceTerm,
+      doNotTranslate: e.doNotTranslate,
+      caseSensitive: e.caseSensitive,
+      translations: Object.fromEntries(e.translations.map((tr) => [tr.locale, tr.value])),
+    }));
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -463,6 +478,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       groupedFieldTranslations,
       optionValueMemory,
       primaryShopLocale,
+      shopLocales,
+      glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
         definitionId: d.definitionId,
@@ -715,6 +732,73 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "saveGlossary") {
+      // Glossary is NOT plan-gated (translation itself is ungated — keep
+      // consistent). Full entry set as JSON; server diff-upserts transactional.
+      const payload = getFormString(formData, "entries");
+      const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+      if (!isValidLocale(sourceLocale)) {
+        return json({ success: false, error: "Invalid source locale", actionType }, { status: 400 });
+      }
+      let incoming: Array<{
+        id?: string;
+        sourceTerm: string;
+        doNotTranslate?: boolean;
+        caseSensitive?: boolean;
+        translations?: Record<string, string>;
+      }> = [];
+      try {
+        incoming = payload ? JSON.parse(payload) : [];
+        if (!Array.isArray(incoming)) throw new Error("not an array");
+      } catch {
+        return json({ success: false, error: "Invalid glossary payload", actionType }, { status: 400 });
+      }
+
+      const { saveGlossaryEntries } = await import("../../src/services/glossary.service");
+      try {
+        const result = await saveGlossaryEntries(
+          session.shop,
+          sourceLocale,
+          incoming.map((e) => ({
+            id: e.id || undefined,
+            sourceTerm: String(e.sourceTerm ?? ""),
+            doNotTranslate: !!e.doNotTranslate,
+            caseSensitive: !!e.caseSensitive,
+            translations: e.translations && typeof e.translations === "object" ? e.translations : {},
+          })),
+        );
+        return json({ success: true, actionType, ...result });
+      } catch (err) {
+        // saveGlossaryEntries throws with a merchant-readable message on
+        // validation errors (forbidden chars, duplicates, entry limit).
+        const message = err instanceof Error ? err.message : "Could not save glossary";
+        return json({ success: false, error: message, actionType }, { status: 400 });
+      }
+    } else if (actionType === "importGlossary") {
+      const csv = getFormString(formData, "csv") || "";
+      const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+      if (!isValidLocale(sourceLocale)) {
+        return json({ success: false, error: "Invalid source locale", actionType }, { status: 400 });
+      }
+      const { parseGlossaryCsv, importGlossaryEntries } = await import("../../src/services/glossary.service");
+      const parsed = parseGlossaryCsv(csv);
+      if (parsed.entries.length === 0) {
+        return json(
+          {
+            success: false,
+            actionType,
+            error: parsed.errors.length > 0 ? parsed.errors.slice(0, 5).join(" ") : "No valid rows found in CSV.",
+          },
+          { status: 400 },
+        );
+      }
+      try {
+        const imported = await importGlossaryEntries(session.shop, sourceLocale, parsed.entries);
+        return json({ success: true, actionType, imported, skipped: parsed.errors.length });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not import glossary";
+        return json({ success: false, error: message, actionType }, { status: 400 });
+      }
     } else if (actionType === "scanProductMetafieldDefinitions") {
       // Data-driven scan: sources from the actual product metafields (incl.
       // third-party / definition-less ones like Google & Judge.me), enriched
@@ -904,7 +988,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -917,7 +1001,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -927,24 +1011,25 @@ export default function SettingsPage() {
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "glossary", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
+  const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -999,6 +1084,7 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
+      { id: "glossary", title: t.settings.glossary || "Glossary" },
       { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
@@ -1136,6 +1222,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              <button
+                onClick={() => handleSectionChange("glossary")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "glossary" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "glossary" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "glossary" ? "semibold" : "regular"}>
+                  {t.settings.glossary || "Glossary"}
+                </Text>
+              </button>
               <button
                 onClick={() => handleSectionChange("metafields")}
                 style={{
@@ -1360,6 +1465,17 @@ export default function SettingsPage() {
                   groupedFieldTranslations={groupedFieldTranslations}
                   primaryShopLocale={primaryShopLocale}
                   t={t}
+                />
+              )}
+
+              {/* Glossary — per-shop terminology for AI translations */}
+              {selectedSection === "glossary" && (
+                <SettingsGlossaryTab
+                  entries={glossaryEntries}
+                  shopLocales={shopLocales}
+                  primaryShopLocale={primaryShopLocale}
+                  t={t}
+                  onHasChangesChange={setHasGlossaryChanges}
                 />
               )}
 
