@@ -279,6 +279,13 @@ export const es: Translation = {
     translating: "Traduciendo...",
     clearAll: "Limpiar todo",
     sendImageToAI: "Enviar imagen a IA",
+    // Traducciones específicas por mercado ("Traducir y adaptar")
+    market: {
+      allMarketsGlobal: "Todos los mercados (global)",
+      selectorLabel: "Mercado",
+      inheritedFromGlobal: "Heredado del valor global",
+      primaryDisabledHint: "Selección de mercado solo para traducciones",
+    },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",
     // Clear all modal

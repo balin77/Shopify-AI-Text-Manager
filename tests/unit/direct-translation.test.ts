@@ -55,6 +55,32 @@ describe("getDictionary()", () => {
     expect(dict.entries["Add to cart"]).toBe("In den Warenkorb");
     expect(dict.entries["No translation yet"]).toBeUndefined();
   });
+
+  it("layers a market-specific override over the global value (with global fallback)", async () => {
+    const db = {
+      directTranslationSettings: {
+        findUnique: vi.fn().mockResolvedValue({ shop: "s", collect: false, version: 1, updatedAt: new Date() }),
+      },
+      directTranslationItem: {
+        findMany: vi.fn().mockResolvedValue([
+          // Has both a global and a UK-market override → market wins.
+          { sourceText: "Colour", translations: [
+            { targetText: "Farbe (global)", marketId: "" },
+            { targetText: "Farbe (UK)", marketId: "gid://shopify/Market/1" },
+          ] },
+          // Only global → falls back to global in the market view.
+          { sourceText: "Cart", translations: [{ targetText: "Warenkorb", marketId: "" }] },
+          // Only a DIFFERENT market's override → no global, market not requested one → nothing.
+          { sourceText: "Sale", translations: [{ targetText: "Aktion (US)", marketId: "gid://shopify/Market/2" }] },
+        ]),
+      },
+    } as never;
+
+    const dict = await getDictionary(db, "s", "de", "gid://shopify/Market/1");
+    expect(dict.entries["Colour"]).toBe("Farbe (UK)"); // market override wins
+    expect(dict.entries["Cart"]).toBe("Warenkorb");     // global fallback
+    expect(dict.entries["Sale"]).toBeUndefined();       // other market's row does not leak
+  });
 });
 
 describe("createItem()", () => {
@@ -112,7 +138,8 @@ describe("setTranslation()", () => {
 
     await setTranslation(db, "s", "item1", "de", "Bewertung", "user");
     expect(upsert).toHaveBeenCalledTimes(1);
-    expect(upsert.mock.calls[0][0].where.itemId_locale).toEqual({ itemId: "item1", locale: "de" });
+    // Unique key now carries the market dimension; direct translations are global ("").
+    expect(upsert.mock.calls[0][0].where.itemId_locale_marketId).toEqual({ itemId: "item1", locale: "de", marketId: "" });
     expect(settingsUpsert).toHaveBeenCalledTimes(1);
   });
 

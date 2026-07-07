@@ -194,7 +194,8 @@ export async function handleTranslateAll(
         successfulUpserts.map(({ key, locale, value, resId }) =>
           db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale_themeId: {
+              shop_resourceId_groupId_key_locale_themeId_marketId: {
+                marketId: "",
                 shop: session.shop,
                 resourceId: resId,
                 groupId: groupId,

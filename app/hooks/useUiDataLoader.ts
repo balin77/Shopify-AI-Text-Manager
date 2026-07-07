@@ -29,11 +29,27 @@ import type {
 export type ValueSource =
   | "deleted" // deletedTranslationKeysRef had this key → empty
   | "localOverride" // localTranslationsRef had a value
+  | "marketOverride" // a market-specific translation (marketTranslations) supplied the value
   | "savedPrimaryCache" // savedPrimaryValuesRef had a cached value
   | "itemTranslation" // item.translations had a value
   | "itemField" // Direct item property (primary locale)
-  | "fallback" // Fallback value (handle→primary, seoTitle→title)
+  | "fallback" // Fallback value (handle→primary, seoTitle→title, or global→market inheritance)
   | "empty"; // No value found
+
+/**
+ * Composite key that folds the market dimension into the per-locale overlay maps
+ * (localTranslationsRef). Global (marketId "") keeps the plain locale key so the
+ * existing global behaviour is byte-for-byte unchanged; a market appends
+ * "@@<marketId>" so market overlays never collide with the global ones.
+ */
+export function buildLocaleKey(locale: string, marketId: string): string {
+  return marketId ? `${locale}@@${marketId}` : locale;
+}
+
+/** Same folding for deletedTranslationKeysRef entries (keyed by translationKey). */
+export function buildDeletedKey(translationKey: string, marketId: string): string {
+  return marketId ? `${translationKey}@@${marketId}` : translationKey;
+}
 
 export interface ResolvedField {
   value: string;
@@ -83,13 +99,16 @@ export interface UseUiDataLoaderReturn {
 
   // ── Transition methods (Phase 2) ──────────────────────────────────────────
 
-  /** After a single-field translation (translateField) response */
+  /** After a single-field translation (translateField) response.
+   *  Pass marketIdArg to force the overlay's market scope to match the save
+   *  (e.g. "" for globally-saved Accept & Translate); omit to use the current market. */
   onTranslateFieldComplete: (
     fieldKey: string,
     translationKey: string,
     translatedValue: string,
     targetLocale: string,
-    currentEditableValues: Record<string, string>
+    currentEditableValues: Record<string, string>,
+    marketIdArg?: string
   ) => TransitionResult;
 
   /** After translateAll response (all fields → all locales) */
@@ -145,6 +164,8 @@ export interface UseUiDataLoaderReturn {
     originalTemplateValuesRef: React.MutableRefObject<Record<string, string>>;
     /** Unified change-detection baseline — single source of truth for all content types */
     baselineValuesRef: React.MutableRefObject<Record<string, string>>;
+    /** Currently-selected market ("" = global); owner keeps it in sync */
+    selectedMarketIdRef: React.MutableRefObject<string>;
   };
 
   /** Template change-detection version counter */
@@ -227,8 +248,15 @@ export function useUiDataLoader(
   // DATA CACHE REFS (moved from useUnifiedContentEditor)
   // ---------------------------------------------------------------------------
 
-  /** Track deleted translation keys — show empty even if revalidation brings them back */
+  /** Track deleted translation keys — show empty even if revalidation brings them back.
+   *  Entries are market-folded via buildDeletedKey() so a market-specific clear
+   *  does not blank the global value (and vice-versa). */
   const deletedTranslationKeysRef = useRef<Set<string>>(new Set());
+
+  /** Currently-selected market ("" = global). Held in a ref so resolve()/the
+   *  transition methods can read it without bloating their useCallback deps. The
+   *  owning hook keeps it in sync via refs.selectedMarketIdRef on every change. */
+  const selectedMarketIdRef = useRef<string>("");
 
   /** Local translation overrides from Accept & Translate / translateFieldToAllLocales.
    *  Survives revalidation (items array replacement). Format: Record<translationKey, Record<locale, value>> */
@@ -297,36 +325,71 @@ export function useUiDataLoader(
       }
 
       // ---- FOREIGN LOCALE ----
+      //
+      // Market dimension (Shopify "Translate & Adapt"): when a market is
+      // selected we first look for a market-specific value (market overlay or
+      // market DB row); if none exists we fall back to the GLOBAL layer exactly
+      // as before, flagging the value as inherited. When no market is selected
+      // (marketId ""), this reduces to the original global-only chain.
+      const marketId = selectedMarketIdRef.current;
+      const isMarket = marketId !== "";
 
-      // 1. Deleted keys → empty
-      if (deletedTranslationKeysRef.current.has(translationKey)) {
-        return { value: "", source: "deleted", isFallback: false };
+      // 1a. Market-specific deletion → skip the market layer (fall through to
+      //     global). Global deletion → empty (as before).
+      const marketDeleted =
+        isMarket &&
+        deletedTranslationKeysRef.current.has(buildDeletedKey(translationKey, marketId));
+      const globalDeleted = deletedTranslationKeysRef.current.has(translationKey);
+
+      // 1b. Market layer (only when a market is selected and not market-deleted)
+      if (isMarket && !marketDeleted) {
+        // Market local override (staged edits/translations for this market)
+        const marketLocal =
+          localTranslationsRef.current[translationKey]?.[buildLocaleKey(locale, marketId)];
+        if (marketLocal) {
+          return { value: marketLocal, source: "marketOverride", isFallback: false };
+        }
+        // Market-specific DB row
+        const marketDbValue =
+          item.marketTranslations?.[marketId]?.[translationKey]?.[locale];
+        if (marketDbValue) {
+          return { value: marketDbValue, source: "marketOverride", isFallback: false };
+        }
       }
 
-      // 2. Local overrides (Accept & Translate, translateFieldToAllLocales)
-      const localValue =
-        localTranslationsRef.current[translationKey]?.[locale];
-      if (localValue) {
-        return { value: localValue, source: "localOverride", isFallback: false };
+      // 2. GLOBAL layer. In a market context this is the inherited fallback, so
+      //    isFallback is true; in the global context it is the direct value.
+      if (globalDeleted) {
+        // Global value was cleared. In a market context with no market value we
+        // still try the field-level fallbacks below; in the global context it is
+        // simply empty.
+        if (!isMarket) {
+          return { value: "", source: "deleted", isFallback: false };
+        }
+      } else {
+        // Global local override
+        const globalLocal = localTranslationsRef.current[translationKey]?.[locale];
+        if (globalLocal) {
+          return { value: globalLocal, source: "localOverride", isFallback: isMarket };
+        }
+        // item.translations (global DB rows)
+        const translatedValue = getTranslatedValue(
+          item,
+          translationKey,
+          locale,
+          "",
+          primaryLocale
+        );
+        if (translatedValue) {
+          return {
+            value: translatedValue,
+            source: "itemTranslation",
+            isFallback: isMarket,
+          };
+        }
       }
 
-      // 3. item.translations
-      const translatedValue = getTranslatedValue(
-        item,
-        translationKey,
-        locale,
-        "",
-        primaryLocale
-      );
-      if (translatedValue) {
-        return {
-          value: translatedValue,
-          source: "itemTranslation",
-          isFallback: false,
-        };
-      }
-
-      // 4. Fallbacks
+      // 3. Field-level fallbacks (handle→primary, seoTitle→title)
       if (fieldKey === "handle" && item.handle) {
         return { value: item.handle, source: "fallback", isFallback: true };
       }
@@ -342,7 +405,7 @@ export function useUiDataLoader(
         return { value: fallbackTitle, source: "fallback", isFallback: true };
       }
 
-      // 5. Empty
+      // 4. Empty
       return { value: "", source: "empty", isFallback: false };
     },
     [primaryLocale, config]
@@ -436,23 +499,36 @@ export function useUiDataLoader(
       translationKey: string,
       translatedValue: string,
       targetLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      // Market the eventual save persists under. MUST match the save's marketId:
+      // pass "" for globally-saved flows (e.g. Accept & Translate → all locales)
+      // and the selected market for market-scoped saves. Defaults to the current
+      // market so market-aware callers can omit it.
+      marketIdArg?: string
     ): TransitionResult => {
       debugLog.transition(
         `onTranslateFieldComplete: field=${fieldKey} locale=${targetLocale} value="${translatedValue.substring(0, 40)}..."`
       );
 
+      // Market-fold the overlay keys so a translation staged in a market context
+      // does not overwrite the global overlay (and a globally-saved translation is
+      // not stranded under a market key). The overlay key must mirror where the
+      // accompanying save writes.
+      const marketId = marketIdArg ?? selectedMarketIdRef.current;
+      const localeKey = buildLocaleKey(targetLocale, marketId);
+      const delKey = buildDeletedKey(translationKey, marketId);
+
       // 1. Clear deleted key
-      if (deletedTranslationKeysRef.current.has(translationKey)) {
-        deletedTranslationKeysRef.current.delete(translationKey);
-        debugLog.transition(`  cleared deletedKey: ${translationKey}`);
+      if (deletedTranslationKeysRef.current.has(delKey)) {
+        deletedTranslationKeysRef.current.delete(delKey);
+        debugLog.transition(`  cleared deletedKey: ${delKey}`);
       }
 
       // 2. Store in localTranslationsRef (overlay — replaces item mutation)
       if (!localTranslationsRef.current[translationKey]) {
         localTranslationsRef.current[translationKey] = {};
       }
-      localTranslationsRef.current[translationKey][targetLocale] =
+      localTranslationsRef.current[translationKey][localeKey] =
         translatedValue;
 
       // 3. Compute updated values
@@ -668,6 +744,11 @@ export function useUiDataLoader(
         let upserted = 0;
         let deleted = 0;
 
+        // Market-fold the overlay locale key so the saved overlay is scoped to the
+        // market it was saved under (matching the market-aware DB write).
+        const marketId = selectedMarketIdRef.current;
+        const localeKey = buildLocaleKey(savedLocale, marketId);
+
         for (const fieldDef of fieldDefinitions) {
           if (fieldDef.type === "image-gallery") continue;
           const value = editableValues[fieldDef.key];
@@ -677,18 +758,16 @@ export function useUiDataLoader(
             if (!localTranslationsRef.current[fieldDef.translationKey]) {
               localTranslationsRef.current[fieldDef.translationKey] = {};
             }
-            localTranslationsRef.current[fieldDef.translationKey][savedLocale] =
+            localTranslationsRef.current[fieldDef.translationKey][localeKey] =
               value;
             upserted++;
           } else if (value === "") {
-            // User cleared this field — remove the locale-specific overlay
+            // User cleared this field — remove the (market-scoped) overlay
             if (
-              localTranslationsRef.current[fieldDef.translationKey]?.[
-                savedLocale
-              ]
+              localTranslationsRef.current[fieldDef.translationKey]?.[localeKey]
             ) {
               delete localTranslationsRef.current[fieldDef.translationKey][
-                savedLocale
+                localeKey
               ];
             }
             deleted++;
@@ -808,6 +887,7 @@ export function useUiDataLoader(
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,
+      selectedMarketIdRef,
     },
     templateValuesVersion,
     setTemplateValuesVersion,

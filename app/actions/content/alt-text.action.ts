@@ -525,7 +525,7 @@ export async function handleTranslateAltTextToAllLocales(
           if (shopifySaved) {
             try {
               const existing = await db.productImageAltTranslation.findUnique({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
+                where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
               });
               if (existing) {
                 await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
@@ -755,10 +755,12 @@ export async function handleSaveImageAltText(
         const dbImage = await db.productImage.findFirst({ where: { mediaId, product: { shop: session.shop } }, select: { id: true } });
         if (dbImage) {
           if (altText.trim() === "") {
-            await db.productImageAltTranslation.deleteMany({ where: { imageId: dbImage.id, locale } });
+            // Scope to the global layer only — a global clear must not wipe
+            // market-specific alt overrides for the same locale.
+            await db.productImageAltTranslation.deleteMany({ where: { imageId: dbImage.id, locale, marketId: "" } });
           } else {
             await db.productImageAltTranslation.upsert({
-              where: { imageId_locale: { imageId: dbImage.id, locale } },
+              where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
               create: { imageId: dbImage.id, locale, altText },
               update: { altText },
             });

@@ -163,7 +163,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
         await db.contentTranslation.upsert({
           where: {
-            shop_resourceId_key_locale: {
+            shop_resourceId_key_locale_marketId: {
+              marketId: "",
               shop,
               resourceId: product.id,
               key: shopifyKey,

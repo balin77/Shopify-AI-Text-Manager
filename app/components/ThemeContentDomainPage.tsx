@@ -22,7 +22,7 @@ import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { PlanAccessGate } from "./PlanAccessGate";
-import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLocale } from "~/types/content-editor.types";
+import type { FetcherData, TranslatableContentItem, ContentEditorConfig, ShopLocale, MarketInfo, MarketTranslations } from "~/types/content-editor.types";
 import type { ContentType } from "~/config/plans";
 import type { TranslatableField } from "~/actions/templates/shared";
 import type { ThemeNavItem, ThemeTranslationRecord } from "~/types/theme-content-domain";
@@ -33,6 +33,7 @@ interface ThemeContentDomainPageProps {
     shop: string;
     shopLocales: ShopLocale[];
     primaryLocale: string;
+    markets?: MarketInfo[];
     error?: string | null;
     aiSettings?: {
       preferredProvider: string | null;
@@ -65,10 +66,20 @@ interface ThemeContentDomainPageProps {
    * related content that lives in another rubric).
    */
   infoBanner?: React.ReactNode;
+  /**
+   * Hide the market selector for this rubric. Set for domains whose Shopify write
+   * path does not support market scoping (e.g. Cookie-Banner via the Customer
+   * Privacy API) — offering a market there would let the client stage a
+   * market-scoped overlay while the save writes globally.
+   */
+  disableMarketSelector?: boolean;
 }
 
-export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner }: ThemeContentDomainPageProps) {
-  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, error, themeOptions, selectedThemeId, needsThemeSync } = data;
+export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner, disableMarketSelector }: ThemeContentDomainPageProps) {
+  const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, markets, error, themeOptions, selectedThemeId, needsThemeSync } = data;
+  // Markets to expose to the editor — suppressed for rubrics whose save path
+  // cannot scope by market (see disableMarketSelector).
+  const effectiveMarkets = disableMarketSelector ? [] : markets;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -175,15 +186,26 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
       const themeTranslations = loadedTranslations[theme.groupId] || {};
 
       if (loadedData) {
-        // Merge all translations from different locales
+        // Merge all translations from different locales. Global rows (marketId "")
+        // feed the per-item `translations` array (unchanged behaviour); market
+        // rows build `marketTranslations[marketId][key][locale]` so resolve() can
+        // layer them over the global value (theme translationKey === field key).
         const allTranslations: ThemeTranslationRecord[] = [];
+        const marketTranslations: MarketTranslations = {};
         for (const [locale, translations] of Object.entries(themeTranslations)) {
           for (const translation of translations) {
-            allTranslations.push({
-              key: translation.key,
-              value: translation.value,
-              locale: locale,
-            });
+            const mId = translation.marketId ?? "";
+            if (mId === "") {
+              allTranslations.push({
+                key: translation.key,
+                value: translation.value,
+                locale: locale,
+              });
+            } else {
+              const byKey = (marketTranslations[mId] ??= {});
+              const byLocale = (byKey[translation.key] ??= {});
+              byLocale[locale] = translation.value;
+            }
           }
         }
 
@@ -191,6 +213,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           ...theme,
           translatableContent: loadedData.translatableContent || [],
           translations: allTranslations,
+          marketTranslations,
         };
       }
       return theme;
@@ -401,6 +424,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     items: items as unknown as TranslatableContentItem[],
     shopLocales: loaderShopLocales,
     primaryLocale,
+    markets: effectiveMarkets,
     fetcher,
     showInfoBox,
     t,

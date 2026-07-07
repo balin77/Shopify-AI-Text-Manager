@@ -277,6 +277,13 @@ export const de = {
     translating: "Übersetze...",
     clearAll: "Alles löschen",
     sendImageToAI: "Bild an KI senden",
+    // Markt-spezifische Übersetzungen ("Übersetzen & anpassen")
+    market: {
+      allMarketsGlobal: "Alle Märkte (global)",
+      selectorLabel: "Markt",
+      inheritedFromGlobal: "Vom globalen Wert geerbt",
+      primaryDisabledHint: "Marktauswahl nur für Übersetzungen",
+    },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
     // Clear all modal

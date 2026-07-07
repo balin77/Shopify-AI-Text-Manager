@@ -16,9 +16,13 @@ export const TRANSLATE_CONTENT = `#graphql
   }
 `;
 
+// $marketIds is optional: omit (or pass null) to remove the GLOBAL translation
+// (all markets); pass [gid://shopify/Market/<id>] to remove only that market's
+// override while the global translation survives. Existing callers that don't
+// supply the variable get the legacy global-removal behaviour.
 export const REMOVE_TRANSLATIONS = `#graphql
-  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
       userErrors {
         field
         message

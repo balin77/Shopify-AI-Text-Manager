@@ -33,6 +33,52 @@ export const GET_URL_REDIRECTS = `#graphql
   }
 `;
 
+/**
+ * MARKETS — enumerate the shop's markets and the locales each one serves.
+ *
+ * Backs the market-specific translation feature ("Translate & Adapt"): a
+ * translation may target a single Market (gid://shopify/Market/<id>) so the same
+ * locale can differ per market (e.g. English for UK vs. US).
+ *
+ * We need, per market, the set of locales it offers on its storefront. A market's
+ * web presence exposes those via `rootUrls` (one entry per served locale — the
+ * default locale at the domain root plus every alternate-locale subfolder). We
+ * read the locale off each rootUrl rather than `defaultLocale`/`alternateLocales`
+ * because rootUrls is the single, stable collection that already unions both.
+ *
+ * Requires the `read_markets` access scope. If the scope is missing or the shop
+ * has no extra markets, loadMarkets() degrades to an empty list and the feature
+ * stays invisible (see ShopifyContentService.loadMarkets).
+ *
+ * VERIFY against the pinned API version's GraphiQL explorer if markets ever fail
+ * to load: field names on Market (`enabled`) and the web-presence relation
+ * (`webPresences` connection vs. legacy singular `webPresence`) have shifted
+ * across versions. This query targets 2025-10.
+ */
+export const GET_MARKETS = `#graphql
+  query getMarkets($first: Int!) {
+    markets(first: $first) {
+      edges {
+        node {
+          id
+          name
+          handle
+          enabled
+          webPresences(first: 10) {
+            edges {
+              node {
+                rootUrls {
+                  locale
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const GET_BLOGS = `#graphql
   query getBlogs($first: Int!) {
     blogs(first: $first) {

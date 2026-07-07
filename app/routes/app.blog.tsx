@@ -280,7 +280,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function BlogPage() {
-  const { articles, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { articles, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -296,6 +296,7 @@ export default function BlogPage() {
     items: articles as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,

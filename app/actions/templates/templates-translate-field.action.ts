@@ -111,7 +111,8 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
     // Shopify succeeded — now save to local DB
     await db.themeTranslation.upsert({
       where: {
-        shop_resourceId_groupId_key_locale_themeId: {
+        shop_resourceId_groupId_key_locale_themeId_marketId: {
+          marketId: "",
           shop: session.shop,
           resourceId: fieldResId,
           groupId: groupId,
@@ -279,7 +280,8 @@ export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionConte
         pendingUpserts.map(({ locale, value }) =>
           db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale_themeId: {
+              shop_resourceId_groupId_key_locale_themeId_marketId: {
+                marketId: "",
                 shop: session.shop,
                 resourceId: fieldResId2,
                 groupId: groupId,

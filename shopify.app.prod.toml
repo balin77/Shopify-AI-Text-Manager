@@ -6,7 +6,7 @@ application_url = "https://contentpilotai.up.railway.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations,write_metaobjects,read_metaobject_definitions"
+scopes = "read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations,write_metaobjects,read_metaobject_definitions,read_markets"
 
 [app_proxy]
 # Storefront /apps/contentpilot/* → forwarded to {url}/* (here: /proxy/*).

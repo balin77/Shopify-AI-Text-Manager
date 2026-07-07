@@ -57,7 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const dbTranslation = dbImage
     ? await db.productImageAltTranslation.findUnique({
-        where: { imageId_locale: { imageId: dbImage.id, locale } },
+        where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
         select: { altText: true, updatedAt: true },
       })
     : null;

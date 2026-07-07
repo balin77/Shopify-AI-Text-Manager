@@ -310,6 +310,8 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
     case "updateContent": {
       const locale = getFormString(formData, "locale");
       const primaryLocale = getFormString(formData, "primaryLocale");
+      // Market scope (foreign locales only; primary theme content is always global).
+      const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
       const updatedFieldsJson = getFormString(formData, "updatedFields");
       if (!locale || !primaryLocale || !updatedFieldsJson) {
         return json({ success: false, error: "Missing required field: locale, primaryLocale, or updatedFields" }, { status: 400 });
@@ -326,6 +328,7 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
           value: value as string,
           locale,
           translatableContentDigest: "",
+          ...(marketId ? { marketId } : {}),
         }));
 
         if (translationInputs.length > 0) {
@@ -364,8 +367,10 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         }
 
         if (changedFields.length > 0) {
+          // Global-scoped to mirror the global-only Shopify removal (market
+          // overrides survive on both sides).
           await db.themeTranslation.deleteMany({
-            where: { shop: session.shop, groupId, key: { in: changedFields }, domain, ...themeScope(selectedThemeId) },
+            where: { shop: session.shop, groupId, key: { in: changedFields }, domain, marketId: "", ...themeScope(selectedThemeId) },
           });
         }
         return json({ success: true });
@@ -375,17 +380,18 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
         for (const [key, value] of Object.entries(updatedFields)) {
           await db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale_themeId: {
+              shop_resourceId_groupId_key_locale_themeId_marketId: {
                 shop: session.shop,
                 resourceId,
                 groupId,
                 key,
                 locale,
                 themeId: rowThemeId,
+                marketId,
               },
             },
             update: { value: value as string, updatedAt: new Date() },
-            create: { shop: session.shop, groupId, resourceId, themeId: rowThemeId, domain, locale, key, value: value as string },
+            create: { shop: session.shop, groupId, resourceId, themeId: rowThemeId, domain, locale, key, value: value as string, marketId },
           });
         }
         return json({ success: true });

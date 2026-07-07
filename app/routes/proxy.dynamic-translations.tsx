@@ -22,6 +22,21 @@ import { isValidLocale } from "../utils/validation";
 // gates the theme-editor capture tool). Translations/collector are also gated.
 const EMPTY = { available: false, collect: false, version: 0, entries: {} as Record<string, string> };
 
+/**
+ * Normalize the storefront-supplied `market` param to the stored
+ * `gid://shopify/Market/<id>` form. The theme embed sends Shopify's numeric
+ * `localization.market.id`; we also accept a full GID (idempotent). Anything
+ * else (empty, handle we can't map, junk) → "" (global) so the dictionary
+ * degrades safely to the global layer.
+ */
+function normalizeMarketParam(raw: string | null): string {
+  const v = (raw ?? "").trim();
+  if (!v) return "";
+  if (/^gid:\/\/shopify\/Market\/\d+$/.test(v)) return v;
+  if (/^\d+$/.test(v)) return `gid://shopify/Market/${v}`;
+  return "";
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.public.appProxy(request);
 
@@ -35,12 +50,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json(EMPTY, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const locale = new URL(request.url).searchParams.get("locale")?.trim() ?? "";
+  const url = new URL(request.url);
+  const locale = url.searchParams.get("locale")?.trim() ?? "";
   if (!locale || !isValidLocale(locale)) {
     return json({ ...EMPTY, available: true }, { headers: { "Cache-Control": "no-store" } });
   }
 
-  const dict = await getDictionary(db, session.shop, locale);
+  // Market context for market-specific direct translations. The theme app embed
+  // injects Shopify's `localization.market.id` (numeric) or `.handle`; we
+  // normalize to the stored `gid://shopify/Market/<id>` form. Anything we can't
+  // map → "" (global), which is also the backward-compatible default for older
+  // embeds that don't send a market. The param is buyer-controlled but only
+  // selects a subset of THIS shop's own dictionary — no privilege escalation.
+  const marketId = normalizeMarketParam(url.searchParams.get("market"));
+
+  const dict = await getDictionary(db, session.shop, locale, marketId);
 
   // Short edge/browser cache; the storefront JS additionally caches in
   // localStorage and revalidates against `version` (stale-while-revalidate).
