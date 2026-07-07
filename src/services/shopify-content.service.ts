@@ -631,6 +631,22 @@ export class ShopifyContentService {
       }
 
       const edges = data.data?.markets?.edges || [];
+
+      // TEMP raw diagnostic: dump why each market is (not) qualifying, so an
+      // empty result isn't a black box. Logs enabled/status + every locale
+      // source per web presence.
+      loggers.translation('info', `[loadMarkets] RAW ${edges.length} market node(s)`, {
+        nodes: edges.map((e: any) => {
+          const n = e?.node;
+          const wps = (n?.webPresences?.edges || []).map((w: any) => ({
+            rootUrls: (w?.node?.rootUrls || []).map((r: any) => r?.locale),
+            defaultLocale: w?.node?.defaultLocale?.locale ?? null,
+            alternateLocales: (w?.node?.alternateLocales || []).map((a: any) => a?.locale),
+          }));
+          return { id: n?.id, name: n?.name, enabled: n?.enabled ?? null, status: n?.status ?? null, wpCount: wps.length, webPresences: wps };
+        }),
+      });
+
       const markets: MarketInfo[] = edges
         .map((edge: any): MarketInfo | null => {
           const node = edge?.node;

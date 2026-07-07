@@ -42,6 +42,7 @@ export const GET_MARKETS = `#graphql
           name
           handle
           enabled
+          status
           webPresences(first: 10) {
             edges {
               node {
