@@ -36,6 +36,12 @@ interface MarketSelectorProps {
     tooltip?: string;
     /** Hover hint explaining WHY the selector is greyed out in the primary locale. */
     primaryDisabledHint?: string;
+    /**
+     * When set, the selector is force-disabled and this reason is always shown as
+     * its tooltip (e.g. a content type whose save path has no market scoping, like
+     * the cookie banner). Takes precedence over the primary-locale hint.
+     */
+    disabledReason?: string;
   };
 }
 
@@ -61,27 +67,30 @@ export function MarketSelector({
     (m) => m.localeCodes.length === 0 || m.localeCodes.includes(currentLanguage),
   );
 
-  // Disabled in the primary locale (unless the caller opts in, e.g.
-  // DirectTranslations) or when no market serves this locale — only "global"
-  // is available; the disabled control keeps the layout stable.
-  const disabled = (isPrimaryLocale && !allowPrimaryLocale) || applicableMarkets.length === 0;
+  // Disabled by an explicit reason (content type has no market scoping), in the
+  // primary locale (unless the caller opts in, e.g. DirectTranslations), or when
+  // no market serves this locale — only "global" is available; the disabled
+  // control keeps the layout stable.
+  const disabled =
+    !!t.disabledReason || (isPrimaryLocale && !allowPrimaryLocale) || applicableMarkets.length === 0;
 
   const options = [
     { label: t.allMarketsGlobal, value: "" },
     ...applicableMarkets.map((m) => ({ label: m.name, value: m.id })),
   ];
 
-  // Only the primary locale gets a tooltip — it explains why the control is
-  // greyed out there. Foreign locales have a usable selector and need no hint.
-  // Show only the first clause (before the dash) per product decision. Wraps the
-  // control so the hint is reachable even though the disabled <Select> swallows
-  // hover events.
-  const showPrimaryHint = disabled && isPrimaryLocale && !allowPrimaryLocale;
+  // Tooltip: an explicit disabledReason (e.g. cookie banner) always wins and is
+  // shown verbatim. Otherwise the primary locale gets a short hint (first clause
+  // before the dash) explaining its greyed-out state; foreign locales with a
+  // usable selector show nothing. Wraps the control so the hint is reachable even
+  // though the disabled <Select> swallows hover events.
+  const showPrimaryHint = !t.disabledReason && disabled && isPrimaryLocale && !allowPrimaryLocale;
   const primaryHint = (
     t.primaryDisabledHint || "Market selection is only available in a translation language"
   )
     .split(/\s[–—-]\s/)[0]
     .trim();
+  const tooltipContent = t.disabledReason || (showPrimaryHint ? primaryHint : undefined);
 
   const control = (
     <div style={{ minWidth: "12rem" }}>
@@ -98,8 +107,8 @@ export function MarketSelector({
     </div>
   );
 
-  return showPrimaryHint ? (
-    <Tooltip content={primaryHint} preferredPosition="below" dismissOnMouseOut>
+  return tooltipContent ? (
+    <Tooltip content={tooltipContent} preferredPosition="below" dismissOnMouseOut>
       {control}
     </Tooltip>
   ) : control;

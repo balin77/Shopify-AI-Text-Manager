@@ -53,6 +53,12 @@ interface UnifiedContentEditorProps {
   /** Primary locale */
   primaryLocale: string;
 
+  /**
+   * When set, the market selector is shown but force-disabled with this reason as
+   * its tooltip (e.g. cookie banner: no market scoping in the Customer Privacy API).
+   */
+  marketDisabledReason?: string;
+
   /** Return value from useUnifiedContentEditor hook */
   editor: UseContentEditorReturn;
 
@@ -172,6 +178,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     items,
     shopLocales,
     primaryLocale,
+    marketDisabledReason,
     editor,
     fetcherState,
     fetcherFormData,
@@ -652,6 +659,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
                     marketTooltip: t.content?.market?.tooltip,
                     marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
+                    marketDisabledReason,
                   }}
                 />
               </div>
@@ -688,6 +696,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
                       marketTooltip: t.content?.market?.tooltip,
                       marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
+                      marketDisabledReason,
                     }}
                   />
                 </Card>

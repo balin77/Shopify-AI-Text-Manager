@@ -285,6 +285,7 @@ export const es: Translation = {
       inheritedFromGlobal: "Heredado del valor global",
       primaryDisabledHint: "La selección de mercado solo está disponible en un idioma de traducción: cambia primero a un idioma de destino.",
       tooltip: "Elige un mercado para traducir este idioma de forma específica. Sin selección, el valor global se aplica a todos los mercados.",
+      disabledHint: "Los banners de cookies se guardan mediante la API de privacidad del cliente de Shopify, que no admite valores específicos por mercado. Este contenido siempre es global.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",

@@ -77,12 +77,16 @@ interface ThemeContentDomainPageProps {
 
 export function ThemeContentDomainPage({ data, config, apiBasePath, planContentType, resourceTypes, infoBanner, disableMarketSelector }: ThemeContentDomainPageProps) {
   const { themes, shop, shopLocales: loaderShopLocales, primaryLocale, markets, error, themeOptions, selectedThemeId, needsThemeSync } = data;
-  // Markets to expose to the editor — suppressed for rubrics whose save path
-  // cannot scope by market (see disableMarketSelector).
-  const effectiveMarkets = disableMarketSelector ? [] : markets;
+  // Markets are always exposed so the selector stays visible. Rubrics whose save
+  // path cannot scope by market (disableMarketSelector) show it greyed out with an
+  // explanatory tooltip instead of hiding it — see marketDisabledReason below.
+  const effectiveMarkets = markets;
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
+  const marketDisabledReason = disableMarketSelector
+    ? (t.content?.market?.disabledHint || "Market selection isn't available for this content type.")
+    : undefined;
   const { showInfoBox } = useInfoBox();
 
   // ── Lazy AI short-title backfill for email notifications ───────────────────
@@ -1098,6 +1102,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           items={items as unknown as TranslatableContentItem[]}
           shopLocales={loaderShopLocales}
           primaryLocale={primaryLocale}
+          marketDisabledReason={marketDisabledReason}
           editor={editor}
           fetcherState={fetcher.state}
           fetcherFormData={fetcher.formData}

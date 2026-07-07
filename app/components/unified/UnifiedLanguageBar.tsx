@@ -91,6 +91,7 @@ interface UnifiedLanguageBarProps {
     marketSelectorLabel?: string;
     marketTooltip?: string;
     marketPrimaryDisabledHint?: string;
+    marketDisabledReason?: string;
   };
 }
 
@@ -176,6 +177,7 @@ export function UnifiedLanguageBar({
               selectorLabel: t.marketSelectorLabel || "Market",
               tooltip: t.marketTooltip,
               primaryDisabledHint: t.marketPrimaryDisabledHint,
+              disabledReason: t.marketDisabledReason,
             }}
           />
         )}

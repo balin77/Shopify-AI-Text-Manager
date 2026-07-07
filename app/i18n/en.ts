@@ -286,6 +286,7 @@ export const en: Translation = {
       inheritedFromGlobal: "Inherited from global value",
       primaryDisabledHint: "Market selection is only available in a translation language — switch to a target language first.",
       tooltip: "Pick a market to translate this language specifically for it. Without a selection the global value applies to all markets.",
+      disabledHint: "Cookie banners are stored via Shopify's Customer Privacy API, which doesn't support market-specific values. This content is always global.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Fields in the primary language must not be empty. If a field is saved empty, Shopify removes it permanently and it can never be restored. Please fill in all fields before saving.",

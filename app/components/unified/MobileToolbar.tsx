@@ -72,6 +72,7 @@ interface MobileToolbarProps {
     marketSelectorLabel?: string;
     marketTooltip?: string;
     marketPrimaryDisabledHint?: string;
+    marketDisabledReason?: string;
   };
 }
 
@@ -228,10 +229,11 @@ export function MobileToolbar({
         </div>
       </div>
 
-      {/* Market selector — its own full-width row below the toolbar. Only shown
-          for foreign locales when the shop has markets (MarketSelector itself
-          guards the primary-locale / no-applicable-market cases). */}
-      {onMarketChange && markets.length > 0 && currentLanguage !== primaryLocale && (
+      {/* Market selector — its own full-width row below the toolbar. Shown for
+          foreign locales when the shop has markets, or whenever a disabledReason
+          is present (e.g. cookie banner shows it greyed with an explanation).
+          MarketSelector itself guards the primary-locale / no-applicable cases. */}
+      {onMarketChange && markets.length > 0 && (currentLanguage !== primaryLocale || !!t.marketDisabledReason) && (
         <div style={{ marginTop: "0.5rem" }}>
           <MarketSelector
             markets={markets}
@@ -244,6 +246,7 @@ export function MobileToolbar({
               selectorLabel: t.marketSelectorLabel || "Market",
               tooltip: t.marketTooltip,
               primaryDisabledHint: t.marketPrimaryDisabledHint,
+              disabledReason: t.marketDisabledReason,
             }}
           />
         </div>

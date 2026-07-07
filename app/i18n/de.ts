@@ -283,6 +283,7 @@ export const de = {
       inheritedFromGlobal: "Vom globalen Wert geerbt",
       primaryDisabledHint: "Marktauswahl nur in einer Übersetzungssprache verfügbar – wechsle zuerst zu einer Zielsprache.",
       tooltip: "Wähle einen Markt, um diese Sprache abweichend für ihn zu übersetzen. Ohne Auswahl gilt der globale Wert für alle Märkte.",
+      disabledHint: "Cookie-Banner werden über Shopifys Customer-Privacy-API gespeichert, die keine markt-spezifischen Werte unterstützt. Diese Inhalte gelten immer global.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
