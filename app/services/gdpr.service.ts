@@ -442,6 +442,12 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoScoreSnapshotsDeleted.count} SEO score snapshots`);
+
+    // Glossary: merchant terminology (GlossaryEntryTranslation cascades).
+    const glossaryEntriesDeleted = await tx.glossaryEntry.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${glossaryEntriesDeleted.count} glossary entries`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

@@ -828,6 +828,42 @@ model AltTextTemplate {
   @@index([shop, productId])
 }
 
+/// Glossar/Terminologie (docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md): one entry
+/// per source term in the shop's primary locale. Injected into every AI
+/// translation prompt via AIService.getGlossaryDirective().
+///   doNotTranslate = true  -> keep the term verbatim in ALL target languages
+///   translations           -> per-locale fixed ("always exactly this") renderings
+///   no translation row     -> no rule for that locale, the AI translates freely
+model GlossaryEntry {
+  id             String   @id @default(cuid())
+  shop           String
+  sourceTerm     String
+  sourceLocale   String // shop primary locale at creation time
+  doNotTranslate Boolean  @default(false)
+  caseSensitive  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  translations GlossaryEntryTranslation[]
+
+  @@unique([shop, sourceTerm, sourceLocale])
+  @@index([shop])
+}
+
+/// Fixed target-locale rendering of a GlossaryEntry ("always translate exactly
+/// so"). Shop scoping is inherited through the entry (cascade on delete), so
+/// GDPR shop-redact only needs to delete GlossaryEntry rows.
+model GlossaryEntryTranslation {
+  id      String        @id @default(cuid())
+  entryId String
+  entry   GlossaryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  locale  String
+  value   String
+
+  @@unique([entryId, locale])
+  @@index([entryId])
+}
+
 /// Persistent audit trail for GDPR compliance requests.
 /// Entries are retained for 3 years (Art. 5(2) GDPR accountability) and are
 /// deliberately NOT deleted on shop/redact. The 3-year upper bound is enforced
