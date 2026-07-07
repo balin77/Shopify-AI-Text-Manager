@@ -36,10 +36,11 @@ import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import { isValidShopifyGID } from "../utils/validation";
 import type { Plan } from "../config/plans";
+// Pure/client-safe pieces from the shared module — the component uses them,
+// so importing them from bulk-meta.service would drag server-only code
+// (ShopifyApiGateway → logger.server) into the client bundle.
 import {
   computeDiff,
-  applyBulkMetaDiff,
-  loadBulkMetaPage,
   BULK_META_TYPES,
   BULK_META_FIELDS,
   BULK_META_PAGE_SIZE,
@@ -48,7 +49,10 @@ import {
   type BulkMetaRow,
   type BulkMetaDiffEntry,
   type BulkMetaFailure,
-} from "../services/seo/bulk-meta.service";
+} from "../services/seo/bulk-meta.shared";
+// Server-only I/O — referenced exclusively from loader/action, which Remix
+// strips from the client build.
+import { applyBulkMetaDiff, loadBulkMetaPage } from "../services/seo/bulk-meta.service";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({

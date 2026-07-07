@@ -19,111 +19,20 @@ import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
+import { groupDiffByRow } from "./bulk-meta.shared";
+import type {
+  BulkMetaType,
+  BulkMetaField,
+  BulkMetaRow,
+  BulkMetaDiffEntry,
+  BulkMetaApplyResult,
+  BulkMetaFailure,
+} from "./bulk-meta.shared";
 
-export type BulkMetaType = "product" | "collection" | "article" | "page";
-export type BulkMetaField = "title" | "seoTitle" | "seoDescription" | "handle";
-
-export const BULK_META_TYPES: BulkMetaType[] = ["product", "collection", "article", "page"];
-export const BULK_META_FIELDS: BulkMetaField[] = ["title", "seoTitle", "seoDescription", "handle"];
-
-/** Rows shown per page in the grid (A2-style take cap, offset-paged via ?page=). */
-export const BULK_META_PAGE_SIZE = 100;
-
-/** More dirty rows than this go through the detached "seoBulkMeta" Task
- * (seo-bulk-meta.handler.ts) instead of a synchronous save. */
-export const MAX_SYNC_SAVE = 25;
-
-/** Hard cap on one detached run. There's no per-item AI call here (unlike
- * MAX_BULK_FIX_ITEMS in seo-bulk-fix.handler.ts), so the ceiling can be much
- * higher — this just bounds one runner's worst-case wall-clock time. */
-export const MAX_BULK_META_TASK_ITEMS = 500;
-
-export interface BulkMetaRow {
-  id: string;
-  type: BulkMetaType;
-  title: string;
-  seoTitle: string;
-  seoDescription: string;
-  handle: string;
-}
-
-export interface BulkMetaDiffEntry {
-  id: string;
-  type: BulkMetaType;
-  field: BulkMetaField;
-  value: string;
-}
-
-export interface BulkMetaFailure {
-  id: string;
-  type: BulkMetaType;
-  message: string;
-}
-
-export interface BulkMetaApplyResult {
-  saved: number;
-  failures: BulkMetaFailure[];
-}
-
-// ─── Pure diff computation (unit-tested) ──────────────────────────────────
-
-/**
- * Diff-only save-all: only cells whose trimmed value differs from the
- * (trimmed) original row value are returned. `edits` is keyed by
- * `${id}:${field}` — exactly the shape of the route's client-side edit map.
- *
- * Trimming means whitespace-only "changes" never count as dirty, but
- * deliberately clearing a field (typing nothing) still produces a
- * `value: ""` entry whenever the original had content — an explicit clear is
- * a real, save-worthy diff, not a no-op.
- *
- * Split on the LAST ":" rather than the first: Shopify GIDs
- * ("gid://shopify/Product/123") contain their own colon, but none of the
- * field names do, so the separator is always the final one.
- */
-export function computeDiff(rows: BulkMetaRow[], edits: Record<string, string>): BulkMetaDiffEntry[] {
-  const byId = new Map(rows.map((r) => [r.id, r] as const));
-  const diff: BulkMetaDiffEntry[] = [];
-
-  for (const key of Object.keys(edits)) {
-    const sep = key.lastIndexOf(":");
-    if (sep < 0) continue;
-    const id = key.slice(0, sep);
-    const field = key.slice(sep + 1) as BulkMetaField;
-    if (!BULK_META_FIELDS.includes(field)) continue;
-
-    const row = byId.get(id);
-    if (!row) continue;
-
-    const original = (row[field] ?? "").trim();
-    const next = (edits[key] ?? "").trim();
-    if (next !== original) {
-      diff.push({ id: row.id, type: row.type, field, value: next });
-    }
-  }
-
-  return diff;
-}
-
-/** Groups flat diff entries into one patch per (type,id) row, so a row with
- * several dirty cells produces a single Shopify mutation instead of one per
- * field. Exported (alongside computeDiff) since it's pure and easy to test
- * independently of any I/O. */
-export function groupDiffByRow(
-  diff: BulkMetaDiffEntry[],
-): { type: BulkMetaType; id: string; fields: Partial<Record<BulkMetaField, string>> }[] {
-  const map = new Map<string, { type: BulkMetaType; id: string; fields: Partial<Record<BulkMetaField, string>> }>();
-  for (const entry of diff) {
-    const key = `${entry.type}:${entry.id}`;
-    let group = map.get(key);
-    if (!group) {
-      group = { type: entry.type, id: entry.id, fields: {} };
-      map.set(key, group);
-    }
-    group.fields[entry.field] = entry.value;
-  }
-  return [...map.values()];
-}
+// Types, constants and the pure diff computation live in bulk-meta.shared.ts
+// (client-safe — the route component uses them); re-export so server-side
+// consumers keep this single import path.
+export * from "./bulk-meta.shared";
 
 // ─── Loading a page of rows (select-minimized, take-capped) ───────────────
 
