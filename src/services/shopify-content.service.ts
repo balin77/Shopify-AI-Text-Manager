@@ -639,12 +639,22 @@ export class ShopifyContentService {
           if (node.enabled === false) return null;
 
           // Union the locales served across all of this market's web presences.
+          // rootUrls only enumerates locales that have a distinct root URL (empty
+          // for single-domain / primary markets), so defaultLocale +
+          // alternateLocales are the authoritative per-web-presence language list
+          // (Admin API 2025-10). Reading only rootUrls dropped every market whose
+          // languages aren't URL-split → empty selector with no error.
           const localeSet = new Set<string>();
           const wpEdges = node.webPresences?.edges || [];
           for (const wpEdge of wpEdges) {
-            const rootUrls = wpEdge?.node?.rootUrls || [];
-            for (const root of rootUrls) {
+            const wp = wpEdge?.node;
+            if (!wp) continue;
+            for (const root of wp.rootUrls || []) {
               if (root?.locale) localeSet.add(root.locale);
+            }
+            if (wp.defaultLocale?.locale) localeSet.add(wp.defaultLocale.locale);
+            for (const alt of wp.alternateLocales || []) {
+              if (alt?.locale) localeSet.add(alt.locale);
             }
           }
 
@@ -658,6 +668,16 @@ export class ShopifyContentService {
         // Keep only markets that serve at least one locale — a market with no
         // web-presence locale can never display a market-specific translation.
         .filter((m: MarketInfo | null): m is MarketInfo => m !== null && m.localeCodes.length > 0);
+
+      // Diagnostic (success path is otherwise silent): how many markets Shopify
+      // returned vs. how many survived the enabled + has-locale filter. If the
+      // raw count is > 0 but qualifying is 0, the store's markets carry no
+      // web-presence locale; if raw is 0/1 the store simply has no extra markets.
+      loggers.translation(
+        'info',
+        `[loadMarkets] Shopify returned ${edges.length} market(s); ${markets.length} qualifying (enabled + >=1 locale)`,
+        { markets: markets.map((m) => ({ id: m.id, name: m.name, locales: m.localeCodes })) },
+      );
 
       return { markets };
     } catch (error) {

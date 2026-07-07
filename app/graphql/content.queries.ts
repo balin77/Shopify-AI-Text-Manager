@@ -48,6 +48,12 @@ export const GET_MARKETS = `#graphql
                 rootUrls {
                   locale
                 }
+                defaultLocale {
+                  locale
+                }
+                alternateLocales {
+                  locale
+                }
               }
             }
           }
