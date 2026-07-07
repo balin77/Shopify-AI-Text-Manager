@@ -140,27 +140,34 @@ private async getGlossaryDirective(sourceTexts: string[], targetLocales: string[
 
 ## Phasen
 
-### Phase 1 — Backend (Modell + Service)
-- [ ] Prisma: `GlossaryEntry` + `GlossaryEntryTranslation` + Migration
-- [ ] `src/services/glossary.service.ts`: Port aus `origin/feature/glossary` (Validation, Sanitization/M1-Härtung, CSV) + Umbau auf Entry-Modell + `buildGlossaryDirective` mit Quelltext-Matching
-- [ ] GDPR: beide Modelle in `redactShopData()` (Entry-Delete kaskadiert auf Translations)
-- [ ] Unit-Tests portieren/erweitern: Validation, CSV-Roundtrip, Directive-Builder (Matching, caseSensitive, Locale-Filter, Cap, Injection-Härtung)
+### Phase 1 — Backend (Modell + Service) ✅
+- [x] Prisma: `GlossaryEntry` + `GlossaryEntryTranslation` + Migration (`20260707100000_add_glossary`)
+- [x] `src/services/glossary.service.ts`: Port aus `origin/feature/glossary` (Validation, Sanitization/M1-Härtung, CSV) + Umbau auf Entry-Modell + `buildGlossaryDirective` mit Quelltext-Matching
+- [x] GDPR: `glossaryEntry.deleteMany` in `redactShopData()` (Translations kaskadieren)
+- [x] Unit-Tests portiert/erweitert (`tests/unit/glossary.service.test.ts`, 27 Tests)
 
-### Phase 2 — Zentrale AI-Injektion
-- [ ] `AIService.getGlossaryDirective()` (lazy load + Instanz-Cache, dynamischer `db.server`-Import)
-- [ ] Injektion in die 7 Methoden der Tabelle oben
-- [ ] Edge-Case 1 (Quelltext == doNotTranslate-Term → AI-Call skippen)
-- [ ] Tests: Prompt enthält Block nur bei Match; kein Block bei leerem Glossar; unveränderte Methoden-Signaturen
+### Phase 2 — Zentrale AI-Injektion ✅
+- [x] `AIService.getGlossaryDirective()` (lazy load + Instanz-Cache, dynamischer Import, fail-open)
+- [x] Injektion in die 7 Methoden der Tabelle oben
+- [x] Edge-Case 1 (Quelltext == doNotTranslate-Term → AI-Call skippen, `translateContent`)
+- [x] Tests (`tests/unit/ai-glossary-injection.test.ts`, 8 Tests: Match/No-Match, Verbatim-Skip, Locale-Filter, Einmal-Laden, Fail-open, ohne Shop kein DB-Zugriff)
 
-### Phase 3 — Settings-UI
-- [ ] Loader: `glossaryEntries` + vollständige `shopLocales` (name, published)
-- [ ] Action: `saveGlossary` (Transaktions-Diff-Upsert), `importGlossary`
-- [ ] `SettingsGlossaryTab.tsx` (Locale-Leiste, Entry-Tabelle, +‑Button, Fremdsprachen-Ansicht, CSV-Buttons)
-- [ ] Tab-Registrierung, i18n de/en/es, AppSaveBar-Integration
+### Phase 3 — Settings-UI ✅
+- [x] Loader: `glossaryEntries` + vollständige `shopLocales` (name, published)
+- [x] Action: `saveGlossary` (Transaktions-Diff-Upsert), `importGlossary`
+- [x] `SettingsGlossaryTab.tsx` (Locale-Leiste, Entry-Tabelle, +‑Button, Fremdsprachen-Ansicht, CSV-Buttons)
+- [x] Tab-Registrierung, i18n de/en/es, AppSaveBar-Integration
 
 ### Phase 4 — Abschluss
-- [ ] Manuelle Verifikation: Begriff anlegen → Produkt übersetzen (Editor, api.ai-Einzelfeld, Theme-Content, Direct Translation) → feste Übersetzung/Verbatim prüfen; Translation-Probe-Tab (dev) zur Prompt-Sichtung nutzen
-- [ ] `docs/COMPETITIVE_ANALYSIS.md`: Gap #2 als erledigt markieren (Pattern wie beim Switcher-Widget), `docs/ROADMAP.md` aktualisieren
+- [ ] Manuelle Verifikation im Dev-Store: Begriff anlegen → Produkt übersetzen (Editor, api.ai-Einzelfeld, Theme-Content, Direct Translation) → feste Übersetzung/Verbatim prüfen; Translation-Probe-Tab (dev) zur Prompt-Sichtung nutzen. (Braucht laufende App + AI-Key — nicht in der Sandbox möglich.)
+- [x] `docs/COMPETITIVE_ANALYSIS.md`: Gap #2 als erledigt markiert, `docs/ROADMAP.md` aktualisiert
+
+**Nebenbefund (behoben, eigener Commit):** Der Basis-Branch
+`claude/seo-tab-review-52v60d` baute nicht (`remix vite:build`:
+"Server-only module referenced by client") — `app.seo.bulk-meta.tsx` nutzte
+`computeDiff`/Konstanten aus `bulk-meta.service.ts` im Client-Code, was
+`ShopifyApiGateway → logger.server` ins Client-Bundle zog. Pure Teile nach
+`app/services/seo/bulk-meta.shared.ts` ausgelagert (Service re-exportiert).
 
 ## Offene Entscheidungen (mit Empfehlung)
 

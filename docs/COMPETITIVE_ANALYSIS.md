@@ -107,7 +107,7 @@
 | Custom AI-Anweisungen | ✅ | ❌ | ❌ | ❌ | ❌ |
 | **Währungsumrechnung** ¹ | ❌ | ✅ 167 | ❌ | ✅ | ✅ |
 | **Geolocation Auto-Detect** | ❌ | ✅ | ✅ | ✅ | ❌ |
-| **Glossar/Terminologie** | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Glossar/Terminologie** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Language/Currency Switcher Widget** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Third-Party-App-Übersetzung** ² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Checkout-Übersetzung** ³ | ✅ | ✅ | ✅ | ✅ | ❌ |
@@ -439,7 +439,7 @@ Diese Features haben die meisten Wettbewerber und Kunden erwarten sie:
 |---|---------|--------|---------|--------------|
 | 1 | **JSON-LD Structured Data** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
 | 2 | **Rich Snippets (Product, Review, Breadcrumb)** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
-| 3 | **Glossar/Terminologie-Management** | Hoch | Mittel | Transcy, Weglot, LangShop, T Lab |
+| ~~3~~ | ~~**Glossar/Terminologie-Management**~~ ✅ erledigt (2026-07, Settings-Tab „Glossar" + zentrale Prompt-Injektion in `src/services/ai.service.ts`; Plan: `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md`) | — | — | — |
 | ~~4~~ | ~~**Language/Currency Switcher Widget**~~ ✅ erledigt (2026-06, `extensions/storefront/blocks/locale-switcher.liquid`) | — | — | — |
 | 5 | **Content-Templates/Vorlagen** | Hoch | Niedrig | ChatGPT-AI, WritePilot, SEO On |
 
@@ -642,11 +642,12 @@ Footer-Position, Auto-Compact ab schmalem Viewport, Merged-Mode für Mobile,
 konfigurierbare Settings). Damit ist die einzige echte Funktionslücke
 geschlossen — Übersetzungen sind für Endkunden ohne Theme-Editing sichtbar.
 
-**2. Glossar/Terminologie-Management.** Begriffsdatenbank pro Shop: „nie
-übersetzen" / „immer exakt so übersetzen". Verhindert inkonsistente AI-
-Übersetzung von Marken-/Fachbegriffen. Standard bei allen großen Translation-
-Apps. Umsetzung = Prisma-Tabelle + Settings-UI + Begriffe in den AI-Prompt
-injizieren. Mittlerer Aufwand, hoher Erwartungswert.
+**2. Glossar/Terminologie-Management.** ✅ erledigt (2026-07). Begriffsdatenbank
+pro Shop: „nie übersetzen" / „immer exakt so übersetzen" pro Zielsprache,
+Settings-Tab „Glossar" mit Locale-Buttons, CSV-Import/Export. Injektion sitzt
+zentral in `AIService` (nur Begriffe, die im Quelltext vorkommen), deckt also
+alle Übersetzungspfade ab (Editoren, Theme-Content, Direct Translations,
+Alt-Texte, SEO). Plan/Details: `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md`.
 
 **3. JSON-LD Structured Data.** Maschinenlesbares Markup (Product/Breadcrumb/
 Article/Review) → Rich Snippets in Google (Sterne, Preis, Verfügbarkeit) +
@@ -699,7 +700,7 @@ die kein Übersetzungs-Konkurrent hat.
 
 **Empfohlene Reihenfolge (wenn Bugs erledigt):** ~~#1 Switcher-Widget~~ ✅
 erledigt → #4 Templates (billig, nutzt vorhandene Infra, zusätzliches
-Pro/Max-Differenzial) → #2 Glossar + #3 JSON-LD parallel.
+Pro/Max-Differenzial) → ~~#2 Glossar~~ ✅ erledigt + #3 JSON-LD parallel.
 
 ---
 
@@ -724,32 +725,18 @@ Pro/Max-Differenzial) → #2 Glossar + #3 JSON-LD parallel.
 // Integration mit bestehenden Product/Collection-Daten
 ```
 
-#### 1.2 Glossar-Management
-- [ ] Glossar-Datenmodell (Prisma Schema erweitern)
-- [ ] Glossar-UI in Settings
-- [ ] Begriffe hinzufügen/bearbeiten/löschen
-- [ ] "Nicht übersetzen" Option
-- [ ] "Feste Übersetzung" Option
-- [ ] Glossar beim Übersetzen anwenden
-- [ ] Import/Export (CSV)
+#### 1.2 Glossar-Management ✅ erledigt (2026-07)
+- [x] Glossar-Datenmodell (`GlossaryEntry` + `GlossaryEntryTranslation`, prisma/schema.prisma)
+- [x] Glossar-UI in Settings (Tab „Glossar" mit Locale-Buttons, `SettingsGlossaryTab.tsx`)
+- [x] Begriffe hinzufügen/bearbeiten/löschen
+- [x] "Nicht übersetzen" Option (pro Begriff, gilt für alle Sprachen)
+- [x] "Feste Übersetzung" Option (pro Zielsprache)
+- [x] Glossar beim Übersetzen anwenden (zentral in `AIService`, alle Übersetzungspfade)
+- [x] Import/Export (CSV)
 
-**Technische Umsetzung:**
-```prisma
-// prisma/schema.prisma
-model GlossaryTerm {
-  id           String   @id @default(cuid())
-  shop         String
-  sourceTerm   String
-  targetTerm   String?  // null = nicht übersetzen
-  sourceLocale String
-  targetLocale String
-  caseSensitive Boolean @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@unique([shop, sourceTerm, sourceLocale, targetLocale])
-}
-```
+Umgesetzt nach `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md` — das dortige
+Datenmodell (Entry + per-Locale-Übersetzungen) ersetzt den früher hier
+skizzierten flachen `GlossaryTerm`-Entwurf.
 
 #### 1.3 Content-Templates
 - [ ] Template-Datenmodell
