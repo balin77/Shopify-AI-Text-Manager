@@ -317,6 +317,7 @@ export function UnifiedFieldRenderer(
         isDataLoading={isDataLoading}
         sourceTextAvailable={sourceTextAvailable}
         disableGeneration={disableGeneration}
+        isFallbackValue={isFallbackValue}
         readOnly={readOnly}
         requiredIndicator={requiredIndicator}
         hasFieldMissingTranslations={fieldHasMissingTranslations}
