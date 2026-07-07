@@ -4,11 +4,12 @@
  * can be translated differently per market (e.g. English for UK vs. US).
  *
  * Placement: right-aligned in the language bar, to the right of the locale
- * buttons. Default option is "All markets (global)" (value ""). Only markets
- * that serve the currently-viewed locale are offered — a market-specific
- * translation for a locale the market doesn't publish would never render on the
- * storefront. Disabled in the primary locale (Shopify has no market-specific
- * primary content) and hidden entirely when the shop has no markets.
+ * buttons. Default option is "All markets (global)" (value ""). A market with an
+ * explicit web-presence locale list is offered only for those locales; a market
+ * that shares the primary web presence (no dedicated locale list) is offered for
+ * every locale, matching Shopify's "Translate & Adapt". Disabled in the primary
+ * locale (Shopify has no market-specific primary content) and hidden entirely
+ * when the shop has no markets.
  */
 
 import { Select } from "@shopify/polaris";
@@ -48,10 +49,12 @@ export function MarketSelector({
 
   const isPrimaryLocale = currentLanguage === primaryLocale;
 
-  // Only markets that publish the current locale can carry a meaningful
-  // market-specific translation for it.
-  const applicableMarkets = markets.filter((m) =>
-    m.localeCodes.includes(currentLanguage),
+  // A market with an explicit web-presence locale list is offered only for those
+  // locales. A market with no dedicated web presence (localeCodes empty) shares
+  // the shop's presence and can carry market-specific translations for ANY of the
+  // shop's locales, so it always applies.
+  const applicableMarkets = markets.filter(
+    (m) => m.localeCodes.length === 0 || m.localeCodes.includes(currentLanguage),
   );
 
   // Disabled in the primary locale (unless the caller opts in, e.g.

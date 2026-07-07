@@ -632,37 +632,26 @@ export class ShopifyContentService {
 
       const edges = data.data?.markets?.edges || [];
 
-      // TEMP raw diagnostic: dump why each market is (not) qualifying, so an
-      // empty result isn't a black box. Logs enabled/status + every locale
-      // source per web presence.
-      loggers.translation('info', `[loadMarkets] RAW ${edges.length} market node(s)`, {
-        nodes: edges.map((e: any) => {
-          const n = e?.node;
-          const wps = (n?.webPresences?.edges || []).map((w: any) => ({
-            rootUrls: (w?.node?.rootUrls || []).map((r: any) => r?.locale),
-            defaultLocale: w?.node?.defaultLocale?.locale ?? null,
-            alternateLocales: (w?.node?.alternateLocales || []).map((a: any) => a?.locale),
-          }));
-          return { id: n?.id, name: n?.name, enabled: n?.enabled ?? null, status: n?.status ?? null, wpCount: wps.length, webPresences: wps };
-        }),
-      });
-
       const markets: MarketInfo[] = edges
         .map((edge: any): MarketInfo | null => {
           const node = edge?.node;
           if (!node?.id) return null;
-          // Skip disabled markets — they never render on the storefront.
-          if (node.enabled === false) return null;
+          // Keep only active markets. `enabled` is deprecated in Admin API 2025-10
+          // and no longer reliable — prefer `status` (ACTIVE), falling back to the
+          // legacy `enabled` if status is absent.
+          const isActive = node.status ? node.status === 'ACTIVE' : node.enabled !== false;
+          if (!isActive) return null;
 
-          // Union the locales served across all of this market's web presences.
-          // rootUrls only enumerates locales that have a distinct root URL (empty
-          // for single-domain / primary markets), so defaultLocale +
-          // alternateLocales are the authoritative per-web-presence language list
-          // (Admin API 2025-10). Reading only rootUrls dropped every market whose
-          // languages aren't URL-split → empty selector with no error.
+          // Locales the market publishes via a DEDICATED web presence. Secondary
+          // markets that share the primary web presence return webPresences: []
+          // here — that is NOT a disqualifier: Shopify's "Translate & Adapt" lets
+          // a market carry market-specific translations for ANY of the shop's
+          // published locales. So an empty list means "no per-locale restriction"
+          // and is handled downstream (MarketSelector offers such a market for
+          // every locale). rootUrls only lists URL-split locales; defaultLocale +
+          // alternateLocales are the authoritative per-web-presence language list.
           const localeSet = new Set<string>();
-          const wpEdges = node.webPresences?.edges || [];
-          for (const wpEdge of wpEdges) {
+          for (const wpEdge of node.webPresences?.edges || []) {
             const wp = wpEdge?.node;
             if (!wp) continue;
             for (const root of wp.rootUrls || []) {
@@ -681,19 +670,11 @@ export class ShopifyContentService {
             localeCodes: [...localeSet],
           };
         })
-        // Keep only markets that serve at least one locale — a market with no
-        // web-presence locale can never display a market-specific translation.
-        .filter((m: MarketInfo | null): m is MarketInfo => m !== null && m.localeCodes.length > 0);
+        .filter((m: MarketInfo | null): m is MarketInfo => m !== null);
 
-      // Diagnostic (success path is otherwise silent): how many markets Shopify
-      // returned vs. how many survived the enabled + has-locale filter. If the
-      // raw count is > 0 but qualifying is 0, the store's markets carry no
-      // web-presence locale; if raw is 0/1 the store simply has no extra markets.
-      loggers.translation(
-        'info',
-        `[loadMarkets] Shopify returned ${edges.length} market(s); ${markets.length} qualifying (enabled + >=1 locale)`,
-        { markets: markets.map((m) => ({ id: m.id, name: m.name, locales: m.localeCodes })) },
-      );
+      loggers.translation('info', `[loadMarkets] ${markets.length} active market(s)`, {
+        markets: markets.map((m) => ({ id: m.id, name: m.name, locales: m.localeCodes })),
+      });
 
       return { markets };
     } catch (error) {
