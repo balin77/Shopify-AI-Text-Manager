@@ -1,6 +1,7 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
+import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -35,30 +36,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       );
     }
   } catch (authError: unknown) {
-    // Handle authentication errors (including rate limiting).
-    // The Shopify Remix adapter throws a Response when auth fails (e.g. 429 from Shopify).
-    logger.error("Authentication error in running-tasks-count", { error: authError instanceof Error ? authError.message : String(authError) });
-
-    const errStatus = authError instanceof Response ? authError.status : undefined;
-
-    // If this is a rate limit error, return 200 with count 0 to prevent client errors
-    if (errStatus === 429) {
-      logger.warn("Rate limit hit on running-tasks-count, returning 0");
-      return json(
-        { count: 0, warning: "Rate limited" },
-        {
-          status: 200,
-          headers: {
-            "Retry-After": "60",
-          },
-        }
-      );
-    }
-
-    // Return a valid JSON response even on auth errors
-    return json(
-      { count: 0, error: "Authentication failed" },
-      { status: errStatus || 401 }
-    );
+    // Re-throws a Shopify auth Response unchanged (so App Bridge can refresh the
+    // token) instead of re-wrapping it as a 3xx json that crashes; 429 degrades
+    // to a graceful 200. See handlePolledAuthError.
+    return handlePolledAuthError(authError, { count: 0 });
   }
 };

@@ -7,7 +7,7 @@
  */
 
 import { json } from "@remix-run/node";
-import { AIService } from "../../../src/services/ai.service";
+import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
@@ -52,11 +52,15 @@ export async function handleLoadSubResourceTranslations(
     // Load translations from Shopify for each sub-resource
     const translations: Record<string, Record<string, string>> = {};
 
-    // Batch: load from local DB first (faster)
+    // Batch: load from local DB first (faster). This is the GLOBAL supplement —
+    // it fills the global layer for resources with no DB row yet; the market
+    // layer is carried by the loader's subResourceTranslations (DB) + client
+    // overlay, so scope to marketId "" for a deterministic global read.
     const dbTranslations = await db.contentTranslation.findMany({
       where: {
         resourceId: { in: resourceIds },
         locale,
+        marketId: "",
       },
     });
 
@@ -87,7 +91,7 @@ export async function handleLoadSubResourceTranslations(
               // Persist to DB so next navigation finds it via the loader pipeline
               dbWrites.push(
                 db.contentTranslation.upsert({
-                  where: { shop_resourceId_key_locale: { shop: session.shop, resourceId: rid, key: t.key, locale } },
+                  where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId: rid, key: t.key, locale } },
                   create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale },
                   update: { value: t.value },
                 })
@@ -130,6 +134,9 @@ export async function handleSaveSubResourceTranslations(
     return json({ success: false, error: "Invalid locale format" }, { status: 400 });
   }
 
+  // Market GID for a market-specific override; "" = global (all markets).
+  const marketId = getFormString(formData, "marketId") || "";
+
   try {
     // translationsData format: { resourceId: { key: value } }
     const translationsDataJson = getFormString(formData, "translationsData");
@@ -169,11 +176,16 @@ export async function handleSaveSubResourceTranslations(
         const keysToDelete: string[] = [];
 
         for (const [key, value] of Object.entries(fields)) {
-          if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
-            // Empty value for ProductOption/ProductOptionValue - delete the translation instead
+          const isEmpty = value === "";
+          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
+          // Delete (rather than store "") when: an option field is cleared
+          // (Shopify rejects blank option translations), OR any field is cleared
+          // in a MARKET context — clearing a market override reverts to the
+          // inherited global value instead of pinning a blank market-specific one.
+          if (isEmpty && (isOptionType || marketId)) {
             keysToDelete.push(key);
           } else {
-            // Non-empty value OR empty value for other resource types
+            // Non-empty value OR empty value in the global context for other types
             translationInputs.push({ key, value, locale });
           }
         }
@@ -187,17 +199,18 @@ export async function handleSaveSubResourceTranslations(
           keysToDelete: JSON.stringify(keysToDelete),
         });
 
-        // Save non-empty translations to Shopify
+        // Save non-empty translations to Shopify (market-scoped when marketId set)
         if (translationInputs.length > 0) {
-          await shopifyContentService.saveTranslations(resourceId, translationInputs);
+          await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
         }
 
-        // Delete empty translations for ProductOptionValue
+        // Delete empty translations for ProductOptionValue. marketIds null =
+        // remove the global translation; a market removes only that override.
         if (keysToDelete.length > 0) {
           const deleteResponse = await gateway.graphql(
             `#graphql
-              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
                   userErrors { field message }
                 }
               }`,
@@ -206,6 +219,7 @@ export async function handleSaveSubResourceTranslations(
                 resourceId,
                 translationKeys: keysToDelete,
                 locales: [locale],
+                marketIds: marketId ? [marketId] : null,
               },
             }
           );
@@ -230,17 +244,20 @@ export async function handleSaveSubResourceTranslations(
         // Save to local DB (including empty strings - user explicitly cleared the field)
         // This allows tracking that the field was intentionally cleared
         for (const [key, value] of Object.entries(fields)) {
-          if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
-            // For ProductOption/ProductOptionValue with empty value, delete from DB too
-            // since there's no translation in Shopify (we removed it)
+          const isEmpty = value === "";
+          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
+          if (isEmpty && (isOptionType || marketId)) {
+            // Cleared option field, or any field cleared in a market context:
+            // delete the DB row (Shopify removal already done above). Scoped to the
+            // saved market so clearing a market override doesn't wipe the global row.
             await db.contentTranslation.deleteMany({
-              where: { resourceId, key, locale },
+              where: { resourceId, key, locale, marketId },
             });
           } else {
-            // For all other cases, save to DB
+            // For all other cases, save to DB (market-scoped)
             await db.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
-              create: { shop: session.shop, resourceId, resourceType, key, value, locale },
+              where: { shop_resourceId_key_locale_marketId: { marketId, shop: session.shop, resourceId, key, locale } },
+              create: { shop: session.shop, resourceId, resourceType, key, value, locale, marketId },
               update: { value },
             });
           }
@@ -400,7 +417,7 @@ export async function handleTranslateSubResources(
         const resourceType = sourceItem?.resourceType || "Unknown";
         for (const [key, value] of Object.entries(fields)) {
           await db.contentTranslation.upsert({
-            where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale: targetLocale } },
+            where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId, key, locale: targetLocale } },
             create: { shop: session.shop, resourceId, resourceType, key, value, locale: targetLocale },
             update: { value },
           });
@@ -574,6 +591,10 @@ export async function handleTranslateSubResourceToAllLocales(
           });
         }
       } catch (err) {
+        // Invalid API key: abort — every remaining locale would 401 too. Surface
+        // it so the request fails loudly instead of reporting success with every
+        // locale in failedLocales.
+        if (isAuthError(err)) throw err;
         logger.error(`[UnifiedContent] Failed to translate sub-resources to ${targetLocale}`, {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
@@ -599,7 +620,7 @@ export async function handleTranslateSubResourceToAllLocales(
           const resourceType = sourceItem?.resourceType || "Unknown";
           for (const [key, value] of Object.entries(fields)) {
             await db.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale: { shop: session.shop, resourceId, key, locale } },
+              where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId, key, locale } },
               create: { shop: session.shop, resourceId, resourceType, key, value, locale },
               update: { value },
             });
@@ -721,6 +742,37 @@ export async function handleSavePrimarySubResources(
           failedOptions.push(optionId);
         } else {
           savedOptions.push(optionId);
+
+          // Mirror the saved primary edit into the local DB. The loader reads
+          // option name/values from the ProductOption row; without this, the
+          // client's post-save revalidation re-reads the STALE row and the UI
+          // snaps back to the old value (only a full Shopify reload fixes it).
+          try {
+            const dbOption = await db.productOption.findUnique({ where: { id: optionId } });
+            if (dbOption) {
+              const dbData: { name?: string; values?: string } = {};
+              if (hasNameChange && changes.name !== undefined) {
+                dbData.name = changes.name;
+              }
+              if (hasValueChanges && changes.valueUpdates) {
+                let parsed: any[] = [];
+                try { parsed = JSON.parse(dbOption.values || "[]"); } catch { parsed = []; }
+                const nameById = new Map(changes.valueUpdates.map(v => [v.id, v.name]));
+                const updatedValues = parsed.map((v: any) =>
+                  // Legacy string-format values have no id → can't be matched, leave as-is
+                  typeof v === "string" ? v : (nameById.has(v.id) ? { ...v, name: nameById.get(v.id) } : v)
+                );
+                dbData.values = JSON.stringify(updatedValues);
+              }
+              if (Object.keys(dbData).length > 0) {
+                await db.productOption.update({ where: { id: optionId }, data: dbData });
+              }
+            }
+          } catch (err) {
+            logger.error(`[UnifiedContent] Failed to mirror primary option ${optionId} into DB`, {
+              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
       } catch (err) {
         logger.error(`[UnifiedContent] Failed to update option ${optionId}`, {
@@ -755,6 +807,18 @@ export async function handleSavePrimarySubResources(
           Object.keys(metafieldChanges).forEach(mfId => failedMetafields.push(mfId));
         } else {
           Object.keys(metafieldChanges).forEach(mfId => savedMetafields.push(mfId));
+
+          // Mirror saved metafield values into the local DB so the client's
+          // post-save revalidation reads the fresh value (see option mirror above).
+          for (const [mfId, value] of Object.entries(metafieldChanges)) {
+            try {
+              await db.productMetafield.update({ where: { id: mfId }, data: { value } });
+            } catch (err) {
+              logger.error(`[UnifiedContent] Failed to mirror primary metafield ${mfId} into DB`, {
+                context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
         }
       } catch (err) {
         logger.error("[UnifiedContent] Failed to update metafields", {
@@ -828,6 +892,7 @@ export async function handleSavePrimarySubResources(
                       resourceType: "ProductOption",
                       key: "name",
                       locale: { in: foreignLocales },
+                      marketId: "",
                     },
                   });
                 }
@@ -867,6 +932,7 @@ export async function handleSavePrimarySubResources(
                         resourceType: "ProductOptionValue",
                         key: "name",
                         locale: { in: foreignLocales },
+                        marketId: "",
                       },
                     });
                   }
@@ -912,6 +978,7 @@ export async function handleSavePrimarySubResources(
                     resourceType: "Metafield",
                     key: "value",
                     locale: { in: foreignLocales },
+                    marketId: "",
                   },
                 });
               }

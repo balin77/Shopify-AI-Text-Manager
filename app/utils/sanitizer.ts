@@ -25,6 +25,27 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+// Liquid placeholders (e.g. `{{ 'notifications/no-image.png' | shopify_asset_url }}`)
+// inside src/href attributes are interpreted by the browser as relative URLs and
+// trigger spurious requests against our Remix routes ("No route matches URL").
+// Strip them so notification-template previews don't generate broken fetches.
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const LIQUID_TOKEN = /\{\{|\{%/;
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (!(node instanceof Element)) return;
+  const src = node.getAttribute('src');
+  if (src && LIQUID_TOKEN.test(src)) {
+    node.setAttribute('src', TRANSPARENT_PIXEL);
+    node.setAttribute('data-liquid-src', src);
+  }
+  const href = node.getAttribute('href');
+  if (href && LIQUID_TOKEN.test(href)) {
+    node.setAttribute('href', '#');
+    node.setAttribute('data-liquid-href', href);
+  }
+});
+
 /** Sanitize HTML for format examples — allows a broader set of tags including headings */
 export function sanitizeFormatExample(html: string): string {
   if (!html) return '';

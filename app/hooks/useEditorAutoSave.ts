@@ -6,6 +6,7 @@
  * changed fields / alt-text indices, and submitting them via safeSubmit.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useCallback, useRef } from "react";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -32,6 +33,7 @@ interface UseEditorAutoSaveProps {
   selectedItem: any;
   shopLocales: ShopLocale[];
   savedLocaleRef: React.MutableRefObject<string | null>;
+  savedMarketIdRef: React.MutableRefObject<string>;
   savedItemIdRef: React.MutableRefObject<string | null>;
   isSavePendingRef: React.MutableRefObject<boolean>;
   isSaveFromTranslateRef: React.MutableRefObject<boolean>;
@@ -47,6 +49,7 @@ interface UseEditorAutoSaveProps {
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedMarketId: string;
     savedItemId: string | null;
   }>>;
   justSubmittedRef: React.MutableRefObject<boolean>;
@@ -77,6 +80,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     effectiveFieldDefinitions,
     selectedItem,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
@@ -117,6 +121,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
         formData,
         options: options || { method: "POST" },
         savedLocale: savedLocaleRef.current,
+        savedMarketId: savedMarketIdRef.current,
         savedItemId: savedItemIdRef.current,
       });
       return;
@@ -157,13 +162,28 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
     debugLog.fields(' originalTemplateValuesRef:', originalTemplateValuesRef.current);
     debugLog.fields(' valuesToCheck:', valuesToCheck);
 
+    // Compare against the value that was LOADED into the editor this session,
+    // not the live server item. Shopify (and the rich-text editor) normalize HTML
+    // on save, so a re-fetched `item.body` can differ byte-for-byte from the
+    // client value even when the user never touched the body. Comparing against
+    // the live item would then flag `body` as "changed" on every subsequent
+    // primary save and wrongly purge its translations across all foreign locales.
+    // The loaded baseline reflects what the user actually started editing from —
+    // the same source buildFieldsForSave uses for foreign-locale change filtering.
+    const loadedBaseline = originalLoadedValuesRef.current;
+    const hasLoadedBaseline = loadedBaseline && Object.keys(loadedBaseline).length > 0;
+
     effectiveFieldDefinitions.forEach((field) => {
       const currentValue = valuesToCheck[field.key] || "";
 
       let originalValue: string;
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         originalValue = originalTemplateValuesRef.current[field.key] || "";
+      } else if (hasLoadedBaseline) {
+        originalValue = loadedBaseline[field.key] || "";
       } else {
+        // Defensive fallback: baseline not yet populated (should not happen after
+        // a normal load, but avoids treating everything as changed if it isn't).
         originalValue = getItemFieldValue(item, field.key, primaryLocale, config);
       }
 

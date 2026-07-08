@@ -23,6 +23,18 @@ html, body {
   height: 100% !important;
 }
 
+/* The editor's <Page> keeps its grey padding border (from responsive.css).
+   For the editor layout to fill exactly the space INSIDE that border — and
+   below any banner rendered above the editor — make the page's content box a
+   column flex container. The layout row inside is `flex: 1`, so it grows to
+   the real remaining height via flexbox instead of a viewport calc, which
+   could not account for the padding or the banner. Scoped via :has so only
+   the editor's page is affected, not other Polaris pages. */
+.Polaris-Page__Content:has(> .unified-content-editor-layout) {
+  display: flex;
+  flex-direction: column;
+}
+
 /* Ensure full height propagates through Polaris wrappers */
 .Polaris-Frame {
   height: 100% !important;

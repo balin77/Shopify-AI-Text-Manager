@@ -6,6 +6,7 @@ import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
+import { TRANSLATION_BATCH } from '../../app/config/constants';
 
 export type AIProvider = 'huggingface' | 'gemini' | 'claude' | 'openai' | 'grok' | 'deepseek';
 
@@ -93,6 +94,59 @@ export class MissingAIKeyError extends Error {
   }
 }
 
+/**
+ * Thrown when a provider rejects the merchant's API key at call time (HTTP 401
+ * / "authentication" / "invalid api key"). Distinct from {@link MissingAIKeyError}
+ * (no key configured at all): here a key IS present but the provider says it is
+ * invalid/unauthorized. Carries the provider's original message so the UI can
+ * show an actionable hint pointing to Settings → AI API Access Codes.
+ */
+export class InvalidAIKeyError extends Error {
+  readonly code = 'INVALID_AI_KEY' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidAIKeyError';
+  }
+}
+
+/**
+ * Returns true when an unknown thrown value looks like a provider authentication
+ * failure (invalid/expired/unauthorized API key). Covers the OpenAI/Grok/DeepSeek
+ * (OpenAI-compatible), Anthropic, Gemini and HuggingFace SDK shapes plus the
+ * HuggingFace router string ("401 Authentication Fails, Your api key ... is invalid").
+ *
+ * Deliberately conservative: it matches 401/explicit auth codes and unambiguous
+ * auth phrases, but NOT bare 403 (which providers also use for content-policy /
+ * quota blocks) so a non-auth 403 is never misclassified as a bad key.
+ */
+export function isAuthError(error: unknown): boolean {
+  const e = error as { status?: number; statusCode?: number; code?: string; message?: string } | null;
+  if (e && typeof e === 'object') {
+    if (e.status === 401 || e.statusCode === 401) return true;
+    const code = String(e.code ?? '').toLowerCase();
+    if (
+      code === 'invalid_api_key' ||
+      code === 'invalid_ai_key' ||
+      code === 'unauthenticated' ||
+      code === 'invalid_authentication'
+    ) return true;
+  }
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    /\b401\b/.test(msg) ||
+    msg.includes('unauthorized') ||
+    msg.includes('authentication fails') ||
+    msg.includes('authentication error') ||
+    msg.includes('invalid api key') ||
+    msg.includes('incorrect api key') ||
+    msg.includes('invalid_api_key') ||
+    msg.includes('api key not valid') ||
+    msg.includes('api key is invalid') ||
+    msg.includes('no auth credentials') ||
+    (msg.includes('api key') && msg.includes('invalid'))
+  );
+}
+
 export interface AIServiceConfig {
   huggingfaceApiKey?: string;
   geminiApiKey?: string;
@@ -115,6 +169,14 @@ export class AIService {
   private queue: AIQueueService;
   private shop?: string;
   private taskId?: string;
+  /**
+   * Circuit breaker: once the provider rejects this instance's key, every later
+   * askAI() call fails immediately with the same error instead of firing more
+   * doomed requests. A bulk translate (many fields × many locales) shares one
+   * AIService instance, so without this an invalid key produced one 401 per
+   * cell, hammering the provider and the queue.
+   */
+  private authError: InvalidAIKeyError | null = null;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -245,15 +307,18 @@ Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any othe
     // (parse/format failure) — it never caught the model echoing the SOURCE
     // verbatim on apparent success, which silently persists untranslated text
     // as a "translation". Per the codebase fail-loud convention, throw so the
-    // caller marks the task failed and writes nothing. Conservative to avoid
-    // false positives: only trips for a non-trivial input (> 8 chars), when
-    // the trimmed output equals the trimmed sanitized input, and the source
-    // and target languages actually differ.
+    // caller marks the task failed and writes nothing.
+    //
+    // BUT many SHORT values are legitimately identical across languages
+    // (loanwords, proper nouns, brand names — "Schadenfreude", "Hotel",
+    // "Information"), so an echo is only treated as a failure when the input is
+    // LONG (>= ECHO_FAILURE_MIN_CHARS): a full paragraph never legitimately
+    // equals its source. Short echoes are returned and used.
     const trimmedIn = sanitizedContent.trim();
     const trimmedOut = result.trim();
     if (
       fromLang !== toLang &&
-      trimmedIn.length > 8 &&
+      trimmedIn.length >= TRANSLATION_BATCH.ECHO_FAILURE_MIN_CHARS &&
       trimmedOut === trimmedIn
     ) {
       throw new Error(
@@ -826,6 +891,66 @@ Respond in JSON format: ["translated1", "translated2", ...]`;
   }
 
   /**
+   * Generate short, concise menu-style titles for a batch of content excerpts in
+   * one AI call. Built for Shopify email-notification templates, whose only
+   * human-readable field is the localized subject line (e.g. "Bestellung
+   * {{name}} bestätigt") — far too long/noisy for a nav list. We ask the model
+   * to distill each excerpt into a 2-4 word notification name in the shop's main
+   * language ("Bestellbestätigung", "Versandbestätigung", …), mirroring what
+   * Shopify's own Translate & Adapt shows (those are private Shopify i18n
+   * strings, not exposed by the API — see the EMAIL_TEMPLATE probe findings).
+   *
+   * Mirrors translateBatchValues: numbered list in, JSON array out, 1:1 length
+   * assertion (fail loud on drift so a partial/misaligned result is never
+   * persisted as success).
+   */
+  async generateTitlesBatch(excerpts: string[], targetLocale: string): Promise<string[]> {
+    if (excerpts.length === 0) return [];
+
+    const toName = localeName(targetLocale);
+
+    loggers.ai('info', `[AI-SERVICE] Generating batch of ${excerpts.length} short titles`, {
+      targetLocale,
+      count: excerpts.length,
+    });
+
+    const numbered = excerpts
+      .map((v, i) => `${i + 1}. ${sanitizePromptInput(v, { maxLength: 800, allowNewlines: true })}`)
+      .join('\n\n');
+
+    const prompt = `You are labelling Shopify email notification templates for a navigation list. For each numbered template excerpt below, return a SHORT, concise title in ${toName} (${targetLocale}) that names the KIND of notification — like a menu label, not the literal subject line. Style examples (German): "Bestellbestätigung", "Versandbestätigung", "Zahlungserinnerung".
+
+Templates:
+${numbered}
+
+Requirements:
+- Output language: ${toName} (${targetLocale})
+- 2-4 words per title, describing the notification TYPE (not the raw subject)
+- No Liquid variables ({{ }} or {% %}), no shop/customer names, no order numbers, no trailing punctuation
+- Return ONLY a JSON array of strings, in the same order, with exactly ${excerpts.length} items
+
+Respond in JSON format: ["title1", "title2", ...]`;
+
+    loggers.ai('debug', '[AI-SERVICE] Batch title prompt', { prompt: prompt.substring(0, 500) });
+
+    const responseText = await this.askAI(prompt);
+
+    loggers.ai('debug', '[AI-SERVICE] Batch title response', { response: responseText.substring(0, 500) });
+
+    const parsed = this.parseJSONResponse(responseText);
+    if (!Array.isArray(parsed)) {
+      loggers.ai('error', '[AI-SERVICE] Batch title response was not a JSON array', { responseLength: responseText.length });
+      throw new Error('AI batch title generation did not return a JSON array');
+    }
+    if (parsed.length !== excerpts.length) {
+      loggers.ai('error', `[AI-SERVICE] Batch title length mismatch: expected ${excerpts.length}, got ${parsed.length}`, { responseLength: responseText.length });
+      throw new Error(`AI batch title generation returned ${parsed.length} titles, expected ${excerpts.length}`);
+    }
+    loggers.ai('info', `[AI-SERVICE] Batch title generation successful: ${parsed.length} titles`);
+    return parsed.map((s) => String(s).trim());
+  }
+
+  /**
    * Permissive recovery for a malformed `["a", "b", ...]` response when the
    * model forgot to escape a straight " inside one of the values (common with
    * typographic content like German „Foo"). Strict JSON.parse rejects the
@@ -1072,6 +1197,261 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return parsed;
   }
 
+  /**
+   * Translate an arbitrary set of fields (key -> source text) into many locales
+   * in a SINGLE AI request, returning `{ locale: { key: translated } }`.
+   *
+   * Unlike translateShortFieldsBatch this imposes NO field-key allow-list and
+   * NO maxLength cap, so long HTML bodies (descriptions, legal pages, theme
+   * template content) pass through untruncated — mirroring translateContent's
+   * contract that long content must reach the model intact (the provider errors
+   * loudly if it overflows the context window rather than silently truncating).
+   *
+   * Use {@link translateFieldsToLocalesChunked} when the combined payload may be
+   * large; it splits the work across calls and falls back here for each chunk.
+   */
+  async translateFieldsToLocalesBatch(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+  ): Promise<Record<string, Record<string, string>>> {
+    const preserveHtml = options.preserveHtml ?? true;
+    const contextLabel = options.contextLabel || 'content';
+
+    const sanitizedFields: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value && value.trim().length > 0) {
+        // No maxLength: long content must pass through untruncated (see the
+        // contract note on translateContent). allowNewlines so HTML/multiline
+        // bodies survive sanitization.
+        sanitizedFields[key] = sanitizePromptInput(value, { allowNewlines: true });
+      }
+    }
+
+    const fieldKeys = Object.keys(sanitizedFields);
+    if (fieldKeys.length === 0 || targetLocales.length === 0) return {};
+
+    const targetLanguages = targetLocales
+      .map((loc) => `${localeName(loc)} (${loc})`)
+      .join(', ');
+
+    // Each field gets a "### <key>" header so the model can map source ->
+    // output unambiguously even for long multi-paragraph bodies.
+    const fieldsText = Object.entries(sanitizedFields)
+      .map(([key, value]) => `### ${key}\n${value}`)
+      .join('\n\n');
+
+    // Expected JSON skeleton: outer = locale code, inner = field key.
+    const jsonStructure: Record<string, Record<string, string>> = {};
+    for (const locale of targetLocales) {
+      jsonStructure[locale] = {};
+      for (const key of fieldKeys) jsonStructure[locale][key] = '...';
+    }
+
+    const htmlRule = preserveHtml
+      ? '\n- Keep ALL HTML tags, attributes, and structure exactly as in the source; translate only the human-readable text between the tags.'
+      : '';
+
+    const prompt = `Translate the following ${contextLabel} fields from ${localeName(fromLang)} to: ${targetLanguages}.
+
+Each field is introduced by a "### <key>" header followed by its source text.
+
+${fieldsText}
+
+Requirements:
+- Translate EVERY field into EVERY target language.
+- Keep the translation natural and faithful to the source meaning.
+- Maintain a similar length to the source.${htmlRule}
+- Do NOT add explanations or extra fields.
+
+Respond with ONLY this JSON shape (outer keys = locale codes, inner keys = field keys):
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    const responseText = await this.askAI(prompt);
+    const parsed = this.parseJSONResponse(responseText);
+
+    // R5-H1: fail loud if any requested locale/field cell is missing or
+    // non-string (a stray `}` in a long body can truncate the JSON and silently
+    // drop later cells while the task still reports success).
+    AIService.assertNestedComplete(
+      'translateFieldsToLocalesBatch',
+      parsed,
+      targetLocales,
+      fieldKeys,
+    );
+
+    // Echo handling: a cell equal to its source is normally fine — many short
+    // words and proper nouns are spelled identically across languages (e.g.
+    // "Schadenfreude", "Hotel", "Information", brand names), so they are KEPT
+    // and used. Only a LONG field returned byte-identical is a failed
+    // translation (a full paragraph never legitimately equals its source); drop
+    // just that cell so it is not persisted as source-as-translation (N-H3) —
+    // the caller's "missing cell → skip" handling keeps the rest usable.
+    const result = parsed as Record<string, Record<string, string>>;
+    const { ECHO_FAILURE_MIN_CHARS } = TRANSLATION_BATCH;
+    let droppedLongEchoes = 0;
+    for (const locale of targetLocales) {
+      if (locale === fromLang) continue;
+      for (const key of fieldKeys) {
+        const src = sanitizedFields[key].trim();
+        const out = result[locale][key].trim();
+        if (out === src && src.length >= ECHO_FAILURE_MIN_CHARS) {
+          delete result[locale][key];
+          droppedLongEchoes++;
+        }
+      }
+    }
+    if (droppedLongEchoes > 0) {
+      loggers.ai('warn', '[AI-SERVICE] translateFieldsToLocalesBatch: dropped long echoed (untranslated) cells', {
+        dropped: droppedLongEchoes,
+        fromLang,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Chunking wrapper around {@link translateFieldsToLocalesBatch}. Estimates the
+   * output size and, only when it would exceed CHUNK_THRESHOLD_CHARS, splits the
+   * work across multiple batch calls — locale-chunking first, then
+   * field-chunking, and finally per-field translateContent for a single field
+   * too large on its own — run with bounded concurrency. Partial results are
+   * merged back into one `{ locale: { key: translated } }` map.
+   *
+   * Resilience: a single failed chunk omits only its own cells (the caller
+   * skips the missing ones — N-H3, never source-as-translation). Only when
+   * EVERY chunk fails does it throw, so the caller's outer catch can fall back
+   * to the sequential path.
+   */
+  async translateFieldsToLocalesChunked(
+    fields: Record<string, string>,
+    fromLang: string,
+    targetLocales: string[],
+    options: { preserveHtml?: boolean; contextLabel?: string } = {}
+  ): Promise<Record<string, Record<string, string>>> {
+    const entries = Object.entries(fields).filter(([, v]) => v && v.trim().length > 0);
+    if (entries.length === 0 || targetLocales.length === 0) return {};
+
+    const { CHUNK_THRESHOLD_CHARS, OUTPUT_EXPANSION_FACTOR, MAX_CONCURRENCY } = TRANSLATION_BATCH;
+    const sourceChars = entries.reduce((a, [, v]) => a + v.length, 0);
+    const estimatedOutput = sourceChars * targetLocales.length * OUTPUT_EXPANSION_FACTOR;
+
+    // Fast path: the whole payload fits in one call.
+    if (estimatedOutput <= CHUNK_THRESHOLD_CHARS) {
+      loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: single batch', {
+        fields: entries.length,
+        locales: targetLocales.length,
+        chunks: 1,
+        estimatedOutput,
+      });
+      return this.translateFieldsToLocalesBatch(fields, fromLang, targetLocales, options);
+    }
+
+    // Source-char budget that keeps ONE locale's output under the threshold.
+    const perLocaleBudget = CHUNK_THRESHOLD_CHARS / OUTPUT_EXPANSION_FACTOR;
+    const byKey = new Map(entries);
+
+    // Split fields into groups that each fit one locale under budget. A single
+    // field larger than the budget becomes its own (oversized) group, handled
+    // via the translateContent fallback below.
+    const fieldGroups: string[][] = [];
+    let cur: string[] = [];
+    let curChars = 0;
+    for (const [key, val] of entries) {
+      if (val.length >= perLocaleBudget) {
+        if (cur.length) { fieldGroups.push(cur); cur = []; curChars = 0; }
+        fieldGroups.push([key]);
+        continue;
+      }
+      if (curChars + val.length > perLocaleBudget && cur.length) {
+        fieldGroups.push(cur); cur = []; curChars = 0;
+      }
+      cur.push(key);
+      curChars += val.length;
+    }
+    if (cur.length) fieldGroups.push(cur);
+
+    // Build the list of chunk jobs. Each resolves to a partial result map.
+    type Job = () => Promise<Record<string, Record<string, string>>>;
+    const jobs: Job[] = [];
+
+    for (const group of fieldGroups) {
+      const groupChars = group.reduce((a, k) => a + (byKey.get(k)?.length || 0), 0);
+
+      // Oversized single field: even one locale exceeds the threshold. There is
+      // no JSON-batching benefit, so fall back to translateContent per locale
+      // (per plan step 3). translateContent returns plain text — safer than
+      // JSON-wrapping a very large HTML body — and its own prompt already
+      // instructs "Keep HTML tags", so options.preserveHtml is honored in
+      // spirit even though the batch prompt's stronger wording isn't reused.
+      if (group.length === 1 && groupChars >= perLocaleBudget) {
+        const key = group[0];
+        const src = byKey.get(key) || '';
+        for (const locale of targetLocales) {
+          jobs.push(async () => {
+            const translated = await this.translateContent(src, fromLang, locale);
+            return { [locale]: { [key]: translated } };
+          });
+        }
+        continue;
+      }
+
+      const groupFields: Record<string, string> = {};
+      for (const k of group) groupFields[k] = byKey.get(k) || '';
+
+      const localesPerChunk = Math.max(1, Math.floor(perLocaleBudget / groupChars));
+      for (let i = 0; i < targetLocales.length; i += localesPerChunk) {
+        const localeChunk = targetLocales.slice(i, i + localesPerChunk);
+        jobs.push(() =>
+          this.translateFieldsToLocalesBatch(groupFields, fromLang, localeChunk, options)
+        );
+      }
+    }
+
+    loggers.ai('info', '[AI-SERVICE] translateFieldsToLocalesChunked: chunked', {
+      fields: entries.length,
+      locales: targetLocales.length,
+      chunks: jobs.length,
+      estimatedOutput,
+    });
+
+    // Run with bounded concurrency; collect partials and errors.
+    const merged: Record<string, Record<string, string>> = {};
+    const errors: unknown[] = [];
+    let succeeded = 0;
+    let cursor = 0;
+
+    const worker = async (): Promise<void> => {
+      while (cursor < jobs.length) {
+        const idx = cursor++;
+        try {
+          const partial = await jobs[idx]();
+          for (const [locale, cells] of Object.entries(partial)) {
+            Object.assign((merged[locale] ??= {}), cells);
+          }
+          succeeded++;
+        } catch (err) {
+          errors.push(err);
+          loggers.ai('error', '[AI-SERVICE] translateFieldsToLocalesChunked: chunk failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(MAX_CONCURRENCY, jobs.length) }, () => worker())
+    );
+
+    // Every chunk failed → throw so the caller can fall back to sequential.
+    if (succeeded === 0 && errors.length > 0) {
+      throw errors[0];
+    }
+
+    return merged;
+  }
+
   private estimateTokens(prompt: string): number {
     // Rough estimate: ~4 characters per token
     // Add output tokens estimate (2000 max_tokens)
@@ -1081,6 +1461,10 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   }
 
   private async askAI(prompt: string, imageUrl?: string): Promise<string> {
+    // Circuit breaker: a previous call on this instance already saw the
+    // provider reject the key — fail fast instead of firing more 401s.
+    if (this.authError) throw this.authError;
+
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
       await this.savePromptToTask(prompt, imageUrl);
@@ -1088,20 +1472,32 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
 
     let response: string;
 
-    // If no shop/taskId provided, execute directly (backward compatibility)
-    if (!this.shop || !this.taskId) {
-      response = await this.executeAIRequest(prompt, imageUrl);
-    } else {
-      // Use queue for rate-limited execution
-      const estimatedTokens = this.estimateTokens(prompt);
+    try {
+      // If no shop/taskId provided, execute directly (backward compatibility)
+      if (!this.shop || !this.taskId) {
+        response = await this.executeAIRequest(prompt, imageUrl);
+      } else {
+        // Use queue for rate-limited execution
+        const estimatedTokens = this.estimateTokens(prompt);
 
-      response = await this.queue.enqueue(
-        this.shop,
-        this.taskId,
-        this.provider,
-        estimatedTokens,
-        () => this.executeAIRequest(prompt, imageUrl)
-      );
+        response = await this.queue.enqueue(
+          this.shop,
+          this.taskId,
+          this.provider,
+          estimatedTokens,
+          () => this.executeAIRequest(prompt, imageUrl)
+        );
+      }
+    } catch (error) {
+      // Normalise provider auth failures (invalid/expired key) into a single
+      // typed error and trip the breaker. Callers that loop over locales must
+      // re-throw this rather than swallowing it (see isAuthError usages), so an
+      // invalid key always surfaces instead of silently producing no output.
+      if (isAuthError(error)) {
+        this.authError = new InvalidAIKeyError(error instanceof Error ? error.message : String(error));
+        throw this.authError;
+      }
+      throw error;
     }
 
     // Save AI response to the corresponding prompt entry (raw, for debugging)

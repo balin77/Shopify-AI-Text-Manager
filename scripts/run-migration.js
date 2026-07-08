@@ -72,6 +72,9 @@ async function fixFailedMigrations() {
     const result = runSilent(`npx prisma migrate resolve --applied ${name}`);
     if (result.success) {
       log(`  ↳ Marked as applied: ${name}`, 'green');
+    } else if (result.output.includes('P3008') || result.output.includes('already recorded as applied')) {
+      // P3008 = already in migration history. This is the steady state after the
+      // one-time baseline; not an error. Stay quiet so genuine failures stand out.
     } else {
       log(`  ↳ Could not resolve ${name}: ${result.output.substring(0, 100)}`, 'yellow');
     }

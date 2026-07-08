@@ -323,6 +323,19 @@ describe('AIService', () => {
 
       expect(result).toBeDefined();
     });
+
+    it('keeps a SHORT identical value (loanword) instead of throwing', async () => {
+      const svc = new AIService('claude', mockConfig);
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue('Hotel');
+      await expect(svc.translateContent('Hotel', 'en', 'de')).resolves.toBe('Hotel');
+    });
+
+    it('throws on a LONG identical value (failed translation)', async () => {
+      const svc = new AIService('claude', mockConfig);
+      const long = 'The quick brown fox jumps over the lazy dog. '.repeat(8);
+      vi.spyOn(svc as any, 'executeAIRequest').mockResolvedValue(long);
+      await expect(svc.translateContent(long, 'en', 'de')).rejects.toThrow(/source unchanged/);
+    });
   });
 
   describe('generateContent()', () => {
@@ -439,6 +452,92 @@ describe('AIService', () => {
       const result = await aiService.translateFields(maliciousFields, ['en'], 'product');
 
       expect(result).toBeDefined();
+    });
+  });
+
+  describe('translateFieldsToLocalesBatch() / translateFieldsToLocalesChunked()', () => {
+    beforeEach(() => {
+      aiService = new AIService('claude', mockConfig);
+    });
+
+    // Build a valid response covering all locales × fields. Extra keys are
+    // tolerated by assertNestedComplete, so one comprehensive blob works for
+    // every chunk (which only requests a subset).
+    const buildResponse = (fields: Record<string, string>, locales: string[]) => {
+      const obj: Record<string, Record<string, string>> = {};
+      for (const loc of locales) {
+        obj[loc] = {};
+        for (const key of Object.keys(fields)) obj[loc][key] = `${key}-${loc}`;
+      }
+      return JSON.stringify(obj);
+    };
+
+    const mockResponse = (text: string) =>
+      vi.spyOn(aiService as any, 'executeAIRequest').mockResolvedValue(text);
+
+    it('collapses 5 fields × 3 locales into a single AI call', async () => {
+      const fields = {
+        a: 'alpha source', b: 'bravo source', c: 'charlie source',
+        d: 'delta source', e: 'echo source',
+      };
+      const locales = ['en', 'fr', 'es'];
+      const spy = mockResponse(buildResponse(fields, locales));
+
+      const result = await aiService.translateFieldsToLocalesChunked(fields, 'de', locales);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.en.a).toBe('a-en');
+      expect(result.fr.e).toBe('e-fr');
+      expect(result.es.c).toBe('c-es');
+    });
+
+    it('splits a 50 000-char field × 5 locales into multiple chunks', async () => {
+      const fields = { big: 'X'.repeat(50_000) };
+      const locales = ['en', 'fr', 'es', 'it', 'nl'];
+      // Oversized single field falls back to translateContent per locale, so we
+      // return a plain translated string (not JSON) for each call.
+      const spy = mockResponse('translated chunk');
+
+      const result = await aiService.translateFieldsToLocalesChunked(fields, 'de', locales);
+
+      expect(spy.mock.calls.length).toBeGreaterThan(1);
+      expect(result.en.big).toBe('translated chunk');
+      expect(Object.keys(result)).toHaveLength(5);
+    });
+
+    it('throws when a requested locale is missing from the JSON', async () => {
+      const fields = { title: 'a long enough source text' };
+      const locales = ['en', 'fr'];
+      // Response omits "fr".
+      mockResponse(JSON.stringify({ en: { title: 'translated title' } }));
+
+      await expect(
+        aiService.translateFieldsToLocalesBatch(fields, 'de', locales),
+      ).rejects.toThrow();
+    });
+
+    it('keeps a short value that is legitimately identical to its source', async () => {
+      // Many short words are spelled the same across languages (loanwords,
+      // proper nouns, brand names) — these must be kept and used, not dropped.
+      const fields = { word: 'Schadenfreude', other: 'translate me' };
+      mockResponse(JSON.stringify({ en: { word: 'Schadenfreude', other: 'translated' } }));
+
+      const result = await aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']);
+
+      expect(result.en.word).toBe('Schadenfreude');
+      expect(result.en.other).toBe('translated');
+    });
+
+    it('drops only a LONG field returned byte-identical (failed translation, N-H3)', async () => {
+      const longEcho = 'The quick brown fox jumps over the lazy dog. '.repeat(8); // >= 200 chars
+      const fields = { body: longEcho, title: 'kurz' };
+      mockResponse(JSON.stringify({ en: { body: longEcho, title: 'short title' } }));
+
+      const result = await aiService.translateFieldsToLocalesBatch(fields, 'de', ['en']);
+
+      // Long echo dropped → caller's "missing → skip" (N-H3) applies.
+      expect(result.en.body).toBeUndefined();
+      expect(result.en.title).toBe('short title');
     });
   });
 

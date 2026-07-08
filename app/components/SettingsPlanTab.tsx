@@ -228,23 +228,32 @@ export function SettingsPlanTab({
                           ? t.settings.allImages
                           : t.settings.featuredImageOnly}
                       </Text>
-                      <Text as="p" variant="bodyMd">
-                        <strong>{t.settings.webpConversion}:</strong>{" "}
-                        {planDetails.maxConcurrentWebpConversions >= 4 ? (
-                          <strong>
-                            {t.settings.webpConversionParallel.replace(
+                      {/* WebP conversion only ever runs inside the Pro+ image
+                          suite (variantImageManager) and is hard-gated by the
+                          monthlyImageOperations quota (0 on Free/Basic → the
+                          /api/convert-webp route fails closed). Showing a
+                          "2 parallel" concurrency value on Free/Basic was
+                          misleading — the feature is unreachable there. Gate
+                          the row on the same flag that unlocks the suite. */}
+                      {planDetails.variantImageManager && (
+                        <Text as="p" variant="bodyMd">
+                          <strong>{t.settings.webpConversion}:</strong>{" "}
+                          {planDetails.maxConcurrentWebpConversions >= 4 ? (
+                            <strong>
+                              {t.settings.webpConversionParallel.replace(
+                                "{count}",
+                                String(planDetails.maxConcurrentWebpConversions),
+                              )}{" "}
+                              ({t.settings.webpConversionFaster})
+                            </strong>
+                          ) : (
+                            t.settings.webpConversionParallel.replace(
                               "{count}",
                               String(planDetails.maxConcurrentWebpConversions),
-                            )}{" "}
-                            ({t.settings.webpConversionFaster})
-                          </strong>
-                        ) : (
-                          t.settings.webpConversionParallel.replace(
-                            "{count}",
-                            String(planDetails.maxConcurrentWebpConversions),
-                          )
-                        )}
-                      </Text>
+                            )
+                          )}
+                        </Text>
+                      )}
                       {planDetails.monthlyImageOperations > 0 && (
                         <Text as="p" variant="bodyMd">
                           <strong>{t.settings.monthlyImageOperations}:</strong>{" "}

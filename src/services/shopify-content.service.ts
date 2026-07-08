@@ -3,11 +3,13 @@
  * Centralized service for managing Shopify content via GraphQL API
  */
 
-import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG } from "../../app/graphql/content.mutations";
-import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT } from "../../app/graphql/content.queries";
+import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPDATE_COLLECTION, UPDATE_BLOG, METAFIELDS_DELETE } from "../../app/graphql/content.mutations";
+import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
+import { isAuthError } from './ai.service';
 import type { PrismaClient } from "@prisma/client";
+import type { MarketInfo } from "../../app/types/content-editor.types";
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
@@ -72,15 +74,23 @@ export class ShopifyContentService {
   /**
    * Save translations for a resource
    */
-  async saveTranslations(resourceId: string, translations: Array<{ key: string; value: string; locale: string }>) {
+  async saveTranslations(
+    resourceId: string,
+    translations: Array<{ key: string; value: string; locale: string }>,
+    /** Market GID for a market-specific override; "" (default) = global (all markets). */
+    marketId: string = "",
+  ) {
     // Fetch digest map first
     const { digestMap } = await this.loadTranslatableContent(resourceId);
 
-    // Add digests to translations, filtering out any without a valid digest
+    // Add digests to translations, filtering out any without a valid digest.
+    // When a market is selected, fold marketId onto each TranslationInput so
+    // Shopify stores a market-specific override (omitting it = all markets/global).
     const translationsWithDigests = translations
       .map(t => ({
         ...t,
-        translatableContentDigest: digestMap[t.key]
+        translatableContentDigest: digestMap[t.key],
+        ...(marketId ? { marketId } : {}),
       }))
       .filter(t => {
         if (!t.translatableContentDigest) {
@@ -115,6 +125,82 @@ export class ShopifyContentService {
   }
 
   /**
+   * Delete metafields by identifier.
+   *
+   * Setting a SEO metafield (global.title_tag / global.description_tag) to
+   * `value: ""` does NOT clear it on Shopify — it must be deleted by identifier.
+   * Deleting a metafield that doesn't exist is a no-op.
+   *
+   * NEVER throws: this runs inside updatePage/updateBlog/updateArticle AFTER the
+   * main update mutation has already landed, and the caller mirrors the save to
+   * the DB AFTER this returns. A thrown error here would leave Shopify updated
+   * but the DB un-mirrored (and the cleared metafield still present). Instead we
+   * log transport errors, GraphQL errors, and userErrors; a lingering metafield
+   * self-heals on the next reload/sync. Returns true when the delete was
+   * confirmed clean, false otherwise (for future partial-success surfacing).
+   */
+  private async deleteMetafields(ownerId: string, identifiers: Array<{ namespace: string; key: string }>): Promise<boolean> {
+    if (identifiers.length === 0) return true;
+
+    try {
+      const response = await this.admin.graphql(METAFIELDS_DELETE, {
+        variables: {
+          metafields: identifiers.map((i) => ({ ownerId, namespace: i.namespace, key: i.key })),
+        },
+      });
+
+      const data = await response.json();
+      if (data.errors?.length > 0) {
+        loggers.translation('warn', '[deleteMetafields] GraphQL error while clearing metafields', {
+          ownerId,
+          identifiers,
+          error: data.errors[0].message,
+        });
+        return false;
+      }
+      if (data.data?.metafieldsDelete?.userErrors?.length > 0) {
+        loggers.translation('warn', '[deleteMetafields] userErrors while clearing metafields', {
+          ownerId,
+          identifiers,
+          userErrors: data.data.metafieldsDelete.userErrors,
+        });
+        return false;
+      }
+      return true;
+    } catch (error: unknown) {
+      loggers.translation('warn', '[deleteMetafields] request failed while clearing metafields', {
+        ownerId,
+        identifiers,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Split SEO metafields into ones to SET (non-empty) and ones to DELETE (cleared).
+   * `undefined` = not sent by the client → skip entirely.
+   * `""` = user cleared it → delete the metafield (set-to-empty does not clear it).
+   */
+  private splitSeoMetafields(seoTitle?: string, seoDescription?: string) {
+    const toSet: Array<{ namespace: string; key: string; value: string; type: string }> = [];
+    const toDelete: Array<{ namespace: string; key: string }> = [];
+
+    const route = (value: string | undefined, key: string) => {
+      if (value === undefined) return;
+      if (value === "") {
+        toDelete.push({ namespace: "global", key });
+      } else {
+        toSet.push({ namespace: "global", key, value, type: "single_line_text_field" });
+      }
+    };
+
+    route(seoTitle, "title_tag");
+    route(seoDescription, "description_tag");
+    return { toSet, toDelete };
+  }
+
+  /**
    * Update a page
    * Note: Shopify Admin API Page type has no `seo` field.
    * SEO data is stored in metafields: global.title_tag and global.description_tag.
@@ -122,14 +208,7 @@ export class ShopifyContentService {
   async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seoTitle?: string; seoDescription?: string }) {
     // Separate SEO fields from the page input – they go as metafields
     const { seoTitle, seoDescription, ...pageInput } = page;
-
-    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
-    if (seoTitle !== undefined) {
-      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
-    }
-    if (seoDescription !== undefined) {
-      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
-    }
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
     const response = await this.admin.graphql(UPDATE_PAGE, {
       variables: {
@@ -150,6 +229,9 @@ export class ShopifyContentService {
       throw new Error(data.data.pageUpdate.userErrors[0].message);
     }
 
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
+
     return data.data?.pageUpdate?.page;
   }
 
@@ -159,14 +241,7 @@ export class ShopifyContentService {
    */
   async updateBlog(id: string, blog: { title?: string; handle?: string; seoTitle?: string; seoDescription?: string }) {
     const { seoTitle, seoDescription, ...blogInput } = blog;
-
-    const metafields: Array<{ namespace: string; key: string; value: string; type: string }> = [];
-    if (seoTitle !== undefined) {
-      metafields.push({ namespace: "global", key: "title_tag", value: seoTitle, type: "single_line_text_field" });
-    }
-    if (seoDescription !== undefined) {
-      metafields.push({ namespace: "global", key: "description_tag", value: seoDescription, type: "single_line_text_field" });
-    }
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
     const response = await this.admin.graphql(UPDATE_BLOG, {
       variables: {
@@ -187,15 +262,29 @@ export class ShopifyContentService {
       throw new Error(data.data.blogUpdate.userErrors[0].message);
     }
 
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
+
     return data.data?.blogUpdate?.blog;
   }
 
   /**
    * Update an article
+   * Note: Like Pages/Blogs, Article SEO data is stored in metafields
+   * (global.title_tag, global.description_tag), not a native `seo` field.
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; image?: { altText: string } | null }) {
+  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; seoTitle?: string; seoDescription?: string; image?: { altText: string } | null }) {
+    const { seoTitle, seoDescription, ...articleInput } = article;
+    const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
+
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
-      variables: { id, article }
+      variables: {
+        id,
+        article: {
+          ...articleInput,
+          ...(metafields.length > 0 ? { metafields } : {}),
+        },
+      }
     });
 
     const data = await response.json();
@@ -207,7 +296,69 @@ export class ShopifyContentService {
       throw new Error(data.data.articleUpdate.userErrors[0].message);
     }
 
+    // Cleared SEO fields must be deleted — set-to-empty leaves the old value on Shopify.
+    await this.deleteMetafields(id, toDelete);
+
     return data.data?.articleUpdate?.article;
+  }
+
+  /**
+   * Build a Shopify SEOInput that preserves the sub-field the caller did NOT send.
+   *
+   * Shopify's productUpdate/collectionUpdate treats `seo` as a unit: sending
+   * `seo: { title }` without a description CLEARS the existing seo.description
+   * (and vice versa). A normal full save sends both fields, but single-field
+   * primary saves — e.g. the Accept & Translate flow that translates only the
+   * meta title back into the primary locale — send just one side. For that
+   * partial case we fetch the current live SEO and carry the missing half over.
+   *
+   * `undefined` means "not sent by the client"; `""` means "user cleared it".
+   * Returns `null` when neither side was sent (caller should omit `seo` entirely).
+   */
+  private async buildPreservedSeo(
+    resourceGid: string,
+    seoTitle: string | undefined,
+    seoDescription: string | undefined,
+  ): Promise<{ title?: string; description?: string } | null> {
+    const hasTitle = seoTitle !== undefined;
+    const hasDescription = seoDescription !== undefined;
+    if (!hasTitle && !hasDescription) return null;
+
+    const seo: { title?: string; description?: string } = {
+      title: seoTitle,
+      description: seoDescription,
+    };
+
+    // Only one side sent → preserve the other from Shopify's current value.
+    if (hasTitle !== hasDescription) {
+      try {
+        const response = await this.admin.graphql(
+          `#graphql
+            query getSeo($id: ID!) {
+              node(id: $id) {
+                ... on Collection { seo { title description } }
+                ... on Product { seo { title description } }
+              }
+            }`,
+          { variables: { id: resourceGid } }
+        );
+        const data = await response.json();
+        const currentSeo = data.data?.node?.seo || {};
+        if (!hasTitle) seo.title = currentSeo.title ?? undefined;
+        if (!hasDescription) seo.description = currentSeo.description ?? undefined;
+      } catch (error: unknown) {
+        // On lookup failure, drop the missing side (JSON.stringify omits undefined)
+        // rather than sending "" and clearing it — Shopify then leaves it unchanged.
+        loggers.translation('warn', '[buildPreservedSeo] Failed to fetch current SEO for preservation', {
+          resourceGid,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!hasTitle) seo.title = undefined;
+        if (!hasDescription) seo.description = undefined;
+      }
+    }
+
+    return seo;
   }
 
   /**
@@ -294,7 +445,7 @@ export class ShopifyContentService {
           });
         }
         await db.contentTranslation.deleteMany({
-          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale },
+          where: { shop, resourceId, resourceType, key: 'image_alt_text', locale, marketId: "" },
         });
         return { saved: true };
       }
@@ -328,7 +479,7 @@ export class ShopifyContentService {
       }
 
       await db.contentTranslation.upsert({
-        where: { shop_resourceId_key_locale: { shop, resourceId, key: 'image_alt_text', locale } },
+        where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: 'image_alt_text', locale, marketId: "" } },
         update: { value: altText, digest: altDigest, resourceType },
         create: { shop, resourceId, resourceType, key: 'image_alt_text', value: altText, locale, digest: altDigest },
       });
@@ -370,19 +521,27 @@ export class ShopifyContentService {
     resourceId: string;
     translationKeys: string[];
     foreignLocales: string[];
+    /**
+     * Market scope for the removal. "" (or undefined) = remove the GLOBAL
+     * translation (marketIds omitted). Non-empty = remove only the
+     * market-specific override for that market (marketIds: [marketId]); the
+     * global translation survives.
+     */
+    marketId?: string;
   }) {
     const { resourceId, translationKeys, foreignLocales } = params;
+    const marketId = params.marketId || "";
 
     if (translationKeys.length === 0 || foreignLocales.length === 0) {
       return { success: true };
     }
 
-    loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales });
+    loggers.translation('info', 'Deleting translations for keys', { translationKeys, foreignLocales, marketId: marketId || '(global)' });
 
     const response = await this.admin.graphql(
       `#graphql
-        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+        mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+          translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
             userErrors {
               field
               message
@@ -398,6 +557,9 @@ export class ShopifyContentService {
           resourceId,
           translationKeys,
           locales: foreignLocales,
+          // Omit (null) for global removal; a single-element array for a
+          // market-specific removal.
+          marketIds: marketId ? [marketId] : null,
         },
       }
     );
@@ -447,6 +609,91 @@ export class ShopifyContentService {
   }
 
   /**
+   * Load the shop's markets and the locales each one serves.
+   *
+   * Backs the market-specific translation feature. NEVER throws: if the
+   * `read_markets` scope is missing, the API errors, or the shop has no markets,
+   * this returns `{ markets: [] }` so the loader can keep rendering and the UI
+   * simply hides the market selector (Edge Case 10 in the plan). Only markets
+   * that (a) are enabled and (b) actually serve at least one locale are returned —
+   * a market with no web-presence locale can never display a market-specific
+   * translation on the storefront.
+   */
+  async loadMarkets(): Promise<{ markets: MarketInfo[] }> {
+    try {
+      const response = await this.admin.graphql(GET_MARKETS, {
+        variables: { first: 100 },
+      });
+
+      if (!response.ok) {
+        loggers.translation('warn', `[loadMarkets] Shopify API HTTP ${response.status} — hiding market selector`);
+        return { markets: [] };
+      }
+
+      const data = await response.json();
+      if (data.errors?.length > 0) {
+        // Most commonly a missing `read_markets` scope, or a field-name drift on
+        // a different API version. Degrade gracefully rather than break the loader.
+        loggers.translation('warn', `[loadMarkets] GraphQL error — hiding market selector`, { error: data.errors[0]?.message });
+        return { markets: [] };
+      }
+
+      const edges = data.data?.markets?.edges || [];
+
+      const markets: MarketInfo[] = edges
+        .map((edge: any): MarketInfo | null => {
+          const node = edge?.node;
+          if (!node?.id) return null;
+          // Keep only active markets. `enabled` is deprecated in Admin API 2025-10
+          // and no longer reliable — prefer `status` (ACTIVE), falling back to the
+          // legacy `enabled` if status is absent.
+          const isActive = node.status ? node.status === 'ACTIVE' : node.enabled !== false;
+          if (!isActive) return null;
+
+          // Locales the market publishes via a DEDICATED web presence. Secondary
+          // markets that share the primary web presence return webPresences: []
+          // here — that is NOT a disqualifier: Shopify's "Translate & Adapt" lets
+          // a market carry market-specific translations for ANY of the shop's
+          // published locales. So an empty list means "no per-locale restriction"
+          // and is handled downstream (MarketSelector offers such a market for
+          // every locale). rootUrls only lists URL-split locales; defaultLocale +
+          // alternateLocales are the authoritative per-web-presence language list.
+          const localeSet = new Set<string>();
+          for (const wpEdge of node.webPresences?.edges || []) {
+            const wp = wpEdge?.node;
+            if (!wp) continue;
+            for (const root of wp.rootUrls || []) {
+              if (root?.locale) localeSet.add(root.locale);
+            }
+            if (wp.defaultLocale?.locale) localeSet.add(wp.defaultLocale.locale);
+            for (const alt of wp.alternateLocales || []) {
+              if (alt?.locale) localeSet.add(alt.locale);
+            }
+          }
+
+          return {
+            id: node.id,
+            name: node.name || node.handle || node.id,
+            handle: node.handle || '',
+            localeCodes: [...localeSet],
+          };
+        })
+        .filter((m: MarketInfo | null): m is MarketInfo => m !== null);
+
+      loggers.translation('info', `[loadMarkets] ${markets.length} active market(s)`, {
+        markets: markets.map((m) => ({ id: m.id, name: m.name, locales: m.localeCodes })),
+      });
+
+      return { markets };
+    } catch (error) {
+      loggers.translation('warn', `[loadMarkets] Unexpected error — hiding market selector`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { markets: [] };
+    }
+  }
+
+  /**
    * Update content in Shopify and database
    * Handles both primary locale updates and translations
    * When updating primary locale, deletes all translations for changed fields
@@ -461,8 +708,17 @@ export class ShopifyContentService {
     shop: string;
     policyType?: string;
     changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
+    /**
+     * Market scope for this save. "" (or undefined) = global (applies to all
+     * markets, legacy behaviour). Non-empty = gid://shopify/Market/<id>, saving a
+     * market-specific override that layers over the global translation for the
+     * same locale. Only meaningful for foreign locales — the primary locale is
+     * always global (Shopify forbids market-specific primary content).
+     */
+    marketId?: string;
   }) {
     const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields } = params;
+    const marketId = params.marketId || "";
 
     if (locale !== primaryLocale) {
       // Handle translations
@@ -540,12 +796,17 @@ export class ShopifyContentService {
         }
       }
 
-      // Save non-empty translations to Shopify
+      // Save non-empty translations to Shopify. When a market is selected, add
+      // marketId to each TranslationInput so Shopify stores a market-specific
+      // override (omitting it means "all markets" = global). Response does not
+      // echo marketId back, so we track it ourselves for the DB mirror below.
       if (translationsInput.length > 0) {
         const response = await this.admin.graphql(TRANSLATE_CONTENT, {
           variables: {
             resourceId,
-            translations: translationsInput
+            translations: marketId
+              ? translationsInput.map((t) => ({ ...t, marketId }))
+              : translationsInput,
           }
         });
 
@@ -562,12 +823,16 @@ export class ShopifyContentService {
         }
       }
 
-      // Delete cleared translations from Shopify
+      // Delete cleared translations from Shopify. Scope the removal to the
+      // selected market: with marketId set, only the market-specific override is
+      // removed (the global translation survives and the field falls back to it);
+      // without it, the global translation is removed.
       if (translationsToDelete.length > 0) {
         await this.deleteAllTranslationsForKeys({
           resourceId,
           translationKeys: translationsToDelete,
           foreignLocales: [locale],
+          marketId,
         });
       }
 
@@ -582,15 +847,16 @@ export class ShopifyContentService {
       const runDbTransaction = async () => {
         // @ts-expect-error Prisma interactive transaction types
         await db.$transaction(async (tx: PrismaClient) => {
-          // Upsert translations saved to Shopify
+          // Upsert translations saved to Shopify (marketId "" = global)
           for (const translation of translationsInput) {
             await tx.contentTranslation.upsert({
               where: {
-                shop_resourceId_key_locale: {
+                shop_resourceId_key_locale_marketId: {
                   shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
+                  marketId,
                 },
               },
               update: {
@@ -606,6 +872,7 @@ export class ShopifyContentService {
                 value: translation.value,
                 locale: translation.locale,
                 digest: translation.translatableContentDigest || null,
+                marketId,
               },
             });
           }
@@ -614,11 +881,12 @@ export class ShopifyContentService {
           for (const translation of dbOnlyTranslations) {
             await tx.contentTranslation.upsert({
               where: {
-                shop_resourceId_key_locale: {
+                shop_resourceId_key_locale_marketId: {
                   shop,
                   resourceId,
                   key: translation.key,
                   locale: translation.locale,
+                  marketId,
                 },
               },
               update: {
@@ -634,11 +902,14 @@ export class ShopifyContentService {
                 value: translation.value,
                 locale: translation.locale,
                 digest: null,
+                marketId,
               },
             });
           }
 
-          // Delete cleared translations from database (single batch call)
+          // Delete cleared translations from database (single batch call).
+          // Scoped to the current market so clearing a market-specific value does
+          // not touch the global row (and vice-versa).
           if (translationsToDelete.length > 0) {
             await tx.contentTranslation.deleteMany({
               where: {
@@ -646,6 +917,7 @@ export class ShopifyContentService {
                 resourceId,
                 resourceType,
                 locale,
+                marketId,
                 key: { in: translationsToDelete },
               },
             });
@@ -747,6 +1019,8 @@ export class ShopifyContentService {
           handle: updates.handle,
           body: updates.body,
           summary: updates.summary,
+          ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
+          ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 
@@ -767,14 +1041,13 @@ export class ShopifyContentService {
           },
         });
       } else if (resourceType === 'Collection') {
+        // Preserve the untouched SEO half on partial saves (see buildPreservedSeo).
+        const preservedSeo = await this.buildPreservedSeo(resourceId, updates.seoTitle, updates.metaDescription);
         updatedResource = await this.updateCollection(resourceId, {
           title: updates.title,
           handle: updates.handle,
           descriptionHtml: updates.description,
-          seo: {
-            title: updates.seoTitle,
-            description: updates.metaDescription,
-          },
+          ...(preservedSeo ? { seo: preservedSeo } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
         });
 
@@ -858,12 +1131,16 @@ export class ShopifyContentService {
               foreignLocales,
             });
 
-            // Delete from database (single batch call instead of N×M loop)
+            // Delete from database (single batch call instead of N×M loop).
+            // Scoped to global (marketId "") to mirror the global-only Shopify
+            // removal above: market-specific overrides survive both sides (Shopify
+            // flags them outdated), matching the plan's market-independence rule.
             await db.contentTranslation.deleteMany({
               where: {
                 shop,
                 resourceId,
                 resourceType,
+                marketId: "",
                 key: { in: translationKeysToDelete },
                 locale: { in: foreignLocales },
               },
@@ -1166,7 +1443,7 @@ export class ShopifyContentService {
         await db.$transaction(async (tx: PrismaClient) => {
           for (const p of saved) {
             await tx.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale: { shop, resourceId, key: p.translationKey, locale: p.locale } },
+              where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: p.translationKey, locale: p.locale, marketId: "" } },
               update: { value: p.value, digest: p.digest, resourceType },
               create: { shop, resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
             });
@@ -1270,6 +1547,9 @@ export class ShopifyContentService {
 
         loggers.translation('debug', 'Batch short fields completed');
       } catch (batchError: unknown) {
+        // Invalid API key: the sequential fallback would fail for every locale
+        // too — surface it so the caller reports failure instead of success.
+        if (isAuthError(batchError)) throw batchError;
         loggers.translation('error', 'Batch short fields failed', { error: batchError instanceof Error ? batchError.message : String(batchError) });
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
@@ -1281,6 +1561,8 @@ export class ShopifyContentService {
               allPrepared.push(...prepared);
             }
           } catch (localeError: unknown) {
+            // Invalid key: abort — every remaining locale would fail identically.
+            if (isAuthError(localeError)) throw localeError;
             loggers.translation('error', `Fallback failed for ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
@@ -1305,6 +1587,8 @@ export class ShopifyContentService {
             if (!failedLocales.includes(locale)) failedLocales.push(locale);
           }
         } catch (localeError: unknown) {
+          // Invalid key: abort — every remaining locale would fail identically.
+          if (isAuthError(localeError)) throw localeError;
           loggers.translation('error', `Failed to translate long fields to ${locale}`, { error: localeError instanceof Error ? localeError.message : String(localeError) });
           if (!failedLocales.includes(locale)) failedLocales.push(locale);
         }

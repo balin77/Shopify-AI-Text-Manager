@@ -477,6 +477,60 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
 };
 
 // ============================================================================
+// THEME-CONTENT DOMAIN RUBRICS (System / Online-Store-Extras / Selling-Plans)
+// These share the Templates dynamic-field machinery — same shape, only the
+// contentType (plan gate) and display labels differ.
+// ============================================================================
+
+export const SYSTEM_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "system",
+  displayName: "System",
+  displayNameSingular: "System Content",
+};
+
+export const DELIVERY_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "delivery",
+  displayName: "Versand & Zustellung",
+  displayNameSingular: "Delivery Method",
+};
+
+export const ONLINE_STORE_EXTRAS_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Filter",
+  displayNameSingular: "Filter",
+};
+
+// Shop-Metadaten: same dynamic-field machinery and plan gate as Filter
+// (onlineStoreExtras). Backed by the same online_store_extras domain, restricted
+// to the SHOP resource type by its route loader.
+export const SHOP_METADATA_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Shop-Metadaten",
+  displayNameSingular: "Shop metadata",
+};
+
+export const SELLING_PLANS_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "sellingPlans",
+  displayName: "Abo-Pläne",
+  displayNameSingular: "Selling Plan",
+};
+
+// Cookie-Banner: same dynamic-field machinery as Templates. Plan gate reuses
+// onlineStoreExtras (every tier — Plan §7.5). Resource is read from Shopify's
+// `unstable` COOKIE_BANNER enum during sync; the editor is unaware of that.
+export const COOKIE_BANNER_CONFIG: ContentEditorConfig = {
+  ...TEMPLATES_CONFIG,
+  contentType: "onlineStoreExtras",
+  displayName: "Cookie-Banner",
+  displayNameSingular: "Cookie banner",
+};
+
+// ============================================================================
 // METAOBJECTS
 // ============================================================================
 

@@ -12,6 +12,8 @@ interface ReloadButtonProps {
     revalidate: () => void;
     state: 'idle' | 'loading';
   };
+  /** Tooltip + accessibility label. Defaults describe the single-item reload. */
+  tooltip?: string;
 }
 
 export function ReloadButton({
@@ -21,6 +23,7 @@ export function ReloadButton({
   onReloadComplete,
   onReloadSuccess,
   revalidator,
+  tooltip = "Nur die Daten dieses Eintrags von Shopify neu laden",
 }: ReloadButtonProps) {
   const isLoading = useIsReloading(resourceId);
 
@@ -45,13 +48,13 @@ export function ReloadButton({
   };
 
   return (
-    <Tooltip content="Daten von Shopify neu laden">
+    <Tooltip content={tooltip}>
       <Button
         icon={RefreshIcon}
         onClick={handleReload}
         loading={isLoading}
         disabled={isLoading}
-        accessibilityLabel="Daten von Shopify neu laden"
+        accessibilityLabel={tooltip}
         size="slim"
       />
     </Tooltip>

@@ -13,12 +13,15 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
+import { isThemeContentType } from "~/utils/content-type-groups";
 import {
   VALID_CONTENT_TYPES,
   errorMessage,
   errorStack,
   getMissingPreferredKey,
   noAiKeyResponse,
+  isAuthError,
+  aiAuthErrorResponse,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
 import {
@@ -38,6 +41,7 @@ import {
   handleTranslateAllAltTextsToAllLocales,
   handleTranslateAllAltTextsForLocale,
 } from "./api-ai-handlers/alt-text.handler";
+import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -46,10 +50,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const formData = await request.formData();
     const actionType = getFormString(formData, "action");
     const rawContentType = getFormString(formData, "contentType") || "";
-    if (!VALID_CONTENT_TYPES.has(rawContentType)) {
+    // The theme-content family (system / delivery / sellingPlans /
+    // onlineStoreExtras) shares the Templates ThemeContent data model, item id
+    // shape (`group_<groupId>`) and handler path. They only differ by their
+    // plan-gating contentType, which is NOT in VALID_CONTENT_TYPES and which the
+    // AI handlers don't recognise (persistence branches key on
+    // `contentType === 'templates'`). Normalise the whole family to 'templates'
+    // so the shared handler logic applies uniformly; without this, "Übersetzen"
+    // on these rubrics 400s ("Invalid contentType: sellingPlans").
+    const contentType = isThemeContentType(rawContentType) ? "templates" : rawContentType;
+    if (!VALID_CONTENT_TYPES.has(contentType)) {
       return json({ success: false, error: `Invalid contentType: ${rawContentType}` }, { status: 400 });
     }
-    const contentType = rawContentType;
     const itemId = getFormString(formData, "itemId") || "unknown";
 
     const { db } = await import("../db.server");
@@ -106,10 +118,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
         return handleTranslateAllAltTextsForLocale(ctx);
+      case "generateTemplateTitles":
+        return handleGenerateTemplateTitles(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }
   } catch (error: unknown) {
+    // An invalid/expired provider key must always surface as an actionable
+    // error — never as a generic 500 (or, worse, a silent success from a
+    // handler that swallowed it). Handlers re-throw auth errors for exactly
+    // this central translation into a clear INVALID_AI_KEY response.
+    if (isAuthError(error)) {
+      logger.error("[API-AI] AI request failed — provider rejected the API key", {
+        context: "AI",
+        error: errorMessage(error),
+      });
+      return aiAuthErrorResponse(error);
+    }
     logger.error("[API-AI] Error processing AI request", {
       context: "AI",
       error: errorMessage(error),

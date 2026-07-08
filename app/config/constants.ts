@@ -125,6 +125,56 @@ export const WEBHOOK_CONFIG = {
 } as const;
 
 // ============================================================================
+// BATCH TRANSLATION
+// ============================================================================
+
+/**
+ * Tuning for the batched/chunked translation path
+ * (AIService.translateFieldsToLocalesChunked).
+ *
+ * The goal is to collapse N fields × M locales into a SINGLE AI call whenever
+ * the estimated output stays small enough, and to split into the fewest
+ * possible additional calls otherwise.
+ */
+export const TRANSLATION_BATCH = {
+  /**
+   * Estimated output-size ceiling (in characters) for a single AI call.
+   *
+   * Why 40 000: the providers are run with `max_tokens: 8192`. At roughly
+   * 4 characters per output token that is ~32 000 characters of model output;
+   * 40 000 is the rounded practical ceiling we allow per call before splitting
+   * (the OUTPUT_EXPANSION_FACTOR below already adds head-room on the estimate,
+   * and most real payloads are short fields that never reach this threshold).
+   * Tune here — no code search required.
+   */
+  CHUNK_THRESHOLD_CHARS: 40_000,
+
+  /**
+   * Multiplier applied to the source character count to estimate translated
+   * output size. Translations are typically longer than the source; 1.3 is a
+   * conservative average expansion across the supported languages.
+   */
+  OUTPUT_EXPANSION_FACTOR: 1.3,
+
+  /**
+   * Maximum number of chunk calls issued in parallel. Bounded to avoid
+   * tripping provider rate limits while still overlapping latency.
+   */
+  MAX_CONCURRENCY: 3,
+
+  /**
+   * A translated cell equal to its source is normally fine — many short words
+   * and proper nouns are spelled identically across languages (e.g.
+   * "Schadenfreude", "Hotel", "Information", brand names), so such values are
+   * kept and used. Only a value at least this long that comes back
+   * byte-identical is treated as a failed translation (a full paragraph never
+   * legitimately equals its source) and dropped rather than persisted as
+   * source-as-translation (N-H3).
+   */
+  ECHO_FAILURE_MIN_CHARS: 200,
+} as const;
+
+// ============================================================================
 // FEATURE FLAGS
 // ============================================================================
 

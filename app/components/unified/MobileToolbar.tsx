@@ -17,8 +17,9 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip } from "../../utils/conten
 import type { ValidationOverlays } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType, ContentImage } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, ContentImage, MarketInfo } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];
@@ -27,6 +28,12 @@ interface MobileToolbarProps {
   selectedItem: TranslatableItem | null;
   contentType: ContentType;
   onLanguageChange: (locale: string) => void;
+  /** Markets for the market selector ([] hides it) */
+  markets?: MarketInfo[];
+  /** Selected market ("" = global) */
+  selectedMarketId?: string;
+  /** Callback when the market changes */
+  onMarketChange?: (marketId: string) => void;
   enabledLanguages?: string[];
   isLoadingData?: boolean;
   validationOverlays?: ValidationOverlays;
@@ -36,6 +43,8 @@ interface MobileToolbarProps {
   onTranslateAll: () => void;
   onClearAll: () => void;
   onToggleSendImageToAI?: () => void;
+  /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
+  disableBulkActions?: boolean;
 
   // Send image to AI feature
   sendImageToAI?: boolean;
@@ -58,6 +67,12 @@ interface MobileToolbarProps {
     translating?: string;
     clearAll?: string;
     sendImageToAI?: string;
+    reloadItemTooltip?: string;
+    allMarketsGlobal?: string;
+    marketSelectorLabel?: string;
+    marketTooltip?: string;
+    marketPrimaryDisabledHint?: string;
+    marketDisabledReason?: string;
   };
 }
 
@@ -68,6 +83,9 @@ export function MobileToolbar({
   selectedItem,
   contentType,
   onLanguageChange,
+  markets = [],
+  selectedMarketId = "",
+  onMarketChange,
   enabledLanguages,
   isLoadingData = false,
   validationOverlays,
@@ -75,6 +93,7 @@ export function MobileToolbar({
   onTranslateAll,
   onClearAll,
   onToggleSendImageToAI,
+  disableBulkActions = false,
   sendImageToAI = false,
   images = [],
   featuredImage,
@@ -159,6 +178,7 @@ export function MobileToolbar({
             resourceId={reloadResourceId}
             resourceType={reloadResourceType}
             locale={reloadLocale}
+            tooltip={t.reloadItemTooltip}
             onReloadComplete={onReloadComplete}
             revalidator={revalidator}
           />
@@ -171,6 +191,7 @@ export function MobileToolbar({
             <ActionList
               actionRole="menuitem"
               items={[
+                ...(disableBulkActions ? [] : [
                 {
                   content: isTranslating
                     ? (t.translating || "Translating...")
@@ -189,6 +210,7 @@ export function MobileToolbar({
                   },
                   destructive: true,
                 },
+                ]),
                 // Send image to AI checkbox (only in main language for products/collections/blogs with images)
                 ...((currentLanguage === primaryLocale &&
                    (contentType === "products" || contentType === "collections" || contentType === "blogs") &&
@@ -206,6 +228,29 @@ export function MobileToolbar({
           <HelpTooltip helpKey="mobileToolbarActions" position="below" />
         </div>
       </div>
+
+      {/* Market selector — its own full-width row below the toolbar. Shown for
+          foreign locales when the shop has markets, or whenever a disabledReason
+          is present (e.g. cookie banner shows it greyed with an explanation).
+          MarketSelector itself guards the primary-locale / no-applicable cases. */}
+      {onMarketChange && markets.length > 0 && (currentLanguage !== primaryLocale || !!t.marketDisabledReason) && (
+        <div style={{ marginTop: "0.5rem" }}>
+          <MarketSelector
+            markets={markets}
+            selectedMarketId={selectedMarketId}
+            currentLanguage={currentLanguage}
+            primaryLocale={primaryLocale}
+            onMarketChange={onMarketChange}
+            t={{
+              allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
+              selectorLabel: t.marketSelectorLabel || "Market",
+              tooltip: t.marketTooltip,
+              primaryDisabledHint: t.marketPrimaryDisabledHint,
+              disabledReason: t.marketDisabledReason,
+            }}
+          />
+        </div>
+      )}
     </Card>
   );
 }

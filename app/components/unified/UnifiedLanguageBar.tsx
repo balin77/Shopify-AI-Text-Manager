@@ -18,8 +18,9 @@ import { useLocaleButtonStyle, getLocaleButtonTooltip, getLocalizedLanguageName 
 import type { ValidationOverlays } from "../../utils/contentEditor.utils";
 import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
+import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../../types/content-editor.types";
 
 interface UnifiedLanguageBarProps {
   /** Shop locales from Shopify */
@@ -42,6 +43,18 @@ interface UnifiedLanguageBarProps {
 
   /** Callback when language changes */
   onLanguageChange: (locale: string) => void;
+
+  /** Markets for the market selector ([] hides it) */
+  markets?: MarketInfo[];
+
+  /** Selected market ("" = global) */
+  selectedMarketId?: string;
+
+  /** Callback when the market changes */
+  onMarketChange?: (marketId: string) => void;
+
+  /** Allow market selection in the primary locale (DirectTranslations only) */
+  allowPrimaryLocaleMarket?: boolean;
 
   /** Optional: Array of enabled languages */
   enabledLanguages?: string[];
@@ -74,6 +87,11 @@ interface UnifiedLanguageBarProps {
     primaryLocaleSuffix?: string;
     translateAll?: string;
     translating?: string;
+    allMarketsGlobal?: string;
+    marketSelectorLabel?: string;
+    marketTooltip?: string;
+    marketPrimaryDisabledHint?: string;
+    marketDisabledReason?: string;
   };
 }
 
@@ -85,6 +103,10 @@ export function UnifiedLanguageBar({
   contentType,
   hasChanges,
   onLanguageChange,
+  markets = [],
+  selectedMarketId = "",
+  onMarketChange,
+  allowPrimaryLocaleMarket = false,
   enabledLanguages,
   onToggleLanguage,
   onTranslateAll,
@@ -141,7 +163,24 @@ export function UnifiedLanguageBar({
           primaryLocaleSuffix={t.primaryLocaleSuffix}
         />
       ))}
-      <div style={{ marginLeft: "auto" }}>
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        {onMarketChange && markets.length > 0 && (
+          <MarketSelector
+            markets={markets}
+            selectedMarketId={selectedMarketId}
+            currentLanguage={currentLanguage}
+            primaryLocale={primaryLocale}
+            onMarketChange={onMarketChange}
+            allowPrimaryLocale={allowPrimaryLocaleMarket}
+            t={{
+              allMarketsGlobal: t.allMarketsGlobal || "All markets (global)",
+              selectorLabel: t.marketSelectorLabel || "Market",
+              tooltip: t.marketTooltip,
+              primaryDisabledHint: t.marketPrimaryDisabledHint,
+              disabledReason: t.marketDisabledReason,
+            }}
+          />
+        )}
         <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
       </div>
     </div>

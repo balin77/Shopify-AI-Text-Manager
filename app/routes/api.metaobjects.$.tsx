@@ -8,8 +8,8 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
-import { TRANSLATE_CONTENT, METAOBJECT_UPDATE } from "../graphql/content.mutations";
-import { GET_TRANSLATABLE_CONTENT } from "../graphql/content.queries";
+import { TRANSLATE_CONTENT, METAOBJECT_UPDATE, REMOVE_TRANSLATIONS } from "../graphql/content.mutations";
+import { GET_TRANSLATABLE_CONTENT, GET_SHOP_LOCALES } from "../graphql/content.queries";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
@@ -104,12 +104,26 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       fields: metaobj.fields as any,
     }));
 
-    // Format translations for UI
-    const translationsArray = translations.map(t => ({
-      key: t.metaobjectId, // Use metaobject ID as translation key
-      value: t.value,
-      locale: t.locale,
-    }));
+    // Format translations for UI. Global rows (marketId "") feed the per-item
+    // `translations` array exactly as before; market-specific rows are surfaced
+    // as `marketTranslations` so resolve() can layer them over the global value.
+    // Metaobject translations are keyed by metaobjectId (that is the field's
+    // translationKey in the editor), so the market lookup is
+    //   marketTranslations[marketId][metaobjectId][locale].
+    const translationsArray = translations
+      .filter(t => (t.marketId ?? "") === "")
+      .map(t => ({
+        key: t.metaobjectId, // Use metaobject ID as translation key
+        value: t.value,
+        locale: t.locale,
+      }));
+    const marketTranslations: Record<string, Record<string, Record<string, string>>> = {};
+    for (const t of translations) {
+      if ((t.marketId ?? "") === "") continue;
+      const byKey = (marketTranslations[t.marketId] ??= {});
+      const byLocale = (byKey[t.metaobjectId] ??= {});
+      byLocale[t.locale] = t.value;
+    }
 
     logger.debug("[API-METAOBJECTS-LOADER] Metaobjects loaded from DB", {
       context: "Metaobjects",
@@ -131,7 +145,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       definitionId: definition.id,
       role: 'METAOBJECT_TYPE',
       metaobjects: formattedMetaobjects,
-      translations: translationsArray, // Include translations from DB
+      translations: translationsArray, // Include translations from DB (global rows)
+      marketTranslations, // Market-specific rows: [marketId][metaobjectId][locale]
       contentCount: totalCount,
       // Pagination metadata
       pagination: {
@@ -291,6 +306,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         const primaryLocale = getFormString(formData, "primaryLocale");
         const metaobjectId = getFormString(formData, "metaobjectId");
         const updatedValue = getFormString(formData, "updatedValue");
+        // Market scope for market-specific translations (foreign locales only).
+        const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
         if (!metaobjectId) {
           return json({ success: false, error: "metaobjectId is required" }, { status: 400 });
@@ -369,7 +386,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             }, { status: 500 });
           }
 
-          // Update DB: Update displayName field
+          // Update DB: mirror the new value into the `fields` blob, NOT just
+          // displayName. The editor's getFieldValue reads labelField.value from
+          // `fields`, so updating only displayName leaves the UI showing the
+          // stale value until a full re-sync re-fetches from Shopify.
+          const existing = await db.metaobject.findUnique({
+            where: { shop_id: { shop: session.shop, id: metaobjectId } },
+            select: { fields: true },
+          });
+          const existingFields = Array.isArray(existing?.fields)
+            ? (existing!.fields as Array<{ key: string; value: string | null; type: string }>)
+            : [];
+          const nextFields = existingFields.map((f) =>
+            f.key === labelField.key ? { ...f, value: updatedValue } : f
+          );
           await db.metaobject.update({
             where: {
               shop_id: {
@@ -379,9 +409,63 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             },
             data: {
               displayName: updatedValue,
+              fields: nextFields,
               lastSyncedAt: new Date()
             }
           });
+
+          // Primary content changed → its foreign translations are now stale.
+          // Remove them on Shopify AND locally, mirroring the products /
+          // collections / templates routes. Without this, outdated translations
+          // linger in every foreign locale until the merchant re-translates.
+          const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+          const localesData = (await localesResponse.json()) as any;
+          const foreignLocales: string[] = (localesData.data?.shopLocales || [])
+            .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+            .map((l: { locale: string }) => l.locale);
+
+          if (foreignLocales.length > 0) {
+            try {
+              const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
+                variables: {
+                  resourceId: metaobjectId,
+                  translationKeys: [labelField.key],
+                  locales: foreignLocales,
+                },
+              });
+              const removeData = (await removeResponse.json()) as any;
+              if (removeData.data?.translationsRemove?.userErrors?.length > 0) {
+                // Non-fatal: the primary save already succeeded.
+                logger.warn("[API-METAOBJECTS] translationsRemove errors on primary change", {
+                  context: "Metaobjects",
+                  metaobjectId,
+                  errors: removeData.data.translationsRemove.userErrors,
+                });
+              }
+
+              // Only mirror the removal into the DB after the Shopify call
+              // returned. If it threw (network), we skip the local purge so the
+              // DB does not diverge from Shopify (a re-sync would just restore
+              // the still-present Shopify translation anyway).
+              await db.metaobjectTranslation.deleteMany({
+                where: {
+                  shop: session.shop,
+                  metaobjectId,
+                  key: labelField.key,
+                  // Global only — mirror the global-only Shopify removal so market
+                  // overrides survive on both sides (no divergence).
+                  marketId: "",
+                  locale: { in: foreignLocales },
+                },
+              });
+            } catch (removeErr: unknown) {
+              logger.warn("[API-METAOBJECTS] translationsRemove failed on primary change (non-fatal)", {
+                context: "Metaobjects",
+                metaobjectId,
+                error: removeErr instanceof Error ? removeErr.message : String(removeErr),
+              });
+            }
+          }
 
           logger.info("[API-METAOBJECTS] Primary locale updated in Shopify and DB", {
             context: "Metaobjects",
@@ -427,7 +511,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
                   key: labelField.key,
                   value: updatedValue,
                   locale: locale,
-                  translatableContentDigest: digestEntry.digest
+                  translatableContentDigest: digestEntry.digest,
+                  ...(marketId ? { marketId } : {}),
                 }
               ]
             }
@@ -444,14 +529,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             }, { status: 500 });
           }
 
-          // Update DB: Upsert translation
+          // Update DB: Upsert translation (market-scoped)
           await db.metaobjectTranslation.upsert({
             where: {
-              shop_metaobjectId_key_locale: {
+              shop_metaobjectId_key_locale_marketId: {
                 shop: session.shop,
                 metaobjectId,
                 key: labelField.key,
-                locale
+                locale,
+                marketId,
               }
             },
             create: {
@@ -461,7 +547,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               key: labelField.key,
               value: updatedValue,
               locale,
-              outdated: false
+              outdated: false,
+              marketId,
             },
             update: {
               value: updatedValue,

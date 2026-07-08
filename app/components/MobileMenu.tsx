@@ -59,9 +59,12 @@ export function MobileMenu({
     }
   }, [showContentTypes]);
 
+  // Level 1 slimmed to match desktop (Plan §3.4): a single "Inhalte" entry
+  // (lands on Produkte); the full content list lives in the expandable section
+  // below.
+  const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
-    { id: "products", label: t.nav.products, path: "/app/products" },
-    { id: "content", label: t.nav.otherContent, path: "/app/collections" },
+    { id: "content", label: navContentLabel, path: "/app/products" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
@@ -167,9 +170,10 @@ export function MobileMenu({
             {/* Main Navigation Tabs */}
             <div style={{ padding: "8px 0" }}>
               {tabs.map((tab) => {
-                const isActive = location.pathname.startsWith(tab.path);
-                const showProductCount = tab.id === "products" && productCount !== undefined;
-                const isAtLimit = showProductCount && productCount >= (maxProducts || Infinity);
+                // Use the content-aware activeTab from the parent (lights "Inhalte"
+                // on every content page, not just /app/products); fall back to a
+                // path match for tasks/settings.
+                const isActive = activeTab ? tab.id === activeTab : location.pathname.startsWith(tab.path);
                 const showTaskCount = tab.id === "tasks" && runningTaskCount && runningTaskCount > 0;
                 const isContentTab = tab.id === "content";
                 const hasContentTypes = contentTypes.length > 0;
@@ -200,17 +204,6 @@ export function MobileMenu({
                       >
                         <span>{tab.label}</span>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          {showProductCount && (
-                            <span
-                              style={{
-                                fontSize: "13px",
-                                color: isAtLimit ? "#d72c0d" : "#6d7175",
-                                fontWeight: "500",
-                              }}
-                            >
-                              {productCount}
-                            </span>
-                          )}
                           {showTaskCount && (
                             <div
                               style={{
@@ -285,6 +278,20 @@ export function MobileMenu({
                             >
                               <span>{type.icon}</span>
                               <span style={{ flex: 1 }}>{type.label}</span>
+                              {type.id === "products" && productCount !== undefined && (
+                                <span
+                                  style={{
+                                    fontSize: "12px",
+                                    fontWeight: "500",
+                                    color:
+                                      maxProducts !== undefined && maxProducts !== Infinity && productCount >= maxProducts
+                                        ? "#d72c0d"
+                                        : "#6d7175",
+                                  }}
+                                >
+                                  {productCount}
+                                </span>
+                              )}
                               {type.comingSoon && (
                                 <span style={{ fontSize: "11px", color: "#6d7175" }}>Soon</span>
                               )}

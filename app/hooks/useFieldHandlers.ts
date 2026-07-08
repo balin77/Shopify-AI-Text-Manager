@@ -6,9 +6,10 @@
  *          language/item selection, value changes, clear operations.
  */
 
+import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
@@ -21,6 +22,7 @@ import type {
   TranslationStrings,
   InfoBoxTone,
   FieldDefinition,
+  MarketInfo,
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
 
@@ -41,6 +43,9 @@ export interface FieldHandlerProps {
   selectedItemId: string | null;
   selectedItem: TranslatableContentItem | undefined;
   currentLanguage: string;
+  /** Selected market ("" = global). Threaded into save/clear so market-specific
+   *  edits persist under the right market dimension. */
+  selectedMarketId: string;
   hasChanges: boolean;
   hasAltTextChanges: boolean;
   enabledLanguages: string[];
@@ -65,8 +70,10 @@ export interface FieldHandlerProps {
   savedPrimaryValuesRef: { current: Record<string, Record<string, string>> };
   originalLoadedValuesRef: { current: Record<string, string> };
   originalTemplateValuesRef: { current: Record<string, string> };
+  baselineValuesRef: { current: Record<string, string> };
   revalidatorRef: { current: { state: string; revalidate: () => void } };
   savedLocaleRef: { current: string | null };
+  savedMarketIdRef: { current: string };
   savedItemIdRef: { current: string | null };
   isSavePendingRef: { current: boolean };
   isSavingCurrentItem: boolean;
@@ -101,7 +108,8 @@ export interface FieldHandlerProps {
       translationKey: string,
       translatedValue: string,
       targetLocale: string,
-      currentEditableValues: Record<string, string>
+      currentEditableValues: Record<string, string>,
+      marketIdArg?: string
     ) => TransitionResult;
     onTranslateFieldToAllLocalesComplete: (
       translationKey: string,
@@ -113,6 +121,9 @@ export interface FieldHandlerProps {
   // State setters
   setSelectedItemId: React.Dispatch<React.SetStateAction<string | null>>;
   setCurrentLanguage: React.Dispatch<React.SetStateAction<string>>;
+  setSelectedMarketId: React.Dispatch<React.SetStateAction<string>>;
+  /** All markets (for the language-change reset guard). */
+  markets: MarketInfo[];
   setEditableValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setHtmlModes: React.Dispatch<React.SetStateAction<Record<string, "html" | "rendered">>>;
@@ -125,6 +136,7 @@ export interface FieldHandlerProps {
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
+  setBaselineVersion: React.Dispatch<React.SetStateAction<number>>;
   setFieldErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setIsSaving: React.Dispatch<React.SetStateAction<boolean>>;
 }
@@ -143,6 +155,7 @@ export interface FieldHandlers {
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
   handleLanguageChange: (locale: string) => void;
+  handleMarketChange: (marketId: string) => void;
   handleToggleLanguage: (locale: string) => void;
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
@@ -171,6 +184,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     selectedItemId,
     selectedItem,
     currentLanguage,
+    selectedMarketId,
     hasChanges,
     hasAltTextChanges,
     enabledLanguages,
@@ -193,8 +207,10 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     savedPrimaryValuesRef,
     originalLoadedValuesRef,
     originalTemplateValuesRef,
+    baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
@@ -215,6 +231,8 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
+    setSelectedMarketId,
+    markets,
     setEditableValues,
     setAiSuggestions,
     setHtmlModes,
@@ -227,6 +245,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setBaselineVersion,
     setFieldErrors,
     setIsSaving,
   } = props;
@@ -254,21 +273,18 @@ const handleSave = () => {
     changedAltTextIndices = getChangedAltTextIndices();
   }
 
-  // If we're saving in the primary locale, clear all translations for changed fields
-  // and update in-memory item values so navigation back shows correct data
+  // If we're saving in the primary locale, mark the changed fields' translations
+  // as deleted so the UI reflects the server-side purge immediately. Drive this
+  // off the already-computed `changedFields` (the exact same list the server uses
+  // to delete) instead of re-deriving from the live item — otherwise a
+  // normalization-only diff on `body` would wrongly hide its translations here
+  // even after the getChangedFields fix keeps the server from deleting them.
   if (currentLanguage === primaryLocale && selectedItem) {
-    effectiveFieldDefinitions.forEach((field) => {
-      const currentValue = editableValues[field.key] || "";
-      const originalValue = getItemFieldValue(selectedItem, field.key, primaryLocale, config);
-
-      // Only clear translations if the value actually changed
-      if (currentValue !== originalValue && field.translationKey) {
-        const translationKey = field.translationKey;
-
-        // Track deleted translation keys for immediate UI update
-        // This ensures that even if revalidation brings back old data, we show empty fields
-        deletedTranslationKeysRef.current.add(translationKey);
-        debugLog.translationClear(`Marked translations for field "${field.key}" (key: ${translationKey}) as deleted`);
+    changedFields.forEach((fieldKey) => {
+      const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+      if (field?.translationKey) {
+        deletedTranslationKeysRef.current.add(field.translationKey);
+        debugLog.translationClear(`Marked translations for field "${fieldKey}" (key: ${field.translationKey}) as deleted`);
       }
     });
 
@@ -283,6 +299,12 @@ const handleSave = () => {
     locale: currentLanguage,
     primaryLocale,
   };
+
+  // Market scope for market-specific translations (foreign locales only; the
+  // primary locale is always global).
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
 
   // Pass policyType for ShopPolicy primary locale updates (required by Shopify API)
   if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
@@ -324,6 +346,7 @@ const handleSave = () => {
 
   // Skip next data load to prevent revalidation from overwriting cleared/saved values.
   savedLocaleRef.current = currentLanguage; // Track which locale we're saving
+  savedMarketIdRef.current = selectedMarketId;
   savedItemIdRef.current = selectedItemId; // Track which item we're saving
   isSavePendingRef.current = true; // Track that a save was initiated
   setIsSaving(true); // Drive spinner — fetcher.state is unreliable due to React 18 batching
@@ -538,6 +561,9 @@ const handleTranslateField = (fieldKey: string) => {
           locale: targetLocale,
           primaryLocale,
         };
+        // Single-field translate auto-saves to the current (foreign) locale —
+        // scope it to the selected market so the override lands correctly.
+        if (selectedMarketId) formDataObj.marketId = selectedMarketId;
         Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
         // Ensure the translated field is always included in the save.
@@ -548,6 +574,7 @@ const handleTranslateField = (fieldKey: string) => {
         }
 
         savedLocaleRef.current = targetLocale;
+        savedMarketIdRef.current = selectedMarketId;
         isSavePendingRef.current = true;
         isSaveFromTranslateRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
@@ -567,7 +594,7 @@ const handleTranslateField = (fieldKey: string) => {
       );
 
       // For templates: Update original values so templateHasFieldChanges becomes false
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translatedValue,
@@ -709,7 +736,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
       }
 
       // For templates: Update original value so hasChanges becomes false after translation
-      if (config.contentType === 'templates' && translations[currentLanguage]) {
+      if (isThemeContentType(config.contentType) && translations[currentLanguage]) {
         originalTemplateValuesRef.current = {
           ...originalTemplateValuesRef.current,
           [fieldKey]: translations[currentLanguage]
@@ -895,6 +922,20 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   const suggestion = aiSuggestions[fieldKey];
   if (!suggestion || !selectedItemId) return;
 
+  // Resource-backed rubrics (Abo-Pläne/System/…) have a read-only main language.
+  // If this is somehow invoked while viewing the primary locale, refuse instead
+  // of attempting a primary save the server rejects. (Generation is disabled on
+  // primary for these rubrics, so this is a defensive guard.)
+  if (currentLanguage === primaryLocale && isResourceBackedThemeContent(config.contentType)) {
+    showInfoBox(
+      String(t.content?.primaryReadOnlyHint
+        || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
+      "warning",
+      String(t.common?.warning || "Warning")
+    );
+    return;
+  }
+
   // Set flag to prevent translation deletion during this flow
   setIsAcceptAndTranslateFlow(true);
 
@@ -905,6 +946,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
       newSet.delete(fieldKey);
       return newSet;
     });
+    fallbackFieldsRef.current.delete(fieldKey);
   }
 
   // Create the new values with the accepted suggestion
@@ -913,7 +955,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     [fieldKey]: suggestion,
   };
 
-  // Accept the suggestion in the primary locale
+  // Accept the suggestion into the currently-viewed locale
   setEditableValues(newValues);
 
   setAiSuggestions((prev) => {
@@ -922,7 +964,213 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     return newSuggestions;
   });
 
-  // Check target locales first
+  // Get context title for translation
+  const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
+
+  // ==========================================================================
+  // FOREIGN LOCALE PATH
+  // The accepted suggestion is written in a foreign language `L`. We must NOT
+  // treat it as primary base content (the old bug copied the foreign text into
+  // every primary field untranslated). Instead:
+  //   1. Keep the accepted text EXACTLY in `L`.
+  //   2. Translate it INTO the primary language and save that as the primary
+  //      base content for THIS field only — WITHOUT `changedFields`, so the
+  //      existing foreign translations are NOT deleted (the one field is
+  //      re-registered by this flow).
+  //   3. Translate the accepted text into the OTHER foreign locales (source =
+  //      `L`, so no double translation via the primary language).
+  // ==========================================================================
+  if (currentLanguage !== primaryLocale) {
+    const L = currentLanguage;
+    const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+    const requestItemId = selectedItemId;
+
+    // Fields without a translationKey cannot be saved as a translation — just
+    // accept the value into `L` and let the user save manually.
+    if (!field?.translationKey) {
+      setIsAcceptAndTranslateFlow(false);
+      return;
+    }
+    const translationKey = field.translationKey;
+
+    // The foreign flow uses hand-built saves (not performAutoSave), so the
+    // deletion-suppression flag isn't needed. Clear it so a subsequent manual
+    // save isn't affected.
+    setIsAcceptAndTranslateFlow(false);
+
+    // Update the `L` overlay AND the change-detection baseline IMMEDIATELY so the
+    // accepted field is not flagged "dirty" — everything here saves automatically,
+    // so the Save button must stay inactive.
+    const transResult = dataLoader.onTranslateFieldComplete(
+      fieldKey,
+      translationKey,
+      suggestion,
+      L,
+      editableValuesRef.current,
+      // Accept & Translate persists GLOBALLY in Phase 1 (foreignForm below has no
+      // marketId), so the overlay must be staged under the global key too.
+      ""
+    );
+    if (transResult.updatedValues) setEditableValues(transResult.updatedValues);
+
+    // Persist the accepted foreign text EXACTLY in `L`.
+    const foreignSaveValues = { ...editableValuesRef.current, [fieldKey]: suggestion };
+    const foreignForm: Record<string, string> = {
+      action: "updateContent",
+      itemId: requestItemId,
+      locale: L,
+      primaryLocale,
+    };
+    Object.assign(foreignForm, buildFieldsForSave(foreignSaveValues, L));
+    // Always include the accepted field (buildFieldsForSave may filter it out
+    // due to stale originalLoadedValuesRef timing during async callbacks).
+    foreignForm[fieldKey] = suggestion;
+    savedLocaleRef.current = L;
+    savedMarketIdRef.current = selectedMarketId;
+    savedItemIdRef.current = requestItemId;
+    isSavePendingRef.current = true;
+    isSaveFromTranslateRef.current = true;
+    safeSubmit(foreignForm, { method: "POST" });
+    originalLoadedValuesRef.current = { ...foreignSaveValues };
+
+    // ONE AI call: translate the accepted text into the primary language AND the
+    // other foreign locales in a single batch. The server persists the OTHER
+    // locales as translations but SKIPS the primary locale (skipSaveLocales) and
+    // returns it, so the client saves it as base content (below).
+    // Resource-backed rubrics (Abo-Pläne/System/Versand/Filter) have a read-only
+    // main language — the original lives in Shopify. Do NOT back-translate the
+    // accepted text into the primary language, save it, or overlay it in the UI;
+    // only translate into the OTHER foreign locales.
+    const primaryReadOnly = isResourceBackedThemeContent(config.contentType);
+    const targetOthers = enabledLanguages.filter((l) => l !== primaryLocale && l !== L);
+    const allTargets = primaryReadOnly ? targetOthers : [primaryLocale, ...targetOthers];
+
+    // Nothing left to translate (no other foreign locales) — the accepted text is
+    // already saved in `L`. For read-only rubrics that is the whole job; inform.
+    if (allTargets.length === 0) {
+      if (primaryReadOnly) {
+        showInfoBox(
+          String(t.content?.primaryReadOnlyTranslateInfo
+            || "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin."),
+          "info",
+          String(t.common?.info || "Info")
+        );
+      }
+      return;
+    }
+
+    debugLog.acceptAndTranslate(' Foreign locale: single batch translate (primary + others), source = ' + L);
+    submitAIAction(
+      {
+        action: "translateFieldToAllLocales",
+        itemId: requestItemId,
+        fieldType: fieldKey,
+        sourceText: suggestion,
+        targetLocales: JSON.stringify(allTargets),
+        // Translate the primary too, but don't persist it as a foreign
+        // translation — the client saves it as base content below. For read-only
+        // rubrics the primary is not a target at all, so nothing to skip.
+        skipSaveLocales: JSON.stringify(primaryReadOnly ? [] : [primaryLocale]),
+        contextTitle,
+        // Server treats `primaryLocale` as the SOURCE language for the AI call.
+        primaryLocale: L,
+      },
+      fieldKey,
+      (result) => {
+        if (selectedItemIdRef.current !== requestItemId) return;
+        const translations = (result.translations as Record<string, string>) || {};
+
+        // Save the primary-language value as BASE content (this field only, NO
+        // changedFields → existing foreign translations are preserved).
+        // Read-only rubrics never translate/save/overlay the main language.
+        const primaryTranslated = primaryReadOnly ? "" : (translations[primaryLocale] || "").trim();
+        if (primaryTranslated) {
+          // Overlay the new primary value so the main language shows it
+          // IMMEDIATELY when the user switches to it — independent of when the
+          // primary base save commits or whether the loader reads stale data.
+          // resolve() checks savedPrimaryValuesRef first for the primary locale.
+          if (!savedPrimaryValuesRef.current[requestItemId]) {
+            savedPrimaryValuesRef.current[requestItemId] = {};
+          }
+          savedPrimaryValuesRef.current[requestItemId][fieldKey] = primaryTranslated;
+
+          const primaryForm: Record<string, string> = {
+            action: "updateContent",
+            itemId: requestItemId,
+            locale: primaryLocale,
+            primaryLocale,
+            [fieldKey]: primaryTranslated,
+          };
+          // Products reject any primary-locale update without a non-empty title
+          // (updatePrimaryProduct); include the real primary title for non-title
+          // single-field saves.
+          if (config.contentType === "products" && fieldKey !== "title") {
+            primaryForm.title = getItemFieldValue(selectedItem!, "title", primaryLocale, config);
+          }
+          if (config.resourceType === "ShopPolicy" && selectedItem?.type) {
+            primaryForm.policyType = selectedItem.type;
+          }
+          // Keep savedLocaleRef on `L`: we are viewing L, the server persists
+          // this as primary via the form `locale` field, and processing the
+          // response under `primaryLocale` would pick a stale primary baseline.
+          savedLocaleRef.current = L;
+          savedMarketIdRef.current = selectedMarketId;
+          savedItemIdRef.current = requestItemId;
+          isSavePendingRef.current = true;
+          isSaveFromTranslateRef.current = true;
+          safeSubmit(primaryForm, { method: "POST" });
+        }
+
+        // Update overlays for the OTHER foreign locales (already saved server-side).
+        const othersTranslations: Record<string, string> = {};
+        for (const [loc, val] of Object.entries(translations)) {
+          if (loc !== primaryLocale) othersTranslations[loc] = val;
+        }
+        if (Object.keys(othersTranslations).length > 0) {
+          dataLoader.onTranslateFieldToAllLocalesComplete(translationKey, othersTranslations, L);
+        }
+
+        const failedLocales = (result.failedLocales as string[]) || [];
+        const fieldLabel = resolveFieldLabel(fieldKey);
+        if (failedLocales.length > 0) {
+          showInfoBox(
+            String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
+              .replace("{successCount}", String(Object.keys(translations).length))
+              .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
+              .replace("{failedLocales}", failedLocales.join(", ")),
+            "warning",
+            t.common?.warning || "Warning"
+          );
+        } else {
+          showInfoBox(
+            t.common?.fieldTranslatedToLanguages
+              ?.replace("{fieldType}", fieldLabel)
+              .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
+              || `${fieldLabel} translated`,
+            "success",
+            t.common?.success || "Success"
+          );
+        }
+
+        setIsLoadingData(true);
+        // Revalidate to reconcile with the server's canonical data. The primary
+        // and other-locale overlays above already drive the UI, so even if this
+        // revalidation races the in-flight primary save and briefly reads stale
+        // data, resolve() keeps showing the new (overlaid) values until the
+        // server catches up.
+        try { revalidatorRef.current.revalidate(); } catch {}
+      },
+      () => {
+        // Translation failed — the accepted foreign text is still saved in `L`.
+        if (selectedItemIdRef.current !== requestItemId) return;
+      }
+    );
+    return;
+  }
+
+  // ==========================================================================
+  // PRIMARY LOCALE PATH (unchanged)
+  // ==========================================================================
   const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
   if (targetLocales.length === 0) {
     showInfoBox(
@@ -935,9 +1183,6 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     performSaveWithValues(newValues, primaryLocale);
     return;
   }
-
-  // Get context title for translation
-  const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
 
   // Step 1: Set up pending translation (will be triggered AFTER save completes)
   pendingTranslationAfterSaveRef.current = {
@@ -956,6 +1201,19 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   };
 
 
+
+  // For theme content, adopt the accepted values as the change-detection baseline
+  // NOW, in the same synchronous batch as setEditableValues(newValues) above.
+  // Otherwise the save button flickers active for the whole in-flight primary save:
+  // isLoadingData is not held during a fetcher submit, so editableValues != baseline
+  // reads as dirty until the save response finally resets the baseline. This save is
+  // automatic ("Übernehmen & Übersetzen" auto-saves), so no dirty state should show.
+  if (isThemeContentType(config.contentType)) {
+    baselineValuesRef.current = { ...newValues };
+    setBaselineVersion((v) => v + 1);
+    originalTemplateValuesRef.current = { ...newValues };
+    setTemplateValuesVersion((v) => v + 1);
+  }
 
   // Step 2: Save the primary text first
   // After save completes, the useEffect will trigger the translation
@@ -976,6 +1234,27 @@ const handleLanguageChange = async (locale: string) => {
     await confirmNavigation();
   }
   setCurrentLanguage(locale);
+  // If the currently-selected market does not serve the new locale, fall back to
+  // "global" — a market-specific translation only makes sense for locales the
+  // market actually offers (and the primary locale is always global).
+  if (selectedMarketId && locale === primaryLocale) {
+    setSelectedMarketId("");
+  } else if (selectedMarketId) {
+    const market = markets.find((m) => m.id === selectedMarketId);
+    if (!market || !market.localeCodes.includes(locale)) {
+      setSelectedMarketId("");
+    }
+  }
+};
+
+const handleMarketChange = async (marketId: string) => {
+  if (marketId === selectedMarketId) return;
+  // Market switch behaves like a locale switch "light": no server round-trip, but
+  // unsaved edits would be lost on re-resolve, so guard them the same way.
+  if (hasChanges || isSavingCurrentItem) {
+    await confirmNavigation();
+  }
+  setSelectedMarketId(marketId);
 };
 
 const handleToggleLanguage = (locale: string) => {
@@ -1065,14 +1344,17 @@ const handleClearField = useCallback((fieldKey: string) => {
     const field = effectiveFieldDefinitions.find(f => f.key === fieldKey);
     if (field) {
       const tKey = field.translationKey;
+      // Market-fold the overlay + deleted keys so clearing a market-specific
+      // value does not blank the global value (resolve() then falls back to it).
+      const localeKey = buildLocaleKey(currentLanguage, selectedMarketId);
       if (localTranslationsRef.current[tKey]) {
-        delete localTranslationsRef.current[tKey][currentLanguage];
+        delete localTranslationsRef.current[tKey][localeKey];
       }
       // Mark as deleted so resolve() returns empty even if item.translations has old data
-      deletedTranslationKeysRef.current.add(tKey);
+      deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
     }
   }
-}, [fallbackFieldsRef, currentLanguage, primaryLocale, effectiveFieldDefinitions]);
+}, [fallbackFieldsRef, currentLanguage, selectedMarketId, primaryLocale, effectiveFieldDefinitions]);
 
 const handleClearAllClick = useCallback(() => {
   setIsClearAllModalOpen(true);
@@ -1154,14 +1436,18 @@ const handleClearAllForLocaleConfirm = () => {
   setEditableValues(clearedValues);
 
   // Update validation refs so isFieldTranslated / hasLocaleMissingTranslations
-  // reflect the cleared state immediately (yellow highlight + button blinking)
+  // reflect the cleared state immediately (yellow highlight + button blinking).
+  // Market-fold the keys so a market-scoped "clear all for this locale" only
+  // blanks the market overrides and lets resolve() fall back to the global values
+  // (mirrors the market-scoped save above and handleClearField).
+  const clearLocaleKey = buildLocaleKey(currentLanguage, selectedMarketId);
   effectiveFieldDefinitions.forEach((field) => {
     const tKey = field.translationKey;
     if (localTranslationsRef.current[tKey]) {
-      delete localTranslationsRef.current[tKey][currentLanguage];
+      delete localTranslationsRef.current[tKey][clearLocaleKey];
     }
     // Mark as deleted so resolve() returns empty even if item.translations has old data
-    deletedTranslationKeysRef.current.add(tKey);
+    deletedTranslationKeysRef.current.add(buildDeletedKey(tKey, selectedMarketId));
   });
 
   // Clear image alt texts - set each to "" explicitly so the UI doesn't fall back to original image.altText
@@ -1188,6 +1474,11 @@ const handleClearAllForLocaleConfirm = () => {
     locale: currentLanguage,
     primaryLocale,
   };
+  // Clearing all fields for the current locale is market-scoped: it removes only
+  // the selected market's overrides, leaving the global translations intact.
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
 
   // Send only fields that had a non-empty translated value (those need deletion)
   effectiveFieldDefinitions.forEach((field) => {
@@ -1235,6 +1526,7 @@ const handleClearAllForLocaleConfirm = () => {
   // Submit save and set tracking refs
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
   isSavePendingRef.current = true;
   safeSubmit(formDataObj, { method: "POST" });
 };
@@ -1364,6 +1656,10 @@ const handleCopyField = (fieldKey: string): void => {
     locale: currentLanguage,
     primaryLocale,
   };
+  // Copy-to-field persists to the current (foreign) locale under the selected market.
+  if (currentLanguage !== primaryLocale && selectedMarketId) {
+    formDataObj.marketId = selectedMarketId;
+  }
   Object.assign(formDataObj, buildFieldsForSave(newValues, currentLanguage));
   formDataObj[fieldKey] = primaryValue;
 
@@ -1371,12 +1667,20 @@ const handleCopyField = (fieldKey: string): void => {
   pendingCopyFieldKeyRef.current = fieldKey;
 
   savedLocaleRef.current = currentLanguage;
+  savedMarketIdRef.current = selectedMarketId;
+  // Track WHICH item is being saved so the save-response handler's
+  // `isSavedItemCurrent` guard passes. Without this, savedItemIdRef stays null
+  // (cleared by a prior save) → the handler early-returns before reaching
+  // markOperationFailed(copy), leaving every button on this field spinning forever.
+  savedItemIdRef.current = selectedItemId;
   isSavePendingRef.current = true;
   isSaveFromTranslateRef.current = true;
   safeSubmit(formDataObj, { method: "POST" });
   originalLoadedValuesRef.current = { ...newValues };
 
-  showInfoBox(t.common?.copied ?? "Copied", "success");
+  // Success/error feedback is deferred to the save-response handler so the
+  // InfoBox reflects the actual Shopify result (see pendingCopyFieldKeyRef in
+  // useUnifiedContentEditor.ts), not an optimistic guess.
 };
 
 const handleCopyFieldToAllLocales = (fieldKey: string): void => {
@@ -1434,6 +1738,7 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,

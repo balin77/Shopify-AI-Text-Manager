@@ -6,13 +6,14 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
   actionType: "translateAll" | "translateAllForLocale"
 ): Promise<Response> {
-  const { admin, db, session, formData, groupId, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
+  const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const targetLocale = getFormString(formData, "targetLocale");
   const targetLocales = targetLocalesJson
@@ -37,7 +38,7 @@ export async function handleTranslateAll(
       shop: session.shop,
       type: "bulkTranslation",
       status: "pending",
-      resourceType: "templates",
+      resourceType: domain,
       resourceId: `group_${groupId}`,
       resourceTitle: firstGroup.groupName,
       progress: 0,
@@ -70,34 +71,36 @@ export async function handleTranslateAll(
     const primaryLocale = getFormString(formData, "primaryLocale") || "en";
 
     const translations: Record<string, Record<string, string>> = {};
-    const totalItems = targetLocales.length * uniqueContent.size;
-    let completedItems = 0;
     const pendingUpserts: Array<{ key: string; locale: string; value: string; resId: string }> = [];
+
+    // Collect every field once; one batched/chunked AI call replaces the old
+    // N-fields × M-locales nested translateContent loop.
+    const fieldsToTranslate: Record<string, string> = {};
+    for (const [key, item] of uniqueContent.entries()) {
+      if (item.value) fieldsToTranslate[key] = item.value;
+    }
+
+    const batchResult = await aiService.translateFieldsToLocalesChunked(
+      fieldsToTranslate,
+      primaryLocale,
+      targetLocales,
+      { preserveHtml: true, contextLabel: "template content" }
+    );
 
     for (const locale of targetLocales) {
       translations[locale] = {};
-
-      for (const [key, item] of uniqueContent.entries()) {
-        try {
-          const translated = await aiService.translateContent(item.value || "", primaryLocale, locale);
-          translations[locale][key] = translated;
-          const fieldResId = keyToResourceId.get(key) || resourceId;
-          pendingUpserts.push({ key, locale, value: translated, resId: fieldResId });
-
-          completedItems++;
-          const progress = Math.round(5 + (completedItems / totalItems) * 90);
-          await db.task.update({ where: { id: task.id }, data: { progress } });
-        } catch (error: unknown) {
-          logger.error("Error translating field", {
-            context: "Templates",
-            key,
-            locale,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          translations[locale][key] = item.value || "";
-        }
+      for (const key of Object.keys(fieldsToTranslate)) {
+        const value = batchResult[locale]?.[key];
+        // Missing cell → skip (N-H3: never persist source as a translation).
+        if (!value) continue;
+        translations[locale][key] = value;
+        const fieldResId = keyToResourceId.get(key) || resourceId;
+        pendingUpserts.push({ key, locale, value, resId: fieldResId });
       }
     }
+
+    // AI phase done — Shopify persistence (unchanged) finishes the task at 100%.
+    await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
     // Save to Shopify FIRST — only persist to local DB on success
     const digestMap = new Map<string, string>();
@@ -191,12 +194,14 @@ export async function handleTranslateAll(
         successfulUpserts.map(({ key, locale, value, resId }) =>
           db.themeTranslation.upsert({
             where: {
-              shop_resourceId_groupId_key_locale: {
+              shop_resourceId_groupId_key_locale_themeId_marketId: {
+                marketId: "",
                 shop: session.shop,
                 resourceId: resId,
                 groupId: groupId,
                 key: key,
                 locale: locale,
+                themeId: extractThemeIdFromResourceId(resId) ?? "",
               },
             },
             update: { value: value, updatedAt: new Date() },
@@ -204,6 +209,8 @@ export async function handleTranslateAll(
               shop: session.shop,
               groupId: groupId,
               resourceId: resId,
+              themeId: extractThemeIdFromResourceId(resId) ?? "",
+              domain: domain,
               locale: locale,
               key: key,
               value: value,

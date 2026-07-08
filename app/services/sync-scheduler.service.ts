@@ -190,6 +190,28 @@ class SyncSchedulerService {
                 });
               }
             }
+
+            // C.3 (PLAN_THEME_SELECTION_B_LITE): periodically refresh the
+            // merchant-selected NON-MAIN theme. syncAll() above only covers MAIN
+            // (translatableResources can't list other themes), so this scoped pass
+            // keeps a selected theme's mirror fresh against external theme-editor
+            // edits. Same low cadence as the reconcile to bound API cost; a no-op
+            // when the shop uses MAIN or the theme has no rows yet (syncTheme is
+            // coalesced + incremental). Failures must not break the cycle.
+            if (syncTimer.cycleCount % RECONCILE_EVERY_N_CYCLES === 0) {
+              try {
+                const { getCachedThemes, resolveSelectedThemeId, pickMainThemeId } = await import("./theme-selection.server");
+                const themes = await getCachedThemes(admin, shop);
+                const selected = await resolveSelectedThemeId(shop, admin, themes);
+                if (selected && selected !== pickMainThemeId(themes)) {
+                  await syncService.syncTheme(selected);
+                }
+              } catch (err) {
+                logger.warn(`[SyncScheduler] Selected-theme scoped sync failed for ${shop}`, {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            }
           }
         } finally {
           this.releaseSyncSlot();

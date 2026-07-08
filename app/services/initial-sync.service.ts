@@ -16,7 +16,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { Prisma } from "@prisma/client";
 import { db } from "../db.server";
-import { getPlanLimits, getSyncScope, type Plan } from "../utils/planUtils";
+import { getPlanLimits, getSyncScope, canAccessContentType, type Plan } from "../utils/planUtils";
 import { ProductSyncService } from "./product-sync.service";
 import { ContentSyncService } from "./content-sync.service";
 import { BackgroundSyncService } from "./background-sync.service";
@@ -71,6 +71,11 @@ export async function runInitialFullSync(
     themes: 0,
     metaobjects: 0,
     menus: 0,
+    system: 0,
+    delivery: 0,
+    onlineStoreExtras: 0,
+    sellingPlans: 0,
+    cookieBanner: 0,
   };
 
   // Track per-phase failures. A swallowed (non-abort) phase error must NOT
@@ -333,6 +338,125 @@ export async function runInitialFullSync(
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       emit('themes', 100, recordPhaseFailure('themes', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6b: Sync System content (notifications, payment, packing).
+  // Pro+ entitlement — gated directly off the entitlement source so it can't
+  // drift from canAccessContentType. (Delivery is a separate Basic+ phase below.)
+  // ==========================================
+  assertNotAborted();
+  if (!canAccessContentType(plan, 'system')) {
+    emit('system', 100, 'System content not included in this plan, skipping...');
+  } else {
+    emit('system', 0, 'Syncing system content...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.system = await bgSyncService.syncSystemContent((current, total, message) => {
+        assertNotAborted();
+        emit('system', current, 'Syncing system content...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('system', 100, `Synced ${stats.system} system groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('system', 100, recordPhaseFailure('system', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6b2: Sync Delivery (checkout shipping method names). Entitled Basic+.
+  // ==========================================
+  assertNotAborted();
+  if (!canAccessContentType(plan, 'delivery')) {
+    emit('delivery', 100, 'Delivery content not included in this plan, skipping...');
+  } else {
+    emit('delivery', 0, 'Syncing delivery content...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.delivery = await bgSyncService.syncDeliveryContent((current, total, message) => {
+        assertNotAborted();
+        emit('delivery', current, 'Syncing delivery content...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('delivery', 100, `Synced ${stats.delivery} delivery groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('delivery', 100, recordPhaseFailure('delivery', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6c: Sync Online-Store extras (Filter + Shop-Metadaten).
+  // Entitled on EVERY tier (small + high value).
+  // ==========================================
+  assertNotAborted();
+  {
+    emit('onlineStoreExtras', 0, 'Syncing online-store extras...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.onlineStoreExtras = await bgSyncService.syncOnlineStoreExtras((current, total, message) => {
+        assertNotAborted();
+        emit('onlineStoreExtras', current, 'Syncing online-store extras...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('onlineStoreExtras', 100, `Synced ${stats.onlineStoreExtras} extras groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('onlineStoreExtras', 100, recordPhaseFailure('onlineStoreExtras', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6c2: Sync Cookie-Banner (Online-Store rubric, every tier).
+  // Mirrors the onlineStoreExtras entitlement and degrades silently when the
+  // unstable endpoint is unreachable — no Coming-Soon UI needed; the rubric
+  // simply renders an empty list (handled by ThemeContentDomainPage).
+  // ==========================================
+  assertNotAborted();
+  {
+    emit('cookieBanner', 0, 'Syncing cookie banner...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.cookieBanner = await bgSyncService.syncCookieBanner((current, total, message) => {
+        assertNotAborted();
+        emit('cookieBanner', current, 'Syncing cookie banner...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('cookieBanner', 100, `Synced ${stats.cookieBanner} cookie-banner groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('cookieBanner', 100, recordPhaseFailure('cookieBanner', err));
+    }
+  }
+
+  // ==========================================
+  // PHASE 6d: Sync Selling Plans (subscriptions). Pro+ entitlement — gated
+  // directly off the entitlement source so it can't drift from
+  // canAccessContentType. Empty on shops without subscriptions.
+  // ==========================================
+  assertNotAborted();
+  if (!canAccessContentType(plan, 'sellingPlans')) {
+    emit('sellingPlans', 100, 'Selling plans not included in this plan, skipping...');
+  } else {
+    emit('sellingPlans', 0, 'Syncing selling plans...');
+    try {
+      const bgSyncService = new BackgroundSyncService(admin, shop);
+      stats.sellingPlans = await bgSyncService.syncSellingPlans((current, total, message) => {
+        assertNotAborted();
+        emit('sellingPlans', current, 'Syncing selling plans...', {
+          detailCurrent: current, detailTotal: total, detailMessage: message,
+        });
+      });
+      emit('sellingPlans', 100, `Synced ${stats.sellingPlans} selling-plan groups`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") throw err;
+      emit('sellingPlans', 100, recordPhaseFailure('sellingPlans', err));
     }
   }
 

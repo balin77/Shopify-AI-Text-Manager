@@ -3,7 +3,7 @@
  */
 
 import { json } from "@remix-run/node";
-import { AIService, toValidProvider } from "../../../src/services/ai.service";
+import { AIService, toValidProvider, isAuthError } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
 import { getTranslation, type Locale } from "../../i18n";
@@ -79,6 +79,32 @@ export function errorMessage(err: unknown): string {
 /** Safely extract an error stack from an unknown thrown value. */
 export function errorStack(err: unknown): string | undefined {
   return err instanceof Error ? err.stack : undefined;
+}
+
+/**
+ * Re-export so api.ai handlers can detect provider auth failures (invalid key)
+ * without each importing from the deep src/ path.
+ */
+export { isAuthError };
+
+/**
+ * Standard 401 response when the merchant's API key was rejected by the
+ * provider at call time (key present but invalid/expired). Mirrors
+ * {@link noAiKeyResponse} but for the invalid- rather than missing-key case, so
+ * the client toast can point the merchant to Settings → AI API Access Codes.
+ */
+export function aiAuthErrorResponse(error: unknown): Response {
+  return json(
+    {
+      success: false,
+      code: "INVALID_AI_KEY",
+      error:
+        "Your AI API key was rejected by the provider (invalid or expired). " +
+        "Please check your API key in Settings → AI API Access Codes.",
+      detail: errorMessage(error),
+    },
+    { status: 401 }
+  );
 }
 
 /** Check if an unknown error is a Prisma error with a specific code. */

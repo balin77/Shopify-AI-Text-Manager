@@ -25,6 +25,7 @@ import {
 } from "./useAIOperationsStore";
 import type { OptionTranslation } from "../components/unified/OptionsField";
 import type { TranslatableContentItem } from "../types/content-editor.types";
+import { buildLocaleKey } from "./useUiDataLoader";
 
 /** Response shape from sub-resource API actions */
 interface SubResourceFetcherData {
@@ -48,6 +49,13 @@ export interface SubResourceState {
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
   translatingFieldIds: Set<string>;
+  /**
+   * Resource GIDs (option / option-value / metafield) whose displayed value is
+   * inherited from the global value while a non-global market is selected. The
+   * UI greys these out + italic, like the main fields' fallbackFields. Keyed by
+   * resourceId: opt.id (name), val.id (value), mf.id (metafield value).
+   */
+  fallbackResourceIds: Set<string>;
   /** Whether there are unsaved changes */
   hasChanges: boolean;
   /** Whether translations are loading from Shopify */
@@ -91,6 +99,8 @@ interface UseProductSubResourcesProps {
   selectedItem: TranslatableContentItem | null;
   currentLanguage: string;
   primaryLocale: string;
+  /** Selected market ("" = global). Sub-resource values resolve/save per market. */
+  selectedMarketId?: string;
   /** Enabled shop locales — needed for copy-to-all-locales */
   enabledLanguages?: string[];
   /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
@@ -141,31 +151,52 @@ function buildFromTranslationsMap(
 }
 
 /**
- * Convert DB pre-loaded subResourceTranslations (array format per resource)
- * into the flat map format { resourceId: { key: value } } for the given locale.
+ * Convert DB pre-loaded subResourceTranslations (array format per resource) into
+ * the flat map { resourceId: { key: value } } for the given locale, resolving the
+ * market dimension: a market-specific value (marketId === selectedMarketId) wins
+ * over the global value (marketId ""); when a market is selected and only a global
+ * value exists, that global value is the inherited fallback and its resourceId is
+ * added to `fallbackResourceIds` so the UI can grey it out.
  */
 function dbPreloadToMap(
-  subResourceTranslations: Record<string, Array<{ key: string; value: string; locale: string }>> | undefined,
+  subResourceTranslations: Record<string, Array<{ key: string; value: string; locale: string; marketId?: string }>> | undefined,
   locale: string,
-): Record<string, Record<string, string>> {
+  selectedMarketId: string,
+): { map: Record<string, Record<string, string>>; fallbackResourceIds: Set<string> } {
   const map: Record<string, Record<string, string>> = {};
-  if (!subResourceTranslations) return map;
+  const fallbackResourceIds = new Set<string>();
+  if (!subResourceTranslations) return { map, fallbackResourceIds };
 
   for (const [resourceId, records] of Object.entries(subResourceTranslations)) {
+    const globalByKey: Record<string, string> = {};
+    const marketByKey: Record<string, string> = {};
     for (const r of records) {
-      if (r.locale === locale) {
-        if (!map[resourceId]) map[resourceId] = {};
-        map[resourceId][r.key] = r.value;
+      if (r.locale !== locale) continue;
+      const rMarket = r.marketId ?? "";
+      if (rMarket === "") globalByKey[r.key] = r.value;
+      else if (selectedMarketId && rMarket === selectedMarketId) marketByKey[r.key] = r.value;
+    }
+    const keys = new Set([...Object.keys(globalByKey), ...Object.keys(marketByKey)]);
+    for (const key of keys) {
+      const hasMarket = marketByKey[key] !== undefined;
+      const value = hasMarket ? marketByKey[key] : globalByKey[key];
+      if (value === undefined) continue;
+      if (!map[resourceId]) map[resourceId] = {};
+      map[resourceId][key] = value;
+      // Market selected, no market override, showing a non-empty global value → inherited.
+      if (selectedMarketId && !hasMarket && (globalByKey[key] ?? "") !== "") {
+        fallbackResourceIds.add(resourceId);
       }
     }
   }
-  return map;
+  return { map, fallbackResourceIds };
 }
 
 export function useProductSubResources({
   selectedItem,
   currentLanguage,
   primaryLocale,
+  selectedMarketId = "",
   enabledLanguages = [],
   revalidator,
   showInfoBox,
@@ -174,6 +205,8 @@ export function useProductSubResources({
   // Translation state (for foreign locales)
   const [optionTranslations, setOptionTranslations] = useState<Record<string, OptionTranslation>>({});
   const [metafieldTranslations, setMetafieldTranslations] = useState<Record<string, string>>({});
+  // Resource GIDs currently showing an inherited (global) value in a market context.
+  const [fallbackResourceIds, setFallbackResourceIds] = useState<Set<string>>(new Set());
   // Track which resources the user actually modified (to avoid sending unchanged pre-loaded translations)
   const [dirtyOptionIds, setDirtyOptionIds] = useState<Set<string>>(new Set());
   const [dirtyOptionValueIds, setDirtyOptionValueIds] = useState<Set<string>>(new Set());
@@ -238,11 +271,15 @@ export function useProductSubResources({
   // LOAD — Two-phase: DB pre-load (instant) + Shopify fetch (supplement)
   // ============================================================================
   useEffect(() => {
-    const loadKey = `${itemId}::${currentLanguage}`;
+    // Market is part of the load key: switching market re-resolves values.
+    const loadKey = `${itemId}::${currentLanguage}::${selectedMarketId}`;
     if (loadedForRef.current === loadKey) return;
 
-    // Reset state
+    // Reset state — unsaved edits belong to the previous item/locale/market.
     setHasChanges(false);
+    setDirtyOptionIds(new Set());
+    setDirtyOptionValueIds(new Set());
+    setDirtyMetafieldIds(new Set());
     // Note: translatingFieldIds is now in the global AI operations store
     // and should NOT be cleared on item change — it's resource-specific.
 
@@ -257,18 +294,26 @@ export function useProductSubResources({
     if (!itemId || isPrimaryLocale || subResourceIds.length === 0) {
       setOptionTranslations({});
       setMetafieldTranslations({});
+      setFallbackResourceIds(new Set());
       setIsLoading(false);
       return;
     }
 
-    // Phase 1: DB pre-load — read from item.subResourceTranslations (instant, synchronous)
-    const dbMap = dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage);
+    // Phase 1: DB pre-load — read from item.subResourceTranslations (instant,
+    // synchronous), resolving market → global and flagging inherited resources.
+    const { map: dbMap, fallbackResourceIds: dbFallback } =
+      dbPreloadToMap(selectedItem?.subResourceTranslations, currentLanguage, selectedMarketId);
 
-    // Merge overlay (from copy operations) on top of DB data
-    const overlayForLocale = localSubResourceOverlayRef.current[currentLanguage] || {};
+    // Merge overlay (from copy operations) on top of DB data. Overlay is
+    // market-folded so a market override doesn't leak into the global view.
+    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    const overlayForLocale = localSubResourceOverlayRef.current[overlayKey] || {};
     const mergedMap = { ...dbMap };
+    const fallbackIds = new Set(dbFallback);
     for (const [resourceId, fields] of Object.entries(overlayForLocale)) {
       mergedMap[resourceId] = { ...(mergedMap[resourceId] || {}), ...fields };
+      // An overlay entry is a market-specific staged value → no longer inherited.
+      fallbackIds.delete(resourceId);
     }
 
     const { optionTranslations: dbOpts, metafieldTranslations: dbMfs } =
@@ -276,6 +321,7 @@ export function useProductSubResources({
 
     setOptionTranslations(dbOpts);
     setMetafieldTranslations(dbMfs);
+    setFallbackResourceIds(fallbackIds);
 
     // Phase 2: Fetch from Shopify for any sub-resources missing from DB.
     // This catches translations made via Translate & Adapt or partial syncs.
@@ -296,7 +342,7 @@ export function useProductSubResources({
       setIsLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetcher is hook-internal and stable
-  }, [itemId, currentLanguage, isPrimaryLocale, subResourceIds, selectedItem]);
+  }, [itemId, currentLanguage, selectedMarketId, isPrimaryLocale, subResourceIds, selectedItem]);
 
   // ============================================================================
   // Handle fetcher responses (load + translate + save)
@@ -340,6 +386,20 @@ export function useProductSubResources({
           }
           return merged;
         });
+
+        // Phase-2 returns GLOBAL values (server reads marketId ""). In a market
+        // context these are inherited fallbacks, not market overrides — flag the
+        // resources so they render greyed, matching Phase-1's dbPreloadToMap.
+        if (selectedMarketId) {
+          setFallbackResourceIds(prev => {
+            const next = new Set(prev);
+            for (const [resourceId, kv] of Object.entries(translations)) {
+              const val = kv.name ?? kv.value;
+              if (val && val !== "") next.add(resourceId);
+            }
+            return next;
+          });
+        }
       }
       setHasChanges(false);
     }
@@ -440,7 +500,7 @@ export function useProductSubResources({
               const option = selectedItem.options?.find(o => o.id === resourceId);
               if (option) {
                 // Restore original option name (empty string if no translation existed)
-                const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                const { map: dbMap } = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage, selectedMarketId);
                 const originalName = dbMap[resourceId]?.name || "";
                 if (restored[resourceId]) {
                   restored[resourceId] = { ...restored[resourceId], name: originalName };
@@ -454,7 +514,7 @@ export function useProductSubResources({
                 const valueIndex = opt.values.findIndex(v => v.id === resourceId);
                 if (valueIndex !== -1) {
                   // Restore original value (empty string if no translation existed)
-                  const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                  const { map: dbMap } = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage, selectedMarketId);
                   const originalValue = dbMap[resourceId]?.name || "";
                   if (restored[opt.id]) {
                     const newValues = [...restored[opt.id].values];
@@ -475,7 +535,7 @@ export function useProductSubResources({
             for (const resourceId of failedResources) {
               const metafield = selectedItem.metafields?.find(m => m.id === resourceId);
               if (metafield) {
-                const dbMap = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage);
+                const { map: dbMap } = dbPreloadToMap(selectedItem.subResourceTranslations, currentLanguage, selectedMarketId);
                 const originalValue = dbMap[resourceId]?.value || "";
                 restored[resourceId] = originalValue;
               }
@@ -561,7 +621,7 @@ export function useProductSubResources({
         }
       }
     }
-  }, [fetcher.state, fetcher.data, selectedItem]);
+  }, [fetcher.state, fetcher.data, selectedItem, selectedMarketId, currentLanguage]);
 
   // Handle translateAllFetcher responses (used by translateAllSubResources and translateAllSubResourcesToAllLocales)
   useEffect(() => {
@@ -622,14 +682,25 @@ export function useProductSubResources({
   // Handlers
   // ============================================================================
 
+  // Editing a field makes it a real market override → no longer inherited.
+  const clearFallback = useCallback((resourceId: string) => {
+    setFallbackResourceIds(prev => {
+      if (!prev.has(resourceId)) return prev;
+      const next = new Set(prev);
+      next.delete(resourceId);
+      return next;
+    });
+  }, []);
+
   const handleOptionNameChange = useCallback((optionId: string, value: string) => {
     setOptionTranslations(prev => ({
       ...prev,
       [optionId]: { ...prev[optionId], name: value, values: prev[optionId]?.values || [] },
     }));
     setDirtyOptionIds(prev => new Set(prev).add(optionId));
+    clearFallback(optionId);
     setHasChanges(true);
-  }, []);
+  }, [clearFallback]);
 
   const handleOptionValueChange = useCallback((optionId: string, valueIndex: number, value: string) => {
     setOptionTranslations(prev => {
@@ -647,14 +718,17 @@ export function useProductSubResources({
       }
       return prev;
     });
+    const valId = selectedItem?.options?.find(o => o.id === optionId)?.values[valueIndex]?.id;
+    if (valId) clearFallback(valId);
     setHasChanges(true);
-  }, [selectedItem]);
+  }, [selectedItem, clearFallback]);
 
   const handleMetafieldChange = useCallback((metafieldId: string, value: string) => {
     setMetafieldTranslations(prev => ({ ...prev, [metafieldId]: value }));
     setDirtyMetafieldIds(prev => new Set(prev).add(metafieldId));
+    clearFallback(metafieldId);
     setHasChanges(true);
-  }, []);
+  }, [clearFallback]);
 
   // ============================================================================
   // Primary Locale Handlers
@@ -743,6 +817,86 @@ export function useProductSubResources({
     return sourceData;
   }, [selectedItem]);
 
+  // Merge a translations map ({ resourceId: { key: value } }) into option/metafield state.
+  const applyTranslationsToState = useCallback((
+    item: TranslatableContentItem,
+    translations: Record<string, Record<string, string>>,
+  ) => {
+    setOptionTranslations(prev => {
+      const updated = { ...prev };
+      for (const opt of item.options || []) {
+        const optTrans = translations[opt.id];
+        if (optTrans?.name) {
+          if (!updated[opt.id]) updated[opt.id] = { name: "", values: [] };
+          updated[opt.id] = { ...updated[opt.id], name: optTrans.name };
+        }
+        const valueTranslations = [...(updated[opt.id]?.values || [])];
+        for (let i = 0; i < opt.values.length; i++) {
+          const valTrans = translations[opt.values[i].id];
+          if (valTrans?.name) valueTranslations[i] = valTrans.name;
+        }
+        if (updated[opt.id]) updated[opt.id] = { ...updated[opt.id], values: valueTranslations };
+      }
+      return updated;
+    });
+    setMetafieldTranslations(prev => {
+      const updated = { ...prev };
+      for (const mf of item.metafields || []) {
+        const mfTrans = translations[mf.id];
+        if (mfTrans?.value) updated[mf.id] = mfTrans.value;
+      }
+      return updated;
+    });
+  }, []);
+
+  // Run a SINGLE field/option translate as its own request.
+  //
+  // These must NOT share the hook's `fetcher`: firing several at once (e.g. the
+  // user translates a name + multiple values simultaneously) makes each
+  // fetcher.submit() replace the previous in-flight request, so only the last
+  // response reaches fetcher.data — every other field's spinner then hangs
+  // forever. A dedicated fetch per call gives each its own lifecycle and clears
+  // its own spinner in `finally`.
+  const runIndividualTranslate = useCallback(async (
+    fieldId: string,
+    sourceData: Array<{ resourceId: string; resourceType: string; key: string; value: string; label: string }>,
+  ) => {
+    const item = selectedItem;
+    if (!item) return;
+    const resourceId = item.id;
+
+    const fd = new FormData();
+    fd.set("sourceData", JSON.stringify(sourceData));
+    fd.set("itemId", resourceId);
+    fd.set("primaryLocale", primaryLocale);
+    fd.set("fieldId", fieldId);
+    if (isPrimaryLocale) {
+      // Primary locale: translate to ALL foreign locales (saved server-side).
+      fd.set("action", "translateSubResourceToAllLocales");
+    } else {
+      fd.set("action", "translateSubResources");
+      fd.set("targetLocale", currentLanguage);
+    }
+
+    try {
+      const resp = await fetch("/app/products", { method: "POST", body: fd });
+      const data = await resp.json().catch(() => null) as SubResourceFetcherData | null;
+      if (data?.success && data.translations) {
+        applyTranslationsToState(item, data.translations as Record<string, Record<string, string>>);
+      }
+      // Primary-locale translate saves to foreign locales server-side and returns
+      // no translations — revalidate so locale-pulsing state refreshes.
+      if (isPrimaryLocale && revalidator && revalidator.state === "idle") {
+        revalidator.revalidate();
+      }
+      setHasChanges(false);
+    } catch {
+      // Spinner is still cleared in finally; translation state simply isn't updated.
+    } finally {
+      markSubResourceCompleted(resourceId, fieldId);
+    }
+  }, [selectedItem, isPrimaryLocale, currentLanguage, primaryLocale, revalidator, applyTranslationsToState]);
+
   const translateOption = useCallback((optionId: string) => {
     const sourceData = buildSourceData(optionId);
     if (sourceData.length === 0) return;
@@ -752,33 +906,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    // If primary locale, translate to all foreign locales
-    if (isPrimaryLocale) {
-      fetcher.submit(
-        {
-          action: "translateSubResourceToAllLocales",
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem?.id || "",
-          primaryLocale,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    } else {
-      // Foreign locale: translate from primary to this locale only
-      fetcher.submit(
-        {
-          action: "translateSubResources",
-          targetLocale: currentLanguage,
-          primaryLocale,
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem?.id || "",
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    }
-  }, [isPrimaryLocale, buildSourceData, currentLanguage, primaryLocale, fetcher, selectedItem?.id]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [buildSourceData, selectedItem?.id, runIndividualTranslate]);
 
   const translateOptionField = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
     if (!selectedItem) return;
@@ -812,33 +943,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    // If primary locale, translate to all foreign locales
-    if (isPrimaryLocale) {
-      fetcher.submit(
-        {
-          action: "translateSubResourceToAllLocales",
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem.id,
-          primaryLocale,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    } else {
-      // Foreign locale: translate from primary to this locale only
-      fetcher.submit(
-        {
-          action: "translateSubResources",
-          targetLocale: currentLanguage,
-          primaryLocale,
-          sourceData: JSON.stringify(sourceData),
-          itemId: selectedItem.id,
-          fieldId, // Send fieldId so server can echo it back
-        },
-        { method: "POST", action: "/app/products" }
-      );
-    }
-  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [selectedItem, runIndividualTranslate]);
 
   const translateMetafield = useCallback((metafieldId: string) => {
     if (isPrimaryLocale || !selectedItem) return;
@@ -858,18 +966,10 @@ export function useProductSubResources({
     // Mark in global store so spinner persists across item navigation
     markSubResourceActive(selectedItem?.id || "", fieldId, "translateSubResource");
 
-    fetcher.submit(
-      {
-        action: "translateSubResources",
-        targetLocale: currentLanguage,
-        primaryLocale,
-        sourceData: JSON.stringify(sourceData),
-        itemId: selectedItem.id,
-        fieldId, // Send fieldId so server can echo it back
-      },
-      { method: "POST", action: "/app/products" }
-    );
-  }, [isPrimaryLocale, selectedItem, currentLanguage, primaryLocale, fetcher]);
+    // Own request lifecycle (not the shared fetcher) so concurrent translates
+    // each clear their own spinner. See runIndividualTranslate.
+    void runIndividualTranslate(fieldId, sourceData);
+  }, [isPrimaryLocale, selectedItem, runIndividualTranslate]);
 
   const translateAllSubResources = useCallback(() => {
     if (isPrimaryLocale || !selectedItem) return;
@@ -1082,11 +1182,12 @@ export function useProductSubResources({
           translationsData: JSON.stringify(translationsData),
           resourceTypes: JSON.stringify(resourceTypes),
           itemId: selectedItem.id,
+          marketId: selectedMarketId,
         },
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
@@ -1136,12 +1237,14 @@ export function useProductSubResources({
       handleOptionValueChange(optionId, valueIndex!, val.name);
     }
 
-    // Write to overlay immediately (eliminates stale window when switching locale)
+    // Write to overlay immediately (eliminates stale window when switching
+    // locale). Market-folded so a market-scoped copy stays in the market layer.
+    const overlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
     const overlay = localSubResourceOverlayRef.current;
-    if (!overlay[currentLanguage]) overlay[currentLanguage] = {};
+    if (!overlay[overlayKey]) overlay[overlayKey] = {};
     for (const [resourceId, fields] of Object.entries(translationsData)) {
-      if (!overlay[currentLanguage][resourceId]) overlay[currentLanguage][resourceId] = {};
-      overlay[currentLanguage][resourceId]["name"] = fields.name;
+      if (!overlay[overlayKey][resourceId]) overlay[overlayKey][resourceId] = {};
+      overlay[overlayKey][resourceId]["name"] = fields.name;
     }
 
     markSubResourceActive(selectedItem.id, fieldId, "copy");
@@ -1154,10 +1257,11 @@ export function useProductSubResources({
         translationsData: JSON.stringify(translationsData),
         resourceTypes: JSON.stringify(resourceTypes),
         itemId: selectedItem.id,
+        marketId: selectedMarketId,
       },
       { method: "POST", action: "/app/products" }
     );
-  }, [selectedItem, currentLanguage, fetcher, handleOptionNameChange, handleOptionValueChange]);
+  }, [selectedItem, currentLanguage, selectedMarketId, fetcher, handleOptionNameChange, handleOptionValueChange]);
 
   const copyOptionFieldToAllLocales = useCallback((optionId: string, fieldType: "name" | "value", valueIndex?: number) => {
     if (!selectedItem) return;
@@ -1224,6 +1328,7 @@ export function useProductSubResources({
       primaryOptionEdits,
       primaryMetafieldEdits,
       translatingFieldIds,
+      fallbackResourceIds,
       hasChanges,
       isLoading,
       isSaving: fetcher.state !== "idle",

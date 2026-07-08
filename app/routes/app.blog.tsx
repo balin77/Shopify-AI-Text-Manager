@@ -8,8 +8,6 @@
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -184,6 +182,11 @@ export const loader = createContentLoader({
       handle: blog.handle,
       isBlogContainer: true as const,
       blogTitle: blog.title, // Used for category badge
+      // Type icon + filter metadata (mirrors the theme-domain loader): the list
+      // holds two types — Blog containers and their articles.
+      icon: "📓",
+      iconTooltip: "Blog",
+      type: "Blog",
       seo: {
         title: blog.seoTitle?.value ?? null,
         description: blog.seoDescription?.value ?? null,
@@ -219,6 +222,9 @@ export const loader = createContentLoader({
       blogTitle: a.blogTitle,
       title: a.title,
       handle: a.handle,
+      icon: "📝",
+      iconTooltip: "Blogeintrag",
+      type: "Article",
       body: a.body,
       summary: a.summary,
       featuredImage: a.imageUrl
@@ -274,7 +280,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function BlogPage() {
-  const { articles, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { articles, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -286,6 +292,7 @@ export default function BlogPage() {
     items: articles as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,
@@ -307,9 +314,7 @@ export default function BlogPage() {
 
   return (
     <PlanAccessGate contentType="articles">
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={BLOGS_CONFIG}

@@ -14,9 +14,7 @@
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { confirmNavigation } from "../hooks/useSaveBar";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { useProductSubResources } from "../hooks/useProductSubResources";
@@ -26,7 +24,6 @@ import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName } from "../utils/planUtils";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useVariantImageManager } from "../hooks/useVariantImageManager";
 import { VariantImageManager } from "../components/image-manager/VariantImageManager";
@@ -182,7 +179,7 @@ export const loader = createContentLoader({
             altText: img.altText,
             mediaId: img.mediaId ?? null,
             altTextTranslations: img.altTextTranslations
-              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText }))
+              ? img.altTextTranslations.map((t: any) => ({ locale: t.locale, altText: t.altText, marketId: t.marketId ?? "" }))
               : [],
           }))
         : [],
@@ -219,11 +216,13 @@ export const loader = createContentLoader({
       })) || [],
       // Sub-resource translations loaded via same DB pipeline as main translations
       subResourceTranslations: (() => {
-        const result: Record<string, Array<{ key: string; value: string; locale: string }>> = {};
+        // Carry marketId per row so the client can layer market → global (see
+        // useProductSubResources). "" = global.
+        const result: Record<string, Array<{ key: string; value: string; locale: string; marketId: string }>> = {};
         for (const opt of p.options || []) {
           if (subTransByResource[opt.id]) {
             result[opt.id] = subTransByResource[opt.id].map((t: any) => ({
-              key: t.key, value: t.value, locale: t.locale,
+              key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
             }));
           }
           try {
@@ -231,7 +230,7 @@ export const loader = createContentLoader({
             for (const v of vals) {
               if (v.id && subTransByResource[v.id]) {
                 result[v.id] = subTransByResource[v.id].map((t: any) => ({
-                  key: t.key, value: t.value, locale: t.locale,
+                  key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
                 }));
               }
             }
@@ -240,7 +239,7 @@ export const loader = createContentLoader({
         for (const mf of p.metafields || []) {
           if (subTransByResource[mf.id]) {
             result[mf.id] = subTransByResource[mf.id].map((t: any) => ({
-              key: t.key, value: t.value, locale: t.locale,
+              key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
             }));
           }
         }
@@ -302,7 +301,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<typeof action>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -311,7 +310,6 @@ export default function ProductsPage() {
   const { t } = useI18n();
   const { showInfoBox, setGlobalLoading } = useInfoBox();
   const { getNextPlanUpgrade } = usePlan();
-  const { setContentNavHeight } = useNavigationHeight();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoadingTranslations, setIsLoadingTranslations] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -330,6 +328,7 @@ export default function ProductsPage() {
     items: products as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,
@@ -384,6 +383,7 @@ export default function ProductsPage() {
     selectedItem: editor.selectedItem,
     currentLanguage: editor.state.currentLanguage,
     primaryLocale,
+    selectedMarketId: editor.state.selectedMarketId,
     revalidator,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
@@ -783,11 +783,6 @@ export default function ProductsPage() {
     }
   }, [products]); // eslint-disable-line react-hooks/exhaustive-deps -- intentionally fires when products changes after sync
 
-  // Reset ContentNavigation height to 0 (since we don't have ContentTypeNavigation on Products page)
-  useEffect(() => {
-    setContentNavHeight(0);
-  }, [setContentNavHeight]);
-
   // Check for sync parameter and trigger background sync
   useEffect(() => {
     if (!isMountedRef.current) return;
@@ -851,7 +846,7 @@ export default function ProductsPage() {
     return (
       <div
         style={{
-          height: "100vh",
+          height: "100%",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -868,8 +863,7 @@ export default function ProductsPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}

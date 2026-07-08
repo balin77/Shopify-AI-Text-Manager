@@ -42,6 +42,24 @@ model AISettings {
   appLanguage       String  @default("de")
   subscriptionPlan  String  @default("free") // "free", "basic", "pro", "max"
 
+  // How to handle Shopify's richtext rule ("all top level nodes must be
+  // <p>/<ul>/<ol>/<h1>-<h6>") when saving primary theme-settings values
+  // (e.g. Brand information → brand_description). Merchant-selectable in Settings.
+  //   "autofix"   (default) — try the save; if Shopify rejects for this reason,
+  //               normalize the offending value's top-level HTML and retry once.
+  //   "normalize" — always normalize HTML-bearing theme-settings values before
+  //               pushing, no retry round-trip.
+  //   "error"     — never rewrite merchant HTML; surface a clear instruction.
+  themeRichtextMode String @default("autofix")
+
+  // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
+  // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
+  // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
+  // published (MAIN) theme — backwards compatible with the pre-selection
+  // behaviour. Validated against GET_THEMES on every read
+  // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
+  selectedThemeId   String?
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
@@ -171,7 +189,10 @@ model DirectTranslation {
   source     String   @default("user")
   updatedAt  DateTime @updatedAt
 
-  @@unique([itemId, locale])
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId   String   @default("")
+
+  @@unique([itemId, locale, marketId])
 }
 
 // Untranslated strings discovered on the storefront (opt-in collector), pending
@@ -404,10 +425,13 @@ model ProductImageAltTranslation {
   locale  String // "en", "fr", "es", "it", etc.
   altText String @db.Text
 
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([imageId, locale])
+  @@unique([imageId, locale, marketId])
   @@index([imageId])
   @@index([locale])
 }
@@ -651,13 +675,20 @@ model ContentTranslation {
   locale String // "en", "fr", "es", "it", etc.
   digest String? // Shopify digest for updates
 
+  // Market dimension (Shopify "Translate & Adapt"): "" = global (all markets,
+  // legacy behaviour). Non-empty = gid://shopify/Market/<id>, a market-specific
+  // override of the global translation for the same locale. Sentinel "" (not
+  // NULL) so the composite unique key treats "one global row" deterministically
+  // across DB engines — NULLs are considered distinct in unique constraints.
+  marketId String @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, key, locale])
+  @@unique([shop, resourceId, key, locale, marketId])
   // shop-prefixed so lookups stay within one tenant's index range instead of
   // scanning across all shops' rows for a (resourceId, locale) pair.
-  @@index([shop, resourceId, locale])
+  @@index([shop, resourceId, locale, marketId])
   @@index([resourceType])
   @@index([locale])
   @@index([shop, resourceType])
@@ -674,15 +705,39 @@ model ThemeContent {
   resourceId          String // Shopify GID
   resourceType        String // "ONLINE_STORE_THEME", "ONLINE_STORE_THEME_JSON_TEMPLATE", etc.
   resourceTypeLabel   String // "Theme Content", "JSON Templates", etc.
+  // Top-level content rubric this row belongs to. Lets the four content rubrics
+  // (Theme, System, Online-Store-Extras, Selling-Plans) share the ThemeContent
+  // table while each route/sync path scopes itself to its own domain.
+  // "theme" | "system" | "online_store_extras" | "selling_plans"
+  domain              String   @default("theme")
   groupId             String // "article", "collection", "product", "misc_cart", etc.
   groupName           String // "Article", "Collection", "Cart", etc.
   groupIcon           String // "📝", "📂", "🛒", etc.
   translatableContent Json // Array of translatable items with keys and values
+  // True only for ONLINE_STORE_THEME_APP_EMBED rows that belong to OUR app
+  // (block.type app-handle matches contentpilot). Our embeds are pure technical
+  // selectors/config, so the editor locks them read-only in every locale; other
+  // apps' embeds stay editable. Derived from settings_data.json at full sync.
+  appEmbedOwned       Boolean  @default(false)
+  // AI-generated concise nav title in the shop's main language. Only set for
+  // rows whose raw name is unusable in a list (currently EMAIL_TEMPLATE, whose
+  // groupName is the full localized email subject line). null = not yet
+  // generated / not applicable. Written once by the title-backfill task and
+  // preserved across syncs (groupName is recomputed every sync, this is not).
+  // The loader prefers this over groupName for the item title.
+  aiShortTitle        String?
+  // Shopify Theme-GID this row belongs to ("gid://shopify/OnlineStoreTheme/<id>").
+  // "" = Legacy/vor der Theme-Auswahl-Migration (Backfill-Kandidat). Derived at
+  // sync time from the theme_id embedded in the resourceId GID (see
+  // app/utils/theme-id.ts), falling back to the active MAIN theme.
+  themeId             String   @default("")
   lastSyncedAt        DateTime @default(now())
 
-  @@unique([shop, resourceId, groupId])
+  @@unique([shop, resourceId, groupId, themeId])
   @@index([shop])
   @@index([shop, groupId])
+  @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([lastSyncedAt])
 }
 
@@ -690,18 +745,34 @@ model ThemeTranslation {
   id         String  @id @default(cuid())
   shop       String
   resourceId String // Links to ThemeContent
+  // Mirrors ThemeContent.domain (see there). Lets each rubric load/delete its
+  // own translations without touching the others.
+  domain     String  @default("theme")
   groupId    String // For faster queries
   key        String // Translation key
   value      String  @db.Text
   locale     String // "en", "fr", "es", "it", etc.
   outdated   Boolean @default(false)
+  // Shopify Theme-GID this translation belongs to. Mirrors ThemeContent.themeId
+  // (see there). "" = Legacy/vor der Theme-Auswahl-Migration.
+  themeId    String  @default("")
+
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId   String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, resourceId, groupId, key, locale])
+  // Unique key folds BOTH the theme (Theme-Auswahl) and market (Translate &
+  // Adapt) dimensions. Explicit map: the auto-generated name would exceed
+  // Postgres's 63-char limit. Built by migration 20260706140000 (after both the
+  // theme-id and market-id migrations, which each create a transient one-sided
+  // index the reconciliation migration replaces).
+  @@unique([shop, resourceId, groupId, key, locale, themeId, marketId], map: "ThemeTranslation_shop_res_grp_key_loc_theme_market_key")
   @@index([shop, resourceId, groupId])
   @@index([shop, groupId, locale]) // For efficient locale-specific group queries
+  @@index([shop, domain])
+  @@index([shop, themeId])
   @@index([locale])
 }
 
@@ -753,10 +824,13 @@ model MetaobjectTranslation {
   locale       String // "en", "fr", "es", "it", etc.
   outdated     Boolean @default(false)
 
+  // Market dimension — see ContentTranslation.marketId. "" = global.
+  marketId     String  @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, metaobjectId, key, locale])
+  @@unique([shop, metaobjectId, key, locale, marketId])
   @@index([shop, metaobjectId])
   @@index([shop, type, locale]) // For efficient type-specific locale queries
   @@index([locale])

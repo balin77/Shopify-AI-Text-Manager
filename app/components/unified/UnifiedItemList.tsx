@@ -12,7 +12,7 @@
  * Used by: Products, Collections, Pages, Blogs, Articles, Policies, etc.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Card,
   ResourceList,
@@ -27,10 +27,12 @@ import {
   TextField,
   Popover,
   ActionList,
+  ChoiceList,
   Tooltip,
   Spinner,
+  Select,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -113,6 +115,20 @@ interface UnifiedItemListProps {
   /** Optional: Sort options to show in the sort dropdown */
   sortOptions?: SortOption[];
 
+  /**
+   * Optional: Theme-Auswahl dropdown, rendered as its own section directly under
+   * the search field. The caller decides visibility (theme-content types with
+   * >1 theme); when passed it is shown.
+   */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    value: string;
+    onChange: (themeId: string) => void;
+    disabled?: boolean;
+    label: string;
+    helpText?: string;
+  };
+
   /** Optional: Show a "+" add button before the search field (default: false) */
   showAddButton?: boolean;
 
@@ -145,6 +161,18 @@ interface UnifiedItemListProps {
     upgradeForMore?: string;
     /** Locale-cased resource noun for plan-limit banner ({items} placeholder) */
     itemNoun?: string;
+    /** Empty-list message ({items} placeholder) */
+    noItemsFound?: string;
+    /** Empty-search message ({items} + {query} placeholders) */
+    noItemsFoundMatching?: string;
+    /** Tooltip for the sort button */
+    sortTooltip?: string;
+    /** Tooltip for the reload-all button */
+    reloadAllTooltip?: string;
+    /** Tooltip for the type-filter button */
+    filterTooltip?: string;
+    /** Title inside the type-filter popover */
+    filterTitle?: string;
   };
 }
 
@@ -164,6 +192,7 @@ export function UnifiedItemList({
   planLimit,
   onSyncAll,
   isSyncing = false,
+  themeSelector,
   sortOptions,
   showAddButton = false,
   onAddItem,
@@ -181,9 +210,30 @@ export function UnifiedItemList({
   const [sortField, setSortField] = useState<string>("title");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [sortPopoverActive, setSortPopoverActive] = useState(false);
+  // Type filter: keys of item.type that are hidden. Only surfaces when the list
+  // actually holds more than one distinct type (e.g. Selling Plans =
+  // Abo-Gruppe + Abo-Plan, Blogs = Blog + Blogeintrag). Single-type lists never
+  // show the filter button.
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  const [filterPopoverActive, setFilterPopoverActive] = useState(false);
 
   const toggleSortPopover = useCallback(() => setSortPopoverActive((v) => !v), []);
   const closeSortPopover = useCallback(() => setSortPopoverActive(false), []);
+  const toggleFilterPopover = useCallback(() => setFilterPopoverActive((v) => !v), []);
+  const closeFilterPopover = useCallback(() => setFilterPopoverActive(false), []);
+
+  // Distinct types present in the (unfiltered) items, each with its display
+  // label + icon taken from the first item of that type.
+  const presentTypes = useMemo(() => {
+    const map = new Map<string, { type: string; label: string; icon?: string }>();
+    for (const it of items) {
+      if (it.type && !map.has(it.type)) {
+        map.set(it.type, { type: it.type, label: it.iconTooltip || it.type, icon: it.icon });
+      }
+    }
+    return Array.from(map.values());
+  }, [items]);
+  const showTypeFilter = presentTypes.length > 1;
 
   const { getTotalNavHeight } = useNavigationHeight();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -195,13 +245,20 @@ export function UnifiedItemList({
   // Use dynamic items per page (calculated from window height)
   const itemsPerPage = fixedItemsPerPage || dynamicItemsPerPage;
 
-  // Filter items based on search
+  // Filter items by hidden types first, then by search. An item without a
+  // `type` is never hidden (single-type lists are unaffected). Only applied
+  // while the filter is actually available (>1 type present): if a reload
+  // shrinks the list to a single type, a previously hidden type must NOT keep
+  // filtering — otherwise the button disappears and the list is a dead-end.
+  const typeFilteredItems = showTypeFilter && hiddenTypes.size
+    ? items.filter((item) => !item.type || !hiddenTypes.has(item.type))
+    : items;
   const filteredItems = showSearch
-    ? items.filter((item) => {
+    ? typeFilteredItems.filter((item) => {
         const searchableText = `${item.title || ""} ${item.subtitle || ""}`.toLowerCase();
         return searchableText.includes(searchQuery.toLowerCase());
       })
-    : items;
+    : typeFilteredItems;
 
   // Determine if current sort field is a date type
   const currentSortOption = sortOptions?.find((opt) => opt.field === sortField);
@@ -252,34 +309,54 @@ export function UnifiedItemList({
   // Calculate items per page and item height based on available space
   useEffect(() => {
     const calculateDynamicPagination = () => {
-      // Get the wrapper height (from flexbox layout)
+      // Measure the OUTER wrapper, never the flex:1 scroll area. The wrapper has
+      // a fixed height (it fills the bounded column), so measuring it can never
+      // feed back into itself. Measuring the scroll child instead caused a
+      // flicker loop: a scrollbar / pagination toggle changed its size → the
+      // observer fired → we recomputed → the size changed again…
       const wrapperHeight = wrapperRef.current?.clientHeight;
       const headerHeight = headerRef.current?.offsetHeight || 100;
-      const paginationHeight = showPagination ? 56 : 0;
 
-      // Calculate available height for the list
-      let availableHeight: number;
-
+      // Space below the header, before reserving the pagination bar.
+      let baseHeight: number;
       if (wrapperHeight && wrapperHeight > 200) {
-        // Use wrapper height minus header, pagination, and a small buffer for borders/padding
-        availableHeight = wrapperHeight - headerHeight - paginationHeight - 20;
+        baseHeight = wrapperHeight - headerHeight;
       } else {
-        // Fallback: calculate from window
+        // Fallback for the very first paint, before the wrapper has a height.
         const navHeight = getTotalNavHeight();
-        const padding = 32;
-        availableHeight = window.innerHeight - navHeight - headerHeight - paginationHeight - padding;
+        baseHeight = window.innerHeight - navHeight - headerHeight - 32;
       }
+
+      // Extra breathing room at the bottom of the list so the last row never
+      // sits flush against the card edge.
+      baseHeight -= 12;
 
       // Calculate item dimensions
       const minItemHeight = showThumbnails ? 62 : 54;
       const maxItemHeight = 82;
+      // Reserve the REAL pagination bar height (measured once it has rendered;
+      // ~70px otherwise). A hardcoded 56 was too small, so a paginated list
+      // overfilled and the bottom row was shaved by the column's clip.
+      const paginationHeight = paginationRef.current?.offsetHeight || 70;
 
-      // Calculate how many items fit based on minimum height
-      const itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+      // First pass: assume the pagination bar is hidden and the full base height
+      // is available for items.
+      let availableHeight = baseHeight;
+      let itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
 
-      // Calculate exact item height to fill the space perfectly
-      // This ensures no pixels are wasted and the list fills exactly
-      const exactItemHeight = availableHeight / itemsThatFit;
+      // If the full set won't fit on one page, the pagination bar WILL render and
+      // consume space — recompute once with it reserved. Deterministic (it reads
+      // the item count, not the live size of the flex child), so it settles in
+      // one pass and can't feedback-loop. Reserving the bar only when it shows
+      // keeps single-page lists flush with the bottom instead of leaving a gap.
+      if (showPagination && items.length > itemsThatFit) {
+        availableHeight = baseHeight - paginationHeight;
+        itemsThatFit = Math.max(5, Math.floor(availableHeight / minItemHeight));
+      }
+
+      // Exact per-item height to fill the space; 2px safety absorbs sub-pixel
+      // rounding so the last row is never shaved by the clip.
+      const exactItemHeight = (availableHeight - 2) / itemsThatFit;
       const calculatedItemHeight = Math.min(maxItemHeight, Math.max(minItemHeight, exactItemHeight));
 
       setDynamicItemsPerPage(itemsThatFit);
@@ -290,7 +367,8 @@ export function UnifiedItemList({
     const timer = setTimeout(calculateDynamicPagination, 150);
     window.addEventListener('resize', calculateDynamicPagination);
 
-    // Use ResizeObserver for more reliable height detection
+    // Observe ONLY the wrapper — its height changes on window/nav resize, never
+    // as a side effect of our own item-count changes, so no feedback loop.
     let resizeObserver: ResizeObserver | null = null;
     if (wrapperRef.current && typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(calculateDynamicPagination);
@@ -302,7 +380,7 @@ export function UnifiedItemList({
       window.removeEventListener('resize', calculateDynamicPagination);
       resizeObserver?.disconnect();
     };
-  }, [getTotalNavHeight, showThumbnails, showPagination]);
+  }, [getTotalNavHeight, showThumbnails, showPagination, items.length]);
 
   // Reset to page 1 when search changes
   const handleSearchChange = (value: string) => {
@@ -347,6 +425,14 @@ export function UnifiedItemList({
               flexShrink: 0,
             }}
           />
+        )}
+
+        {/* Type icon (emoji) with hover tooltip naming the type. Only rendered
+            when the item carries an icon (theme groups, blogs, selling plans). */}
+        {item.icon && (
+          <Tooltip content={item.iconTooltip || item.type || ""} zIndexOverride={1200}>
+            <span style={{ fontSize: "1.1rem", flexShrink: 0, lineHeight: 1 }}>{item.icon}</span>
+          </Tooltip>
         )}
 
         {/* Category Badge (standalone - only when no thumbnails) */}
@@ -513,17 +599,58 @@ export function UnifiedItemList({
                   to anchor the row; Delete is tone=critical to stand out as a
                   destructive action. */}
               <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                {showTypeFilter && (
+                  <Popover
+                    active={filterPopoverActive}
+                    activator={
+                      <Tooltip content={t.filterTooltip || "Typen filtern"} zIndexOverride={1200}>
+                        <Button
+                          icon={FilterIcon}
+                          variant="plain"
+                          onClick={toggleFilterPopover}
+                          accessibilityLabel={t.filterTooltip || "Typen filtern"}
+                          size="slim"
+                        />
+                      </Tooltip>
+                    }
+                    onClose={closeFilterPopover}
+                    preferredAlignment="right"
+                  >
+                    <div style={{ padding: "8px 12px", minWidth: "180px" }}>
+                      <ChoiceList
+                        allowMultiple
+                        title={t.filterTitle || "Angezeigte Typen"}
+                        choices={presentTypes.map((pt) => ({
+                          label: pt.icon ? `${pt.icon} ${pt.label}` : pt.label,
+                          value: pt.type,
+                        }))}
+                        selected={presentTypes
+                          .map((pt) => pt.type)
+                          .filter((tp) => !hiddenTypes.has(tp))}
+                        onChange={(selected) => {
+                          const sel = new Set(selected);
+                          setHiddenTypes(
+                            new Set(presentTypes.map((pt) => pt.type).filter((tp) => !sel.has(tp)))
+                          );
+                          setCurrentPage(1);
+                        }}
+                      />
+                    </div>
+                  </Popover>
+                )}
                 {sortOptions && sortOptions.length > 0 && (
                   <Popover
                     active={sortPopoverActive}
                     activator={
-                      <Button
-                        icon={SortIcon}
-                        variant="plain"
-                        onClick={toggleSortPopover}
-                        accessibilityLabel="Sort items"
-                        size="slim"
-                      />
+                      <Tooltip content={t.sortTooltip || "Einträge sortieren"} zIndexOverride={1200}>
+                        <Button
+                          icon={SortIcon}
+                          variant="plain"
+                          onClick={toggleSortPopover}
+                          accessibilityLabel={t.sortTooltip || "Einträge sortieren"}
+                          size="slim"
+                        />
+                      </Tooltip>
                     }
                     onClose={closeSortPopover}
                     preferredAlignment="right"
@@ -558,14 +685,15 @@ export function UnifiedItemList({
                   </Popover>
                 )}
                 {onSyncAll && (
-                  <Button
-                    icon={RefreshIcon}
-                    variant="plain"
-                    onClick={onSyncAll}
-                    loading={isSyncing}
-                    accessibilityLabel="Sync from Shopify"
-                    size="slim"
-                  />
+                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"} zIndexOverride={1200}>
+                    <Button
+                      icon={RefreshIcon}
+                      onClick={onSyncAll}
+                      loading={isSyncing}
+                      accessibilityLabel={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}
+                      size="slim"
+                    />
+                  </Tooltip>
                 )}
                 {showAddButton && onAddItem && (
                   <Button
@@ -601,6 +729,18 @@ export function UnifiedItemList({
                 prefix={<Icon source={SearchIcon} />}
                 clearButton
                 onClearButtonClick={() => handleSearchChange("")}
+              />
+            )}
+
+            {/* Theme selector — own section directly under the search (Theme-Auswahl) */}
+            {themeSelector && (
+              <Select
+                label={themeSelector.label}
+                options={themeSelector.options}
+                value={themeSelector.value}
+                onChange={themeSelector.onChange}
+                disabled={themeSelector.disabled}
+                helpText={themeSelector.helpText}
               />
             )}
 
@@ -708,8 +848,11 @@ export function UnifiedItemList({
             <div style={{ padding: "2rem", textAlign: "center" }}>
               <Text as="p" variant="bodySm" tone="subdued">
                 {searchQuery
-                  ? `No ${resourceName.plural.toLowerCase()} found matching "${searchQuery}"`
-                  : `No ${resourceName.plural.toLowerCase()} found`}
+                  ? (t.noItemsFoundMatching || 'No {items} found matching "{query}"')
+                      .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())
+                      .replace("{query}", searchQuery)
+                  : (t.noItemsFound || "No {items} found")
+                      .replace("{items}", t.itemNoun || resourceName.plural.toLowerCase())}
               </Text>
             </div>
           )}

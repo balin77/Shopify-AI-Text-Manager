@@ -12,8 +12,6 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -36,9 +34,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { db } = await import("../db.server");
     const { loadAISettingsForValidation } = await import("../utils/loader-helpers");
+    const { ShopifyContentService } = await import("../../src/services/shopify-content.service");
+    const { buildMarketTranslations } = await import("../utils/market-translations.server");
 
     // Load shopLocales and policies from Shopify in parallel
-    const [localesResponse, policiesResponse, aiSettings] = await Promise.all([
+    const [localesResponse, policiesResponse, aiSettings, marketsResult] = await Promise.all([
       admin.graphql(
         `#graphql
           query getShopLocales {
@@ -67,7 +67,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           }`
       ),
       loadAISettingsForValidation(db, session.shop),
+      new ShopifyContentService(admin as never).loadMarkets(),
     ]);
+
+    const markets = marketsResult.markets;
 
     const localesData = await localesResponse.json();
     const shopLocales = localesData.data?.shopLocales || [];
@@ -82,8 +85,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop, resourceType: 'ShopPolicy', resourceId: { in: policyIds } }
     });
 
-    // Group translations by resourceId
+    // Group translations by resourceId. Global rows (marketId "") feed the
+    // per-item `translations` array; market-specific rows (marketId !== "") are
+    // surfaced separately so resolve() can layer them over the global values.
     const translationsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
+      if ((trans.marketId ?? "") !== "") return acc;
+      if (!acc[trans.resourceId]) {
+        acc[trans.resourceId] = [];
+      }
+      acc[trans.resourceId].push(trans);
+      return acc;
+    }, {});
+    const marketRowsByResource = allTranslations.reduce((acc: Record<string, any[]>, trans) => {
+      if ((trans.marketId ?? "") === "") return acc;
       if (!acc[trans.resourceId]) {
         acc[trans.resourceId] = [];
       }
@@ -99,6 +113,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       type: p.type,
       url: p.url,
       translations: translationsByResource[p.id] || [],
+      marketTranslations: buildMarketTranslations(marketRowsByResource[p.id] || []),
     }));
 
     return json({
@@ -106,6 +121,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales,
       primaryLocale,
+      markets,
       error: null,
       aiSettings,
     });
@@ -117,6 +133,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shop: session.shop,
       shopLocales: [],
       primaryLocale: "en",
+      markets: [],
       error: "Failed to load policies",
       aiSettings: null,
     }, { status: 500 });
@@ -170,7 +187,7 @@ function getPolicyTypeName(type: string, t: any) {
 }
 
 export default function PoliciesPage() {
-  const { policies, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { policies, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -182,6 +199,7 @@ export default function PoliciesPage() {
     items: policies as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,
@@ -217,9 +235,7 @@ export default function PoliciesPage() {
 
   return (
     <PlanAccessGate contentType="policies">
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={POLICIES_CONFIG}

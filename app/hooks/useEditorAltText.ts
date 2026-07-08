@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
-import { getItemFieldValue } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
 import type {
   ShopLocale,
@@ -31,6 +31,8 @@ interface UseEditorAltTextProps {
   selectedItemRef: React.MutableRefObject<any>;
   selectedItemIdRef: React.MutableRefObject<string | null>;
   currentLanguage: string;
+  /** Selected market ("" = global). Alt text is resolved/saved per market. */
+  selectedMarketId: string;
   primaryLocale: string;
   shopLocales: ShopLocale[];
   config: ContentEditorConfig;
@@ -40,6 +42,7 @@ interface UseEditorAltTextProps {
   buildFieldsForSave: (values: Record<string, string>, locale: string) => Record<string, string>;
   safeSubmit: (data: Record<string, any>, options?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void;
   savedLocaleRef: React.MutableRefObject<string | null>;
+  savedMarketIdRef: React.MutableRefObject<string>;
   isSavePendingRef: React.MutableRefObject<boolean>;
   isSaveFromTranslateRef: React.MutableRefObject<boolean>;
   revalidatorRef: React.MutableRefObject<{ state: string; revalidate: () => void }>;
@@ -57,6 +60,8 @@ interface UseEditorAltTextProps {
 interface UseEditorAltTextReturn {
   // State
   imageAltTexts: Record<number, string>;
+  /** Image indices whose alt text is a market-inherited (global) fallback. */
+  fallbackAltTextIndices: Set<number>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   altTextSuggestions: Record<number, string>;
   setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
@@ -100,6 +105,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     selectedItemRef,
     selectedItemIdRef,
     currentLanguage,
+    selectedMarketId,
     primaryLocale,
     shopLocales,
     config,
@@ -109,6 +115,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     buildFieldsForSave,
     safeSubmit,
     savedLocaleRef,
+    savedMarketIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     revalidatorRef,
@@ -137,6 +144,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
+
+  // Image indices whose alt text is inherited from the global value while a
+  // non-global market is selected (mirrors the main fields' fallbackFields). The
+  // UI greys these out. Empty in the global context.
+  const [fallbackAltTextIndices, setFallbackAltTextIndices] = useState<Set<number>>(new Set());
 
   // Send Image to AI feature state
   const [sendImageToAI, setSendImageToAI] = useState(false);
@@ -254,11 +266,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setImageAltTexts(newAltTexts);
     setOriginalAltTexts(newAltTexts);
 
-    // Write to overlay so switching away and back to this locale shows correct value immediately
-    if (!localAltTextOverlayRef.current[currentLanguage]) {
-      localAltTextOverlayRef.current[currentLanguage] = {};
+    // Write to overlay (market-folded) so switching away and back to this
+    // locale/market shows the correct value immediately.
+    const copyOverlayKey = buildLocaleKey(currentLanguage, selectedMarketId);
+    if (!localAltTextOverlayRef.current[copyOverlayKey]) {
+      localAltTextOverlayRef.current[copyOverlayKey] = {};
     }
-    localAltTextOverlayRef.current[currentLanguage][imageIndex] = sourceAltText;
+    localAltTextOverlayRef.current[copyOverlayKey][imageIndex] = sourceAltText;
 
     markOperationActive(selectedItemId, `altText_${imageIndex}`, "copy");
     pendingCopyAltTextIndexRef.current = imageIndex;
@@ -269,10 +283,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       locale: currentLanguage,
       primaryLocale,
     };
+    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
     Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
     savedLocaleRef.current = currentLanguage;
+    savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
     isSaveFromTranslateRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
@@ -379,10 +395,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
                 locale: currentLanguage,
                 primaryLocale,
               };
+              if (selectedMarketId) formDataObj.marketId = selectedMarketId;
               Object.assign(formDataObj, buildFieldsForSave(editableValuesRef.current, currentLanguage));
               formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
               savedLocaleRef.current = currentLanguage;
+              savedMarketIdRef.current = selectedMarketId;
               isSavePendingRef.current = true;
               isSaveFromTranslateRef.current = true;
               safeSubmit(formDataObj, { method: "POST" });
@@ -703,6 +721,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       locale: currentLanguage,
       primaryLocale,
     };
+    if (selectedMarketId) formDataObj.marketId = selectedMarketId;
 
     // Add field values - for foreign locales, only send fields that actually changed
     Object.assign(formDataObj, buildFieldsForSave(editableValues, currentLanguage));
@@ -711,6 +730,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
 
     savedLocaleRef.current = currentLanguage;
+    savedMarketIdRef.current = selectedMarketId;
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
 
@@ -734,18 +754,130 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
+    setAltTextSuggestions(prev => {
+      const newSuggestions = { ...prev };
+      delete newSuggestions[imageIndex];
+      return newSuggestions;
+    });
+
+    // ========================================================================
+    // FOREIGN LOCALE PATH
+    // The accepted alt-text is in a foreign language `L`. Mirror the text-field
+    // fix: keep it EXACTLY in `L`, translate it into the primary language and
+    // save that as the base image alt-text (this field only, so no deletion of
+    // existing foreign alt-text translations), and translate it into the OTHER
+    // foreign locales (source = `L`). Do NOT overwrite the item's base altText
+    // with the foreign value.
+    // ========================================================================
+    if (currentLanguage !== primaryLocale) {
+      const L = currentLanguage;
+      const requestItemId = selectedItemId;
+      setOriginalAltTexts(newAltTexts);
+      const targetOthers = enabledLanguages.filter(l => l !== primaryLocale && l !== L);
+
+      // Persist the accepted foreign alt-text EXACTLY in `L`.
+      const saveForeignExact = () => {
+        const foreignForm: Record<string, string> = {
+          action: "updateContent",
+          itemId: requestItemId,
+          locale: L,
+          primaryLocale,
+        };
+        foreignForm.imageAltTexts = JSON.stringify(newAltTexts);
+        savedLocaleRef.current = L;
+        savedMarketIdRef.current = "";
+        isSavePendingRef.current = true;
+        isSaveFromTranslateRef.current = true;
+        safeSubmit(foreignForm, { method: "POST" });
+      };
+
+      // Translate the accepted foreign alt-text into the primary language.
+      submitAIAction(
+        {
+          action: "translateAltText",
+          itemId: requestItemId,
+          productId: item.id,
+          productTitle: item.title || "",
+          imageIndex: String(imageIndex),
+          sourceAltText: suggestion,
+          targetLocale: primaryLocale,
+          // Server uses `primaryLocale` purely as the SOURCE language.
+          primaryLocale: L,
+        },
+        `altText_${imageIndex}`,
+        (result) => {
+          if (selectedItemIdRef.current !== requestItemId) return;
+          const primaryTranslated = ((result.translatedAltText as string) || "").trim();
+
+          // 1. Save the accepted foreign alt-text exactly in `L`.
+          saveForeignExact();
+
+          // 2. Save the primary base alt-text (this image only, no deletion trigger).
+          if (primaryTranslated) {
+            const primaryForm: Record<string, string> = {
+              action: "updateContent",
+              itemId: requestItemId,
+              locale: primaryLocale,
+              primaryLocale,
+            };
+            primaryForm.imageAltTexts = JSON.stringify({ [imageIndex]: primaryTranslated });
+            // Products reject a primary-locale update without a non-empty title.
+            if (config.contentType === "products") {
+              primaryForm.title = getItemFieldValue(item, "title", primaryLocale, config);
+            }
+            // Do NOT set savedLocaleRef to primaryLocale. Save A (locale L) was
+            // submitted immediately and this save is queued behind it; the
+            // save-response effect reads the single shared savedLocaleRef, and
+            // overwriting it to primary would both misprocess save A and write
+            // the FOREIGN alt-text (held in imageAltTextsRef) into the primary
+            // in-memory image (a leak). The server still persists this as the
+            // primary base alt-text via the form `locale` field.
+            isSavePendingRef.current = true;
+            isSaveFromTranslateRef.current = true;
+            safeSubmit(primaryForm, { method: "POST" });
+          }
+
+          // 3. Translate into the OTHER foreign locales directly from `L`.
+          if (targetOthers.length > 0) {
+            submitAIAction(
+              {
+                action: "translateAltTextToAllLocales",
+                itemId: requestItemId,
+                productId: item.id,
+                productTitle: item.title || "",
+                imageIndex: String(imageIndex),
+                sourceAltText: suggestion,
+                targetLocales: JSON.stringify(targetOthers),
+                primaryLocale: L,
+              },
+              `altText_${imageIndex}`,
+              () => {
+                if (revalidatorRef.current.state === 'idle') {
+                  try { revalidatorRef.current.revalidate(); } catch {}
+                }
+              }
+            );
+          }
+        },
+        () => {
+          // Translating into the primary language failed — still keep the
+          // accepted foreign alt-text saved.
+          if (selectedItemIdRef.current !== requestItemId) return;
+          saveForeignExact();
+        }
+      );
+      return;
+    }
+
+    // ========================================================================
+    // PRIMARY LOCALE PATH (unchanged)
+    // ========================================================================
     // Immediately update the in-memory item so the fallback display
     // (images[index]?.altText) shows the correct value even if imageAltTexts
     // state gets cleared during revalidation cycles.
     if (item.images?.[imageIndex]) {
       item.images[imageIndex].altText = suggestion;
     }
-
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
 
     // Check target locales first
     const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
@@ -766,6 +898,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
       formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
       savedLocaleRef.current = primaryLocale;
+      savedMarketIdRef.current = "";
       isSavePendingRef.current = true;
       safeSubmit(formDataObj, { method: "POST" });
       setOriginalAltTexts(newAltTexts);
@@ -786,6 +919,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     Object.assign(formDataObj, buildFieldsForSave(editableValues, primaryLocale));
     formDataObj.imageAltTexts = JSON.stringify(newAltTexts);
     savedLocaleRef.current = primaryLocale;
+    savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
     setOriginalAltTexts(newAltTexts);
@@ -839,31 +973,61 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       // Reset to primary locale alt-texts - fallback will use images[i].altText
       setImageAltTexts({});
       setOriginalAltTexts({});
+      setFallbackAltTextIndices(new Set());
     } else {
-      // Load translated alt-texts — check overlay first (from copy ops), then DB
+      // Load translated alt-texts. When a market is selected, prefer the
+      // market-specific value (overlay then DB); if absent, fall back to the
+      // global value — mirroring the storefront + the main resolve() chain. When
+      // no market is selected, this reduces to the original global-only lookup.
       const translatedAltTexts: Record<number, string> = {};
-      const overlayForLocale = localAltTextOverlayRef.current[currentLanguage] || {};
+      // Indices showing a market-inherited (global) value — greyed out in the UI.
+      const fallbackIndices = new Set<number>();
+      const marketOverlay = selectedMarketId
+        ? (localAltTextOverlayRef.current[buildLocaleKey(currentLanguage, selectedMarketId)] || {})
+        : {};
+      const globalOverlay = localAltTextOverlayRef.current[currentLanguage] || {};
       allImages.forEach((img: ContentImage, index: number) => {
-        if (overlayForLocale[index] !== undefined) {
-          translatedAltTexts[index] = overlayForLocale[index];
-          return;
+        // 1. Market layer (overlay → DB)
+        if (selectedMarketId) {
+          if (marketOverlay[index] !== undefined) {
+            translatedAltTexts[index] = marketOverlay[index];
+            return;
+          }
+          const marketDb = img.altTextTranslations?.find(
+            (t) => t.locale === currentLanguage && (t.marketId ?? "") === selectedMarketId
+          );
+          if (marketDb) {
+            translatedAltTexts[index] = marketDb.altText;
+            return;
+          }
         }
-        const translation = img.altTextTranslations?.find(
-          (t: { locale: string }) => t.locale === currentLanguage
-        );
-        if (translation) {
-          translatedAltTexts[index] = translation.altText;
+        // 2. Global layer (overlay → DB). With a market selected this value is
+        //    inherited from global → flag it as a fallback so the UI greys it.
+        let globalVal: string | undefined;
+        if (globalOverlay[index] !== undefined) {
+          globalVal = globalOverlay[index];
+        } else {
+          const globalDb = img.altTextTranslations?.find(
+            (t) => t.locale === currentLanguage && (t.marketId ?? "") === ""
+          );
+          if (globalDb) globalVal = globalDb.altText;
+        }
+        if (globalVal !== undefined) {
+          translatedAltTexts[index] = globalVal;
+          if (selectedMarketId && globalVal.trim() !== "") fallbackIndices.add(index);
         }
       });
       setImageAltTexts(translatedAltTexts);
       setOriginalAltTexts({ ...translatedAltTexts });
+      setFallbackAltTextIndices(fallbackIndices);
     }
-  }, [currentLanguage, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     // State
     imageAltTexts,
     setImageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions,
     setAltTextSuggestions,
     originalAltTexts,

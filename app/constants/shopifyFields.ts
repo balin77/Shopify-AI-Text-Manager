@@ -49,11 +49,16 @@ export const UI_FIELD_TO_TRANSLATION_KEY: Record<string, string> = {
 export const FIELD_CONFIGS = {
   products: ['title', 'descriptionHtml', 'handle', 'productType', 'seo.title', 'seo.description'],
   collections: ['title', 'descriptionHtml', 'handle', 'seo.title', 'seo.description'],
-  pages: ['title', 'body', 'handle'],
+  pages: ['title', 'body', 'handle', 'seo.title', 'seo.description'],
   blogs: ['title', 'body', 'summary', 'handle', 'seo.title', 'seo.description'],
   policies: ['body'],
   templates: ['title', 'body'],
-  metaobjects: [] // Metaobjects have dynamic fields
+  metaobjects: [], // Metaobjects have dynamic fields
+  // ThemeContent-backed rubrics — all dynamic fields (no fixed required set).
+  system: [],
+  delivery: [],
+  sellingPlans: [],
+  onlineStoreExtras: [],
 } as const;
 
 /**

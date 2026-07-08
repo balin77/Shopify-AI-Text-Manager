@@ -17,6 +17,8 @@ import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
+import { MainNavigation } from "../components/MainNavigation";
+import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { getProviderDisplayName, type AIProvider } from "../utils/api-key-validation";
 import { AppErrorBoundary } from "../components/AppErrorBoundary";
@@ -150,6 +152,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       error: installState?.initialSyncError ?? null,
     };
 
+    // Presence of conditional content types (drives nav hiding of entitled-but-
+    // empty entries, e.g. the Theme App-Einbettungen tab which many shops lack).
+    // Cheap indexed count on (shop, domain).
+    // NOTE: Statische Abschnitte is intentionally NOT conditional — it is always
+    // shown so merchants can discover/add static-section content. Abo-Pläne is
+    // likewise always shown now (gated via canAccessContentType, not hidden when
+    // empty), so merchants on Pro/Max can reach the page and use its reload-all
+    // button to discover newly-created selling plans.
+    const themeAppEmbedRows = await db.themeContent.count({
+      where: { shop: session.shop, domain: "theme", resourceType: "ONLINE_STORE_THEME_APP_EMBED" },
+    });
+    const conditionalContent = {
+      themeAppEmbeds: themeAppEmbedRows > 0,
+    };
+
     return json({
       appLanguage,
       subscriptionPlan,
@@ -158,6 +175,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
       extensionSetupHint,
+      conditionalContent,
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)
@@ -183,6 +201,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,
+      conditionalContent: { themeAppEmbeds: true },
       loaderError: true,
     });
   }
@@ -313,7 +332,21 @@ function AppContent() {
   return (
     <AppErrorBoundary>
       <InitialSyncBanner />
-      <Outlet />
+      {/* Persistent navigation: mounted once per app lifecycle here in the
+          layout route so it survives sibling navigation instead of being
+          remounted on every sub-page. Only the <Outlet /> content swaps.
+          ContentTypeNavigation returns null on non-content pages. */}
+      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+        <MainNavigation />
+        <ContentTypeNavigation />
+        {/* Fills the space below the (in-flow) nav bars. overflowY:auto makes
+            this the scroll container, so document-flow routes (settings/tasks)
+            scroll here while the nav stays pinned above, and fixed-frame editor
+            routes (height:100%) fit exactly without a stray document scroll. */}
+        <main style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Outlet />
+        </main>
+      </div>
     </AppErrorBoundary>
   );
 }

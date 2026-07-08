@@ -5,6 +5,7 @@
  * Provides a complete state management and handler system for content editing.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRevalidator } from "@remix-run/react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
@@ -12,7 +13,7 @@ import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";
 import { useItemFocus } from "./useFocusManagement";
 import { useLatestRef } from "./useLatestRef";
-import { useUiDataLoader, getItemFieldValue } from "./useUiDataLoader";
+import { useUiDataLoader, getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { useEditorAutoSave } from "./useEditorAutoSave";
 import { useEditorAltText } from "./useEditorAltText";
 import type {
@@ -60,6 +61,9 @@ interface TaskData {
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
   const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
+  // Markets for the "Translate & Adapt" market selector. Empty when the shop has
+  // no extra markets or the read_markets scope is missing → selector stays hidden.
+  const markets = props.markets ?? [];
   const { refresh: refreshTaskCount } = useTaskCount();
   const revalidator = useRevalidator();
   // IMPORTANT: useRevalidator() returns an unstable reference that changes on
@@ -89,6 +93,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const [hasRestored, setHasRestored] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
   const currentLanguageRef = useLatestRef(currentLanguage);
+  // Selected market for market-specific translations ("" = all markets / global).
+  const [selectedMarketId, setSelectedMarketId] = useState<string>("");
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
   const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
@@ -133,12 +139,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       originalLoadedValuesRef,
       originalTemplateValuesRef,
       baselineValuesRef,
+      selectedMarketIdRef,
     },
     templateValuesVersion,
     setTemplateValuesVersion,
     baselineVersion,
     setBaselineVersion,
   } = dataLoader;
+
+  // Keep the data loader's market ref in sync so resolve()/transitions see the
+  // current market synchronously (updated on render, before any effect runs).
+  selectedMarketIdRef.current = selectedMarketId;
 
   // Track which fields are showing fallback values (e.g., handle field showing primary locale value)
   // This happens when Shopify doesn't return a translation because it's identical to the primary value
@@ -432,6 +443,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Track previous language to detect language changes
   const prevCurrentLanguageRef = useRef<string>(currentLanguage);
+  // Tracks the market the data-loading effect last resolved for. A market switch
+  // re-resolves all fields (same as a locale switch) without a server round-trip.
+  const prevSelectedMarketIdRef = useRef<string>(selectedMarketId);
 
   // Track previous item ID for data loading (separate from image loading ref to avoid race condition)
   const prevItemIdForDataLoadRef = useRef<string | null>(null);
@@ -458,6 +472,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   // Ref to track the locale that was active when the save was initiated
   const savedLocaleRef = useRef<string | null>(null);
+  // Market a save was SUBMITTED under (pinned at submit time, like savedLocaleRef).
+  // The alt-text onSaveComplete mirror must tag rows with the submitted market —
+  // NOT the live selectedMarketId, which may differ if the save was global (bulk /
+  // Accept & Translate) or the user switched market mid-save.
+  const savedMarketIdRef = useRef<string>("");
 
   // Ref to track the ITEM ID that was active when the save was initiated.
   // Allows response handlers to detect if the user navigated away before
@@ -469,6 +488,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     formData: FormData;
     options: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" };
     savedLocale: string | null;
+    savedMarketId: string;
     savedItemId: string | null;
   }>>([]);
 
@@ -492,6 +512,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const {
     imageAltTexts, setImageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions, setAltTextSuggestions,
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
@@ -511,6 +532,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItemRef,
     selectedItemIdRef,
     currentLanguage,
+    selectedMarketId,
     primaryLocale,
     shopLocales,
     config,
@@ -520,6 +542,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     buildFieldsForSave: (v, l) => buildFieldsForSaveRef.current(v, l),
     safeSubmit: (data, opts) => safeSubmitRef.current(data, opts),
     savedLocaleRef,
+    savedMarketIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
     revalidatorRef,
@@ -568,6 +591,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItem,
     shopLocales,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSaveFromTranslateRef,
@@ -628,11 +652,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // NOTE: Use separate ref from image loading to avoid race condition
     const itemIdChanged = prevItemIdForDataLoadRef.current !== selectedItemId;
     const languageChanged = prevCurrentLanguageRef.current !== currentLanguage;
+    const marketChanged = prevSelectedMarketIdRef.current !== selectedMarketId;
     const refreshTriggered = prevDataRefreshTriggerRef.current !== dataRefreshTrigger;
     const translationsArrived = prevTranslationSignalRef.current !== selectedItemTranslationSignal;
     const primaryContentChanged = prevSelectedItemPrimarySignalRef.current !== selectedItemPrimarySignal;
 
-    if (!itemIdChanged && !languageChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
+    if (!itemIdChanged && !languageChanged && !marketChanged && !refreshTriggered && !translationsArrived && !primaryContentChanged) {
       // Don't log on skip to reduce console spam
       return;
     }
@@ -645,6 +670,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // Update refs
     prevItemIdForDataLoadRef.current = selectedItemId;
     prevCurrentLanguageRef.current = currentLanguage;
+    prevSelectedMarketIdRef.current = selectedMarketId;
     prevDataRefreshTriggerRef.current = dataRefreshTrigger;
     prevTranslationSignalRef.current = selectedItemTranslationSignal;
     prevSelectedItemPrimarySignalRef.current = selectedItemPrimarySignal;
@@ -657,7 +683,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // The page-level reload effect (app.templates.tsx) fetches fresh data from the API
       // and updates editable values directly. Reading from item.translatableContent here
       // would use stale cached data and cause a race condition (stale values overwriting fresh).
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         debugLog.dataLoad(' Templates refresh - skip stale data load, page-level effect handles update');
         return;
       }
@@ -706,7 +732,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     // IMPORTANT: Deps are kept minimal to prevent unnecessary re-runs.
     // selectedItemTranslationSignal is stable (only changes when translation count changes)
     // so it won't cause extra re-runs during normal editing.
-  }, [selectedItemId, currentLanguage, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
+  }, [selectedItemId, currentLanguage, selectedMarketId, primaryLocale, config, dataRefreshTrigger, selectedItemTranslationSignal, selectedItemPrimarySignal]);
 
   // Mark loading as complete after editableValues have been updated
   // This is in a separate useEffect to ensure the state update has completed
@@ -1086,6 +1112,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           locale: targetLocale,
           primaryLocale,
         };
+        // Keep the save's market scope in lock-step with the overlay fold done by
+        // onTranslateFieldComplete above (which reads the same market ref).
+        if (targetLocale !== primaryLocale && selectedMarketIdRef.current) {
+          formDataObj.marketId = selectedMarketIdRef.current;
+        }
         Object.assign(formDataObj, buildFieldsForSave(newValues, targetLocale));
 
         // Ensure the translated field is always included in the save
@@ -1094,6 +1125,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
 
         savedLocaleRef.current = targetLocale;
+        // Legacy translateField auto-save carries marketId when foreign (see above).
+        savedMarketIdRef.current = targetLocale !== primaryLocale ? selectedMarketIdRef.current : "";
         isSavePendingRef.current = true;
         safeSubmit(formDataObj, { method: "POST" });
       }
@@ -1217,6 +1250,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     savedLocaleRef.current = currentLanguage;
+    // This bulk alt auto-save (generate-all) writes globally — see formDataObj above
+    // (no marketId) — so the mirror must tag the saved alt as global too.
+    savedMarketIdRef.current = "";
     isSavePendingRef.current = true;
     safeSubmit(formDataObj, { method: "POST" });
   }, [imageAltTexts, selectedItemId, currentLanguage, primaryLocale, effectiveFieldDefinitions, editableValues, safeSubmit, getChangedFields]);
@@ -1454,7 +1490,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const result = dataLoader.onSaveComplete(
         savedLocale,
         editableValues,
-        effectiveFieldDefinitions
+        effectiveFieldDefinitions,
+        fallbackFieldsRef.current
       );
 
       // Image alt-text updates (not managed by dataLoader — separate concern)
@@ -1469,6 +1506,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
         }
       } else {
+        // Mirror the saved alt-text into the in-memory translations, scoped to
+        // the market the save was SUBMITTED under (savedMarketIdRef, pinned at
+        // submit time) — not the live market, which may differ for a global save
+        // (bulk / Accept & Translate) or after a mid-save market switch.
+        const savedMarketId = savedMarketIdRef.current;
         if (item.images && Object.keys(imageAltTextsRef.current).length > 0) {
           for (const [indexStr, altText] of Object.entries(imageAltTextsRef.current)) {
             const index = parseInt(indexStr, 10);
@@ -1477,13 +1519,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 item.images[index].altTextTranslations = [];
               }
               item.images[index].altTextTranslations = item.images[index].altTextTranslations.filter(
-                (t: AltTextTranslation) => t.locale !== savedLocale
+                (t: AltTextTranslation) => !(t.locale === savedLocale && (t.marketId ?? "") === savedMarketId)
               );
               item.images[index].altTextTranslations.push({
                 locale: savedLocale,
                 altText: altText,
+                marketId: savedMarketId,
               });
-              debugLog.response(' Updated alt-text translation for image', index, 'locale:', savedLocale);
+              debugLog.response(' Updated alt-text translation for image', index, 'locale:', savedLocale, 'market:', savedMarketId || '(global)');
             }
           }
         }
@@ -1540,7 +1583,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const currentItemId = selectedItemIdRef.current;
         if (currentItemId) {
           const primarySnapshot = savedPrimaryValuesRef.current[currentItemId];
-          if (primarySnapshot && Object.keys(primarySnapshot).length > 0) {
+          // Only adopt the primary snapshot as the change-detection baseline when
+          // the user is actually VIEWING the primary locale. The foreign-locale
+          // Accept & Translate flow populates savedPrimaryValuesRef purely as a
+          // display overlay while the user is on a foreign locale — using it as
+          // the baseline there would wrongly flag the field dirty (the overlay
+          // holds the primary value, but editableValues holds the foreign value).
+          if (
+            primarySnapshot &&
+            Object.keys(primarySnapshot).length > 0 &&
+            currentLanguageRef.current === primaryLocale
+          ) {
             baselineValuesRef.current = { ...primarySnapshot };
             setBaselineVersion(v => v + 1);
           } else {
@@ -1561,7 +1614,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // after save completes, before the translation starts. Otherwise isLoadingData flips
         // back to false (10ms timer) while the translation is still in-flight, and the stale
         // baseline causes hasFieldChanges to return true → save button flickers active.
-        if (config.contentType === 'templates') {
+        if (isThemeContentType(config.contentType)) {
           const snapshot = { ...editableValuesRef.current };
           originalTemplateValuesRef.current = snapshot;
           setTemplateValuesVersion(v => v + 1);
@@ -1597,6 +1650,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                 shopifyKey,
                 translations as Record<string, string>,
                 currentLanguage
+              );
+
+              // Also update the component-managed translation cache (loadedTranslations
+              // in ThemeContentDomainPage). That cache — NOT resolve()/localTranslationsRef —
+              // is what the component's language-switch effect reads authoritatively and
+              // pushes into the editor via setEditableValue. The direct "translate to all
+              // locales" path updates it through this same callback; the deferred
+              // Accept & Translate path must do the same, or foreign locales render empty
+              // after switching to them (the values are on Shopify but never reach the UI).
+              onTranslateToAllLocalesComplete?.(
+                fieldKey,
+                translations as Record<string, string>
               );
 
               // If the current language is one of the translated languages, update editableValues
@@ -1682,7 +1747,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
             setIsAcceptAndTranslateFlow(false);
 
             // For templates: Update original values and unified baseline so hasChanges becomes false
-            if (config.contentType === 'templates') {
+            if (isThemeContentType(config.contentType)) {
               // Update with the translated value if we're viewing a foreign locale,
               // OR with the current editableValues for the primary locale (the accepted
               // AI suggestion was saved but the baseline was never updated because the
@@ -1723,6 +1788,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // Check if any alt-text indices failed to save to Shopify
       const failedAltTextIndices = fetcher.data.failedAltTextIndices || [];
       // If this save was triggered by a copy action, clear the field loading state.
+      const wasCopySave = !!pendingCopyFieldKeyRef.current;
       if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
         markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
         pendingCopyFieldKeyRef.current = null;
@@ -1752,6 +1818,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           "warning",
           t.common?.warning || "Warning"
         );
+      } else if (wasCopySave) {
+        // Copy ("Übertragen") confirmed persisted to Shopify.
+        showInfoBox(
+          t.common?.copiedToShopify || "Successfully transferred to Shopify",
+          "success",
+          t.common?.success || "Success"
+        );
       } else if (!wasTranslateSave) {
         showInfoBox(
           t.common?.changesSaved || "Changes saved successfully!",
@@ -1769,13 +1842,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       // blocking subsequent saves. The data loading effect (after revalidation) sets
       // originalTemplateValuesRef from resolve() which is always correct.
       // The isLoadingData=true guard in templateHasFieldChanges covers the gap.
-      if (config.contentType === 'templates') {
+      if (isThemeContentType(config.contentType)) {
         // For foreign locale saves: update localTranslationsRef so isFieldTranslated
         // and hasLocaleMissingTranslations return correct results IMMEDIATELY —
         // without waiting for revalidation. No item mutation needed; resolve()
         // reads localTranslationsRef with higher priority than item.translations.
         const savedLocale = savedLocaleRef.current;
         if (savedLocale && savedLocale !== primaryLocale) {
+          // Fold the market the save was submitted under into the overlay key,
+          // exactly like resolve()/onSaveComplete. Without this a market-scoped
+          // save writes under the plain (global) locale key, leaking the market
+          // value into the global layer (and it survives revalidation).
+          const savedLocaleKey = buildLocaleKey(savedLocale, savedMarketIdRef.current);
           effectiveFieldDefinitions.forEach((field) => {
             const value = editableValues[field.key];
             const tKey = field.translationKey;
@@ -1785,9 +1863,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
               localTranslationsRef.current[tKey] = {};
             }
             if (value && value.trim()) {
-              localTranslationsRef.current[tKey][savedLocale] = value;
+              localTranslationsRef.current[tKey][savedLocaleKey] = value;
             } else {
-              delete localTranslationsRef.current[tKey][savedLocale];
+              delete localTranslationsRef.current[tKey][savedLocaleKey];
             }
           });
         }
@@ -1820,6 +1898,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       isSavePendingRef.current = false;
       isSaveFromTranslateRef.current = false;
       setIsSaving(false);
+
+      // Clear a copy ("Übertragen") spinner on failure too — otherwise the field's
+      // buttons keep spinning forever after a failed Shopify save.
+      if (pendingCopyFieldKeyRef.current && selectedItemIdRef.current) {
+        markOperationFailed(selectedItemIdRef.current, pendingCopyFieldKeyRef.current);
+        pendingCopyFieldKeyRef.current = null;
+      }
 
       const isSavedItemCurrent = savedItemIdRef.current === selectedItemIdRef.current;
       savedItemIdRef.current = null;
@@ -1854,7 +1939,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
 
         // Auto-restore empty fields to their original values (discard empty edits)
-        if (config.contentType === 'templates' && originalTemplateValuesRef.current) {
+        if (isThemeContentType(config.contentType) && originalTemplateValuesRef.current) {
           setEditableValues(prev => {
             const restored = { ...prev };
             let restoredCount = 0;
@@ -1929,6 +2014,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       // Restore metadata for this queued save
       savedLocaleRef.current = next.savedLocale;
+      savedMarketIdRef.current = next.savedMarketId;
       savedItemIdRef.current = next.savedItemId;
       isSavePendingRef.current = true;
 
@@ -1974,6 +2060,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,
@@ -1995,6 +2082,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     selectedItemId,
     selectedItem,
     currentLanguage,
+    selectedMarketId,
     hasChanges,
     hasAltTextChanges,
     enabledLanguages,
@@ -2017,8 +2105,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     savedPrimaryValuesRef,
     originalLoadedValuesRef,
     originalTemplateValuesRef,
+    baselineValuesRef,
     revalidatorRef,
     savedLocaleRef,
+    savedMarketIdRef,
     savedItemIdRef,
     isSavePendingRef,
     isSavingCurrentItem,
@@ -2039,6 +2129,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     dataLoader,
     setSelectedItemId,
     setCurrentLanguage,
+    setSelectedMarketId,
+    markets,
     setEditableValues,
     setAiSuggestions,
     setHtmlModes,
@@ -2051,6 +2143,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
+    setBaselineVersion,
     setFieldErrors,
     setIsSaving,
   });
@@ -2064,16 +2157,27 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
     if (!field) return false;
 
+    // Market-aware: a market override may exist without a global row, so fold the
+    // selected market into every lookup (mirrors resolve()). marketId "" keeps the
+    // plain global keys, so global behaviour is unchanged.
+    const marketId = selectedMarketId;
+
     // Phase 4: Check deletedTranslationKeysRef FIRST — if a field was cleared,
     // it should appear untranslated even if item.translations still has old data.
-    if (deletedTranslationKeysRef.current.has(field.translationKey)) {
+    if (deletedTranslationKeysRef.current.has(buildDeletedKey(field.translationKey, marketId))) {
       return false;
     }
 
     // Check localTranslationsRef (from translateFieldToAllLocales / saves)
     // This ensures immediate UI feedback before revalidation completes
-    const localValue = localTranslationsRef.current[field.translationKey]?.[currentLanguage];
+    const localeKey = buildLocaleKey(currentLanguage, marketId);
+    const localValue = localTranslationsRef.current[field.translationKey]?.[localeKey];
     if (localValue) {
+      return true;
+    }
+
+    // Market-specific DB row (marketTranslations), if any for the selected market.
+    if (marketId && selectedItem.marketTranslations?.[marketId]?.[field.translationKey]?.[currentLanguage]) {
       return true;
     }
 
@@ -2130,7 +2234,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Helper to update original template values (used after loading translations)
   // Also syncs originalLoadedValuesRef so buildFieldsForSave uses the correct baseline
   const setOriginalTemplateValues = (values: Record<string, string>) => {
-    if (config.contentType === 'templates') {
+    if (isThemeContentType(config.contentType)) {
       originalTemplateValuesRef.current = { ...values };
       originalLoadedValuesRef.current = { ...values };
       baselineValuesRef.current = { ...values };
@@ -2143,7 +2247,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // This avoids race conditions from 25+ individual setEditableValue calls and ensures
   // editableValues and originalLoadedValuesRef are updated in a single React batch.
   const reloadTemplateValues = useCallback((values: Record<string, string>) => {
-    if (config.contentType !== 'templates') return;
+    if (!isThemeContentType(config.contentType)) return;
     debugLog.dataLoad(' reloadTemplateValues - atomic update with', Object.keys(values).length, 'fields');
     setEditableValues(values);
     originalTemplateValuesRef.current = { ...values };
@@ -2170,12 +2274,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const state: EditorState = {
     selectedItemId,
     currentLanguage,
+    selectedMarketId,
+    markets,
     editableValues,
     aiSuggestions,
     htmlModes,
     hasChanges,
     enabledLanguages,
     imageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions,
     isClearAllModalOpen,
     isInitialDataReady,
@@ -2205,6 +2312,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAndTranslate,
     handleRejectSuggestion,
     handleLanguageChange,
+    handleMarketChange,
     handleToggleLanguage,
     handleItemSelect,
     handleValueChange,

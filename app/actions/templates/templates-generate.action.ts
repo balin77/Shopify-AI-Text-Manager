@@ -7,7 +7,7 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
 
 export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<Response> {
-  const { db, session, formData, groupId, firstGroup } = ctx;
+  const { db, session, formData, groupId, firstGroup, domain } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");
   const mainLanguage = getFormString(formData, "mainLanguage");
@@ -18,7 +18,7 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
       shop: session.shop,
       type: "aiGeneration",
       status: "pending",
-      resourceType: "templates",
+      resourceType: domain,
       resourceId: `group_${groupId}`,
       resourceTitle: firstGroup.groupName,
       fieldType: fieldLabel,

@@ -1,6 +1,6 @@
 import { json } from "@remix-run/node";
 import type { AIActionContext } from "./shared";
-import { errorMessage, createAIService, isPrismaError } from "./shared";
+import { errorMessage, createAIService, isPrismaError, isAuthError } from "./shared";
 import type { TranslatableContentItem } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
@@ -456,39 +456,54 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
 
     const translatedAltTexts: Record<string, string> = {};
     const aiResponses: Array<{ locale: string; response: string }> = [];
-    const totalLocales = targetLocales.length;
 
-    // Translate to each locale
-    for (let i = 0; i < targetLocales.length; i++) {
-      const locale = targetLocales[i];
-      try {
-        const translatedValue = await aiService.translateContent(sourceAltText, primaryLocale, locale);
-        translatedAltTexts[locale] = translatedValue;
-        aiResponses.push({ locale, response: translatedValue });
-
-        // Update progress
-        const progress = Math.round(10 + ((i + 1) / totalLocales) * 80);
-        await db.task.update({
-          where: { id: task.id },
-          data: { progress },
-        });
-
-        logger.debug("[API-AI] Translated alt-text to locale", {
-          context: "AI",
-          imageIndex,
-          locale
-        });
-      } catch (error: unknown) {
-        logger.error("[API-AI] Error translating alt-text to locale", {
-          context: "AI",
-          imageIndex,
-          locale,
-          error: errorMessage(error)
-        });
-        translatedAltTexts[locale] = sourceAltText; // Fallback to original
-        aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
+    // Translate this alt-text to ALL locales in ONE alt-text-aware AI call
+    // instead of one translateContent round-trip per locale. On total failure,
+    // fall back to the per-locale path so a single bad call doesn't block all.
+    const altKey = String(imageIndex);
+    try {
+      const batch = await aiService.translateAltTextsBatch(
+        { [altKey]: sourceAltText },
+        primaryLocale,
+        targetLocales,
+        contentType
+      );
+      for (const locale of targetLocales) {
+        const value = batch[altKey]?.[locale];
+        // Missing cell → skip (N-H3: never persist source as a translation).
+        if (!value) continue;
+        translatedAltTexts[locale] = value;
+        aiResponses.push({ locale, response: value });
+      }
+    } catch (error: unknown) {
+      // Invalid API key: the per-locale fallback would 401 too — fail loudly.
+      if (isAuthError(error)) throw error;
+      logger.error("[API-AI] Alt-text batch translation failed, falling back to per-locale", {
+        context: "AI",
+        imageIndex,
+        error: errorMessage(error)
+      });
+      for (const locale of targetLocales) {
+        try {
+          const value = await aiService.translateContent(sourceAltText, primaryLocale, locale);
+          translatedAltTexts[locale] = value;
+          aiResponses.push({ locale, response: value });
+        } catch (innerError: unknown) {
+          // Invalid key: abort the loop — every remaining locale would 401 too.
+          if (isAuthError(innerError)) throw innerError;
+          // Skip this locale — do NOT persist source-as-translation (N-H3).
+          logger.error("[API-AI] Error translating alt-text to locale", {
+            context: "AI",
+            imageIndex,
+            locale,
+            error: errorMessage(innerError)
+          });
+          aiResponses.push({ locale, response: `ERROR: ${errorMessage(innerError)}` });
+        }
       }
     }
+
+    await db.task.update({ where: { id: task.id }, data: { progress: 60 } });
 
     // Save translations to Shopify first, then DB only on success
     const failedLocales: string[] = [];
@@ -614,7 +629,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
             if (shopifySaved && dbImage) {
               try {
                 const existing = await db.productImageAltTranslation.findUnique({
-                  where: { imageId_locale: { imageId: dbImage.id, locale } },
+                  where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
                 });
                 if (existing) {
                   await db.productImageAltTranslation.update({ where: { id: existing.id }, data: { altText } });
@@ -739,16 +754,17 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
         altTextsData, primaryLocale, targetLocales, contentType
       );
     } catch (error: unknown) {
+      // Invalid API key: fail loudly — every image/locale would 401 too.
+      if (isAuthError(error)) throw error;
       logger.error("[API-AI] Error batch-translating alt-texts to all locales", {
         context: "AI", error: errorMessage(error),
       });
-      // Fallback: use source texts for all
-      for (const imgIdx of imageIndices) {
-        translatedResults[String(imgIdx)] = {};
-        for (const locale of targetLocales) {
-          translatedResults[String(imgIdx)][locale] = altTextsData[String(imgIdx)];
-        }
-      }
+      // Leave translatedResults empty: the per-image/locale save below skips
+      // missing cells (`if (!altText) continue;`) and records them as failed.
+      // (Previously this filled every cell with the SOURCE alt-text, which then
+      // got written to Shopify + DB as if it were a real translation — N-H3
+      // source-as-translation corruption, reported as success.)
+      translatedResults = {};
     }
 
     await db.task.update({
@@ -900,7 +916,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
           if (shopifySaved) {
             try {
               const existing = await db.productImageAltTranslation.findUnique({
-                where: { imageId_locale: { imageId: dbImage.id, locale } },
+                where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
               });
               if (existing) {
                 await db.productImageAltTranslation.update({
@@ -1005,16 +1021,19 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
         altTextsData, primaryLocale, [targetLocale], contentType
       );
       for (const [imgIdx, localeMap] of Object.entries(batchResult)) {
-        translatedAltTexts[Number(imgIdx)] = localeMap[targetLocale] || altTextsData[imgIdx];
+        // Missing cell → skip (do NOT fall back to the source alt-text, which
+        // would be persisted as a real translation — N-H3 corruption).
+        const value = localeMap[targetLocale];
+        if (value) translatedAltTexts[Number(imgIdx)] = value;
       }
     } catch (error: unknown) {
+      // Invalid API key: fail loudly — there is no per-image fallback here.
+      if (isAuthError(error)) throw error;
       logger.error("[API-AI] Error batch-translating alt-texts for locale", {
         context: "AI", targetLocale, error: errorMessage(error),
       });
-      // Fallback: use source texts
-      for (const imgIdx of imageIndices) {
-        translatedAltTexts[imgIdx] = altTextsData[String(imgIdx)];
-      }
+      // Leave translatedAltTexts empty: the save loop below skips missing cells
+      // (`if (!altText) continue;`) instead of writing source-as-translation.
     }
 
     await db.task.update({
@@ -1158,7 +1177,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
         if (shopifySaved) {
           try {
             const existing = await db.productImageAltTranslation.findUnique({
-              where: { imageId_locale: { imageId: dbImage.id, locale: targetLocale } },
+              where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale: targetLocale } },
             });
             if (existing) {
               await db.productImageAltTranslation.update({

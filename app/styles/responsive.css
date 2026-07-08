@@ -7,6 +7,66 @@
   --spacing-mobile: 8px;
   --spacing-tablet: 12px;
   --spacing-desktop: 16px;
+  /* Single source of truth for the outer page padding (margin from page
+     content to the window edge) on desktop+. Owned here so every route — the
+     content editor AND the simple Polaris pages (Tasks, Settings, …) — reads
+     the same value and stays as tight as the content page. Routes must NOT add
+     their own page-level padding wrapper on top of this. */
+  --app-page-padding: 16px;
+}
+
+/* Simple Polaris pages (Tasks, Settings, …) opt into the SAME frame as the
+   content editor by wrapping their content in .app-page-content.
+
+   Two things have to match the content page:
+   1) The gutter must be even on all four sides and measured from the bar
+      DIRECTLY above (the main nav here, the L3 submenu on content pages).
+      Polaris' own .Polaris-Page (padding 0 var(--p-space-600)) and
+      .Polaris-Page__Content (padding-top var(--p-space-500)=20px,
+      padding-bottom var(--p-space-200)=8px) stack an asymmetric, oversized
+      inset on top of our padding — that is why the top looked larger and the
+      bottom uneven. We zero BOTH and own the single gutter on the wrapper.
+   2) The bottom gutter must stay visible. Letting <main> scroll the whole
+      page does NOT work: a scroll container drops the trailing padding of its
+      content, so the last row runs to the very edge instead of stopping a few
+      px before it. The content editor solves this by being a FIXED frame that
+      fills the viewport (height:100%, overflow:hidden) with the gutter as
+      padding, and scrolling its INNER content — so the 16px frame (incl. the
+      bottom strip) is always visible. We replicate that: the Page chain fills
+      to a definite height, .app-page-content is the padded non-scrolling
+      frame, and its single child scrolls internally. */
+.Polaris-Page:has(> .Polaris-Page__Content > .app-page-content) {
+  padding: 0 !important;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.Polaris-Page__Content:has(> .app-page-content) {
+  padding: 0 !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.app-page-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: var(--app-page-padding);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* The actual page content (Tasks: a BlockStack; Settings: the sidebar+content
+   row) scrolls inside the frame, so the frame's padding — including the bottom
+   strip — is never scrolled away. */
+.app-page-content > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* Visibility Utilities for Mobile/Tablet/Desktop */
@@ -477,9 +537,9 @@
     display: block;
   }
 
-  /* Standard padding */
+  /* Standard padding — single source of truth (see --app-page-padding) */
   .Polaris-Page {
-    padding: var(--spacing-desktop) !important;
+    padding: var(--app-page-padding) !important;
   }
 
   /* Inline button groups on desktop */
@@ -495,9 +555,10 @@
     grid-template-columns: 360px 1fr 320px;
   }
 
-  /* More generous spacing */
+  /* Keep the same tight page padding as every other breakpoint so simple
+     Polaris pages stay as small as the content page (see --app-page-padding). */
   .Polaris-Page {
-    padding: 20px !important;
+    padding: var(--app-page-padding) !important;
   }
 }
 
@@ -601,6 +662,18 @@ a:focus:not(:focus-visible) {
     border: 1px solid #000 !important;
     page-break-inside: avoid;
   }
+}
+
+/* Sub-navigation hover affordance — L3 chips are flat by default (no
+   border/bg) so they need a hover state to read as clickable. L2 chips
+   already have a card appearance and only need a subtle darken. Active
+   chips ([aria-current="page"]) are excluded so the selected state stays
+   visually distinct under the pointer. */
+.content-type-nav button:not([aria-current="page"]):not([aria-disabled="true"]):hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+.rubric-nav button:not([aria-current="page"]):hover {
+  background-color: #f1f2f3 !important;
 }
 
 /* Global: Remove blue focus ring from all Polaris TextFields and Select inputs */

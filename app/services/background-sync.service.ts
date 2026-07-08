@@ -9,9 +9,11 @@ import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
 import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
+import { extractThemeIdFromResourceId } from '~/utils/theme-id';
 import { db } from '../db.server';
-import { getSyncScope, type Plan } from '../utils/planUtils';
+import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
+import { stripLiquid } from '../utils/liquid-strip';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -46,6 +48,8 @@ interface ThemeContentItem extends TranslatableContentItem {
   _groupId: string;
   _groupName: string;
   _groupIcon: string;
+  /** APP_EMBED only: true when the embed belongs to our own app (see isOwnAppEmbedType). */
+  _appEmbedOwned?: boolean;
 }
 
 /** Theme translatable resource from Shopify */
@@ -58,7 +62,7 @@ interface ThemeResource {
 // Theme key-to-group mapping (shared between initial sync and per-group reload)
 // ============================================================================
 
-interface KeyPatternConfig {
+export interface KeyPatternConfig {
   pattern: RegExp;
   name: string;
   groupId: string;
@@ -66,21 +70,57 @@ interface KeyPatternConfig {
   extractSubgroup?: boolean;
 }
 
-const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
+// Ordering matters: more specific patterns MUST precede the generic prefix they
+// share (e.g. shopify.checkout.* before shopify.*, templates.404.* before
+// templates.*). The matcher takes the first hit and stops.
+export const THEME_KEY_PATTERNS: KeyPatternConfig[] = [
+  // ── JSON template sections (section.*) ──
   { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
+  { pattern: /^section\.blog\./, name: 'Blog', groupId: 'blog_theme', icon: '📝' },
   { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
   { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
   { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
   { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
   { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
+
+  // ── JSON template top-level keys (templates.*) ──
+  { pattern: /^templates\.404\./, name: '404', groupId: 'tpl_404', icon: '🚫' },
+  { pattern: /^templates\.list-collections\./, name: 'List Collections', groupId: 'tpl_list_coll', icon: '📂' },
+
   { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
   { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
   { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
+
+  // ── shopify.* namespace (LOCALE_CONTENT: checkout + system strings, ~2590 keys) ──
+  { pattern: /^shopify\.checkout\./, name: 'Checkout & System', groupId: 'shopify_checkout', icon: '🛒' },
+  { pattern: /^shopify\.customer_accounts\./, name: 'Customer Accounts (Shopify)', groupId: 'shopify_customer_accounts', icon: '👥' },
+  { pattern: /^shopify\.email_marketing\./, name: 'Email Marketing', groupId: 'shopify_email_marketing', icon: '✉️' },
+  { pattern: /^shopify\.subscriptions\./, name: 'Subscriptions', groupId: 'shopify_subscriptions', icon: '🔁' },
+  { pattern: /^shopify\.sentence\./, name: 'Sentence connectors', groupId: 'shopify_sentence', icon: '✏️' },
+  { pattern: /^shopify\./, name: 'Shopify (other)', groupId: 'shopify_other', icon: '🏬' },
+
+  // ── LOCALE_CONTENT top-level prefixes (Theme-Standardinhalte) ──
+  { pattern: /^accessibility\./, name: 'Accessibility', groupId: 'accessibility', icon: '♿' },
+  { pattern: /^accounts\./, name: 'Accounts', groupId: 'accounts', icon: '👤' },
+  { pattern: /^announcement_bar\./, name: 'Announcement Bar', groupId: 'announcement_bar', icon: '📢' },
+  { pattern: /^blogs\./, name: 'Blogs', groupId: 'blogs_theme', icon: '📝' },
+  { pattern: /^customer_accounts\./, name: 'Customer Accounts', groupId: 'customer_accounts', icon: '👥' },
+  { pattern: /^customer\./, name: 'Customer', groupId: 'customer', icon: '👤' },
+  { pattern: /^general\./, name: 'General', groupId: 'general', icon: '🔧' },
+  { pattern: /^gift_cards?\./, name: 'Gift Cards', groupId: 'gift_cards', icon: '🎁' },
+  { pattern: /^localization\./, name: 'Localization', groupId: 'localization', icon: '🌍' },
+  { pattern: /^newsletter\./, name: 'Newsletter', groupId: 'newsletter', icon: '📰' },
+  { pattern: /^onboarding\./, name: 'Onboarding', groupId: 'onboarding', icon: '🚀' },
+  { pattern: /^products\./, name: 'Products', groupId: 'products_theme', icon: '🛍️' },
+  { pattern: /^recipient\./, name: 'Recipient', groupId: 'recipient', icon: '👥' },
+  { pattern: /^sections\./, name: 'Sections', groupId: 'sections_theme', icon: '🧩' },
+  { pattern: /^templates\./, name: 'Templates', groupId: 'templates_theme', icon: '📋' },
+
   { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
 ];
 
 /** Determine which groupId a translatable key belongs to (same logic as initial sync) */
-function getGroupIdForKey(key: string): string {
+export function getGroupIdForKey(key: string): string {
   for (const patternConfig of THEME_KEY_PATTERNS) {
     const match = key.match(patternConfig.pattern);
     if (match) {
@@ -104,6 +144,77 @@ function getGroupIdForKey(key: string): string {
   return 'misc_other';
 }
 
+/**
+ * App-embed translatable keys look like `block.<blockId>.<setting>`. All keys
+ * within one ONLINE_STORE_THEME_APP_EMBED resource share the same <blockId>,
+ * which matches an entry under `current.blocks` in settings_data.json. Returns
+ * the first blockId found, or null when the keys don't follow this shape.
+ */
+export function extractAppEmbedBlockId(content: { key: string }[]): string | null {
+  for (const item of content) {
+    const m = item.key.match(/^block\.([^.]+)\./);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/**
+ * Group key for one app-embed block. Keyed by the blockId (unique per block and
+ * shared by all of that block's `block.<blockId>.<setting>` keys) — NOT by the
+ * resourceId. Shopify returns one translatable resource per block, but the
+ * resourceIds of two blocks belonging to the SAME app differ only after the
+ * "?"; truncating at "?" (the old behaviour) collapsed every block of an app
+ * into a single entry (e.g. the variant-gallery block was swallowed by the
+ * locale-switcher entry). Falls back to the resourceId tail only for content
+ * that does not follow the `block.*` shape.
+ */
+export function appEmbedGroupId(resourceId: string, blockId: string | null): string {
+  if (blockId) return `app_embed_${blockId}`;
+  const shortId = resourceId.split('/').pop()?.split('?')[0] || resourceId;
+  return `app_embed_${shortId}`;
+}
+
+/** "contentpilot-ai" / "language_and_currency" → "Contentpilot Ai" / "Language And Currency". */
+function titleizeHandle(handle: string): string {
+  return handle
+    .replace(/[-_]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/**
+ * Turn an app-block `type` (`shopify://apps/<app>/blocks/<block>/<uuid>`) into a
+ * human label like "Contentpilot Ai – Language And Currency". Names are derived
+ * from handles (the storefront-pretty title lives in the app's extension schema,
+ * not in the Admin API), so they're recognizable but not pixel-perfect. Returns
+ * null when the type isn't an app block.
+ */
+export function prettifyAppEmbedType(type: unknown): string | null {
+  if (typeof type !== 'string') return null;
+  const m = type.match(/^shopify:\/\/apps\/([^/]+)\/blocks\/([^/]+)\//);
+  if (!m) return null;
+  const app = titleizeHandle(m[1]);
+  const block = titleizeHandle(m[2]);
+  return block ? `${app} – ${block}` : app;
+}
+
+/**
+ * Whether an app-embed block `type` belongs to OUR app. The app-handle segment
+ * of `shopify://apps/<app-handle>/blocks/...` carries our handle (e.g.
+ * "contentpilot-ai" in prod, "contentpilot-ai-dev" in dev — both contain
+ * "contentpilot"). Matching the authoritative handle (not the lossy display
+ * name) keeps other apps' embeds editable while locking ours. Normalized so
+ * handle punctuation/casing variants still match.
+ */
+export function isOwnAppEmbedType(type: unknown): boolean {
+  if (typeof type !== 'string') return false;
+  const m = type.match(/^shopify:\/\/apps\/([^/]+)\/blocks\//);
+  if (!m) return false;
+  return m[1].toLowerCase().replace(/[^a-z0-9]/g, '').includes('contentpilot');
+}
+
 export interface SyncStats {
   pages: number;
   policies: number;
@@ -111,9 +222,20 @@ export interface SyncStats {
   metaobjects: number;
   articles: number;
   menus: number;
+  system: number;
+  delivery: number;
+  onlineStoreExtras: number;
+  sellingPlans: number;
+  cookieBanner: number;
   total: number;
   duration: number;
 }
+
+// Per-shop in-flight full-theme-sync promises. A full theme sync runs an
+// aggressive cross-group cleanup, so two concurrent runs for the same shop must
+// not interleave — concurrent callers coalesce onto the in-flight run. Keyed by
+// shop; entries are always removed on settle (see syncAllThemes).
+const inFlightThemeSyncs = new Map<string, Promise<number>>();
 
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
@@ -396,11 +518,12 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            shop_resourceId_key_locale: {
+            shop_resourceId_key_locale_marketId: {
               shop: this.shop,
               resourceId: pageData.id,
               key: t.key,
               locale: t.locale,
+              marketId: "",
             },
           },
           create: {
@@ -690,11 +813,12 @@ export class BackgroundSyncService {
       for (const t of allTranslations) {
         await tx.contentTranslation.upsert({
           where: {
-            shop_resourceId_key_locale: {
+            shop_resourceId_key_locale_marketId: {
               shop: this.shop,
               resourceId: policyData.id,
               key: t.key,
               locale: t.locale,
+              marketId: "",
             },
           },
           create: {
@@ -744,6 +868,72 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
+   * Build a blockId → display-name map for theme app embeds by reading the main
+   * theme's config/settings_data.json (requires read_themes). App embeds live
+   * under `current.blocks`, keyed by the same blockId that prefixes their
+   * translatable keys. Best-effort: returns an empty map on any error so the
+   * sync falls back to generic names.
+   */
+  private async fetchAppEmbedNameMap(): Promise<Map<string, { name?: string; owned: boolean }>> {
+    const map = new Map<string, { name?: string; owned: boolean }>();
+    try {
+      // Mirror the proven GET_THEME_FILES shape (content.queries.ts): `files`
+      // is a connection and REQUIRES `first`/`last`, and we filter to the MAIN
+      // theme by `role` rather than the `roles:` arg for maximum compatibility.
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query themeSettingsData {
+            themes(first: 20) {
+              nodes {
+                role
+                files(filenames: ["config/settings_data.json"], first: 1) {
+                  nodes {
+                    body { ... on OnlineStoreThemeFileBodyText { content } }
+                  }
+                }
+              }
+            }
+          }`
+      );
+      const data = await resp.json();
+      if (data.errors) {
+        logger.warn(`[BackgroundSync] settings_data.json query error`, { error: data.errors[0]?.message });
+        return map;
+      }
+      const nodes: Array<{ role?: string; files?: { nodes?: Array<{ body?: { content?: string } }> } }> =
+        data.data?.themes?.nodes ?? [];
+      const mainTheme = nodes.find((n) => String(n.role).toUpperCase() === "MAIN") ?? nodes[0];
+      const content = mainTheme?.files?.nodes?.[0]?.body?.content;
+      if (!content) {
+        logger.warn(`[BackgroundSync] settings_data.json not found on main theme (themes: ${nodes.length})`);
+        return map;
+      }
+      // Shopify auto-generates settings_data.json with a leading /* ... */
+      // banner comment, which is not valid JSON. Strip it before parsing
+      // (mirrors the leading-comment handling in templates-update.action.ts).
+      // Without this, JSON.parse throws and every app-embed falls back to a
+      // generic "App-Einbettung N" name.
+      const jsonContent = content.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, "");
+      const parsed = JSON.parse(jsonContent);
+      const blocks = parsed?.current?.blocks;
+      if (blocks && typeof blocks === 'object') {
+        for (const [blockId, block] of Object.entries(blocks)) {
+          const type = (block as { type?: unknown })?.type;
+          const name = prettifyAppEmbedType(type);
+          const owned = isOwnAppEmbedType(type);
+          if (name || owned) map.set(blockId, { name: name ?? undefined, owned });
+        }
+      }
+      logger.debug(`[BackgroundSync] app-embed name map built: ${map.size} block(s) named (current.blocks: ${blocks ? Object.keys(blocks).length : 0})`);
+    } catch (err) {
+      logger.warn(`[BackgroundSync] Could not derive app-embed names from settings_data.json`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return map;
+  }
+
+  /**
    * Sync a single theme group by groupId (public method for manual reload)
    */
   async syncSingleThemeGroup(groupId: string): Promise<Record<string, unknown>> {
@@ -755,6 +945,14 @@ export class BackgroundSyncService {
     // files both contribute keys to the "product" group).  Fetch ALL rows so
     // every resource is synced — using findFirst would arbitrarily pick one
     // and leave the others stale / their translations deleted.
+    //
+    // No domain filter: the whole ThemeContent family (theme / system /
+    // delivery / online_store_extras / selling_plans / customer_privacy) shares
+    // this table and the group_<groupId> id shape. groupId+resourceId is
+    // globally unique (the @@unique omits domain), so a lookup by groupId
+    // resolves the owning domain unambiguously — derived below. Scoping to
+    // domain:"theme" here made per-group reloads of the other rubrics throw
+    // ("Theme group not found" / the route's "Unknown resource type").
     const existingRows = await db.themeContent.findMany({
       where: {
         shop: this.shop,
@@ -763,8 +961,34 @@ export class BackgroundSyncService {
     });
 
     if (existingRows.length === 0) {
+      // Per-group reload is a Refresh of a KNOWN group only. Discovery of a
+      // brand-new theme group (e.g. a freshly added static section) is the job
+      // of the list-level "sync from Shopify" action, which runs the full
+      // syncAllThemes() discovery. Keep this path a single-resource refresh so
+      // the two reload buttons stay cleanly separated.
       throw new Error(`Theme group not found: ${groupId}`);
     }
+
+    // Derive the domain from the stored rows so this single-group refresh works
+    // for every rubric, not just theme.
+    const domain = existingRows[0].domain;
+
+    // Cookie-banner content is only readable through Shopify's `unstable`
+    // endpoint, which the generic translatableResource query below cannot use.
+    // Re-run the dedicated whole-domain sync (idempotent) and return this
+    // group's freshly-synced rows.
+    if (domain === "customer_privacy") {
+      await this.syncCookieBanner();
+      const themeContent = await db.themeContent.findMany({ where: { shop: this.shop, groupId } });
+      const translations = await db.themeTranslation.findMany({ where: { shop: this.shop, groupId } });
+      return { themeContent, translations };
+    }
+
+    // The `theme` domain groups fields by key pattern and a group can span
+    // multiple resources; the flat domains (system / delivery /
+    // online_store_extras / selling_plans) put every field of a single resource
+    // into one group.
+    const isThemeDomain = domain === "theme";
 
     const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];
     logger.debug(`[BackgroundSync] Group "${groupId}" spans ${uniqueResourceIds.length} resource(s)`);
@@ -810,20 +1034,29 @@ export class BackgroundSyncService {
       // Filter content that belongs to this group using the same pattern-based
       // grouping logic as the initial sync.
       const allContent: TranslatableContentItem[] = resource.translatableContent || [];
-      const groupContent = allContent.filter((item) => {
-        return getGroupIdForKey(item.key) === groupId;
-      });
+      // App-embed groups are keyed per block (groupId = app_embed_<blockId>),
+      // not by key pattern. Shopify returns one resource per block, so every
+      // field of this resource belongs to the group.
+      // Flat-domain groups own every field of their single resource; only the
+      // theme domain sub-selects by key pattern (app-embed groups are keyed per
+      // block, so every field of that resource belongs to the group).
+      const groupContent = !isThemeDomain
+        ? allContent
+        : groupId.startsWith('app_embed_')
+          ? allContent
+          : allContent.filter((item) => getGroupIdForKey(item.key) === groupId);
 
       logger.debug(`[BackgroundSync] Resource ${resourceId}: ${groupContent.length} fields for group ${groupId}`);
 
       // Update this resource's ThemeContent row
-      await db.themeContent.update({
+      await db.themeContent.updateMany({
+        // updateMany (not update): the unique key now includes themeId, but the
+        // per-resource reload targets one theme-specific resourceId, so scoping
+        // by (shop, resourceId, groupId) updates exactly that row.
         where: {
-          shop_resourceId_groupId: {
-            shop: this.shop,
-            resourceId: resourceId,
-            groupId: groupId,
-          },
+          shop: this.shop,
+          resourceId: resourceId,
+          groupId: groupId,
         },
         data: {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column accepts any JSON-serializable value
@@ -872,17 +1105,42 @@ export class BackgroundSyncService {
     // Differential sync: only write rows that are new or actually changed, and
     // delete rows that disappeared. Re-creating every row on each sync produced
     // tens of thousands of dead tuples per run -> table bloat + WAL explosion.
-    const desired = allTranslations.map((t) => ({
-      resourceId: (t as any)._resourceId || uniqueResourceIds[0],
-      key: t.key,
-      value: t.value,
-      locale: t.locale,
-      outdated: t.outdated || false,
-    }));
+    //
+    // De-duplicate by the ThemeTranslation unique tuple (resourceId, key,
+    // locale) and drop null values — mirrors syncFlatDomain's `seen`/`value !=
+    // null` guards. Shopify's translations(locale:) can return the same key
+    // twice for a resource (e.g. SELLING_PLAN_GROUP); without this, two `create`
+    // calls for the same tuple hit "Unique constraint failed on the fields:
+    // (shop, resourceId, groupId, key, locale)". ThemeTranslation.value is
+    // non-null, so a null-valued Shopify translation must be skipped, not written.
+    const desiredSeen = new Set<string>();
+    const desired = allTranslations
+      .filter((t) => t.value != null)
+      .map((t) => ({
+        resourceId: (t as any)._resourceId || uniqueResourceIds[0],
+        key: t.key,
+        value: t.value,
+        locale: t.locale,
+        outdated: t.outdated || false,
+      }))
+      .filter((d) => {
+        const k = `${d.resourceId} ${d.key} ${d.locale}`;
+        if (desiredSeen.has(k)) return false;
+        desiredSeen.add(k);
+        return true;
+      });
 
+    // Read existing rows by (shop, groupId) WITHOUT a domain filter. The
+    // ThemeTranslation @@unique is (shop, resourceId, groupId, key, locale) —
+    // domain is NOT part of it. A row for this group can therefore already exist
+    // under a DIFFERENT domain (e.g. the AI translate path historically saved
+    // flat-domain translations under the default "theme"). Filtering by the
+    // derived domain would miss that row, we'd try to create it, and hit the
+    // unique constraint. Matching on the real unique tuple lets us UPDATE (and
+    // heal the domain) instead of colliding.
     const existing = await db.themeTranslation.findMany({
       where: { shop: this.shop, groupId: groupId },
-      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true },
+      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true, domain: true },
     });
 
     const rowKey = (r: { resourceId: string; key: string; locale: string }) =>
@@ -901,7 +1159,9 @@ export class BackgroundSyncService {
             data: {
               shop: this.shop,
               resourceId: d.resourceId,
+              themeId: extractThemeIdFromResourceId(d.resourceId) ?? '',
               groupId: groupId,
+              domain,
               key: d.key,
               value: d.value,
               locale: d.locale,
@@ -909,11 +1169,13 @@ export class BackgroundSyncService {
             },
           })
         );
-      } else if (prev.value !== d.value || prev.outdated !== d.outdated) {
+      } else if (prev.value !== d.value || prev.outdated !== d.outdated || prev.domain !== domain) {
         ops.push(
           db.themeTranslation.update({
             where: { id: prev.id },
-            data: { value: d.value, outdated: d.outdated, updatedAt: new Date() },
+            // Heal the domain too: a row saved under the wrong domain is moved to
+            // the group's real domain so the domain-scoped loader finds it.
+            data: { value: d.value, outdated: d.outdated, domain, updatedAt: new Date() },
           })
         );
       }
@@ -934,6 +1196,7 @@ export class BackgroundSyncService {
       where: {
         shop: this.shop,
         groupId: groupId,
+        domain,
       },
     });
 
@@ -957,22 +1220,219 @@ export class BackgroundSyncService {
   // ============================================
 
   /**
-   * Sync all theme content with translations
-   * This is complex as it groups theme resources by patterns
+   * Sync all theme content with translations (public entry point).
+   *
+   * Coalescing wrapper: a full theme sync runs the aggressive cross-group
+   * cleanup (deleteMany over the whole `domain:'theme'` set). Two of these
+   * running at once for the same shop — e.g. the ~40s scheduler tick and a
+   * manual reload that fell through to discovery (syncSingleThemeGroup) — could
+   * interleave their findMany/deleteMany and churn rows (delete-then-recreate).
+   * To prevent that, concurrent calls for the same shop share the in-flight run
+   * instead of starting a second one. The in-flight promise is keyed per shop
+   * and always cleared on settle so a failed run never wedges the next one.
+   *
+   * Note: a coalesced caller's onProgress is not invoked (it rides the existing
+   * run); only the run that actually started reports progress. This is fine —
+   * progress reporting only matters for the foreground initial sync, which does
+   * not overlap a background reload.
    */
   async syncAllThemes(onProgress?: ProgressCallback): Promise<number> {
+    const inFlight = inFlightThemeSyncs.get(this.shop);
+    if (inFlight) {
+      logger.debug(`[BackgroundSync] Theme sync already running for ${this.shop} — coalescing onto in-flight run`);
+      return inFlight;
+    }
+
+    const run = this.runFullThemeSync(onProgress);
+    inFlightThemeSyncs.set(this.shop, run);
+    try {
+      return await run;
+    } finally {
+      inFlightThemeSyncs.delete(this.shop);
+    }
+  }
+
+  /**
+   * Theme-scoped sync (PLAN_THEME_SELECTION_B_LITE): populate ThemeContent/
+   * ThemeTranslation for a SPECIFIC theme — including UNPUBLISHED themes that
+   * `translatableResources` never enumerates. Resource ids are constructed/
+   * derived per theme (see enumerateThemeResourcesFor) and their content fetched
+   * via translatableResourcesByIds; rows are stamped with themeId = themeGid and
+   * cleanup is scoped to that theme, so MAIN's rows are never touched.
+   * Coalesces concurrent runs per (shop, theme).
+   */
+  async syncTheme(themeGid: string, onProgress?: ProgressCallback): Promise<number> {
+    const key = `${this.shop}::${themeGid}`;
+    const inFlight = inFlightThemeSyncs.get(key);
+    if (inFlight) {
+      logger.debug(`[BackgroundSync] Theme-scoped sync already running for ${key} — coalescing`);
+      return inFlight;
+    }
+    const run = this.runFullThemeSync(onProgress, themeGid);
+    inFlightThemeSyncs.set(key, run);
+    try {
+      return await run;
+    } finally {
+      inFlightThemeSyncs.delete(key);
+    }
+  }
+
+  /**
+   * Build the translatable-resource set for a SPECIFIC theme (incl. unpublished),
+   * which `translatableResources(resourceType:…)` cannot enumerate (it only ever
+   * returns the published theme). Three strategies by resourceId shape
+   * (PLAN_THEME_SELECTION_B_LITE §2.1); content+digest then fetched via
+   * translatableResourcesByIds. Returns [] on hard failure (caller skips type).
+   */
+  private async enumerateThemeResourcesFor(resourceType: string, targetThemeGid: string): Promise<ThemeResource[]> {
+    const num = targetThemeGid.split('/').pop() || targetThemeGid;
+    let ids: string[] = [];
+    try {
+      if (resourceType === 'ONLINE_STORE_THEME_LOCALE_CONTENT') {
+        // Strategy A — deterministic: the theme-num IS the object id.
+        ids = [`gid://shopify/OnlineStoreThemeLocaleContent/${num}`];
+      } else if (resourceType === 'ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS') {
+        ids = [`gid://shopify/OnlineStoreThemeSettingsDataSections/${num}`];
+      } else if (resourceType === 'ONLINE_STORE_THEME_JSON_TEMPLATE') {
+        // Strategy B — derive template names from the theme's files.
+        const names = await this.listThemeFileBasenames(targetThemeGid, 'templates/*.json', /^templates\//);
+        ids = names.map((n) => `gid://shopify/OnlineStoreThemeJsonTemplate/${n}?theme_id=${num}`);
+      } else if (resourceType === 'ONLINE_STORE_THEME_SECTION_GROUP') {
+        const names = await this.listThemeFileBasenames(targetThemeGid, 'sections/*.json', /^sections\//);
+        ids = names.map((n) => `gid://shopify/OnlineStoreThemeSectionGroup/${n}?theme_id=${num}`);
+      } else if (resourceType === 'ONLINE_STORE_THEME_SETTINGS_CATEGORY' || resourceType === 'ONLINE_STORE_THEME_APP_EMBED') {
+        // Strategy C — rewrite the published theme's enumerated ids onto the
+        // target theme's theme_id. Robust for categories/embeds that exist in
+        // BOTH themes: a rewritten id that the target theme lacks simply returns
+        // empty content from translatableResourcesByIds and is skipped (no junk
+        // rows). The only gap is target-UNIQUE settings categories / app embeds
+        // (present on the target but not MAIN). Reconstructing THOSE ids is
+        // intentionally NOT attempted: a SETTINGS_CATEGORY id embeds the RESOLVED
+        // category label (e.g. "Brand+information", not the `t:` schema key) plus
+        // first_setting_id, so building one requires parsing config/settings_schema.json
+        // AND resolving its t:-labels against the theme's schema-locale file; an
+        // APP_EMBED id embeds a non-reconstructable app_embed_<hash>. Both are
+        // fragile for marginal value (tiny content volume; categories/apps are
+        // largely shared across a shop's themes). See PLAN_THEME_SELECTION_B_LITE §7.
+        // Only ids that actually carry a theme_id= param are rewritten: an id
+        // without it would otherwise be passed through unchanged and fetch MAIN's
+        // content, which we'd then mislabel as the target theme.
+        const mainIds = await this.enumerateMainResourceIds(resourceType);
+        ids = mainIds
+          .filter((rid) => /[?&]theme_id=\d+/.test(rid))
+          .map((rid) => rid.replace(/([?&]theme_id=)\d+/, `$1${num}`));
+      } else {
+        return [];
+      }
+    } catch (e) {
+      logger.warn(`[BackgroundSync] enumerateThemeResourcesFor(${resourceType}) failed`, { error: e instanceof Error ? e.message : String(e) });
+      return [];
+    }
+    if (ids.length === 0) return [];
+    return this.fetchTranslatableByIds(ids);
+  }
+
+  /** Read a theme's file basenames matching a glob (templates/*.json → "article"). */
+  private async listThemeFileBasenames(themeGid: string, glob: string, stripPrefix: RegExp): Promise<string[]> {
+    const resp = await this.gateway.graphql(
+      `#graphql
+        query themeFileList($themeId: ID!, $filenames: [String!]!) {
+          theme(id: $themeId) { files(filenames: $filenames, first: 250) { nodes { filename } } }
+        }`,
+      { variables: { themeId: themeGid, filenames: [glob] } }
+    );
+    const data = await resp.json();
+    if (data.errors) {
+      logger.warn(`[BackgroundSync] theme file list failed for ${glob}`, { error: data.errors[0]?.message });
+      return [];
+    }
+    const nodes: Array<{ filename: string }> = data.data?.theme?.files?.nodes ?? [];
+    return nodes
+      .map((n) => n.filename.replace(stripPrefix, '').replace(/\.json$/, ''))
+      .filter((n) => n.length > 0);
+  }
+
+  /** Enumerate the PUBLISHED theme's resourceIds for a type (rewrite strategy). */
+  private async enumerateMainResourceIds(resourceType: string): Promise<string[]> {
+    const out: string[] = [];
+    let hasNext = true;
+    let cursor: string | null = null;
+    while (hasNext) {
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query mainResourceIds($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
+            translatableResources(first: $first, resourceType: $resourceType, after: $after) {
+              pageInfo { hasNextPage endCursor }
+              edges { node { resourceId } }
+            }
+          }`,
+        { variables: { first: 250, resourceType, after: cursor } }
+      );
+      const data = await resp.json();
+      if (data.errors) break;
+      const conn = data.data?.translatableResources;
+      for (const e of conn?.edges ?? []) out.push(e.node.resourceId);
+      hasNext = conn?.pageInfo?.hasNextPage || false;
+      cursor = conn?.pageInfo?.endCursor || null;
+    }
+    return out;
+  }
+
+  /** Fetch translatableContent+digest for constructed resourceIds (batched). */
+  private async fetchTranslatableByIds(ids: string[]): Promise<ThemeResource[]> {
+    const BATCH = 50;
+    const out: ThemeResource[] = [];
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const slice = ids.slice(i, i + BATCH);
+      const resp = await this.gateway.graphql(
+        `#graphql
+          query translatableByIds($ids: [ID!]!, $first: Int!) {
+            translatableResourcesByIds(resourceIds: $ids, first: $first) {
+              edges { node { resourceId translatableContent { key value digest locale } } }
+            }
+          }`,
+        { variables: { ids: slice, first: slice.length } }
+      );
+      const data = await resp.json();
+      if (data.errors) {
+        logger.warn('[BackgroundSync] translatableResourcesByIds failed', { error: data.errors[0]?.message });
+        continue;
+      }
+      for (const e of data.data?.translatableResourcesByIds?.edges ?? []) {
+        const node = e.node;
+        if (node?.translatableContent && node.translatableContent.length > 0) {
+          out.push({ resourceId: node.resourceId, translatableContent: node.translatableContent } as ThemeResource);
+        }
+      }
+      // Gentle on the translation rate-limit (same 250ms cadence as the sync).
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return out;
+  }
+
+  /**
+   * The actual full theme sync. Do not call directly — go through
+   * syncAllThemes() (full/MAIN) or syncTheme() (scoped) so the coalescing guard
+   * applies. `targetThemeId` set → theme-scoped mode (see syncTheme).
+   * This is complex as it groups theme resources by patterns
+   */
+  private async runFullThemeSync(onProgress?: ProgressCallback, targetThemeId?: string): Promise<number> {
     logger.debug(`[BackgroundSync] Syncing all themes for shop: ${this.shop}`);
 
     try {
       const { db } = await import("../db.server");
 
-      // Define the working resource types (based on ContentService)
+      // Define the working resource types (based on ContentService).
+      // ONLINE_STORE_THEME is intentionally dropped — it is a ~99% duplicate of
+      // ONLINE_STORE_THEME_LOCALE_CONTENT. APP_EMBED and SETTINGS_DATA_SECTIONS
+      // are now included (previously excluded) for full Theme rubric coverage.
       const WORKING_RESOURCE_TYPES = [
-        { type: 'ONLINE_STORE_THEME', label: 'Theme Content' },
         { type: 'ONLINE_STORE_THEME_JSON_TEMPLATE', label: 'JSON Templates' },
         { type: 'ONLINE_STORE_THEME_LOCALE_CONTENT', label: 'Locale Content' },
         { type: 'ONLINE_STORE_THEME_SECTION_GROUP', label: 'Section Groups' },
         { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
+        { type: 'ONLINE_STORE_THEME_APP_EMBED', label: 'App Embeds' },
+        { type: 'ONLINE_STORE_THEME_SETTINGS_DATA_SECTIONS', label: 'Shared Sections' },
       ];
 
       // Use module-level THEME_KEY_PATTERNS for grouping
@@ -986,9 +1446,23 @@ export class BackgroundSyncService {
 
       // Track all synced theme content combinations for cleanup
       const syncedCombinations = new Set<string>();
+      // Track which theme(s) this run actually enumerated. The combination
+      // cleanup below only ever considers rows belonging to these themes, so a
+      // FULL sync (which enumerates ONLY the published theme) never deletes rows
+      // that a theme-scoped syncTheme() wrote for another theme — and a scoped
+      // sync never touches any theme but its target. Critical: without this, the
+      // periodic full sync wipes every non-MAIN row (their combos are absent
+      // from the MAIN-only syncedCombinations).
+      const syncedThemeIds = new Set<string>();
 
       // Track fetched translations to avoid duplicate API calls
       const translationCache = new Map<string, ShopifyTranslation[]>();
+
+      // App-embed naming: blockId→name map from settings_data.json (lazily
+      // fetched on the first APP_EMBED resource), plus a counter for embeds we
+      // can't resolve a name for.
+      let appEmbedNames: Map<string, { name?: string; owned: boolean }> | null = null;
+      let appEmbedFallbackCount = 0;
 
       // Fetch resources for each working resource type
       let resourceTypeIndex = 0;
@@ -1004,6 +1478,12 @@ export class BackgroundSyncService {
         }
 
         try {
+          let resources: ThemeResource[];
+          if (targetThemeId) {
+            // Theme-scoped sync: construct/derive THIS theme's resource set
+            // (translatableResources only ever returns the published theme).
+            resources = await this.enumerateThemeResourcesFor(resourceTypeConfig.type, targetThemeId);
+          } else {
           // Implement pagination to handle large datasets
           let hasNextPage = true;
           let cursor: string | null = null;
@@ -1064,7 +1544,8 @@ export class BackgroundSyncService {
             }
           }
 
-          const resources = allResourcesForType;
+          resources = allResourcesForType;
+          }
 
           // Skip if no resources found
           if (resources.length === 0) {
@@ -1090,8 +1571,33 @@ export class BackgroundSyncService {
               logger.debug(`[BackgroundSync-Themes] ⚠️  Resource ${resource.resourceId} has no translatable content, skipping...`);
               continue;
             }
-            // Group translatable content by key patterns
+            // Group translatable content into nav groups.
             const contentByGroup: Record<string, ThemeContentItem[]> = {};
+
+            if (resourceTypeConfig.type === 'ONLINE_STORE_THEME_APP_EMBED') {
+              // App embeds: ONE group per BLOCK (one per installed embed),
+              // named from the theme's settings_data.json. Keyed by the blockId,
+              // NOT the resourceId — two blocks of the same app share a
+              // resourceId tail, so keying by resource collapsed them into one
+              // entry (see appEmbedGroupId). Mirrors how Translate & Adapt lists
+              // one entry per block.
+              if (appEmbedNames === null) {
+                appEmbedNames = await this.fetchAppEmbedNameMap();
+              }
+              const blockId = extractAppEmbedBlockId(resource.translatableContent || []);
+              const groupKey = appEmbedGroupId(resource.resourceId, blockId);
+              const embedInfo = blockId ? appEmbedNames.get(blockId) : undefined;
+              const appEmbedGroupName = embedInfo?.name || `App-Einbettung ${++appEmbedFallbackCount}`;
+              // Lock only OUR embeds (technical selectors); other apps stay editable.
+              const appEmbedOwned = embedInfo?.owned ?? false;
+              contentByGroup[groupKey] = (resource.translatableContent || []).map((item) => ({
+                ...item,
+                _groupId: groupKey,
+                _groupName: appEmbedGroupName,
+                _groupIcon: '🔌',
+                _appEmbedOwned: appEmbedOwned,
+              }));
+            } else {
             const unmatchedContent: TranslatableContentItem[] = [];
 
             for (const item of resource.translatableContent || []) {
@@ -1178,6 +1684,7 @@ export class BackgroundSyncService {
                   _groupIcon: icon
                 }));
               }
+            }
             }
 
             // Batch-fetch ALL existing theme translations for this resource (avoids N+1 per group).
@@ -1309,34 +1816,70 @@ export class BackgroundSyncService {
               const combinationKey = `${resource.resourceId}::${groupId}`;
               syncedCombinations.add(combinationKey);
 
-              // Upsert theme content
+              // Upsert theme content. themeId scopes the row to the theme this
+              // resource belongs to. Theme-scoped sync forces the target theme
+              // (deterministic resourceIds carry no ?theme_id=); otherwise it is
+              // extracted from the GID ('' = theme-agnostic).
+              const themeId = targetThemeId ?? (extractThemeIdFromResourceId(resource.resourceId) ?? '');
+              syncedThemeIds.add(themeId);
+              // Promote any pre-existing legacy row (themeId="") for this resource to
+              // its real Theme-GID FIRST, so the upsert below UPDATEs it instead of
+              // creating a duplicate. This makes a theme-aware sync that runs before
+              // scripts/backfill-theme-id.js self-healing (no duplicate rows, and the
+              // backfill then finds nothing left to do). At most one legacy row
+              // exists per (shop,resourceId,groupId) and per (…,key,locale), so the
+              // updateMany cannot collide on the first promotion; wrapped non-fatal
+              // for the pathological interrupted-migration case.
+              if (themeId) {
+                try {
+                  await db.themeContent.updateMany({
+                    where: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' },
+                    data: { themeId },
+                  });
+                  await db.themeTranslation.updateMany({
+                    where: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' },
+                    data: { themeId },
+                  });
+                } catch (promoteErr) {
+                  logger.warn('[BackgroundSync] Legacy themeId promotion skipped (non-fatal)', {
+                    resourceId: resource.resourceId,
+                    error: promoteErr instanceof Error ? promoteErr.message : String(promoteErr),
+                  });
+                }
+              }
               await db.themeContent.upsert({
                 where: {
-                  shop_resourceId_groupId: {
+                  shop_resourceId_groupId_themeId: {
                     shop: this.shop,
                     resourceId: resource.resourceId,
                     groupId,
+                    themeId,
                   },
                 },
                 create: {
                   shop: this.shop,
                   resourceId: resource.resourceId,
+                  themeId,
                   resourceType: resourceTypeConfig.type,
                   resourceTypeLabel: resourceTypeConfig.label,
+                  domain: 'theme',
                   groupId,
                   groupName,
                   groupIcon,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
                   translatableContent: items as any,
+                  appEmbedOwned: firstItem._appEmbedOwned ?? false,
                   lastSyncedAt: new Date(),
                 },
                 update: {
                   resourceType: resourceTypeConfig.type,
                   resourceTypeLabel: resourceTypeConfig.label,
+                  domain: 'theme',
                   groupName,
                   groupIcon,
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
                   translatableContent: items as any,
+                  appEmbedOwned: firstItem._appEmbedOwned ?? false,
                   lastSyncedAt: new Date(),
                 },
               });
@@ -1352,7 +1895,7 @@ export class BackgroundSyncService {
               // count instead of the number of actual changes (this is what filled the
               // Postgres volume). Mirrors the incremental logic in syncSingleThemeGroup.
               const toCreate: {
-                shop: string; resourceId: string; groupId: string;
+                shop: string; resourceId: string; themeId: string; domain: string; groupId: string;
                 key: string; value: string; locale: string; outdated: boolean;
               }[] = [];
               const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
@@ -1364,6 +1907,8 @@ export class BackgroundSyncService {
                   toCreate.push({
                     shop: this.shop,
                     resourceId: resource.resourceId,
+                    themeId,
+                    domain: 'theme',
                     groupId,
                     key: t.key,
                     value: t.value,
@@ -1437,7 +1982,14 @@ export class BackgroundSyncService {
       // Health check: refuse to wipe local data when Shopify returns 0 theme resources.
       // Same pattern as syncAllPages / syncAllPolicies.
       if (syncedCombinations.size === 0) {
-        const localThemeCount = await db.themeContent.count({ where: { shop: this.shop } });
+        // Theme-scoped: a target theme may legitimately have no translatable
+        // resources — do NOT run the MAIN-scoped data-loss abort (which counts
+        // ALL theme rows incl. MAIN) and do NOT clean up. Just no-op.
+        if (targetThemeId) {
+          logger.debug(`[BackgroundSync] Theme-scoped sync: no resources for theme ${targetThemeId} — nothing to do`);
+          return 0;
+        }
+        const localThemeCount = await db.themeContent.count({ where: { shop: this.shop, domain: 'theme' } });
         if (localThemeCount > 0) {
           logger.error(`[BackgroundSync] 🔴 ABORTING theme sync: Shopify returned 0 theme resources but ${localThemeCount} exist locally. Possible API outage.`);
           throw new Error(`Shopify returned 0 theme resources but ${localThemeCount} exist locally - aborting to prevent data loss`);
@@ -1451,9 +2003,14 @@ export class BackgroundSyncService {
         onProgress(95, 100, `Cleaning up obsolete themes...`);
       }
       if (syncedCombinations.size > 0) {
-        // Get all existing theme content for this shop
+        // Get all existing theme content for this shop (scoped to the theme
+        // domain so the System / Online-Store-Extras / Selling-Plans rubrics,
+        // which share this table, are never swept by a theme-only sync).
         const existingThemeContent = await db.themeContent.findMany({
-          where: { shop: this.shop },
+          // Only rows of the theme(s) enumerated THIS run are cleanup candidates.
+          // Full sync enumerates only MAIN → never sweeps a scoped theme's rows;
+          // scoped sync only its target → never sweeps MAIN's.
+          where: { shop: this.shop, domain: 'theme', themeId: { in: [...syncedThemeIds] } },
           select: { resourceId: true, groupId: true }
         });
 
@@ -1475,12 +2032,16 @@ export class BackgroundSyncService {
             db.themeTranslation.deleteMany({
               where: {
                 shop: this.shop,
+                domain: 'theme',
+                themeId: { in: [...syncedThemeIds] },
                 OR: deleteConditions,
               },
             }),
             db.themeContent.deleteMany({
               where: {
                 shop: this.shop,
+                domain: 'theme',
+                themeId: { in: [...syncedThemeIds] },
                 OR: deleteConditions,
               },
             }),
@@ -1488,6 +2049,46 @@ export class BackgroundSyncService {
 
           logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete theme groups and their translations`);
         }
+      }
+
+      // §9.1 Verwaiste-Theme-Cleanup: drop rows for themes that no longer exist
+      // (deleted/deinstalled). translatableResources already stops returning a
+      // deleted theme's resources, so the combination cleanup above catches most;
+      // this is the explicit belt-and-suspenders pass keyed on themeId. Guarded on
+      // a non-empty theme list so an API blip never wipes data. themeId "" (legacy/
+      // theme-agnostic) is always kept.
+      // Skipped in theme-scoped mode: it operates across ALL themes, which is a
+      // full-sync concern (and would add a GET_THEMES round-trip to every switch).
+      if (!targetThemeId) try {
+        const THEME_CAP = 250;
+        const themesResp = await this.gateway.graphql(
+          `#graphql
+            query themeIdsForCleanup { themes(first: ${THEME_CAP}) { nodes { id } } }`
+        );
+        const themesJson = await themesResp.json();
+        const currentThemeIds: string[] = (themesJson.data?.themes?.nodes ?? [])
+          .map((n: { id?: string }) => n.id)
+          .filter((id: string | undefined): id is string => !!id);
+        if (currentThemeIds.length >= THEME_CAP) {
+          // Enumeration was capped — we may not have the full theme list, so a
+          // notIn delete could wipe valid rows. Skip cleanup this run.
+          logger.warn(`[BackgroundSync] Skipping orphan-theme cleanup — theme count hit the ${THEME_CAP} cap (list may be truncated)`);
+        } else if (currentThemeIds.length > 0) {
+          const keep = [...currentThemeIds, ''];
+          const orphanTrans = await db.themeTranslation.deleteMany({
+            where: { shop: this.shop, domain: 'theme', themeId: { notIn: keep } },
+          });
+          const orphanContent = await db.themeContent.deleteMany({
+            where: { shop: this.shop, domain: 'theme', themeId: { notIn: keep } },
+          });
+          if (orphanContent.count > 0 || orphanTrans.count > 0) {
+            logger.info(`[BackgroundSync] 🗑️ Removed orphan-theme rows: ${orphanContent.count} ThemeContent, ${orphanTrans.count} ThemeTranslation`);
+          }
+        } else {
+          logger.warn('[BackgroundSync] Skipping orphan-theme cleanup — GET_THEMES returned no themes (possible API blip)');
+        }
+      } catch (cleanupErr) {
+        logger.warn('[BackgroundSync] Orphan-theme cleanup failed (non-fatal)', { error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr) });
       }
 
       // Log final database statistics
@@ -1506,6 +2107,503 @@ export class BackgroundSyncService {
       logger.error('[BackgroundSync] Error syncing themes:', error);
       throw error;
     }
+  }
+
+  // ============================================
+  // FLAT-DOMAIN SYNC (System / Online-Store-Extras / Selling-Plans)
+  // ============================================
+
+  /**
+   * Sync one or more translatable resource types into the shared ThemeContent /
+   * ThemeTranslation tables under a non-"theme" domain.
+   *
+   * Unlike syncAllThemes (which splits one resource type's keys into many groups
+   * by key prefix), these domains use ONE GROUP PER RESOURCE: every Shopify
+   * resource (e.g. each EMAIL_TEMPLATE) becomes its own nav group. This is the
+   * only model that renders correctly because resources of the same type share
+   * key names (title/body_html) — collapsing them into a single shared group
+   * would dedupe-by-key and lose every resource but the first.
+   *
+   * Orphan cleanup and the empty-result health check are scoped to `domain`, so
+   * these never interfere with each other or with the theme domain.
+   */
+  private async syncFlatDomain(
+    domain: string,
+    resourceTypes: { type: string; label: string; icon: string; groupPrefix: string; skipIfEmpty?: boolean }[],
+    onProgress?: ProgressCallback
+  ): Promise<number> {
+    logger.debug(`[BackgroundSync] Syncing domain "${domain}" for shop: ${this.shop}`);
+    const { db } = await import("../db.server");
+
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
+
+    // Preference order for deriving a human group name from a resource's primary
+    // content; falls back to the resource-type label (covers SHOP, whose keys are
+    // meta_title/meta_description rather than a name).
+    const NAME_KEYS = ["title", "name", "label", "subject"];
+    // Strip Liquid ({{ }} / {% %}) and the empty brackets/parens it leaves
+    // behind. EMAIL_TEMPLATE names are the full email subject line ("Bestellung
+    // {{name}} bestätigt", "[{{ shop.name }}] …"), so without this the raw Liquid
+    // noise shows in the nav list. Always-on fallback; the AI short title
+    // (aiShortTitle) supersedes it when available. Harmless for the other flat
+    // domains (their names rarely contain Liquid). stripLiquid is shared with the
+    // AI title-excerpt builder (utils/liquid-strip) so both stay in lockstep.
+    const deriveName = (content: TranslatableContentItem[], fallback: string): string => {
+      for (const nk of NAME_KEYS) {
+        const hit = content.find((c) => c.key === nk && c.value && c.value.trim());
+        if (hit?.value) {
+          const cleaned = stripLiquid(hit.value) || hit.value.trim();
+          return cleaned.length > 80 ? `${cleaned.slice(0, 77)}…` : cleaned;
+        }
+      }
+      return fallback;
+    };
+
+    const syncedCombinations = new Set<string>();
+    let totalGroups = 0;
+    let typeIndex = 0;
+    // When any resource type fails (GraphQL error or thrown exception) we have an
+    // INCOMPLETE view of Shopify for this domain. Running orphan cleanup in that
+    // state would delete the failed type's rows (they're absent from
+    // syncedCombinations) — silent data loss on a transient API blip. So we skip
+    // cleanup for this run and let the next successful cycle reconcile.
+    let anySourceFailed = false;
+
+    for (const rt of resourceTypes) {
+      typeIndex++;
+      if (onProgress) {
+        onProgress(Math.round((typeIndex - 1) / resourceTypes.length * 100), 100, `Syncing ${rt.label}...`);
+      }
+
+      try {
+        // Paginate translatableResources for this type
+        const resources: ThemeResource[] = [];
+        let hasNextPage = true;
+        let cursor: string | null = null;
+        while (hasNextPage) {
+          const resp = await this.gateway.graphql(
+            `#graphql
+              query getDomainTranslatableResources($first: Int!, $resourceType: TranslatableResourceType!, $after: String) {
+                translatableResources(first: $first, resourceType: $resourceType, after: $after) {
+                  pageInfo { hasNextPage endCursor }
+                  edges { node { resourceId translatableContent { key value digest locale } } }
+                }
+              }`,
+            { variables: { first: 250, resourceType: rt.type, after: cursor } }
+          );
+          const data = await resp.json();
+          if (data.errors) {
+            logger.error(`[BackgroundSync] Error loading ${rt.type} (domain=${domain})`, { error: data.errors[0]?.message });
+            anySourceFailed = true;
+            break;
+          }
+          const pageInfo = data.data?.translatableResources?.pageInfo;
+          const edges = data.data?.translatableResources?.edges || [];
+          resources.push(...edges.map((e: { node: ThemeResource }) => e.node));
+          hasNextPage = pageInfo?.hasNextPage || false;
+          cursor = pageInfo?.endCursor || null;
+        }
+
+        if (resources.length === 0) {
+          logger.debug(`[BackgroundSync] No resources for ${rt.type} (domain=${domain})${rt.skipIfEmpty ? " — skipIfEmpty" : ""}`);
+          continue;
+        }
+
+        for (const resource of resources) {
+          const content = (resource.translatableContent || []).filter((c) => c.key);
+          if (content.length === 0) continue;
+
+          const shortId = resource.resourceId.split("/").pop() || resource.resourceId;
+          const groupId = `${rt.groupPrefix}_${shortId}`;
+          const groupName = deriveName(content, rt.label);
+          syncedCombinations.add(`${resource.resourceId}::${groupId}`);
+
+          await db.themeContent.upsert({
+            where: { shop_resourceId_groupId_themeId: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' } },
+            create: {
+              shop: this.shop,
+              resourceId: resource.resourceId,
+              themeId: '',
+              resourceType: rt.type,
+              resourceTypeLabel: rt.label,
+              domain,
+              groupId,
+              groupName,
+              groupIcon: rt.icon,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+              translatableContent: content as any,
+              lastSyncedAt: new Date(),
+            },
+            update: {
+              resourceType: rt.type,
+              resourceTypeLabel: rt.label,
+              domain,
+              groupName,
+              groupIcon: rt.icon,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+              translatableContent: content as any,
+              lastSyncedAt: new Date(),
+            },
+          });
+
+          // Fetch + persist foreign-locale translations for this resource.
+          const existingRows = await db.themeTranslation.findMany({
+            // domain-scoped: each rubric's sync only ever considers its own rows
+            // (defense-in-depth; the unique key omits domain).
+            where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain },
+            select: { id: true, key: true, locale: true, value: true, outdated: true },
+          });
+          const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
+
+          const fetched: ShopifyTranslation[] = [];
+          for (const locale of nonPrimaryLocales) {
+            try {
+              const tResp = await this.gateway.graphql(
+                `#graphql
+                  query getDomainTranslations($resourceId: ID!, $locale: String!) {
+                    translatableResource(resourceId: $resourceId) {
+                      translations(locale: $locale) { key value locale outdated }
+                    }
+                  }`,
+                { variables: { resourceId: resource.resourceId, locale: locale.locale } }
+              );
+              const tData = await tResp.json();
+              if (tData.errors) continue;
+              const translations: ShopifyTranslation[] = tData.data?.translatableResource?.translations || [];
+              fetched.push(...translations);
+            } catch (err) {
+              logger.error(`[BackgroundSync] Exception fetching ${domain} translations for ${locale.locale}`, { err });
+            }
+          }
+
+          const seen = new Set<string>();
+          const relevant = fetched.filter((t) => {
+            // ThemeTranslation.value is non-null; Shopify can return null values
+            // for an unset translation — skip those rather than crash the insert.
+            if (t.value == null) return false;
+            const uk = `${t.key}::${t.locale}`;
+            if (seen.has(uk)) return false;
+            seen.add(uk);
+            return content.some((c) => c.key === t.key);
+          });
+
+          const toCreate: { shop: string; resourceId: string; themeId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean }[] = [];
+          const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
+          for (const t of relevant) {
+            const outdated = t.outdated || false;
+            const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
+            if (!prev) {
+              toCreate.push({ shop: this.shop, resourceId: resource.resourceId, themeId: '', domain, groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+            } else if (prev.value !== t.value || prev.outdated !== outdated) {
+              toUpdate.push({ id: prev.id, value: t.value, outdated });
+            }
+          }
+
+          const CHUNK = 500;
+          for (let i = 0; i < toCreate.length; i += CHUNK) {
+            await db.themeTranslation.createMany({ data: toCreate.slice(i, i + CHUNK), skipDuplicates: true });
+          }
+          for (let i = 0; i < toUpdate.length; i += CHUNK) {
+            await db.$transaction(
+              toUpdate.slice(i, i + CHUNK).map((u) =>
+                db.themeTranslation.update({ where: { id: u.id }, data: { value: u.value, outdated: u.outdated } })
+              )
+            );
+          }
+
+          // Delete locale rows no longer present in Shopify.
+          const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}`));
+          const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
+          for (let i = 0; i < keysToDelete.length; i += CHUNK) {
+            await db.themeTranslation.deleteMany({
+              where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain, OR: keysToDelete.slice(i, i + CHUNK) },
+            });
+          }
+
+          totalGroups++;
+        }
+      } catch (error) {
+        anySourceFailed = true;
+        logger.error(`[BackgroundSync] Error syncing ${rt.type} (domain=${domain})`, { error });
+      }
+    }
+
+    // Health check: do not wipe local rows on an empty Shopify response (outage).
+    if (syncedCombinations.size === 0) {
+      const localCount = await db.themeContent.count({ where: { shop: this.shop, domain } });
+      if (localCount > 0) {
+        logger.error(`[BackgroundSync] 🔴 ABORTING ${domain} sync: Shopify returned 0 resources but ${localCount} exist locally.`);
+        throw new Error(`Shopify returned 0 ${domain} resources but ${localCount} exist locally - aborting to prevent data loss`);
+      }
+      return 0;
+    }
+
+    // Orphan cleanup, scoped to this domain only. Skipped on partial failure so
+    // a transient error never deletes the failed type's still-valid rows.
+    if (anySourceFailed) {
+      logger.warn(`[BackgroundSync] Skipping ${domain} orphan cleanup — a resource type failed this run (incomplete view).`);
+      logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} groups for domain "${domain}" (cleanup deferred)`);
+      return totalGroups;
+    }
+    const existing = await db.themeContent.findMany({ where: { shop: this.shop, domain }, select: { resourceId: true, groupId: true } });
+    const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
+    if (toDelete.length > 0) {
+      const conditions = toDelete.map((i) => ({ resourceId: i.resourceId, groupId: i.groupId }));
+      await db.$transaction([
+        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain, OR: conditions } }),
+        db.themeContent.deleteMany({ where: { shop: this.shop, domain, OR: conditions } }),
+      ]);
+      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete ${domain} groups`);
+    }
+
+    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} groups for domain "${domain}"`);
+    return totalGroups;
+  }
+
+  /** System rubric (Pro+): notifications, payment, packing slips. */
+  async syncSystemContent(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("system", [
+      { type: "EMAIL_TEMPLATE", label: "Benachrichtigung", icon: "✉️", groupPrefix: "email" },
+      { type: "PAYMENT_GATEWAY", label: "Zahlungsanbieter", icon: "💳", groupPrefix: "payment", skipIfEmpty: true },
+      { type: "PACKING_SLIP_TEMPLATE", label: "Lieferschein", icon: "📦", groupPrefix: "packing", skipIfEmpty: true },
+    ], onProgress);
+  }
+
+  /** Delivery rubric (Basic+): checkout-facing shipping/delivery method names. */
+  async syncDeliveryContent(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("delivery", [
+      { type: "DELIVERY_METHOD_DEFINITION", label: "Versandmethode", icon: "🚚", groupPrefix: "delivery" },
+    ], onProgress);
+  }
+
+  /** Online-Store extras: storefront filters + shop SEO metadata. */
+  async syncOnlineStoreExtras(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("online_store_extras", [
+      { type: "FILTER", label: "Filter", icon: "🔍", groupPrefix: "filter" },
+      { type: "SHOP", label: "Shop-Metadaten", icon: "🏪", groupPrefix: "shop_metadata" },
+    ], onProgress);
+  }
+
+  /** Selling plans (subscriptions) — conditional, empty on shops without them. */
+  async syncSellingPlans(onProgress?: ProgressCallback): Promise<number> {
+    return this.syncFlatDomain("selling_plans", [
+      { type: "SELLING_PLAN_GROUP", label: "Abo-Gruppe", icon: "📚", groupPrefix: "splan_group", skipIfEmpty: true },
+      { type: "SELLING_PLAN", label: "Abo-Plan", icon: "🔁", groupPrefix: "splan", skipIfEmpty: true },
+    ], onProgress);
+  }
+
+  /**
+   * Cookie-Banner rubric — distinct from syncFlatDomain because COOKIE_BANNER
+   * lives only in Shopify's `unstable` TranslatableResourceType enum (the rest of
+   * the ThemeContent domains use the pinned stable enum). The reads therefore go
+   * through a raw fetch against /admin/api/unstable/graphql.json. Persistence is
+   * under domain="customer_privacy" (Shopify's own term — chosen to keep the
+   * substring "cookie_banner" out of every URL so Brave Shields / EasyPrivacy
+   * filters do not silently drop the API calls). The editor renders via the
+   * standard ThemeContentDomainPage.
+   *
+   * Degrades silently to a no-op return 0 when the resource is unreachable on
+   * this shop (e.g. region without Customer-Privacy cookie banner enabled, or
+   * Shopify schema drift) — matches the original page's "Coming Soon" behaviour
+   * without the bespoke UI: the loader simply finds no themeContent rows.
+   */
+  async syncCookieBanner(onProgress?: ProgressCallback): Promise<number> {
+    logger.debug(`[BackgroundSync] Syncing customer_privacy (cookie banner) for shop: ${this.shop}`);
+    const { db } = await import("../db.server");
+
+    // One-shot cleanup of legacy rows from the pre-rename sync (domain was
+    // "cookie_banner" until we renamed it to dodge ad-blocker filter lists).
+    // Idempotent: the deletes are domain-scoped and no other code touches that
+    // domain anymore, so once the table has no "cookie_banner" rows this is a
+    // no-op forever. Cheaper than a one-shot migration script.
+    await db.$transaction([
+      db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "cookie_banner" } }),
+      db.themeContent.deleteMany({ where: { shop: this.shop, domain: "cookie_banner" } }),
+    ]);
+    const {
+      getCookieBannerAvailability,
+      getCookieBannerResources,
+      getCookieBannerTranslations,
+    } = await import("../utils/cookie-banner-availability.server");
+
+    // Resolve the access token via the encrypted session storage — the
+    // BackgroundSyncService constructor only receives `admin` (stable gateway),
+    // not the session, but the unstable endpoint needs the raw token.
+    const { sessionStorage } = await import("../shopify.server");
+    const sessions = await sessionStorage.findSessionsByShop(this.shop);
+    const session = sessions.find((s) => !!s.accessToken);
+    if (!session?.accessToken) {
+      logger.debug(`[BackgroundSync] No session token for ${this.shop} — skipping cookie_banner sync`);
+      return 0;
+    }
+    const cbSession = { shop: this.shop, accessToken: session.accessToken };
+
+    if (onProgress) onProgress(5, 100, "Probing cookie-banner availability…");
+    const availability = await getCookieBannerAvailability(cbSession);
+    if (availability !== "available") {
+      logger.debug(`[BackgroundSync] cookie_banner unavailable for ${this.shop} — sync no-op`);
+      // Mirror the orphan-cleanup safety: if rows exist locally but Shopify now
+      // says unavailable, we leave them in place. The next successful probe
+      // reconciles. (A "Shopify deleted the cookie banner" event is not a thing
+      // we should infer from a probe error.)
+      return 0;
+    }
+
+    if (onProgress) onProgress(15, 100, "Fetching cookie-banner content…");
+    const resources = await getCookieBannerResources(cbSession);
+    if (resources === null) {
+      logger.debug(`[BackgroundSync] cookie_banner content fetch failed for ${this.shop} — sync no-op`);
+      return 0;
+    }
+
+    const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
+    const nonPrimaryLocales = locales.filter((l) => !l.primary);
+
+    const NAME_KEYS = ["title", "name", "label"];
+    const deriveName = (content: TranslatableContentItem[], fallback: string): string => {
+      for (const nk of NAME_KEYS) {
+        const hit = content.find((c) => c.key === nk && c.value && c.value.trim());
+        if (hit?.value) return hit.value.length > 80 ? `${hit.value.slice(0, 77)}…` : hit.value;
+      }
+      return fallback;
+    };
+
+    const syncedCombinations = new Set<string>();
+    let totalGroups = 0;
+    let resIdx = 0;
+
+    for (const resource of resources) {
+      resIdx++;
+      if (onProgress) {
+        onProgress(20 + Math.round((resIdx / Math.max(resources.length, 1)) * 70), 100,
+          `Syncing cookie-banner ${resIdx}/${resources.length}`);
+      }
+
+      // CookieBannerResource's translatableContent uses {key,value,digest,locale}
+      // where value/digest are nullable. ThemeContent's JSON column treats
+      // these as opaque, so the cast preserves the shape without losing nulls.
+      const content = (resource.translatableContent || []).filter((c) => c.key);
+      if (content.length === 0) continue;
+
+      const shortId = resource.resourceId.split("/").pop() || resource.resourceId;
+      const groupId = `customer_privacy_${shortId}`;
+      const groupName = deriveName(
+        content as unknown as TranslatableContentItem[],
+        "Cookie banner"
+      );
+      syncedCombinations.add(`${resource.resourceId}::${groupId}`);
+
+      await db.themeContent.upsert({
+        where: { shop_resourceId_groupId_themeId: { shop: this.shop, resourceId: resource.resourceId, groupId, themeId: '' } },
+        create: {
+          shop: this.shop,
+          resourceId: resource.resourceId,
+          themeId: '',
+          resourceType: "COOKIE_BANNER",
+          resourceTypeLabel: "Cookie banner",
+          domain: "customer_privacy",
+          groupId,
+          groupName,
+          groupIcon: "🍪",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+          translatableContent: content as any,
+          lastSyncedAt: new Date(),
+        },
+        update: {
+          resourceType: "COOKIE_BANNER",
+          resourceTypeLabel: "Cookie banner",
+          domain: "customer_privacy",
+          groupName,
+          groupIcon: "🍪",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Prisma JSON column
+          translatableContent: content as any,
+          lastSyncedAt: new Date(),
+        },
+      });
+
+      // Fetch + persist foreign-locale translations (raw unstable fetch — the
+      // gateway can't reach the unstable endpoint).
+      const existingRows = await db.themeTranslation.findMany({
+        where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "customer_privacy" },
+        select: { id: true, key: true, locale: true, value: true, outdated: true },
+      });
+      const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
+
+      const fetched: ShopifyTranslation[] = [];
+      for (const locale of nonPrimaryLocales) {
+        const translations = await getCookieBannerTranslations(cbSession, resource.resourceId, locale.locale);
+        for (const t of translations) {
+          if (t.value == null) continue;
+          fetched.push({ key: t.key, value: t.value, locale: t.locale, outdated: t.outdated });
+        }
+      }
+
+      const seen = new Set<string>();
+      const relevant = fetched.filter((t) => {
+        const uk = `${t.key}::${t.locale}`;
+        if (seen.has(uk)) return false;
+        seen.add(uk);
+        return content.some((c) => c.key === t.key);
+      });
+
+      const toCreate: { shop: string; resourceId: string; themeId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean }[] = [];
+      const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
+      for (const t of relevant) {
+        const outdated = t.outdated || false;
+        const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
+        if (!prev) {
+          toCreate.push({ shop: this.shop, resourceId: resource.resourceId, themeId: '', domain: "customer_privacy", groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+        } else if (prev.value !== t.value || prev.outdated !== outdated) {
+          toUpdate.push({ id: prev.id, value: t.value, outdated });
+        }
+      }
+
+      const CHUNK = 500;
+      for (let i = 0; i < toCreate.length; i += CHUNK) {
+        await db.themeTranslation.createMany({ data: toCreate.slice(i, i + CHUNK), skipDuplicates: true });
+      }
+      for (let i = 0; i < toUpdate.length; i += CHUNK) {
+        await db.$transaction(
+          toUpdate.slice(i, i + CHUNK).map((u) =>
+            db.themeTranslation.update({ where: { id: u.id }, data: { value: u.value, outdated: u.outdated } })
+          )
+        );
+      }
+
+      const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}`));
+      const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
+      for (let i = 0; i < keysToDelete.length; i += CHUNK) {
+        await db.themeTranslation.deleteMany({
+          where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain: "customer_privacy", OR: keysToDelete.slice(i, i + CHUNK) },
+        });
+      }
+
+      totalGroups++;
+    }
+
+    // Orphan cleanup, scoped to this domain only. Skipping the cleanup when
+    // Shopify returned 0 resources is essential — that path is taken when the
+    // unstable endpoint is reachable but the shop has no cookie banner today.
+    // We must NOT use it to wipe rows on a shop that had a banner before; the
+    // upstream availability guard means we only reach here on a confirmed
+    // "available" probe, so an empty resources[] is authoritative.
+    const existing = await db.themeContent.findMany({
+      where: { shop: this.shop, domain: "customer_privacy" },
+      select: { resourceId: true, groupId: true },
+    });
+    const toDelete = existing.filter((i) => !syncedCombinations.has(`${i.resourceId}::${i.groupId}`));
+    if (toDelete.length > 0) {
+      const conditions = toDelete.map((i) => ({ resourceId: i.resourceId, groupId: i.groupId }));
+      await db.$transaction([
+        db.themeTranslation.deleteMany({ where: { shop: this.shop, domain: "customer_privacy", OR: conditions } }),
+        db.themeContent.deleteMany({ where: { shop: this.shop, domain: "customer_privacy", OR: conditions } }),
+      ]);
+      logger.debug(`[BackgroundSync] 🗑️ Deleted ${toDelete.length} obsolete customer_privacy groups`);
+    }
+
+    logger.debug(`[BackgroundSync] ✓ Synced ${totalGroups} customer_privacy (cookie-banner) groups`);
+    return totalGroups;
   }
 
   // ============================================
@@ -1547,7 +2645,10 @@ export class BackgroundSyncService {
       const contentSync = new ContentSyncService(this.gateway, this.shop);
 
       // Run all entitled syncs in parallel; disabled phases resolve to 0.
-      const [pages, policies, themes, metaobjects, articles, menus] = await Promise.all([
+      // Gating for the new domains (until they get their own SyncPhase entries
+      // in Phase 4): system + selling_plans mirror the themes (Pro+) entitlement;
+      // online_store_extras is small + high-value and runs on every tier.
+      const [pages, policies, themes, metaobjects, articles, menus, system, delivery, onlineStoreExtras, sellingPlans, cookieBanner] = await Promise.all([
         scope.pages.enabled
           ? this.syncAllPages(scope.pages.max).catch(err => {
               logger.error('[BackgroundSync] Pages sync failed:', err);
@@ -1584,6 +2685,42 @@ export class BackgroundSyncService {
               return 0;
             })
           : Promise.resolve(0),
+        // System (notifications/payment/packing) entitled Pro+ — gate directly
+        // off the entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'system')
+          ? this.syncSystemContent().catch(err => {
+              logger.error('[BackgroundSync] System sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        // Delivery (checkout shipping names) entitled Basic+ — gate directly off
+        // the entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'delivery')
+          ? this.syncDeliveryContent().catch(err => {
+              logger.error('[BackgroundSync] Delivery sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        // Online-Store extras (Filter + Shop-Metadaten) entitled on every tier.
+        this.syncOnlineStoreExtras().catch(err => {
+          logger.error('[BackgroundSync] Online-Store-Extras sync failed:', err);
+          return 0;
+        }),
+        // Selling plans (subscriptions) entitled Pro+ — gate directly off the
+        // entitlement source so it can't drift from canAccessContentType.
+        canAccessContentType(plan, 'sellingPlans')
+          ? this.syncSellingPlans().catch(err => {
+              logger.error('[BackgroundSync] Selling-Plans sync failed:', err);
+              return 0;
+            })
+          : Promise.resolve(0),
+        // Cookie banner shares the onlineStoreExtras entitlement (every tier) —
+        // gracefully no-ops when the unstable endpoint is unreachable, so it's
+        // safe to run unconditionally.
+        this.syncCookieBanner().catch(err => {
+          logger.error('[BackgroundSync] Cookie-Banner sync failed:', err);
+          return 0;
+        }),
       ]);
 
       const duration = Date.now() - startTime;
@@ -1594,12 +2731,17 @@ export class BackgroundSyncService {
         metaobjects,
         articles,
         menus,
-        total: pages + policies + themes + metaobjects + articles + menus,
+        system,
+        delivery,
+        onlineStoreExtras,
+        sellingPlans,
+        cookieBanner,
+        total: pages + policies + themes + metaobjects + articles + menus + system + delivery + onlineStoreExtras + sellingPlans + cookieBanner,
         duration,
       };
 
       logger.debug(`[BackgroundSync] ✓ Full sync complete in ${duration}ms (plan=${plan})`);
-      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}`);
+      logger.debug(`[BackgroundSync]   Pages: ${pages}, Policies: ${policies}, Themes: ${themes}, Metaobjects: ${metaobjects}, Articles: ${articles}, Menus: ${menus}, System: ${system}, Delivery: ${delivery}, Extras: ${onlineStoreExtras}, SellingPlans: ${sellingPlans}, CookieBanner: ${cookieBanner}`);
 
       return stats;
     } catch (error: unknown) {

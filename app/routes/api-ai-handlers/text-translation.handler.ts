@@ -1,11 +1,13 @@
 import { json } from "@remix-run/node";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
-import { errorMessage, errorStack, createAIService } from "./shared";
+import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse, isValidLocale } from "~/utils/validation";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { extractThemeIdFromResourceId } from "~/utils/theme-id";
+import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
@@ -14,6 +16,62 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
 import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
+import { writeCookieBannerTranslations } from "~/utils/cookie-banner-availability.server";
+
+/**
+ * COOKIE_BANNER translatable resources are rejected by the pinned stable
+ * `translationsRegister` with "invalid id" — they can only be written through
+ * Shopify's `unstable` endpoint (see app.cookie-banner.tsx and
+ * cookie-banner-availability.server.ts). Cookie-Banner is normalised into the
+ * `templates` content-type family in api.ai.tsx, so its AI translations flow
+ * through the two `contentType === 'templates'` send sites below. Without this
+ * prefix check those sites push the CookieBanner GID at the stable endpoint and
+ * every locale throws "invalid id". The manual save path already routes here.
+ */
+const COOKIE_BANNER_GID_PREFIX = "gid://shopify/CookieBanner/";
+
+/**
+ * Register one foreign-locale translation for a theme-content ("templates")
+ * field. Routes COOKIE_BANNER resources to the `unstable` endpoint (via
+ * writeCookieBannerTranslations, which never throws) and everything else to the
+ * normal pinned-stable `admin.graphql` mutation (which throws on transport
+ * errors, preserving the existing caller catch behaviour). Returns a normalised
+ * accepted/error result so both send sites can share identical handling.
+ */
+async function registerTemplateFieldTranslation(params: {
+  admin: AIActionContext["admin"];
+  session: AIActionContext["session"];
+  resourceId: string;
+  key: string;
+  value: string;
+  locale: string;
+  digest: string;
+}): Promise<{ accepted: boolean; error?: string }> {
+  const { admin, session, resourceId, key, value, locale, digest } = params;
+  const input = [{ key, value, locale, translatableContentDigest: digest }];
+
+  if (resourceId.startsWith(COOKIE_BANNER_GID_PREFIX)) {
+    const res = await writeCookieBannerTranslations(
+      { shop: session.shop, accessToken: session.accessToken },
+      resourceId,
+      [{ key, value, translatableContentDigest: digest, locale }]
+    );
+    return { accepted: res.ok, error: res.error };
+  }
+
+  const response = await admin.graphql(TRANSLATE_CONTENT, {
+    variables: { resourceId, translations: input },
+  });
+  const data = (await response.json()) as ShopifyGraphQLResponse;
+  if (data.errors && data.errors.length > 0) {
+    return { accepted: false, error: JSON.stringify(data.errors) };
+  }
+  const userErrors = data.data?.translationsRegister?.userErrors ?? [];
+  if (userErrors.length > 0) {
+    return { accepted: false, error: JSON.stringify(userErrors) };
+  }
+  return { accepted: true };
+}
 
 export async function handleTranslateField(ctx: AIActionContext): Promise<Response> {
   const { session, admin, db, formData, settings, contentType, itemId } = ctx;
@@ -214,6 +272,16 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     return json({ success: false, error: "No target locales specified" }, { status: 400 });
   }
 
+  // Locales that should be TRANSLATED (and returned) but NOT persisted here.
+  // Used by foreign-locale "Accept & Translate": the shop's primary locale is
+  // included as a target so the batch AI call also produces the primary-language
+  // value, but the primary base content is saved by the client (via updateContent),
+  // not registered as a foreign translation. Empty for all normal flows.
+  const skipSaveLocalesJson = getFormString(formData, "skipSaveLocales");
+  const skipSaveLocales = new Set(
+    skipSaveLocalesJson ? safeJsonParse<string[]>(skipSaveLocalesJson, []) : []
+  );
+
   const MAX_TARGET_LOCALES = 50;
   if (targetLocales.length > MAX_TARGET_LOCALES) {
     return json(
@@ -281,17 +349,30 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
     // so each field key must be saved against its own resource ID.
     let templateGroupId: string | null = null;
     let templateResourceId: string | null = null;
+    // The ThemeContent domain that owns this group (theme / system / delivery /
+    // online_store_extras / selling_plans / customer_privacy). MUST be mirrored
+    // onto every themeTranslation row we write — the Prisma default is "theme",
+    // so persisting without it saves flat-domain translations (e.g. Abo-Gruppe)
+    // under the wrong domain. That both hides them from the domain-scoped loader
+    // AND makes the next reload collide (the @@unique omits domain, so a
+    // re-create under the correct domain violates the constraint).
+    let templateDomain = "theme";
     const templateKeyToResourceId = new Map<string, string>();
     if (contentType === 'templates' && itemId) {
       templateGroupId = itemId.replace("group_", "");
+      // Theme-Auswahl: scope to the selected theme so key→resourceId mapping uses
+      // the chosen theme's resources (legacy/flat rows with themeId "" stay in).
+      const selectedThemeId = await resolveSelectedThemeId(session.shop, admin);
       const themeContentRows = await db.themeContent.findMany({
         where: {
           shop: session.shop,
-          groupId: templateGroupId
+          groupId: templateGroupId,
+          ...(selectedThemeId ? { OR: [{ themeId: selectedThemeId }, { themeId: "" }] } : {}),
         }
       });
       if (themeContentRows.length > 0) {
         templateResourceId = themeContentRows[0].resourceId;
+        templateDomain = themeContentRows[0].domain;
         // Build key → resourceId map from all rows
         for (const row of themeContentRows) {
           const items = (row.translatableContent as unknown) as Array<{ key: string; value?: string; digest?: string }>;
@@ -491,6 +572,10 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             response: isCacheHit ? `${translatedValue} (cache)` : translatedValue,
           });
 
+          // Translate-and-return only (e.g. primary locale for the client to save
+          // as base content) — skip Shopify + DB persistence for this locale.
+          if (skipSaveLocales.has(locale)) continue;
+
           // Save to Shopify for templates
           if (contentType === 'templates' && templateGroupId) {
             // Use the correct resourceId for this specific field key
@@ -519,37 +604,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
               } else {
-              const translationInput = [{
+              const result = await registerTemplateFieldTranslation({
+                admin,
+                session,
+                resourceId: fieldResourceId,
                 key: fieldType,
                 value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
-
-              const templateResponse = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: fieldResourceId,
-                  translations: translationInput
-                }
+                locale,
+                digest,
               });
 
-              const templateData = await templateResponse.json() as ShopifyGraphQLResponse;
-
-              if (templateData.errors && templateData.errors.length > 0) {
-                logger.error("[API-AI] Batch: GraphQL error saving template translation", {
-                  context: "AI",
-                  errors: templateData.errors,
-                  locale,
-                  fieldType
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-              } else if ((templateData.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
+              if (!result.accepted) {
                 logger.error("[API-AI] Batch: Shopify rejected template translation", {
                   context: "AI",
-                  errors: templateData.data?.translationsRegister?.userErrors,
+                  error: result.error,
                   locale,
-                  fieldType
+                  fieldType,
+                  resourceId: fieldResourceId
                 });
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
@@ -574,22 +645,29 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale: {
+                    shop_resourceId_groupId_key_locale_themeId_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
                       key: fieldType,
-                      locale: locale
+                      locale: locale,
+                      themeId: extractThemeIdFromResourceId(fieldResourceId) ?? ""
                     }
                   },
                   update: {
+                    // Heal the domain too: a row written before this fix (or by a
+                    // path that omitted domain) may sit under the default "theme".
+                    domain: templateDomain,
                     value: translatedValue,
                     updatedAt: new Date()
                   },
                   create: {
                     shop: session.shop,
                     groupId: templateGroupId,
+                    domain: templateDomain,
                     resourceId: fieldResourceId,
+                    themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
                     value: translatedValue
@@ -703,7 +781,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    shop_resourceId_key_locale: {
+                    shop_resourceId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
@@ -824,7 +903,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 const metaType = itemId.replace('metaobject_type_', '');
                 await db.metaobjectTranslation.upsert({
                   where: {
-                    shop_metaobjectId_key_locale: {
+                    shop_metaobjectId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       metaobjectId: metaobjectGid,
                       key: metaLabelKey,
@@ -874,6 +954,9 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
         // Progress already updated in loop above
 
       } catch (batchError: unknown) {
+        // An invalid API key will fail the sequential fallback too — don't mask
+        // it as a fallback, surface it so the whole request fails loudly.
+        if (isAuthError(batchError)) throw batchError;
         logger.error("[API-AI] Batch translation failed, falling back to sequential", {
           context: "AI",
           error: errorMessage(batchError),
@@ -885,13 +968,63 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
 
     // Sequential translation for long fields OR if batch failed
     if (!isShortField || Object.keys(translations).length === 0) {
+      // Long, non-slug fields: fetch ALL locales in one batched/chunked AI call
+      // up front, then read each locale's value inside the loop below — the
+      // per-locale Shopify/DB persistence stays untouched. Slug fields keep
+      // their dedicated translateSlug path (see Phase 3.2 / translateSlugBatch).
+      let batchTranslations: Record<string, Record<string, string>> = {};
+      let batchTranslationFailed = false;
+      if (!isSlugField) {
+        try {
+          batchTranslations = await aiService.translateFieldsToLocalesChunked(
+            { [fieldType]: sourceText },
+            primaryLocale,
+            targetLocales,
+            { preserveHtml: true, contextLabel: contentType }
+          );
+        } catch (batchErr: unknown) {
+          // An invalid API key will fail every per-locale fallback too — surface
+          // it instead of silently degrading to a doomed sequential pass.
+          if (isAuthError(batchErr)) throw batchErr;
+          // Whole batch failed (all chunks broke) — fall back to the original
+          // per-locale translateContent path below for every locale.
+          batchTranslationFailed = true;
+          logger.error("[API-AI] Long-field batch translation failed, falling back to sequential translateContent", {
+            context: "AI",
+            error: errorMessage(batchErr),
+            fieldType,
+          });
+        }
+      }
+
       for (let i = 0; i < targetLocales.length; i++) {
         const locale = targetLocales[i];
         try {
-          // Use special method for URL slugs
-          let translatedValue = isSlugField
-            ? await aiService.translateSlug(sourceText, primaryLocale, locale)
-            : await aiService.translateContent(sourceText, primaryLocale, locale);
+          // Use special method for URL slugs; otherwise prefer the prefetched
+          // batch value and only fall back to a per-locale call on total failure.
+          let translatedValue: string;
+          if (isSlugField) {
+            translatedValue = await aiService.translateSlug(sourceText, primaryLocale, locale);
+          } else {
+            const batched = batchTranslations[locale]?.[fieldType];
+            if (batched) {
+              translatedValue = batched;
+            } else if (batchTranslationFailed) {
+              translatedValue = await aiService.translateContent(sourceText, primaryLocale, locale);
+            } else {
+              // Batch succeeded overall but this locale's cell is missing →
+              // reject the locale (N-H3: never persist source-as-translation).
+              logger.warn("[API-AI] Locale missing from batch translation — skipping (not writing source)", {
+                context: "AI",
+                fieldType,
+                locale,
+              });
+              if (!rejectedFields[locale]) rejectedFields[locale] = [];
+              rejectedFields[locale].push(fieldType);
+              aiResponses.push({ locale, response: `REJECTED: missing from batch translation` });
+              continue;
+            }
+          }
 
           // For URL slugs: ensure the result is a valid slug (post-process as safety net)
           if (isSlugField) {
@@ -925,6 +1058,10 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
           translations[locale] = translatedValue;
           aiResponses.push({ locale, response: translatedValue });
 
+          // Translate-and-return only (e.g. primary locale for the client to save
+          // as base content) — skip Shopify + DB persistence for this locale.
+          if (skipSaveLocales.has(locale)) continue;
+
           // For templates: Send to Shopify AND save to database
           if (contentType === 'templates' && templateGroupId) {
             // Use the correct resourceId for this specific field key
@@ -953,38 +1090,23 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
               } else {
-              const translationInput = [{
+              const result = await registerTemplateFieldTranslation({
+                admin,
+                session,
+                resourceId: fieldResourceId,
                 key: fieldType,
                 value: translatedValue,
-                locale: locale,
-                translatableContentDigest: digest
-              }];
-
-              const response = await admin.graphql(TRANSLATE_CONTENT, {
-                variables: {
-                  resourceId: fieldResourceId,
-                  translations: translationInput
-                }
+                locale,
+                digest,
               });
 
-              const data = await response.json() as ShopifyGraphQLResponse;
-
-              if (data.errors && data.errors.length > 0) {
-                logger.error("[API-AI] Shopify GraphQL errors", {
+              if (!result.accepted) {
+                logger.error("[API-AI] Shopify rejected translation", {
                   context: "AI",
-                  errors: data.errors,
+                  error: result.error,
                   locale,
                   fieldType,
                   resourceId: fieldResourceId
-                });
-                if (!rejectedFields[locale]) rejectedFields[locale] = [];
-                rejectedFields[locale].push(fieldType);
-              } else if ((data.data?.translationsRegister?.userErrors?.length ?? 0) > 0) {
-                logger.error("[API-AI] Shopify translation userErrors", {
-                  context: "AI",
-                  errors: data.data?.translationsRegister?.userErrors,
-                  locale,
-                  fieldType
                 });
                 if (!rejectedFields[locale]) rejectedFields[locale] = [];
                 rejectedFields[locale].push(fieldType);
@@ -1017,22 +1139,29 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               try {
                 await db.themeTranslation.upsert({
                   where: {
-                    shop_resourceId_groupId_key_locale: {
+                    shop_resourceId_groupId_key_locale_themeId_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: fieldResourceId,
                       groupId: templateGroupId,
                       key: fieldType,
-                      locale: locale
+                      locale: locale,
+                      themeId: extractThemeIdFromResourceId(fieldResourceId) ?? ""
                     }
                   },
                   update: {
+                    // Heal the domain too: a row written before this fix (or by a
+                    // path that omitted domain) may sit under the default "theme".
+                    domain: templateDomain,
                     value: translatedValue,
                     updatedAt: new Date()
                   },
                   create: {
                     shop: session.shop,
                     groupId: templateGroupId,
+                    domain: templateDomain,
                     resourceId: fieldResourceId,
+                    themeId: extractThemeIdFromResourceId(fieldResourceId) ?? "",
                     locale: locale,
                     key: fieldType,
                     value: translatedValue
@@ -1145,7 +1274,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 };
                 await db.contentTranslation.upsert({
                   where: {
-                    shop_resourceId_key_locale: {
+                    shop_resourceId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       resourceId: itemId,
                       key: shopifyKey,
@@ -1271,7 +1401,8 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
                 const metaType = itemId.replace('metaobject_type_', '');
                 await db.metaobjectTranslation.upsert({
                   where: {
-                    shop_metaobjectId_key_locale: {
+                    shop_metaobjectId_key_locale_marketId: {
+                      marketId: "",
                       shop: session.shop,
                       metaobjectId: metaobjectGid,
                       key: metaLabelKey,
@@ -1317,24 +1448,56 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
             data: { progress },
           });
         } catch (error: unknown) {
+          // Invalid API key: abort the whole loop — every remaining locale would
+          // 401 too. Re-throw so the outer handler fails loudly (success: false)
+          // instead of marking all locales "rejected" and reporting success.
+          if (isAuthError(error)) throw error;
           logger.error("[API-AI] Error translating to locale", {
             context: "AI",
             fieldType,
             locale,
             error: errorMessage(error)
           });
-          // R3-H10 / N-H3 audited-safe: this sourceText assignment is
-          // RESPONSE-MAP ONLY. The Shopify translationsRegister + DB upsert
-          // for this locale live inside the try above, BEFORE this catch, so
-          // a translation failure writes NOTHING to Shopify/DB for it. The
-          // persisted artifact (task.result = aiResponses) records an
-          // explicit `ERROR:` for the locale, never the source. Do NOT start
-          // persisting `translations` without re-introducing an N-H3 guard.
-          translations[locale] = sourceText; // response map only — see note
+          // The AI call (or its Shopify/DB persistence) failed for this
+          // locale — nothing was written to Shopify/DB. Mark the locale as
+          // rejected and do NOT put it into `translations`: that map is
+          // returned to the client and used to populate the editor, so writing
+          // `sourceText` here (a) surfaced the untranslated source as if it
+          // were a real translation (N-H3) and (b) kept `translations`
+          // non-empty even when EVERY locale failed (e.g. invalid AI API key
+          // → 401 for all locales), so the handler reported success: true
+          // while nothing was translated. The task log keeps an explicit
+          // ERROR entry for diagnostics.
+          if (!rejectedFields[locale]) rejectedFields[locale] = [];
+          rejectedFields[locale].push(fieldType);
           aiResponses.push({ locale, response: `ERROR: ${errorMessage(error)}` });
         }
       }
     } // End of sequential translation if block
+
+    // No locale produced a real translation → the whole operation failed
+    // (e.g. an invalid AI API key returning 401 for every locale, or all
+    // batch chunks broke). Previously this still marked the task "completed"
+    // and returned success: true, so the frontend reported success while
+    // nothing was translated or saved — the silent-failure bug. Fail loudly:
+    // mark the task failed and return an error so the editor surfaces it.
+    if (Object.keys(translations).length === 0) {
+      const firstError = aiResponses.find((r) => r.response.startsWith("ERROR:"))?.response;
+      const failMsg = (firstError
+        ? firstError.replace(/^ERROR:\s*/, "")
+        : "Translation failed for all locales").trim();
+      logger.error("[API-AI] translateFieldToAllLocales produced no translations — failing loudly", {
+        context: "AI",
+        fieldType,
+        targetLocales,
+        error: failMsg,
+      });
+      await db.task.update({
+        where: { id: task.id },
+        data: { status: "failed", completedAt: new Date(), error: failMsg.substring(0, 1000) },
+      });
+      return json({ success: false, error: failMsg, fieldType, rejectedFields }, { status: 502 });
+    }
 
     // Update task to completed with all AI responses
     await db.task.update({

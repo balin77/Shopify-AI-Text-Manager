@@ -16,9 +16,13 @@ export const TRANSLATE_CONTENT = `#graphql
   }
 `;
 
+// $marketIds is optional: omit (or pass null) to remove the GLOBAL translation
+// (all markets); pass [gid://shopify/Market/<id>] to remove only that market's
+// override while the global translation survives. Existing callers that don't
+// supply the variable get the legacy global-removal behaviour.
 export const REMOVE_TRANSLATIONS = `#graphql
-  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+  mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+    translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
       userErrors {
         field
         message
@@ -96,6 +100,8 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
         image {
           altText
           url
@@ -209,6 +215,31 @@ export const METAFIELDS_SET = `#graphql
         key
         value
         type
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * METAFIELDS DELETE — remove metafield values by identifier.
+ *
+ * Setting a metafield to `value: ""` via metafieldsSet does NOT clear it on
+ * Shopify. To actually remove a metafield (e.g. clearing a page/blog SEO
+ * title_tag / description_tag on the primary locale), it must be deleted by
+ * its { ownerId, namespace, key } identifier. Deleting a non-existent
+ * metafield is a no-op.
+ */
+export const METAFIELDS_DELETE = `#graphql
+  mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+    metafieldsDelete(metafields: $metafields) {
+      deletedMetafields {
+        ownerId
+        namespace
+        key
       }
       userErrors {
         field

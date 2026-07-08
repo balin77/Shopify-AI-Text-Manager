@@ -1,5 +1,5 @@
-import { useRef, useEffect } from "react";
-import { Text, Button, InlineStack } from "@shopify/polaris";
+import { useRef, useEffect, useMemo } from "react";
+import { Text, Button, InlineStack, Banner } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
@@ -84,6 +84,14 @@ export function AIEditableHTMLField({
   const isUserTypingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEditorElementRef = useRef<HTMLDivElement | null>(null);
+
+  // Shopify notification templates (EMAIL_TEMPLATE etc.) contain raw Liquid like
+  // `{{ shop.email_logo_url }}` that only Shopify can render server-side. Detect
+  // it so we can lock the preview editor and explain why placeholders show up
+  // instead of real images — otherwise an inline edit would persist the
+  // sanitized (Liquid-stripped) HTML and corrupt the template.
+  const containsLiquid = useMemo(() => /\{\{|\{%/.test(value || ""), [value]);
+  const previewReadOnly = readOnly || (mode === "rendered" && containsLiquid);
 
   // Cleanup typing timer on unmount
   useEffect(() => {
@@ -226,9 +234,20 @@ export function AIEditableHTMLField({
         </InlineStack>
       </InlineStack>
 
-      {mode === "rendered" && !readOnly && (
+      {mode === "rendered" && !previewReadOnly && (
         <div style={{ marginTop: "0.5rem" }}>
           <HtmlFormattingToolbar onCommand={handleFormatText} />
+        </div>
+      )}
+
+      {mode === "rendered" && containsLiquid && (
+        <div style={{ marginTop: "0.5rem" }}>
+          <Banner tone="info">
+            <p>
+              {t.products?.liquidPreviewNotice ||
+                "This template contains Liquid variables (e.g. {{ shop.email_logo_url }}) that Shopify only renders when the email is sent. Switch to HTML mode to edit."}
+            </p>
+          </Banner>
         </div>
       )}
 
@@ -253,7 +272,7 @@ export function AIEditableHTMLField({
       ) : (
         <div
           ref={editorRef}
-          contentEditable={!readOnly}
+          contentEditable={!previewReadOnly}
           onInput={handleInput}
           suppressContentEditableWarning
           // R4-UX3: this is the primary body-content editor. Without these a
@@ -262,17 +281,17 @@ export function AIEditableHTMLField({
           role="textbox"
           aria-multiline="true"
           aria-label={label}
-          aria-readonly={readOnly}
+          aria-readonly={previewReadOnly}
           tabIndex={0}
           style={{
             width: "100%",
             minHeight: "200px",
             padding: "12px",
             border: "1px solid #c9cccf",
-            borderTop: mode === "rendered" && !readOnly ? "none" : "1px solid #c9cccf",
-            borderRadius: mode === "rendered" && !readOnly ? "0 0 8px 8px" : "8px",
+            borderTop: mode === "rendered" && !previewReadOnly ? "none" : "1px solid #c9cccf",
+            borderRadius: mode === "rendered" && !previewReadOnly ? "0 0 8px 8px" : "8px",
             lineHeight: "1.6",
-            ...(readOnly ? { opacity: 0.6, userSelect: "text" as const } : {}),
+            ...(previewReadOnly ? { opacity: readOnly ? 0.6 : 1, userSelect: "text" as const } : {}),
           }}
           className="description-editor"
         />

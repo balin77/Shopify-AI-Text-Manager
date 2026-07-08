@@ -12,6 +12,8 @@ export interface ThemeContentRow {
   id: string;
   shop: string;
   resourceId: string;
+  /** Shopify translatable resource type, e.g. "ONLINE_STORE_THEME_JSON_TEMPLATE" or "ONLINE_STORE_THEME_LOCALE_CONTENT". */
+  resourceType?: string;
   groupId: string;
   groupName: string;
   groupIcon: string;
@@ -27,10 +29,19 @@ export interface TemplatesActionContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
   formData: FormData;
+  /** ThemeContent domain this group belongs to: "theme" | "system" | "online_store_extras" | "selling_plans". */
+  domain: string;
   groupId: string;
   themeGroups: ThemeContentRow[];
   firstGroup: ThemeContentRow;
   resourceId: string;
   /** Maps each translatable field key → the Shopify resource ID that owns it */
   keyToResourceId: Map<string, string>;
+  /** Maps each translatable field key → the Shopify resource type that owns it */
+  keyToResourceType: Map<string, string>;
+  /**
+   * Theme-Auswahl: the Shopify Theme-GID this request is scoped to (null = no
+   * selection / MAIN). Reads should include legacy rows (themeId "") too.
+   */
+  selectedThemeId?: string | null;
 }

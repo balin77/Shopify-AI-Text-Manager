@@ -26,6 +26,31 @@ export interface Translation {
   value: string;
 }
 
+/**
+ * A Shopify market, plus the locales it serves on its storefront. Used by the
+ * market-specific translation feature ("Translate & Adapt"): a translation may
+ * target one market so the same locale can differ per market.
+ */
+export interface MarketInfo {
+  /** gid://shopify/Market/<id> — sent as TranslationInput.marketId */
+  id: string;
+  name: string;
+  handle: string;
+  /** locales this market offers (default + alternate web-presence locales) */
+  localeCodes: string[];
+}
+
+/**
+ * Market translations loaded from the DB, keyed for O(1) lookup in resolve():
+ *   marketTranslations[marketId][translationKey][locale] = value
+ * Only non-global rows (marketId !== "") are included; the global layer stays in
+ * item.translations as before.
+ */
+export type MarketTranslations = Record<
+  string,
+  Record<string, Record<string, string>>
+>;
+
 // ============================================================================
 // IMAGE TYPES
 // ============================================================================
@@ -33,6 +58,8 @@ export interface Translation {
 export interface AltTextTranslation {
   locale: string;
   altText: string;
+  /** Market scope ("" / undefined = global). Non-empty = market-specific alt text. */
+  marketId?: string;
 }
 
 export interface ContentImage {
@@ -84,7 +111,9 @@ export interface TranslatableContentItem {
     type: string;
   }>;
   /** Pre-loaded sub-resource translations from DB (options, option values, metafields) */
-  subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string }>>;
+  subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string; marketId?: string }>>;
+  /** Market-specific translations (marketId → translationKey → locale → value). Global rows stay in `translations`. */
+  marketTranslations?: MarketTranslations;
 }
 
 // ============================================================================
@@ -189,6 +218,7 @@ export interface TranslationStrings {
     fieldTranslatedAndSaved?: string;
     translatedSuccessfully?: string;
     copied?: string;
+    copiedToShopify?: string;
     [key: string]: TranslationValue;
   };
   content?: {
@@ -201,7 +231,7 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
 export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
 
@@ -329,12 +359,18 @@ export type TranslatableItem = TranslatableContentItem;
 export interface EditorState {
   selectedItemId: string | null;
   currentLanguage: string;
+  /** Selected market ("" = all markets / global). */
+  selectedMarketId: string;
+  /** Markets available for the current shop (empty → market selector hidden). */
+  markets: MarketInfo[];
   editableValues: Record<string, string>;
   aiSuggestions: Record<string, string>;
   htmlModes: Record<string, 'html' | 'rendered'>;
   hasChanges: boolean;
   enabledLanguages: string[];
   imageAltTexts: Record<number, string>;
+  /** Image indices whose alt text is a market-inherited (global) fallback. */
+  fallbackAltTextIndices: Set<number>;
   altTextSuggestions: Record<number, string>;
   isClearAllModalOpen: boolean;
   isInitialDataReady: boolean;
@@ -364,6 +400,7 @@ export interface EditorHandlers {
   handleAcceptAndTranslate: (fieldKey: string) => void;
   handleRejectSuggestion: (fieldKey: string) => void;
   handleLanguageChange: (locale: string) => void;
+  handleMarketChange: (marketId: string) => void;
   handleToggleLanguage: (locale: string) => void;
   handleItemSelect: (itemId: string) => void;
   handleValueChange: (fieldKey: string, value: string) => void;
@@ -403,6 +440,10 @@ export interface UseContentEditorProps {
 
   /** Primary locale */
   primaryLocale: string;
+
+  /** Markets for the "Translate & Adapt" market selector (optional; [] hides it).
+   *  Loosened like shopLocales to absorb Remix's loader-serialization types. */
+  markets?: MarketInfo[] | any[];
 
   /** Fetcher from useFetcher() */
   fetcher: FetcherWithComponents<FetcherData>;

@@ -11,7 +11,6 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { resolveMerchantLocale } from "../utils/locale.server";
-import { MainNavigation } from "../components/MainNavigation";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
@@ -20,9 +19,11 @@ import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
+import { SettingsRichtextTab } from "../components/SettingsRichtextTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
+import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -285,8 +286,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     });
 
+    // Theme-translation usage gauge — theme domain only (the System /
+    // Online-Store-Extras / Selling-Plans domains share this table but are not
+    // governed by the maxThemeTranslations cap shown here).
     const themeTranslationCount = await db.themeTranslation.count({
-      where: { shop: session.shop },
+      where: { shop: session.shop, domain: "theme" },
     });
 
     // Rolling monthly image-operation usage (Bulk-Upload + WebP). Read-only and
@@ -406,6 +410,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       newFeaturesEnabled,
     );
     const showTranslationsTab = true;
+    // Dev-only diagnostic surface: only visible when APP_ENV === "development".
+    const showTranslationProbeTab = process.env.APP_ENV === "development";
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -452,6 +458,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationsTab,
+      showTranslationProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
       optionValueMemory,
@@ -489,6 +496,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
+
+        // Theme-settings richtext handling: "autofix" | "normalize" | "error"
+        themeRichtextMode: settings.themeRichtextMode || 'autofix',
       },
       instructions: {
         // General (Writing Style Instructions)
@@ -692,6 +702,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "saveRichtextMode") {
+      const mode = String(formData.get("themeRichtextMode") || "");
+      if (!["autofix", "normalize", "error"].includes(mode)) {
+        return json({ success: false, error: "Invalid richtext mode", actionType }, { status: 400 });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { themeRichtextMode: mode },
+        create: { shop: session.shop, themeRichtextMode: mode, preferredProvider: "claude" },
+      });
+
+      return json({ success: true, actionType });
     } else if (actionType === "scanProductMetafieldDefinitions") {
       // Data-driven scan: sources from the actual product metafields (incl.
       // third-party / definition-less ones like Google & Judge.me), enriched
@@ -881,7 +904,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -894,7 +917,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -903,13 +926,14 @@ export default function SettingsPage() {
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager";
+    if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -920,7 +944,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -977,8 +1001,10 @@ export default function SettingsPage() {
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
       { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
+      { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
       { id: "plan", title: t.settings.plan },
       { id: "feedback", title: t.settings.feedback },
+      ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
     ];
 
     registerItems({
@@ -1004,8 +1030,11 @@ export default function SettingsPage() {
 
   return (
     <Page fullWidth>
-      <MainNavigation />
-      <div style={{ padding: "1rem" }}>
+      {/* Page padding is owned globally by .Polaris-Page (responsive.css,
+          --app-page-padding); .app-page-content zeroes Polaris' own
+          Page__Content inset so the gutter is even on all sides (incl. top
+          and bottom), matching the content page. */}
+      <div className="app-page-content">
         <div style={{ display: "flex", gap: "1rem" }}>
           {/* Left Sidebar - Hidden on mobile */}
           <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
@@ -1167,6 +1196,25 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
+                onClick={() => handleSectionChange("richtext")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "richtext" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "richtext" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "richtext" ? "semibold" : "regular"}>
+                  {t.settings.richtextFormatting || "Rich-text formatting"}
+                </Text>
+              </button>
+              <button
                 onClick={() => handleSectionChange("plan")}
                 style={{
                   width: "100%",
@@ -1225,6 +1273,27 @@ export default function SettingsPage() {
                   {t.settings.feedback}
                 </Text>
               </button>
+              {showTranslationProbeTab && (
+              <button
+                onClick={() => handleSectionChange("translationprobe")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "translationprobe" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "translationprobe" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translationprobe" ? "semibold" : "regular"}>
+                  Translation Probe
+                </Text>
+              </button>
+              )}
             </Card>
           </div>
 
@@ -1322,6 +1391,16 @@ export default function SettingsPage() {
                   onHasChangesChange={setHasAIChanges}                />
               )}
 
+              {/* Rich-text formatting (theme-settings richtext handling) */}
+              {selectedSection === "richtext" && (
+                <SettingsRichtextTab
+                  settings={settings}
+                  fetcher={fetcher}
+                  t={t}
+                  onHasChangesChange={setHasAIChanges}
+                />
+              )}
+
               {/* Plan Settings */}
               {selectedSection === "plan" && (
                 <>
@@ -1399,6 +1478,11 @@ export default function SettingsPage() {
                     </div>
                   </BlockStack>
                 </Card>
+              )}
+
+              {/* Translation Coverage Probe (Phase 0 dev tool) */}
+              {selectedSection === "translationprobe" && showTranslationProbeTab && (
+                <SettingsTranslationProbeTab />
               )}
             </BlockStack>
           </div>

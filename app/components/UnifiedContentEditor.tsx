@@ -5,6 +5,7 @@
  * Based on the products page structure with all bug fixes included.
  */
 
+import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -23,7 +24,6 @@ import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -52,6 +52,12 @@ interface UnifiedContentEditorProps {
 
   /** Primary locale */
   primaryLocale: string;
+
+  /**
+   * When set, the market selector is shown but force-disabled with this reason as
+   * its tooltip (e.g. cookie banner: no market scoping in the Customer Privacy API).
+   */
+  marketDisabledReason?: string;
 
   /** Return value from useUnifiedContentEditor hook */
   editor: UseContentEditorReturn;
@@ -150,6 +156,20 @@ interface UnifiedContentEditorProps {
 
   /** Optional: product IDs that have variants with missing main images (for yellow dot in list) */
   extraMissingPrimaryIds?: Set<string>;
+
+  /**
+   * Optional: Theme-Auswahl. Only rendered for theme-content types
+   * (isThemeContentType) and when more than one theme exists. Lets the merchant
+   * pick which installed theme's content is edited/translated.
+   */
+  themeSelector?: {
+    options: { label: string; value: string }[];
+    selectedThemeId: string;
+    onChange: (themeId: string) => void;
+    /** Non-MAIN theme with no own synced rows → surface the sync prompt even when
+     * shared "" rows keep the nav list non-empty (PLAN_THEME_SELECTION_B_LITE). */
+    needsThemeSync?: boolean;
+  };
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -158,6 +178,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     items,
     shopLocales,
     primaryLocale,
+    marketDisabledReason,
     editor,
     fetcherState,
     fetcherFormData,
@@ -174,6 +195,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     isFieldsLoading = false,
     revalidator,
     sortOptions,
+    themeSelector,
     subResourceState,
     subResourceHandlers,
     showImageManager,
@@ -243,6 +265,51 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
 
+  // List-level "sync from Shopify" (discovery): trigger a real full sync of this
+  // content type from Shopify, THEN revalidate so newly-created items appear in
+  // the list. (The per-item ReloadButton in the language bar stays a single-item
+  // refresh.) Falls back to a plain revalidate for content types without a
+  // discovery endpoint.
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  // True once a sync-from-Shopify has been attempted for the current theme. Lets
+  // the empty-state distinguish "not synced yet" from "synced, genuinely empty"
+  // (a theme can legitimately have 0 entries in a tab). Reset on theme switch.
+  const [syncAttempted, setSyncAttempted] = useState(false);
+  const handleSyncAll = useCallback(async () => {
+    if (!revalidator) return;
+    const ct = config.contentType;
+    const endpoint =
+      ct === "products"
+        ? "/api/sync-products"
+        : SYNC_CONTENT_TYPE[ct]
+          ? `/api/sync-content?types=${SYNC_CONTENT_TYPE[ct]}`
+          : null;
+    if (!endpoint) {
+      revalidator.revalidate();
+      return;
+    }
+    setIsDiscovering(true);
+    try {
+      const res = await fetch(endpoint, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // Don't block the revalidate — the DB may still hold fresher data than the
+      // current view even if the Shopify pull failed.
+      console.error("[UnifiedContentEditor] sync-from-Shopify failed:", err);
+    } finally {
+      setIsDiscovering(false);
+      setSyncAttempted(true);
+      revalidator.revalidate();
+    }
+  }, [revalidator, config.contentType]);
+
+  // A theme switch means a different data set — forget the previous theme's
+  // sync-attempt so its empty-state starts from "not synced yet" again.
+  const themeSelectorThemeId = themeSelector?.selectedThemeId;
+  useEffect(() => {
+    setSyncAttempted(false);
+  }, [themeSelectorThemeId]);
+
   // Check if a global AI action is currently running (affects all fields)
   // Uses global AI operations store — spinners persist across item navigation.
   const { isAllLocalesRunning: isAllLocalesActionRunning, isPerLocaleRunning: isPerLocaleActionRunning } =
@@ -252,6 +319,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   const isGlobalAIActionRunning = isAllLocalesActionRunning || isPerLocaleActionRunning
     || loadingFieldKeys.has("__translateAll__");
+
+  // App-embed groups are technical content (CSS selectors / config). Editing or
+  // translating them would break the embed on the storefront, so we lock every
+  // field — in the primary language AND in all foreign locales — while still
+  // showing the items (parity with Translate & Adapt). Server loader marks the
+  // group with `embedTechnical` (theme-content-domain.server.ts).
+  const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
 
   // Translated resource names for the item list
   const resourceNames = (t.content?.resourceNames || {}) as Record<string, string>;
@@ -279,7 +353,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     return items.map((item) => {
       let subtitle = config.getSubtitle ? config.getSubtitle(item, t) : undefined;
       // Translate "translatable fields" for templates
-      if (config.contentType === "templates" && item.contentCount !== undefined) {
+      if (isThemeContentType(config.contentType) && item.contentCount !== undefined) {
         subtitle = `${item.contentCount || 0} ${t.content?.translatableFields || "translatable fields"}`;
       }
       const itemOverlays = item.id === selectedItem?.id ? validationOverlays : undefined;
@@ -388,7 +462,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
 
   const sidebarRenderer = renderSidebar || defaultRenderSidebar;
-  const { getTotalNavHeight } = useNavigationHeight();
 
   // Stable ref for handleItemSelect to avoid re-triggering useEffect
   const handleItemSelectRef = useRef(handlers.handleItemSelect);
@@ -448,11 +521,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       <div
         className="unified-content-editor-layout"
         style={{
-          height: "100%",
+          // Fill the real available space via flexbox instead of a viewport
+          // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
+          // made a column flex container in content-editor-global.css, so this
+          // row grows to exactly what's left after the page's grey padding
+          // border AND any banner rendered above the editor (e.g. the
+          // "Technical content" warning on theme pages). A viewport calc
+          // (100vh - nav) could account for neither, so it overshot and clipped
+          // the bottom of both columns. minHeight:0 lets the columns scroll
+          // internally instead of stretching the row.
+          flex: 1,
           minHeight: 0,
           display: "flex",
           gap: "16px",
-          padding: "16px",
+          // Single source of truth for the page margin — shared with the
+          // simple Polaris pages via responsive.css (.Polaris-Page padding).
+          padding: "var(--app-page-padding)",
           overflow: "hidden",
           boxSizing: "border-box",
         }}
@@ -472,9 +556,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          onSyncAll={revalidator ? () => revalidator.revalidate() : undefined}
-          isSyncing={revalidator?.state === "loading"}
+          onSyncAll={revalidator ? handleSyncAll : undefined}
+          isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
+          themeSelector={
+            themeSelector && isThemeContentType(config.contentType) && themeSelector.options.length > 1
+              ? {
+                  options: themeSelector.options,
+                  value: themeSelector.selectedThemeId,
+                  onChange: themeSelector.onChange,
+                  disabled: isDiscovering || revalidator?.state === "loading",
+                  label: t.content?.themeSelectorLabel || "Theme",
+                  helpText: t.content?.themeSelectorHelp,
+                }
+              : undefined
+          }
           t={{
             searchPlaceholder: t.content?.searchPlaceholder,
             paginationOf: t.content?.paginationOf || "of",
@@ -483,6 +579,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             planLimitReached: t.content?.planLimitReached,
             upgradeForMore: t.content?.upgradeForMore,
             itemNoun,
+            noItemsFound: t.content?.noItemsFound,
+            noItemsFoundMatching: t.content?.noItemsFoundMatching,
+            sortTooltip: t.content?.sortTooltip,
+            reloadAllTooltip: t.content?.reloadAllTooltip,
+            filterTooltip: t.content?.filterTooltip,
+            filterTitle: t.content?.filterTitle,
           }}
           />
           </div>
@@ -526,12 +628,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   selectedItem={selectedItem}
                   contentType={config.contentType}
                   onLanguageChange={handlers.handleLanguageChange}
+                  markets={state.markets}
+                  selectedMarketId={state.selectedMarketId}
+                  onMarketChange={handlers.handleMarketChange}
                   enabledLanguages={state.enabledLanguages}
                   isLoadingData={state.isLoadingData}
                   validationOverlays={validationOverlays}
                   validationVersion={helpers.validationVersion}
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
+                  disableBulkActions={isEmbedTechnical}
                   onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
                   sendImageToAI={state.sendImageToAI}
                   images={state.images}
@@ -548,6 +654,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
                     sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
+                    reloadItemTooltip: t.content?.reloadItemTooltip,
+                    allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
+                    marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                    marketTooltip: t.content?.market?.tooltip,
+                    marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
+                    marketDisabledReason,
                   }}
                 />
               </div>
@@ -564,11 +676,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     contentType={config.contentType}
                     hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
                     onLanguageChange={handlers.handleLanguageChange}
+                    markets={state.markets}
+                    selectedMarketId={state.selectedMarketId}
+                    onMarketChange={handlers.handleMarketChange}
                     enabledLanguages={state.enabledLanguages}
                     onToggleLanguage={handlers.handleToggleLanguage}
                     onTranslateAll={handlers.handleTranslateAll}
                     isTranslating={isAllLocalesActionRunning}
-                    showTranslateAll={true}
+                    showTranslateAll={!isEmbedTechnical}
                     showReloadButton={true}
                     isLoadingData={state.isLoadingData}
                     validationOverlays={validationOverlays}
@@ -577,6 +692,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                       translateAll: t.content?.translateAll || "🌍 Translate All",
                       translating: t.content?.translating || "Translating...",
+                      allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
+                      marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
+                      marketTooltip: t.content?.market?.tooltip,
+                      marketPrimaryDisabledHint: t.content?.market?.primaryDisabledHint,
+                      marketDisabledReason,
                     }}
                   />
                 </Card>
@@ -590,7 +710,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     <InlineStack gap="200">
                       {state.currentLanguage === primaryLocale ? (
                         <>
-                          {/* Primary locale: Translate to ALL foreign languages */}
+                          {/* Primary locale: Translate to ALL foreign languages.
+                              Hidden for app-embed technical groups — translating
+                              CSS selectors / config would break the embed. */}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleTranslateAll}
                             loading={isAllLocalesActionRunning}
@@ -601,8 +724,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
-                          {/* Clear All: hidden for templates when primary edit is not enabled */}
-                          {!(config.contentType === 'templates' && !ENABLE_THEME_PRIMARY_EDIT) && (
+                          )}
+                          {/* Clear All: hidden for templates when primary edit is not
+                              enabled, and for app-embed technical groups. */}
+                          {!isEmbedTechnical && !(isThemeContentType(config.contentType) && !ENABLE_THEME_PRIMARY_EDIT) && (
                             <Button
                               onClick={handlers.handleClearAllClick}
                               size="slim"
@@ -623,7 +748,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         </>
                       ) : (
                         <>
-                          {/* Foreign locale: Translate ONLY this locale */}
+                          {/* Foreign locale: Translate ONLY this locale. Hidden for
+                              app-embed technical groups (locked in every locale). */}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleTranslateAllForLocale}
                             loading={isPerLocaleActionRunning || isAllLocalesActionRunning}
@@ -634,6 +761,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? (t.content?.translating || "Translating...")
                               : (t.content?.translateAll || "🌍 Translate All")}
                           </Button>
+                          )}
+                          {!isEmbedTechnical && (
                           <Button
                             onClick={handlers.handleClearAllForLocaleClick}
                             size="slim"
@@ -641,6 +770,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           >
                             🗑️ {t.content?.clearAll || "Clear All"}
                           </Button>
+                          )}
                         </>
                       )}
                     </InlineStack>
@@ -652,6 +782,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         resourceId={selectedItem.id}
                         resourceType={getResourceType(config.contentType)}
                         locale={state.currentLanguage}
+                        tooltip={t.content?.reloadItemTooltip}
                         onReloadComplete={handleReloadComplete}
                         onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
                         revalidator={revalidator}
@@ -771,10 +902,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
                     {/* Dynamic Fields */}
                     {!isFieldsLoading && (() => {
-                      // Template primary locale: read-only when themeFilesUpsert is not enabled
-                      const isTemplatePrimaryReadOnly = config.contentType === 'templates'
+                      // Primary-language editing writes to a theme file
+                      // (themeFilesUpsert), which only exists for the `theme`
+                      // domain (contentType "templates"). It is read-only when:
+                      //  - themeFilesUpsert is not enabled (templates), OR
+                      //  - the rubric is a resource-backed theme-content family
+                      //    member (System/Versand/Abo-Pläne/Filter) — those have
+                      //    no theme file, so their original lives in Shopify admin
+                      //    and the server rejects primary saves for them.
+                      const isTemplatePrimaryReadOnly = isThemeContentType(config.contentType)
                         && state.currentLanguage === primaryLocale
-                        && !ENABLE_THEME_PRIMARY_EDIT;
+                        && (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates");
+
+                      // App-embed technical fields are locked in every locale.
+                      const isFieldReadOnly = isTemplatePrimaryReadOnly || isEmbedTechnical;
 
                       return fieldDefinitions.map((field) => {
                         if (field.type === "image-gallery" && imageGalleryReplacement) {
@@ -792,20 +933,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
                           isDataLoading={!state.isInitialDataReady}
                           sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                          disableGeneration={config.contentType === 'templates'}
+                          disableGeneration={isThemeContentType(config.contentType)}
                           isFallbackValue={state.fallbackFields?.has(field.key) || false}
                           fieldError={state.fieldErrors?.[field.key]}
-                          readOnly={isTemplatePrimaryReadOnly}
-                          onGenerateAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
-                          onFormatAI={isTemplatePrimaryReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
-                          onTranslate={field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined}
-                          onTranslateToAllLocales={field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined}
-                          onCopy={field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined}
-                          onCopyToAllLocales={field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined}
+                          readOnly={isFieldReadOnly}
+                          embedTechnical={isEmbedTechnical}
+                          selectedMarketId={state.selectedMarketId}
+                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
+                          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
+                          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
+                          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+                          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
+                          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
                           onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
                           onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
                           onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                          onClear={isTemplatePrimaryReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
+                          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
                           htmlMode={state.htmlModes[field.key] || "rendered"}
                           onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
                           shopLocales={shopLocales}
@@ -871,6 +1014,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       currentLanguage={state.currentLanguage}
                       shopLocales={shopLocales}
                       translations={subResourceState.optionTranslations}
+                      fallbackResourceIds={subResourceState.fallbackResourceIds}
                       onTranslate={subResourceHandlers.translateOption}
                       onTranslateField={subResourceHandlers.translateOptionField}
                       onCopyField={subResourceHandlers.copyOptionField}
@@ -916,6 +1060,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.metafieldTranslations}
+                      fallbackResourceIds={subResourceState.fallbackResourceIds}
                       onTranslate={subResourceHandlers.translateMetafield}
                       onMetafieldChange={subResourceHandlers.handleMetafieldChange}
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}
@@ -933,13 +1078,60 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               </div>
             </>
           ) : (
-            <Card padding="600">
-              <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                <Text as="p" variant="headingLg" tone="subdued">
-                  {t.content?.selectFromList || "Select an item from the list"}
-                </Text>
-              </div>
-            </Card>
+            // Empty state fills the editor column so it matches the item-list
+            // column height when nothing is selected (both equal height when
+            // empty). The injected style forces the Polaris Card to full height
+            // and vertically centers the hint — mirrors UnifiedItemList's
+            // full-height card pattern. The item-list height is left untouched.
+            <div className="unified-editor-empty" style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <style dangerouslySetInnerHTML={{ __html: `
+                .unified-editor-empty > .Polaris-Card {
+                  height: 100% !important;
+                  display: flex !important;
+                  flex-direction: column !important;
+                }
+                .unified-editor-empty .Polaris-Card > div {
+                  flex: 1 !important;
+                  display: flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                }
+              ` }} />
+              <Card padding="600">
+                <div style={{ textAlign: "center", padding: "2rem" }}>
+                  {themeSelector && (items.length === 0 || themeSelector.needsThemeSync) ? (
+                    // Theme-Auswahl: the selected theme has no content in this tab.
+                    // Before a sync attempt this reads as "not synced yet" + a
+                    // primary sync button; AFTER an attempt that still returns
+                    // nothing, it reads as "genuinely empty" + a secondary retry,
+                    // so the "not synced" text doesn't get stuck forever on a theme
+                    // that simply has no entries here.
+                    <BlockStack gap="400" inlineAlign="center">
+                      <Text as="p" variant="headingMd" tone="subdued">
+                        {syncAttempted
+                          ? (t.content?.themeNoEntries || "No entries for this theme in this section.")
+                          : (t.content?.themeSwitchNeedsSync || "This theme hasn't been synced yet.")}
+                      </Text>
+                      {revalidator && (
+                        <Button
+                          variant={syncAttempted ? "secondary" : "primary"}
+                          loading={isDiscovering}
+                          onClick={handleSyncAll}
+                        >
+                          {syncAttempted
+                            ? (t.content?.themeSyncRetry || "Sync again")
+                            : (t.content?.themeSyncNow || "Load all entries now")}
+                        </Button>
+                      )}
+                    </BlockStack>
+                  ) : (
+                    <Text as="p" variant="headingLg" tone="subdued">
+                      {t.content?.selectFromList || "Select an item from the list"}
+                    </Text>
+                  )}
+                </div>
+              </Card>
+            </div>
           )}
         </div>
 
@@ -1154,7 +1346,32 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
   return "";
 }
 
+/**
+ * contentType → the `types` value for POST /api/sync-content, used by the
+ * list-level "sync from Shopify" (discovery) button. `products` is special-cased
+ * to its own /api/sync-products endpoint by the caller. Content types absent
+ * here have no full-discovery endpoint and fall back to a plain revalidate.
+ */
+const SYNC_CONTENT_TYPE: Record<string, string> = {
+  collections: "collections",
+  blogs: "articles",
+  pages: "pages",
+  policies: "policies",
+  templates: "themes",
+  metaobjects: "metaobjects",
+  system: "system",
+  delivery: "delivery",
+  onlineStoreExtras: "onlineStoreExtras",
+  sellingPlans: "sellingPlans",
+};
+
 function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
+  // The whole theme-content family (templates + system / delivery / sellingPlans
+  // / onlineStoreExtras) reloads through the single-group theme-content path
+  // (api.sync-single-resource → syncSingleThemeGroup, which is now domain-aware).
+  // Without this, non-templates rubrics posted their raw contentType and the
+  // route rejected it ("Unknown resource type: sellingPlans").
+  if (isThemeContentType(contentType)) return "templates";
   const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
     blogs: "article",
     pages: "page",

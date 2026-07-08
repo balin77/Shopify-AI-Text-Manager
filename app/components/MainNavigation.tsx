@@ -1,5 +1,5 @@
 import { useLocation, useMatches, useNavigation } from "@remix-run/react";
-import { InlineStack, Text, Banner, ButtonGroup, Button, Tooltip, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
+import { InlineStack, Text, ButtonGroup, Button, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -11,7 +11,9 @@ import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
+import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
+import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
@@ -30,7 +32,6 @@ export function MainNavigation() {
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
-  const [navHeight, setNavHeight] = useState(73);
   const notifiedTaskIds = useRef<Set<string>>(new Set());
   const isMountedRef = useRef(true);
 
@@ -163,8 +164,7 @@ export function MainNavigation() {
     const updateHeight = () => {
       if (navRef.current && isMountedRef.current) {
         const height = navRef.current.offsetHeight;
-        setNavHeight(height);
-        setMainNavHeight(height); // Update context for other components
+        setMainNavHeight(height); // Publish for downstream sticky elements
       }
     };
 
@@ -215,9 +215,13 @@ export function MainNavigation() {
     return `${h}:${m}`;
   };
 
+  // Level 1 is slimmed to high-level sections (Plan §3.4): "Inhalte" subsumes the
+  // old Products + Other-Content tabs; the rubric/content-type structure lives in
+  // RubricNavigation (Level 2) + ContentTypeNavigation (Level 3). "Inhalte" lands
+  // on Produkte (the first Katalog entry).
+  const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
-    { id: "products", label: t.nav.products, path: "/app/products" },
-    { id: "content", label: t.nav.otherContent, path: "/app/collections" },
+    { id: "content", label: navContentLabel, path: "/app/products" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
@@ -248,30 +252,26 @@ export function MainNavigation() {
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
-  // Content types for mobile menu (wenn auf Content-Seiten)
-  const isOnContentPage = location.pathname.startsWith("/app/collections") ||
-    location.pathname.startsWith("/app/blog") ||
-    location.pathname.startsWith("/app/metaobjects") ||
-    location.pathname.startsWith("/app/pages") ||
-    location.pathname.startsWith("/app/policies") ||
-    location.pathname.startsWith("/app/menus") ||
-    location.pathname.startsWith("/app/templates") ||
-    location.pathname.startsWith("/app/direct-translations");
+  // Content types for the mobile drawer (Plan §3.6: Level 2 + Level 3 collapse
+  // into the hamburger menu). Flattened from the shared rubric config so it
+  // stays in sync with the desktop bars.
+  const isOnContentPage = isContentPath(location.pathname);
 
-  const contentTypes = [
-    { id: "collections", label: t.content.collections, icon: "📂", path: "/app/collections" },
-    { id: "blogs", label: t.content.blogs, icon: "📝", path: "/app/blog" },
-    { id: "metaobjects", label: t.content.metaobjects || "Metaobjects", icon: "🔷", path: "/app/metaobjects" },
-    { id: "pages", label: t.content.pages, icon: "📄", path: "/app/pages" },
-    { id: "policies", label: t.content.policies, icon: "📋", path: "/app/policies" },
-    { id: "menus", label: t.content.menus, icon: "🍔", path: "/app/menus" },
-    { id: "templates", label: t.content.templates, icon: "🧪", path: "/app/templates" },
-    { id: "directTranslations", label: t.content.directTranslations || "Direct translations", icon: "🌐", path: "/app/direct-translations" },
-  ];
+  const mobileContentLabels = t.content as unknown as Record<string, string>;
+  const contentTypes = CONTENT_RUBRICS.flatMap((r) =>
+    r.entries.map((e) => ({
+      id: e.id,
+      label: mobileContentLabels?.[e.labelKey] || e.id,
+      icon: e.icon,
+      path: e.path,
+    }))
+  );
 
   return (
     <>
-      {/* Fixed Navigation */}
+      {/* Sticky Navigation — takes real space in document flow, so no spacer
+          is needed and the bar doesn't briefly overlap content during hydration
+          like a position:fixed bar would. */}
       <nav
         ref={navRef}
         role="navigation"
@@ -279,7 +279,7 @@ export function MainNavigation() {
         style={{
           background: "white",
           borderBottom: "1px solid #e1e3e5",
-          position: "fixed",
+          position: "sticky",
           top: 0,
           left: 0,
           right: 0,
@@ -287,11 +287,11 @@ export function MainNavigation() {
         }}
       >
         {/* Einzeilige Leiste mit Navigation, InfoBox und Plan Selector */}
-        <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "1rem", gap: "2rem", flexWrap: "wrap" }}>
+        <div className="main-navigation" style={{ display: "flex", alignItems: "center", padding: "0.5rem 1rem", gap: "2rem", flexWrap: "wrap" }}>
           {/* Mobile Menu (Hamburger) - nur auf Mobile sichtbar */}
           <div className="mobile-only">
             <MobileMenu
-              activeTab={tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
+              activeTab={isContentPath(location.pathname) ? "content" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
               productCount={productCount}
               maxProducts={maxProducts}
               contentTypes={contentTypes}
@@ -316,9 +316,10 @@ export function MainNavigation() {
           <div className="desktop-only">
           <InlineStack gap="400" blockAlign="center">
             {tabs.map((tab) => {
-              const isActive = location.pathname.startsWith(tab.path);
-              const showProductCount = tab.id === "products" && productCount !== undefined;
-              const isAtLimit = showProductCount && productCount >= maxProducts && maxProducts !== Infinity;
+              // "Inhalte" is active on ANY content page, not just /app/products.
+              const isActive = tab.id === "content"
+                ? isContentPath(location.pathname)
+                : location.pathname.startsWith(tab.path);
               const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
 
               const tabContent = (
@@ -327,11 +328,11 @@ export function MainNavigation() {
                   onClick={() => handleClick(tab.path, tab.id)}
                   role="tab"
                   aria-selected={isActive}
-                  aria-label={`Navigate to ${tab.label}${showProductCount ? ` (${productCount} products)` : ''}${showTaskCount ? ` (${runningTaskCount} running tasks)` : ''}`}
+                  aria-label={`Navigate to ${tab.label}${showTaskCount ? ` (${runningTaskCount} running tasks)` : ''}`}
                   aria-current={isActive ? "page" : undefined}
                   style={{
                     textDecoration: "none",
-                    padding: "1rem 0.5rem",
+                    padding: "0.4rem 0.5rem",
                     transition: "border-color 0.2s",
                     background: "none",
                     border: "none",
@@ -348,43 +349,12 @@ export function MainNavigation() {
                     >
                       {tab.label}
                     </Text>
-                    {showProductCount && (
-                      <Text
-                        as="span"
-                        variant="bodySm"
-                        tone={isAtLimit ? "critical" : "subdued"}
-                      >
-                        ({productCount})
-                      </Text>
-                    )}
                     {showTaskCount && (
-                      <div
-                        style={{
-                          backgroundColor: "#0066CC",
-                          color: "white",
-                          borderRadius: "10px",
-                          padding: "2px 8px",
-                          fontSize: "12px",
-                          fontWeight: "600",
-                          minWidth: "20px",
-                          textAlign: "center",
-                        }}
-                      >
-                        {runningTaskCount}
-                      </div>
+                      <RunningTasksPreview count={runningTaskCount} />
                     )}
                   </InlineStack>
                 </button>
               );
-
-              // Wrap with tooltip if at product limit
-              if (isAtLimit && plan === "free") {
-                return (
-                  <Tooltip key={tab.id} content={t.products.upgradeForMoreProducts}>
-                    {tabContent}
-                  </Tooltip>
-                );
-              }
 
               return tabContent;
             })}
@@ -730,9 +700,6 @@ export function MainNavigation() {
           </div>
         </div>
       </nav>
-
-      {/* Dynamic spacer to prevent content from going under fixed navigation */}
-      <div style={{ height: `${navHeight}px` }} aria-hidden="true" />
     </>
   );
 }

@@ -13,8 +13,6 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { MainNavigation } from "../components/MainNavigation";
-import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -133,7 +131,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function MetaobjectsPage() {
-  const { metaobjects, shopLocales, primaryLocale, error, aiSettings } = useLoaderData<typeof loader>();
+  const { metaobjects, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const entryFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -154,6 +152,7 @@ export default function MetaobjectsPage() {
         ...item,
         metaobjects: loaded.metaobjects,
         translations: loaded.translations,
+        marketTranslations: loaded.marketTranslations,
         contentCount: loaded.contentCount ?? item.contentCount,
       };
     });
@@ -178,6 +177,7 @@ export default function MetaobjectsPage() {
     items: augmentedMetaobjects as unknown as ContentItem[],
     shopLocales,
     primaryLocale,
+    markets,
     fetcher,
     showInfoBox,
     t,
@@ -235,9 +235,7 @@ export default function MetaobjectsPage() {
 
   return (
     <PlanAccessGate contentType="metaobjects">
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden" }}>
-      <MainNavigation />
-      <ContentTypeNavigation />
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={METAOBJECTS_CONFIG}
