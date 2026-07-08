@@ -127,9 +127,9 @@ export const GET_PAGES = `#graphql
 `;
 
 export const GET_TRANSLATIONS = `#graphql
-  query getTranslations($resourceId: ID!, $locale: String!) {
+  query getTranslations($resourceId: ID!, $locale: String!, $marketId: ID) {
     translatableResource(resourceId: $resourceId) {
-      translations(locale: $locale) {
+      translations(locale: $locale, marketId: $marketId) {
         key
         value
         locale

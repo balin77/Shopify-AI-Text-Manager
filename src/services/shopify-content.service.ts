@@ -23,11 +23,14 @@ export class ShopifyContentService {
   }
 
   /**
-   * Load translations for a specific resource and locale
+   * Load translations for a specific resource and locale.
+   *
+   * @param marketId Market GID for market-specific translations; "" (default) =
+   *                 global layer. Mirrors the marketId param on saveTranslations.
    */
-  async loadTranslations(resourceId: string, locale: string) {
+  async loadTranslations(resourceId: string, locale: string, marketId: string = "") {
     const response = await this.admin.graphql(GET_TRANSLATIONS, {
-      variables: { resourceId, locale }
+      variables: { resourceId, locale, marketId: marketId || null }
     });
 
     if (!response.ok) {

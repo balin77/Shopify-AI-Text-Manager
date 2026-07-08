@@ -11,7 +11,8 @@
 import { db } from '../db.server';
 import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale } from './sync-types';
-import { fetchShopLocales } from './sync-utils';
+import type { MarketInfo } from '~/types/content-editor.types';
+import { fetchShopLocales, fetchShopMarkets, marketLayersForLocale } from './sync-utils';
 import { isMetaobjectLabelField } from '~/constants/shopifyFields';
 
 interface MetaobjectDefinition {
@@ -45,11 +46,21 @@ const TRANSLATION_BATCH_SIZE = 250;
 
 export class MetaobjectSyncService {
   private cachedLocales: ShopLocale[] | null = null;
+  /** Markets memo — loaded once per service instance (one instance ≈ one sync run). */
+  private marketsPromise: Promise<MarketInfo[]> | null = null;
 
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
   ) {}
+
+  /** Shop markets for the market-aware read-back; [] when scope/markets missing. */
+  private getMarkets(): Promise<MarketInfo[]> {
+    if (!this.marketsPromise) {
+      this.marketsPromise = fetchShopMarkets(this.admin.graphql.bind(this.admin));
+    }
+    return this.marketsPromise;
+  }
 
   /**
    * Full sync: Sync all metaobject definitions and metaobjects
@@ -350,6 +361,9 @@ export class MetaobjectSyncService {
 
     if (foreignLocales.length === 0) return 0;
 
+    // Market-aware read-back: [] when scope/markets missing → global-only.
+    const markets = await this.getMarkets();
+
     const metaobjectIds = metaobjects.map(m => m.id);
     let translationCount = 0;
 
@@ -360,92 +374,96 @@ export class MetaobjectSyncService {
     }
 
     for (const locale of foreignLocales) {
-      for (const batch of batches) {
-        try {
-          const response = await this.admin.graphql(
-            `#graphql
-              query getMetaobjectTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
-                translatableResourcesByIds(first: ${batch.length}, resourceIds: $resourceIds) {
-                  edges {
-                    node {
-                      resourceId
-                      translations(locale: $locale) {
-                        key
-                        value
-                        locale
+      // Global layer ("") plus one pass per market serving this locale
+      for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+        for (const batch of batches) {
+          try {
+            const response = await this.admin.graphql(
+              `#graphql
+                query getMetaobjectTranslationsBulk($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                  translatableResourcesByIds(first: ${batch.length}, resourceIds: $resourceIds) {
+                    edges {
+                      node {
+                        resourceId
+                        translations(locale: $locale, marketId: $marketId) {
+                          key
+                          value
+                          locale
+                        }
                       }
                     }
                   }
-                }
-              }`,
-            { variables: { resourceIds: batch, locale: locale.locale } }
-          );
+                }`,
+              { variables: { resourceIds: batch, locale: locale.locale, marketId: marketId || null } }
+            );
 
-          const data = await response.json();
+            const data = await response.json();
 
-          if (data.errors) {
-            logger.warn(`[MetaobjectSync] GraphQL error fetching bulk translations for locale ${locale.locale}:`, {
-              context: 'MetaobjectSync',
-              errors: data.errors[0]?.message
-            });
-            continue;
-          }
+            if (data.errors) {
+              logger.warn(`[MetaobjectSync] GraphQL error fetching bulk translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, {
+                context: 'MetaobjectSync',
+                errors: data.errors[0]?.message
+              });
+              continue;
+            }
 
-          const resources = data.data?.translatableResourcesByIds?.edges || [];
+            const resources = data.data?.translatableResourcesByIds?.edges || [];
 
-          // Collect all upsert operations for this batch
-          const upsertOps = [];
+            // Collect all upsert operations for this batch
+            const upsertOps = [];
 
-          for (const edge of resources) {
-            if (!edge.node?.resourceId) continue;
-            const metaobjectId = edge.node.resourceId;
-            const translations = edge.node.translations || [];
+            for (const edge of resources) {
+              if (!edge.node?.resourceId) continue;
+              const metaobjectId = edge.node.resourceId;
+              const translations = edge.node.translations || [];
 
-            for (const trans of translations) {
-              if (!trans.value) continue;
-              // Only sync translatable field keys
-              if (isMetaobjectLabelField(trans.key)) {
-                upsertOps.push(
-                  db.metaobjectTranslation.upsert({
-                    where: {
-                      shop_metaobjectId_key_locale_marketId: {
-                        marketId: "",
+              for (const trans of translations) {
+                if (!trans.value) continue;
+                // Only sync translatable field keys
+                if (isMetaobjectLabelField(trans.key)) {
+                  upsertOps.push(
+                    db.metaobjectTranslation.upsert({
+                      where: {
+                        shop_metaobjectId_key_locale_marketId: {
+                          marketId,
+                          shop: this.shop,
+                          metaobjectId,
+                          key: trans.key,
+                          locale: trans.locale
+                        }
+                      },
+                      create: {
                         shop: this.shop,
                         metaobjectId,
+                        type,
                         key: trans.key,
-                        locale: trans.locale
+                        value: trans.value,
+                        locale: trans.locale,
+                        outdated: false,
+                        marketId
+                      },
+                      update: {
+                        value: trans.value,
+                        outdated: false,
+                        updatedAt: new Date()
                       }
-                    },
-                    create: {
-                      shop: this.shop,
-                      metaobjectId,
-                      type,
-                      key: trans.key,
-                      value: trans.value,
-                      locale: trans.locale,
-                      outdated: false
-                    },
-                    update: {
-                      value: trans.value,
-                      outdated: false,
-                      updatedAt: new Date()
-                    }
-                  })
-                );
+                    })
+                  );
+                }
               }
             }
-          }
 
-          // Execute all upserts in a single transaction
-          if (upsertOps.length > 0) {
-            await db.$transaction(upsertOps);
-            translationCount += upsertOps.length;
+            // Execute all upserts in a single transaction
+            if (upsertOps.length > 0) {
+              await db.$transaction(upsertOps);
+              translationCount += upsertOps.length;
+            }
+          } catch (error) {
+            logger.warn(`[MetaobjectSync] Error fetching bulk translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, {
+              context: 'MetaobjectSync',
+              error: error instanceof Error ? error.message : String(error)
+            });
           }
-        } catch (error) {
-          logger.warn(`[MetaobjectSync] Error fetching bulk translations for locale ${locale.locale}:`, {
-            context: 'MetaobjectSync',
-            error: error instanceof Error ? error.message : String(error)
-          });
         }
       }
     }

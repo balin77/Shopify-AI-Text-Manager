@@ -54,6 +54,12 @@ vi.mock('~/utils/logger.server', () => ({
 vi.mock('~/services/sync-utils', () => ({
   fetchShopLocales: vi.fn().mockResolvedValue([{ locale: 'en', primary: true }]),
   fetchAllTranslations: vi.fn().mockResolvedValue([]),
+  fetchShopMarkets: vi.fn().mockResolvedValue([]),
+  // Pure helpers — mirror the real implementations so market-aware code paths
+  // behave exactly like production with zero markets.
+  marketLayersForLocale: (markets: { id: string; localeCodes: string[] }[], locale: string) =>
+    ['', ...markets.filter((m) => m.localeCodes.length === 0 || m.localeCodes.includes(locale)).map((m) => m.id)],
+  fetchedMarketLayers: (markets: { id: string }[]) => ['', ...markets.map((m) => m.id)],
 }));
 
 vi.mock('~/services/shopify-api-gateway.service', () => {
