@@ -100,6 +100,50 @@ export async function handleLoadSubResourceTranslations(
           }
         });
       }
+
+      // Market layers (read-back supplement): for the ids that had no DB row,
+      // also pull each market's overrides for this locale and persist them so
+      // the loader's marketTranslations pipeline finds them on the next
+      // navigation. The RESPONSE stays global-only — the market layer reaches
+      // the editor via the loader + client overlay, not via this payload.
+      try {
+        const { markets } = await shopifyContentService.loadMarkets();
+        const marketsForLocale = markets.filter(
+          (m) => m.localeCodes.length === 0 || m.localeCodes.includes(locale)
+        );
+        for (const market of marketsForLocale) {
+          for (let i = 0; i < missingIds.length; i += batchSize) {
+            const batch = missingIds.slice(i, i + batchSize);
+            const results = await Promise.allSettled(
+              batch.map(rid => shopifyContentService.loadTranslations(rid, locale, market.id))
+            );
+            results.forEach((result, idx) => {
+              if (result.status === "fulfilled" && result.value) {
+                const rid = batch[idx];
+                const gidMatch = rid.match(/gid:\/\/shopify\/(\w+)\//);
+                const resourceType = gidMatch ? gidMatch[1] : "Unknown";
+                for (const t of result.value) {
+                  dbWrites.push(
+                    db.contentTranslation.upsert({
+                      where: { shop_resourceId_key_locale_marketId: { marketId: market.id, shop: session.shop, resourceId: rid, key: t.key, locale } },
+                      create: { shop: session.shop, resourceId: rid, resourceType, key: t.key, value: t.value, locale, marketId: market.id },
+                      update: { value: t.value },
+                    })
+                  );
+                }
+              }
+            });
+          }
+        }
+      } catch (marketErr) {
+        // Market read-back is best-effort — the global supplement above must
+        // never fail because markets could not be loaded.
+        logger.warn('[UnifiedContent] loadSubResourceTranslations market supplement failed', {
+          context: 'UnifiedContent',
+          error: marketErr instanceof Error ? marketErr.message : String(marketErr),
+        });
+      }
+
       // Fire DB writes in parallel (non-blocking for the response)
       if (dbWrites.length > 0) {
         await Promise.allSettled(dbWrites);

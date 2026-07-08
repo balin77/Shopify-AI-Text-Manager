@@ -36,6 +36,11 @@ const mockDb = {
   },
   productImageAltTranslation: {
     create: vi.fn().mockResolvedValue({}),
+    createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    // No pre-existing market alt rows → nothing to preserve across the
+    // ProductImage delete-then-recreate.
+    findMany: vi.fn().mockResolvedValue([]),
   },
   productOption: {
     deleteMany: vi.fn().mockResolvedValue({ count: 0 }),

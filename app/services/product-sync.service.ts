@@ -11,7 +11,8 @@ import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server
 import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-delete-lock.server';
 import { withDbRaceRetry } from '~/utils/db-retry.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
-import { fetchShopLocales } from './sync-utils';
+import type { MarketInfo } from '~/types/content-editor.types';
+import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 
 /** GraphQL error shape */
@@ -109,10 +110,21 @@ interface ShopifyProductData {
 }
 
 export class ProductSyncService {
+  /** Markets memo — loaded once per service instance (one instance ≈ one sync run). */
+  private marketsPromise: Promise<MarketInfo[]> | null = null;
+
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
   ) {}
+
+  /** Shop markets for the market-aware read-back; [] when scope/markets missing. */
+  private getMarkets(): Promise<MarketInfo[]> {
+    if (!this.marketsPromise) {
+      this.marketsPromise = fetchShopMarkets(this.admin.graphql.bind(this.admin));
+    }
+    return this.marketsPromise;
+  }
 
   /**
    * Bulk-sync all products with translations, images, options, and metafields.
@@ -307,6 +319,17 @@ export class ProductSyncService {
           .map((edge) => edge.node) ?? [];
 
         if (mediaImages.length > 0) {
+          // Deleting ProductImage rows CASCADES away every
+          // ProductImageAltTranslation (global AND market layers). Snapshot
+          // them and re-attach to the recreated images (matched by mediaId)
+          // so translations survive the delete-then-recreate. Phase 3c then
+          // refreshes the layers it successfully fetches (delete+recreate
+          // scoped per layer), so preserved rows never go permanently stale.
+          const preservedAltRows = await tx.productImageAltTranslation.findMany({
+            where: { image: { productId: product.id } },
+            select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
+          });
+
           await tx.productImage.deleteMany({ where: { productId: product.id } });
           await tx.productImage.createMany({
             data: mediaImages.map((media, index) => ({
@@ -317,6 +340,23 @@ export class ProductSyncService {
               position: index,
             })),
           });
+
+          if (preservedAltRows.length > 0) {
+            const newImages = await tx.productImage.findMany({
+              where: { productId: product.id },
+              select: { id: true, mediaId: true },
+            });
+            const newIdByMediaId = new Map(newImages.filter((i) => i.mediaId).map((i) => [i.mediaId as string, i.id]));
+            const restoreData = preservedAltRows.flatMap((row) => {
+              const newImageId = row.image.mediaId ? newIdByMediaId.get(row.image.mediaId) : undefined;
+              return newImageId
+                ? [{ imageId: newImageId, locale: row.locale, altText: row.altText, marketId: row.marketId }]
+                : [];
+            });
+            if (restoreData.length > 0) {
+              await tx.productImageAltTranslation.createMany({ data: restoreData, skipDuplicates: true });
+            }
+          }
         }
       }
 
@@ -404,6 +444,8 @@ export class ProductSyncService {
 
         const shopLocales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
         const nonPrimaryLocales = shopLocales.filter((l) => !l.primary && l.published);
+        // Market-aware read-back: [] when scope/markets missing → global-only.
+        const markets = await this.getMarkets();
 
         if (nonPrimaryLocales.length > 0) {
           const productIds = allProducts.map((p) => p.id);
@@ -427,68 +469,73 @@ export class ProductSyncService {
               value: string;
               locale: string;
               digest: string | null;
+              marketId: string;
             }> = [];
 
-            let batchIndex = 0;
-            for (const batch of batches) {
-              batchIndex++;
-              checkAborted();
-              onProgress?.({ overallPercent: localeProgress, detailCurrent: batchIndex, detailTotal: batches.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
-              try {
-                const response = await this.admin.graphql(
-                  `#graphql
-                    query getBulkProductTranslations($resourceIds: [ID!]!, $locale: String!) {
-                      translatableResourcesByIds(first: ${BATCH_SIZE}, resourceIds: $resourceIds) {
-                        edges {
-                          node {
-                            resourceId
-                            translatableContent {
-                              key
-                              digest
-                            }
-                            translations(locale: $locale) {
-                              key
-                              value
-                              locale
+            // Global layer ("") plus one pass per market serving this locale
+            for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+              let batchIndex = 0;
+              for (const batch of batches) {
+                batchIndex++;
+                checkAborted();
+                onProgress?.({ overallPercent: localeProgress, detailCurrent: batchIndex, detailTotal: batches.length, message: `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})` });
+                try {
+                  const response = await this.admin.graphql(
+                    `#graphql
+                      query getBulkProductTranslations($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                        translatableResourcesByIds(first: ${BATCH_SIZE}, resourceIds: $resourceIds) {
+                          edges {
+                            node {
+                              resourceId
+                              translatableContent {
+                                key
+                                digest
+                              }
+                              translations(locale: $locale, marketId: $marketId) {
+                                key
+                                value
+                                locale
+                              }
                             }
                           }
                         }
+                      }`,
+                    { variables: { resourceIds: batch, locale: locale.locale, marketId: marketId || null } }
+                  );
+
+                  const data = await response.json() as TranslatableResourcesByIdsResponse;
+
+                  if (data.errors) {
+                    logger.warn(`[ProductSync] GraphQL error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+                    continue;
+                  }
+
+                  const resources = data.data?.translatableResourcesByIds?.edges ?? [];
+                  for (const edge of resources) {
+                    const node = edge.node;
+                    const digestMap = new Map<string, string>();
+                    for (const content of node.translatableContent ?? []) {
+                      if (content.digest) {
+                        digestMap.set(content.key, content.digest);
                       }
-                    }`,
-                  { variables: { resourceIds: batch, locale: locale.locale } }
-                );
-
-                const data = await response.json() as TranslatableResourcesByIdsResponse;
-
-                if (data.errors) {
-                  logger.warn(`[ProductSync] GraphQL error fetching translations for locale ${locale.locale}:`, data.errors[0]?.message);
-                  continue;
-                }
-
-                const resources = data.data?.translatableResourcesByIds?.edges ?? [];
-                for (const edge of resources) {
-                  const node = edge.node;
-                  const digestMap = new Map<string, string>();
-                  for (const content of node.translatableContent ?? []) {
-                    if (content.digest) {
-                      digestMap.set(content.key, content.digest);
+                    }
+                    for (const t of node.translations ?? []) {
+                      if (t.value) {
+                        allTranslations.push({
+                          resourceId: node.resourceId,
+                          key: t.key,
+                          value: t.value,
+                          locale: t.locale ?? locale.locale,
+                          digest: digestMap.get(t.key) ?? null,
+                          marketId,
+                        });
+                      }
                     }
                   }
-                  for (const t of node.translations ?? []) {
-                    if (t.value) {
-                      allTranslations.push({
-                        resourceId: node.resourceId,
-                        key: t.key,
-                        value: t.value,
-                        locale: t.locale ?? locale.locale,
-                        digest: digestMap.get(t.key) ?? null,
-                      });
-                    }
-                  }
+                } catch (batchErr: unknown) {
+                  if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                  logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
-              } catch (batchErr: unknown) {
-                if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
-                logger.warn(`[ProductSync] Failed to fetch translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
               }
             }
 
@@ -502,6 +549,7 @@ export class ProductSyncService {
                   value: t.value,
                   locale: t.locale,
                   digest: t.digest,
+                  marketId: t.marketId,
                 })),
                 skipDuplicates: true,
               });
@@ -550,58 +598,62 @@ export class ProductSyncService {
                 key: string;
                 value: string;
                 locale: string;
+                marketId: string;
               }> = [];
 
-              let subBatchIndex = 0;
-              for (const batch of subBatches) {
-                subBatchIndex++;
-                checkAborted();
-                onProgress?.({ overallPercent: subProgress, detailCurrent: subBatchIndex, detailTotal: subBatches.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
-                try {
-                  const response = await this.admin.graphql(
-                    `#graphql
-                      query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
-                        translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
-                          edges {
-                            node {
-                              resourceId
-                              translations(locale: $locale) {
-                                key
-                                value
+              for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+                let subBatchIndex = 0;
+                for (const batch of subBatches) {
+                  subBatchIndex++;
+                  checkAborted();
+                  onProgress?.({ overallPercent: subProgress, detailCurrent: subBatchIndex, detailTotal: subBatches.length, message: `Fetching sub-resource translations: ${locale.name || locale.locale} (${subLocaleIndex}/${nonPrimaryLocales.length})` });
+                  try {
+                    const response = await this.admin.graphql(
+                      `#graphql
+                        query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                          translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                            edges {
+                              node {
+                                resourceId
+                                translations(locale: $locale, marketId: $marketId) {
+                                  key
+                                  value
+                                }
                               }
                             }
                           }
+                        }`,
+                      { variables: { resourceIds: batch, locale: locale.locale, marketId: marketId || null } }
+                    );
+
+                    const data = await response.json() as TranslatableResourcesByIdsResponse;
+
+                    if (data.errors) {
+                      logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+                      continue;
+                    }
+
+                    const resources = data.data?.translatableResourcesByIds?.edges ?? [];
+                    for (const edge of resources) {
+                      const resourceId = edge.node.resourceId;
+                      const resourceType = typeMap.get(resourceId) ?? "Unknown";
+                      for (const t of edge.node.translations ?? []) {
+                        if (t.value) {
+                          subTranslations.push({
+                            resourceId,
+                            resourceType,
+                            key: t.key,
+                            value: t.value,
+                            locale: locale.locale,
+                            marketId,
+                          });
                         }
-                      }`,
-                    { variables: { resourceIds: batch, locale: locale.locale } }
-                  );
-
-                  const data = await response.json() as TranslatableResourcesByIdsResponse;
-
-                  if (data.errors) {
-                    logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
-                    continue;
-                  }
-
-                  const resources = data.data?.translatableResourcesByIds?.edges ?? [];
-                  for (const edge of resources) {
-                    const resourceId = edge.node.resourceId;
-                    const resourceType = typeMap.get(resourceId) ?? "Unknown";
-                    for (const t of edge.node.translations ?? []) {
-                      if (t.value) {
-                        subTranslations.push({
-                          resourceId,
-                          resourceType,
-                          key: t.key,
-                          value: t.value,
-                          locale: locale.locale,
-                        });
                       }
                     }
+                  } catch (batchErr: unknown) {
+                    if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                    logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                   }
-                } catch (batchErr: unknown) {
-                  if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch sub-resource translation batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
 
@@ -615,6 +667,7 @@ export class ProductSyncService {
                     value: t.value,
                     locale: t.locale,
                     digest: null,
+                    marketId: t.marketId,
                   })),
                   skipDuplicates: true,
                 });
@@ -651,79 +704,117 @@ export class ProductSyncService {
               mediaBatches.push(allMediaIds.slice(i, i + MEDIA_BATCH_SIZE));
             }
 
-            const altTranslations: Array<{ imageId: string; locale: string; altText: string }> = [];
+            const altTranslations: Array<{ imageId: string; locale: string; altText: string; marketId: string }> = [];
+            // Layers we attempted vs. layers with at least one failed batch —
+            // only cleanly fetched layers are replaced in the DB below.
+            const attemptedAltLayers = new Set<string>();
+            const failedAltLayers = new Set<string>();
 
             let mediaLocaleIndex = 0;
             for (const locale of nonPrimaryLocales) {
               mediaLocaleIndex++;
               checkAborted();
 
-              let mediaBatchIndex = 0;
-              for (const batch of mediaBatches) {
-                mediaBatchIndex++;
-                checkAborted();
-                onProgress?.({ overallPercent: Math.round(90 + (mediaLocaleIndex / nonPrimaryLocales.length) * 7), detailCurrent: mediaBatchIndex, detailTotal: mediaBatches.length, message: `Fetching image translations: ${locale.name || locale.locale} (${mediaLocaleIndex}/${nonPrimaryLocales.length})` });
-                try {
-                  const response = await this.admin.graphql(
-                    `#graphql
-                      query getBulkImageAltTranslations($resourceIds: [ID!]!, $locale: String!) {
-                        translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
-                          edges {
-                            node {
-                              resourceId
-                              translations(locale: $locale) {
-                                key
-                                value
+              for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+                attemptedAltLayers.add(marketId);
+                let mediaBatchIndex = 0;
+                for (const batch of mediaBatches) {
+                  mediaBatchIndex++;
+                  checkAborted();
+                  onProgress?.({ overallPercent: Math.round(90 + (mediaLocaleIndex / nonPrimaryLocales.length) * 7), detailCurrent: mediaBatchIndex, detailTotal: mediaBatches.length, message: `Fetching image translations: ${locale.name || locale.locale} (${mediaLocaleIndex}/${nonPrimaryLocales.length})` });
+                  try {
+                    const response = await this.admin.graphql(
+                      `#graphql
+                        query getBulkImageAltTranslations($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                          translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                            edges {
+                              node {
+                                resourceId
+                                translations(locale: $locale, marketId: $marketId) {
+                                  key
+                                  value
+                                }
                               }
                             }
                           }
+                        }`,
+                      { variables: { resourceIds: batch, locale: locale.locale, marketId: marketId || null } }
+                    );
+
+                    const data = await response.json() as TranslatableResourcesByIdsResponse;
+                    if (data.errors) {
+                      logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+                      failedAltLayers.add(marketId);
+                      continue;
+                    }
+
+                    const resources = data.data?.translatableResourcesByIds?.edges ?? [];
+                    for (const edge of resources) {
+                      const mediaId = edge.node.resourceId;
+                      const translations = edge.node.translations ?? [];
+                      const altTranslation = translations.find((t: { key: string; value?: string }) => t.key === "alt");
+                      if (altTranslation?.value) {
+                        const dbId = mediaIdToDbId.get(mediaId);
+                        if (dbId) {
+                          altTranslations.push({
+                            imageId: dbId,
+                            locale: locale.locale,
+                            altText: altTranslation.value,
+                            marketId,
+                          });
                         }
-                      }`,
-                    { variables: { resourceIds: batch, locale: locale.locale } }
-                  );
-
-                  const data = await response.json() as TranslatableResourcesByIdsResponse;
-                  if (data.errors) {
-                    logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}:`, data.errors[0]?.message);
-                    continue;
-                  }
-
-                  const resources = data.data?.translatableResourcesByIds?.edges ?? [];
-                  for (const edge of resources) {
-                    const mediaId = edge.node.resourceId;
-                    const translations = edge.node.translations ?? [];
-                    const altTranslation = translations.find((t: { key: string; value?: string }) => t.key === "alt");
-                    if (altTranslation?.value) {
-                      const dbId = mediaIdToDbId.get(mediaId);
-                      if (dbId) {
-                        altTranslations.push({
-                          imageId: dbId,
-                          locale: locale.locale,
-                          altText: altTranslation.value,
-                        });
                       }
                     }
+                  } catch (batchErr: unknown) {
+                    if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
+                    logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
+                    failedAltLayers.add(marketId);
                   }
-                } catch (batchErr: unknown) {
-                  if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
-                  logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
                 }
               }
             }
 
-            if (altTranslations.length > 0) {
-              onProgress?.({ overallPercent: 97, message: `Saving ${altTranslations.length} image alt-text translations...` });
+            // Replace each CLEANLY fetched layer wholesale. writeProduct
+            // preserved the pre-sync alt rows across the image recreate, so a
+            // plain skipDuplicates insert would keep stale values; deleting
+            // only the succeeded layers keeps failed/un-fetched layers intact.
+            // Delete + recreate run in ONE transaction: if the insert fails
+            // (e.g. an image id vanished under a concurrent single-product
+            // sync → FK error), the delete rolls back and the old rows survive
+            // instead of leaving the succeeded layers empty.
+            const succeededAltLayers = [...attemptedAltLayers].filter((l) => !failedAltLayers.has(l));
+            const dbImageIds = [...mediaIdToDbId.values()];
+            const freshAltRows = altTranslations.filter((t) => !failedAltLayers.has(t.marketId));
 
-              await db.productImageAltTranslation.createMany({
-                data: altTranslations.map(t => ({
-                  imageId: t.imageId,
-                  locale: t.locale,
-                  altText: t.altText,
-                })),
-                skipDuplicates: true,
-              });
-
-              logger.debug(`[ProductSync] Saved ${altTranslations.length} image alt-text translations`);
+            if ((succeededAltLayers.length > 0 && dbImageIds.length > 0) || freshAltRows.length > 0) {
+              if (freshAltRows.length > 0) {
+                onProgress?.({ overallPercent: 97, message: `Saving ${freshAltRows.length} image alt-text translations...` });
+              }
+              try {
+                await db.$transaction(async (tx) => {
+                  if (succeededAltLayers.length > 0 && dbImageIds.length > 0) {
+                    await tx.productImageAltTranslation.deleteMany({
+                      where: { imageId: { in: dbImageIds }, marketId: { in: succeededAltLayers } },
+                    });
+                  }
+                  if (freshAltRows.length > 0) {
+                    await tx.productImageAltTranslation.createMany({
+                      data: freshAltRows.map(t => ({
+                        imageId: t.imageId,
+                        locale: t.locale,
+                        altText: t.altText,
+                        marketId: t.marketId,
+                      })),
+                      skipDuplicates: true,
+                    });
+                  }
+                });
+                logger.debug(`[ProductSync] Saved ${freshAltRows.length} image alt-text translations`);
+              } catch (altWriteErr: unknown) {
+                if (altWriteErr instanceof DOMException && altWriteErr.name === "AbortError") throw altWriteErr;
+                // Rolled back — old rows intact; next sync/reload refreshes them.
+                logger.warn(`[ProductSync] Alt-text translation write failed (rolled back):`, altWriteErr instanceof Error ? altWriteErr.message : String(altWriteErr));
+              }
             }
           }
         }
@@ -786,16 +877,18 @@ export class ProductSyncService {
         logger.debug(`[ProductSync] Product is ${productData.status}: ${productId} - syncing anyway with current status`);
       }
 
-      // 2. Fetch all available locales
+      // 2. Fetch all available locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.admin.graphql.bind(this.admin));
-      logger.debug(`[ProductSync] Found ${locales.length} locales`);
+      const markets = await this.getMarkets();
+      logger.debug(`[ProductSync] Found ${locales.length} locales, ${markets.length} market(s)`);
 
-      // 3. Fetch translations for all non-primary locales
+      // 3. Fetch translations for all non-primary locales (global + market layers)
       const foreignLocales = locales.filter((l) => !l.primary);
       const translationResult = await this.fetchAllTranslations(
         productId,
         foreignLocales,
-        productData // Pass product data for fallback values
+        productData, // Pass product data for fallback values
+        markets
       );
 
       const allTranslations = translationResult.translations;
@@ -830,16 +923,22 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Fetched ${allTranslations.length} translations from ${foreignLocales.length} foreign locales (errors: ${translationResult.errorCount})`);
 
       // 4. Fetch image alt-text translations (API 2025-10+)
+      const altFailedMarketIds = new Set<string>();
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published)
+        locales.filter((l) => !l.primary && l.published),
+        markets,
+        altFailedMarketIds
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 4b. Fetch sub-resource translations (options, option values, metafields)
+      const subResFailedMarketIds = new Set<string>();
       const subResourceTranslations = await this.fetchSubResourceTranslations(
         productData,
-        locales.filter((l) => !l.primary && l.published)
+        locales.filter((l) => !l.primary && l.published),
+        markets,
+        subResFailedMarketIds
       );
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
@@ -847,7 +946,11 @@ export class ProductSyncService {
       if (forceSync) {
         logger.info(`[ProductSync] [RELOAD] title="${productData.title || '(empty)'}", descLen=${(productData.descriptionHtml || '').length}, translations=${allTranslations.length}`);
       }
-      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync);
+      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync, markets, {
+        productFields: translationResult.failedMarketIds,
+        imageAlt: altFailedMarketIds,
+        subResources: subResFailedMarketIds,
+      });
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -864,9 +967,12 @@ export class ProductSyncService {
    */
   private async fetchImageAltTextTranslations(
     productData: ShopifyProductData,
-    locales: ShopLocale[]
-  ): Promise<Array<{ mediaId: string; locale: string; altText: string }>> {
-    const altTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [];
+    locales: ShopLocale[],
+    markets: MarketInfo[] = [],
+    /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
+    failedMarketIds?: Set<string>
+  ): Promise<Array<{ mediaId: string; locale: string; altText: string; marketId: string }>> {
+    const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
     // Get all media images from product
     const mediaImages = productData.media?.edges
@@ -883,57 +989,62 @@ export class ProductSyncService {
 
     logger.debug(`[ProductSync] Fetching alt-text translations for ${mediaIds.length} images using BULK query`);
 
-    // 1 API call per locale (instead of per image × locale)
+    // 1 API call per (locale, layer) — global layer plus markets serving the locale
     for (const locale of locales) {
-      try {
-        const response = await this.admin.graphql(
-          `#graphql
-            query getMediaImageTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
-              translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
-                edges {
-                  node {
-                    resourceId
-                    translations(locale: $locale) {
-                      key
-                      value
+      for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+        try {
+          const response = await this.admin.graphql(
+            `#graphql
+              query getMediaImageTranslationsBulk($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                  edges {
+                    node {
+                      resourceId
+                      translations(locale: $locale, marketId: $marketId) {
+                        key
+                        value
+                      }
                     }
                   }
                 }
-              }
-            }`,
-          { variables: { resourceIds: mediaIds, locale: locale.locale } }
-        );
+              }`,
+            { variables: { resourceIds: mediaIds, locale: locale.locale, marketId: marketId || null } }
+          );
 
-        const data = await response.json();
+          const data = await response.json();
 
-        if (data.errors) {
-          logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}:`, data.errors[0]?.message);
-          continue;
-        }
-
-        const resources = data.data?.translatableResourcesByIds?.edges || [];
-
-        let foundCount = 0;
-        for (const edge of resources) {
-          const resourceId = edge.node.resourceId;
-          const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
-
-          const altTranslation = translations.find((t) => t.key === "alt");
-          if (altTranslation?.value) {
-            altTranslations.push({
-              mediaId: resourceId,
-              locale: locale.locale,
-              altText: altTranslation.value,
-            });
-            foundCount++;
+          if (data.errors) {
+            logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+            if (marketId) failedMarketIds?.add(marketId);
+            continue;
           }
-        }
 
-        if (foundCount > 0) {
-          logger.debug(`[ProductSync] Found ${foundCount} alt-text translations for locale ${locale.locale}`);
+          const resources = data.data?.translatableResourcesByIds?.edges || [];
+
+          let foundCount = 0;
+          for (const edge of resources) {
+            const resourceId = edge.node.resourceId;
+            const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
+
+            const altTranslation = translations.find((t) => t.key === "alt");
+            if (altTranslation?.value) {
+              altTranslations.push({
+                mediaId: resourceId,
+                locale: locale.locale,
+                altText: altTranslation.value,
+                marketId,
+              });
+              foundCount++;
+            }
+          }
+
+          if (foundCount > 0) {
+            logger.debug(`[ProductSync] Found ${foundCount} alt-text translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
+          }
+        } catch (error) {
+          logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
+          if (marketId) failedMarketIds?.add(marketId);
         }
-      } catch (error) {
-        logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}:`, error);
       }
     }
 
@@ -950,9 +1061,12 @@ export class ProductSyncService {
    */
   private async fetchSubResourceTranslations(
     productData: ShopifyProductData,
-    locales: ShopLocale[]
-  ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }>> {
-    const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }> = [];
+    locales: ShopLocale[],
+    markets: MarketInfo[] = [],
+    /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
+    failedMarketIds?: Set<string>
+  ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }>> {
+    const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }> = [];
 
     // Collect all sub-resource IDs from product data
     const subResources: Array<{ id: string; type: string }> = [];
@@ -979,61 +1093,66 @@ export class ProductSyncService {
 
     logger.debug(`[ProductSync] Fetching sub-resource translations for ${allIds.length} resources using BULK query`);
 
-    // 1 API call per locale (bulk)
+    // 1 API call per (locale, layer) — global layer plus markets serving the locale
     for (const locale of locales) {
-      try {
-        const response = await this.admin.graphql(
-          `#graphql
-            query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!) {
-              translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
-                edges {
-                  node {
-                    resourceId
-                    translations(locale: $locale) {
-                      key
-                      value
+      for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+        try {
+          const response = await this.admin.graphql(
+            `#graphql
+              query getSubResourceTranslationsBulk($resourceIds: [ID!]!, $locale: String!, $marketId: ID) {
+                translatableResourcesByIds(first: 250, resourceIds: $resourceIds) {
+                  edges {
+                    node {
+                      resourceId
+                      translations(locale: $locale, marketId: $marketId) {
+                        key
+                        value
+                      }
                     }
                   }
                 }
+              }`,
+            { variables: { resourceIds: allIds, locale: locale.locale, marketId: marketId || null } }
+          );
+
+          const data = await response.json();
+
+          if (data.errors) {
+            logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+            if (marketId) failedMarketIds?.add(marketId);
+            continue;
+          }
+
+          const resources = data.data?.translatableResourcesByIds?.edges || [];
+
+          let foundCount = 0;
+          for (const edge of resources) {
+            const resourceId = edge.node.resourceId;
+            const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
+            const resourceType = typeMap.get(resourceId) || "Unknown";
+
+            for (const t of translations) {
+              if (t.value) {
+                results.push({
+                  resourceId,
+                  resourceType,
+                  key: t.key,
+                  value: t.value,
+                  locale: locale.locale,
+                  marketId,
+                });
+                foundCount++;
               }
-            }`,
-          { variables: { resourceIds: allIds, locale: locale.locale } }
-        );
-
-        const data = await response.json();
-
-        if (data.errors) {
-          logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}:`, data.errors[0]?.message);
-          continue;
-        }
-
-        const resources = data.data?.translatableResourcesByIds?.edges || [];
-
-        let foundCount = 0;
-        for (const edge of resources) {
-          const resourceId = edge.node.resourceId;
-          const translations: Array<{ key: string; value: string }> = edge.node.translations || [];
-          const resourceType = typeMap.get(resourceId) || "Unknown";
-
-          for (const t of translations) {
-            if (t.value) {
-              results.push({
-                resourceId,
-                resourceType,
-                key: t.key,
-                value: t.value,
-                locale: locale.locale,
-              });
-              foundCount++;
             }
           }
-        }
 
-        if (foundCount > 0) {
-          logger.debug(`[ProductSync] Found ${foundCount} sub-resource translations for locale ${locale.locale}`);
+          if (foundCount > 0) {
+            logger.debug(`[ProductSync] Found ${foundCount} sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
+          }
+        } catch (error) {
+          logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
+          if (marketId) failedMarketIds?.add(marketId);
         }
-      } catch (error) {
-        logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}:`, error);
       }
     }
 
@@ -1230,17 +1349,24 @@ export class ProductSyncService {
    *
    * Returns: { translations, hadErrors, errorCount }
    */
-  private async fetchAllTranslations(productId: string, locales: ShopLocale[], productData: ShopifyProductData): Promise<{
+  private async fetchAllTranslations(productId: string, locales: ShopLocale[], productData: ShopifyProductData, markets: MarketInfo[] = []): Promise<{
     translations: ResolvedTranslation[];
     hadErrors: boolean;
     errorCount: number;
+    /** Markets whose fetch failed for at least one locale — their DB rows must not be wiped. */
+    failedMarketIds: Set<string>;
   }> {
     const allTranslations: ResolvedTranslation[] = [];
     const digestMap = new Map<string, string>();
+    // errors[] drives the abort/data-loss heuristic in syncProduct and counts
+    // GLOBAL-layer failures only (as before markets existed); market-layer
+    // failures are tracked per market so saveToDatabase can exclude that
+    // market's rows from the delete+recreate instead of wiping them.
     const errors: string[] = [];
+    const failedMarketIds = new Set<string>();
     const skipped: string[] = [];
 
-    logger.debug(`[ProductSync] Starting translation fetch for ${locales.length} locales`);
+    logger.debug(`[ProductSync] Starting translation fetch for ${locales.length} locales, ${markets.length} market(s)`);
 
     for (const locale of locales) {
       if (!locale.published) {
@@ -1249,91 +1375,94 @@ export class ProductSyncService {
         continue;
       }
 
-      logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}`);
+      for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+        logger.debug(`[ProductSync] Fetching translations for locale: ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
 
-      try {
-        const response = await this.admin.graphql(
-          `#graphql
-            query getTranslations($resourceId: ID!, $locale: String!) {
-              translatableResource(resourceId: $resourceId) {
-                translatableContent {
-                  key
-                  value
-                  digest
-                  locale
+        try {
+          const response = await this.admin.graphql(
+            `#graphql
+              query getTranslations($resourceId: ID!, $locale: String!, $marketId: ID) {
+                translatableResource(resourceId: $resourceId) {
+                  translatableContent {
+                    key
+                    value
+                    digest
+                    locale
+                  }
+                  translations(locale: $locale, marketId: $marketId) {
+                    key
+                    value
+                    locale
+                  }
                 }
-                translations(locale: $locale) {
-                  key
-                  value
-                  locale
-                }
-              }
-            }`,
-          { variables: { resourceId: productId, locale: locale.locale } }
-        );
+              }`,
+            { variables: { resourceId: productId, locale: locale.locale, marketId: marketId || null } }
+          );
 
-        const data = await response.json();
+          const data = await response.json();
 
-        // Check for GraphQL errors for this locale
-        if (data.errors && data.errors.length > 0) {
-          logger.warn(`[ProductSync] GraphQL errors fetching translations for locale ${locale.locale}:`, {
-            errors: data.errors,
+          // Check for GraphQL errors for this locale
+          if (data.errors && data.errors.length > 0) {
+            logger.warn(`[ProductSync] GraphQL errors fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, {
+              errors: data.errors,
+              productId,
+              locale: locale.locale,
+            });
+            if (marketId) failedMarketIds.add(marketId);
+            else errors.push(`${locale.locale}: ${(data.errors as GraphQLError[])[0].message}`);
+            // Continue with other locales instead of failing completely
+            continue;
+          }
+
+          const resource = data.data?.translatableResource;
+
+          if (!resource) {
+            logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
+            if (marketId) failedMarketIds.add(marketId);
+            else errors.push(`${locale.locale}: No translatable resource`);
+            continue;
+          }
+
+          // Build digest map from translatableContent (for reference only)
+          if (resource.translatableContent) {
+            for (const content of resource.translatableContent) {
+              // Store digest for future updates - but DO NOT store as translation
+              digestMap.set(content.key, content.digest);
+            }
+          }
+
+          // ONLY save actual translations from Shopify
+          // DO NOT save translatableContent values - those are the source language text
+          if (resource.translations && resource.translations.length > 0) {
+            logger.debug(`[ProductSync] Actual translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`,
+              resource.translations.map((t: ShopifyTranslation) => t.key).join(', '));
+
+            for (const translation of resource.translations) {
+              allTranslations.push({
+                key: translation.key,
+                value: translation.value,
+                locale: translation.locale,
+                digest: digestMap.get(translation.key),
+                marketId,
+              });
+            }
+
+            logger.debug(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`);
+          } else {
+            logger.debug(`[ProductSync] No translations found for ${locale.locale}${marketId ? ` (market ${marketId})` : ''} - nothing to save`);
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          // Log error but continue with other locales (graceful degradation)
+          logger.error(`[ProductSync] Error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, {
+            error: message,
             productId,
             locale: locale.locale,
           });
-          errors.push(`${locale.locale}: ${(data.errors as GraphQLError[])[0].message}`);
-          // Continue with other locales instead of failing completely
-          continue;
+          if (marketId) failedMarketIds.add(marketId);
+          else errors.push(`${locale.locale}: ${message}`);
+          // Continue to next locale
         }
-
-        const resource = data.data?.translatableResource;
-
-        if (!resource) {
-          logger.warn(`[ProductSync] No translatable resource found for ${locale.locale}`);
-          errors.push(`${locale.locale}: No translatable resource`);
-          continue;
-        }
-
-        // Build digest map from translatableContent (for reference only)
-        if (resource.translatableContent) {
-          logger.debug(`[ProductSync] Available translatable keys for ${locale.locale}:`,
-            resource.translatableContent.map((c: { key: string }) => c.key).join(', '));
-
-          for (const content of resource.translatableContent) {
-            // Store digest for future updates - but DO NOT store as translation
-            digestMap.set(content.key, content.digest);
-          }
-        }
-
-        // ONLY save actual translations from Shopify
-        // DO NOT save translatableContent values - those are the source language text
-        if (resource.translations && resource.translations.length > 0) {
-          logger.debug(`[ProductSync] Actual translations for ${locale.locale}:`,
-            resource.translations.map((t: ShopifyTranslation) => t.key).join(', '));
-
-          for (const translation of resource.translations) {
-            allTranslations.push({
-              key: translation.key,
-              value: translation.value,
-              locale: translation.locale,
-              digest: digestMap.get(translation.key),
-            });
-          }
-
-          logger.debug(`[ProductSync] Saved ${resource.translations.length} actual translations for ${locale.locale}`);
-        } else {
-          logger.debug(`[ProductSync] No translations found for ${locale.locale} - nothing to save`);
-        }
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        // Log error but continue with other locales (graceful degradation)
-        logger.error(`[ProductSync] Error fetching translations for locale ${locale.locale}:`, {
-          error: message,
-          productId,
-          locale: locale.locale,
-        });
-        errors.push(`${locale.locale}: ${message}`);
-        // Continue to next locale
       }
     }
 
@@ -1344,6 +1473,7 @@ export class ProductSyncService {
       successful: successfulLocales,
       skipped: skipped.length,
       errors: errors.length,
+      failedMarkets: failedMarketIds.size,
       translationsFound: allTranslations.length,
     });
 
@@ -1358,6 +1488,7 @@ export class ProductSyncService {
       translations: allTranslations,
       hadErrors: errors.length > 0,
       errorCount: errors.length,
+      failedMarketIds,
     };
   }
 
@@ -1369,11 +1500,28 @@ export class ProductSyncService {
   private async saveToDatabase(
     productData: ShopifyProductData,
     translations: ResolvedTranslation[],
-    imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string }> = [],
-    subResourceTranslations: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string }> = [],
-    forceSync = false
+    imageAltTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId?: string }> = [],
+    subResourceTranslations: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId?: string }> = [],
+    forceSync = false,
+    markets: MarketInfo[] = [],
+    /** Per fetch pipeline: markets whose fetch errored — their rows survive untouched. */
+    failedMarkets: { productFields?: Set<string>; imageAlt?: Set<string>; subResources?: Set<string> } = {}
   ) {
     const { db } = await import("../db.server");
+
+    const productFieldsFailed = failedMarkets.productFields ?? new Set<string>();
+    const imageAltFailed = failedMarkets.imageAlt ?? new Set<string>();
+    const subResourcesFailed = failedMarkets.subResources ?? new Set<string>();
+
+    // Layers this sync run actually (successfully) fetched: global ("") plus
+    // every market whose fetch did not fail. Delete/recreate is SCOPED to
+    // these layers so market rows survive a global-only or partially-failed
+    // run (e.g. loadMarkets degraded to [] on a missing read_markets scope).
+    // Tracked per fetch pipeline — product fields, image alt-text, and
+    // sub-resources fail independently.
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !productFieldsFailed.has(m.id)));
+    const altFetchedLayers = fetchedMarketLayers(markets.filter((m) => !imageAltFailed.has(m.id)));
+    const subResFetchedLayers = fetchedMarketLayers(markets.filter((m) => !subResourcesFailed.has(m.id)));
 
     // R4-DI5: do not resurrect a product that was deleted while this sync was
     // in flight (we fetched it from Shopify before a products/delete webhook
@@ -1415,11 +1563,26 @@ export class ProductSyncService {
     }
     logger.debug(`[ProductSync] [SYNC] Total preserved: ${preservedAltTexts.size} images`);
 
-    // Prepare data outside transaction
-    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    // Alt-text TRANSLATION rows of layers we did NOT cleanly fetch this run
+    // (failed markets, or all markets when loadMarkets degraded to []) would
+    // be destroyed by the ProductImage delete-then-recreate below via the FK
+    // cascade — no marketId scoping can protect them there. Snapshot them and
+    // re-attach to the recreated images (matched by mediaId).
+    const preservedAltRows = await db.productImageAltTranslation.findMany({
+      where: { image: { productId: productData.id }, marketId: { notIn: altFetchedLayers } },
+      select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
+    });
+
+    // Prepare data outside transaction. Rows of layers OUTSIDE fetchedLayers
+    // (i.e. a market that partially failed) are dropped: their old DB rows are
+    // preserved untouched, and inserting a partial fresh set would collide
+    // with the un-deleted rows on the composite unique key.
+    const validTranslations = translations.filter(t =>
+      t.value != null && t.value !== undefined && fetchedLayers.includes(t.marketId || "")
+    );
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
-      logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values`);
+      logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values or failed market layers`);
     }
 
     const mediaImages: ShopifyMediaImage[] = productData.media?.edges
@@ -1494,25 +1657,28 @@ export class ProductSyncService {
         // count/membership mismatch) falls through to the original
         // delete+recreate, so correctness is never traded for the speed-up.
         const existingTranslations = await tx.contentTranslation.findMany({
-          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" },
-          select: { locale: true, key: true, digest: true },
+          // marketId-scoped: only rows of successfully fetched layers take part
+          // in the digest comparison and the delete+recreate below.
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers } },
+          select: { locale: true, key: true, digest: true, marketId: true },
         });
-        const tkey = (locale: string, key: string) => `${locale} ${key}`;
+        const tkey = (locale: string, key: string, marketId: string) => `${marketId} ${locale} ${key}`;
         const everyIncomingHasDigest = validTranslations.length > 0 && validTranslations.every(t => !!t.digest);
         const everyStoredHasDigest = existingTranslations.length > 0 && existingTranslations.every(e => !!e.digest);
-        const existingDigestByKey = new Map(existingTranslations.map(e => [tkey(e.locale, e.key), e.digest]));
+        const existingDigestByKey = new Map(existingTranslations.map(e => [tkey(e.locale, e.key, e.marketId), e.digest]));
         const translationsUnchanged =
           everyIncomingHasDigest &&
           everyStoredHasDigest &&
           existingTranslations.length === validTranslations.length &&
-          validTranslations.every(t => existingDigestByKey.get(tkey(t.locale, t.key)) === t.digest);
+          validTranslations.every(t => existingDigestByKey.get(tkey(t.locale, t.key, t.marketId || "")) === t.digest);
 
         if (translationsUnchanged) {
           logger.info(`[ProductSync] [RELOAD] Skipping translation rewrite — all ${validTranslations.length} digests unchanged`, { productId: productData.id });
         } else {
-        // Delete old translations and recreate from Shopify
+        // Delete old translations and recreate from Shopify — SCOPED to the
+        // layers this run fetched, so un-fetched market rows survive.
         const deletedTranslations = await tx.contentTranslation.deleteMany({
-          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product" }
+          where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers } }
         });
         logger.info(`[ProductSync] [RELOAD] Deleted ${deletedTranslations.count} old translations, will save ${validTranslations.length} fresh ones`);
 
@@ -1538,6 +1704,7 @@ export class ProductSyncService {
               value: t.value,
               locale: t.locale,
               digest: t.digest || null,
+              marketId: t.marketId || "",
             })),
           });
           logger.debug(`[ProductSync] ✓ Successfully saved ${validTranslations.length} translations to database`);
@@ -1550,29 +1717,39 @@ export class ProductSyncService {
         // Sub-resource rows are stored with digest=null, so they cannot be
         // digest-skipped and are always reconciled here as before.
         if (subResourceTranslations.length > 0) {
-          const subResourceIds = [...new Set(subResourceTranslations.map(t => t.resourceId))];
+          // Rows of markets whose sub-resource fetch failed are dropped: their
+          // old rows stay untouched (excluded from the delete scope below) and
+          // a partial insert would collide with them on the unique key.
+          const freshSubResourceRows = subResourceTranslations.filter(
+            t => subResFetchedLayers.includes(t.marketId || "")
+          );
+          const subResourceIds = [...new Set(freshSubResourceRows.map(t => t.resourceId))];
 
-          const deletedSubTrans = await tx.contentTranslation.deleteMany({
-            where: {
-              shop: this.shop,
-              resourceId: { in: subResourceIds },
-              resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
-            },
-          });
-          logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
+          if (subResourceIds.length > 0) {
+            const deletedSubTrans = await tx.contentTranslation.deleteMany({
+              where: {
+                shop: this.shop,
+                resourceId: { in: subResourceIds },
+                resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
+                marketId: { in: subResFetchedLayers },
+              },
+            });
+            logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
 
-          await tx.contentTranslation.createMany({
-            data: subResourceTranslations.map(t => ({
-              shop: this.shop,
-              resourceId: t.resourceId,
-              resourceType: t.resourceType,
-              key: t.key,
-              value: t.value,
-              locale: t.locale,
-              digest: null,
-            })),
-          });
-          logger.debug(`[ProductSync] Saved ${subResourceTranslations.length} sub-resource translations`);
+            await tx.contentTranslation.createMany({
+              data: freshSubResourceRows.map(t => ({
+                shop: this.shop,
+                resourceId: t.resourceId,
+                resourceType: t.resourceType,
+                key: t.key,
+                value: t.value,
+                locale: t.locale,
+                digest: null,
+                marketId: t.marketId || "",
+              })),
+            });
+            logger.debug(`[ProductSync] Saved ${freshSubResourceRows.length} sub-resource translations`);
+          }
         }
       }
 
@@ -1640,6 +1817,9 @@ export class ProductSyncService {
 
           let savedAltTranslations = 0;
           for (const altTrans of imageAltTranslations) {
+            // Rows of failed market layers are dropped — the preserved
+            // snapshot below carries those layers over instead.
+            if (!altFetchedLayers.includes(altTrans.marketId || "")) continue;
             const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
             if (dbImageId) {
               await tx.productImageAltTranslation.create({
@@ -1647,6 +1827,7 @@ export class ProductSyncService {
                   imageId: dbImageId,
                   locale: altTrans.locale,
                   altText: altTrans.altText,
+                  marketId: altTrans.marketId || "",
                 },
               });
               savedAltTranslations++;
@@ -1655,6 +1836,26 @@ export class ProductSyncService {
 
           if (savedAltTranslations > 0) {
             logger.debug(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
+          }
+        }
+
+        // Restore the snapshot of un-fetched layers (see preservedAltRows
+        // above). skipDuplicates: fresh rows above always win — preserved and
+        // fresh layers are disjoint, so this only fills the protected layers.
+        if (preservedAltRows.length > 0) {
+          const mediaIdToNewDbId = new Map<string, string>();
+          createdImages.forEach((img) => {
+            if (img.mediaId) mediaIdToNewDbId.set(img.mediaId, img.id);
+          });
+          const restoreData = preservedAltRows.flatMap((row) => {
+            const newImageId = row.image.mediaId ? mediaIdToNewDbId.get(row.image.mediaId) : undefined;
+            return newImageId
+              ? [{ imageId: newImageId, locale: row.locale, altText: row.altText, marketId: row.marketId }]
+              : [];
+          });
+          if (restoreData.length > 0) {
+            await tx.productImageAltTranslation.createMany({ data: restoreData, skipDuplicates: true });
+            logger.debug(`[ProductSync] ✓ Restored ${restoreData.length} preserved market alt-text translations`);
           }
         }
       }

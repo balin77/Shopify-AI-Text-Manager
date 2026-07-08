@@ -11,7 +11,8 @@ import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
-import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
+import type { MarketInfo } from '~/types/content-editor.types';
+import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
 
 /** Collection data from Shopify GraphQL */
 interface ShopifyCollectionData {
@@ -63,10 +64,21 @@ interface ShopifyMenuData {
 }
 
 export class ContentSyncService {
+  /** Markets memo — loaded once per service instance (one instance ≈ one sync run). */
+  private marketsPromise: Promise<MarketInfo[]> | null = null;
+
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
   ) {}
+
+  /** Shop markets for the market-aware read-back; [] when scope/markets missing. */
+  private getMarkets(): Promise<MarketInfo[]> {
+    if (!this.marketsPromise) {
+      this.marketsPromise = fetchShopMarkets(this.graphqlFn());
+    }
+    return this.marketsPromise;
+  }
 
   // ============================================
   // COLLECTION SYNC
@@ -87,15 +99,19 @@ export class ContentSyncService {
         return;
       }
 
-      // 2. Fetch all available locales
+      // 2. Fetch all available locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.graphqlFn());
-      logger.debug(`[ContentSync] Found ${locales.length} locales`);
+      const markets = await this.getMarkets();
+      logger.debug(`[ContentSync] Found ${locales.length} locales, ${markets.length} market(s)`);
 
-      // 3. Fetch translations for all non-primary locales
+      // 3. Fetch translations for all non-primary locales (global + market layers)
+      const failedMarketIds = new Set<string>();
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
         locales.filter((l) => !l.primary),
-        "Collection"
+        "Collection",
+        markets,
+        failedMarketIds
       );
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
@@ -107,7 +123,9 @@ export class ContentSyncService {
           const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
             imageResourceId,
             locales.filter((l) => !l.primary),
-            "Collection" // Store under Collection resourceType with the parent's resourceId
+            "Collection", // Store under Collection resourceType with the parent's resourceId
+            markets,
+            failedMarketIds
           );
           // Remap: store with key "image_alt_text" and use the collection's resourceId
           for (const t of imageTranslations) {
@@ -124,8 +142,11 @@ export class ContentSyncService {
         }
       }
 
-      // 4. Save to database
-      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync);
+      // 4. Save to database. Markets whose fetch failed are excluded so their
+      // rows are neither deleted nor partially recreated (avoids data loss AND
+      // unique-key collisions with the un-deleted rows).
+      const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
 
       logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
@@ -175,14 +196,18 @@ export class ContentSyncService {
         return;
       }
 
-      // 2. Fetch all available locales
+      // 2. Fetch all available locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.graphqlFn());
+      const markets = await this.getMarkets();
 
-      // 3. Fetch translations
+      // 3. Fetch translations (global + market layers)
+      const failedMarketIds = new Set<string>();
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
         locales.filter((l) => !l.primary),
-        "Article"
+        "Article",
+        markets,
+        failedMarketIds
       );
 
       // 3b. Fetch article image alt-text translations (separate Shopify resource type).
@@ -193,7 +218,9 @@ export class ContentSyncService {
           const imageTranslations = await fetchAllTranslations(this.graphqlFn(),
             imageResourceId,
             locales.filter((l) => !l.primary),
-            "Article"
+            "Article",
+            markets,
+            failedMarketIds
           );
           for (const t of imageTranslations) {
             if (t.key === 'alt') {
@@ -209,8 +236,9 @@ export class ContentSyncService {
         }
       }
 
-      // 4. Save to database
-      await this.saveArticleToDatabase(articleData, allTranslations, forceSync);
+      // 4. Save to database — failed markets excluded (see syncCollection).
+      const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
 
       logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
@@ -447,13 +475,18 @@ export class ContentSyncService {
   // SAVE TO DATABASE
   // ============================================
 
-  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false) {
+  private async saveCollectionToDatabase(collectionData: ShopifyCollectionData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
 
     // Prepare valid translations outside transaction
-    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    // Rows of layers outside the (successfully fetched) delete scope are
+    // dropped: their old rows stay untouched and a partial insert would
+    // collide with them on the composite unique key.
+    const layers = fetchedMarketLayers(markets);
+    const validTranslations = translations.filter(t =>
+      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -500,12 +533,15 @@ export class ContentSyncService {
       if (!forceSync && isTranslationRecentlySaved(collectionData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
       } else {
-        // Delete old translations
+        // Delete old translations — SCOPED to the layers this run actually
+        // fetched (global + listed markets). If loadMarkets degraded to []
+        // (missing scope / API error), existing market rows must survive.
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: collectionData.id,
             resourceType: "Collection",
+            marketId: { in: fetchedMarketLayers(markets) },
           },
         });
 
@@ -520,6 +556,7 @@ export class ContentSyncService {
               value: t.value,
               locale: t.locale,
               digest: t.digest || null,
+              marketId: t.marketId || "",
             })),
           });
           logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);
@@ -530,13 +567,18 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for collection ${collectionData.id}`);
   }
 
-  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false) {
+  private async saveArticleToDatabase(articleData: ShopifyArticleData, translations: ResolvedTranslation[], forceSync = false, markets: MarketInfo[] = []) {
     const { db } = await import("../db.server");
 
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
 
     // Prepare valid translations outside transaction
-    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    // Rows of layers outside the (successfully fetched) delete scope are
+    // dropped: their old rows stay untouched and a partial insert would
+    // collide with them on the composite unique key.
+    const layers = fetchedMarketLayers(markets);
+    const validTranslations = translations.filter(t =>
+      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -589,12 +631,14 @@ export class ContentSyncService {
       if (!forceSync && isTranslationRecentlySaved(articleData.id)) {
         logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
       } else {
-        // Delete old translations
+        // Delete old translations — SCOPED to the layers this run actually
+        // fetched (global + listed markets); see saveCollectionToDatabase.
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: articleData.id,
             resourceType: "Article",
+            marketId: { in: fetchedMarketLayers(markets) },
           },
         });
 
@@ -609,6 +653,7 @@ export class ContentSyncService {
               value: t.value,
               locale: t.locale,
               digest: t.digest || null,
+              marketId: t.marketId || "",
             })),
           });
           logger.debug(`[ContentSync] ✓ Saved ${validTranslations.length} translations`);

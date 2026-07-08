@@ -8,7 +8,8 @@
 import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
-import { fetchShopLocales, fetchAllTranslations } from './sync-utils';
+import type { MarketInfo } from '~/types/content-editor.types';
+import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { extractThemeIdFromResourceId } from '~/utils/theme-id';
 import { db } from '../db.server';
 import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
@@ -240,6 +241,9 @@ const inFlightThemeSyncs = new Map<string, Promise<number>>();
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
 
+  /** Markets memo — loaded once per service instance (one instance ≈ one sync run). */
+  private marketsPromise: Promise<MarketInfo[]> | null = null;
+
   constructor(
     private admin: ShopifyGraphQLClient,
     private shop: string
@@ -251,6 +255,14 @@ export class BackgroundSyncService {
     // - Request queuing
     // - Throttle error detection (THROTTLED, 429)
     this.gateway = new ShopifyApiGateway(admin, shop);
+  }
+
+  /** Shop markets for the market-aware read-back; [] when scope/markets missing. */
+  private getMarkets(): Promise<MarketInfo[]> {
+    if (!this.marketsPromise) {
+      this.marketsPromise = fetchShopMarkets(this.gateway.graphql.bind(this.gateway));
+    }
+    return this.marketsPromise;
   }
 
   // ============================================
@@ -376,9 +388,10 @@ export class BackgroundSyncService {
         }
       }
 
-      // 3. Fetch shop locales
+      // 3. Fetch shop locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
+      const markets = await this.getMarkets();
 
       // 4. Sync each page
       let pageIndex = 0;
@@ -387,7 +400,7 @@ export class BackgroundSyncService {
         if (onProgress) {
           onProgress(pageIndex, pages.length, `Syncing page ${pageIndex}/${pages.length}`);
         }
-        await this.syncSinglePageInternal(page, nonPrimaryLocales);
+        await this.syncSinglePageInternal(page, nonPrimaryLocales, markets);
       }
 
       logger.debug(`[BackgroundSync] ✓ Successfully synced ${pages.length} pages`);
@@ -434,12 +447,13 @@ export class BackgroundSyncService {
       throw new Error(`Page ${gid} not found in Shopify`);
     }
 
-    // Fetch locales
+    // Fetch locales + markets
     const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
+    const markets = await this.getMarkets();
 
     // Sync the page
-    await this.syncSinglePageInternal(pageData, nonPrimaryLocales);
+    await this.syncSinglePageInternal(pageData, nonPrimaryLocales, markets);
 
     // Return fresh data from database
     const page = await db.page.findUnique({
@@ -469,18 +483,26 @@ export class BackgroundSyncService {
    * Sync a single page with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePageInternal(pageData: ShopifyPageData, nonPrimaryLocales: ShopLocale[]): Promise<void> {
+  private async syncSinglePageInternal(pageData: ShopifyPageData, nonPrimaryLocales: ShopLocale[], markets: MarketInfo[] = []): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
+    const failedMarketIds = new Set<string>();
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       pageData.id,
       nonPrimaryLocales,
-      "Page"
+      "Page",
+      markets,
+      failedMarketIds
     );
 
-    // Prepare current keys for cleanup
-    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale }));
+    // Prepare current keys for cleanup (marketId is part of the row identity)
+    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale, marketId: t.marketId || "" }));
+    // Cleanup is SCOPED to the layers this run SUCCESSFULLY fetched: when
+    // loadMarkets degraded to [] (missing scope / API error) or a market's
+    // fetch errored, that market's rows must survive. Upserts of fresh rows
+    // from a partially failed market stay harmless (no delete involved).
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -523,7 +545,7 @@ export class BackgroundSyncService {
               resourceId: pageData.id,
               key: t.key,
               locale: t.locale,
-              marketId: "",
+              marketId: t.marketId || "",
             },
           },
           create: {
@@ -534,6 +556,7 @@ export class BackgroundSyncService {
             value: t.value,
             locale: t.locale,
             digest: t.digest || null,
+            marketId: t.marketId || "",
           },
           update: {
             value: t.value,
@@ -543,25 +566,27 @@ export class BackgroundSyncService {
         });
       }
 
-      // Delete translations that no longer exist
+      // Delete translations that no longer exist — only within fetched layers
       if (currentKeys.length > 0) {
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: pageData.id,
             resourceType: "Page",
+            marketId: { in: fetchedLayers },
             NOT: {
-              OR: currentKeys.map(({ key, locale }) => ({ key, locale })),
+              OR: currentKeys.map(({ key, locale, marketId }) => ({ key, locale, marketId })),
             },
           },
         });
       } else {
-        // No translations from Shopify - delete all
+        // No translations from Shopify - delete all (within fetched layers)
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: pageData.id,
             resourceType: "Page",
+            marketId: { in: fetchedLayers },
           },
         });
       }
@@ -672,9 +697,10 @@ export class BackgroundSyncService {
         }
       }
 
-      // 3. Fetch shop locales
+      // 3. Fetch shop locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
+      const markets = await this.getMarkets();
 
       // 4. Sync each policy
       let policyIndex = 0;
@@ -683,7 +709,7 @@ export class BackgroundSyncService {
         if (onProgress) {
           onProgress(policyIndex, policies.length, `Syncing policy ${policyIndex}/${policies.length}`);
         }
-        await this.syncSinglePolicyInternal(policy, nonPrimaryLocales);
+        await this.syncSinglePolicyInternal(policy, nonPrimaryLocales, markets);
       }
 
       logger.debug(`[BackgroundSync] ✓ Successfully synced ${policies.length} policies`);
@@ -733,12 +759,13 @@ export class BackgroundSyncService {
       throw new Error(`Policy ${policyIdOrType} not found in Shopify`);
     }
 
-    // Fetch locales
+    // Fetch locales + markets
     const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
+    const markets = await this.getMarkets();
 
     // Sync the policy
-    await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales);
+    await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales, markets);
 
     // Return fresh data from database
     const policy = await db.shopPolicy.findUnique({
@@ -768,18 +795,23 @@ export class BackgroundSyncService {
    * Sync a single policy with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePolicyInternal(policyData: ShopifyPolicyData, nonPrimaryLocales: ShopLocale[]): Promise<void> {
+  private async syncSinglePolicyInternal(policyData: ShopifyPolicyData, nonPrimaryLocales: ShopLocale[], markets: MarketInfo[] = []): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
+    const failedMarketIds = new Set<string>();
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       policyData.id,
       nonPrimaryLocales,
-      "ShopPolicy"
+      "ShopPolicy",
+      markets,
+      failedMarketIds
     );
 
-    // Prepare current keys for cleanup
-    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale }));
+    // Prepare current keys for cleanup (marketId is part of the row identity);
+    // cleanup is scoped to the successfully fetched layers — see syncSinglePageInternal.
+    const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale, marketId: t.marketId || "" }));
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -818,7 +850,7 @@ export class BackgroundSyncService {
               resourceId: policyData.id,
               key: t.key,
               locale: t.locale,
-              marketId: "",
+              marketId: t.marketId || "",
             },
           },
           create: {
@@ -829,6 +861,7 @@ export class BackgroundSyncService {
             value: t.value,
             locale: t.locale,
             digest: t.digest || null,
+            marketId: t.marketId || "",
           },
           update: {
             value: t.value,
@@ -838,25 +871,27 @@ export class BackgroundSyncService {
         });
       }
 
-      // Delete translations that no longer exist
+      // Delete translations that no longer exist — only within fetched layers
       if (currentKeys.length > 0) {
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: policyData.id,
             resourceType: "ShopPolicy",
+            marketId: { in: fetchedLayers },
             NOT: {
-              OR: currentKeys.map(({ key, locale }) => ({ key, locale })),
+              OR: currentKeys.map(({ key, locale, marketId }) => ({ key, locale, marketId })),
             },
           },
         });
       } else {
-        // No translations from Shopify - delete all
+        // No translations from Shopify - delete all (within fetched layers)
         await tx.contentTranslation.deleteMany({
           where: {
             shop: this.shop,
             resourceId: policyData.id,
             resourceType: "ShopPolicy",
+            marketId: { in: fetchedLayers },
           },
         });
       }
@@ -993,9 +1028,13 @@ export class BackgroundSyncService {
     const uniqueResourceIds = [...new Set(existingRows.map((r) => r.resourceId))];
     logger.debug(`[BackgroundSync] Group "${groupId}" spans ${uniqueResourceIds.length} resource(s)`);
 
-    // Get shop locales
+    // Get shop locales + markets (market-aware read-back)
     const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
+    const markets = await this.getMarkets();
+    // Markets whose translation fetch errors below are excluded from the
+    // update/stale-delete scope so their rows survive a transient API blip.
+    const failedMarketIds = new Set<string>();
 
     // Collect translations from ALL resources
     const allTranslations: ShopifyTranslation[] = [];
@@ -1066,36 +1105,43 @@ export class BackgroundSyncService {
       });
 
       // Fetch translations for all non-primary locales for this resource
+      // (global layer + one pass per market that serves the locale)
       for (const locale of nonPrimaryLocales) {
-        try {
-          const translationsResponse = await this.gateway.graphql(
-            `#graphql
-              query getThemeTranslations($resourceId: ID!, $locale: String!) {
-                translatableResource(resourceId: $resourceId) {
-                  translations(locale: $locale) {
-                    key
-                    value
-                    locale
-                    outdated
+        for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+          try {
+            const translationsResponse = await this.gateway.graphql(
+              `#graphql
+                query getThemeTranslations($resourceId: ID!, $locale: String!, $marketId: ID) {
+                  translatableResource(resourceId: $resourceId) {
+                    translations(locale: $locale, marketId: $marketId) {
+                      key
+                      value
+                      locale
+                      outdated
+                    }
                   }
-                }
-              }`,
-            { variables: { resourceId, locale: locale.locale } }
-          );
-
-          const translationsData = await translationsResponse.json();
-
-          if (!translationsData.errors) {
-            const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
-            // Filter translations that belong to this group
-            const groupTranslations = translations.filter((t) =>
-              groupContent.some((c) => c.key === t.key)
+                }`,
+              { variables: { resourceId, locale: locale.locale, marketId: marketId || null } }
             );
-            allTranslations.push(...groupTranslations.map((t) => ({ ...t, _resourceId: resourceId })));
+
+            const translationsData = await translationsResponse.json();
+
+            if (!translationsData.errors) {
+              const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
+              // Filter translations that belong to this group
+              const groupTranslations = translations.filter((t) =>
+                groupContent.some((c) => c.key === t.key)
+              );
+              allTranslations.push(...groupTranslations.map((t) => ({ ...t, _resourceId: resourceId, _marketId: marketId })));
+            } else {
+              logger.error(`[BackgroundSync] GraphQL error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { error: translationsData.errors[0]?.message });
+              if (marketId) failedMarketIds.add(marketId);
+            }
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { error: message });
+            if (marketId) failedMarketIds.add(marketId);
           }
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}`, { error: message });
         }
       }
     }
@@ -1113,18 +1159,25 @@ export class BackgroundSyncService {
     // calls for the same tuple hit "Unique constraint failed on the fields:
     // (shop, resourceId, groupId, key, locale)". ThemeTranslation.value is
     // non-null, so a null-valued Shopify translation must be skipped, not written.
+    // Only layers whose fetch fully succeeded take part in the write/delete
+    // reconciliation below; failed markets keep their existing rows untouched
+    // (and their partial fresh rows are dropped — a bare `create` would
+    // otherwise collide with the surviving row on the unique tuple).
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
+
     const desiredSeen = new Set<string>();
     const desired = allTranslations
-      .filter((t) => t.value != null)
+      .filter((t) => t.value != null && fetchedLayers.includes(((t as any)._marketId as string) || ''))
       .map((t) => ({
         resourceId: (t as any)._resourceId || uniqueResourceIds[0],
         key: t.key,
         value: t.value,
         locale: t.locale,
         outdated: t.outdated || false,
+        marketId: ((t as any)._marketId as string) || '',
       }))
       .filter((d) => {
-        const k = `${d.resourceId} ${d.key} ${d.locale}`;
+        const k = `${d.resourceId} ${d.key} ${d.locale} ${d.marketId}`;
         if (desiredSeen.has(k)) return false;
         desiredSeen.add(k);
         return true;
@@ -1139,12 +1192,15 @@ export class BackgroundSyncService {
     // unique constraint. Matching on the real unique tuple lets us UPDATE (and
     // heal the domain) instead of colliding.
     const existing = await db.themeTranslation.findMany({
-      where: { shop: this.shop, groupId: groupId },
-      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true, domain: true },
+      // marketId-scoped: only rows of layers this run actually fetched are
+      // update/stale-delete candidates — market rows survive when loadMarkets
+      // degraded to [] (missing scope / API error).
+      where: { shop: this.shop, groupId: groupId, marketId: { in: fetchedLayers } },
+      select: { id: true, resourceId: true, key: true, locale: true, value: true, outdated: true, domain: true, marketId: true },
     });
 
-    const rowKey = (r: { resourceId: string; key: string; locale: string }) =>
-      `${r.resourceId} ${r.key} ${r.locale}`;
+    const rowKey = (r: { resourceId: string; key: string; locale: string; marketId: string }) =>
+      `${r.resourceId} ${r.key} ${r.locale} ${r.marketId}`;
     const existingByKey = new Map(existing.map((r) => [rowKey(r), r]));
     const desiredKeys = new Set(desired.map(rowKey));
 
@@ -1166,6 +1222,7 @@ export class BackgroundSyncService {
               value: d.value,
               locale: d.locale,
               outdated: d.outdated,
+              marketId: d.marketId,
             },
           })
         );
@@ -1438,9 +1495,11 @@ export class BackgroundSyncService {
       // Use module-level THEME_KEY_PATTERNS for grouping
       const KEY_PATTERNS = THEME_KEY_PATTERNS;
 
-      // Get shop locales
+      // Get shop locales + markets (market-aware read-back)
       const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
       const nonPrimaryLocales = locales.filter((l) => !l.primary);
+      const markets = await this.getMarkets();
+      const fetchedLayers = fetchedMarketLayers(markets);
 
       let totalGroups = 0;
 
@@ -1455,8 +1514,14 @@ export class BackgroundSyncService {
       // from the MAIN-only syncedCombinations).
       const syncedThemeIds = new Set<string>();
 
-      // Track fetched translations to avoid duplicate API calls
-      const translationCache = new Map<string, ShopifyTranslation[]>();
+      // Track fetched translations to avoid duplicate API calls.
+      // Entries carry the layer they were fetched for ("" = global).
+      type MarketTaggedTranslation = ShopifyTranslation & { marketId: string };
+      const translationCache = new Map<string, MarketTaggedTranslation[]>();
+      // Per-resource record of markets whose translation fetch errored — those
+      // markets are excluded from the stale-delete below so a transient API
+      // blip never wipes their rows. Keyed like translationCache.
+      const translationFetchFailures = new Map<string, Set<string>>();
 
       // App-embed naming: blockId→name map from settings_data.json (lazily
       // fetched on the first APP_EMBED resource), plus a counter for embeds we
@@ -1694,8 +1759,12 @@ export class BackgroundSyncService {
               where: {
                 shop: this.shop,
                 resourceId: resource.resourceId,
+                // marketId-scoped: only rows of layers this run fetched are
+                // update/stale-delete candidates — market rows survive when
+                // loadMarkets degraded to [] (missing scope / API error).
+                marketId: { in: fetchedLayers },
               },
-              select: { id: true, key: true, locale: true, groupId: true, value: true, outdated: true }
+              select: { id: true, key: true, locale: true, groupId: true, value: true, outdated: true, marketId: true }
             });
 
             const existingRowsByGroup = new Map<string, Map<string, { id: string; value: string; outdated: boolean }>>();
@@ -1703,7 +1772,7 @@ export class BackgroundSyncService {
               if (!existingRowsByGroup.has(t.groupId)) {
                 existingRowsByGroup.set(t.groupId, new Map());
               }
-              existingRowsByGroup.get(t.groupId)!.set(`${t.key}::${t.locale}`, { id: t.id, value: t.value, outdated: t.outdated });
+              existingRowsByGroup.get(t.groupId)!.set(`${t.key}::${t.locale}::${t.marketId}`, { id: t.id, value: t.value, outdated: t.outdated });
             }
 
             // Fetch translations for each group
@@ -1713,8 +1782,8 @@ export class BackgroundSyncService {
               const groupIcon = firstItem._groupIcon;
 
               // Deduplicate translations for this group
-              const allTranslations: ShopifyTranslation[] = [];
-              const seenKeys = new Set<string>(); // Track seen key-locale combinations
+              const allTranslations: MarketTaggedTranslation[] = [];
+              const seenKeys = new Set<string>(); // Track seen key-locale-market combinations
 
               // Check cache first to avoid duplicate API calls
               const cacheKey = `${resource.resourceId}::${nonPrimaryLocales.map((l) => l.locale).join(',')}`;
@@ -1729,56 +1798,67 @@ export class BackgroundSyncService {
                 let localeIndex = 0;
                 for (const locale of nonPrimaryLocales) {
                   localeIndex++;
-                  try {
-                    logger.debug(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}...`);
+                  // Global layer first, then one pass per market serving the locale
+                  for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+                    try {
+                      logger.debug(`[BackgroundSync-Themes]   🌐 Fetching locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}...`);
 
-                    // Report locale fetching progress
-                    if (onProgress) {
-                      const baseProgress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
-                      const resourceProgress = Math.round((resourceIndex / resources.length) * (100 / totalResourceTypes));
-                      onProgress(
-                        baseProgress + resourceProgress,
-                        100,
-                        `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`
-                      );
-                    }
+                      // Report locale fetching progress
+                      if (onProgress) {
+                        const baseProgress = Math.round((resourceTypeIndex - 1) / totalResourceTypes * 100);
+                        const resourceProgress = Math.round((resourceIndex / resources.length) * (100 / totalResourceTypes));
+                        onProgress(
+                          baseProgress + resourceProgress,
+                          100,
+                          `Fetching translations: ${locale.name || locale.locale} (${localeIndex}/${nonPrimaryLocales.length})`
+                        );
+                      }
 
-                    // Gateway handles rate limiting and retry automatically
-                    const translationsResponse = await this.gateway.graphql(
-                      `#graphql
-                        query getThemeTranslations($resourceId: ID!, $locale: String!) {
-                          translatableResource(resourceId: $resourceId) {
-                            translations(locale: $locale) {
-                              key
-                              value
-                              locale
-                              outdated
+                      // Gateway handles rate limiting and retry automatically
+                      const translationsResponse = await this.gateway.graphql(
+                        `#graphql
+                          query getThemeTranslations($resourceId: ID!, $locale: String!, $marketId: ID) {
+                            translatableResource(resourceId: $resourceId) {
+                              translations(locale: $locale, marketId: $marketId) {
+                                key
+                                value
+                                locale
+                                outdated
+                              }
                             }
-                          }
-                        }`,
-                      { variables: { resourceId: resource.resourceId, locale: locale.locale } }
-                    );
+                          }`,
+                        { variables: { resourceId: resource.resourceId, locale: locale.locale, marketId: marketId || null } }
+                      );
 
-                    const translationsData = await translationsResponse.json();
+                      const translationsData = await translationsResponse.json();
 
-                    // Check for GraphQL errors
-                    if (translationsData.errors) {
-                      logger.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}:`, translationsData.errors[0].message);
-                      continue;
+                      // Check for GraphQL errors
+                      if (translationsData.errors) {
+                        logger.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, translationsData.errors[0].message);
+                        if (marketId) {
+                          if (!translationFetchFailures.has(cacheKey)) translationFetchFailures.set(cacheKey, new Set());
+                          translationFetchFailures.get(cacheKey)!.add(marketId);
+                        }
+                        continue;
+                      }
+
+                      const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
+
+                      if (translations.length > 0) {
+                        logger.debug(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}: ${translations.length} translations fetched`);
+                        resourceTranslations.push(...translations.map((t) => ({ ...t, marketId })));
+                      } else {
+                        logger.debug(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}: NO translations found (might be empty in Shopify)`);
+                      }
+
+                    } catch (error: unknown) {
+                      const message = error instanceof Error ? error.message : String(error);
+                      logger.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, message);
+                      if (marketId) {
+                        if (!translationFetchFailures.has(cacheKey)) translationFetchFailures.set(cacheKey, new Set());
+                        translationFetchFailures.get(cacheKey)!.add(marketId);
+                      }
                     }
-
-                    const translations: ShopifyTranslation[] = translationsData.data?.translatableResource?.translations || [];
-
-                    if (translations.length > 0) {
-                      logger.debug(`[BackgroundSync-Themes]   ✅ Locale ${locale.locale}: ${translations.length} translations fetched`);
-                      resourceTranslations.push(...translations);
-                    } else {
-                      logger.debug(`[BackgroundSync-Themes]   ⚠️  Locale ${locale.locale}: NO translations found (might be empty in Shopify)`);
-                    }
-
-                  } catch (error: unknown) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    logger.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}:`, message);
                   }
                 }
 
@@ -1792,7 +1872,7 @@ export class BackgroundSyncService {
               // Filter translations relevant to this group
               for (const t of resourceTranslations) {
                 if (items.some(item => item.key === t.key)) {
-                  const uniqueKey = `${t.key}::${t.locale}`;
+                  const uniqueKey = `${t.key}::${t.locale}::${t.marketId}`;
                   if (!seenKeys.has(uniqueKey)) {
                     seenKeys.add(uniqueKey);
                     allTranslations.push(t);
@@ -1896,13 +1976,13 @@ export class BackgroundSyncService {
               // Postgres volume). Mirrors the incremental logic in syncSingleThemeGroup.
               const toCreate: {
                 shop: string; resourceId: string; themeId: string; domain: string; groupId: string;
-                key: string; value: string; locale: string; outdated: boolean;
+                key: string; value: string; locale: string; outdated: boolean; marketId: string;
               }[] = [];
               const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
 
               for (const t of allTranslations) {
                 const outdated = t.outdated || false;
-                const prev = existingRows.get(`${t.key}::${t.locale}`);
+                const prev = existingRows.get(`${t.key}::${t.locale}::${t.marketId}`);
                 if (!prev) {
                   toCreate.push({
                     shop: this.shop,
@@ -1914,6 +1994,7 @@ export class BackgroundSyncService {
                     value: t.value,
                     locale: t.locale,
                     outdated,
+                    marketId: t.marketId,
                   });
                 } else if (prev.value !== t.value || prev.outdated !== outdated) {
                   toUpdate.push({ id: prev.id, value: t.value, outdated });
@@ -1944,9 +2025,11 @@ export class BackgroundSyncService {
                 );
               }
 
-              // Delete translations that no longer exist in Shopify
+              // Delete translations that no longer exist in Shopify.
+              // existingRows is already scoped to the fetched market layers,
+              // so rows of un-fetched layers can never end up here.
               const currentKeys = new Set(
-                allTranslations.map((t) => `${t.key}::${t.locale}`)
+                allTranslations.map((t) => `${t.key}::${t.locale}::${t.marketId}`)
               );
 
               const keysToDelete = Array.from(existingRows.keys()).filter(
@@ -1954,10 +2037,14 @@ export class BackgroundSyncService {
               );
 
               if (keysToDelete.length > 0) {
-                const parsedKeysToDelete = keysToDelete.map(kl => {
-                  const [key, locale] = kl.split('::');
-                  return { key, locale };
-                });
+                // Markets whose fetch errored for this resource keep their rows.
+                const resourceFailedMarkets = translationFetchFailures.get(cacheKey) ?? new Set<string>();
+                const parsedKeysToDelete = keysToDelete
+                  .map(kl => {
+                    const [key, locale, marketId] = kl.split('::');
+                    return { key, locale, marketId: marketId ?? '' };
+                  })
+                  .filter(({ marketId }) => !resourceFailedMarkets.has(marketId));
                 for (let i = 0; i < parsedKeysToDelete.length; i += CHUNK) {
                   const batch = parsedKeysToDelete.slice(i, i + CHUNK);
                   await db.themeTranslation.deleteMany({
@@ -1965,7 +2052,7 @@ export class BackgroundSyncService {
                       shop: this.shop,
                       resourceId: resource.resourceId,
                       groupId,
-                      OR: batch.map(({ key, locale }) => ({ key, locale })),
+                      OR: batch.map(({ key, locale, marketId }) => ({ key, locale, marketId })),
                     },
                   });
                 }
@@ -2137,6 +2224,8 @@ export class BackgroundSyncService {
 
     const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
+    const markets = await this.getMarkets();
+    const fetchedLayers = fetchedMarketLayers(markets);
 
     // Preference order for deriving a human group name from a resource's primary
     // content; falls back to the resource-type label (covers SHOP, whose keys are
@@ -2250,30 +2339,40 @@ export class BackgroundSyncService {
           // Fetch + persist foreign-locale translations for this resource.
           const existingRows = await db.themeTranslation.findMany({
             // domain-scoped: each rubric's sync only ever considers its own rows
-            // (defense-in-depth; the unique key omits domain).
-            where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain },
-            select: { id: true, key: true, locale: true, value: true, outdated: true },
+            // (defense-in-depth; the unique key omits domain). marketId-scoped:
+            // rows of layers this run did not fetch are never stale-deleted.
+            where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain, marketId: { in: fetchedLayers } },
+            select: { id: true, key: true, locale: true, value: true, outdated: true, marketId: true },
           });
-          const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}`, r]));
+          const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}::${r.marketId}`, r]));
 
-          const fetched: ShopifyTranslation[] = [];
+          const fetched: (ShopifyTranslation & { marketId: string })[] = [];
+          // Markets whose fetch errors for THIS resource are excluded from the
+          // stale-delete below so a transient blip never wipes their rows.
+          const resourceFailedMarkets = new Set<string>();
           for (const locale of nonPrimaryLocales) {
-            try {
-              const tResp = await this.gateway.graphql(
-                `#graphql
-                  query getDomainTranslations($resourceId: ID!, $locale: String!) {
-                    translatableResource(resourceId: $resourceId) {
-                      translations(locale: $locale) { key value locale outdated }
-                    }
-                  }`,
-                { variables: { resourceId: resource.resourceId, locale: locale.locale } }
-              );
-              const tData = await tResp.json();
-              if (tData.errors) continue;
-              const translations: ShopifyTranslation[] = tData.data?.translatableResource?.translations || [];
-              fetched.push(...translations);
-            } catch (err) {
-              logger.error(`[BackgroundSync] Exception fetching ${domain} translations for ${locale.locale}`, { err });
+            for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+              try {
+                const tResp = await this.gateway.graphql(
+                  `#graphql
+                    query getDomainTranslations($resourceId: ID!, $locale: String!, $marketId: ID) {
+                      translatableResource(resourceId: $resourceId) {
+                        translations(locale: $locale, marketId: $marketId) { key value locale outdated }
+                      }
+                    }`,
+                  { variables: { resourceId: resource.resourceId, locale: locale.locale, marketId: marketId || null } }
+                );
+                const tData = await tResp.json();
+                if (tData.errors) {
+                  if (marketId) resourceFailedMarkets.add(marketId);
+                  continue;
+                }
+                const translations: ShopifyTranslation[] = tData.data?.translatableResource?.translations || [];
+                fetched.push(...translations.map((t) => ({ ...t, marketId })));
+              } catch (err) {
+                logger.error(`[BackgroundSync] Exception fetching ${domain} translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { err });
+                if (marketId) resourceFailedMarkets.add(marketId);
+              }
             }
           }
 
@@ -2282,19 +2381,19 @@ export class BackgroundSyncService {
             // ThemeTranslation.value is non-null; Shopify can return null values
             // for an unset translation — skip those rather than crash the insert.
             if (t.value == null) return false;
-            const uk = `${t.key}::${t.locale}`;
+            const uk = `${t.key}::${t.locale}::${t.marketId}`;
             if (seen.has(uk)) return false;
             seen.add(uk);
             return content.some((c) => c.key === t.key);
           });
 
-          const toCreate: { shop: string; resourceId: string; themeId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean }[] = [];
+          const toCreate: { shop: string; resourceId: string; themeId: string; domain: string; groupId: string; key: string; value: string; locale: string; outdated: boolean; marketId: string }[] = [];
           const toUpdate: { id: string; value: string; outdated: boolean }[] = [];
           for (const t of relevant) {
             const outdated = t.outdated || false;
-            const prev = existingByKeyLocale.get(`${t.key}::${t.locale}`);
+            const prev = existingByKeyLocale.get(`${t.key}::${t.locale}::${t.marketId}`);
             if (!prev) {
-              toCreate.push({ shop: this.shop, resourceId: resource.resourceId, themeId: '', domain, groupId, key: t.key, value: t.value, locale: t.locale, outdated });
+              toCreate.push({ shop: this.shop, resourceId: resource.resourceId, themeId: '', domain, groupId, key: t.key, value: t.value, locale: t.locale, outdated, marketId: t.marketId });
             } else if (prev.value !== t.value || prev.outdated !== outdated) {
               toUpdate.push({ id: prev.id, value: t.value, outdated });
             }
@@ -2312,9 +2411,13 @@ export class BackgroundSyncService {
             );
           }
 
-          // Delete locale rows no longer present in Shopify.
-          const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}`));
-          const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}`)).map((r) => ({ key: r.key, locale: r.locale }));
+          // Delete locale rows no longer present in Shopify (existingRows is
+          // already scoped to the fetched market layers; markets whose fetch
+          // errored for this resource additionally keep their rows).
+          const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}::${t.marketId}`));
+          const keysToDelete = existingRows
+            .filter((r) => !currentKeys.has(`${r.key}::${r.locale}::${r.marketId}`) && !resourceFailedMarkets.has(r.marketId))
+            .map((r) => ({ key: r.key, locale: r.locale, marketId: r.marketId }));
           for (let i = 0; i < keysToDelete.length; i += CHUNK) {
             await db.themeTranslation.deleteMany({
               where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain, OR: keysToDelete.slice(i, i + CHUNK) },

@@ -52,6 +52,8 @@ export interface ResolvedTranslation {
   locale: string;
   digest?: string | null;
   resourceType?: string;
+  /** Market GID for a market-specific translation; "" (default) = global layer. */
+  marketId?: string;
 }
 
 /** Progress callback for sync operations */
