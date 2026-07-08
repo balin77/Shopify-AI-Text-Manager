@@ -165,7 +165,13 @@ export async function fetchAllTranslations(
         }
 
         const resource = data.data?.translatableResource;
-        if (!resource) continue;
+        if (!resource) {
+          // Null resource on a market pass counts as a failed layer (mirrors
+          // product-sync's own fetchAllTranslations) so the caller's delete
+          // scope stays conservative on this ambiguous response.
+          if (marketId) failedMarketIds?.add(marketId);
+          continue;
+        }
 
         const digestMap = new Map<string, string>();
 

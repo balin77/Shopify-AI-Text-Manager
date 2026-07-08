@@ -778,29 +778,43 @@ export class ProductSyncService {
             // preserved the pre-sync alt rows across the image recreate, so a
             // plain skipDuplicates insert would keep stale values; deleting
             // only the succeeded layers keeps failed/un-fetched layers intact.
+            // Delete + recreate run in ONE transaction: if the insert fails
+            // (e.g. an image id vanished under a concurrent single-product
+            // sync → FK error), the delete rolls back and the old rows survive
+            // instead of leaving the succeeded layers empty.
             const succeededAltLayers = [...attemptedAltLayers].filter((l) => !failedAltLayers.has(l));
             const dbImageIds = [...mediaIdToDbId.values()];
-            if (succeededAltLayers.length > 0 && dbImageIds.length > 0) {
-              await db.productImageAltTranslation.deleteMany({
-                where: { imageId: { in: dbImageIds }, marketId: { in: succeededAltLayers } },
-              });
-            }
-
             const freshAltRows = altTranslations.filter((t) => !failedAltLayers.has(t.marketId));
-            if (freshAltRows.length > 0) {
-              onProgress?.({ overallPercent: 97, message: `Saving ${freshAltRows.length} image alt-text translations...` });
 
-              await db.productImageAltTranslation.createMany({
-                data: freshAltRows.map(t => ({
-                  imageId: t.imageId,
-                  locale: t.locale,
-                  altText: t.altText,
-                  marketId: t.marketId,
-                })),
-                skipDuplicates: true,
-              });
-
-              logger.debug(`[ProductSync] Saved ${freshAltRows.length} image alt-text translations`);
+            if ((succeededAltLayers.length > 0 && dbImageIds.length > 0) || freshAltRows.length > 0) {
+              if (freshAltRows.length > 0) {
+                onProgress?.({ overallPercent: 97, message: `Saving ${freshAltRows.length} image alt-text translations...` });
+              }
+              try {
+                await db.$transaction(async (tx) => {
+                  if (succeededAltLayers.length > 0 && dbImageIds.length > 0) {
+                    await tx.productImageAltTranslation.deleteMany({
+                      where: { imageId: { in: dbImageIds }, marketId: { in: succeededAltLayers } },
+                    });
+                  }
+                  if (freshAltRows.length > 0) {
+                    await tx.productImageAltTranslation.createMany({
+                      data: freshAltRows.map(t => ({
+                        imageId: t.imageId,
+                        locale: t.locale,
+                        altText: t.altText,
+                        marketId: t.marketId,
+                      })),
+                      skipDuplicates: true,
+                    });
+                  }
+                });
+                logger.debug(`[ProductSync] Saved ${freshAltRows.length} image alt-text translations`);
+              } catch (altWriteErr: unknown) {
+                if (altWriteErr instanceof DOMException && altWriteErr.name === "AbortError") throw altWriteErr;
+                // Rolled back — old rows intact; next sync/reload refreshes them.
+                logger.warn(`[ProductSync] Alt-text translation write failed (rolled back):`, altWriteErr instanceof Error ? altWriteErr.message : String(altWriteErr));
+              }
             }
           }
         }
