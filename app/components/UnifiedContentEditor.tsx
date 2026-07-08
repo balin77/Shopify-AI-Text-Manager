@@ -1013,6 +1013,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       currentLanguage={state.currentLanguage}
                       shopLocales={shopLocales}
                       translations={subResourceState.optionTranslations}
+                      fallbackResourceIds={subResourceState.fallbackResourceIds}
                       onTranslate={subResourceHandlers.translateOption}
                       onTranslateField={subResourceHandlers.translateOptionField}
                       onCopyField={subResourceHandlers.copyOptionField}
@@ -1058,6 +1059,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       translations={subResourceState.metafieldTranslations}
+                      fallbackResourceIds={subResourceState.fallbackResourceIds}
                       onTranslate={subResourceHandlers.translateMetafield}
                       onMetafieldChange={subResourceHandlers.handleMetafieldChange}
                       onPrimaryMetafieldChange={subResourceHandlers.handlePrimaryMetafieldChange}

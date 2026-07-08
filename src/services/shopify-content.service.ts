@@ -74,15 +74,23 @@ export class ShopifyContentService {
   /**
    * Save translations for a resource
    */
-  async saveTranslations(resourceId: string, translations: Array<{ key: string; value: string; locale: string }>) {
+  async saveTranslations(
+    resourceId: string,
+    translations: Array<{ key: string; value: string; locale: string }>,
+    /** Market GID for a market-specific override; "" (default) = global (all markets). */
+    marketId: string = "",
+  ) {
     // Fetch digest map first
     const { digestMap } = await this.loadTranslatableContent(resourceId);
 
-    // Add digests to translations, filtering out any without a valid digest
+    // Add digests to translations, filtering out any without a valid digest.
+    // When a market is selected, fold marketId onto each TranslationInput so
+    // Shopify stores a market-specific override (omitting it = all markets/global).
     const translationsWithDigests = translations
       .map(t => ({
         ...t,
-        translatableContentDigest: digestMap[t.key]
+        translatableContentDigest: digestMap[t.key],
+        ...(marketId ? { marketId } : {}),
       }))
       .filter(t => {
         if (!t.translatableContentDigest) {

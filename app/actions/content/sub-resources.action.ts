@@ -52,11 +52,15 @@ export async function handleLoadSubResourceTranslations(
     // Load translations from Shopify for each sub-resource
     const translations: Record<string, Record<string, string>> = {};
 
-    // Batch: load from local DB first (faster)
+    // Batch: load from local DB first (faster). This is the GLOBAL supplement —
+    // it fills the global layer for resources with no DB row yet; the market
+    // layer is carried by the loader's subResourceTranslations (DB) + client
+    // overlay, so scope to marketId "" for a deterministic global read.
     const dbTranslations = await db.contentTranslation.findMany({
       where: {
         resourceId: { in: resourceIds },
         locale,
+        marketId: "",
       },
     });
 
@@ -130,6 +134,9 @@ export async function handleSaveSubResourceTranslations(
     return json({ success: false, error: "Invalid locale format" }, { status: 400 });
   }
 
+  // Market GID for a market-specific override; "" = global (all markets).
+  const marketId = getFormString(formData, "marketId") || "";
+
   try {
     // translationsData format: { resourceId: { key: value } }
     const translationsDataJson = getFormString(formData, "translationsData");
@@ -187,17 +194,18 @@ export async function handleSaveSubResourceTranslations(
           keysToDelete: JSON.stringify(keysToDelete),
         });
 
-        // Save non-empty translations to Shopify
+        // Save non-empty translations to Shopify (market-scoped when marketId set)
         if (translationInputs.length > 0) {
-          await shopifyContentService.saveTranslations(resourceId, translationInputs);
+          await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
         }
 
-        // Delete empty translations for ProductOptionValue
+        // Delete empty translations for ProductOptionValue. marketIds null =
+        // remove the global translation; a market removes only that override.
         if (keysToDelete.length > 0) {
           const deleteResponse = await gateway.graphql(
             `#graphql
-              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!) {
-                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales) {
+              mutation removeTranslations($resourceId: ID!, $translationKeys: [String!]!, $locales: [String!]!, $marketIds: [ID!]) {
+                translationsRemove(resourceId: $resourceId, translationKeys: $translationKeys, locales: $locales, marketIds: $marketIds) {
                   userErrors { field message }
                 }
               }`,
@@ -206,6 +214,7 @@ export async function handleSaveSubResourceTranslations(
                 resourceId,
                 translationKeys: keysToDelete,
                 locales: [locale],
+                marketIds: marketId ? [marketId] : null,
               },
             }
           );
@@ -232,15 +241,16 @@ export async function handleSaveSubResourceTranslations(
         for (const [key, value] of Object.entries(fields)) {
           if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
             // For ProductOption/ProductOptionValue with empty value, delete from DB too
-            // since there's no translation in Shopify (we removed it)
+            // since there's no translation in Shopify (we removed it). Scoped to the
+            // saved market so clearing a market override doesn't wipe the global row.
             await db.contentTranslation.deleteMany({
-              where: { resourceId, key, locale },
+              where: { resourceId, key, locale, marketId },
             });
           } else {
-            // For all other cases, save to DB
+            // For all other cases, save to DB (market-scoped)
             await db.contentTranslation.upsert({
-              where: { shop_resourceId_key_locale_marketId: { marketId: "",  shop: session.shop, resourceId, key, locale } },
-              create: { shop: session.shop, resourceId, resourceType, key, value, locale },
+              where: { shop_resourceId_key_locale_marketId: { marketId, shop: session.shop, resourceId, key, locale } },
+              create: { shop: session.shop, resourceId, resourceType, key, value, locale, marketId },
               update: { value },
             });
           }
@@ -875,6 +885,7 @@ export async function handleSavePrimarySubResources(
                       resourceType: "ProductOption",
                       key: "name",
                       locale: { in: foreignLocales },
+                      marketId: "",
                     },
                   });
                 }
@@ -914,6 +925,7 @@ export async function handleSavePrimarySubResources(
                         resourceType: "ProductOptionValue",
                         key: "name",
                         locale: { in: foreignLocales },
+                        marketId: "",
                       },
                     });
                   }
@@ -959,6 +971,7 @@ export async function handleSavePrimarySubResources(
                     resourceType: "Metafield",
                     key: "value",
                     locale: { in: foreignLocales },
+                    marketId: "",
                   },
                 });
               }

@@ -32,6 +32,12 @@ interface MetafieldsFieldProps {
   /** Translation data (indexed by metafield ID) */
   translations: Record<string, string>;
 
+  /**
+   * Metafield GIDs whose shown value is inherited from the global value while a
+   * market is selected — greyed out + italic, like the main fields.
+   */
+  fallbackResourceIds?: Set<string>;
+
   /** Callback to translate a single metafield */
   onTranslate: (metafieldId: string) => void;
 
@@ -71,6 +77,7 @@ export function MetafieldsField({
   isPrimaryLocale,
   currentLanguage,
   translations,
+  fallbackResourceIds,
   onTranslate,
   onMetafieldChange,
   onPrimaryMetafieldChange,
@@ -171,7 +178,7 @@ export function MetafieldsField({
 
                       {/* Translation input */}
                       <div>
-                        <div className={`ai-editable-field-wrapper ${hasTranslation ? "bg-white" : "bg-untranslated"}`}>
+                        <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(mf.id) ? "bg-fallback" : (hasTranslation ? "bg-white" : "bg-untranslated")}`}>
                           <TextField
                             label={`${mf.namespace}.${mf.key} (${currentLanguage})`}
                             value={translation}

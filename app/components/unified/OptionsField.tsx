@@ -54,6 +54,13 @@ interface OptionsFieldProps {
   /** Translation data (indexed by option ID) */
   translations: Record<string, OptionTranslation>;
 
+  /**
+   * Resource GIDs (option.id for the name, value.id for a value) whose shown
+   * value is inherited from the global value while a market is selected — greyed
+   * out + italic, like the main fields.
+   */
+  fallbackResourceIds?: Set<string>;
+
   /** Callback to translate entire option */
   onTranslate: (optionId: string) => void;
 
@@ -123,6 +130,7 @@ export function OptionsField({
   currentLanguage,
   shopLocales,
   translations,
+  fallbackResourceIds,
   onTranslate,
   onTranslateField,
   onCopyField,
@@ -455,7 +463,7 @@ export function OptionsField({
 
                       {/* Option Name Translation — always available */}
                       <div>
-                        <div className={`ai-editable-field-wrapper ${translation.name ? "bg-white" : "bg-untranslated"}`} style={{ position: "relative" }}>
+                        <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(option.id) ? "bg-fallback" : (translation.name ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
                           {translation.name && (
                             <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                               <Button
@@ -517,7 +525,7 @@ export function OptionsField({
                             const valueFieldId = `${option.id}:value:${valueIndex}`;
                             return (
                               <div key={optVal.id || valueIndex}>
-                                <div className={`ai-editable-field-wrapper ${translation.values[valueIndex] ? "bg-white" : "bg-untranslated"}`} style={{ position: "relative" }}>
+                                <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(optVal.id) ? "bg-fallback" : (translation.values[valueIndex] ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
                                   {translation.values[valueIndex] && (
                                     <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
                                       <Button

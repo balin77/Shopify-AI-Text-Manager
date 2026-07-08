@@ -111,7 +111,7 @@ export interface TranslatableContentItem {
     type: string;
   }>;
   /** Pre-loaded sub-resource translations from DB (options, option values, metafields) */
-  subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string }>>;
+  subResourceTranslations?: Record<string, Array<{ key: string; value: string; locale: string; marketId?: string }>>;
   /** Market-specific translations (marketId → translationKey → locale → value). Global rows stay in `translations`. */
   marketTranslations?: MarketTranslations;
 }

@@ -216,11 +216,13 @@ export const loader = createContentLoader({
       })) || [],
       // Sub-resource translations loaded via same DB pipeline as main translations
       subResourceTranslations: (() => {
-        const result: Record<string, Array<{ key: string; value: string; locale: string }>> = {};
+        // Carry marketId per row so the client can layer market → global (see
+        // useProductSubResources). "" = global.
+        const result: Record<string, Array<{ key: string; value: string; locale: string; marketId: string }>> = {};
         for (const opt of p.options || []) {
           if (subTransByResource[opt.id]) {
             result[opt.id] = subTransByResource[opt.id].map((t: any) => ({
-              key: t.key, value: t.value, locale: t.locale,
+              key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
             }));
           }
           try {
@@ -228,7 +230,7 @@ export const loader = createContentLoader({
             for (const v of vals) {
               if (v.id && subTransByResource[v.id]) {
                 result[v.id] = subTransByResource[v.id].map((t: any) => ({
-                  key: t.key, value: t.value, locale: t.locale,
+                  key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
                 }));
               }
             }
@@ -237,7 +239,7 @@ export const loader = createContentLoader({
         for (const mf of p.metafields || []) {
           if (subTransByResource[mf.id]) {
             result[mf.id] = subTransByResource[mf.id].map((t: any) => ({
-              key: t.key, value: t.value, locale: t.locale,
+              key: t.key, value: t.value, locale: t.locale, marketId: t.marketId ?? "",
             }));
           }
         }
@@ -381,6 +383,7 @@ export default function ProductsPage() {
     selectedItem: editor.selectedItem,
     currentLanguage: editor.state.currentLanguage,
     primaryLocale,
+    selectedMarketId: editor.state.selectedMarketId,
     revalidator,
     showInfoBox,
     enabledLanguages: editor.state.enabledLanguages,
