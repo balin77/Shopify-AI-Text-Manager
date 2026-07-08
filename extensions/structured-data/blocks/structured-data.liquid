@@ -1,0 +1,347 @@
+{%- comment -%}
+  App Embed Block (target: body) - emits schema.org JSON-LD for the current
+  page using NATIVE Liquid objects (product / collection / article / shop), so
+  rich-snippet markup is produced automatically with no admin API call. Every
+  dynamic value is passed through the `json` filter, which JSON-encodes the
+  string AND escapes `<` (so a value containing "</script>" cannot break out
+  of the surrounding <script> element). Absolute URLs are built from
+  `shop.url` (canonical, no trailing slash) + the object's root-relative
+  `.url`. Enable once - no placement needed.
+{%- endcomment -%}
+
+{%- liquid
+  assign want_org = block.settings.enable_organization
+  assign want_product = block.settings.enable_product
+  assign want_collection = block.settings.enable_collection
+  assign want_article = block.settings.enable_article
+  assign want_breadcrumb = block.settings.enable_breadcrumb
+  assign want_faq = block.settings.enable_faq
+
+  assign logo_url = ''
+  if block.settings.logo
+    assign logo_url = block.settings.logo | image_url: width: 512
+  elsif shop.brand.logo
+    assign logo_url = shop.brand.logo | image_url: width: 512
+  endif
+-%}
+
+{%- if want_org -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ shop.name | json }},
+  "url": {{ shop.url | json }}
+  {%- if logo_url != '' -%}, "logo": {{ logo_url | json }}{%- endif -%}
+  {%- assign social_lines = block.settings.social_urls | newline_to_br | split: '<br />' -%}
+  {%- assign social_clean = '' -%}
+  {%- for s in social_lines -%}
+    {%- assign st = s | strip -%}
+    {%- if st != '' -%}
+      {%- if social_clean == '' -%}{%- assign social_clean = st -%}{%- else -%}{%- assign social_clean = social_clean | append: '|' | append: st -%}{%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if social_clean != '' -%}
+    , "sameAs": [
+    {%- assign parts = social_clean | split: '|' -%}
+    {%- for p in parts -%}{{ p | json }}{%- unless forloop.last -%}, {%- endunless -%}{%- endfor -%}
+    ]
+  {%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- if want_product and request.page_type == 'product' and product -%}
+  {%- liquid
+    assign p_url = shop.url | append: product.url
+    assign p_desc = product.metafields.global.description_tag | default: product.description | strip_html | truncate: 500
+    assign p_img = ''
+    if product.featured_image
+      assign p_img = product.featured_image | image_url: width: 1200
+    endif
+    assign p_var = product.selected_or_first_available_variant
+    assign p_price = product.price
+    if p_var and p_var.price
+      assign p_price = p_var.price
+    endif
+    assign p_currency = cart.currency.iso_code | default: shop.currency
+    # Shopify "rating" metafield value is a rating object: .rating / .scale_max
+    assign r_obj = product.metafields.reviews.rating.value
+    assign r_count = product.metafields.reviews.rating_count.value
+
+    # GTIN/Brand/Offer completeness (plan §C1): barcode is a native
+    # ProductVariant property (no metafield scope/sync needed). Non-digit
+    # separators (spaces/hyphens) are stripped before length-matching to
+    # gtin8/12/13/14; any other non-empty length falls back to generic gtin.
+    assign p_gtin = p_var.barcode | default: '' | remove: '-' | remove: ' '
+    assign p_gtin_len = p_gtin | size
+    assign p_gtin_key = ''
+    if p_gtin_len == 8
+      assign p_gtin_key = 'gtin8'
+    elsif p_gtin_len == 12
+      assign p_gtin_key = 'gtin12'
+    elsif p_gtin_len == 13
+      assign p_gtin_key = 'gtin13'
+    elsif p_gtin_len == 14
+      assign p_gtin_key = 'gtin14'
+    elsif p_gtin != ''
+      assign p_gtin_key = 'gtin'
+    endif
+    assign p_mpn = product.metafields.custom.mpn.value
+    # priceValidUntil defaults to "one year from now" here (the pure
+    # structured-data.service.ts keeps this clock-free for testability and
+    # only emits it when a caller supplies one).
+    assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
+  -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "name": {{ product.title | json }},
+  "url": {{ p_url | json }}
+  {%- if p_desc != '' -%}, "description": {{ p_desc | json }}{%- endif -%}
+  {%- if p_img != '' -%}, "image": {{ p_img | json }}{%- endif -%}
+  {%- if p_var and p_var.sku != blank -%}, "sku": {{ p_var.sku | json }}{%- endif -%}
+  {%- if p_gtin_key != '' -%}, "{{ p_gtin_key }}": {{ p_gtin | json }}{%- endif -%}
+  {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
+  , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
+  , "offers": {
+      "@type": "Offer",
+      "price": {{ p_price | divided_by: 100.0 | round: 2 | json }},
+      "priceCurrency": {{ p_currency | json }},
+      "availability": {% if product.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
+      "itemCondition": "https://schema.org/NewCondition",
+      "priceValidUntil": {{ p_valid_until | json }},
+      "url": {{ p_url | json }}
+    }
+  {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}
+  , "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": {{ r_obj.rating | plus: 0 }},
+      "bestRating": {{ r_obj.scale_max | default: 5 | plus: 0 }},
+      "reviewCount": {{ r_count | plus: 0 }}
+    }
+  {%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  FAQ (plan §C2): opt-in (`enable_faq`, default false), product pages only.
+  Sourced from the product metafield `custom.faq` (type `json`, a list of
+  `{question, answer}`) via `METAFIELDS_SET` — no admin API call needed here,
+  it's read straight off the native `product` object. Built into a `capture`
+  first so we only emit the <script> block when at least one entry has both a
+  non-blank question and answer (an empty `mainEntity` is invalid FAQPage
+  markup); the comma between entries is placed via a counter (not join/split)
+  since question/answer text can contain any character. Every value goes
+  through `| json` per this block's escaping convention.
+{%- endcomment -%}
+{%- if want_faq and request.page_type == 'product' and product -%}
+  {%- assign faq_items = product.metafields.custom.faq.value -%}
+  {%- capture faq_body -%}
+    {%- assign faq_printed = 0 -%}
+    {%- for faq_item in faq_items -%}
+      {%- if faq_item.question != blank and faq_item.answer != blank -%}
+        {%- if faq_printed > 0 -%},{%- endif -%}
+        {
+          "@type": "Question",
+          "name": {{ faq_item.question | json }},
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": {{ faq_item.answer | json }}
+          }
+        }
+        {%- assign faq_printed = faq_printed | plus: 1 -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endcapture -%}
+  {%- if faq_body != blank -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {{ faq_body }}
+  ]
+}
+</script>
+  {%- endif -%}
+{%- endif -%}
+
+{%- if want_collection and request.page_type == 'collection' and collection -%}
+  {%- liquid
+    assign c_url = shop.url | append: collection.url
+    assign c_desc = collection.metafields.global.description_tag | default: collection.description | strip_html | truncate: 500
+  -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": {{ collection.title | json }},
+  "url": {{ c_url | json }}
+  {%- if c_desc != '' -%}, "description": {{ c_desc | json }}{%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- if want_article and request.page_type == 'article' and article -%}
+  {%- liquid
+    assign a_url = shop.url | append: article.url
+    assign a_desc = article.excerpt_or_content | strip_html | truncate: 500
+    assign a_img = ''
+    if article.image
+      assign a_img = article.image | image_url: width: 1200
+    endif
+  -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": {{ article.title | json }},
+  "url": {{ a_url | json }},
+  "mainEntityOfPage": {{ a_url | json }},
+  "datePublished": {{ article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
+  "dateModified": {{ article.updated_at | default: article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
+  "author": { "@type": "Person", "name": {{ article.author | default: shop.name | json }} },
+  "publisher": {
+    "@type": "Organization",
+    "name": {{ shop.name | json }}
+    {%- if logo_url != '' -%}, "logo": { "@type": "ImageObject", "url": {{ logo_url | json }} }{%- endif -%}
+  }
+  {%- if a_desc != '' -%}, "description": {{ a_desc | json }}{%- endif -%}
+  {%- if a_img != '' -%}, "image": {{ a_img | json }}{%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  Breadcrumb: each ListItem is emitted inline (no join/split round-trip) so a
+  title containing a "|" cannot corrupt positions or JSON. Every name/url is
+  `| json`-escaped.
+{%- endcomment -%}
+{%- if want_breadcrumb and request.page_type == 'product' and product -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ product.title | json }}, "item": {{ shop.url | append: product.url | json }} }
+  ]
+}
+</script>
+{%- elsif want_breadcrumb and request.page_type == 'collection' and collection -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ collection.title | json }}, "item": {{ shop.url | append: collection.url | json }} }
+  ]
+}
+</script>
+{%- elsif want_breadcrumb and request.page_type == 'article' and article -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ blog.title | json }}, "item": {{ shop.url | append: blog.url | json }} },
+    { "@type": "ListItem", "position": 3, "name": {{ article.title | json }}, "item": {{ shop.url | append: article.url | json }} }
+  ]
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  SEO tab Phase 3: 404 beacon. Only on 404 pages, reports the missing path +
+  referrer to the app-proxy collector (Seo404Hit) so the merchant can see
+  frequent 404s and one-click a redirect. Best-effort: sendBeacon with a fetch
+  fallback, wrapped in try/catch so it can never disturb the storefront.
+{%- endcomment -%}
+{%- if request.page_type == '404' -%}
+<script>
+  (function () {
+    try {
+      var payload = JSON.stringify({
+        path: window.location.pathname + window.location.search,
+        referrer: document.referrer || ''
+      });
+      var url = '/apps/contentpilot/seo-404';
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
+      }
+    } catch (e) { /* never break the storefront */ }
+  })();
+</script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "JSON-LD Structured Data",
+  "target": "body",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_organization",
+      "label": "Organization (all pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_product",
+      "label": "Product (product pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_collection",
+      "label": "Collection (collection pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_article",
+      "label": "Article (blog post pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_breadcrumb",
+      "label": "Breadcrumb list",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_faq",
+      "label": "FAQ (product pages, from the \"custom.faq\" metafield)",
+      "info": "Off by default - only enable once the product metafield \"custom.faq\" (a list of question/answer pairs) is populated.",
+      "default": false
+    },
+    {
+      "type": "header",
+      "content": "Organization details"
+    },
+    {
+      "type": "image_picker",
+      "id": "logo",
+      "label": "Logo (falls back to your theme brand logo)"
+    },
+    {
+      "type": "textarea",
+      "id": "social_urls",
+      "label": "Social / profile URLs (one per line)",
+      "info": "Added as Organization.sameAs (e.g. your Instagram, Facebook, X)."
+    }
+  ]
+}
+{% endschema %}

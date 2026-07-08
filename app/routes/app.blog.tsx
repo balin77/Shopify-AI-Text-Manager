@@ -6,7 +6,7 @@
  */
 
 import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -286,6 +286,10 @@ export default function BlogPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
+  // Deep-link from the SEO dashboard: ?select=<Shopify GID> preselects the item.
+  const [searchParams] = useSearchParams();
+  const initialItemId = searchParams.get("select") || undefined;
+
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: BLOGS_CONFIG,
@@ -296,6 +300,7 @@ export default function BlogPage() {
     fetcher,
     showInfoBox,
     t,
+    initialItemId,
   });
 
   // Show loader error

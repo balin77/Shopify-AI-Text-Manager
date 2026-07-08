@@ -135,6 +135,30 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   const formatExample = genFormatKey ? getInstructionWithDefault(genAiInstructions, genFormatKey) : null;
   const fieldInstructions = genInstructionsTextKey ? getInstructionWithDefault(genAiInstructions, genInstructionsTextKey) : null;
 
+  // SEO Phase 5→AI bridge: the keywords tab lets a merchant track one target
+  // keyword per item, then flags when that keyword is missing from the
+  // title/meta — but generation itself never knew about it. `itemId` here is
+  // the same Shopify GID the keywords route stores as `resourceId` (both come
+  // straight from the content editor's `selectedItem.id`, e.g. db.product.id),
+  // and locale "" is the primary-locale row the keywords feature manages, so
+  // this lookup matches keys 1:1 with no normalization needed.
+  //
+  // Locale dimension (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5b): `mainLanguage`
+  // here is a human-readable display name (e.g. "German"), not a Shopify
+  // locale code, and this handler always generates content in the PRIMARY
+  // language — locale "" therefore stays correct. If a future translation-
+  // generation flow starts passing an explicit target locale/language code
+  // through `ctx`/formData, the lookup below should switch to that locale's
+  // SeoKeyword row instead of hardcoding "".
+  const trackedKeywordRow = ["title", "seoTitle", "metaDescription", "description"].includes(fieldType)
+    ? await db.seoKeyword.findUnique({
+        where: { shop_resourceId_locale: { shop: session.shop, resourceId: itemId, locale: "" } },
+      })
+    : null;
+  const sanitizedTrackedKeyword = trackedKeywordRow
+    ? sanitizePromptInput(trackedKeywordRow.keyword, { fieldType: "general" })
+    : null;
+
   // Build field-type-aware prompt
   let prompt = `Create an improved ${genFieldLabel} for the following content.`;
 
@@ -155,6 +179,10 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey, seoTitleMaxChars) : null;
   if (charLimit) {
     prompt += `\n- Length: ${charLimit}`;
+  }
+
+  if (sanitizedTrackedKeyword) {
+    prompt += `\n- Naturally include the target keyword "${sanitizedTrackedKeyword}" (do not stuff it).`;
   }
 
   if (genField?.type === "slug") {

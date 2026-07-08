@@ -157,16 +157,24 @@ export async function redactCustomerData(
 
   logger.info(`[GDPR] Redacting data for customer ${customer.id} from shop ${shop_domain}`);
 
+  // R5-G2: mirror exportCustomerData's defensive parsing — an unguarded
+  // BigInt(customer.id) throws on an empty/non-numeric/placeholder value
+  // (e.g. Shopify's compliance test payload), which made this handler 500
+  // instead of redacting what it safely can.
+  const userIdBig = toBigIntOrNull(customer?.id);
+  const orConditions: Array<Record<string, unknown>> = [];
+  if (customer?.email) orConditions.push({ email: customer.email });
+  if (userIdBig !== null) orConditions.push({ userId: userIdBig });
+
   // Delete all sessions for this customer
-  const deleted = await db.session.deleteMany({
-    where: {
-      shop: shop_domain,
-      OR: [
-        { email: customer.email },
-        { userId: BigInt(customer.id) },
-      ],
-    },
-  });
+  const deleted = orConditions.length === 0
+    ? { count: 0 }
+    : await db.session.deleteMany({
+      where: {
+        shop: shop_domain,
+        OR: orConditions,
+      },
+    });
 
   logger.info(`[GDPR] Redacted ${deleted.count} sessions for customer ${customer.id}`);
 }
@@ -181,7 +189,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 35 models in prisma/schema.prisma:
+ * Coverage of all 40 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
@@ -191,7 +199,9 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings                 (all scoped by `shop`)
+ *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
+ *      SeoIndexNowQueue, SeoScoreSnapshot          (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -357,7 +367,7 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${metaobjectTranslationsDeleted.count} metaobject translations`);
 
-    // 23. Delete install-state marker (R3) — leaving no residue keeps both the
+    // 24. Delete install-state marker (R3) — leaving no residue keeps both the
     //     shop/redact webhook and the 30-day reaper idempotent (a redelivered
     //     request finds no marker and deletes 0 rows everywhere).
     const shopInstallStateDeleted = await tx.shopInstallState.deleteMany({
@@ -397,6 +407,47 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${directTranslationCandidatesDeleted.count} direct translation candidates`);
+
+    // SEO tab Phase 3: storefront 404-hit collector (shop-scoped usage data).
+    const seo404HitsDeleted = await tx.seo404Hit.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // SEO tab Phase 5: per-item target keywords (shop-scoped).
+    const seoKeywordsDeleted = await tx.seoKeyword.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordsDeleted.count} SEO keywords`);
+
+    // SEO tab Phase 6: Google Search Console connection (encrypted refresh token).
+    const gscConnectionsDeleted = await tx.googleSearchConsoleConnection.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${gscConnectionsDeleted.count} GSC connections`);
+
+    // SEO tab Phase 8: IndexNow config + submit queue (shop-scoped).
+    const indexNowConfigsDeleted = await tx.seoIndexNowConfig.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowConfigsDeleted.count} IndexNow configs`);
+
+    const indexNowQueueDeleted = await tx.seoIndexNowQueue.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowQueueDeleted.count} IndexNow queue rows`);
+
+    // SEO Audit Dashboard: persisted analyzeStore() snapshots (shop-scoped).
+    const seoScoreSnapshotsDeleted = await tx.seoScoreSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoScoreSnapshotsDeleted.count} SEO score snapshots`);
+
+    // Glossary: merchant terminology (GlossaryEntryTranslation cascades).
+    const glossaryEntriesDeleted = await tx.glossaryEntry.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${glossaryEntriesDeleted.count} glossary entries`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

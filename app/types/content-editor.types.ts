@@ -195,7 +195,11 @@ export type FetcherData =
 // TRANSLATION STRINGS TYPE
 // ============================================================================
 
-export type TranslationValue = string | Record<string, string> | undefined;
+// Recursive so i18n blocks may nest beyond a single level (e.g. the SEO tab's
+// `seo.sections.<id>.label` and `seo.dashboard.problems.*`). Only used as the
+// loose structural target for TranslationStrings; the precise per-locale type
+// remains `typeof de` (Translation), so this never weakens real key checking.
+export type TranslationValue = string | { [key: string]: TranslationValue } | undefined;
 
 export interface HelpContent {
   title: string;

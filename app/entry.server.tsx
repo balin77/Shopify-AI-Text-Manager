@@ -6,6 +6,7 @@ import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
+import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { logger } from "./utils/logger.server";
 import { initSentryServer, captureServerError } from "./utils/sentry.server";
 
@@ -26,12 +27,14 @@ process.on('SIGTERM', () => {
   logger.info('SIGTERM received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
+  GscAutoSyncService.getInstance().stop();
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
+  GscAutoSyncService.getInstance().stop();
 });
 
 export default async function handleRequest(

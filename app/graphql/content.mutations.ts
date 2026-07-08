@@ -106,6 +106,8 @@ export const UPDATE_ARTICLE = `#graphql
           altText
           url
         }
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
       }
       userErrors {
         field
@@ -331,6 +333,53 @@ export const METAOBJECT_UPDATE = `#graphql
           type
         }
       }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+// SEO tab Phase 3: native URL redirect CRUD (Online Store navigation).
+// Requires the `write_online_store_navigation` access scope. Always read
+// `userErrors` — Shopify reports loops/duplicates/invalid paths there.
+export const URL_REDIRECT_CREATE = `#graphql
+  mutation urlRedirectCreate($urlRedirect: UrlRedirectInput!) {
+    urlRedirectCreate(urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECT_UPDATE = `#graphql
+  mutation urlRedirectUpdate($id: ID!, $urlRedirect: UrlRedirectInput!) {
+    urlRedirectUpdate(id: $id, urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECT_DELETE = `#graphql
+  mutation urlRedirectDelete($id: ID!) {
+    urlRedirectDelete(id: $id) {
+      deletedUrlRedirectId
       userErrors {
         field
         message

@@ -1,0 +1,604 @@
+/**
+ * Google Search Console integration (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 6 / A7).
+ *
+ * OAuth 2.0 to Google + the Search Console API. The refresh token is encrypted
+ * at rest (same AES-256-GCM utility as the AI API keys); access tokens are
+ * derived per request and never stored. The OAuth `state` is HMAC-signed
+ * (CSRF + carries the shop/host so the callback can re-enter the embedded app).
+ *
+ * The whole feature is opt-in: when the GOOGLE_OAUTH_* env vars are absent,
+ * isGscConfigured() is false and the section shows "not configured" rather than
+ * erroring. `invalid_grant` (revoked/expired refresh token) clears the stored
+ * connection so the merchant is prompted to reconnect.
+ */
+
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import type { PrismaClient } from "@prisma/client";
+import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
+
+const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+const GSC_API = "https://www.googleapis.com/webmasters/v3";
+const GSC_INSPECT_API = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
+
+// Every outbound call to Google is a request-response cycle the merchant is
+// waiting on (a Remix loader/action). Without a timeout, a stalled TCP
+// connection to Google would hang the request indefinitely. Analytics queries
+// get a longer budget — they aggregate rows server-side on Google's end.
+const FETCH_TIMEOUT_MS = 10_000;
+const ANALYTICS_FETCH_TIMEOUT_MS = 15_000;
+
+// webmasters.readonly = analytics/inspection; webmasters = sitemaps.submit.
+// openid+email so we can show which Google account is connected.
+const SCOPES = [
+  "https://www.googleapis.com/auth/webmasters.readonly",
+  "https://www.googleapis.com/auth/webmasters",
+  "openid",
+  "email",
+];
+
+const STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Thrown when the merchant must (re)connect — caller clears any stored token. */
+export class GscReconnectRequiredError extends Error {
+  constructor(public reason: string) {
+    super(`GSC reconnect required: ${reason}`);
+    this.name = "GscReconnectRequiredError";
+  }
+}
+
+export interface GscOAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}
+
+export function getGscOAuthConfig(): GscOAuthConfig | null {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const appUrl = process.env.SHOPIFY_APP_URL?.replace(/\/$/, "");
+  const redirectUri =
+    process.env.GOOGLE_OAUTH_REDIRECT_URI || (appUrl ? `${appUrl}/auth/google/callback` : undefined);
+  if (!clientId || !clientSecret || !redirectUri) return null;
+  return { clientId, clientSecret, redirectUri };
+}
+
+export function isGscConfigured(): boolean {
+  return getGscOAuthConfig() !== null;
+}
+
+// ── Signed OAuth state (CSRF + carries shop/host) ────────────────────────────
+
+function stateSecret(): string {
+  const secret = process.env.SHOPIFY_API_SECRET || process.env.ENCRYPTION_KEY;
+  if (secret) return secret;
+  // A hardcoded fallback would let anyone forge a valid-looking OAuth state
+  // (CSRF) if this ever ran in production without SHOPIFY_API_SECRET or
+  // ENCRYPTION_KEY set — both should always be present in production (see
+  // scripts/validate-env.js). Fail loudly there instead of signing with a
+  // secret an attacker can read straight out of this file. Non-production
+  // keeps the fallback so local dev works with a bare-bones .env.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "GSC OAuth state secret is not configured: set SHOPIFY_API_SECRET or ENCRYPTION_KEY in production",
+    );
+  }
+  return "dev-only-state-secret";
+}
+
+export function signOAuthState(payload: { shop: string; host: string; customDomain?: string | null }): string {
+  // A random per-state nonce lets consumeOAuthState() enforce single-use
+  // (replay) semantics below — the signature alone only proves authenticity,
+  // not that this exact state hasn't already been redeemed.
+  const body = Buffer.from(JSON.stringify({ ...payload, ts: Date.now(), nonce: randomUUID() })).toString(
+    "base64url",
+  );
+  const sig = createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+interface VerifiedOAuthState {
+  shop: string;
+  host: string;
+  customDomain: string | null;
+  nonce: string | null;
+}
+
+/** Shared signature/TTL check. Does not consume the nonce — see consumeOAuthState(). */
+function verifySignedState(state: string): VerifiedOAuthState | null {
+  const [body, sig] = (state || "").split(".");
+  if (!body || !sig) return null;
+  const expected = createHmac("sha256", stateSecret()).update(body).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (typeof data.shop !== "string" || typeof data.ts !== "number") return null;
+    if (Date.now() - data.ts > STATE_TTL_MS) return null;
+    return {
+      shop: data.shop,
+      host: typeof data.host === "string" ? data.host : "",
+      customDomain: typeof data.customDomain === "string" ? data.customDomain : null,
+      // Absent on states signed before this nonce field existed (pre-deploy
+      // grace — see consumeOAuthState()).
+      nonce: typeof data.nonce === "string" ? data.nonce : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function verifyOAuthState(
+  state: string,
+): { shop: string; host: string; customDomain: string | null } | null {
+  const verified = verifySignedState(state);
+  if (!verified) return null;
+  return { shop: verified.shop, host: verified.host, customDomain: verified.customDomain };
+}
+
+// ── Single-use nonce store (OAuth-state replay protection) ──────────────────
+//
+// This app deploys as a single Node process: server.js documents (see the
+// R4-C2 comment there, "the app is currently deployed as a single `web`
+// process (Procfile: `web: npm run start:production`; no replica/scale
+// config)") that every in-process singleton in this codebase relies on that
+// assumption. A plain in-memory Map is therefore sufficient here too — it
+// only needs to prevent a nonce being redeemed twice on the ONE process
+// handling all callbacks. If this app is ever scaled to multiple instances,
+// the upgrade path is a DB-backed nonce table (e.g. a UsedOAuthNonce model
+// with a unique constraint on `nonce`) shared across instances, exactly as
+// server.js recommends a Postgres advisory lock for the other singletons.
+const consumedNonces = new Map<string, number>(); // nonce -> expiresAt (ms)
+
+/** Drop nonces whose state would have expired anyway — bounds the Map to ~STATE_TTL_MS worth of entries. */
+function purgeExpiredNonces(now: number): void {
+  for (const [nonce, expiresAt] of consumedNonces) {
+    if (expiresAt <= now) consumedNonces.delete(nonce);
+  }
+}
+
+/**
+ * Verify the signed OAuth state AND atomically mark its nonce consumed, so a
+ * second callback replaying the exact same `state` value (same code request
+ * repeated, tab duplicated, network retry replayed by an attacker who
+ * observed the redirect) is rejected instead of re-running the connect flow.
+ * Returns null on an invalid/expired/tampered state OR a replay.
+ *
+ * Backward-compat / rollout grace: a state signed by the previous deploy (no
+ * `nonce` claim yet) is accepted on TTL + signature alone, exactly like
+ * before — it cannot be tracked for single-use, but every state is at most
+ * STATE_TTL_MS (10 min) old before it expires naturally, so the replay window
+ * for that one-deploy transition period is bounded and small. Once fully
+ * rolled out, all newly-issued states carry a nonce and get full single-use
+ * enforcement.
+ */
+export function consumeOAuthState(
+  state: string,
+): { shop: string; host: string; customDomain: string | null } | null {
+  const verified = verifySignedState(state);
+  if (!verified) return null;
+
+  const now = Date.now();
+  purgeExpiredNonces(now);
+  if (verified.nonce) {
+    if (consumedNonces.has(verified.nonce)) return null; // replay
+    consumedNonces.set(verified.nonce, now + STATE_TTL_MS);
+  }
+  return { shop: verified.shop, host: verified.host, customDomain: verified.customDomain };
+}
+
+export function buildGscAuthUrl(state: string): string | null {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) return null;
+  const params = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    response_type: "code",
+    scope: SCOPES.join(" "),
+    access_type: "offline",
+    prompt: "consent", // force a refresh_token on every (re)connect
+    include_granted_scopes: "true",
+    state,
+  });
+  return `${GOOGLE_AUTH_URL}?${params.toString()}`;
+}
+
+// ── Token exchange / refresh ─────────────────────────────────────────────────
+
+export interface TokenResult {
+  accessToken: string;
+  refreshToken?: string;
+  expiresIn: number;
+  idToken?: string;
+}
+
+export async function exchangeCodeForTokens(code: string): Promise<TokenResult> {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) throw new Error("GSC is not configured");
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      redirect_uri: cfg.redirectUri,
+      grant_type: "authorization_code",
+    }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.access_token) {
+    throw new Error(`Google token exchange failed: ${json.error || res.status}`);
+  }
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token,
+    expiresIn: json.expires_in ?? 3600,
+    idToken: json.id_token,
+  };
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<string> {
+  const cfg = getGscOAuthConfig();
+  if (!cfg) throw new Error("GSC is not configured");
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      refresh_token: refreshToken,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      grant_type: "refresh_token",
+    }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || !json.access_token) {
+    if (json.error === "invalid_grant") throw new GscReconnectRequiredError("invalid_grant");
+    throw new Error(`Google token refresh failed: ${json.error || res.status}`);
+  }
+  return json.access_token;
+}
+
+/**
+ * Best-effort revoke of a refresh token at Google (called on disconnect). Never
+ * throws — a revoke failure (network blip, token already revoked, Google
+ * outage) must not block deleting the local connection; the merchant's intent
+ * to disconnect must always succeed locally regardless of Google's reachability.
+ */
+export async function revokeGoogleToken(refreshToken: string): Promise<void> {
+  try {
+    await fetch(GOOGLE_REVOKE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: refreshToken }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    // Best-effort only — see doc comment above.
+  }
+}
+
+/** Best-effort email from an OpenID id_token (no signature verification needed — display only). */
+export function emailFromIdToken(idToken: string | undefined): string | null {
+  if (!idToken) return null;
+  const parts = idToken.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    return typeof payload.email === "string" ? payload.email : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Connection persistence ───────────────────────────────────────────────────
+
+export async function saveGscConnection(
+  db: PrismaClient,
+  shop: string,
+  input: { propertyUrl: string; refreshToken: string; email?: string | null },
+): Promise<void> {
+  const enc = encryptApiKey(input.refreshToken);
+  if (!enc) throw new Error("Failed to encrypt the GSC refresh token");
+  await db.googleSearchConsoleConnection.upsert({
+    where: { shop },
+    create: { shop, propertyUrl: input.propertyUrl, refreshToken: enc, email: input.email ?? null },
+    update: { propertyUrl: input.propertyUrl, refreshToken: enc, email: input.email ?? null },
+  });
+}
+
+/** Update just the property (when a refresh on reconnect didn't return a new token). */
+export async function updateGscProperty(
+  db: PrismaClient,
+  shop: string,
+  propertyUrl: string,
+  email?: string | null,
+): Promise<void> {
+  await db.googleSearchConsoleConnection.updateMany({
+    where: { shop },
+    data: { propertyUrl, ...(email !== undefined ? { email } : {}) },
+  });
+}
+
+export async function getGscConnection(db: PrismaClient, shop: string) {
+  return db.googleSearchConsoleConnection.findUnique({ where: { shop } });
+}
+
+export async function deleteGscConnection(db: PrismaClient, shop: string): Promise<void> {
+  await db.googleSearchConsoleConnection.deleteMany({ where: { shop } });
+}
+
+/** Load the connection, refresh an access token. Clears the connection on invalid_grant. */
+export async function getGscAccessToken(
+  db: PrismaClient,
+  shop: string,
+): Promise<{ accessToken: string; propertyUrl: string }> {
+  const conn = await getGscConnection(db, shop);
+  if (!conn) throw new GscReconnectRequiredError("not_connected");
+  // NON-throwing decrypt: a corrupted token or a rotated ENCRYPTION_KEY must
+  // yield null (→ clear the connection + prompt reconnect), not throw past this
+  // guard and get misclassified as a generic fetch error.
+  const refresh = tryDecryptApiKey(conn.refreshToken, "gsc-refresh-token");
+  if (!refresh) {
+    await deleteGscConnection(db, shop);
+    throw new GscReconnectRequiredError("decrypt_failed");
+  }
+  try {
+    const accessToken = await refreshAccessToken(refresh);
+    return { accessToken, propertyUrl: conn.propertyUrl };
+  } catch (e) {
+    if (e instanceof GscReconnectRequiredError) await deleteGscConnection(db, shop);
+    throw e;
+  }
+}
+
+// ── Search Console API ───────────────────────────────────────────────────────
+
+export interface GscSite {
+  siteUrl: string;
+  permissionLevel: string;
+}
+
+export async function listSites(accessToken: string): Promise<GscSite[]> {
+  const res = await fetch(`${GSC_API}/sites`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC listSites failed: ${json.error?.message || res.status}`);
+  return (json.siteEntry ?? []).filter((s: GscSite) => s.permissionLevel !== "siteUnverifiedUser");
+}
+
+/**
+ * Pick the GSC property that best matches a shop. Prefers a domain property or a
+ * URL-prefix property whose host contains the shop's domain (myshopify or
+ * custom).
+ *
+ * Deliberately does NOT fall back to `sites[0]` when nothing matches: the
+ * merchant's Google account can have any number of unrelated verified
+ * properties (other stores, personal sites), and silently picking the first
+ * one would submit sitemaps / read analytics for the wrong website. Returning
+ * null here tells the caller to store the connection without a property and
+ * let the merchant pick the right one explicitly.
+ */
+export function pickProperty(sites: GscSite[], shop: string, customDomain?: string | null): string | null {
+  if (sites.length === 0) return null;
+  const needles = [shop.toLowerCase(), customDomain?.toLowerCase()].filter(Boolean) as string[];
+  const matches = (siteUrl: string) => {
+    const s = siteUrl.toLowerCase();
+    return needles.some((n) => s.includes(n));
+  };
+  // Prefer a matching domain property, then a matching URL property.
+  const domainMatch = sites.find((s) => s.siteUrl.startsWith("sc-domain:") && matches(s.siteUrl));
+  if (domainMatch) return domainMatch.siteUrl;
+  const urlMatch = sites.find((s) => matches(s.siteUrl));
+  if (urlMatch) return urlMatch.siteUrl;
+  return null;
+}
+
+export interface SearchAnalyticsRow {
+  keys: string[];
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface SearchAnalyticsOptions {
+  startDate: string; // YYYY-MM-DD
+  endDate: string;
+  dimensions?: string[]; // e.g. ["query"], ["query","page"]
+  rowLimit?: number;
+}
+
+export async function querySearchAnalytics(
+  accessToken: string,
+  propertyUrl: string,
+  opts: SearchAnalyticsOptions,
+): Promise<SearchAnalyticsRow[]> {
+  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/searchAnalytics/query`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      startDate: opts.startDate,
+      endDate: opts.endDate,
+      dimensions: opts.dimensions ?? ["query"],
+      rowLimit: opts.rowLimit ?? 25,
+      dataState: "final", // GSC has 2–3d latency; only settled data
+    }),
+    signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC searchAnalytics failed: ${json.error?.message || res.status}`);
+  return (json.rows ?? []) as SearchAnalyticsRow[];
+}
+
+/** One (query, page) row flagged as a "quick win" — ranks decently but the CTR headroom suggests a title/meta rewrite could pull more clicks. */
+export interface CtrOpportunity {
+  query: string;
+  page: string;
+  impressions: number;
+  position: number;
+  ctr: number;
+}
+
+// Position 4-20 = "found, but not front-of-page-1" — the band where a better
+// title/meta description has the most leverage (position 1-3 already win the
+// click; >20 rarely gets impressions worth optimizing for). 200 impressions
+// is a floor so we don't surface statistical noise from single-digit-view rows.
+const OPPORTUNITY_MIN_IMPRESSIONS = 200;
+const OPPORTUNITY_MIN_POSITION = 4;
+const OPPORTUNITY_MAX_POSITION = 20;
+const OPPORTUNITY_LIMIT = 10;
+
+/**
+ * Filter/rank ["query","page"]-dimension analytics rows down to the top CTR
+ * opportunities. Pure and exported so the ranking logic is unit-testable
+ * without mocking fetch/Prisma.
+ */
+export function findCtrOpportunities(rows: SearchAnalyticsRow[], limit = OPPORTUNITY_LIMIT): CtrOpportunity[] {
+  return rows
+    .filter(
+      (r) =>
+        r.impressions >= OPPORTUNITY_MIN_IMPRESSIONS &&
+        r.position >= OPPORTUNITY_MIN_POSITION &&
+        r.position <= OPPORTUNITY_MAX_POSITION,
+    )
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, limit)
+    .map((r) => ({
+      query: r.keys[0] ?? "",
+      page: r.keys[1] ?? "",
+      impressions: r.impressions,
+      position: r.position,
+      ctr: r.ctr,
+    }));
+}
+
+/**
+ * Submit a sitemap to GSC. `sitemapUrl` must be the sitemap's FULL absolute URL
+ * (e.g. "https://shop.example.com/sitemap.xml") — the sitemaps.submit API takes
+ * this as the resource identifier, not a path relative to the property. This
+ * holds even for `sc-domain:` (domain) properties: the sitemap itself is still
+ * served over https from the store's host, only the *property* is domain-scoped.
+ */
+export async function submitSitemap(
+  accessToken: string,
+  propertyUrl: string,
+  sitemapUrl: string,
+): Promise<void> {
+  const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/sitemaps/${encodeURIComponent(sitemapUrl)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok && res.status !== 204) {
+    const json: any = await res.json().catch(() => ({}));
+    throw new Error(`GSC submitSitemap failed: ${json.error?.message || res.status}`);
+  }
+}
+
+export async function inspectUrl(
+  accessToken: string,
+  propertyUrl: string,
+  inspectionUrl: string,
+): Promise<any> {
+  const res = await fetch(GSC_INSPECT_API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ inspectionUrl, siteUrl: propertyUrl }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`GSC urlInspection failed: ${json.error?.message || res.status}`);
+  return json.inspectionResult ?? null;
+}
+
+/** Compact shape the "Inspect URL" card actually renders. */
+export interface UrlInspectionSummary {
+  verdict: string; // "PASS" | "PARTIAL" | "FAIL" | "NEUTRAL" | "VERDICT_UNSPECIFIED"
+  coverageState: string;
+  robotsTxtState: string;
+  indexingState: string;
+  lastCrawlTime: string | null;
+}
+
+/**
+ * Reduce the raw (large, deeply nested) urlInspection.index API response down
+ * to the handful of fields the UI needs. The full response also carries
+ * mobileUsabilityResult/richResultsResult/AMP data we don't use — kept pure
+ * and exported so the shape mapping is unit-testable without a live call.
+ */
+export function summarizeInspection(inspectionResult: any): UrlInspectionSummary {
+  const idx = inspectionResult?.indexStatusResult ?? {};
+  return {
+    verdict: idx.verdict || "VERDICT_UNSPECIFIED",
+    coverageState: idx.coverageState || "",
+    robotsTxtState: idx.robotsTxtState || "",
+    indexingState: idx.indexingState || "",
+    lastCrawlTime: idx.lastCrawlTime || null,
+  };
+}
+
+// ── Keyword enrichment ───────────────────────────────────────────────────────
+
+/** Default trailing window for analytics (GSC has 2–3 day latency). */
+export function defaultDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
+  const end = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3d lag
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+/**
+ * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
+ * back onto matching SeoKeyword rows (exact, case-insensitive query match).
+ * Returns the number of keyword rows enriched. Caller must pass `now` (the
+ * service stays deterministic / testable).
+ */
+export async function enrichKeywordsFromGsc(
+  db: PrismaClient,
+  shop: string,
+  now: Date,
+): Promise<number> {
+  const { accessToken, propertyUrl } = await getGscAccessToken(db, shop);
+  const { startDate, endDate } = defaultDateRange(now);
+  const rows = await querySearchAnalytics(accessToken, propertyUrl, {
+    startDate,
+    endDate,
+    dimensions: ["query"],
+    rowLimit: 1000,
+  });
+
+  // Best row per query keyword (GSC already aggregates by the query dimension).
+  const byKeyword = new Map<string, SearchAnalyticsRow>();
+  for (const row of rows) {
+    const kw = (row.keys?.[0] ?? "").toLowerCase();
+    if (kw) byKeyword.set(kw, row);
+  }
+
+  const keywords = await db.seoKeyword.findMany({ where: { shop }, select: { id: true, keyword: true } });
+  let enriched = 0;
+  for (const k of keywords) {
+    const row = byKeyword.get(k.keyword.toLowerCase());
+    if (!row) continue;
+    await db.seoKeyword.update({
+      where: { id: k.id },
+      data: {
+        gscPosition: row.position,
+        gscClicks: row.clicks,
+        gscImpressions: row.impressions,
+        gscCtr: row.ctr,
+        gscUpdatedAt: now,
+      },
+    });
+    enriched += 1;
+  }
+  return enriched;
+}

@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
+import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 import { TRANSLATION_BATCH } from '../../app/config/constants';
@@ -177,6 +178,14 @@ export class AIService {
    * cell, hammering the provider and the queue.
    */
   private authError: InvalidAIKeyError | null = null;
+  /**
+   * Shop glossary (Glossar/Terminologie), lazily loaded ONCE per instance —
+   * one AIService instance = one request/task, so a bulk translate reads the
+   * glossary a single time. Injection happens here (not at the call sites) so
+   * EVERY translation path — editors, theme content, direct translations,
+   * alt-texts, SEO — is covered automatically.
+   */
+  private glossaryRulesPromise?: Promise<GlossaryRule[]>;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -189,6 +198,56 @@ export class AIService {
 
   private getModel(): string {
     return this.config.selectedModel || DEFAULT_MODELS[this.provider];
+  }
+
+  private loadGlossaryRules(): Promise<GlossaryRule[]> {
+    // No shop context (unit tests, ad-hoc usage) -> no glossary.
+    if (!this.shop) return Promise.resolve([]);
+    if (!this.glossaryRulesPromise) {
+      const shop = this.shop;
+      this.glossaryRulesPromise = (async () => {
+        try {
+          // Dynamic import: keeps db.server out of this module's static graph
+          // (same pattern as savePromptToTask).
+          const { loadGlossaryRules } = await import('./glossary.service');
+          return await loadGlossaryRules(shop);
+        } catch (error) {
+          // A broken glossary must never block translations — warn and proceed.
+          loggers.ai('warn', '[AI-SERVICE] Failed to load glossary; translating without it', {
+            shop,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      })();
+    }
+    return this.glossaryRulesPromise;
+  }
+
+  /**
+   * The sanitized glossary directive block for this shop, filtered to terms
+   * that actually occur in `sourceTexts`, or '' when nothing applies. Appended
+   * to translation prompts between the requirements and the response-format
+   * section. Empty `targetLocales` = all locales in play.
+   */
+  private async getGlossaryDirective(sourceTexts: string[], targetLocales: string[]): Promise<string> {
+    const rules = await this.loadGlossaryRules();
+    if (rules.length === 0) return '';
+    const { buildGlossaryDirective } = await import('./glossary.service');
+    return buildGlossaryDirective(rules, sourceTexts, targetLocales);
+  }
+
+  /**
+   * True when the whole trimmed text IS a doNotTranslate glossary term (e.g. a
+   * title that is exactly the brand name). Callers then skip the AI call and
+   * keep the source verbatim — both because that is the correct result and
+   * because the echo guard would otherwise reject the unchanged output.
+   */
+  private async isVerbatimGlossaryTerm(text: string): Promise<boolean> {
+    const rules = await this.loadGlossaryRules();
+    if (rules.length === 0) return false;
+    const { matchesVerbatimDoNotTranslate } = await import('./glossary.service');
+    return matchesVerbatimDoNotTranslate(rules, text);
   }
 
   private initializeProvider() {
@@ -294,10 +353,20 @@ ${languageInstruction}`;
       allowNewlines: true
     });
 
+    // Glossary short-circuit: a field that IS a doNotTranslate term (e.g.
+    // title = brand name) must stay verbatim — skip the AI call entirely
+    // (correct result, zero tokens, and the echo guard below would otherwise
+    // reject the unchanged output).
+    if (fromLang !== toLang && await this.isVerbatimGlossaryTerm(sanitizedContent)) {
+      return sanitizedContent.trim();
+    }
+
+    const glossaryDirective = await this.getGlossaryDirective([sanitizedContent], [toLang]);
+
     const prompt = `Translate the following text from ${fromLang} to ${toLang}. Keep HTML tags.
 
 Text: ${sanitizedContent}
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
     const response = await this.askAI(prompt);
@@ -597,6 +666,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     }
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedAltTexts),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType} image alt-texts from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${altTextsText}
@@ -605,7 +679,7 @@ Requirements:
 - Keep translations concise and descriptive
 - Maintain similar character length
 - Preserve any product-specific terminology
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -767,6 +841,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? `\n- URL slugs (handle) must be valid: only lowercase a-z, 0-9, hyphens. No special characters, umlauts, or accents.`
       : '';
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(filteredFields),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${fieldsText}
@@ -774,7 +853,7 @@ ${fieldsText}
 Requirements:
 - Keep translations concise and natural
 - Maintain similar character length${handleInstructions}
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -827,6 +906,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? `For each ${context} value, detect its source language and translate it to ${toName} (${toLang}). If a value is already written in ${toName}, return it UNCHANGED (1:1 copy).`
       : `Translate these ${context} values from ${fromName} to ${toName} (${toLang}).`;
 
+    const glossaryDirective = await this.getGlossaryDirective(values, [toLang]);
+
     const prompt = `${sourceClause}
 
 ${numberedValues}
@@ -836,7 +917,7 @@ Requirements:
 - Maintain similar character length
 - Inside translated strings, escape any straight double-quote as \\" so the JSON array stays valid
 - Return ONLY a JSON array of translated strings in the same order
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format: ["translated1", "translated2", ...]`;
 
     // R3-M10 scope note: these two are DEBUG level (not error). The winston
@@ -994,13 +1075,18 @@ Respond in JSON format: ["title1", "title2", ...]`;
       jsonStructure[locale] = { seoTitle: '...', metaDescription: '...' };
     }
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      [sanitizedTitle, sanitizedDescription],
+      targetLocales,
+    );
+
     const prompt = `Translate these SEO texts from the source language to ${targetLanguages}.
 
 SEO Title: ${sanitizedTitle}
 Meta Description: ${sanitizedDescription}
 
 Make sure that the character lengths remain similar and the translations sound natural.
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -1173,12 +1259,17 @@ Output the result in ${language}.`;
     // Use custom instructions if provided
     const instructions = customInstructions || defaultInstructions;
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedFields),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType === 'product' ? 'product' : contentType === 'collection' ? 'collection' : contentType === 'blog' ? 'blog' : contentType === 'page' ? 'page' : contentType === 'policy' ? 'policy' : 'product'} fields from the source language to ${targetLanguages}.
 
 ${fieldsText}
 
 ${instructions}
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -1253,6 +1344,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? '\n- Keep ALL HTML tags, attributes, and structure exactly as in the source; translate only the human-readable text between the tags.'
       : '';
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedFields),
+      targetLocales,
+    );
+
     const prompt = `Translate the following ${contextLabel} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 Each field is introduced by a "### <key>" header followed by its source text.
@@ -1264,7 +1360,7 @@ Requirements:
 - Keep the translation natural and faithful to the source meaning.
 - Maintain a similar length to the source.${htmlRule}
 - Do NOT add explanations or extra fields.
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond with ONLY this JSON shape (outer keys = locale codes, inner keys = field keys):
 ${JSON.stringify(jsonStructure, null, 2)}`;
 

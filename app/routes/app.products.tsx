@@ -12,7 +12,7 @@
  */
 
 import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
@@ -322,6 +322,10 @@ export default function ProductsPage() {
   // so we can refresh the editor when fresh data arrives
   const pendingTranslationSyncRefreshRef = useRef(false);
 
+  // Deep-link from the SEO dashboard: ?select=<Shopify GID> preselects the item.
+  const [searchParams] = useSearchParams();
+  const initialItemId = searchParams.get("select") || undefined;
+
   // Initialize unified content editor - MUST be called before any conditional returns
   const editor = useUnifiedContentEditor({
     config: PRODUCTS_CONFIG,
@@ -332,6 +336,7 @@ export default function ProductsPage() {
     fetcher,
     showInfoBox,
     t,
+    initialItemId,
   });
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)

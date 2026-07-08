@@ -33,6 +33,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 | Multi-Language Translation | ✅ Complete | All |
 | Bulk Operations | ✅ Complete | All |
 | Custom AI Instructions | ✅ Complete | Pro+ |
+| Glossar/Terminologie (Settings-Tab + AI-Prompt-Injektion) | ✅ Complete (2026-07) | All |
 | Billing System (4 Tiers) | ✅ Complete | - |
 | GDPR Compliance | ✅ Complete | - |
 | Webhook System | ✅ Complete | - |

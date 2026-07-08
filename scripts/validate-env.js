@@ -137,6 +137,31 @@ if (!process.env.SENTRY_DSN) {
   console.log(`   Sourcemap-Upload: ${process.env.SENTRY_AUTH_TOKEN ? '✅ aktiv (SENTRY_AUTH_TOKEN gesetzt)' : 'deaktiviert (SENTRY_AUTH_TOKEN nicht gesetzt — Stacktraces bleiben minifiziert)'}`);
 }
 
+// Optional: Google Search Console (SEO tab Phase 6) — never an error, the
+// feature is opt-in. Only CLIENT_ID + CLIENT_SECRET are actually required:
+// getGscOAuthConfig() (app/services/google-search-console.server.ts) derives
+// GOOGLE_OAUTH_REDIRECT_URI from SHOPIFY_APP_URL when it isn't set explicitly,
+// so listing it as "required" here would be misleading.
+console.log('\n🔎 Google Search Console (SEO tab):');
+{
+  const gscRequiredVars = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'];
+  const present = gscRequiredVars.filter((v) => process.env[v]);
+  if (present.length === 0) {
+    console.log('   deaktiviert (GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET nicht gesetzt — Search-Console-Sektion zeigt "nicht konfiguriert")');
+  } else if (present.length === gscRequiredVars.length) {
+    if (process.env.GOOGLE_OAUTH_REDIRECT_URI) {
+      console.log(`   ✅ konfiguriert (GOOGLE_OAUTH_REDIRECT_URI explizit gesetzt: ${process.env.GOOGLE_OAUTH_REDIRECT_URI})`);
+    } else if (process.env.SHOPIFY_APP_URL) {
+      console.log(`   ✅ konfiguriert (GOOGLE_OAUTH_REDIRECT_URI wird aus SHOPIFY_APP_URL abgeleitet: ${process.env.SHOPIFY_APP_URL.replace(/\/$/, '')}/auth/google/callback)`);
+    } else {
+      warnings.push('⚠️  Google Search Console: GOOGLE_OAUTH_CLIENT_ID/SECRET gesetzt, aber weder GOOGLE_OAUTH_REDIRECT_URI noch SHOPIFY_APP_URL gesetzt — die Redirect-URI kann nicht abgeleitet werden');
+    }
+  } else {
+    const missing = gscRequiredVars.filter((v) => !process.env[v]);
+    warnings.push(`⚠️  Google Search Console teilweise konfiguriert — fehlt: ${missing.join(', ')} (GSC bleibt deaktiviert, bis beide gesetzt sind; GOOGLE_OAUTH_REDIRECT_URI ist optional und fällt sonst auf SHOPIFY_APP_URL zurück)`);
+  }
+}
+
 // Print results
 console.log('\n' + '='.repeat(60));
 if (errors.length > 0) {

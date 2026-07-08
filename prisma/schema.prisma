@@ -67,7 +67,7 @@ model AISettings {
   // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
-  devForcedPlan     String? // "free" | "basic" | "pro" | "max" | null
+  devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
 
   // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
   // subscription is verified ACTIVE (never optimistically at the mutation call,
@@ -77,7 +77,7 @@ model AISettings {
   // wieder einen Trial bekommen. Der Missbrauchspfad
   // (free → basic[Trial] → cancel → pro OHNE Uninstall/Redact) wird geschlossen,
   // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
-  trialConsumedAt   DateTime?
+  trialConsumedAt DateTime?
 
   // One-shot marker: set the first time a Pro/Max shop is shown the
   // theme-extension setup hint (infobox on app start). Without it the hint
@@ -132,14 +132,14 @@ model AISettings {
 // the field from the editor again WITHOUT reverting the Shopify-side storefront
 // access change (that would be destructive for the storefront/other tools).
 model EnabledMetafieldDefinition {
-  id        String @id @default(cuid())
-  shop      String
+  id                  String   @id @default(cuid())
+  shop                String
   // Shopify GID of the MetafieldDefinition.
-  definitionId String
-  namespace String
-  key       String
+  definitionId        String
+  namespace           String
+  key                 String
   // "PRODUCT" for now — column exists so later owner types can reuse the model.
-  ownerType String @default("PRODUCT")
+  ownerType           String   @default("PRODUCT")
   // True when ContentPilot had to set the definition's storefront access to
   // PUBLIC_READ to make it translatable (i.e. it was not publicly accessible and
   // shop-owned). False for definitions that were already translatable/public
@@ -180,14 +180,14 @@ model DirectTranslationItem {
 // One translation of a DirectTranslationItem into one locale. Cascade-deleted
 // with its item; the source attaches translations by item FK, never by text.
 model DirectTranslation {
-  id         String   @id @default(cuid())
+  id         String                @id @default(cuid())
   itemId     String
   item       DirectTranslationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  locale     String   // target language ISO, e.g. "fr"
-  targetText String   @db.Text
+  locale     String // target language ISO, e.g. "fr"
+  targetText String                @db.Text
   // "user" (manually entered / transferred) or "ai" (auto-translated).
-  source     String   @default("user")
-  updatedAt  DateTime @updatedAt
+  source     String                @default("user")
+  updatedAt  DateTime              @updatedAt
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
   marketId   String   @default("")
@@ -204,7 +204,7 @@ model DirectTranslationCandidate {
   shop        String
   sourceHash  String
   sourceText  String   @db.Text
-  count       Int      @default(1)   // times seen across visitors/pages
+  count       Int      @default(1) // times seen across visitors/pages
   status      String   @default("new") // "new" | "rejected"
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
@@ -221,24 +221,24 @@ model DirectTranslationCandidate {
 // NOTE: `enabled` is gone — the theme app embed is the on/off switch. Scope is
 // gone — direct translations are global (apply on all pages).
 model DirectTranslationSettings {
-  shop      String   @id
+  shop              String   @id
   // Opt-in: when true, the storefront reports untranslated strings it renders
   // (heuristically filtered, capped) so the merchant can review them in the
   // admin. Off by default (privacy/noise). Never auto-applied.
-  collect   Boolean  @default(false)
+  collect           Boolean  @default(false)
   // Opt-in: when true, the storefront walks AND replaces text even inside
   // elements marked `translate="no"`. 3rd-party review/widget apps (Judge.me
   // etc.) set that attribute to fence off browser auto-translate; for direct
   // translations the merchant is in control and usually wants those reached.
-  ignoreTranslateNo Boolean @default(false)
+  ignoreTranslateNo Boolean  @default(false)
   // Opt-in: when true, server-side language detection (franc) drops collected
   // candidates whose language matches the locale they were reported from —
   // i.e. strings that the storefront already serves in the right language and
   // therefore don't need a direct translation.
-  filterByLanguage  Boolean @default(false)
+  filterByLanguage  Boolean  @default(false)
   // Bumped on every dictionary change so the storefront cache invalidates.
-  version   Int      @default(1)
-  updatedAt DateTime @updatedAt
+  version           Int      @default(1)
+  updatedAt         DateTime @updatedAt
 }
 
 model AIInstructions {
@@ -246,11 +246,11 @@ model AIInstructions {
   shop String @unique
 
   // GENERAL - Writing Style Instructions (used by all AI generate/improve operations)
-  writingStyleInstructions String? @db.Text
+  writingStyleInstructions   String? @db.Text
   // GENERAL - Format Instructions (used by the "Format" function)
   formatPreserveInstructions String? @db.Text
   // GENERAL - Translate Instructions (used by the "Translate" function)
-  translateInstructions String? @db.Text
+  translateInstructions      String? @db.Text
 
   // PRODUCTS - All fields available
   productTitleFormat             String? @db.Text
@@ -329,7 +329,7 @@ model Task {
 
   // Queue management
   queuePosition   Int? // Position in queue (null if not queued)
-  retryCount      Int  @default(0) // Number of retries attempted
+  retryCount      Int     @default(0) // Number of retries attempted
   estimatedTokens Int? // Estimated tokens for this task
   provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
   aiModel         String? // AI model name used (e.g., gpt-4o, claude-3-5-sonnet-20241022)
@@ -370,10 +370,10 @@ model Product {
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images       ProductImage[]
-  options      ProductOption[]
-  metafields   ProductMetafield[]
-  variants     ProductVariant[]
+  images     ProductImage[]
+  options    ProductOption[]
+  metafields ProductMetafield[]
+  variants   ProductVariant[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -386,11 +386,11 @@ model ProductImage {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url                String
-  altText            String? // Primary locale alt-text
-  mediaId            String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
-  position           Int?
-  altTextModifiedAt  DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
+  url                 String
+  altText             String? // Primary locale alt-text
+  mediaId             String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
+  position            Int?
+  altTextModifiedAt   DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
   altTextTranslations ProductImageAltTranslation[]
 
   // Atomic get-or-create keyed on (productId, mediaId) — prevents duplicate
@@ -441,9 +441,9 @@ model ProductOption {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  name     String
-  position Int
-  values   String @db.Text // JSON array
+  name               String
+  position           Int
+  values             String  @db.Text // JSON array
   linkedMetafieldKey String? // Metaobject type key when option is linked (e.g. "color")
 
   @@index([productId])
@@ -463,16 +463,16 @@ model ProductMetafield {
 }
 
 model ProductVariant {
-  id         String  @id           // numerische Shopify ID
-  shopifyGid String  @unique       // gid://shopify/ProductVariant/...
-  productId  String
-  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  title      String
-  sku        String?
-  imageKey   String?
-  position   Int
-  galleryJson String? @db.Text    // JSON: ["gid://shopify/File/...", ...]
-  updatedAt  DateTime @updatedAt
+  id          String   @id // numerische Shopify ID
+  shopifyGid  String   @unique // gid://shopify/ProductVariant/...
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  title       String
+  sku         String?
+  imageKey    String?
+  position    Int
+  galleryJson String?  @db.Text // JSON: ["gid://shopify/File/...", ...]
+  updatedAt   DateTime @updatedAt
 
   @@index([productId])
 }
@@ -480,8 +480,8 @@ model ProductVariant {
 model OptionValueMemory {
   id          String   @id @default(cuid())
   shop        String
-  optionValue String   // original display name, e.g. "Erdnuss"
-  savedAs     String   // last saved key segment, e.g. "Peanut"
+  optionValue String // original display name, e.g. "Erdnuss"
+  savedAs     String // last saved key segment, e.g. "Peanut"
   updatedAt   DateTime @updatedAt
 
   @@unique([shop, optionValue])
@@ -494,10 +494,10 @@ model OptionValueMemory {
 model GroupedFieldTranslation {
   id              String   @id @default(cuid())
   shop            String
-  fieldKey        String   // "productType" (zukuenftig: "vendor" | "tag")
+  fieldKey        String // "productType" (zukuenftig: "vendor" | "tag")
   sourceLocale    String
-  sourceValueNorm String   // trim + collapsed whitespace + lowercase (Lookup-Key)
-  sourceValue     String   // kanonische Originalform (Casing des ersten Inserts)
+  sourceValueNorm String // trim + collapsed whitespace + lowercase (Lookup-Key)
+  sourceValue     String // kanonische Originalform (Casing des ersten Inserts)
   targetLocale    String
   translatedValue String
   source          String   @default("ai") // "ai" | "user" | "imported"
@@ -509,13 +509,13 @@ model GroupedFieldTranslation {
 }
 
 model ImageManagerSettings {
-  id            String  @id @default(cuid())
-  shopId        String  @unique
-  enabled       Boolean @default(true)
-  firstImageBig Boolean @default(false)
-  showAltTags   Boolean @default(false)
-  autoAltText   Boolean @default(false)
-  thumbSize     Int     @default(80)
+  id            String   @id @default(cuid())
+  shopId        String   @unique
+  enabled       Boolean  @default(true)
+  firstImageBig Boolean  @default(false)
+  showAltTags   Boolean  @default(false)
+  autoAltText   Boolean  @default(false)
+  thumbSize     Int      @default(80)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
@@ -668,7 +668,7 @@ model ContentTranslation {
   // tenant-scoped deletes safe and indexable.
   resourceId   String // The GID of the parent resource
   resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
-  shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
+  shop         String // Defense-in-depth: explicit shop scope for multi-tenant isolation
 
   key    String // "title", "body_html", "body", "description", "handle", "meta_title", "meta_description"
   value  String  @db.Text
@@ -781,11 +781,11 @@ model ThemeTranslation {
 // ============================================
 
 model MetaobjectDefinition {
-  id              String @id // Shopify GID (e.g., "gid://shopify/MetaobjectDefinition/123")
-  shop            String
-  type            String // Metaobject type identifier (e.g., "size_guide", "product_spec")
-  name            String // Display name
-  description     String? @db.Text
+  id               String  @id // Shopify GID (e.g., "gid://shopify/MetaobjectDefinition/123")
+  shop             String
+  type             String // Metaobject type identifier (e.g., "size_guide", "product_spec")
+  name             String // Display name
+  description      String? @db.Text
   fieldDefinitions Json // Array of field definitions with keys and types
 
   lastSyncedAt DateTime @default(now())
@@ -797,12 +797,12 @@ model MetaobjectDefinition {
 }
 
 model Metaobject {
-  id              String  @id // Shopify GID (e.g., "gid://shopify/Metaobject/123")
-  shop            String
-  type            String // Links to MetaobjectDefinition.type
-  handle          String
-  displayName     String // Primary locale display name
-  fields          Json // Array of field values {key, value, type}
+  id          String @id // Shopify GID (e.g., "gid://shopify/Metaobject/123")
+  shop        String
+  type        String // Links to MetaobjectDefinition.type
+  handle      String
+  displayName String // Primary locale display name
+  fields      Json // Array of field values {key, value, type}
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -841,15 +841,51 @@ model AltTextTemplate {
   id            String   @id @default(cuid())
   shop          String
   productId     String
-  position      Int      // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
-  positionLabel String?  // optional user-defined label, e.g. "Main Image"
-  locale        String   // "de", "en", "fr", etc.
+  position      Int // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
+  positionLabel String? // optional user-defined label, e.g. "Main Image"
+  locale        String // "de", "en", "fr", etc.
   template      String   @db.Text // e.g. "Eleganter {Farbe} Blumentopf"
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([shop, productId, position, locale])
   @@index([shop, productId])
+}
+
+/// Glossar/Terminologie (docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md): one entry
+/// per source term in the shop's primary locale. Injected into every AI
+/// translation prompt via AIService.getGlossaryDirective().
+///   doNotTranslate = true  -> keep the term verbatim in ALL target languages
+///   translations           -> per-locale fixed ("always exactly this") renderings
+///   no translation row     -> no rule for that locale, the AI translates freely
+model GlossaryEntry {
+  id             String   @id @default(cuid())
+  shop           String
+  sourceTerm     String
+  sourceLocale   String // shop primary locale at creation time
+  doNotTranslate Boolean  @default(false)
+  caseSensitive  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  translations GlossaryEntryTranslation[]
+
+  @@unique([shop, sourceTerm, sourceLocale])
+  @@index([shop])
+}
+
+/// Fixed target-locale rendering of a GlossaryEntry ("always translate exactly
+/// so"). Shop scoping is inherited through the entry (cascade on delete), so
+/// GDPR shop-redact only needs to delete GlossaryEntry rows.
+model GlossaryEntryTranslation {
+  id      String        @id @default(cuid())
+  entryId String
+  entry   GlossaryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  locale  String
+  value   String
+
+  @@unique([entryId, locale])
+  @@index([entryId])
 }
 
 /// Persistent audit trail for GDPR compliance requests.
@@ -859,19 +895,19 @@ model AltTextTemplate {
 /// standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
 /// which runs daily and deletes only rows where requestedAt < now − 3 years.
 model GdprAuditLog {
-  id              String   @id @default(cuid())
-  shop            String
-  requestType     String   // "data_request" | "customer_redact" | "shop_redact"
-  customerId      BigInt?
-  customerEmail   String?
-  status          String   // "completed" | "failed"
-  dataExported    String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
-  error           String?  @db.Text
+  id            String   @id @default(cuid())
+  shop          String
+  requestType   String // "data_request" | "customer_redact" | "shop_redact"
+  customerId    BigInt?
+  customerEmail String?
+  status        String // "completed" | "failed"
+  dataExported  String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
+  error         String?  @db.Text
   // R5-G4: Shopify X-Shopify-Webhook-Id — correlates redelivered (non-2xx
   // retried, up to ~48h) compliance attempts in this append-only trail.
-  webhookId       String?
-  requestedAt     DateTime @default(now())
-  completedAt     DateTime @default(now())
+  webhookId     String?
+  requestedAt   DateTime @default(now())
+  completedAt   DateTime @default(now())
 
   @@index([shop])
   @@index([shop, requestType])
@@ -883,8 +919,8 @@ model GdprAuditLog {
 /// "inactive since" anchor. `uninstalledAt` is set by the APP_UNINSTALLED
 /// webhook and cleared (set null) on every (re)install via afterAuth.
 model ShopInstallState {
-  shop                   String    @id
-  uninstalledAt          DateTime?
+  shop                      String    @id
+  uninstalledAt             DateTime?
   // Set ONCE when the initial full sync (incl. product translations) completes
   // successfully (api.sync-all-stream). Onboarding (app._index) and the
   // sync-stream products gate key off THIS marker, not db.product.count — a
@@ -892,7 +928,7 @@ model ShopInstallState {
   // initial sync runs, so a count-based gate would skip translations forever.
   // null = initial sync not yet completed (run onboarding). Deleted together
   // with products on full GDPR wipe (gdpr.service) → reinstall re-onboards.
-  initialSyncCompletedAt DateTime?
+  initialSyncCompletedAt    DateTime?
   // Server-side initial-sync progress, written (throttled) by the sync scheduler
   // so the persistent onboarding banner can poll it without an open SSE stream.
   // initialSyncStartedAt anchors the 3h bypass cap (process-restart safe).
@@ -904,7 +940,7 @@ model ShopInstallState {
   initialSyncStats          Json?
   initialSyncError          String?
   initialSyncForceRequested Boolean   @default(false)
-  updatedAt              DateTime  @updatedAt
+  updatedAt                 DateTime  @updatedAt
 
   @@index([uninstalledAt])
 }
@@ -923,4 +959,126 @@ model ImageOperationCounter {
 
   @@unique([shop, period])
   @@index([shop])
+}
+
+// SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
+// through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
+// via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:
+// upsert-increment per path, FIFO-pruned per shop (MAX_404_HITS_PER_SHOP), and
+// purged in redactShopData (the GDPR schema-coverage guard requires it).
+model Seo404Hit {
+  id          String   @id @default(cuid())
+  shop        String
+  path        String   @db.Text // requested storefront path (may be long)
+  pathHash    String // sha256 of the normalized path — the upsert key
+  referrer    String?  @db.Text
+  count       Int      @default(1)
+  status      String   @default("new") // "new" | "redirected" | "dismissed"
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, pathHash])
+  @@index([shop, status])
+  // Backs the FIFO-prune query (delete oldest-untouched when a shop exceeds the
+  // cap) and the "most frequent / most recent" admin listing.
+  @@index([shop, lastSeenAt])
+  @@index([shop, count])
+}
+
+// SEO tab Phase 5: one target keyword per content item (per locale), with
+// optional Google Search Console enrichment columns (Phase 6). Shop-scoped;
+// purged in redactShopData (the GDPR schema-coverage guard requires it).
+// keyword is stored lowercased; the (shop, keyword) index backs the GSC join.
+model SeoKeyword {
+  id           String @id @default(cuid())
+  shop         String
+  resourceType String // "Product" | "Collection" | "Article" | "Page"
+  resourceId   String // Shopify GID
+  keyword      String // lowercased on write
+  locale       String @default("") // "" = primary/default locale
+
+  // GSC enrichment (written by Phase 6 sync; null until connected).
+  gscPosition    Float?
+  gscClicks      Int?
+  gscImpressions Int?
+  gscCtr         Float?
+  gscUpdatedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, resourceId, locale])
+  @@index([shop, keyword])
+  @@index([shop])
+}
+
+// SEO tab Phase 6: per-shop Google Search Console OAuth connection. The
+// refresh token is stored ENCRYPTED (same AES-256-GCM utility as the AI API
+// keys); access tokens are derived per-request and never persisted. Shop-scoped
+// (shop is the PK) and purged in redactShopData (GDPR schema-coverage guard).
+model GoogleSearchConsoleConnection {
+  shop         String   @id
+  propertyUrl  String // GSC property, e.g. "sc-domain:example.com" or "https://example.com/"
+  refreshToken String   @db.Text // encrypted at rest
+  email        String? // connected Google account (display only)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Last time app/services/seo/gsc-auto-sync.service.ts (or the merchant's
+  // manual "Sync keyword rankings" button) wrote GSC data onto SeoKeyword
+  // rows. Null = never synced. Drives the daily auto-sync's "is this
+  // connection due" query; also stamped (with a backoff, see the service's
+  // doc comment) on plan-gate/no-keywords skips and sync errors so a shop
+  // that can't be synced doesn't get retried on every tick.
+  lastKeywordSyncAt DateTime?
+}
+
+// SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
+// design (it is served at keyLocation for verification), so it is intentionally
+// stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+model SeoIndexNowConfig {
+  shop            String    @id
+  key             String // public IndexNow token (plaintext by design)
+  keyLocation     String // URL where the key file is served (app-proxy on the shop host)
+  enabled         Boolean   @default(true)
+  lastSubmittedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// SEO tab Phase 8: debounced queue of changed storefront URLs to submit to
+// IndexNow (fed by product/collection webhooks, drained on demand). Shop-scoped;
+// purged in redactShopData.
+model SeoIndexNowQueue {
+  id        String   @id @default(cuid())
+  shop      String
+  url       String   @db.Text
+  urlHash   String // dedupe key (sha256 of url)
+  createdAt DateTime @default(now())
+
+  @@unique([shop, urlHash])
+  @@index([shop])
+}
+
+// SEO Audit Dashboard: a point-in-time snapshot of analyzeStore()'s result
+// (audit.service.ts), persisted so the dashboard reads a cached history
+// instead of re-scanning the full content cache on every visit. `payload` is
+// the full JSON.stringify(StoreAudit) (distribution, byType, problems incl.
+// items, worstOffenders) — the averageScore/totalScanned/totalAvailable/capped
+// columns are denormalized copies kept alongside it so the lightweight trend
+// query (getAuditTrend) never has to parse the payload. Written by the
+// detached "seoAudit" Task runner (seo-audit.handler.ts); pruned to the newest
+// 30 rows per shop on every write (see saveAuditSnapshot). Shop-scoped;
+// purged in redactShopData.
+model SeoScoreSnapshot {
+  id             String   @id @default(cuid())
+  shop           String
+  createdAt      DateTime @default(now())
+  averageScore   Int
+  totalScanned   Int
+  totalAvailable Int
+  capped         Boolean
+  payload        String   @db.Text // JSON.stringify(StoreAudit)
+
+  @@index([shop, createdAt])
 }

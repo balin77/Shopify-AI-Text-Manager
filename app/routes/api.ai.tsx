@@ -41,7 +41,16 @@ import {
   handleTranslateAllAltTextsToAllLocales,
   handleTranslateAllAltTextsForLocale,
 } from "./api-ai-handlers/alt-text.handler";
+import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
+import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
+import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
+
+// Actions that never call an AI provider — they only read/write the DB
+// content cache and/or Shopify directly — so a shop with no AI key
+// configured yet must still be able to use them. Kept as a Set (rather than
+// growing the single seoAudit ternary below) now that there's more than one.
+const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta"]);
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -74,7 +83,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Compliance gate: never send merchant content to a third-party AI through
     // an operator key. Block early with an actionable code if the shop has no
     // own API key for its preferred provider.
-    const missingKey = getMissingPreferredKey(settings);
+    // NON_AI_ACTIONS are exempt — they only read/write the DB content cache
+    // and/or Shopify directly (no provider call at all), so a shop with no AI
+    // key configured yet must still be able to use them.
+    const missingKey = NON_AI_ACTIONS.has(actionType) ? null : getMissingPreferredKey(settings);
     if (missingKey) {
       return noAiKeyResponse(settings, missingKey);
     }
@@ -118,6 +130,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
         return handleTranslateAllAltTextsForLocale(ctx);
+      case "seoBulkFix":
+        return handleSeoBulkFix(ctx);
+      case "seoAudit":
+        return handleSeoAudit(ctx);
+      case "seoBulkMeta":
+        return handleSeoBulkMeta(ctx);
       case "generateTemplateTitles":
         return handleGenerateTemplateTitles(ctx);
       default:

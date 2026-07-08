@@ -42,6 +42,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 /**
+ * SEO tab Phase 8: best-effort IndexNow enqueue for a product's storefront URL.
+ * Best-effort — never let it break the webhook. `getEnabledConfig` does a
+ * single (PK-indexed) query that both gates ("is IndexNow on for this shop")
+ * and feeds `enqueueResource`, so shops without IndexNow skip the handle
+ * lookup entirely and enabled shops don't load the config row twice.
+ */
+async function enqueueProductForIndexNow(db: any, shop: string, productId: string): Promise<void> {
+  try {
+    const { getEnabledConfig, enqueueResource } = await import("../services/seo/index-now.service");
+    const config = await getEnabledConfig(db, shop);
+    if (!config) return;
+    const prod = await db.product.findUnique({ where: { id: productId }, select: { handle: true } });
+    if (prod?.handle) await enqueueResource(db, shop, shop, "product", prod.handle, config);
+  } catch { /* ignore */ }
+}
+
+/**
  * Process webhook in the background
  */
 async function processWebhookAsync(
@@ -63,7 +80,13 @@ async function processWebhookAsync(
 
     if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
       await syncService.syncProduct(productId);
+      await enqueueProductForIndexNow(db, shop, productId);
     } else if (topic === "PRODUCTS_DELETE") {
+      // IndexNow is meant to be told about removed URLs too, so we must
+      // enqueue BEFORE deleteProduct wipes the cache row: Shopify's
+      // products/delete payload carries only the numeric id, not the handle,
+      // so the handle has to come from our own cache while it still exists.
+      await enqueueProductForIndexNow(db, shop, productId);
       await syncService.deleteProduct(productId);
     }
 

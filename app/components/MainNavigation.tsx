@@ -14,6 +14,7 @@ import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact
 import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
+import { isSeoPath } from "../config/seo-sections";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
@@ -222,6 +223,7 @@ export function MainNavigation() {
   const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
     { id: "content", label: navContentLabel, path: "/app/products" },
+    { id: "seo", label: t.nav.seo, path: "/app/seo" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
@@ -291,7 +293,7 @@ export function MainNavigation() {
           {/* Mobile Menu (Hamburger) - nur auf Mobile sichtbar */}
           <div className="mobile-only">
             <MobileMenu
-              activeTab={isContentPath(location.pathname) ? "content" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
+              activeTab={isContentPath(location.pathname) ? "content" : isSeoPath(location.pathname) ? "seo" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
               productCount={productCount}
               maxProducts={maxProducts}
               contentTypes={contentTypes}
@@ -319,6 +321,8 @@ export function MainNavigation() {
               // "Inhalte" is active on ANY content page, not just /app/products.
               const isActive = tab.id === "content"
                 ? isContentPath(location.pathname)
+                : tab.id === "seo"
+                ? isSeoPath(location.pathname)
                 : location.pathname.startsWith(tab.path);
               const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
 

@@ -41,6 +41,19 @@ const LONG_RUNNING_TASK_TYPES = [
   'templates',
   'metaobjects',
   'menus',
+  // SEO Audit Dashboard "Fix with AI" bulk action (seo-bulk-fix.handler.ts) —
+  // up to 100 sequential AI generations + Shopify saves, same shape as
+  // bulkAIGeneration, so it needs the same generous stuck-task threshold.
+  'seoBulkFix',
+  // SEO Audit Dashboard "Rescan" action (seo-audit.handler.ts) — a full
+  // content-cache scan (up to 4×1000 rows + groupBys) can run long on large
+  // shops; give it the same generous stuck-task threshold as other detached
+  // Task runners rather than the short default cutoff.
+  'seoAudit',
+  // Manual bulk-meta editor's large-batch save (Anhang C3, seo-bulk-meta.handler.ts) —
+  // up to 500 sequential Shopify saves + DB updates, same shape as seoBulkFix
+  // minus the AI call, so it needs the same generous stuck-task threshold.
+  'seoBulkMeta',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

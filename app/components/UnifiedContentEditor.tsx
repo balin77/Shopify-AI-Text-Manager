@@ -22,6 +22,13 @@ import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import {
+  buildProductJsonLd,
+  buildCollectionJsonLd,
+  buildArticleJsonLd,
+  type JsonLd,
+} from "../services/structured-data.service";
+import type { KeywordResourceType } from "../services/seo/keywords.service";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { usePlan } from "../contexts/PlanContext";
@@ -446,6 +453,44 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
     }
 
+    // JSON-LD preview for the SEO sidebar. The shop's storefront domain is
+    // not available in this translation editor, so URLs are intentionally
+    // omitted by the service (still valid schema.org); the storefront theme
+    // extension emits the absolute-URL version automatically. This makes the
+    // copyable block + schema validation reachable for the SEO-relevant types.
+    const title = editableValues.title || "";
+    const desc = editableValues.description || editableValues.body || "";
+    const handle = editableValues.handle || "";
+    const metaDescription = editableValues.metaDescription || "";
+    const sdShop = { domain: "", name: "" };
+    let structuredData: JsonLd | null = null;
+    if (!isBlogContainer && title) {
+      if (config.contentType === "products") {
+        structuredData = buildProductJsonLd(
+          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          sdShop,
+        );
+      } else if (config.contentType === "collections") {
+        structuredData = buildCollectionJsonLd(
+          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          sdShop,
+        );
+      } else if (config.contentType === "blogs") {
+        structuredData = buildArticleJsonLd(
+          { title, body: desc, handle, blogHandle: handle },
+          sdShop,
+        );
+      }
+    }
+
+    // Target-keyword tracking is per-item (locale ""), not per-translation, so
+    // it's only offered while editing the primary locale — matches the pattern
+    // used elsewhere in this file (e.g. handleClearAllClick vs ...ForLocaleClick).
+    const keywordResourceType =
+      !isBlogContainer && state.currentLanguage === primaryLocale
+        ? getKeywordResourceType(config.contentType)
+        : undefined;
+
     return (
       <SeoSidebar
         title={editableValues.title || ""}
@@ -457,6 +502,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         imagesWithAlt={imagesWithAlt}
         excludeDescription={isBlogContainer}
         excludeImages={isBlogContainer}
+        structuredData={structuredData}
+        resourceId={keywordResourceType ? item.id : undefined}
+        resourceType={keywordResourceType}
       />
     );
   };
@@ -1344,6 +1392,19 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
   }
 
   return "";
+}
+
+// Target-keyword tracking (SeoKeyword model) only covers these four content
+// types — everything else (policies, templates, metaobjects, ...) returns
+// undefined so the sidebar's "Target keyword" section stays hidden for them.
+function getKeywordResourceType(contentType: string): KeywordResourceType | undefined {
+  const map: Record<string, KeywordResourceType> = {
+    products: "Product",
+    collections: "Collection",
+    blogs: "Article",
+    pages: "Page",
+  };
+  return map[contentType];
 }
 
 /**
