@@ -487,18 +487,22 @@ export class BackgroundSyncService {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
+    const failedMarketIds = new Set<string>();
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       pageData.id,
       nonPrimaryLocales,
       "Page",
-      markets
+      markets,
+      failedMarketIds
     );
 
     // Prepare current keys for cleanup (marketId is part of the row identity)
     const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale, marketId: t.marketId || "" }));
-    // Cleanup is SCOPED to the layers this run fetched: when loadMarkets
-    // degraded to [] (missing scope / API error) market rows must survive.
-    const fetchedLayers = fetchedMarketLayers(markets);
+    // Cleanup is SCOPED to the layers this run SUCCESSFULLY fetched: when
+    // loadMarkets degraded to [] (missing scope / API error) or a market's
+    // fetch errored, that market's rows must survive. Upserts of fresh rows
+    // from a partially failed market stay harmless (no delete involved).
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -795,17 +799,19 @@ export class BackgroundSyncService {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
+    const failedMarketIds = new Set<string>();
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       policyData.id,
       nonPrimaryLocales,
       "ShopPolicy",
-      markets
+      markets,
+      failedMarketIds
     );
 
     // Prepare current keys for cleanup (marketId is part of the row identity);
-    // cleanup is scoped to the fetched layers — see syncSinglePageInternal.
+    // cleanup is scoped to the successfully fetched layers — see syncSinglePageInternal.
     const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale, marketId: t.marketId || "" }));
-    const fetchedLayers = fetchedMarketLayers(markets);
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
@@ -1026,7 +1032,9 @@ export class BackgroundSyncService {
     const locales = await fetchShopLocales(this.gateway.graphql.bind(this.gateway));
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
     const markets = await this.getMarkets();
-    const fetchedLayers = fetchedMarketLayers(markets);
+    // Markets whose translation fetch errors below are excluded from the
+    // update/stale-delete scope so their rows survive a transient API blip.
+    const failedMarketIds = new Set<string>();
 
     // Collect translations from ALL resources
     const allTranslations: ShopifyTranslation[] = [];
@@ -1125,10 +1133,14 @@ export class BackgroundSyncService {
                 groupContent.some((c) => c.key === t.key)
               );
               allTranslations.push(...groupTranslations.map((t) => ({ ...t, _resourceId: resourceId, _marketId: marketId })));
+            } else {
+              logger.error(`[BackgroundSync] GraphQL error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { error: translationsData.errors[0]?.message });
+              if (marketId) failedMarketIds.add(marketId);
             }
           } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             logger.error(`[BackgroundSync] Error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { error: message });
+            if (marketId) failedMarketIds.add(marketId);
           }
         }
       }
@@ -1147,9 +1159,15 @@ export class BackgroundSyncService {
     // calls for the same tuple hit "Unique constraint failed on the fields:
     // (shop, resourceId, groupId, key, locale)". ThemeTranslation.value is
     // non-null, so a null-valued Shopify translation must be skipped, not written.
+    // Only layers whose fetch fully succeeded take part in the write/delete
+    // reconciliation below; failed markets keep their existing rows untouched
+    // (and their partial fresh rows are dropped — a bare `create` would
+    // otherwise collide with the surviving row on the unique tuple).
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
+
     const desiredSeen = new Set<string>();
     const desired = allTranslations
-      .filter((t) => t.value != null)
+      .filter((t) => t.value != null && fetchedLayers.includes(((t as any)._marketId as string) || ''))
       .map((t) => ({
         resourceId: (t as any)._resourceId || uniqueResourceIds[0],
         key: t.key,
@@ -1500,6 +1518,10 @@ export class BackgroundSyncService {
       // Entries carry the layer they were fetched for ("" = global).
       type MarketTaggedTranslation = ShopifyTranslation & { marketId: string };
       const translationCache = new Map<string, MarketTaggedTranslation[]>();
+      // Per-resource record of markets whose translation fetch errored — those
+      // markets are excluded from the stale-delete below so a transient API
+      // blip never wipes their rows. Keyed like translationCache.
+      const translationFetchFailures = new Map<string, Set<string>>();
 
       // App-embed naming: blockId→name map from settings_data.json (lazily
       // fetched on the first APP_EMBED resource), plus a counter for embeds we
@@ -1813,6 +1835,10 @@ export class BackgroundSyncService {
                       // Check for GraphQL errors
                       if (translationsData.errors) {
                         logger.error(`[BackgroundSync-Themes]   ❌ GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, translationsData.errors[0].message);
+                        if (marketId) {
+                          if (!translationFetchFailures.has(cacheKey)) translationFetchFailures.set(cacheKey, new Set());
+                          translationFetchFailures.get(cacheKey)!.add(marketId);
+                        }
                         continue;
                       }
 
@@ -1828,6 +1854,10 @@ export class BackgroundSyncService {
                     } catch (error: unknown) {
                       const message = error instanceof Error ? error.message : String(error);
                       logger.error(`[BackgroundSync-Themes]   ❌ Exception fetching locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, message);
+                      if (marketId) {
+                        if (!translationFetchFailures.has(cacheKey)) translationFetchFailures.set(cacheKey, new Set());
+                        translationFetchFailures.get(cacheKey)!.add(marketId);
+                      }
                     }
                   }
                 }
@@ -2007,10 +2037,14 @@ export class BackgroundSyncService {
               );
 
               if (keysToDelete.length > 0) {
-                const parsedKeysToDelete = keysToDelete.map(kl => {
-                  const [key, locale, marketId] = kl.split('::');
-                  return { key, locale, marketId: marketId ?? '' };
-                });
+                // Markets whose fetch errored for this resource keep their rows.
+                const resourceFailedMarkets = translationFetchFailures.get(cacheKey) ?? new Set<string>();
+                const parsedKeysToDelete = keysToDelete
+                  .map(kl => {
+                    const [key, locale, marketId] = kl.split('::');
+                    return { key, locale, marketId: marketId ?? '' };
+                  })
+                  .filter(({ marketId }) => !resourceFailedMarkets.has(marketId));
                 for (let i = 0; i < parsedKeysToDelete.length; i += CHUNK) {
                   const batch = parsedKeysToDelete.slice(i, i + CHUNK);
                   await db.themeTranslation.deleteMany({
@@ -2313,6 +2347,9 @@ export class BackgroundSyncService {
           const existingByKeyLocale = new Map(existingRows.map((r) => [`${r.key}::${r.locale}::${r.marketId}`, r]));
 
           const fetched: (ShopifyTranslation & { marketId: string })[] = [];
+          // Markets whose fetch errors for THIS resource are excluded from the
+          // stale-delete below so a transient blip never wipes their rows.
+          const resourceFailedMarkets = new Set<string>();
           for (const locale of nonPrimaryLocales) {
             for (const marketId of marketLayersForLocale(markets, locale.locale)) {
               try {
@@ -2326,11 +2363,15 @@ export class BackgroundSyncService {
                   { variables: { resourceId: resource.resourceId, locale: locale.locale, marketId: marketId || null } }
                 );
                 const tData = await tResp.json();
-                if (tData.errors) continue;
+                if (tData.errors) {
+                  if (marketId) resourceFailedMarkets.add(marketId);
+                  continue;
+                }
                 const translations: ShopifyTranslation[] = tData.data?.translatableResource?.translations || [];
                 fetched.push(...translations.map((t) => ({ ...t, marketId })));
               } catch (err) {
                 logger.error(`[BackgroundSync] Exception fetching ${domain} translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}`, { err });
+                if (marketId) resourceFailedMarkets.add(marketId);
               }
             }
           }
@@ -2371,9 +2412,12 @@ export class BackgroundSyncService {
           }
 
           // Delete locale rows no longer present in Shopify (existingRows is
-          // already scoped to the fetched market layers).
+          // already scoped to the fetched market layers; markets whose fetch
+          // errored for this resource additionally keep their rows).
           const currentKeys = new Set(relevant.map((t) => `${t.key}::${t.locale}::${t.marketId}`));
-          const keysToDelete = existingRows.filter((r) => !currentKeys.has(`${r.key}::${r.locale}::${r.marketId}`)).map((r) => ({ key: r.key, locale: r.locale, marketId: r.marketId }));
+          const keysToDelete = existingRows
+            .filter((r) => !currentKeys.has(`${r.key}::${r.locale}::${r.marketId}`) && !resourceFailedMarkets.has(r.marketId))
+            .map((r) => ({ key: r.key, locale: r.locale, marketId: r.marketId }));
           for (let i = 0; i < keysToDelete.length; i += CHUNK) {
             await db.themeTranslation.deleteMany({
               where: { shop: this.shop, resourceId: resource.resourceId, groupId, domain, OR: keysToDelete.slice(i, i + CHUNK) },

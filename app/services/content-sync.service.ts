@@ -105,11 +105,13 @@ export class ContentSyncService {
       logger.debug(`[ContentSync] Found ${locales.length} locales, ${markets.length} market(s)`);
 
       // 3. Fetch translations for all non-primary locales (global + market layers)
+      const failedMarketIds = new Set<string>();
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
         locales.filter((l) => !l.primary),
         "Collection",
-        markets
+        markets,
+        failedMarketIds
       );
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
@@ -122,7 +124,8 @@ export class ContentSyncService {
             imageResourceId,
             locales.filter((l) => !l.primary),
             "Collection", // Store under Collection resourceType with the parent's resourceId
-            markets
+            markets,
+            failedMarketIds
           );
           // Remap: store with key "image_alt_text" and use the collection's resourceId
           for (const t of imageTranslations) {
@@ -139,8 +142,11 @@ export class ContentSyncService {
         }
       }
 
-      // 4. Save to database
-      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, markets);
+      // 4. Save to database. Markets whose fetch failed are excluded so their
+      // rows are neither deleted nor partially recreated (avoids data loss AND
+      // unique-key collisions with the un-deleted rows).
+      const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+      await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
 
       logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
@@ -195,11 +201,13 @@ export class ContentSyncService {
       const markets = await this.getMarkets();
 
       // 3. Fetch translations (global + market layers)
+      const failedMarketIds = new Set<string>();
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
         locales.filter((l) => !l.primary),
         "Article",
-        markets
+        markets,
+        failedMarketIds
       );
 
       // 3b. Fetch article image alt-text translations (separate Shopify resource type).
@@ -211,7 +219,8 @@ export class ContentSyncService {
             imageResourceId,
             locales.filter((l) => !l.primary),
             "Article",
-            markets
+            markets,
+            failedMarketIds
           );
           for (const t of imageTranslations) {
             if (t.key === 'alt') {
@@ -227,8 +236,9 @@ export class ContentSyncService {
         }
       }
 
-      // 4. Save to database
-      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, markets);
+      // 4. Save to database — failed markets excluded (see syncCollection).
+      const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+      await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
 
       logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
@@ -471,7 +481,12 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Saving collection to database: ${collectionData.id}`);
 
     // Prepare valid translations outside transaction
-    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    // Rows of layers outside the (successfully fetched) delete scope are
+    // dropped: their old rows stay untouched and a partial insert would
+    // collide with them on the composite unique key.
+    const layers = fetchedMarketLayers(markets);
+    const validTranslations = translations.filter(t =>
+      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
@@ -558,7 +573,12 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Saving article to database: ${articleData.id}`);
 
     // Prepare valid translations outside transaction
-    const validTranslations = translations.filter(t => t.value != null && t.value !== undefined);
+    // Rows of layers outside the (successfully fetched) delete scope are
+    // dropped: their old rows stay untouched and a partial insert would
+    // collide with them on the composite unique key.
+    const layers = fetchedMarketLayers(markets);
+    const validTranslations = translations.filter(t =>
+      t.value != null && t.value !== undefined && layers.includes(t.marketId || ""));
     const skippedCount = translations.length - validTranslations.length;
     if (skippedCount > 0) {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);

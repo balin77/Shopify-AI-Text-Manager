@@ -319,6 +319,17 @@ export class ProductSyncService {
           .map((edge) => edge.node) ?? [];
 
         if (mediaImages.length > 0) {
+          // Deleting ProductImage rows CASCADES away every
+          // ProductImageAltTranslation (global AND market layers). Snapshot
+          // them and re-attach to the recreated images (matched by mediaId)
+          // so translations survive the delete-then-recreate. Phase 3c then
+          // refreshes the layers it successfully fetches (delete+recreate
+          // scoped per layer), so preserved rows never go permanently stale.
+          const preservedAltRows = await tx.productImageAltTranslation.findMany({
+            where: { image: { productId: product.id } },
+            select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
+          });
+
           await tx.productImage.deleteMany({ where: { productId: product.id } });
           await tx.productImage.createMany({
             data: mediaImages.map((media, index) => ({
@@ -329,6 +340,23 @@ export class ProductSyncService {
               position: index,
             })),
           });
+
+          if (preservedAltRows.length > 0) {
+            const newImages = await tx.productImage.findMany({
+              where: { productId: product.id },
+              select: { id: true, mediaId: true },
+            });
+            const newIdByMediaId = new Map(newImages.filter((i) => i.mediaId).map((i) => [i.mediaId as string, i.id]));
+            const restoreData = preservedAltRows.flatMap((row) => {
+              const newImageId = row.image.mediaId ? newIdByMediaId.get(row.image.mediaId) : undefined;
+              return newImageId
+                ? [{ imageId: newImageId, locale: row.locale, altText: row.altText, marketId: row.marketId }]
+                : [];
+            });
+            if (restoreData.length > 0) {
+              await tx.productImageAltTranslation.createMany({ data: restoreData, skipDuplicates: true });
+            }
+          }
         }
       }
 
@@ -677,6 +705,10 @@ export class ProductSyncService {
             }
 
             const altTranslations: Array<{ imageId: string; locale: string; altText: string; marketId: string }> = [];
+            // Layers we attempted vs. layers with at least one failed batch —
+            // only cleanly fetched layers are replaced in the DB below.
+            const attemptedAltLayers = new Set<string>();
+            const failedAltLayers = new Set<string>();
 
             let mediaLocaleIndex = 0;
             for (const locale of nonPrimaryLocales) {
@@ -684,6 +716,7 @@ export class ProductSyncService {
               checkAborted();
 
               for (const marketId of marketLayersForLocale(markets, locale.locale)) {
+                attemptedAltLayers.add(marketId);
                 let mediaBatchIndex = 0;
                 for (const batch of mediaBatches) {
                   mediaBatchIndex++;
@@ -711,6 +744,7 @@ export class ProductSyncService {
                     const data = await response.json() as TranslatableResourcesByIdsResponse;
                     if (data.errors) {
                       logger.warn(`[ProductSync] GraphQL error fetching alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+                      failedAltLayers.add(marketId);
                       continue;
                     }
 
@@ -734,16 +768,30 @@ export class ProductSyncService {
                   } catch (batchErr: unknown) {
                     if (batchErr instanceof DOMException && batchErr.name === "AbortError") throw batchErr;
                     logger.warn(`[ProductSync] Failed to fetch alt-text batch for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, batchErr instanceof Error ? batchErr.message : String(batchErr));
+                    failedAltLayers.add(marketId);
                   }
                 }
               }
             }
 
-            if (altTranslations.length > 0) {
-              onProgress?.({ overallPercent: 97, message: `Saving ${altTranslations.length} image alt-text translations...` });
+            // Replace each CLEANLY fetched layer wholesale. writeProduct
+            // preserved the pre-sync alt rows across the image recreate, so a
+            // plain skipDuplicates insert would keep stale values; deleting
+            // only the succeeded layers keeps failed/un-fetched layers intact.
+            const succeededAltLayers = [...attemptedAltLayers].filter((l) => !failedAltLayers.has(l));
+            const dbImageIds = [...mediaIdToDbId.values()];
+            if (succeededAltLayers.length > 0 && dbImageIds.length > 0) {
+              await db.productImageAltTranslation.deleteMany({
+                where: { imageId: { in: dbImageIds }, marketId: { in: succeededAltLayers } },
+              });
+            }
+
+            const freshAltRows = altTranslations.filter((t) => !failedAltLayers.has(t.marketId));
+            if (freshAltRows.length > 0) {
+              onProgress?.({ overallPercent: 97, message: `Saving ${freshAltRows.length} image alt-text translations...` });
 
               await db.productImageAltTranslation.createMany({
-                data: altTranslations.map(t => ({
+                data: freshAltRows.map(t => ({
                   imageId: t.imageId,
                   locale: t.locale,
                   altText: t.altText,
@@ -752,7 +800,7 @@ export class ProductSyncService {
                 skipDuplicates: true,
               });
 
-              logger.debug(`[ProductSync] Saved ${altTranslations.length} image alt-text translations`);
+              logger.debug(`[ProductSync] Saved ${freshAltRows.length} image alt-text translations`);
             }
           }
         }
@@ -861,18 +909,22 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Fetched ${allTranslations.length} translations from ${foreignLocales.length} foreign locales (errors: ${translationResult.errorCount})`);
 
       // 4. Fetch image alt-text translations (API 2025-10+)
+      const altFailedMarketIds = new Set<string>();
       const imageAltTranslations = await this.fetchImageAltTextTranslations(
         productData,
         locales.filter((l) => !l.primary && l.published),
-        markets
+        markets,
+        altFailedMarketIds
       );
       logger.debug(`[ProductSync] Fetched ${imageAltTranslations.length} image alt-text translations`);
 
       // 4b. Fetch sub-resource translations (options, option values, metafields)
+      const subResFailedMarketIds = new Set<string>();
       const subResourceTranslations = await this.fetchSubResourceTranslations(
         productData,
         locales.filter((l) => !l.primary && l.published),
-        markets
+        markets,
+        subResFailedMarketIds
       );
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
@@ -880,7 +932,11 @@ export class ProductSyncService {
       if (forceSync) {
         logger.info(`[ProductSync] [RELOAD] title="${productData.title || '(empty)'}", descLen=${(productData.descriptionHtml || '').length}, translations=${allTranslations.length}`);
       }
-      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync, markets, translationResult.failedMarketIds);
+      await this.saveToDatabase(productData, allTranslations, imageAltTranslations, subResourceTranslations, forceSync, markets, {
+        productFields: translationResult.failedMarketIds,
+        imageAlt: altFailedMarketIds,
+        subResources: subResFailedMarketIds,
+      });
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -898,7 +954,9 @@ export class ProductSyncService {
   private async fetchImageAltTextTranslations(
     productData: ShopifyProductData,
     locales: ShopLocale[],
-    markets: MarketInfo[] = []
+    markets: MarketInfo[] = [],
+    /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
+    failedMarketIds?: Set<string>
   ): Promise<Array<{ mediaId: string; locale: string; altText: string; marketId: string }>> {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
@@ -943,6 +1001,7 @@ export class ProductSyncService {
 
           if (data.errors) {
             logger.warn(`[ProductSync] GraphQL error for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+            if (marketId) failedMarketIds?.add(marketId);
             continue;
           }
 
@@ -970,6 +1029,7 @@ export class ProductSyncService {
           }
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch bulk alt-text for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
+          if (marketId) failedMarketIds?.add(marketId);
         }
       }
     }
@@ -988,7 +1048,9 @@ export class ProductSyncService {
   private async fetchSubResourceTranslations(
     productData: ShopifyProductData,
     locales: ShopLocale[],
-    markets: MarketInfo[] = []
+    markets: MarketInfo[] = [],
+    /** OUT: markets whose fetch errored — their DB rows must not be replaced. */
+    failedMarketIds?: Set<string>
   ): Promise<Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }>> {
     const results: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId: string }> = [];
 
@@ -1043,6 +1105,7 @@ export class ProductSyncService {
 
           if (data.errors) {
             logger.warn(`[ProductSync] GraphQL error fetching sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, data.errors[0]?.message);
+            if (marketId) failedMarketIds?.add(marketId);
             continue;
           }
 
@@ -1074,6 +1137,7 @@ export class ProductSyncService {
           }
         } catch (error) {
           logger.warn(`[ProductSync] Failed to fetch sub-resource translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
+          if (marketId) failedMarketIds?.add(marketId);
         }
       }
     }
@@ -1426,15 +1490,24 @@ export class ProductSyncService {
     subResourceTranslations: Array<{ resourceId: string; resourceType: string; key: string; value: string; locale: string; marketId?: string }> = [],
     forceSync = false,
     markets: MarketInfo[] = [],
-    failedMarketIds: Set<string> = new Set()
+    /** Per fetch pipeline: markets whose fetch errored — their rows survive untouched. */
+    failedMarkets: { productFields?: Set<string>; imageAlt?: Set<string>; subResources?: Set<string> } = {}
   ) {
     const { db } = await import("../db.server");
+
+    const productFieldsFailed = failedMarkets.productFields ?? new Set<string>();
+    const imageAltFailed = failedMarkets.imageAlt ?? new Set<string>();
+    const subResourcesFailed = failedMarkets.subResources ?? new Set<string>();
 
     // Layers this sync run actually (successfully) fetched: global ("") plus
     // every market whose fetch did not fail. Delete/recreate is SCOPED to
     // these layers so market rows survive a global-only or partially-failed
     // run (e.g. loadMarkets degraded to [] on a missing read_markets scope).
-    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
+    // Tracked per fetch pipeline — product fields, image alt-text, and
+    // sub-resources fail independently.
+    const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !productFieldsFailed.has(m.id)));
+    const altFetchedLayers = fetchedMarketLayers(markets.filter((m) => !imageAltFailed.has(m.id)));
+    const subResFetchedLayers = fetchedMarketLayers(markets.filter((m) => !subResourcesFailed.has(m.id)));
 
     // R4-DI5: do not resurrect a product that was deleted while this sync was
     // in flight (we fetched it from Shopify before a products/delete webhook
@@ -1475,6 +1548,16 @@ export class ProductSyncService {
       }
     }
     logger.debug(`[ProductSync] [SYNC] Total preserved: ${preservedAltTexts.size} images`);
+
+    // Alt-text TRANSLATION rows of layers we did NOT cleanly fetch this run
+    // (failed markets, or all markets when loadMarkets degraded to []) would
+    // be destroyed by the ProductImage delete-then-recreate below via the FK
+    // cascade — no marketId scoping can protect them there. Snapshot them and
+    // re-attach to the recreated images (matched by mediaId).
+    const preservedAltRows = await db.productImageAltTranslation.findMany({
+      where: { image: { productId: productData.id }, marketId: { notIn: altFetchedLayers } },
+      select: { locale: true, altText: true, marketId: true, image: { select: { mediaId: true } } },
+    });
 
     // Prepare data outside transaction. Rows of layers OUTSIDE fetchedLayers
     // (i.e. a market that partially failed) are dropped: their old DB rows are
@@ -1620,36 +1703,39 @@ export class ProductSyncService {
         // Sub-resource rows are stored with digest=null, so they cannot be
         // digest-skipped and are always reconciled here as before.
         if (subResourceTranslations.length > 0) {
-          const subResourceIds = [...new Set(subResourceTranslations.map(t => t.resourceId))];
+          // Rows of markets whose sub-resource fetch failed are dropped: their
+          // old rows stay untouched (excluded from the delete scope below) and
+          // a partial insert would collide with them on the unique key.
+          const freshSubResourceRows = subResourceTranslations.filter(
+            t => subResFetchedLayers.includes(t.marketId || "")
+          );
+          const subResourceIds = [...new Set(freshSubResourceRows.map(t => t.resourceId))];
 
-          // Sub-resource fetches track failures independently of the product
-          // fields, so scope to the union of the fetched layers and every layer
-          // actually present in the fresh data — the recreate below must never
-          // collide with an un-deleted row of the same (key, locale, market).
-          const subResourceLayers = [...new Set([...fetchedLayers, ...subResourceTranslations.map(t => t.marketId || "")])];
-          const deletedSubTrans = await tx.contentTranslation.deleteMany({
-            where: {
-              shop: this.shop,
-              resourceId: { in: subResourceIds },
-              resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
-              marketId: { in: subResourceLayers },
-            },
-          });
-          logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
+          if (subResourceIds.length > 0) {
+            const deletedSubTrans = await tx.contentTranslation.deleteMany({
+              where: {
+                shop: this.shop,
+                resourceId: { in: subResourceIds },
+                resourceType: { in: ["ProductOption", "ProductOptionValue", "Metafield"] },
+                marketId: { in: subResFetchedLayers },
+              },
+            });
+            logger.debug(`[ProductSync] Deleted ${deletedSubTrans.count} old sub-resource translations`);
 
-          await tx.contentTranslation.createMany({
-            data: subResourceTranslations.map(t => ({
-              shop: this.shop,
-              resourceId: t.resourceId,
-              resourceType: t.resourceType,
-              key: t.key,
-              value: t.value,
-              locale: t.locale,
-              digest: null,
-              marketId: t.marketId || "",
-            })),
-          });
-          logger.debug(`[ProductSync] Saved ${subResourceTranslations.length} sub-resource translations`);
+            await tx.contentTranslation.createMany({
+              data: freshSubResourceRows.map(t => ({
+                shop: this.shop,
+                resourceId: t.resourceId,
+                resourceType: t.resourceType,
+                key: t.key,
+                value: t.value,
+                locale: t.locale,
+                digest: null,
+                marketId: t.marketId || "",
+              })),
+            });
+            logger.debug(`[ProductSync] Saved ${freshSubResourceRows.length} sub-resource translations`);
+          }
         }
       }
 
@@ -1717,6 +1803,9 @@ export class ProductSyncService {
 
           let savedAltTranslations = 0;
           for (const altTrans of imageAltTranslations) {
+            // Rows of failed market layers are dropped — the preserved
+            // snapshot below carries those layers over instead.
+            if (!altFetchedLayers.includes(altTrans.marketId || "")) continue;
             const dbImageId = mediaIdToDbId.get(altTrans.mediaId);
             if (dbImageId) {
               await tx.productImageAltTranslation.create({
@@ -1733,6 +1822,26 @@ export class ProductSyncService {
 
           if (savedAltTranslations > 0) {
             logger.debug(`[ProductSync] ✓ Saved ${savedAltTranslations} image alt-text translations`);
+          }
+        }
+
+        // Restore the snapshot of un-fetched layers (see preservedAltRows
+        // above). skipDuplicates: fresh rows above always win — preserved and
+        // fresh layers are disjoint, so this only fills the protected layers.
+        if (preservedAltRows.length > 0) {
+          const mediaIdToNewDbId = new Map<string, string>();
+          createdImages.forEach((img) => {
+            if (img.mediaId) mediaIdToNewDbId.set(img.mediaId, img.id);
+          });
+          const restoreData = preservedAltRows.flatMap((row) => {
+            const newImageId = row.image.mediaId ? mediaIdToNewDbId.get(row.image.mediaId) : undefined;
+            return newImageId
+              ? [{ imageId: newImageId, locale: row.locale, altText: row.altText, marketId: row.marketId }]
+              : [];
+          });
+          if (restoreData.length > 0) {
+            await tx.productImageAltTranslation.createMany({ data: restoreData, skipDuplicates: true });
+            logger.debug(`[ProductSync] ✓ Restored ${restoreData.length} preserved market alt-text translations`);
           }
         }
       }

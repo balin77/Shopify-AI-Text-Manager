@@ -88,7 +88,14 @@ export function marketLayersForLocale(markets: MarketInfo[], locale: string): st
  * Used to SCOPE delete/cleanup statements so a sync never deletes rows of a
  * layer it did not (re-)fetch — in particular, when loadMarkets degrades to
  * `[]` (missing scope / API error) existing market rows must survive a
- * global-only re-sync.
+ * global-only re-sync. Callers must EXCLUDE markets whose fetch failed
+ * (pass `markets.filter(m => !failedMarketIds.has(m.id))`).
+ *
+ * Deliberate scope note: the scope is per MARKET, not per (locale, market)
+ * tuple. When a market stops serving a locale (localeCodes shrank), its rows
+ * for that locale are no longer fetched but ARE still cleaned up — that is
+ * intended: the storefront can no longer display them, and Shopify remains
+ * the source of truth (re-adding the locale restores them on the next sync).
  */
 export function fetchedMarketLayers(markets: MarketInfo[]): string[] {
   return ['', ...markets.map((m) => m.id)];
@@ -110,13 +117,18 @@ export function fetchedMarketLayers(markets: MarketInfo[]): string[] {
  * @param locales - Published shop locales
  * @param resourceType - Resource type string for DB storage
  * @param markets - Shop markets for the market-specific passes (default: none)
+ * @param failedMarketIds - OUT param: populated with the ids of markets whose
+ *   fetch errored for at least one locale. Callers doing delete-then-recreate
+ *   must exclude these markets from their delete scope, otherwise a transient
+ *   API error would wipe that market's rows without recreating them.
  */
 export async function fetchAllTranslations(
   graphqlFn: GraphQLFunction,
   resourceId: string,
   locales: ShopLocale[],
   resourceType: string,
-  markets: MarketInfo[] = []
+  markets: MarketInfo[] = [],
+  failedMarketIds?: Set<string>
 ): Promise<ResolvedTranslation[]> {
   const allTranslationsMap = new Map<string, ResolvedTranslation>();
 
@@ -148,6 +160,7 @@ export async function fetchAllTranslations(
         const data = await response.json();
         if (data.errors?.length > 0) {
           logger.warn(`[SyncUtils] GraphQL error fetching translations for ${locale.locale}${marketId ? ` (market ${marketId})` : ''}: ${data.errors[0].message}`);
+          if (marketId) failedMarketIds?.add(marketId);
           continue;
         }
 
@@ -183,6 +196,7 @@ export async function fetchAllTranslations(
         }
       } catch (error) {
         logger.warn(`[SyncUtils] Error fetching translations for locale ${locale.locale}${marketId ? ` (market ${marketId})` : ''}:`, error);
+        if (marketId) failedMarketIds?.add(marketId);
       }
     }
   }
