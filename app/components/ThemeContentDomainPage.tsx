@@ -1039,15 +1039,23 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     !!selectedGroupId && themes.some((item: ThemeNavItem) => item.groupId === selectedGroupId && item.embedTechnical);
 
   // Theme-Auswahl: labeled dropdown options + change handler.
+  // The published (MAIN) theme is pinned to the top; other themes keep their
+  // existing relative order (Array.sort is stable).
   const themeSelectOptions = useMemo(
     () =>
-      (themeOptions ?? []).map((th) => ({
-        value: th.id,
-        label:
-          String(th.role).toUpperCase() === "MAIN"
-            ? `${th.name} ${t.content?.themeSelectorPublished || "(published)"}`
-            : th.name,
-      })),
+      [...(themeOptions ?? [])]
+        .sort((a, b) => {
+          const aMain = String(a.role).toUpperCase() === "MAIN" ? 0 : 1;
+          const bMain = String(b.role).toUpperCase() === "MAIN" ? 0 : 1;
+          return aMain - bMain;
+        })
+        .map((th) => ({
+          value: th.id,
+          label:
+            String(th.role).toUpperCase() === "MAIN"
+              ? `${th.name} ${t.content?.themeSelectorPublished || "(published)"}`
+              : th.name,
+        })),
     [themeOptions, t]
   );
 
