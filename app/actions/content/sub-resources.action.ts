@@ -176,11 +176,16 @@ export async function handleSaveSubResourceTranslations(
         const keysToDelete: string[] = [];
 
         for (const [key, value] of Object.entries(fields)) {
-          if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
-            // Empty value for ProductOption/ProductOptionValue - delete the translation instead
+          const isEmpty = value === "";
+          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
+          // Delete (rather than store "") when: an option field is cleared
+          // (Shopify rejects blank option translations), OR any field is cleared
+          // in a MARKET context — clearing a market override reverts to the
+          // inherited global value instead of pinning a blank market-specific one.
+          if (isEmpty && (isOptionType || marketId)) {
             keysToDelete.push(key);
           } else {
-            // Non-empty value OR empty value for other resource types
+            // Non-empty value OR empty value in the global context for other types
             translationInputs.push({ key, value, locale });
           }
         }
@@ -239,9 +244,11 @@ export async function handleSaveSubResourceTranslations(
         // Save to local DB (including empty strings - user explicitly cleared the field)
         // This allows tracking that the field was intentionally cleared
         for (const [key, value] of Object.entries(fields)) {
-          if (value === "" && (resourceType === "ProductOptionValue" || resourceType === "ProductOption")) {
-            // For ProductOption/ProductOptionValue with empty value, delete from DB too
-            // since there's no translation in Shopify (we removed it). Scoped to the
+          const isEmpty = value === "";
+          const isOptionType = resourceType === "ProductOptionValue" || resourceType === "ProductOption";
+          if (isEmpty && (isOptionType || marketId)) {
+            // Cleared option field, or any field cleared in a market context:
+            // delete the DB row (Shopify removal already done above). Scoped to the
             // saved market so clearing a market override doesn't wipe the global row.
             await db.contentTranslation.deleteMany({
               where: { resourceId, key, locale, marketId },

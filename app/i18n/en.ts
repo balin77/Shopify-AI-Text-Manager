@@ -221,6 +221,7 @@ export const en: Translation = {
     appEmbedWarning: "This is app-embed content (e.g. CSS selectors and technical configuration). These fields are read-only, because editing or translating them would break the embed on your storefront. They are shown for reference only.",
     appEmbedReadOnlyHint: "Technical app-embed element — it can't be edited in the main language or in translations, because changing it would break the embed.",
     primaryReadOnlyHint: "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.",
+    slugMarketLockedHint: "The URL handle can't be customized per market — Shopify only allows translating it per language. The global (translated) handle is used for every market.",
     primaryReadOnlyTranslateInfo: "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin.",
     deliveryPackingSlipNoticeTitle: "Packing slip template",
     deliveryPackingSlipNotice: "You can translate the packing slip template under \"Notifications\".",

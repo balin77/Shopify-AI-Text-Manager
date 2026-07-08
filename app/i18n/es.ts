@@ -220,6 +220,7 @@ export const es: Translation = {
     appEmbedWarning: "Este es contenido de app-embed (por ejemplo, selectores CSS y configuración técnica). Estos campos son de solo lectura, porque editarlos o traducirlos rompería la inserción en tu tienda. Se muestran solo como referencia.",
     appEmbedReadOnlyHint: "Elemento técnico de app-embed — no se puede editar ni en el idioma principal ni en las traducciones, porque cambiarlo rompería la inserción.",
     primaryReadOnlyHint: "Este campo no se puede editar en el idioma principal aquí — gestiona el original en tu panel de Shopify. Aún puedes traducirlo a otros idiomas.",
+    slugMarketLockedHint: "El identificador de URL no se puede personalizar por mercado — Shopify solo permite traducirlo por idioma. Para todos los mercados se usa el identificador global (traducido).",
     primaryReadOnlyTranslateInfo: "El idioma principal es de solo lectura para este tipo de contenido — la traducción se aplicó, pero el original se gestiona en tu panel de Shopify.",
     deliveryPackingSlipNoticeTitle: "Plantilla de albarán",
     deliveryPackingSlipNotice: "Puedes traducir la plantilla de albarán en «Notificaciones».",

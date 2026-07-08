@@ -218,6 +218,7 @@ export const de = {
     appEmbedWarning: "Dies ist App-Einbettungs-Inhalt (z. B. CSS-Selektoren und technische Konfiguration). Diese Felder sind schreibgeschützt, da eine Bearbeitung oder Übersetzung die Einbettung im Storefront beschädigen würde. Sie werden nur zur Übersicht angezeigt.",
     appEmbedReadOnlyHint: "Technisches Element der App-Einbettung — es kann weder in der Hauptsprache noch in Übersetzungen bearbeitet werden, da eine Änderung die Einbettung beschädigen würde.",
     primaryReadOnlyHint: "Dieses Feld kann in der Hauptsprache hier nicht bearbeitet werden — das Original verwaltest du in deinem Shopify-Admin. Übersetzen in andere Sprachen ist weiterhin möglich.",
+    slugMarketLockedHint: "Der URL-Handle kann nicht pro Markt angepasst werden — Shopify erlaubt nur eine Übersetzung pro Sprache. Für alle Märkte gilt der globale (übersetzte) Handle.",
     primaryReadOnlyTranslateInfo: "Die Hauptsprache ist bei diesem Inhaltstyp schreibgeschützt — die Übersetzung wurde übernommen, aber das Original wird in deinem Shopify-Admin verwaltet.",
     deliveryPackingSlipNoticeTitle: "Lieferscheinvorlage",
     deliveryPackingSlipNotice: "Die Lieferscheinvorlage übersetzen Sie unter Benachrichtigungen.",

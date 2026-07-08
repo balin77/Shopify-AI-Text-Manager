@@ -36,6 +36,8 @@ export interface FieldRendererProps {
   readOnly?: boolean;
   /** If true, the read-only reason is app-embed technical content — swaps the tooltip hint. */
   embedTechnical?: boolean;
+  /** Selected market ("" = global). A non-global market locks the URL handle. */
+  selectedMarketId?: string;
   /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
   fieldError?: string;
   onGenerateAI?: () => void;
@@ -76,6 +78,7 @@ export function UnifiedFieldRenderer(
     isFallbackValue,
     readOnly,
     embedTechnical,
+    selectedMarketId,
     fieldError,
     onGenerateAI,
     onFormatAI,
@@ -282,18 +285,30 @@ export function UnifiedFieldRenderer(
   const shouldShowClear = !(field.key === "title" && isPrimaryLocale);
 
   // Read-only fields get a hover tooltip explaining why they can't be edited.
+  // The URL handle (slug) cannot be customized per market — Shopify only allows
+  // translating it per locale, never a market-specific override. So in a
+  // non-global market context the slug is locked (read-only, no translate/copy/
+  // clear); it shows the inherited locale value greyed, with its own hint.
+  const slugMarketLocked =
+    field.type === "slug" && !isPrimaryLocale && !!selectedMarketId;
+  const effectiveReadOnly = readOnly || slugMarketLocked;
+
   // App-embed technical fields (CSS selectors / config) are locked in EVERY
-  // locale, so they get a dedicated hint; other read-only fields (main language
-  // of resource-backed rubrics like Abo-Pläne) get the primary-read-only hint.
+  // locale, so they get a dedicated hint; the market-locked slug gets its own;
+  // other read-only fields (main language of resource-backed rubrics like
+  // Abo-Pläne) get the primary-read-only hint.
   const readOnlyHint = String(
-    embedTechnical
+    slugMarketLocked
+      ? (t.content?.slugMarketLockedHint ||
+         "The URL handle can't be customized per market — Shopify only allows translating it per language. The global (translated) handle is used for every market.")
+      : embedTechnical
       ? (t.content?.appEmbedReadOnlyHint ||
          "Technical app-embed element — it can't be edited in the main language or in translations, because changing it would break the embed.")
       : (t.content?.primaryReadOnlyHint ||
          "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages.")
   );
   const withReadOnlyTooltip = (el: ReactElement): ReactElement =>
-    readOnly ? (
+    effectiveReadOnly ? (
       <Tooltip content={readOnlyHint} dismissOnMouseOut preferredPosition="above">
         <div>{el}</div>
       </Tooltip>
@@ -355,21 +370,21 @@ export function UnifiedFieldRenderer(
       sourceTextAvailable={sourceTextAvailable}
       disableGeneration={disableGeneration}
       isFallbackValue={isFallbackValue}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       requiredIndicator={requiredIndicator}
       error={fieldError}
       hasFieldMissingTranslations={fieldHasMissingTranslations}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
-      onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
-      onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
-      onTranslate={field.supportsTranslation !== false ? onTranslate : undefined}
-      onTranslateToAllLocales={field.supportsTranslation !== false ? onTranslateToAllLocales : undefined}
-      onCopy={field.supportsTranslation !== false ? onCopy : undefined}
-      onCopyToAllLocales={field.supportsTranslation !== false ? onCopyToAllLocales : undefined}
+      onGenerateAI={slugMarketLocked ? undefined : (field.supportsAI !== false ? onGenerateAI : undefined)}
+      onFormatAI={slugMarketLocked ? undefined : (field.supportsFormatting !== false ? onFormatAI : undefined)}
+      onTranslate={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onTranslate : undefined)}
+      onTranslateToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onTranslateToAllLocales : undefined)}
+      onCopy={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopy : undefined)}
+      onCopyToAllLocales={slugMarketLocked ? undefined : (field.supportsTranslation !== false ? onCopyToAllLocales : undefined)}
       onAcceptSuggestion={onAcceptSuggestion}
       onAcceptAndTranslate={onAcceptAndTranslate}
       onRejectSuggestion={onRejectSuggestion}
-      onClear={shouldShowClear ? onClear : undefined}
+      onClear={slugMarketLocked ? undefined : (shouldShowClear ? onClear : undefined)}
     />
   );
 }
