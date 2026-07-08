@@ -512,6 +512,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
   const {
     imageAltTexts, setImageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions, setAltTextSuggestions,
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
@@ -1489,7 +1490,8 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const result = dataLoader.onSaveComplete(
         savedLocale,
         editableValues,
-        effectiveFieldDefinitions
+        effectiveFieldDefinitions,
+        fallbackFieldsRef.current
       );
 
       // Image alt-text updates (not managed by dataLoader — separate concern)
@@ -2280,6 +2282,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     hasChanges,
     enabledLanguages,
     imageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions,
     isClearAllModalOpen,
     isInitialDataReady,

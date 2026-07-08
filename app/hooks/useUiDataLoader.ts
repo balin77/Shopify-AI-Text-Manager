@@ -132,7 +132,11 @@ export interface UseUiDataLoaderReturn {
   onSaveComplete: (
     savedLocale: string,
     editableValues: Record<string, string>,
-    fieldDefinitions: FieldDefinition[]
+    fieldDefinitions: FieldDefinition[],
+    /** Fields still inherited from global (current fallbackFields) — skipped when
+     *  storing market overlays so a single-field market save doesn't drop the
+     *  inherited styling on the rest. Ignored in the global context. */
+    inheritedFieldKeys?: Set<string>
   ) => TransitionResult;
 
   /** After translateFieldToAllLocales callback (Accept & Translate) */
@@ -708,7 +712,8 @@ export function useUiDataLoader(
     (
       savedLocale: string,
       editableValues: Record<string, string>,
-      fieldDefinitions: FieldDefinition[]
+      fieldDefinitions: FieldDefinition[],
+      inheritedFieldKeys?: Set<string>
     ): TransitionResult => {
       debugLog.transition(`onSaveComplete: locale=${savedLocale}`);
 
@@ -752,6 +757,20 @@ export function useUiDataLoader(
         for (const fieldDef of fieldDefinitions) {
           if (fieldDef.type === "image-gallery") continue;
           const value = editableValues[fieldDef.key];
+
+          // In a market context, only fields the save actually wrote as market
+          // overrides get an overlay. Fields still inherited from the global value
+          // (inheritedFieldKeys, i.e. the current fallbackFields — the same set
+          // buildFieldsForSave skips) must NOT get a market overlay, else
+          // resolve() would find one for every field and the greyed "inherited"
+          // styling would vanish across the whole item after saving one field.
+          if (marketId && inheritedFieldKeys?.has(fieldDef.key)) {
+            if (localTranslationsRef.current[fieldDef.translationKey]?.[localeKey]) {
+              delete localTranslationsRef.current[fieldDef.translationKey][localeKey];
+              deleted++;
+            }
+            continue;
+          }
 
           if (value) {
             // Store in localTranslationsRef to persist after revalidation

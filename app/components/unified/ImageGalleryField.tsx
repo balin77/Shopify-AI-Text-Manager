@@ -63,6 +63,12 @@ interface ImageGalleryFieldProps {
   /** Alt-text values (indexed by image position) */
   altTexts: Record<number, string>;
 
+  /**
+   * Image indices whose alt text is inherited from the global value while a
+   * non-global market is selected — greyed out + italic, like the main fields.
+   */
+  altTextFallbackIndices?: Set<number>;
+
   /** Callback when alt-text changes */
   onAltTextChange: (imageIndex: number, value: string) => void;
 
@@ -133,6 +139,7 @@ export function ImageGalleryField({
   isFreePlan = false,
   shopLocales = [],
   altTexts,
+  altTextFallbackIndices = new Set(),
   onAltTextChange,
   onGenerateAltText,
   onGenerateAllAltTexts,
@@ -423,6 +430,7 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[selectedImageIndex]}
           isPrimaryLocale={isPrimaryLocale}
+          isFallbackValue={altTextFallbackIndices.has(selectedImageIndex)}
           isTranslated={isAltTextTranslated(images[selectedImageIndex], currentLanguage, primaryLocale, altTexts[selectedImageIndex])}
           hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(images[selectedImageIndex], shopLocales, primaryLocale, altTexts[selectedImageIndex])}
           placeholder={t.altTextPlaceholder}
@@ -449,6 +457,7 @@ export function ImageGalleryField({
           helpKey="altText"
           suggestion={altTextSuggestions[0]}
           isPrimaryLocale={isPrimaryLocale}
+          isFallbackValue={altTextFallbackIndices.has(0)}
           isTranslated={isAltTextTranslated(featuredImage, currentLanguage, primaryLocale, altTexts[0])}
           hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(featuredImage, shopLocales, primaryLocale, altTexts[0])}
           placeholder={t.altTextPlaceholder}

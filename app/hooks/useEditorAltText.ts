@@ -60,6 +60,8 @@ interface UseEditorAltTextProps {
 interface UseEditorAltTextReturn {
   // State
   imageAltTexts: Record<number, string>;
+  /** Image indices whose alt text is a market-inherited (global) fallback. */
+  fallbackAltTextIndices: Set<number>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   altTextSuggestions: Record<number, string>;
   setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
@@ -142,6 +144,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   // Per-locale overlay for copy operations — eliminates stale window on locale switch
   // structure: { locale: { imageIndex: altText } }
   const localAltTextOverlayRef = useRef<Record<string, Record<number, string>>>({});
+
+  // Image indices whose alt text is inherited from the global value while a
+  // non-global market is selected (mirrors the main fields' fallbackFields). The
+  // UI greys these out. Empty in the global context.
+  const [fallbackAltTextIndices, setFallbackAltTextIndices] = useState<Set<number>>(new Set());
 
   // Send Image to AI feature state
   const [sendImageToAI, setSendImageToAI] = useState(false);
@@ -966,12 +973,15 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       // Reset to primary locale alt-texts - fallback will use images[i].altText
       setImageAltTexts({});
       setOriginalAltTexts({});
+      setFallbackAltTextIndices(new Set());
     } else {
       // Load translated alt-texts. When a market is selected, prefer the
       // market-specific value (overlay then DB); if absent, fall back to the
       // global value — mirroring the storefront + the main resolve() chain. When
       // no market is selected, this reduces to the original global-only lookup.
       const translatedAltTexts: Record<number, string> = {};
+      // Indices showing a market-inherited (global) value — greyed out in the UI.
+      const fallbackIndices = new Set<number>();
       const marketOverlay = selectedMarketId
         ? (localAltTextOverlayRef.current[buildLocaleKey(currentLanguage, selectedMarketId)] || {})
         : {};
@@ -991,20 +1001,25 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             return;
           }
         }
-        // 2. Global layer (overlay → DB) — the inherited fallback in a market.
+        // 2. Global layer (overlay → DB). With a market selected this value is
+        //    inherited from global → flag it as a fallback so the UI greys it.
+        let globalVal: string | undefined;
         if (globalOverlay[index] !== undefined) {
-          translatedAltTexts[index] = globalOverlay[index];
-          return;
+          globalVal = globalOverlay[index];
+        } else {
+          const globalDb = img.altTextTranslations?.find(
+            (t) => t.locale === currentLanguage && (t.marketId ?? "") === ""
+          );
+          if (globalDb) globalVal = globalDb.altText;
         }
-        const globalDb = img.altTextTranslations?.find(
-          (t) => t.locale === currentLanguage && (t.marketId ?? "") === ""
-        );
-        if (globalDb) {
-          translatedAltTexts[index] = globalDb.altText;
+        if (globalVal !== undefined) {
+          translatedAltTexts[index] = globalVal;
+          if (selectedMarketId && globalVal.trim() !== "") fallbackIndices.add(index);
         }
       });
       setImageAltTexts(translatedAltTexts);
       setOriginalAltTexts({ ...translatedAltTexts });
+      setFallbackAltTextIndices(fallbackIndices);
     }
   }, [currentLanguage, selectedMarketId, selectedItemId, primaryLocale]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1012,6 +1027,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // State
     imageAltTexts,
     setImageAltTexts,
+    fallbackAltTextIndices,
     altTextSuggestions,
     setAltTextSuggestions,
     originalAltTexts,

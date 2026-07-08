@@ -222,6 +222,7 @@ export function UnifiedFieldRenderer(
         isFreePlan={false}
         shopLocales={shopLocales}
         altTexts={state.imageAltTexts}
+        altTextFallbackIndices={state.fallbackAltTextIndices}
         onAltTextChange={handlers.handleAltTextChange}
         onGenerateAltText={handlers.handleGenerateAltText}
         onGenerateAllAltTexts={handlers.handleGenerateAllAltTexts}

@@ -369,6 +369,8 @@ export interface EditorState {
   hasChanges: boolean;
   enabledLanguages: string[];
   imageAltTexts: Record<number, string>;
+  /** Image indices whose alt text is a market-inherited (global) fallback. */
+  fallbackAltTextIndices: Set<number>;
   altTextSuggestions: Record<number, string>;
   isClearAllModalOpen: boolean;
   isInitialDataReady: boolean;
