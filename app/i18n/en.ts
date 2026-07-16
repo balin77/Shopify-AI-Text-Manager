@@ -1245,6 +1245,11 @@ export const en: Translation = {
         title: "hreflang audit",
         description: "Checks whether published languages are actually translated (otherwise hreflang points at untranslated content).",
       },
+      translationSeo: {
+        label: "Translation SEO",
+        title: "Translation SEO",
+        description: "Translation coverage of title, SEO title, and meta description per language.",
+      },
       keywords: {
         label: "Keywords",
         title: "Keyword tracking",
@@ -1319,6 +1324,7 @@ export const en: Translation = {
         localeLabel: "Language",
         localePlaceholder: "Choose a language",
         chooseLocaleHint: "Choose a language to check title, SEO title, and meta description translation coverage.",
+        noSecondaryLocales: "No secondary languages are published for this store. Once another language is published, it can be audited here.",
         fields: {
           title: "Title",
           metaTitle: "SEO title",

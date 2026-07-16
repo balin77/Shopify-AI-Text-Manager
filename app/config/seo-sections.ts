@@ -58,6 +58,13 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "audit",
   },
   {
+    id: "translationSeo",
+    path: "/app/seo/translations",
+    icon: "🈯",
+    labelKey: "translationSeo",
+    kind: "audit",
+  },
+  {
     id: "keywords",
     path: "/app/seo/keywords",
     icon: "🔑",

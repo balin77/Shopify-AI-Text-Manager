@@ -1242,6 +1242,11 @@ export const de = {
         title: "hreflang-Audit",
         description: "Prüft, ob veröffentlichte Sprachen tatsächlich übersetzt sind (sonst zeigt hreflang auf nicht übersetzte Inhalte).",
       },
+      translationSeo: {
+        label: "Übersetzungs-SEO",
+        title: "Übersetzungs-SEO",
+        description: "Übersetzungsabdeckung von Titel, SEO-Titel und Meta-Beschreibung pro Sprache prüfen.",
+      },
       keywords: {
         label: "Keywords",
         title: "Keyword-Tracking",
@@ -1316,6 +1321,7 @@ export const de = {
         localeLabel: "Sprache",
         localePlaceholder: "Sprache auswählen",
         chooseLocaleHint: "Wähle eine Sprache, um die Übersetzungsabdeckung von Titel, SEO-Titel und Meta-Beschreibung zu prüfen.",
+        noSecondaryLocales: "Für diesen Shop sind keine sekundären Sprachen veröffentlicht. Sobald eine weitere Sprache veröffentlicht ist, kann sie hier geprüft werden.",
         fields: {
           title: "Titel",
           metaTitle: "SEO-Titel",

@@ -29,7 +29,6 @@ import {
   Button,
   ProgressBar,
   Banner,
-  Select,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -41,15 +40,9 @@ import {
   saveAuditSnapshot,
   getLatestAuditSnapshot,
   getAuditTrend,
-  analyzeLocale,
-  LOCALE_AUDIT_FIELDS,
   type AuditType,
   type AuditTrendPoint,
-  type LocaleAudit,
-  type LocaleAuditField,
-  type LocaleMissingItemRef,
 } from "../services/seo/audit.service";
-import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
@@ -62,7 +55,7 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
 ]);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
   const settings = await db.aISettings.findUnique({
@@ -106,32 +99,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
-  // ---- Translation SEO card: secondary-locale coverage (live, not snapshot) --
-  // Much lighter than analyzeStore (presence checks only), so unlike the main
-  // audit above it's fine to run inline on every load — but only for the ONE
-  // locale the merchant picked via ?auditLocale=, never for all locales at once.
-  const shopLocales = await getCachedShopLocales(admin, session.shop);
-  const secondaryLocales: { locale: string; name: string }[] = shopLocales
-    .filter((l: any) => l.published && !l.primary)
-    .map((l: any) => ({ locale: String(l.locale), name: String(l.name) }));
-
-  const requestedAuditLocale = new URL(request.url).searchParams.get("auditLocale") || "";
-  let auditLocale: string | null = null;
-  let localeAudit: LocaleAudit | null = null;
-  if (requestedAuditLocale && secondaryLocales.some((l) => l.locale === requestedAuditLocale)) {
-    auditLocale = requestedAuditLocale;
-    localeAudit = await analyzeLocale(session.shop, requestedAuditLocale, { db, plan });
-  }
-
   return json({
     audit: snapshot.audit,
     lastScannedAt: snapshot.createdAt.toISOString(),
     trend,
     bulkFixRunning: !!runningBulkFix,
     scanRunning: !!runningScan,
-    secondaryLocales,
-    auditLocale,
-    localeAudit,
   });
 };
 
@@ -150,9 +123,6 @@ export default function SeoDashboard() {
     trend,
     bulkFixRunning,
     scanRunning,
-    secondaryLocales,
-    auditLocale,
-    localeAudit,
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -160,17 +130,6 @@ export default function SeoDashboard() {
 
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
-  };
-
-  // Translation SEO locale picker — replaces the current history entry (no
-  // back-button stop per keystroke-equivalent change) and keeps every other
-  // param (shop/host/embedded, …) via useAppNavigation's merge. An empty
-  // value clears the selection (loader treats "" the same as absent).
-  const handleLocaleChange = (locale: string) => {
-    handleNavigate("/app/seo", {
-      searchParams: new URLSearchParams({ auditLocale: locale }),
-      replace: true,
-    });
   };
 
   // "Rescan" — kicks off the detached "seoAudit" Task (seo-audit.handler.ts)
@@ -513,23 +472,6 @@ export default function SeoDashboard() {
             </BlockStack>
           </Card>
         )}
-
-        {/* Translation SEO — locale-aware coverage of title/meta_title/
-            meta_description in ContentTranslation. Hidden entirely when the
-            shop has no published secondary locale (nothing to audit). */}
-        {secondaryLocales.length > 0 && (
-          <TranslationSeoCard
-            d={d.translationSeo}
-            types={d.types}
-            secondaryLocales={secondaryLocales}
-            auditLocale={auditLocale}
-            localeAudit={localeAudit}
-            onLocaleChange={handleLocaleChange}
-            onOpenInEditor={openInEditor}
-            openInEditorLabel={d.openInEditor}
-            cappedNoteTemplate={d.cappedNote}
-          />
-        )}
       </BlockStack>
     </SeoSectionLayout>
   );
@@ -623,180 +565,3 @@ function TrendChart({ points }: { points: Pick<AuditTrendPoint, "averageScore">[
   );
 }
 
-/** How many merged missing-item rows to show before "show more" — mirrors
- * app.seo.hreflang.tsx's VISIBLE_MISSING. */
-const VISIBLE_LOCALE_MISSING = 10;
-
-interface MergedMissingRow {
-  type: AuditType;
-  id: string;
-  title: string;
-  missingFields: LocaleAuditField[];
-}
-
-/** Merge the three independent per-field missing-item lists (each capped at
- * MAX_LOCALE_MISSING_ITEMS in the service) into one row per item, so the UI
- * shows a single "here's what's missing" list instead of three overlapping
- * ones. Purely a display concern — the service keeps per-field lists because
- * that's what the coverage math needs. */
-function mergeMissingRows(totals: LocaleAudit["totals"]): MergedMissingRow[] {
-  const byKey = new Map<string, MergedMissingRow>();
-  for (const field of LOCALE_AUDIT_FIELDS) {
-    for (const item of totals[field].missing as LocaleMissingItemRef[]) {
-      const key = `${item.type}:${item.id}`;
-      let row = byKey.get(key);
-      if (!row) {
-        row = { type: item.type, id: item.id, title: item.title, missingFields: [] };
-        byKey.set(key, row);
-      }
-      row.missingFields.push(field);
-    }
-  }
-  // Most-missing-fields first, then title, for a stable/useful default order.
-  return [...byKey.values()].sort(
-    (a, b) => b.missingFields.length - a.missingFields.length || a.title.localeCompare(b.title),
-  );
-}
-
-/**
- * "Translation SEO" card: presence coverage (not quality — analyzeStore
- * already scores quality for the primary locale) of title/SEO-title/meta
- * description translations for ONE secondary locale at a time, picked via the
- * Select below. Deep-links reuse the same ?select=<GID> pattern as the
- * worst-offenders table and app.seo.hreflang.tsx; there is no locale param the
- * editor understands yet (verified against useUnifiedContentEditor — it only
- * reads ?select=), so the link opens the item and the merchant switches the
- * in-editor language selector manually.
- */
-function TranslationSeoCard({
-  d,
-  types,
-  secondaryLocales,
-  auditLocale,
-  localeAudit,
-  onLocaleChange,
-  onOpenInEditor,
-  openInEditorLabel,
-  cappedNoteTemplate,
-}: {
-  d: any;
-  types: Record<string, string>;
-  secondaryLocales: { locale: string; name: string }[];
-  auditLocale: string | null;
-  localeAudit: LocaleAudit | null;
-  onLocaleChange: (locale: string) => void;
-  onOpenInEditor: (type: AuditType, id: string) => void;
-  openInEditorLabel: string;
-  cappedNoteTemplate: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  const options = [
-    { label: d.localePlaceholder, value: "" },
-    ...secondaryLocales.map((l) => ({ label: `${l.name} (${l.locale})`, value: l.locale })),
-  ];
-
-  const mergedMissing = localeAudit ? mergeMissingRows(localeAudit.totals) : [];
-  const visibleMissing = expanded ? mergedMissing : mergedMissing.slice(0, VISIBLE_LOCALE_MISSING);
-
-  return (
-    <Card>
-      <BlockStack gap="300">
-        <Text as="h3" variant="headingMd">
-          {d.title}
-        </Text>
-
-        <div style={{ maxWidth: "320px" }}>
-          <Select
-            label={d.localeLabel}
-            labelHidden
-            options={options}
-            value={auditLocale ?? ""}
-            onChange={onLocaleChange}
-          />
-        </div>
-
-        {!localeAudit ? (
-          <Text as="p" variant="bodySm" tone="subdued">
-            {d.chooseLocaleHint}
-          </Text>
-        ) : (
-          <BlockStack gap="300">
-            {localeAudit.capped && (
-              <Banner tone="info">
-                {cappedNoteTemplate
-                  .replace("{scanned}", String(localeAudit.totalItems))
-                  .replace("{total}", String(localeAudit.totalAvailable))}
-              </Banner>
-            )}
-
-            {LOCALE_AUDIT_FIELDS.map((field) => {
-              const coverage = localeAudit.totals[field];
-              return (
-                <InlineStack key={field} gap="300" blockAlign="center">
-                  <div style={{ width: "140px" }}>
-                    <Text as="span" variant="bodyMd">
-                      {d.fields[field]}
-                    </Text>
-                  </div>
-                  <div style={{ flex: 1, minWidth: "120px" }}>
-                    <ProgressBar
-                      progress={coverage.coveragePct}
-                      tone={progressTone(coverage.coveragePct)}
-                      size="small"
-                    />
-                  </div>
-                  <div style={{ minWidth: "130px", textAlign: "right" }}>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      {coverage.missingTotal === 0
-                        ? d.allTranslated
-                        : d.missingCount
-                            .replace("{count}", String(coverage.missingTotal))
-                            .replace("{total}", String(coverage.total))}
-                    </Text>
-                  </div>
-                </InlineStack>
-              );
-            })}
-
-            {mergedMissing.length > 0 && (
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm" fontWeight="semibold">
-                  {d.missingItemsTitle.replace("{count}", String(mergedMissing.length))}
-                </Text>
-                {visibleMissing.map((row) => (
-                  <InlineStack key={`${row.type}:${row.id}`} align="space-between" blockAlign="center">
-                    <InlineStack gap="200" blockAlign="center">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        {types[row.type] || row.type}
-                      </Text>
-                      <Text as="span" variant="bodyMd" truncate>
-                        {row.title || row.id}
-                      </Text>
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        ({row.missingFields.map((f) => d.fields[f]).join(", ")})
-                      </Text>
-                    </InlineStack>
-                    <Button variant="plain" onClick={() => onOpenInEditor(row.type, row.id)}>
-                      {openInEditorLabel}
-                    </Button>
-                  </InlineStack>
-                ))}
-                {mergedMissing.length > VISIBLE_LOCALE_MISSING && (
-                  <Button variant="plain" onClick={() => setExpanded((v) => !v)}>
-                    {expanded
-                      ? d.showLess
-                      : d.showMore.replace(
-                          "{count}",
-                          String(mergedMissing.length - VISIBLE_LOCALE_MISSING),
-                        )}
-                  </Button>
-                )}
-              </BlockStack>
-            )}
-          </BlockStack>
-        )}
-      </BlockStack>
-    </Card>
-  );
-}
