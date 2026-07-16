@@ -36,19 +36,24 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 const MAX_BULK_FIX_ITEMS = 100;
 
 // Allowlist of AI-fixable problem buckets (see audit.service.ts FINDING_TO_BUCKET
-// for the full code list). Length/duplicate/alt-text buckets are intentionally
-// NOT included here yet:
-//  - imagesMissingAlt already has a dedicated, more mature bulk feature
-//    (handleGenerateAllAltTexts) — point the merchant at it instead of
-//    reimplementing image handling here.
-//  - titleLength / descriptionTooShort / duplicateSeoTitle / duplicateSeoDescription
-//    need either a different field (title/description) or cross-item
-//    dedup logic that's out of scope for this first cut.
-const FIXABLE_CODE_TO_FIELD: Record<string, "seoTitle" | "metaDescription"> = {
+// for the full code list). Duplicate/description buckets are intentionally
+// NOT included yet — they need cross-item dedup or html-content generation
+// that's out of scope for this cut.
+type FixableField = "seoTitle" | "metaDescription" | "title" | "altText";
+
+const FIXABLE_CODE_TO_FIELD: Record<string, FixableField> = {
   seoTitleMissing: "seoTitle",
   seoTitleTooLong: "seoTitle",
   metaDescriptionMissing: "metaDescription",
   metaDescriptionLength: "metaDescription",
+  // Storefront-visible content title (product/collection/page/article name).
+  // Merchant-triggered from the SEO dashboard only — never a passive
+  // regeneration, since it changes public-facing copy.
+  titleLength: "title",
+  // Handled by a separate runner (runAltTextBulkFix) because alt text is
+  // per-image, not per-item, and needs productUpdateMedia instead of the
+  // regular content mutations.
+  imagesMissingAlt: "altText",
 };
 
 /** AuditType -> the api-ai-handlers/content-fields.config.tsx contentType key. */
@@ -65,23 +70,18 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
 
   const field = FIXABLE_CODE_TO_FIELD[problemCode];
   if (!field) {
-    if (problemCode === "imagesMissingAlt") {
-      // Redirect to the existing, more capable bulk feature instead of
-      // duplicating image-alt-text handling here.
-      return json(
-        {
-          success: false,
-          code: "USE_ALT_TEXT_BULK",
-          error: "Use \"Generate all alt texts\" in the product editor to fix missing image alt text in bulk.",
-        },
-        { status: 400 },
-      );
-    }
     return json(
       { success: false, error: `SEO bulk-fix isn't available for "${problemCode}" yet.` },
       { status: 400 },
     );
   }
+
+  // Optional single-item mode: the dashboard's per-row KI button POSTs
+  // itemId + itemType so only ONE item runs, instead of the whole bucket.
+  // Still validated against the server-side audit below (never trust the
+  // client — a stale/foreign GID must not slip through).
+  const singleItemId = getFormString(formData, "itemId");
+  const singleItemType = getFormString(formData, "itemType") as AuditType | "";
 
   // Single-flight: only one seoBulkFix run per shop at a time — a second click
   // (or a second bucket) while one is in flight would double-spend AI calls
@@ -118,11 +118,22 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
   });
 
   const bucket: AuditProblemBucket | undefined = audit.problems.find((p) => p.code === problemCode);
-  const items = (bucket?.items ?? []).slice(0, MAX_BULK_FIX_ITEMS);
+  const bucketItems = bucket?.items ?? [];
+
+  // Single-item mode filters the bucket down; verifying against the
+  // server-derived bucket is what makes a POSTed GID safe to trust.
+  const items = singleItemId
+    ? bucketItems.filter((it) => it.id === singleItemId && it.type === singleItemType).slice(0, 1)
+    : bucketItems.slice(0, MAX_BULK_FIX_ITEMS);
 
   if (items.length === 0) {
     return json(
-      { success: false, error: "No affected items found — the audit may already be clean. Reload the dashboard." },
+      {
+        success: false,
+        error: singleItemId
+          ? "This item is no longer affected by this problem — reload the dashboard."
+          : "No affected items found — the audit may already be clean. Reload the dashboard.",
+      },
       { status: 400 },
     );
   }
@@ -146,15 +157,22 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
   // runBulkAltTextGeneration in alt-text.handler.ts. Progress/results are
   // persisted to Task after every item (heartbeat), so a crash only loses the
   // in-flight item and TaskRecoveryService reaps a truly stalled run.
-  void runSeoBulkFix(task.id, {
-    db,
-    settings,
-    shop: session.shop,
-    admin,
-    field,
-    items,
-    seoTitleMaxChars,
-  }).catch(async (err: unknown) => {
+  //
+  // altText fans out per image inside the runner and reports its own
+  // progress differently — see runAltTextBulkFix.
+  const runner =
+    field === "altText"
+      ? runAltTextBulkFix(task.id, { db, settings, shop: session.shop, admin, items })
+      : runSeoBulkFix(task.id, {
+          db,
+          settings,
+          shop: session.shop,
+          admin,
+          field,
+          items,
+          seoTitleMaxChars,
+        });
+  void runner.catch(async (err: unknown) => {
     logger.error("[API-AI] SEO bulk-fix crashed", {
       context: "AI",
       taskId: task.id,
@@ -176,12 +194,16 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
 
 // ─── Runner ────────────────────────────────────────────────────────────────
 
+/** Fields runSeoBulkFix knows how to prompt + persist. altText has its own
+ * runner (runAltTextBulkFix) because it's per-image, not per-item. */
+type TextField = Exclude<FixableField, "altText">;
+
 interface RunArgs {
   db: PrismaClient;
   settings: AISettings | null;
   shop: string;
   admin: AdminApiContext;
-  field: "seoTitle" | "metaDescription";
+  field: TextField;
   items: { type: AuditType; id: string }[];
   seoTitleMaxChars: number;
 }
@@ -331,6 +353,337 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
   });
 }
 
+// ─── Alt-text runner ──────────────────────────────────────────────────────
+//
+// imagesMissingAlt is per-image, not per-item: one product can contribute
+// several missing-alt images. We still use `items` (the affected content rows)
+// as the outer loop, then fan out to each item's images that lack alt text
+// inside. Uses the same AI-alt-text pipeline as the product-editor bulk
+// action (aiService.generateImageAltText), but persistence is the caller's
+// own responsibility (productUpdateMedia for gallery images, updateCollection
+// / updateArticle for their single featured image).
+
+interface AltTextRunArgs {
+  db: PrismaClient;
+  settings: AISettings | null;
+  shop: string;
+  admin: AdminApiContext;
+  items: { type: AuditType; id: string }[];
+}
+
+async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<void> {
+  const { db, settings, shop, admin, items } = args;
+
+  const gateway = new ShopifyApiGateway(admin, shop);
+  const contentService = new ShopifyContentService(gateway as any);
+  const aiService = createAIService(settings, shop, taskId);
+
+  const aiInstructions = (await db.aIInstructions.findUnique({ where: { shop } })) as Record<
+    string,
+    string | null
+  > | null;
+  let mainLanguage = "English";
+  try {
+    const { shopLocales } = await contentService.loadShopLocales();
+    const primary = shopLocales.find((l: { primary: boolean; name?: string }) => l.primary);
+    if (primary?.name) mainLanguage = primary.name;
+  } catch (err: unknown) {
+    logger.warn("[API-AI] SEO alt-text bulk-fix: failed to load shop locales, defaulting", {
+      context: "AI",
+      taskId,
+      error: errorMessage(err),
+    });
+  }
+
+  const succeeded: { type: AuditType; id: string }[] = [];
+  const failed: { type: AuditType; id: string; error: string }[] = [];
+  let authErrorSeen = false;
+
+  // First pass: enumerate every missing-alt image across every affected
+  // content row so total/progress reflect IMAGES, not items — the same
+  // reason handleGenerateAllAltTexts uses a per-image heartbeat.
+  interface AltJob {
+    type: AuditType;
+    id: string;
+    productTitle: string;
+    imageUrl: string;
+    mediaId?: string | null;
+    productImageId?: string; // for db.productImage.update
+    isFeatured?: boolean; // product featured-image fallback
+  }
+  const jobs: AltJob[] = [];
+
+  for (const it of items) {
+    if (it.type === "product") {
+      const product = await db.product.findUnique({
+        where: { shop_id: { shop, id: it.id } },
+        select: {
+          id: true,
+          title: true,
+          featuredImageUrl: true,
+          featuredImageAlt: true,
+          images: {
+            select: { id: true, url: true, altText: true, mediaId: true, position: true },
+            orderBy: { position: "asc" },
+          },
+        },
+      });
+      if (!product) continue;
+      const missing = product.images.filter((img) => !img.altText || img.altText.trim() === "");
+      if (missing.length > 0) {
+        for (const img of missing) {
+          jobs.push({
+            type: "product",
+            id: it.id,
+            productTitle: product.title,
+            imageUrl: img.url,
+            mediaId: img.mediaId,
+            productImageId: img.id,
+          });
+        }
+      } else if (
+        product.images.length === 0 &&
+        product.featuredImageUrl &&
+        (!product.featuredImageAlt || product.featuredImageAlt.trim() === "")
+      ) {
+        // Featured-image fallback (audit uses the same rule). No mediaId
+        // available for a bare featuredImageUrl — persistImageAltText will
+        // resolve it via the Product.media query at write time.
+        jobs.push({
+          type: "product",
+          id: it.id,
+          productTitle: product.title,
+          imageUrl: product.featuredImageUrl,
+          isFeatured: true,
+        });
+      }
+    } else if (it.type === "collection") {
+      const c = await db.collection.findUnique({
+        where: { shop_id: { shop, id: it.id } },
+        select: { id: true, title: true, imageUrl: true, imageAltText: true },
+      });
+      if (c?.imageUrl && (!c.imageAltText || c.imageAltText.trim() === "")) {
+        jobs.push({ type: "collection", id: it.id, productTitle: c.title, imageUrl: c.imageUrl });
+      }
+    } else if (it.type === "article") {
+      const a = await db.article.findUnique({
+        where: { shop_id: { shop, id: it.id } },
+        select: { id: true, title: true, imageUrl: true, imageAltText: true },
+      });
+      if (a?.imageUrl && (!a.imageAltText || a.imageAltText.trim() === "")) {
+        jobs.push({ type: "article", id: it.id, productTitle: a.title, imageUrl: a.imageUrl });
+      }
+    }
+    // page has no images (audit passes totalImages: 0)
+  }
+
+  const total = jobs.length;
+  if (total === 0) {
+    await db.task.update({
+      where: { id: taskId },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify({ succeeded, failed }),
+      },
+    });
+    return;
+  }
+
+  // Update the task's total now that we know the true image count
+  // (differs from `items.length` used at task create time).
+  await db.task
+    .update({ where: { id: taskId }, data: { total } })
+    .catch(() => {});
+
+  // Dedupe succeeded items so the per-image loop below doesn't push the same
+  // content row multiple times when it has several images.
+  const succeededSeen = new Set<string>();
+
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+
+    if (!authErrorSeen) {
+      try {
+        const sanitizedTitle = sanitizePromptInput(job.productTitle || "", { fieldType: "title" });
+        let prompt = `Create an optimized alt text for a product image.\nProduct: ${sanitizedTitle}\nImage URL: ${job.imageUrl}`;
+        if (aiInstructions?.productAltTextFormat) {
+          prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+        }
+        if (aiInstructions?.productAltTextInstructions) {
+          prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+        }
+        prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
+
+        const altText = (
+          await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)
+        ).trim();
+
+        await persistImageAltText({
+          db,
+          shop,
+          job,
+          altText,
+          contentService,
+          gateway,
+        });
+
+        const key = `${job.type}:${job.id}`;
+        if (!succeededSeen.has(key)) {
+          succeeded.push({ type: job.type, id: job.id });
+          succeededSeen.add(key);
+        }
+      } catch (err: unknown) {
+        const message = errorMessage(err);
+        failed.push({ type: job.type, id: job.id, error: message });
+        logger.error("[API-AI] SEO alt-text bulk-fix: image failed", {
+          context: "AI",
+          taskId,
+          type: job.type,
+          id: job.id,
+          error: message,
+        });
+        if (isAuthError(err)) authErrorSeen = true;
+      }
+    } else {
+      failed.push({
+        type: job.type,
+        id: job.id,
+        error: "Skipped after provider API key was rejected",
+      });
+    }
+
+    const progressPercent = Math.round(((i + 1) / total) * 100);
+    await db.task
+      .update({
+        where: { id: taskId },
+        data: {
+          progress: progressPercent,
+          processed: i + 1,
+          result: JSON.stringify({ succeeded, failed }),
+        },
+      })
+      .catch((err: unknown) => {
+        logger.error("[API-AI] SEO alt-text bulk-fix: progress persist failed", {
+          context: "AI",
+          taskId,
+          error: errorMessage(err),
+        });
+      });
+  }
+
+  const finalStatus = succeeded.length === 0 ? "failed" : "completed";
+  const failureSummary =
+    failed.length > 0
+      ? `${failed.length} of ${total} image(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      : null;
+
+  await db.task.update({
+    where: { id: taskId },
+    data: {
+      status: finalStatus,
+      progress: 100,
+      completedAt: new Date(),
+      result: JSON.stringify({ succeeded, failed }),
+      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+    },
+  });
+}
+
+interface PersistImageAltTextArgs {
+  db: PrismaClient;
+  shop: string;
+  job: {
+    type: AuditType;
+    id: string;
+    imageUrl: string;
+    mediaId?: string | null;
+    productImageId?: string;
+    isFeatured?: boolean;
+  };
+  altText: string;
+  contentService: ShopifyContentService;
+  gateway: ShopifyApiGateway;
+}
+
+async function persistImageAltText(params: PersistImageAltTextArgs): Promise<void> {
+  const { db, shop, job, altText, contentService, gateway } = params;
+
+  if (job.type === "product") {
+    // Resolve mediaId if we don't have one cached (bare featuredImageUrl case).
+    let mediaId = job.mediaId;
+    if (!mediaId) {
+      const productResponse = await gateway.graphql(
+        `#graphql
+          query seoAltFixProductMedia($id: ID!) {
+            product(id: $id) {
+              media(first: 1) { edges { node { ... on MediaImage { id } } } }
+            }
+          }`,
+        { variables: { id: job.id } },
+      );
+      const productData = (await productResponse.json()) as {
+        data?: { product?: { media?: { edges?: { node?: { id?: string } }[] } } };
+      };
+      mediaId = productData.data?.product?.media?.edges?.[0]?.node?.id ?? null;
+    }
+    if (!mediaId) throw new Error("No Shopify MediaImage found for this product image");
+
+    const response = await gateway.graphql(
+      `#graphql
+        mutation seoAltFixProductUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
+          productUpdateMedia(media: $media, productId: $productId) {
+            media { alt }
+            mediaUserErrors { field message }
+          }
+        }`,
+      { variables: { productId: job.id, media: [{ id: mediaId, alt: altText }] } },
+    );
+    const data = (await response.json()) as {
+      data?: {
+        productUpdateMedia?: {
+          media?: { alt: string }[];
+          mediaUserErrors?: { field?: string[]; message: string }[];
+        };
+      };
+    };
+    const mediaUserErrors = data.data?.productUpdateMedia?.mediaUserErrors ?? [];
+    if (mediaUserErrors.length > 0) throw new Error(mediaUserErrors[0].message);
+
+    if (job.productImageId) {
+      await db.productImage.update({
+        where: { id: job.productImageId },
+        data: { altText, altTextModifiedAt: new Date() },
+      });
+    } else if (job.isFeatured) {
+      await db.product.update({
+        where: { shop_id: { shop, id: job.id } },
+        data: { featuredImageAlt: altText, lastSyncedAt: new Date() },
+      });
+    }
+    return;
+  }
+
+  if (job.type === "collection") {
+    await contentService.updateCollection(job.id, { image: { altText } });
+    await db.collection.update({
+      where: { shop_id: { shop, id: job.id } },
+      data: { imageAltText: altText, lastSyncedAt: new Date() },
+    });
+    return;
+  }
+
+  if (job.type === "article") {
+    await contentService.updateArticle(job.id, { image: { altText } });
+    await db.article.update({
+      where: { shop_id: { shop, id: job.id } },
+      data: { imageAltText: altText, lastSyncedAt: new Date() },
+    });
+    return;
+  }
+}
+
 async function loadRows(
   db: PrismaClient,
   shop: string,
@@ -422,7 +775,7 @@ interface PromptContext {
 /** Mirrors handleGenerateAIText's prompt shape (text-generation.handler.ts) so
  * bulk-generated SEO titles/meta descriptions read the same as ones a
  * merchant generated one-by-one in the editor. */
-function buildFixPrompt(field: "seoTitle" | "metaDescription", ctx: PromptContext): string {
+function buildFixPrompt(field: TextField, ctx: PromptContext): string {
   const sanitizedTitle = sanitizePromptInput(ctx.title, { fieldType: "title" });
   const sanitizedDescription = sanitizePromptInput(ctx.description, {
     fieldType: "description",
@@ -430,9 +783,17 @@ function buildFixPrompt(field: "seoTitle" | "metaDescription", ctx: PromptContex
   });
 
   let prompt = `Create an improved ${ctx.fieldLabel} for the following content.`;
-  prompt += `\n\nContext - Title: ${sanitizedTitle}`;
-  if (field === "metaDescription" && sanitizedDescription) {
-    prompt += `\nContext - Description: ${sanitizedDescription}`;
+  // For content-title regeneration the CURRENT title is what we're rewriting,
+  // so pass the description as the primary signal instead — the "Context - Title"
+  // line for a title rewrite would just anchor the model to the old text.
+  if (field === "title") {
+    if (sanitizedDescription) prompt += `\n\nContext - Description: ${sanitizedDescription}`;
+    prompt += `\nContext - Current Title (to be rewritten): ${sanitizedTitle}`;
+  } else {
+    prompt += `\n\nContext - Title: ${sanitizedTitle}`;
+    if (field === "metaDescription" && sanitizedDescription) {
+      prompt += `\nContext - Description: ${sanitizedDescription}`;
+    }
   }
   prompt += `\nLanguage: ${ctx.mainLanguage}`;
 
@@ -467,7 +828,7 @@ interface PersistArgs {
   shop: string;
   type: AuditType;
   id: string;
-  field: "seoTitle" | "metaDescription";
+  field: TextField;
   value: string;
   contentService: ShopifyContentService;
   gateway: ShopifyApiGateway;
@@ -482,11 +843,16 @@ async function persistField(params: PersistArgs): Promise<void> {
 
   switch (type) {
     case "product": {
-      // Minimal partial productUpdate — only the seo.{title|description} sub-field
-      // that changed is sent, so the other one (and title/handle/description) is
-      // left untouched by Shopify (omitted GraphQL input fields = "no change").
-      const seoInput: Record<string, string> = {};
-      seoInput[field === "seoTitle" ? "title" : "description"] = value;
+      // Minimal partial productUpdate — only the field that changed is sent,
+      // so every omitted input is left untouched by Shopify.
+      let inputPayload: Record<string, unknown>;
+      if (field === "title") {
+        inputPayload = { id, title: value };
+      } else {
+        const seoInput: Record<string, string> = {};
+        seoInput[field === "seoTitle" ? "title" : "description"] = value;
+        inputPayload = { id, seo: seoInput };
+      }
       const response = await gateway.graphql(
         `#graphql
           mutation seoBulkFixProductUpdate($input: ProductInput!) {
@@ -494,7 +860,7 @@ async function persistField(params: PersistArgs): Promise<void> {
               userErrors { field message }
             }
           }`,
-        { variables: { input: { id, seo: seoInput } } },
+        { variables: { input: inputPayload } },
       );
       const data = (await response.json()) as {
         data?: { productUpdate?: { userErrors?: { field?: string; message: string }[] } };
@@ -502,29 +868,42 @@ async function persistField(params: PersistArgs): Promise<void> {
       const userErrors = data.data?.productUpdate?.userErrors ?? [];
       if (userErrors.length > 0) throw new Error(userErrors[0].message);
 
-      await db.product.update({
-        where: { shop_id: { shop, id } },
-        data:
-          field === "seoTitle"
-            ? { seoTitle: value, lastSyncedAt: new Date() }
-            : { seoDescription: value, lastSyncedAt: new Date() },
-      });
+      const dbData =
+        field === "seoTitle"
+          ? { seoTitle: value, lastSyncedAt: new Date() }
+          : field === "metaDescription"
+            ? { seoDescription: value, lastSyncedAt: new Date() }
+            : { title: value, lastSyncedAt: new Date() };
+      await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
     }
     case "collection": {
-      const seo = field === "seoTitle" ? { title: value } : { description: value };
-      await contentService.updateCollection(id, { seo });
-      await db.collection.update({
-        where: { shop_id: { shop, id } },
-        data:
-          field === "seoTitle"
-            ? { seoTitle: value, lastSyncedAt: new Date() }
-            : { seoDescription: value, lastSyncedAt: new Date() },
-      });
+      if (field === "title") {
+        await contentService.updateCollection(id, { title: value });
+        await db.collection.update({
+          where: { shop_id: { shop, id } },
+          data: { title: value, lastSyncedAt: new Date() },
+        });
+      } else {
+        const seo = field === "seoTitle" ? { title: value } : { description: value };
+        await contentService.updateCollection(id, { seo });
+        await db.collection.update({
+          where: { shop_id: { shop, id } },
+          data:
+            field === "seoTitle"
+              ? { seoTitle: value, lastSyncedAt: new Date() }
+              : { seoDescription: value, lastSyncedAt: new Date() },
+        });
+      }
       break;
     }
     case "page": {
-      const pageInput = field === "seoTitle" ? { seoTitle: value } : { seoDescription: value };
+      const pageInput =
+        field === "seoTitle"
+          ? { seoTitle: value }
+          : field === "metaDescription"
+            ? { seoDescription: value }
+            : { title: value };
       await contentService.updatePage(id, pageInput);
       await db.page.update({
         where: { shop_id: { shop, id } },
@@ -536,15 +915,20 @@ async function persistField(params: PersistArgs): Promise<void> {
       // Article SEO title/description are stored the same way as Page/Blog —
       // as global.title_tag/description_tag metafields, written inline by
       // updateArticle() (see ShopifyContentService.updateArticle).
-      const articleInput = field === "seoTitle" ? { seoTitle: value } : { seoDescription: value };
+      const articleInput =
+        field === "seoTitle"
+          ? { seoTitle: value }
+          : field === "metaDescription"
+            ? { seoDescription: value }
+            : { title: value };
       await contentService.updateArticle(id, articleInput);
-      await db.article.update({
-        where: { shop_id: { shop, id } },
-        data:
-          field === "seoTitle"
-            ? { seoTitle: value, lastSyncedAt: new Date() }
-            : { seoDescription: value, lastSyncedAt: new Date() },
-      });
+      const articleDbData =
+        field === "seoTitle"
+          ? { seoTitle: value, lastSyncedAt: new Date() }
+          : field === "metaDescription"
+            ? { seoDescription: value, lastSyncedAt: new Date() }
+            : { title: value, lastSyncedAt: new Date() };
+      await db.article.update({ where: { shop_id: { shop, id } }, data: articleDbData });
       break;
     }
   }

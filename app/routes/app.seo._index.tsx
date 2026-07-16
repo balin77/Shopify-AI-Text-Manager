@@ -53,6 +53,8 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
   "seoTitleTooLong",
   "metaDescriptionMissing",
   "metaDescriptionLength",
+  "titleLength",
+  "imagesMissingAlt",
 ]);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -240,9 +242,14 @@ export default function SeoDashboard() {
     });
   };
 
-  const handleFixWithAi = (problemCode: string) => {
+  // singleItem is the per-row KI button in the expanded list — same handler,
+  // just narrowed to one GID on the server.
+  const handleFixWithAi = (
+    problemCode: string,
+    singleItem?: { type: AuditType; id: string },
+  ) => {
     if (disableFixButtons || fixFetcher.state !== "idle") return;
-    setFixingCode(problemCode);
+    setFixingCode(singleItem ? `${problemCode}:${singleItem.id}` : problemCode);
     const formData = new FormData();
     formData.append("action", "seoBulkFix");
     // seoBulkFix spans every content type and re-derives affected items
@@ -250,6 +257,10 @@ export default function SeoDashboard() {
     // generic contentType gate.
     formData.append("contentType", "products");
     formData.append("problemCode", problemCode);
+    if (singleItem) {
+      formData.append("itemId", singleItem.id);
+      formData.append("itemType", singleItem.type);
+    }
     fixFetcher.submit(formData, { method: "post", action: "/api/ai" });
   };
 
@@ -473,32 +484,54 @@ export default function SeoDashboard() {
                           }}
                         >
                           <BlockStack gap="100">
-                            {isOpen && items.map((it) => (
-                              <InlineStack
-                                key={`${p.code}:${it.type}:${it.id}`}
-                                gap="200"
-                                align="space-between"
-                                blockAlign="center"
-                              >
-                                <div style={{ minWidth: 0, flex: "1 1 auto" }}>
-                                  <Text as="span" variant="bodySm" truncate>
-                                    {it.title || it.id}
-                                  </Text>
-                                </div>
-                                <InlineStack gap="200" blockAlign="center">
-                                  <Text as="span" variant="bodySm" tone="subdued">
-                                    {d.types[it.type] || it.type}
-                                  </Text>
-                                  <Button
-                                    variant="plain"
-                                    size="slim"
-                                    onClick={() => openInEditor(it.type, it.id)}
-                                  >
-                                    {d.openInEditor}
-                                  </Button>
+                            {isOpen && items.map((it) => {
+                              const itemFixKey = `${p.code}:${it.id}`;
+                              const showAiButton = AI_FIXABLE_PROBLEM_CODES.has(p.code);
+                              return (
+                                <InlineStack
+                                  key={`${p.code}:${it.type}:${it.id}`}
+                                  gap="200"
+                                  align="space-between"
+                                  blockAlign="center"
+                                >
+                                  <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                                    <Text as="span" variant="bodySm" truncate>
+                                      {it.title || it.id}
+                                    </Text>
+                                  </div>
+                                  <InlineStack gap="200" blockAlign="center">
+                                    <Text as="span" variant="bodySm" tone="subdued">
+                                      {d.types[it.type] || it.type}
+                                    </Text>
+                                    {showAiButton && (
+                                      <Button
+                                        variant="plain"
+                                        size="slim"
+                                        onClick={() =>
+                                          handleFixWithAi(p.code, { type: it.type, id: it.id })
+                                        }
+                                        disabled={
+                                          disableFixButtons || fixFetcher.state !== "idle"
+                                        }
+                                        loading={
+                                          fixingCode === itemFixKey &&
+                                          fixFetcher.state !== "idle"
+                                        }
+                                      >
+                                        {d.fixWithAi}
+                                      </Button>
+                                    )}
+                                    <Button
+                                      variant="plain"
+                                      size="slim"
+                                      onClick={() => openInEditor(it.type, it.id)}
+                                    >
+                                      {d.openInEditor}
+                                    </Button>
+                                  </InlineStack>
                                 </InlineStack>
-                              </InlineStack>
-                            ))}
+                              );
+                            })}
                             {truncated && (
                               <Text as="p" variant="bodySm" tone="subdued">
                                 {d.problemsTruncated
