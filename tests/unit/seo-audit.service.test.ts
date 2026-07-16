@@ -107,13 +107,15 @@ describe("analyzeStore", () => {
     const seoTitleMissingBucket = audit.problems.find((p) => p.code === "seoTitleMissing");
     expect(seoTitleMissingBucket?.items).toEqual(
       expect.arrayContaining([
-        { type: "product", id: "gid-P2" },
-        { type: "page", id: "gid-PG1" },
+        expect.objectContaining({ type: "product", id: "gid-P2" }),
+        expect.objectContaining({ type: "page", id: "gid-PG1" }),
       ]),
     );
     expect(seoTitleMissingBucket?.items.length).toBe(2);
     const metaDescriptionMissingBucket = audit.problems.find((p) => p.code === "metaDescriptionMissing");
-    expect(metaDescriptionMissingBucket?.items).toEqual([{ type: "product", id: "gid-P2" }]);
+    expect(metaDescriptionMissingBucket?.items).toEqual([
+      expect.objectContaining({ type: "product", id: "gid-P2" }),
+    ]);
 
     // worst offender is the lowest score with issues (P2 @ 50)
     expect(audit.worstOffenders[0].id).toBe("gid-P2");
@@ -207,8 +209,8 @@ describe("analyzeStore — duplicate SEO title/description detection", () => {
     const duplicateSeoTitleBucket = audit.problems.find((p) => p.code === "duplicateSeoTitle");
     expect(duplicateSeoTitleBucket?.items).toEqual(
       expect.arrayContaining([
-        { type: "product", id: "gid-P1" },
-        { type: "product", id: "gid-P2" },
+        expect.objectContaining({ type: "product", id: "gid-P1" }),
+        expect.objectContaining({ type: "product", id: "gid-P2" }),
       ]),
     );
     expect(duplicateSeoTitleBucket?.items.length).toBe(2);
@@ -255,7 +257,7 @@ const SAMPLE_AUDIT: AuditAggregate = {
   averageScore: 77,
   distribution: { good: 2, medium: 1, poor: 0 },
   byType: [{ type: "product", count: 3, avgScore: 77, good: 2, medium: 1, poor: 0 }],
-  problems: [{ code: "seoTitleMissing", count: 1, items: [{ type: "product", id: "gid-1" }] }],
+  problems: [{ code: "seoTitleMissing", count: 1, items: [{ type: "product", id: "gid-1", title: "T" }] }],
   worstOffenders: [{ id: "gid-1", type: "product", title: "T", score: 50, issueCount: 2 }],
   capped: false,
 };

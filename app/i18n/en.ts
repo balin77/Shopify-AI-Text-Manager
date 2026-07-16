@@ -1302,6 +1302,7 @@ export const en: Translation = {
       scanRunning: "A scan is running — refreshing automatically…",
       scanStartError: "Couldn't start the scan. Please try again.",
       trendTitle: "Score trend",
+      problemsTruncated: "Showing {shown} of {total} affected items.",
       problems: {
         metaDescriptionMissing: "Meta description missing",
         metaDescriptionLength: "Meta description length not optimal",

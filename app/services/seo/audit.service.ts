@@ -53,8 +53,9 @@ export interface AuditProblemBucket {
   count: number;
   /** Affected item refs, capped at MAX_PROBLEM_BUCKET_ITEMS. Consumed by the
    * "Fix with AI" bulk handler (seo-bulk-fix.handler.ts) to know WHICH items
-   * to regenerate without trusting client-supplied ids. */
-  items: { type: AuditType; id: string }[];
+   * to regenerate without trusting client-supplied ids, AND by the dashboard
+   * UI to render the expandable per-bucket item list (deep-links per row). */
+  items: { type: AuditType; id: string; title: string }[];
 }
 
 export interface AuditAggregate {
@@ -439,20 +440,21 @@ export async function analyzeStore(
   // Capped, per-bucket item refs — see MAX_PROBLEM_BUCKET_ITEMS. Kept separate
   // from bucketCounts so the count stays the TRUE total even once a bucket's
   // item list has filled up.
-  const bucketItems = new Map<string, { type: AuditType; id: string }[]>();
-  // id -> type lookup so the duplicate-SEO buckets below (built from
+  const bucketItems = new Map<string, { type: AuditType; id: string; title: string }[]>();
+  // id -> type/title lookup so the duplicate-SEO buckets below (built from
   // seoTitleGroups/seoDescriptionGroups, which only track ids) can also carry
   // typed item refs, same as every other bucket.
   const typeById = new Map<string, AuditType>();
+  const titleById = new Map<string, string>();
   let scoreSum = 0;
 
-  const addBucketItem = (code: string, type: AuditType, id: string) => {
+  const addBucketItem = (code: string, type: AuditType, id: string, title: string) => {
     let items = bucketItems.get(code);
     if (!items) {
       items = [];
       bucketItems.set(code, items);
     }
-    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) items.push({ type, id });
+    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) items.push({ type, id, title });
   };
 
   for (const { row, buckets } of scored) {
@@ -461,9 +463,10 @@ export async function analyzeStore(
     else if (row.score >= 40) distribution.medium += 1;
     else distribution.poor += 1;
     typeById.set(row.id, row.type);
+    titleById.set(row.id, row.title);
     for (const b of buckets) {
       bucketCounts.set(b, (bucketCounts.get(b) ?? 0) + 1);
-      addBucketItem(b, row.type, row.id);
+      addBucketItem(b, row.type, row.id, row.title);
     }
   }
 
@@ -478,7 +481,7 @@ export async function analyzeStore(
       duplicateSeoTitleCount += ids.length;
       for (const id of ids) {
         const type = typeById.get(id);
-        if (type) addBucketItem("duplicateSeoTitle", type, id);
+        if (type) addBucketItem("duplicateSeoTitle", type, id, titleById.get(id) ?? "");
       }
     }
   }
@@ -488,7 +491,7 @@ export async function analyzeStore(
       duplicateSeoDescriptionCount += ids.length;
       for (const id of ids) {
         const type = typeById.get(id);
-        if (type) addBucketItem("duplicateSeoDescription", type, id);
+        if (type) addBucketItem("duplicateSeoDescription", type, id, titleById.get(id) ?? "");
       }
     }
   }

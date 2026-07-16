@@ -1299,6 +1299,7 @@ export const de = {
       scanRunning: "Ein Scan läuft — wird automatisch aktualisiert…",
       scanStartError: "Der Scan konnte nicht gestartet werden. Bitte erneut versuchen.",
       trendTitle: "Score-Verlauf",
+      problemsTruncated: "{shown} von {total} betroffenen Inhalten werden angezeigt.",
       problems: {
         metaDescriptionMissing: "Meta-Description fehlt",
         metaDescriptionLength: "Meta-Description-Länge nicht optimal",

@@ -1301,6 +1301,7 @@ export const es: Translation = {
       scanRunning: "Hay un análisis en curso — actualizando automáticamente…",
       scanStartError: "No se pudo iniciar el análisis. Inténtalo de nuevo.",
       trendTitle: "Tendencia de la puntuación",
+      problemsTruncated: "Mostrando {shown} de {total} elementos afectados.",
       problems: {
         metaDescriptionMissing: "Falta la meta descripción",
         metaDescriptionLength: "Longitud de la meta descripción no óptima",

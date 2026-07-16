@@ -29,6 +29,7 @@ import {
   Button,
   ProgressBar,
   Banner,
+  Collapsible,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -226,6 +227,19 @@ export default function SeoDashboard() {
 
   const disableFixButtons = bulkFixRunning || fixStarted;
 
+  // Per-bucket expand/collapse — merchant clicks the ▼/▲ to reveal the affected
+  // items and jump straight into the editor from any row. Local UI state only;
+  // the item refs themselves come from `p.items` on the loader data.
+  const [expandedProblems, setExpandedProblems] = useState<Set<string>>(new Set());
+  const toggleProblem = (code: string) => {
+    setExpandedProblems((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
   const handleFixWithAi = (problemCode: string) => {
     if (disableFixButtons || fixFetcher.state !== "idle") return;
     setFixingCode(problemCode);
@@ -388,28 +402,117 @@ export default function SeoDashboard() {
               <Text as="h3" variant="headingMd">
                 {d.problemsTitle}
               </Text>
-              {audit.problems.map((p) => (
-                <InlineStack key={p.code} gap="200" align="space-between" blockAlign="center">
-                  <Text as="span" variant="bodyMd">
-                    {(d.problems as Record<string, string>)[p.code] || p.code}
-                  </Text>
-                  <InlineStack gap="200" blockAlign="center">
-                    <Badge tone="attention">
-                      {d.affectedItems.replace("{count}", String(p.count))}
-                    </Badge>
-                    {AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
-                      <Button
-                        size="slim"
-                        onClick={() => handleFixWithAi(p.code)}
-                        disabled={disableFixButtons || fixFetcher.state !== "idle"}
-                        loading={fixingCode === p.code && fixFetcher.state !== "idle"}
+              {audit.problems.map((p) => {
+                const isOpen = expandedProblems.has(p.code);
+                // p.items may be missing on snapshots written before the
+                // item-refs field existed. The toggle is gated on hasItems so
+                // an empty bucket still renders the row (count-only) without
+                // an inert triangle.
+                const items = p.items ?? [];
+                const hasItems = items.length > 0;
+                const truncated = p.count > items.length;
+                const label = (d.problems as Record<string, string>)[p.code] || p.code;
+                return (
+                  <BlockStack key={p.code} gap="200">
+                    <InlineStack gap="200" align="space-between" blockAlign="center">
+                      <button
+                        type="button"
+                        onClick={() => hasItems && toggleProblem(p.code)}
+                        disabled={!hasItems}
+                        aria-expanded={isOpen}
+                        aria-controls={`seo-problem-panel-${p.code}`}
+                        aria-label={label}
+                        style={{
+                          all: "unset",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          cursor: hasItems ? "pointer" : "default",
+                          flex: "1 1 auto",
+                          minWidth: 0,
+                        }}
                       >
-                        {d.fixWithAi}
-                      </Button>
+                        {hasItems && (
+                          <Text as="span" tone="subdued" variant="bodySm">
+                            <span aria-hidden="true">{isOpen ? "▼" : "▶"}</span>
+                          </Text>
+                        )}
+                        <Text as="span" variant="bodyMd">{label}</Text>
+                      </button>
+                      <InlineStack gap="200" blockAlign="center">
+                        <Badge tone="attention">
+                          {d.affectedItems.replace("{count}", String(p.count))}
+                        </Badge>
+                        {AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
+                          <Button
+                            size="slim"
+                            onClick={() => handleFixWithAi(p.code)}
+                            disabled={disableFixButtons || fixFetcher.state !== "idle"}
+                            loading={fixingCode === p.code && fixFetcher.state !== "idle"}
+                          >
+                            {d.fixWithAi}
+                          </Button>
+                        )}
+                      </InlineStack>
+                    </InlineStack>
+                    {hasItems && (
+                      <Collapsible
+                        open={isOpen}
+                        id={`seo-problem-panel-${p.code}`}
+                        transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
+                      >
+                        {/* Gate children on isOpen so a fully-collapsed dashboard
+                            with several buckets doesn't mount up to
+                            (buckets × MAX_PROBLEM_BUCKET_ITEMS) Polaris Buttons
+                            just to have Collapsible hide them at height 0. */}
+                        <div
+                          style={{
+                            paddingLeft: "1.25rem",
+                            borderInlineStart: "2px solid var(--p-color-border-subdued)",
+                            marginLeft: "0.25rem",
+                          }}
+                        >
+                          <BlockStack gap="100">
+                            {isOpen && items.map((it) => (
+                              <InlineStack
+                                key={`${p.code}:${it.type}:${it.id}`}
+                                gap="200"
+                                align="space-between"
+                                blockAlign="center"
+                              >
+                                <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                                  <Text as="span" variant="bodySm" truncate>
+                                    {it.title || it.id}
+                                  </Text>
+                                </div>
+                                <InlineStack gap="200" blockAlign="center">
+                                  <Text as="span" variant="bodySm" tone="subdued">
+                                    {d.types[it.type] || it.type}
+                                  </Text>
+                                  <Button
+                                    variant="plain"
+                                    size="slim"
+                                    onClick={() => openInEditor(it.type, it.id)}
+                                  >
+                                    {d.openInEditor}
+                                  </Button>
+                                </InlineStack>
+                              </InlineStack>
+                            ))}
+                            {truncated && (
+                              <Text as="p" variant="bodySm" tone="subdued">
+                                {d.problemsTruncated
+                                  .replace("{shown}", String(items.length))
+                                  .replace("{total}", String(p.count))}
+                              </Text>
+                            )}
+                          </BlockStack>
+                        </div>
+                      </Collapsible>
                     )}
-                  </InlineStack>
-                </InlineStack>
-              ))}
+                  </BlockStack>
+                );
+              })}
             </BlockStack>
           </Card>
         )}
