@@ -30,7 +30,9 @@ import {
   ProgressBar,
   Banner,
   Collapsible,
+  Tooltip,
 } from "@shopify/polaris";
+import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -499,35 +501,39 @@ export default function SeoDashboard() {
                                       {it.title || it.id}
                                     </Text>
                                   </div>
-                                  <InlineStack gap="200" blockAlign="center">
+                                  <InlineStack gap="400" blockAlign="center">
                                     <Text as="span" variant="bodySm" tone="subdued">
                                       {d.types[it.type] || it.type}
                                     </Text>
-                                    {showAiButton && (
-                                      <Button
-                                        variant="plain"
-                                        size="slim"
-                                        onClick={() =>
-                                          handleFixWithAi(p.code, { type: it.type, id: it.id })
-                                        }
-                                        disabled={
-                                          disableFixButtons || fixFetcher.state !== "idle"
-                                        }
-                                        loading={
-                                          fixingCode === itemFixKey &&
-                                          fixFetcher.state !== "idle"
-                                        }
-                                      >
-                                        {d.fixWithAi}
-                                      </Button>
-                                    )}
-                                    <Button
-                                      variant="plain"
-                                      size="slim"
-                                      onClick={() => openInEditor(it.type, it.id)}
-                                    >
-                                      {d.openInEditor}
-                                    </Button>
+                                    <InlineStack gap="200" blockAlign="center">
+                                      {showAiButton && (
+                                        <Button
+                                          variant="plain"
+                                          size="slim"
+                                          onClick={() =>
+                                            handleFixWithAi(p.code, { type: it.type, id: it.id })
+                                          }
+                                          disabled={
+                                            disableFixButtons || fixFetcher.state !== "idle"
+                                          }
+                                          loading={
+                                            fixingCode === itemFixKey &&
+                                            fixFetcher.state !== "idle"
+                                          }
+                                        >
+                                          {d.fixWithAi}
+                                        </Button>
+                                      )}
+                                      <Tooltip content={d.openInEditor}>
+                                        <Button
+                                          variant="plain"
+                                          size="slim"
+                                          icon={EditIcon}
+                                          accessibilityLabel={d.openInEditor}
+                                          onClick={() => openInEditor(it.type, it.id)}
+                                        />
+                                      </Tooltip>
+                                    </InlineStack>
                                   </InlineStack>
                                 </InlineStack>
                               );
@@ -596,9 +602,14 @@ export default function SeoDashboard() {
                           <Text as="span" variant="bodySm">{row.issueCount}</Text>
                         </td>
                         <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                          <Button variant="plain" onClick={() => openInEditor(row.type, row.id)}>
-                            {d.openInEditor}
-                          </Button>
+                          <Tooltip content={d.openInEditor}>
+                            <Button
+                              variant="plain"
+                              icon={EditIcon}
+                              accessibilityLabel={d.openInEditor}
+                              onClick={() => openInEditor(row.type, row.id)}
+                            />
+                          </Tooltip>
                         </td>
                       </tr>
                     ))}
