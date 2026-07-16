@@ -326,7 +326,7 @@ export default function SeoDashboard() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {d.itemsScanned}: {audit.totalScanned}
                 </Text>
-                {trend.length >= 2 && (
+                {trend.length > 3 && (
                   <BlockStack gap="100">
                     <Text as="p" variant="bodySm" tone="subdued">
                       {d.trendTitle}
