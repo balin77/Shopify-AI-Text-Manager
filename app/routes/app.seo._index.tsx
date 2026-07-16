@@ -56,7 +56,10 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
   "metaDescriptionMissing",
   "metaDescriptionLength",
   "titleLength",
+  "descriptionTooShort",
   "imagesMissingAlt",
+  "duplicateSeoTitle",
+  "duplicateSeoDescription",
 ]);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {

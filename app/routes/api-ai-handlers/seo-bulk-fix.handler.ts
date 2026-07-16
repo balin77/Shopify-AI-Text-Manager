@@ -36,20 +36,30 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 const MAX_BULK_FIX_ITEMS = 100;
 
 // Allowlist of AI-fixable problem buckets (see audit.service.ts FINDING_TO_BUCKET
-// for the full code list). Duplicate/description buckets are intentionally
-// NOT included yet — they need cross-item dedup or html-content generation
-// that's out of scope for this cut.
-type FixableField = "seoTitle" | "metaDescription" | "title" | "altText";
+// for the full code list).
+type FixableField = "seoTitle" | "metaDescription" | "title" | "description" | "altText";
 
 const FIXABLE_CODE_TO_FIELD: Record<string, FixableField> = {
   seoTitleMissing: "seoTitle",
   seoTitleTooLong: "seoTitle",
   metaDescriptionMissing: "metaDescription",
   metaDescriptionLength: "metaDescription",
+  // Duplicate SEO buckets regenerate the SAME field (title / description) but
+  // trigger sibling-context injection in the prompt (see buildFixPrompt) so
+  // the AI doesn't just produce another duplicate. The bucket's `items` list
+  // IS the sibling group — the runner iterates it and each item gets the
+  // OTHER items' current values as an "avoid these" hint.
+  duplicateSeoTitle: "seoTitle",
+  duplicateSeoDescription: "metaDescription",
   // Storefront-visible content title (product/collection/page/article name).
   // Merchant-triggered from the SEO dashboard only — never a passive
   // regeneration, since it changes public-facing copy.
   titleLength: "title",
+  // Storefront-visible content BODY (descriptionHtml / body). Uses the
+  // dedicated description-generation AI path (generateProductDescription)
+  // and receives the current description as context so tone/keywords carry
+  // over — not a blank-slate rewrite.
+  descriptionTooShort: "description",
   // Handled by a separate runner (runAltTextBulkFix) because alt text is
   // per-image, not per-item, and needs productUpdateMedia instead of the
   // regular content mutations.
@@ -169,6 +179,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
           shop: session.shop,
           admin,
           field,
+          problemCode,
           items,
           seoTitleMaxChars,
         });
@@ -204,6 +215,10 @@ interface RunArgs {
   shop: string;
   admin: AdminApiContext;
   field: TextField;
+  /** Original bucket code — used to detect the duplicate-SEO buckets, where
+   * every item must receive its siblings' current values as an "avoid these
+   * values" hint so the regen doesn't just produce another duplicate. */
+  problemCode: string;
   items: { type: AuditType; id: string }[];
   seoTitleMaxChars: number;
 }
@@ -218,7 +233,9 @@ interface FixableRow {
 }
 
 async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
-  const { db, settings, shop, admin, field, items, seoTitleMaxChars } = args;
+  const { db, settings, shop, admin, field, problemCode, items, seoTitleMaxChars } = args;
+  const isDuplicateBucket =
+    problemCode === "duplicateSeoTitle" || problemCode === "duplicateSeoDescription";
 
   const gateway = new ShopifyApiGateway(admin, shop);
   const contentService = new ShopifyContentService(gateway as any);
@@ -259,6 +276,51 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     for (const [id, row] of loaded.entries()) rows.set(id, row);
   }
 
+  // Duplicate-bucket siblings: for each item, the OTHER items sharing the same
+  // (normalized) current value. That value is passed to the prompt as an
+  // "avoid these" hint so the AI produces something distinct instead of
+  // regenerating another duplicate. Cheap map lookup, computed once.
+  //
+  // A duplicate SEO title / description also DOES apply to items with a fully
+  // empty value (two items both missing a meta description technically share
+  // "" — but that would already be flagged as `metaDescriptionMissing` and is
+  // out of scope here). Empty-normalized keys are skipped.
+  const siblingHintById = new Map<string, string[]>();
+  if (isDuplicateBucket) {
+    // Normalization contract MUST match audit.service.ts's
+    // normalizeForDuplicateCheck (trim + lowercase, seoTitle falls back to
+    // title, no fallback for metaDescription). If the audit's algorithm ever
+    // changes (e.g. smart-quote normalization), mirror the change here or
+    // the "avoid" list will silently miss real duplicates.
+    const readField = (row: FixableRow): string =>
+      problemCode === "duplicateSeoTitle"
+        ? (row.seoTitle || row.title || "").trim()
+        : (row.metaDescription || "").trim();
+    const groups = new Map<string, string[]>();
+    for (const it of items) {
+      const row = rows.get(it.id);
+      if (!row) continue;
+      const key = readField(row).toLowerCase();
+      if (!key) continue;
+      const group = groups.get(key) ?? [];
+      group.push(it.id);
+      groups.set(key, group);
+    }
+    for (const [, group] of groups.entries()) {
+      if (group.length < 2) continue;
+      for (const id of group) {
+        const siblings = group
+          .filter((sid) => sid !== id)
+          .map((sid) => {
+            const r = rows.get(sid);
+            return r ? readField(r) : "";
+          })
+          .filter((v) => v.length > 0);
+        if (siblings.length > 0) siblingHintById.set(id, siblings);
+      }
+    }
+  }
+
   const succeeded: { type: AuditType; id: string }[] = [];
   const failed: { type: AuditType; id: string; error: string }[] = [];
   const total = items.length;
@@ -286,12 +348,27 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
             seoTitleMaxChars,
             mainLanguage,
             aiInstructions,
+            avoidValues: siblingHintById.get(id),
           });
 
-          // Neither seoTitle nor metaDescription is an "html" field, so this
-          // mirrors handleGenerateAIText's non-html branch (generateProductTitle
-          // is the shared short-text generation path for both).
-          const generated = (await aiService.generateProductTitle(prompt)).trim();
+          // description is long-form HTML; every other TextField is short
+          // plain text. generateProductDescription is the shared long-form
+          // path, generateProductTitle the shared short-text one — matches
+          // how text-generation.handler.ts routes single-item generation.
+          const generated = (
+            field === "description"
+              ? await aiService.generateProductDescription(row.title, prompt)
+              : await aiService.generateProductTitle(prompt)
+          ).trim();
+
+          // Guard against a silent clobber: a provider glitch that returns
+          // an empty string would otherwise overwrite the storefront body
+          // (or title / seo field) with "" and the "fix" would strictly
+          // regress the item's SEO score. Skip and mark failed instead;
+          // the merchant can retry from the dashboard.
+          if (generated.length === 0) {
+            throw new Error("AI returned an empty value — nothing was saved.");
+          }
 
           await persistField({ db, shop, type, id, field, value: generated, contentService, gateway });
 
@@ -770,6 +847,9 @@ interface PromptContext {
   seoTitleMaxChars: number;
   mainLanguage: string;
   aiInstructions: Record<string, string | null> | null;
+  /** Sibling values to steer the AI away from — populated for the duplicate
+   * SEO buckets so a regen doesn't just produce another duplicate. */
+  avoidValues?: string[];
 }
 
 /** Mirrors handleGenerateAIText's prompt shape (text-generation.handler.ts) so
@@ -783,12 +863,20 @@ function buildFixPrompt(field: TextField, ctx: PromptContext): string {
   });
 
   let prompt = `Create an improved ${ctx.fieldLabel} for the following content.`;
-  // For content-title regeneration the CURRENT title is what we're rewriting,
-  // so pass the description as the primary signal instead — the "Context - Title"
-  // line for a title rewrite would just anchor the model to the old text.
   if (field === "title") {
+    // Title rewrite: the CURRENT title is what we're replacing, so lead with
+    // the description as the primary signal — quoting the old title first
+    // would anchor the model to it.
     if (sanitizedDescription) prompt += `\n\nContext - Description: ${sanitizedDescription}`;
     prompt += `\nContext - Current Title (to be rewritten): ${sanitizedTitle}`;
+  } else if (field === "description") {
+    // Description rewrite: pass the old description as a "carry the tone /
+    // key points, but expand it" seed, not as the thing being replaced —
+    // otherwise a too-short description gets padded with filler.
+    prompt += `\n\nContext - Title: ${sanitizedTitle}`;
+    if (sanitizedDescription) {
+      prompt += `\nContext - Current Description (too short — extend, don't just repeat): ${sanitizedDescription}`;
+    }
   } else {
     prompt += `\n\nContext - Title: ${sanitizedTitle}`;
     if (field === "metaDescription" && sanitizedDescription) {
@@ -796,6 +884,19 @@ function buildFixPrompt(field: TextField, ctx: PromptContext): string {
     }
   }
   prompt += `\nLanguage: ${ctx.mainLanguage}`;
+
+  // Duplicate-SEO buckets: explicit "avoid these values" hint. Placed BEFORE
+  // Requirements so the model treats it as a hard constraint, not a stylistic
+  // one. Sanitize each sibling value to prevent prompt-control tokens.
+  if (ctx.avoidValues && ctx.avoidValues.length > 0) {
+    const sanitizedAvoid = ctx.avoidValues
+      .map((v) => sanitizePromptInput(v, { fieldType: field === "metaDescription" ? "metaDescription" : "seoTitle" }))
+      .filter((v) => v.length > 0);
+    if (sanitizedAvoid.length > 0) {
+      prompt += `\n\nAvoid values (already used by other items — produce something clearly distinct):`;
+      for (const v of sanitizedAvoid) prompt += `\n- ${v}`;
+    }
+  }
 
   prompt += `\n\nRequirements:`;
   const charLimit = getCharacterLimitRequirement(ctx.aiInstructionsKey, ctx.seoTitleMaxChars);
@@ -848,6 +949,8 @@ async function persistField(params: PersistArgs): Promise<void> {
       let inputPayload: Record<string, unknown>;
       if (field === "title") {
         inputPayload = { id, title: value };
+      } else if (field === "description") {
+        inputPayload = { id, descriptionHtml: value };
       } else {
         const seoInput: Record<string, string> = {};
         seoInput[field === "seoTitle" ? "title" : "description"] = value;
@@ -873,7 +976,9 @@ async function persistField(params: PersistArgs): Promise<void> {
           ? { seoTitle: value, lastSyncedAt: new Date() }
           : field === "metaDescription"
             ? { seoDescription: value, lastSyncedAt: new Date() }
-            : { title: value, lastSyncedAt: new Date() };
+            : field === "description"
+              ? { descriptionHtml: value, lastSyncedAt: new Date() }
+              : { title: value, lastSyncedAt: new Date() };
       await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
     }
@@ -883,6 +988,12 @@ async function persistField(params: PersistArgs): Promise<void> {
         await db.collection.update({
           where: { shop_id: { shop, id } },
           data: { title: value, lastSyncedAt: new Date() },
+        });
+      } else if (field === "description") {
+        await contentService.updateCollection(id, { descriptionHtml: value });
+        await db.collection.update({
+          where: { shop_id: { shop, id } },
+          data: { descriptionHtml: value, lastSyncedAt: new Date() },
         });
       } else {
         const seo = field === "seoTitle" ? { title: value } : { description: value };
@@ -898,12 +1009,16 @@ async function persistField(params: PersistArgs): Promise<void> {
       break;
     }
     case "page": {
+      // Page body lives in `body` (not descriptionHtml); everything else
+      // maps 1:1 to the updatePage signature.
       const pageInput =
         field === "seoTitle"
           ? { seoTitle: value }
           : field === "metaDescription"
             ? { seoDescription: value }
-            : { title: value };
+            : field === "description"
+              ? { body: value }
+              : { title: value };
       await contentService.updatePage(id, pageInput);
       await db.page.update({
         where: { shop_id: { shop, id } },
@@ -914,20 +1029,25 @@ async function persistField(params: PersistArgs): Promise<void> {
     case "article": {
       // Article SEO title/description are stored the same way as Page/Blog —
       // as global.title_tag/description_tag metafields, written inline by
-      // updateArticle() (see ShopifyContentService.updateArticle).
+      // updateArticle() (see ShopifyContentService.updateArticle). Body
+      // uses `body`, matching Page.
       const articleInput =
         field === "seoTitle"
           ? { seoTitle: value }
           : field === "metaDescription"
             ? { seoDescription: value }
-            : { title: value };
+            : field === "description"
+              ? { body: value }
+              : { title: value };
       await contentService.updateArticle(id, articleInput);
       const articleDbData =
         field === "seoTitle"
           ? { seoTitle: value, lastSyncedAt: new Date() }
           : field === "metaDescription"
             ? { seoDescription: value, lastSyncedAt: new Date() }
-            : { title: value, lastSyncedAt: new Date() };
+            : field === "description"
+              ? { body: value, lastSyncedAt: new Date() }
+              : { title: value, lastSyncedAt: new Date() };
       await db.article.update({ where: { shop_id: { shop, id } }, data: articleDbData });
       break;
     }
