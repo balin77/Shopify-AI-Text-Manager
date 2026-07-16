@@ -77,33 +77,33 @@ export default function SeoLayout() {
   };
 
   return (
-    <>
-      {/* Rendered inside the app's scroll container (<main> in app.tsx),
-          which starts flush below MainNavigation — so stickyTop is 0 relative
-          to that container, not `mainNavHeight`. (RubricNavigation sits
-          outside <main> so it uses `mainNavHeight` for a different reason.)
-          No height publication either: no downstream consumer of
-          `rubricNavHeight` mounts on SEO pages. */}
+    // Own the full height of <main> so the scroll happens INSIDE the outlet
+    // container, not on the outer <main>. Otherwise <main>'s scrollbar track
+    // runs behind the (sticky) SubNavBar — the merchant sees the track/thumb
+    // extending up alongside the sub-nav chips. Same pattern the fixed-frame
+    // editor routes use (see comment in app.tsx's <main>).
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
       <SubNavBar
         items={items}
         activeId={active?.id ?? null}
         onSelect={onSelect}
         ariaLabel="SEO sections"
-        stickyTop={0}
       />
 
-      <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto", width: "100%" }}>
-        {isSeoSectionLoading ? (
-          <Card>
-            <BlockStack gap="400">
-              <SkeletonBodyText lines={3} />
-              <SkeletonBodyText lines={5} />
-            </BlockStack>
-          </Card>
-        ) : (
-          <Outlet />
-        )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto", width: "100%" }}>
+          {isSeoSectionLoading ? (
+            <Card>
+              <BlockStack gap="400">
+                <SkeletonBodyText lines={3} />
+                <SkeletonBodyText lines={5} />
+              </BlockStack>
+            </Card>
+          ) : (
+            <Outlet />
+          )}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
