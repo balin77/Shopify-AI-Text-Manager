@@ -17,7 +17,6 @@ import { Card, BlockStack, SkeletonBodyText } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { meetsPlan } from "../utils/planUtils";
 import { SEO_SECTIONS, getActiveSeoSection, isSeoPath } from "../config/seo-sections";
@@ -39,7 +38,6 @@ export default function SeoLayout() {
   const navigation = useNavigation();
   const { t } = useI18n();
   const { plan } = usePlan();
-  const { mainNavHeight, setRubricNavHeight } = useNavigationHeight();
   const { handleNavigate } = useAppNavigation();
 
   const active = getActiveSeoSection(location.pathname);
@@ -80,13 +78,18 @@ export default function SeoLayout() {
 
   return (
     <>
+      {/* Rendered inside the app's scroll container (<main> in app.tsx),
+          which starts flush below MainNavigation — so stickyTop is 0 relative
+          to that container, not `mainNavHeight`. (RubricNavigation sits
+          outside <main> so it uses `mainNavHeight` for a different reason.)
+          No height publication either: no downstream consumer of
+          `rubricNavHeight` mounts on SEO pages. */}
       <SubNavBar
         items={items}
         activeId={active?.id ?? null}
         onSelect={onSelect}
         ariaLabel="SEO sections"
-        stickyTop={mainNavHeight}
-        onMeasure={setRubricNavHeight}
+        stickyTop={0}
       />
 
       <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto", width: "100%" }}>
