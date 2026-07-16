@@ -14,7 +14,8 @@ import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact
 import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
-import { isSeoPath } from "../config/seo-sections";
+import { isSeoPath, SEO_SECTIONS } from "../config/seo-sections";
+import { meetsPlan } from "../utils/planUtils";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
@@ -269,6 +270,19 @@ export function MainNavigation() {
     }))
   );
 
+  // SEO sections mirror the desktop SubNavBar so mobile users can jump straight
+  // to a sub-section (Übersicht, Strukturierte Daten, …) from the hamburger.
+  const isOnSeoPage = isSeoPath(location.pathname);
+  const seoSectionStrings =
+    (t.seo as { sections?: Record<string, { label?: string }> }).sections ?? {};
+  const seoTypes = SEO_SECTIONS.map((section) => ({
+    id: section.id,
+    label: seoSectionStrings[section.id]?.label || section.id,
+    icon: section.icon,
+    path: section.path,
+    locked: section.planGate ? !meetsPlan(plan, section.planGate) : false,
+  }));
+
   return (
     <>
       {/* Sticky Navigation — takes real space in document flow, so no spacer
@@ -298,6 +312,8 @@ export function MainNavigation() {
               maxProducts={maxProducts}
               contentTypes={contentTypes}
               showContentTypes={isOnContentPage}
+              seoTypes={seoTypes}
+              showSeoTypes={isOnSeoPage}
             />
           </div>
 

@@ -34,6 +34,16 @@ interface MobileMenuProps {
   }>;
   /** Show content type navigation */
   showContentTypes?: boolean;
+  /** SEO sections for secondary navigation (mirrors the desktop SubNavBar) */
+  seoTypes?: Array<{
+    id: string;
+    label: string;
+    icon: string;
+    path: string;
+    locked?: boolean;
+  }>;
+  /** Show SEO section navigation */
+  showSeoTypes?: boolean;
 }
 
 export function MobileMenu({
@@ -42,9 +52,12 @@ export function MobileMenu({
   maxProducts,
   contentTypes = [],
   showContentTypes = false,
+  seoTypes = [],
+  showSeoTypes = false,
 }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
+  const [isSeoExpanded, setIsSeoExpanded] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { handleNavigate } = useAppNavigation();
@@ -58,6 +71,13 @@ export function MobileMenu({
       setIsContentExpanded(true);
     }
   }, [showContentTypes]);
+
+  // Auto-expand SEO submenu when on an SEO page (parity with the content tab)
+  useEffect(() => {
+    if (showSeoTypes) {
+      setIsSeoExpanded(true);
+    }
+  }, [showSeoTypes]);
 
   // Level 1 slimmed to match desktop (Plan §3.4): a single "Inhalte" entry
   // (lands on Produkte); the full content list lives in the expandable section
@@ -178,6 +198,14 @@ export function MobileMenu({
                 const showTaskCount = tab.id === "tasks" && runningTaskCount && runningTaskCount > 0;
                 const isContentTab = tab.id === "content";
                 const hasContentTypes = contentTypes.length > 0;
+                const isSeoTab = tab.id === "seo";
+                const hasSeoTypes = seoTypes.length > 0;
+                const isExpandableTab = (isContentTab && hasContentTypes) || (isSeoTab && hasSeoTypes);
+                const expanded = isContentTab ? isContentExpanded : isSeoTab ? isSeoExpanded : false;
+                const toggleExpanded = () => {
+                  if (isContentTab) setIsContentExpanded(!isContentExpanded);
+                  else if (isSeoTab) setIsSeoExpanded(!isSeoExpanded);
+                };
 
                 return (
                   <div key={tab.id}>
@@ -224,15 +252,15 @@ export function MobileMenu({
                         </div>
                       </button>
 
-                      {/* Toggle button for content submenu */}
-                      {isContentTab && hasContentTypes && (
+                      {/* Toggle button for content / SEO submenu */}
+                      {isExpandableTab && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setIsContentExpanded(!isContentExpanded);
+                            toggleExpanded();
                           }}
-                          aria-label={isContentExpanded ? "Collapse content types" : "Expand content types"}
-                          aria-expanded={isContentExpanded}
+                          aria-label={expanded ? "Collapse submenu" : "Expand submenu"}
+                          aria-expanded={expanded}
                           style={{
                             background: "none",
                             border: "none",
@@ -242,10 +270,52 @@ export function MobileMenu({
                             alignItems: "center",
                           }}
                         >
-                          <Icon source={isContentExpanded ? ChevronDownIcon : ChevronRightIcon} />
+                          <Icon source={expanded ? ChevronDownIcon : ChevronRightIcon} />
                         </button>
                       )}
                     </div>
+
+                    {/* SEO Sections Submenu - collapsible */}
+                    {isSeoTab && hasSeoTypes && isSeoExpanded && (
+                      <div style={{ paddingLeft: "12px" }}>
+                        {seoTypes.map((type) => {
+                          const isSeoTypeActive =
+                            location.pathname === type.path ||
+                            location.pathname.startsWith(type.path + "/");
+
+                          return (
+                            <button
+                              key={type.id}
+                              onClick={() => handleNavigation(type.path)}
+                              className={`mobile-menu-item ${isSeoTypeActive ? "active" : ""}`}
+                              style={{
+                                width: "100%",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "8px",
+                                padding: "10px 16px",
+                                border: "none",
+                                background: isSeoTypeActive ? "#f6f6f7" : "transparent",
+                                borderLeft: isSeoTypeActive ? "4px solid #0066CC" : "4px solid transparent",
+                                cursor: "pointer",
+                                fontSize: "14px",
+                                fontWeight: isSeoTypeActive ? "600" : "400",
+                                color: type.locked ? "#8c9196" : isSeoTypeActive ? "#202223" : "#5c5f62",
+                                textAlign: "left",
+                                opacity: type.locked ? 0.6 : 1,
+                                transition: "background-color 150ms ease",
+                              }}
+                            >
+                              <span>{type.icon}</span>
+                              <span style={{ flex: 1 }}>{type.label}</span>
+                              {type.locked && (
+                                <span style={{ fontSize: "12px" }} aria-hidden="true">🔒</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {/* Content Types Submenu - collapsible */}
                     {isContentTab && hasContentTypes && isContentExpanded && (
