@@ -124,7 +124,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 | Feature | Beschreibung | Priorität |
 |---------|--------------|-----------|
 | Scheduled Translations | Zeitgesteuerte Übersetzungen | High |
-| Content Templates | Wiederverwendbare Vorlagen | High |
+| ~~Content Templates~~ | ~~Wiederverwendbare Vorlagen~~ ⛔ **verworfen 2026-07-19** — 2-Tages-Test ergab: `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam (siehe `docs/COMPETITIVE_ANALYSIS.md` §3.1 Punkt 5). Re-Einstieg nur bei echten Zusatz-Variablen (`{{brand}}`, `{{price}}`, `{{tags}}` etc. aus Shopify). | — |
 | Version History | Änderungsverlauf für Content | Medium |
 | Content Approval Workflow | Multi-User Freigabe-Prozess | Low |
 

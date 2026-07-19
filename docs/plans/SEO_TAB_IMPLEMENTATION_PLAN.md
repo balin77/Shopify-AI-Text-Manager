@@ -17,7 +17,8 @@ ContentPilot besitzt heute nur **per-Item-SEO** im Editor: [SeoSidebar.tsx](app/
 
 **Vorhandene Feature-Branches (nicht neu bauen — integrieren):**
 - **`origin/feature/jsonld-structured-data`** — JSON-LD ist bereits implementiert (2 Commits off `develop`): reine Builder + Validierung in `app/services/structured-data.service.ts` (+ Unit-Tests), eigene Theme-Extension `extensions/structured-data/`, optionaler `structuredData`-Prop in `SeoSidebar.tsx` (einklappbarer JSON-LD-Block, Copy, Validierung), Verdrahtung in `UnifiedContentEditor.tsx`, 5 i18n-Keys, GDPR-Guard befriedigt. **Phase 2 setzt hierauf auf, statt neu zu bauen** (Details unten).
-- `origin/feature/content-templates`, `origin/feature/glossary` — adressieren andere Analyse-Gaps (Templates, Glossar); hier nur erwähnt, damit keine Doppelarbeit entsteht.
+- `origin/feature/glossary` — adressiert einen anderen Analyse-Gap (Glossar), inzwischen auf `develop` gemergt.
+- ~~`origin/feature/content-templates`~~ — wurde am 2026-07-17 gemergt und am 2026-07-19 wieder komplett zurückgezogen (`{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam). Siehe `docs/COMPETITIVE_ANALYSIS.md` §3.1 Punkt 5.
 - `origin/feature/language-currency-switcher` — bereits ausgelieferter Switcher.
 
 ---

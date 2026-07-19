@@ -801,11 +801,11 @@ WICHTIG (Req 4.3.3): Keine unbelegten Claims wie "the best", "the first",
 "#1 translation app" etc. verwenden!
 
 Key Features (min 3, max 5):
-1. AI-powered product descriptions
-2. Multi-language translation
+1. AI-powered product descriptions (6 providers, BYO-key)
+2. Multi-language translation (full Translate & Adapt parity + 3 surfaces beyond)
 3. Bulk content operations
-4. SEO optimization
-5. Custom content templates
+4. SEO + AEO optimization (store-wide audit, JSON-LD, hreflang, GSC, llms.txt, IndexNow)
+5. Foreign-locale SEO audit + AI fixes (unique — no competitor audits SEO per translated locale)
 
 App Category:
 Marketing > Content & SEO
