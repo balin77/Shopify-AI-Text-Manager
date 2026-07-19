@@ -1080,5 +1080,10 @@ model SeoScoreSnapshot {
   capped         Boolean
   payload        String   @db.Text // JSON.stringify(StoreAudit)
 
-  @@index([shop, createdAt])
+  // Per-locale snapshots for the SEO overview language switcher.
+  // "" (sentinel) = primary locale, mirrors ContentTranslation.marketId's
+  // "" = global convention. Non-empty = a shop-locale code like "en", "fr".
+  locale String @default("")
+
+  @@index([shop, locale, createdAt])
 }

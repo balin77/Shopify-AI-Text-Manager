@@ -1302,6 +1302,8 @@ export const es: Translation = {
       rescan: "Volver a analizar",
       lastScanned: "Último análisis: {time}",
       scanRunning: "Hay un análisis en curso — actualizando automáticamente…",
+      primaryLocaleSuffix: "Principal",
+      foreignLocaleBanner: "Análisis SEO para {locale}. La puntuación, los problemas y las correcciones con IA se aplican a este idioma — la puntuación del idioma principal permanece separada.",
       scanStartError: "No se pudo iniciar el análisis. Inténtalo de nuevo.",
       trendTitle: "Tendencia de la puntuación",
       problemsTruncated: "Mostrando {shown} de {total} elementos afectados.",

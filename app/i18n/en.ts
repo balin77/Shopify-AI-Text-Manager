@@ -1303,6 +1303,8 @@ export const en: Translation = {
       rescan: "Rescan",
       lastScanned: "Last scanned {time}",
       scanRunning: "A scan is running — refreshing automatically…",
+      primaryLocaleSuffix: "Primary",
+      foreignLocaleBanner: "SEO analysis for {locale}. Score, problems, and AI fixes apply to this language — the primary-locale score stays separate.",
       scanStartError: "Couldn't start the scan. Please try again.",
       trendTitle: "Score trend",
       problemsTruncated: "Showing {shown} of {total} affected items.",

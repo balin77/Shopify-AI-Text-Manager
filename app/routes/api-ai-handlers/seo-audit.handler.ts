@@ -23,11 +23,13 @@ import { logger } from "~/utils/logger.server";
 import { analyzeStore } from "~/services/seo/audit.service";
 import { saveAuditSnapshot } from "~/services/seo/audit.service";
 import { seoTitleEffectiveLimit } from "~/utils/seo-score";
+import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 import type { Plan } from "~/config/plans";
 import type { PrismaClient } from "@prisma/client";
+import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 
 export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
-  const { session, db, settings } = ctx;
+  const { session, admin, db, settings } = ctx;
 
   // Single-flight: only one seoAudit run per shop at a time — a second click
   // while one is in flight would just duplicate the scan and race the
@@ -70,11 +72,11 @@ export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
   });
 
   // Fire-and-forget: survives navigation, same pattern as runSeoBulkFix /
-  // runBulkAltTextGeneration. This is one long unit of work (the scan itself),
-  // not a per-item loop, so progress just heartbeats 50 -> 100 around it
-  // rather than per-item increments.
+  // runBulkAltTextGeneration. Now scans primary + every published foreign
+  // locale so the SEO overview language switcher has fresh data for each tab.
   void runSeoAudit(task.id, {
     db,
+    admin,
     shop: session.shop,
     plan,
     seoTitleEffectiveLimit: effectiveLimit,
@@ -93,36 +95,120 @@ export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
 
 interface RunArgs {
   db: PrismaClient;
+  admin: AdminApiContext;
   shop: string;
   plan: Plan;
   seoTitleEffectiveLimit: number;
 }
 
 async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, plan, seoTitleEffectiveLimit: effectiveLimit } = args;
+  const { db, admin, shop, plan, seoTitleEffectiveLimit: effectiveLimit } = args;
 
   try {
-    // Heartbeat before the scan starts — TaskRecoveryService's stuck-task
-    // reaper keys off `updatedAt`, so this also proves the runner picked up
-    // the task even if the scan itself takes a while on a large shop.
-    await db.task.update({ where: { id: taskId }, data: { progress: 50 } });
+    // Enumerate every shop locale so the SEO overview language switcher has a
+    // fresh snapshot per tab. Primary snapshot uses locale="" (sentinel) so
+    // it stays compatible with pre-locale rows. Published-but-non-primary
+    // locales get their own snapshot; unpublished locales are skipped (no
+    // storefront surface = no useful signal).
+    const shopLocales = await getCachedShopLocales(admin, shop).catch((err: unknown) => {
+      logger.warn("[API-AI] SEO audit: failed to load shop locales, falling back to primary only", {
+        context: "AI",
+        taskId,
+        error: errorMessage(err),
+      });
+      return [] as { locale: string; primary: boolean; published: boolean }[];
+    });
+    const foreignLocales = shopLocales
+      .filter((l) => l.published && !l.primary)
+      .map((l) => l.locale);
 
-    const audit = await analyzeStore(shop, { db, seoTitleEffectiveLimit: effectiveLimit, plan });
-    await saveAuditSnapshot(db, shop, audit);
+    // Locale scan list: primary first (fastest path, existing users notice
+    // this run first), then every published foreign locale.
+    const scanTargets: { locale: string; snapshotKey: string }[] = [
+      { locale: "", snapshotKey: "" },
+      ...foreignLocales.map((l) => ({ locale: l, snapshotKey: l })),
+    ];
 
+    let processed = 0;
+    let succeededCount = 0;
+    let lastPrimaryAudit: {
+      averageScore: number;
+      totalScanned: number;
+      totalAvailable: number;
+      capped: boolean;
+    } | null = null;
+
+    // Update total up front so the Tasks-tab progress bar shows the real
+    // denominator instead of 1 for a multi-locale run.
+    await db.task
+      .update({ where: { id: taskId }, data: { total: scanTargets.length } })
+      .catch(() => {});
+
+    for (const target of scanTargets) {
+      const localeLabel = target.locale === "" ? "<primary>" : target.locale;
+      try {
+        // Heartbeat per locale — TaskRecoveryService's stuck-task reaper keys
+        // off updatedAt, so this proves the runner is still alive between
+        // scans on multi-locale shops.
+        const preProgress = Math.round((processed / scanTargets.length) * 100);
+        await db.task.update({ where: { id: taskId }, data: { progress: preProgress } });
+
+        const audit = await analyzeStore(shop, {
+          db,
+          seoTitleEffectiveLimit: effectiveLimit,
+          plan,
+          locale: target.locale || undefined,
+        });
+        await saveAuditSnapshot(db, shop, audit, target.snapshotKey);
+
+        if (target.locale === "") {
+          lastPrimaryAudit = {
+            averageScore: audit.averageScore,
+            totalScanned: audit.totalScanned,
+            totalAvailable: audit.totalAvailable,
+            capped: audit.capped,
+          };
+        }
+        succeededCount += 1;
+      } catch (err: unknown) {
+        // One failing locale must not sink the whole run — a broken
+        // ContentTranslation row shouldn't stop the merchant seeing their
+        // primary score. Log and continue.
+        logger.error("[API-AI] SEO audit: locale scan failed", {
+          context: "AI",
+          taskId,
+          locale: localeLabel,
+          error: errorMessage(err),
+        });
+      } finally {
+        processed += 1;
+      }
+    }
+
+    // Mark failed if EVERY locale threw — a "completed" status on a run that
+    // produced no snapshots would mislead the merchant (dashboard would keep
+    // reading the previous stale snapshot with no error surface).
+    const allFailed = succeededCount === 0 && scanTargets.length > 0;
     await db.task.update({
       where: { id: taskId },
       data: {
-        status: "completed",
+        status: allFailed ? "failed" : "completed",
         progress: 100,
-        processed: 1,
+        processed,
         completedAt: new Date(),
-        result: JSON.stringify({
-          averageScore: audit.averageScore,
-          totalScanned: audit.totalScanned,
-          totalAvailable: audit.totalAvailable,
-          capped: audit.capped,
-        }),
+        error: allFailed
+          ? `All ${scanTargets.length} locale scan(s) failed — see logs for details.`
+          : null,
+        // Result summary keeps the primary-locale headline numbers for
+        // continuity with the pre-multi-locale schema.
+        result: JSON.stringify(
+          lastPrimaryAudit ?? {
+            averageScore: 0,
+            totalScanned: 0,
+            totalAvailable: 0,
+            capped: false,
+          },
+        ),
       },
     });
   } catch (err: unknown) {

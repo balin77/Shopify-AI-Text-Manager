@@ -438,7 +438,7 @@ describe("getAuditTrend", () => {
     }));
     const { db } = makeSnapshotDb(existing);
 
-    const trend = await getAuditTrend(db, "shop.myshopify.com", 3);
+    const trend = await getAuditTrend(db, "shop.myshopify.com", "", 3);
     expect(trend.map((p) => p.averageScore)).toEqual([7, 8, 9]);
   });
 });

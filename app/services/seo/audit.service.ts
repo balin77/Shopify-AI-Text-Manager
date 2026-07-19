@@ -168,12 +168,161 @@ export interface AnalyzeStoreDeps {
   /** `seoTitleSuffix ? 60 - suffix.length : 60`, computed by the caller. */
   seoTitleEffectiveLimit: number;
   plan: Plan;
+  /**
+   * Foreign locale to score against (empty/undefined = primary locale, the
+   * historic behavior). When set, every scoring input (`title`, `description`,
+   * `seoTitle`, `metaDescription`) is sourced from ContentTranslation rows
+   * (keys `title`, `body_html`, `meta_title`, `meta_description`) for this
+   * (shop, locale, resourceType, resourceId); missing rows count as an empty
+   * value, so the same scoring rules that fire for "primary meta description
+   * missing" also fire for "foreign meta description missing". Product image
+   * alt coverage is sourced from ProductImageAltTranslation for the same
+   * locale. Collection/Article featured-image alt is not currently persisted
+   * per-locale in this app, so `imagesMissingAlt` is skipped for those types
+   * on foreign locales (its bucket-fix path would have nowhere to write).
+   */
+  locale?: string;
+}
+
+/** Keys ContentTranslation stores for the four audited fields — mirrors the
+ * TRANSLATION_KEYS list in hreflang.service.ts, minus `handle`. */
+const TRANSLATION_KEY_TITLE = "title";
+const TRANSLATION_KEY_BODY = "body_html";
+const TRANSLATION_KEY_META_TITLE = "meta_title";
+const TRANSLATION_KEY_META_DESCRIPTION = "meta_description";
+
+/** resourceType strings ContentTranslation uses per AuditType. Same map as
+ * hreflang / analyzeLocale below. */
+const AUDIT_RESOURCE_TYPE: Record<AuditType, string> = {
+  product: "Product",
+  collection: "Collection",
+  article: "Article",
+  page: "Page",
+};
+
+interface TranslationOverlay {
+  title: string;
+  body: string;
+  metaTitle: string;
+  metaDescription: string;
+}
+
+/**
+ * Batch-load foreign-locale ContentTranslation rows for every item passed in.
+ * One findMany across all resource types (resourceId is a globally-unique
+ * Shopify GID). Returns an id -> { title, body, metaTitle, metaDescription }
+ * map with empty strings for missing rows so the scorer can treat missing
+ * translations the same way it treats an empty primary value.
+ */
+async function loadTranslationOverlays(
+  db: PrismaClient,
+  shop: string,
+  locale: string,
+  ids: string[],
+): Promise<Map<string, TranslationOverlay>> {
+  const map = new Map<string, TranslationOverlay>();
+  if (ids.length === 0) return map;
+
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      locale,
+      resourceId: { in: ids },
+      key: {
+        in: [
+          TRANSLATION_KEY_TITLE,
+          TRANSLATION_KEY_BODY,
+          TRANSLATION_KEY_META_TITLE,
+          TRANSLATION_KEY_META_DESCRIPTION,
+        ],
+      },
+      // Global rows only for the audit (marketId="" sentinel). Market-specific
+      // overrides would balloon the surface without the UI to switch between
+      // them; foreign-locale coverage is already what merchants ask about
+      // first, and this stays consistent with analyzeLocale below.
+      marketId: "",
+    },
+    select: { resourceId: true, key: true, value: true },
+  });
+
+  for (const r of rows) {
+    let overlay = map.get(r.resourceId);
+    if (!overlay) {
+      overlay = { title: "", body: "", metaTitle: "", metaDescription: "" };
+      map.set(r.resourceId, overlay);
+    }
+    switch (r.key) {
+      case TRANSLATION_KEY_TITLE:
+        overlay.title = r.value;
+        break;
+      case TRANSLATION_KEY_BODY:
+        overlay.body = r.value;
+        break;
+      case TRANSLATION_KEY_META_TITLE:
+        overlay.metaTitle = r.value;
+        break;
+      case TRANSLATION_KEY_META_DESCRIPTION:
+        overlay.metaDescription = r.value;
+        break;
+    }
+  }
+  return map;
+}
+
+/**
+ * For a given foreign locale, count how many of each product's gallery images
+ * have a persisted alt translation. `ProductImageAltTranslation` is the only
+ * per-locale alt store in this app; Collection/Article featured-image alt has
+ * no per-locale table, so the audit skips its imagesMissingAlt bucket for
+ * those types (there'd be no fix path to act on the finding).
+ *
+ * Returns a productId -> imagesWithAltForLocale count. Not present = 0.
+ */
+async function loadProductAltCoverageForLocale(
+  db: PrismaClient,
+  locale: string,
+  productIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (productIds.length === 0) return map;
+
+  const rows = await db.productImageAltTranslation.groupBy({
+    by: ["imageId"],
+    where: {
+      locale,
+      marketId: "",
+      altText: { not: "" },
+      image: { productId: { in: productIds } },
+    },
+    _count: { _all: true },
+  });
+  if (rows.length === 0) return map;
+
+  // We grouped by imageId — bring back the productId for each so we can bucket
+  // per product. One extra select-minimized lookup, cheaper than joining in
+  // the groupBy directly.
+  const imageIds = rows.map((r) => r.imageId);
+  const imgs = await db.productImage.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, productId: true },
+  });
+  const productByImage = new Map(imgs.map((i) => [i.id, i.productId]));
+
+  for (const r of rows) {
+    const pid = productByImage.get(r.imageId);
+    if (!pid) continue;
+    map.set(pid, (map.get(pid) ?? 0) + r._count._all);
+  }
+  return map;
 }
 
 export async function analyzeStore(
   shop: string,
-  { db, seoTitleEffectiveLimit, plan }: AnalyzeStoreDeps,
+  { db, seoTitleEffectiveLimit, plan, locale }: AnalyzeStoreDeps,
 ): Promise<AuditAggregate> {
+  // Normalize "" / undefined to "primary". Consumers pass the sentinel "" for
+  // primary snapshots so the audit + snapshot table share one call shape.
+  const foreignLocale = locale && locale.length > 0 ? locale : null;
   const allowed = new Set(PLAN_CONFIG[plan].contentTypes);
   const wants = (type: AuditType) => allowed.has(TYPE_TO_CONTENT_TYPE[type]);
 
@@ -247,38 +396,81 @@ export async function analyzeStore(
     const totalMap = new Map(totalByProduct.map((g) => [g.productId, g._count._all]));
     const withAltMap = new Map(withAltByProduct.map((g) => [g.productId, g._count._all]));
 
+    // Foreign-locale overlay: ContentTranslation values replace the primary
+    // scoring inputs; ProductImageAltTranslation counts substitute the primary
+    // alt coverage. The featured-image fallback still uses the primary alt
+    // for now (the app doesn't persist a per-locale featured-image alt outside
+    // of the gallery table), so a shop that only ever uses a featured image
+    // still gets non-zero coverage in the foreign audit rather than 0/0 noise.
+    const overlays = foreignLocale
+      ? await loadTranslationOverlays(db, shop, foreignLocale, productIds)
+      : null;
+    const altByProductForLocale = foreignLocale
+      ? await loadProductAltCoverageForLocale(db, foreignLocale, productIds)
+      : null;
+
     const stat = newStat("product");
     for (const p of products) {
       let totalImages = totalMap.get(p.id) ?? 0;
-      let imagesWithAlt = withAltMap.get(p.id) ?? 0;
+      let imagesWithAlt = altByProductForLocale
+        ? altByProductForLocale.get(p.id) ?? 0
+        : withAltMap.get(p.id) ?? 0;
       // Mirror the editor: fall back to the featured image when no gallery rows.
       if (totalImages === 0 && nonEmpty(p.featuredImageUrl)) {
         totalImages = 1;
+        // For foreign locales we currently have no per-locale featured-image
+        // alt store, so this row falls back to the primary alt — same signal
+        // the storefront ships when no translation is registered.
         imagesWithAlt = nonEmpty(p.featuredImageAlt) ? 1 : 0;
       }
+      const overlay = overlays?.get(p.id);
+      const effectiveTitle = overlay ? overlay.title : p.title;
+      const effectiveDescription = overlay ? overlay.body : p.descriptionHtml ?? "";
+      const effectiveSeoTitle = overlay ? overlay.metaTitle : p.seoTitle ?? "";
+      const effectiveMetaDescription = overlay
+        ? overlay.metaDescription
+        : p.seoDescription ?? "";
+      // For foreign locales, score the TRANSLATED values so titleLength /
+      // seoTitleMissing / metaDescription-* findings fire on the actual
+      // storefront copy for this locale. Missing translation = "" = missing
+      // finding, exactly like an empty primary field.
       const item = scoreOne(
         "product",
         p.id,
-        p.title,
+        effectiveTitle,
         {
-          description: p.descriptionHtml ?? "",
-          seoTitle: p.seoTitle ?? "",
-          metaDescription: p.seoDescription ?? "",
+          description: effectiveDescription,
+          seoTitle: effectiveSeoTitle,
+          metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
       );
+      // Keep the DISPLAY title = primary so worst-offenders rows read like
+      // the merchant expects (they recognize products by their primary name).
+      // The row.title change is display-only; scoring already used the
+      // effective title above.
+      if (foreignLocale) item.row.title = p.title;
       scored.push(item);
       tallyStat(stat, item.row.score);
       // SERP title falls back to the item title when no seoTitle is set —
       // that's what Google actually shows, so that's what must match/collide.
+      // For foreign locale, the effective (translated) values are what the
+      // storefront serves for that locale — that's the correct duplicate
+      // surface.
       addToDuplicateGroup(
         seoTitleGroups,
-        normalizeForDuplicateCheck(nonEmpty(p.seoTitle) ? p.seoTitle : p.title),
+        normalizeForDuplicateCheck(
+          nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
+        ),
         p.id,
       );
-      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(p.seoDescription), p.id);
+      addToDuplicateGroup(
+        seoDescriptionGroups,
+        normalizeForDuplicateCheck(effectiveMetaDescription),
+        p.id,
+      );
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
@@ -309,31 +501,50 @@ export async function analyzeStore(
     totalAvailable += count;
     if (count > collections.length) capped = true;
 
+    const collectionOverlays = foreignLocale
+      ? await loadTranslationOverlays(db, shop, foreignLocale, collections.map((c) => c.id))
+      : null;
+
     const stat = newStat("collection");
     for (const c of collections) {
+      const overlay = collectionOverlays?.get(c.id);
+      const effectiveTitle = overlay ? overlay.title : c.title;
+      const effectiveDescription = overlay ? overlay.body : c.descriptionHtml ?? "";
+      const effectiveSeoTitle = overlay ? overlay.metaTitle : c.seoTitle ?? "";
+      const effectiveMetaDescription = overlay ? overlay.metaDescription : c.seoDescription ?? "";
+      // Collection featured-image alt has no per-locale store in this app,
+      // so foreign audits fall back to the primary alt (same value the
+      // storefront ships when no translation is registered).
       const totalImages = nonEmpty(c.imageUrl) ? 1 : 0;
       const imagesWithAlt = nonEmpty(c.imageAltText) ? 1 : 0;
       const item = scoreOne(
         "collection",
         c.id,
-        c.title,
+        effectiveTitle,
         {
-          description: c.descriptionHtml ?? "",
-          seoTitle: c.seoTitle ?? "",
-          metaDescription: c.seoDescription ?? "",
+          description: effectiveDescription,
+          seoTitle: effectiveSeoTitle,
+          metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
       );
+      if (foreignLocale) item.row.title = c.title;
       scored.push(item);
       tallyStat(stat, item.row.score);
       addToDuplicateGroup(
         seoTitleGroups,
-        normalizeForDuplicateCheck(nonEmpty(c.seoTitle) ? c.seoTitle : c.title),
+        normalizeForDuplicateCheck(
+          nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
+        ),
         c.id,
       );
-      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(c.seoDescription), c.id);
+      addToDuplicateGroup(
+        seoDescriptionGroups,
+        normalizeForDuplicateCheck(effectiveMetaDescription),
+        c.id,
+      );
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
@@ -363,31 +574,47 @@ export async function analyzeStore(
     totalAvailable += count;
     if (count > articles.length) capped = true;
 
+    const articleOverlays = foreignLocale
+      ? await loadTranslationOverlays(db, shop, foreignLocale, articles.map((a) => a.id))
+      : null;
+
     const stat = newStat("article");
     for (const a of articles) {
+      const overlay = articleOverlays?.get(a.id);
+      const effectiveTitle = overlay ? overlay.title : a.title;
+      const effectiveDescription = overlay ? overlay.body : a.body ?? "";
+      const effectiveSeoTitle = overlay ? overlay.metaTitle : a.seoTitle ?? "";
+      const effectiveMetaDescription = overlay ? overlay.metaDescription : a.seoDescription ?? "";
       const totalImages = nonEmpty(a.imageUrl) ? 1 : 0;
       const imagesWithAlt = nonEmpty(a.imageAltText) ? 1 : 0;
       const item = scoreOne(
         "article",
         a.id,
-        a.title,
+        effectiveTitle,
         {
-          description: a.body ?? "",
-          seoTitle: a.seoTitle ?? "",
-          metaDescription: a.seoDescription ?? "",
+          description: effectiveDescription,
+          seoTitle: effectiveSeoTitle,
+          metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
       );
+      if (foreignLocale) item.row.title = a.title;
       scored.push(item);
       tallyStat(stat, item.row.score);
       addToDuplicateGroup(
         seoTitleGroups,
-        normalizeForDuplicateCheck(nonEmpty(a.seoTitle) ? a.seoTitle : a.title),
+        normalizeForDuplicateCheck(
+          nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
+        ),
         a.id,
       );
-      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(a.seoDescription), a.id);
+      addToDuplicateGroup(
+        seoDescriptionGroups,
+        normalizeForDuplicateCheck(effectiveMetaDescription),
+        a.id,
+      );
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
@@ -415,29 +642,45 @@ export async function analyzeStore(
     totalAvailable += count;
     if (count > pages.length) capped = true;
 
+    const pageOverlays = foreignLocale
+      ? await loadTranslationOverlays(db, shop, foreignLocale, pages.map((pg) => pg.id))
+      : null;
+
     const stat = newStat("page");
     for (const pg of pages) {
+      const overlay = pageOverlays?.get(pg.id);
+      const effectiveTitle = overlay ? overlay.title : pg.title;
+      const effectiveDescription = overlay ? overlay.body : pg.body ?? "";
+      const effectiveSeoTitle = overlay ? overlay.metaTitle : pg.seoTitle ?? "";
+      const effectiveMetaDescription = overlay ? overlay.metaDescription : pg.seoDescription ?? "";
       const item = scoreOne(
         "page",
         pg.id,
-        pg.title,
+        effectiveTitle,
         {
-          description: pg.body ?? "",
-          seoTitle: pg.seoTitle ?? "",
-          metaDescription: pg.seoDescription ?? "",
+          description: effectiveDescription,
+          seoTitle: effectiveSeoTitle,
+          metaDescription: effectiveMetaDescription,
           totalImages: 0,
           imagesWithAlt: 0,
         },
         seoTitleEffectiveLimit,
       );
+      if (foreignLocale) item.row.title = pg.title;
       scored.push(item);
       tallyStat(stat, item.row.score);
       addToDuplicateGroup(
         seoTitleGroups,
-        normalizeForDuplicateCheck(nonEmpty(pg.seoTitle) ? pg.seoTitle : pg.title),
+        normalizeForDuplicateCheck(
+          nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
+        ),
         pg.id,
       );
-      addToDuplicateGroup(seoDescriptionGroups, normalizeForDuplicateCheck(pg.seoDescription), pg.id);
+      addToDuplicateGroup(
+        seoDescriptionGroups,
+        normalizeForDuplicateCheck(effectiveMetaDescription),
+        pg.id,
+      );
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);
@@ -600,17 +843,26 @@ export interface AuditSnapshot {
 
 /**
  * Persist one snapshot and prune older rows beyond MAX_SNAPSHOTS_PER_SHOP for
- * this shop. Prune happens here (not a cron) so retention is enforced at the
- * single write path, with no separate scheduled job to keep in sync.
+ * this (shop, locale). Prune happens here (not a cron) so retention is
+ * enforced at the single write path, with no separate scheduled job to keep in
+ * sync. Retention is per-locale: adding an English snapshot never displaces
+ * the German trend, and vice versa.
+ *
+ * `locale` sentinel: "" (default) = primary-locale snapshot. Non-empty = a
+ * shop-locale code like "en" / "fr". Mirrors ContentTranslation.marketId's
+ * "" = global convention so the DB column is never NULL and unique/index
+ * lookups stay deterministic across engines.
  */
 export async function saveAuditSnapshot(
   db: PrismaClient,
   shop: string,
   audit: AuditAggregate,
+  locale: string = "",
 ): Promise<void> {
   await db.seoScoreSnapshot.create({
     data: {
       shop,
+      locale,
       averageScore: audit.averageScore,
       totalScanned: audit.totalScanned,
       totalAvailable: audit.totalAvailable,
@@ -619,33 +871,36 @@ export async function saveAuditSnapshot(
     },
   });
 
-  // Prune: find the id of the Nth-newest row and delete everything older.
-  // Two small queries beat a single DELETE ... OFFSET (not portable in
-  // Prisma) and keep the cap exact even under concurrent writes.
+  // Prune: find the id of the Nth-newest row (for this locale) and delete
+  // everything older. Two small queries beat a single DELETE ... OFFSET
+  // (not portable in Prisma) and keep the cap exact even under concurrent
+  // writes.
   const keep = await db.seoScoreSnapshot.findMany({
-    where: { shop },
+    where: { shop, locale },
     select: { id: true },
     orderBy: { createdAt: "desc" },
     take: MAX_SNAPSHOTS_PER_SHOP,
   });
   if (keep.length === MAX_SNAPSHOTS_PER_SHOP) {
     await db.seoScoreSnapshot.deleteMany({
-      where: { shop, id: { notIn: keep.map((r) => r.id) } },
+      where: { shop, locale, id: { notIn: keep.map((r) => r.id) } },
     });
   }
 }
 
 /**
- * Latest snapshot for a shop, or null if none exists yet or the stored
- * payload is corrupt (defensive JSON.parse — a bad row must never 500 the
- * dashboard, just fall back to "no snapshot").
+ * Latest snapshot for a (shop, locale), or null if none exists yet or the
+ * stored payload is corrupt (defensive JSON.parse — a bad row must never 500
+ * the dashboard, just fall back to "no snapshot"). `locale` = "" for the
+ * primary-locale snapshot.
  */
 export async function getLatestAuditSnapshot(
   db: PrismaClient,
   shop: string,
+  locale: string = "",
 ): Promise<AuditSnapshot | null> {
   const row = await db.seoScoreSnapshot.findFirst({
-    where: { shop },
+    where: { shop, locale },
     orderBy: { createdAt: "desc" },
   });
   if (!row) return null;
@@ -894,10 +1149,11 @@ export async function analyzeLocale(
 export async function getAuditTrend(
   db: PrismaClient,
   shop: string,
+  locale: string = "",
   limit: number = MAX_SNAPSHOTS_PER_SHOP,
 ): Promise<AuditTrendPoint[]> {
   const rows = await db.seoScoreSnapshot.findMany({
-    where: { shop },
+    where: { shop, locale },
     select: { createdAt: true, averageScore: true, totalScanned: true },
     orderBy: { createdAt: "desc" },
     take: limit,

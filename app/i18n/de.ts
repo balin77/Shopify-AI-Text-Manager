@@ -1300,6 +1300,8 @@ export const de = {
       rescan: "Neu scannen",
       lastScanned: "Zuletzt gescannt: {time}",
       scanRunning: "Ein Scan läuft — wird automatisch aktualisiert…",
+      primaryLocaleSuffix: "Primär",
+      foreignLocaleBanner: "SEO-Analyse für {locale}. Score, Probleme und KI-Fixes gelten für diese Sprache — der Primärsprachen-Score bleibt separat.",
       scanStartError: "Der Scan konnte nicht gestartet werden. Bitte erneut versuchen.",
       trendTitle: "Score-Verlauf",
       problemsTruncated: "{shown} von {total} betroffenen Inhalten werden angezeigt.",

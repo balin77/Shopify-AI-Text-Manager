@@ -18,8 +18,8 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import React, { useEffect, useRef, useState } from "react";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -46,6 +46,8 @@ import {
   type AuditType,
   type AuditTrendPoint,
 } from "../services/seo/audit.service";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
+import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
@@ -63,7 +65,7 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
 ]);
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
   const settings = await db.aISettings.findUnique({
@@ -80,17 +82,40 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
   const effectiveLimit = seoTitleEffectiveLimit(suffix);
 
-  let snapshot = await getLatestAuditSnapshot(db, session.shop);
+  // Shop locales drive the language toolbar; primary determines what "" means
+  // in the snapshot table. Fetches are cached (60s TTL) so this only hits
+  // Shopify once per minute per shop.
+  const shopLocales = await getCachedShopLocales(admin, session.shop).catch(() => []);
+  const primary = shopLocales.find((l) => l.primary);
+  const primaryLocale = primary?.locale ?? "";
+
+  // Selected locale from ?locale=xx. Empty = primary (snapshot sentinel).
+  // Unknown/unpublished/non-shop locales fall back to primary so a stale link
+  // never renders an empty dashboard.
+  const requestedLocale = new URL(request.url).searchParams.get("locale") ?? "";
+  const isValidForeign =
+    requestedLocale.length > 0 &&
+    requestedLocale !== primaryLocale &&
+    shopLocales.some((l) => l.locale === requestedLocale && l.published && !l.primary);
+  const activeLocaleKey = isValidForeign ? requestedLocale : "";
+
+  let snapshot = await getLatestAuditSnapshot(db, session.shop, activeLocaleKey);
   if (!snapshot) {
-    // First-ever visit for this shop: no snapshot yet. Run the scan inline
-    // ONCE so this load still works, and persist it immediately so every
-    // subsequent visit (and the trend chart) is instantly cached from here on.
-    const audit = await analyzeStore(session.shop, { db, seoTitleEffectiveLimit: effectiveLimit, plan });
-    await saveAuditSnapshot(db, session.shop, audit);
+    // First-ever visit for this (shop, locale): no snapshot yet. Run the scan
+    // inline ONCE so this load still works, and persist it immediately so
+    // every subsequent visit is instantly cached from here on. The next
+    // "Rescan" click will refresh every locale in one Task.
+    const audit = await analyzeStore(session.shop, {
+      db,
+      seoTitleEffectiveLimit: effectiveLimit,
+      plan,
+      locale: activeLocaleKey || undefined,
+    });
+    await saveAuditSnapshot(db, session.shop, audit, activeLocaleKey);
     snapshot = { audit, createdAt: new Date() };
   }
 
-  const trend = await getAuditTrend(db, session.shop);
+  const trend = await getAuditTrend(db, session.shop, activeLocaleKey);
 
   // Cheap existence checks so the buttons render disabled/loading after a
   // reload instead of only reacting to the click in THIS tab (the handlers'
@@ -113,6 +138,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     trend,
     bulkFixRunning: !!runningBulkFix,
     scanRunning: !!runningScan,
+    shopLocales,
+    primaryLocale,
+    activeLocale: activeLocaleKey, // "" = primary; else the foreign locale code
   });
 };
 
@@ -131,10 +159,45 @@ export default function SeoDashboard() {
     trend,
     bulkFixRunning,
     scanRunning,
+    shopLocales,
+    primaryLocale,
+    activeLocale,
   } = useLoaderData<typeof loader>();
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const d = t.seo.dashboard;
+
+  // URL search-params ownership: switching locale updates ?locale=xx, which
+  // re-runs the loader against the per-locale snapshot. `activeLocale` is the
+  // server-validated key ("" = primary), NOT whatever's in the URL — that way
+  // an unknown locale falls back cleanly without needing client-side
+  // reconciliation.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isForeign = activeLocale !== "";
+  const sortedLocales = useMemo(() => {
+    // useLoaderData widens array-item types with `| null` when the loader
+    // catches and returns `[]` — filter defensively so downstream code sees
+    // a plain non-null shape.
+    const list = (shopLocales as (typeof shopLocales[number] | null)[])
+      .filter((l): l is NonNullable<typeof l> => l !== null && l.published);
+    list.sort((a, b) => {
+      if (a.primary) return -1;
+      if (b.primary) return 1;
+      return (a.name || a.locale).localeCompare(b.name || b.locale);
+    });
+    return list;
+  }, [shopLocales]);
+
+  const switchLocale = (locale: string) => {
+    // Empty string / primary code => primary tab, drop the URL param entirely.
+    const next = new URLSearchParams(searchParams);
+    if (!locale || locale === primaryLocale) {
+      next.delete("locale");
+    } else {
+      next.set("locale", locale);
+    }
+    setSearchParams(next, { replace: true });
+  };
 
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
@@ -287,6 +350,10 @@ export default function SeoDashboard() {
       formData.append("itemType", singleItem.type);
     }
     if (fixAllForItem) formData.append("fixAllForItem", "true");
+    // Foreign-locale fix: the server generates a translation (adapted for the
+    // SEO constraint), writes translationsRegister + ContentTranslation, and
+    // never touches the primary field. "" = primary, unchanged behavior.
+    if (activeLocale) formData.append("locale", activeLocale);
     fixFetcher.submit(formData, { method: "post", action: "/api/ai" });
   };
 
@@ -307,6 +374,49 @@ export default function SeoDashboard() {
   return (
     <SeoSectionLayout sectionId="overview">
       <BlockStack gap="400">
+        {/* Language switcher — mirrors the content editor's locale toolbar.
+            Clicking a locale updates ?locale=xx which re-runs the loader
+            against the per-locale snapshot. `activeLocale` (server-validated)
+            drives which button is primary, so a stale/unknown URL never
+            renders the wrong tab. */}
+        {sortedLocales.length > 1 && (
+          <InlineStack gap="200" blockAlign="center" wrap>
+            {sortedLocales.map((locale) => {
+              const isPrimary = locale.locale === primaryLocale;
+              const isActive = isPrimary ? activeLocale === "" : activeLocale === locale.locale;
+              const label = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${
+                isPrimary ? ` (${d.primaryLocaleSuffix})` : ""
+              }`;
+              return (
+                <Button
+                  key={locale.locale}
+                  size="slim"
+                  variant={isActive ? "primary" : undefined}
+                  onClick={() => switchLocale(isPrimary ? "" : locale.locale)}
+                >
+                  {label}
+                </Button>
+              );
+            })}
+          </InlineStack>
+        )}
+
+        {/* Foreign-locale hint: no scoring surprise if the merchant lands here
+            expecting primary numbers — the copy names the locale the score is
+            for so the tab identity is obvious even without checking the URL. */}
+        {isForeign && (
+          <Banner tone="info">
+            {d.foreignLocaleBanner.replace(
+              "{locale}",
+              getLocalizedLanguageName(
+                activeLocale,
+                appLocale,
+                sortedLocales.find((l) => l.locale === activeLocale)?.name,
+              ),
+            )}
+          </Banner>
+        )}
+
         {audit.capped && (
           <Banner tone="info">
             {d.cappedNote
