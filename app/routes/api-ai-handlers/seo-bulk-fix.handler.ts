@@ -534,6 +534,19 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     ? await loadForeignTranslations(db, shop, foreignLocale, items)
     : new Map<string, FixableRow>();
 
+  // Foreign-locale digest cache: one aliased-batch call up front replaces N
+  // per-item `translatableResource` queries in `persistFieldForLocale`. On a
+  // 100-item bucket that's 2 GraphQL requests instead of 100. Missing entries
+  // (resource has no such translatable key) fall back to per-item lookup
+  // inside persistFieldForLocale, so a partial batch is still correct.
+  const digestByResource = isForeign
+    ? await loadTranslatableDigests(
+        gateway,
+        items.map((it) => it.id),
+        FIELD_TO_TRANSLATION_KEY[field],
+      )
+    : new Map<string, string>();
+
   // Duplicate-bucket siblings: for each item, the OTHER items sharing the same
   // (normalized) current value. That value is passed to the prompt as an
   // "avoid these" hint so the AI produces something distinct instead of
@@ -663,6 +676,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
               value: generated,
               locale: foreignLocale,
               gateway,
+              digest: digestByResource.get(id),
             });
           } else {
             await persistField({
@@ -911,6 +925,19 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
     .update({ where: { id: taskId }, data: { total } })
     .catch(() => {});
 
+  // Foreign-locale digest cache for MediaImage GIDs — same aliased-batch
+  // trick as runSeoBulkFix. Featured-image-only products are skipped upstream
+  // in the foreign branch, so every `job.mediaId` here is populated. On a
+  // product with 5 gallery images × 100 items = 500 lookups → 10 requests
+  // instead of 500.
+  const altDigestByMedia = isForeign
+    ? await loadTranslatableDigests(
+        gateway,
+        jobs.map((j) => j.mediaId ?? "").filter((m) => m.length > 0),
+        "alt",
+      )
+    : new Map<string, string>();
+
   // Dedupe succeeded items so the per-image loop below doesn't push the same
   // content row multiple times when it has several images.
   const succeededSeen = new Set<string>();
@@ -942,6 +969,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
             altText,
             locale: foreignLocale,
             gateway,
+            digest: job.mediaId ? altDigestByMedia.get(job.mediaId) : undefined,
           });
         } else {
           await persistImageAltText({
@@ -1871,6 +1899,17 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
   // was over-eager). Not a failure — the code is effectively already fixed.
   if (jobs.length === 0) return;
 
+  // Single-item scope but potentially multiple gallery images — batch one
+  // digest lookup covering every image at once instead of N per-image
+  // roundtrips inside persistImageAltTextForLocale. Cheap even for jobs.length===1.
+  const altDigestByMedia = isForeign
+    ? await loadTranslatableDigests(
+        gateway,
+        jobs.map((j) => j.mediaId ?? "").filter((m) => m.length > 0),
+        "alt",
+      )
+    : new Map<string, string>();
+
   const failures: string[] = [];
   for (const job of jobs) {
     try {
@@ -1899,6 +1938,7 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
           altText,
           locale: foreignLocale,
           gateway,
+          digest: job.mediaId ? altDigestByMedia.get(job.mediaId) : undefined,
         });
       } else {
         await persistImageAltText({
@@ -1930,11 +1970,94 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
 //     and resolve its display name for the prompt.
 //   • loadForeignTranslations / loadForeignFieldValue: batch/scalar ContentTranslation
 //     lookups for the current foreign values (feed the "avoid" hint + prompt seed).
+//   • loadTranslatableDigests: aliased-subquery batch of translatableResource
+//     digest lookups; kills the per-item Shopify roundtrip on large buckets.
 //   • persistFieldForLocale: translationsRegister on the resource's own GID +
-//     ContentTranslation upsert. Digest fetched lazily per-item.
+//     ContentTranslation upsert. Digest accepted from the batch cache when
+//     available (falls back to a single-item fetch for FixAllForItem).
 //   • persistImageAltTextForLocale: translationsRegister on the MediaImage GID +
 //     ProductImageAltTranslation upsert (product images only — Collection/Article
 //     featured-image alt has no per-locale store in this app).
+
+/** Alias batch cap. Shopify's calculated-cost budget for a single request is
+ * generous, but `translatableResource` isn't free — each aliased selection
+ * costs ~1 point. 50 stays well inside the per-request budget while cutting
+ * a 100-item bucket down to 2 roundtrips instead of 100. */
+const DIGEST_BATCH_CHUNK = 50;
+
+/**
+ * Batch-fetch translation digests for many resource GIDs at once. Uses
+ * aliased sub-selections (Shopify has no `translatableResourcesByIds`) so
+ * one HTTP request covers up to DIGEST_BATCH_CHUNK resources. Returns a
+ * `resourceId -> digest` map for the requested `key`; missing entries
+ * (resource has no such translatable content) simply aren't in the map, so
+ * callers can fall back to a single-item fetch or fail-fast per item.
+ *
+ * `resourceIds` are deduped internally — the same GID passed twice would
+ * otherwise waste a slot in the alias batch and cost extra points.
+ */
+async function loadTranslatableDigests(
+  gateway: ShopifyApiGateway,
+  resourceIds: string[],
+  key: string,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (resourceIds.length === 0) return map;
+
+  const unique = Array.from(new Set(resourceIds));
+
+  for (let i = 0; i < unique.length; i += DIGEST_BATCH_CHUNK) {
+    const chunk = unique.slice(i, i + DIGEST_BATCH_CHUNK);
+
+    // Build the aliased query dynamically. Variable names `$r0..$rN` match
+    // the alias names `a0..aN` so response parsing is index-driven and
+    // doesn't need a per-request key map. GraphQL doesn't support
+    // interpolated variables in query strings, but structured variable
+    // definitions are still fine because the query text is derived from
+    // `chunk.length` only (not the GIDs themselves) — so Shopify's query
+    // cache still keys on identical batch sizes.
+    const varDefs = chunk.map((_, idx) => `$r${idx}: ID!`).join(", ");
+    const selections = chunk
+      .map(
+        (_, idx) =>
+          `a${idx}: translatableResource(resourceId: $r${idx}) { translatableContent { key digest } }`,
+      )
+      .join("\n        ");
+    const query = `#graphql
+      query seoBulkFixBatchDigests(${varDefs}) {
+        ${selections}
+      }`;
+    const variables: Record<string, string> = {};
+    for (let idx = 0; idx < chunk.length; idx++) variables[`r${idx}`] = chunk[idx];
+
+    let response;
+    try {
+      response = await gateway.graphql(query, { variables });
+    } catch (err: unknown) {
+      // One bad chunk mustn't sink the whole run — log and fall through with
+      // an empty result for these ids. Callers will retry per-item via the
+      // legacy fetch path in persistFieldForLocale / persistImageAltTextForLocale.
+      logger.warn("[API-AI] SEO bulk-fix: digest batch failed, falling back per-item", {
+        context: "AI",
+        chunkStart: i,
+        chunkSize: chunk.length,
+        error: errorMessage(err),
+      });
+      continue;
+    }
+    const data = (await response.json()) as {
+      data?: Record<string, { translatableContent?: { key: string; digest: string }[] } | null>;
+    };
+    if (!data.data) continue;
+    for (let idx = 0; idx < chunk.length; idx++) {
+      const node = data.data[`a${idx}`];
+      const content = node?.translatableContent ?? [];
+      const digest = content.find((c) => c.key === key)?.digest;
+      if (digest) map.set(chunk[idx], digest);
+    }
+  }
+  return map;
+}
 
 /**
  * Validate `requestedLocale` against shopLocales.
@@ -2071,6 +2194,11 @@ interface PersistForLocaleArgs {
   value: string;
   locale: string;
   gateway: ShopifyApiGateway;
+  /** Pre-fetched digest from `loadTranslatableDigests`. When present, skips
+   * the per-item `translatableResource` query. Absent = fall back to a
+   * single-item fetch (used by `runFixAllForItem`, which only touches one
+   * item and doesn't justify a batch). */
+  digest?: string;
 }
 
 /**
@@ -2078,31 +2206,34 @@ interface PersistForLocaleArgs {
  * ContentTranslation upsert. Follows the same shape text-translation.handler.ts
  * uses for the standard "translate one field" flow.
  *
- * Digest fetched inline per-item (cheap: one small query, and per-item audits
- * already fetch shopify data anyway). userErrors + missing digest = throw so
- * the outer runner marks this fix failed instead of silently writing only to
- * the DB.
+ * Digest resolution: use the pre-fetched value from the runner's batch cache
+ * when available; otherwise fetch inline (single-item paths). userErrors +
+ * missing digest = throw so the outer runner marks this fix failed instead
+ * of silently writing only to the DB.
  */
 async function persistFieldForLocale(params: PersistForLocaleArgs): Promise<void> {
-  const { db, shop, type, id, field, value, locale, gateway } = params;
+  const { db, shop, type, id, field, value, locale, gateway, digest: prefetchedDigest } = params;
   const key = FIELD_TO_TRANSLATION_KEY[field];
   const resourceType = AUDIT_TYPE_TO_RESOURCE_TYPE[type];
 
-  // Fetch this resource's translatable digest for the specific key.
-  const digestResponse = await gateway.graphql(
-    `#graphql
-      query seoBulkFixTranslatableContent($resourceId: ID!) {
-        translatableResource(resourceId: $resourceId) {
-          translatableContent { key digest }
-        }
-      }`,
-    { variables: { resourceId: id } },
-  );
-  const digestData = (await digestResponse.json()) as {
-    data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
-  };
-  const content = digestData.data?.translatableResource?.translatableContent ?? [];
-  const digest = content.find((c) => c.key === key)?.digest;
+  let digest = prefetchedDigest;
+  if (!digest) {
+    // Fallback: fetch this resource's translatable digest for the specific key.
+    const digestResponse = await gateway.graphql(
+      `#graphql
+        query seoBulkFixTranslatableContent($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            translatableContent { key digest }
+          }
+        }`,
+      { variables: { resourceId: id } },
+    );
+    const digestData = (await digestResponse.json()) as {
+      data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
+    };
+    const content = digestData.data?.translatableResource?.translatableContent ?? [];
+    digest = content.find((c) => c.key === key)?.digest;
+  }
   if (!digest) {
     throw new Error(
       `No translatable digest for key "${key}" on ${resourceType} ${id} — Shopify won't accept the translation.`,
@@ -2192,6 +2323,9 @@ interface PersistImageAltForLocaleArgs {
   altText: string;
   locale: string;
   gateway: ShopifyApiGateway;
+  /** Pre-fetched digest for this image's MediaImage GID. See
+   * PersistForLocaleArgs.digest. */
+  digest?: string;
 }
 
 /**
@@ -2200,7 +2334,7 @@ interface PersistImageAltForLocaleArgs {
  * — Collection/Article featured-image paths were already skipped upstream.
  */
 async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs): Promise<void> {
-  const { db, shop, job, altText, locale, gateway } = params;
+  const { db, shop, job, altText, locale, gateway, digest: prefetchedDigest } = params;
   if (job.type !== "product") {
     // Defensive: upstream already filters these out, but never fall through
     // to a silent no-op — this would strand the DB in a corrupt state.
@@ -2214,25 +2348,29 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
 
   // Resolve mediaId if we don't have one cached (bare featuredImageUrl case
   // is skipped for foreign runs, but this stays here for defense in depth).
-  let mediaId = job.mediaId;
+  const mediaId = job.mediaId;
   if (!mediaId) {
     throw new Error("MediaImage GID missing — cannot translate this image's alt text.");
   }
 
-  const digestResponse = await gateway.graphql(
-    `#graphql
-      query seoBulkFixAltDigest($resourceId: ID!) {
-        translatableResource(resourceId: $resourceId) {
-          translatableContent { key digest }
-        }
-      }`,
-    { variables: { resourceId: mediaId } },
-  );
-  const digestData = (await digestResponse.json()) as {
-    data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
-  };
-  const digest =
-    digestData.data?.translatableResource?.translatableContent?.find((c) => c.key === "alt")?.digest;
+  let digest = prefetchedDigest;
+  if (!digest) {
+    const digestResponse = await gateway.graphql(
+      `#graphql
+        query seoBulkFixAltDigest($resourceId: ID!) {
+          translatableResource(resourceId: $resourceId) {
+            translatableContent { key digest }
+          }
+        }`,
+      { variables: { resourceId: mediaId } },
+    );
+    const digestData = (await digestResponse.json()) as {
+      data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
+    };
+    digest = digestData.data?.translatableResource?.translatableContent?.find(
+      (c) => c.key === "alt",
+    )?.digest;
+  }
   if (!digest) {
     throw new Error(`No translatable digest for alt on MediaImage ${mediaId}.`);
   }
