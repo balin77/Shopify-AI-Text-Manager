@@ -37,6 +37,7 @@ import {
   type ShopInfo,
   type JsonLdWarning,
 } from "../services/structured-data.service";
+import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
 
 const GOOGLE_RICH_RESULTS_TEST = "https://search.google.com/test/rich-results";
 
@@ -107,13 +108,80 @@ async function fetchShopInfo(admin: any, fallbackShop: string): Promise<ShopInfo
     return {
       name: s?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: s?.primaryDomain?.host || fallbackShop,
-      // logoUrl is intentionally unset — see FIELD-EXISTENCE NOTES above.
+      // logoUrl is populated separately by fetchShopLogoUrl — see FIELD-
+      // EXISTENCE NOTES above for why we can't get it from Shop.brand.
     };
   } catch {
     return {
       name: fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: fallbackShop,
     };
+  }
+}
+
+// Files-search fallback: resolves a shopify://shop_images/<filename> URI to a
+// CDN URL by matching the filename in the shop's Files. Kept small (first: 5)
+// because we only take the first hit; the query filter narrows further.
+const FILES_BY_FILENAME_QUERY = `#graphql
+  query seoStructuredDataFilesByFilename($query: String!) {
+    files(first: 5, query: $query) {
+      edges {
+        node {
+          alt
+          ... on MediaImage { image { url } }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Reads the Organization logo the same way the storefront's app-embed Liquid
+ * block does — but from the Admin API, which does NOT expose `shop.brand`.
+ * The theme's `config/settings_data.json` stores the merchant-picked header
+ * logo under `current.logo` as a shopify://shop_images/<filename> URI; we
+ * strip the JS-comment prefix, JSON-parse the body, and resolve the URI to
+ * a CDN URL via the Files API. Returns null when no logo is set — the UI
+ * then surfaces the Organization warning + a deep-link to Settings → Brand.
+ */
+async function fetchShopLogoUrl(admin: any): Promise<string | null> {
+  try {
+    const themeId = await getMainThemeId(admin);
+    if (!themeId) return null;
+
+    const raw = await readThemeFile(admin, themeId, "config/settings_data.json");
+    if (!raw) return null;
+
+    // Shopify prefixes settings_data.json with a "/* ... */" banner comment
+    // that isn't valid JSON. Strip everything up to and including the first
+    // `*/` before parsing; fall through cleanly if the file happens to have
+    // no comment (older themes).
+    const commentEnd = raw.indexOf("*/");
+    const body = commentEnd > -1 ? raw.slice(commentEnd + 2) : raw;
+    const settings: any = JSON.parse(body);
+    const logoUri: string | undefined = settings?.current?.logo;
+    if (!logoUri || typeof logoUri !== "string") return null;
+
+    // Already a full URL (rare — some legacy themes store it that way).
+    if (/^https?:\/\//i.test(logoUri)) return logoUri;
+
+    // Normal case: shopify://shop_images/<filename>. Resolve via Files search.
+    const match = logoUri.match(/^shopify:\/\/shop_images\/(.+)$/);
+    if (!match) return null;
+    const filename = decodeURIComponent(match[1]);
+
+    const res = await admin.graphql(FILES_BY_FILENAME_QUERY, {
+      variables: { query: `filename:${filename}` },
+    });
+    const j: any = await res.json();
+    const edges: any[] = j?.data?.files?.edges ?? [];
+    for (const e of edges) {
+      const url = e?.node?.image?.url;
+      if (url) return url;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -195,11 +263,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
-  const [shopInfo, productLive, articlePublishedAt] = await Promise.all([
+  const [shopInfoBase, shopLogoUrl, productLive, articlePublishedAt] = await Promise.all([
     fetchShopInfo(admin, shop),
+    fetchShopLogoUrl(admin),
     product ? fetchProductPreviewData(admin, product.id) : Promise.resolve(null),
     article ? fetchArticlePublishedAt(admin, article.id) : Promise.resolve(null),
   ]);
+  const shopInfo: ShopInfo = { ...shopInfoBase, logoUrl: shopLogoUrl };
 
   const previews: PreviewBlock[] = [];
 
