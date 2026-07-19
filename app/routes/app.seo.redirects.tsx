@@ -432,12 +432,43 @@ export default function SeoRedirects() {
     );
   };
 
-  const handleExport = () => {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const handleExport = async () => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     params.set("export", "1");
-    // Direct navigation — a fetcher would try to parse the CSV response as JSON.
-    window.location.href = `/app/seo/redirects?${params.toString()}`;
+    // A top-level navigation to the CSV response blanks the embedded iframe
+    // (App Bridge session token isn't attached to a raw `window.location.href`
+    // request, so `authenticate.admin` bounces to auth). Same-origin `fetch`
+    // carries the session cookie and lets us assemble the download client-side.
+    setExporting(true);
+    setExportError(null);
+    try {
+      const res = await fetch(`/app/seo/redirects?${params.toString()}`, {
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        setExportError(r.errors.createFailed);
+        return;
+      }
+      const blob = await res.blob();
+      const disp = res.headers.get("Content-Disposition") || "";
+      const match = disp.match(/filename="?([^"]+)"?/);
+      const filename = match ? match[1] : "redirects.csv";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError(r.errors.createFailed);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleImportClick = () => {
@@ -594,7 +625,7 @@ export default function SeoRedirects() {
                 >
                   {r.importCsvButton}
                 </Button>
-                <Button onClick={handleExport}>{r.exportCsvButton}</Button>
+                <Button onClick={handleExport} loading={exporting}>{r.exportCsvButton}</Button>
               </InlineStack>
             </InlineStack>
             <input
@@ -606,6 +637,7 @@ export default function SeoRedirects() {
             />
             {createError && <Banner tone="critical">{createError}</Banner>}
             {importError && <Banner tone="critical">{importError}</Banner>}
+            {exportError && <Banner tone="critical">{exportError}</Banner>}
             {importResult && (
               <Banner tone={importResult.errors.length > 0 ? "warning" : "success"}>
                 <BlockStack gap="100">
