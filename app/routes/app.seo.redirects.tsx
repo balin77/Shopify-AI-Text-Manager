@@ -492,6 +492,13 @@ export default function SeoRedirects() {
   return (
     <SeoSectionLayout sectionId="redirects">
       <BlockStack gap="400">
+        <Banner tone="info" title={r.helpTitle}>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">{r.helpBody1}</Text>
+            <Text as="p" variant="bodyMd">{r.helpBody2}</Text>
+          </BlockStack>
+        </Banner>
+
         {/* Frequent 404s */}
         <Card>
           <BlockStack gap="300">

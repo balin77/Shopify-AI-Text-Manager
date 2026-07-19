@@ -118,6 +118,13 @@ export default function SeoIndexNow() {
     <SeoSectionLayout sectionId="indexNow">
       {data.gated ? null : (
         <BlockStack gap="400">
+          <Banner tone="info" title={n.helpTitle}>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">{n.helpBody1}</Text>
+              <Text as="p" variant="bodyMd">{n.helpBody2}</Text>
+            </BlockStack>
+          </Banner>
+
           {msg && <Banner tone={msg.tone}>{msg.text}</Banner>}
 
           <Card>

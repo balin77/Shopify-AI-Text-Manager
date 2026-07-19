@@ -118,6 +118,13 @@ export default function SeoAeo() {
     <SeoSectionLayout sectionId="aeo">
       {data.gated ? null : (
         <BlockStack gap="400">
+          <Banner tone="info" title={a.helpTitle}>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">{a.helpBody1}</Text>
+              <Text as="p" variant="bodyMd">{a.helpBody2}</Text>
+            </BlockStack>
+          </Banner>
+
           {genMsg && <Banner tone={genMsg.tone}>{genMsg.msg}</Banner>}
 
           {/* llms.txt */}

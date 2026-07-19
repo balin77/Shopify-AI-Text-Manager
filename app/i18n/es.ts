@@ -1423,6 +1423,9 @@ export const es: Translation = {
       },
     },
     redirectsPage: {
+      helpTitle: "Por qué importan las redirecciones",
+      helpBody1: "Las redirecciones de URL (redirecciones 301) le dicen a Google y a los visitantes: la página antigua se movió, aquí está la nueva. Cuando renombras productos o páginas, reestructuras tu tienda o eliminas contenido, solo una redirección preserva tu posicionamiento en Google, tus backlinks y los marcadores guardados; de lo contrario, los visitantes acaban en un error 404 y Google descarta las señales de ranking acumuladas.",
+      helpBody2: "Abajo puedes crear, editar e importar/exportar redirecciones por CSV. Además, recopilamos los errores 404 reales de tu tienda (una vez que el bloque de la app esté activo en el tema) y sugerimos una URL de destino con un clic, para que puedas convertir cada 404 en una redirección rápidamente.",
       redirectsTitle: "Redirecciones de URL",
       searchPlaceholder: "Buscar redirecciones (p. ej. path:/antiguo)",
       searchButton: "Buscar",
@@ -1539,6 +1542,9 @@ export const es: Translation = {
       },
     },
     searchConsolePage: {
+      helpTitle: "¿Qué te da conectar Search Console?",
+      helpBody1: "Google Search Console (GSC) es la herramienta oficial de Google para propietarios de sitios y la única fuente de datos reales sobre cómo aparece tu tienda en Google: qué búsquedas la muestran, con qué frecuencia se hace clic, en qué posición se posiciona y si hay problemas de indexación. Conecta tu tienda aquí y traeremos esos datos automáticamente y los mostraremos junto a tu contenido.",
+      helpBody2: "Abajo verás: tus principales consultas de búsqueda con clics, impresiones y posición; «victorias rápidas» (consultas en posiciones 4–20 con baja tasa de clics, donde un mejor título o meta descripción rinde más); y una herramienta de inspección de URL para comprobar en vivo si una página está indexada. También puedes enviar aquí tu sitemap a Google. El ranking de palabras clave se sincroniza automáticamente una vez al día.",
       notConfigured: "La integración con Google Search Console aún no está configurada para esta app (faltan las credenciales OAuth). Contacta al operador de la app.",
       connectTitle: "Conectar Google Search Console",
       connectBody: "Conecta tu cuenta de Google para ver consultas de búsqueda reales, clics, impresiones y posiciones de tu tienda. Tu tienda debe estar verificada en Search Console.",
@@ -1586,6 +1592,9 @@ export const es: Translation = {
       lastSyncedLabel: "Última sincronización",
     },
     aeoPage: {
+      helpTitle: "SEO para búsquedas con IA (AEO)",
+      helpBody1: "Los sistemas de IA como ChatGPT, Perplexity, Claude o Google AI Overviews buscan respuestas en la web y citan sitios individuales en sus respuestas. Dos palancas hacen que tu tienda sea preferentemente encontrable y citable por ellos: un archivo llms.txt que da a los rastreadores de IA un mapa claro del contenido de tu tienda, y un robots.txt que no bloquee accidentalmente a esos rastreadores.",
+      helpBody2: "Abajo puedes generar automáticamente y mantener actualizado tu llms.txt (se sirve en tu dominio en /llms.txt), y ves de un vistazo qué bots de IA (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, etc.) tienen actualmente acceso a tu tienda. Si alguno está bloqueado, te mostramos qué cambiar en Shopify para arreglarlo.",
       llmsTitle: "llms.txt",
       llmsPresent: "presente",
       llmsAbsent: "no presente",
@@ -1655,6 +1664,9 @@ export const es: Translation = {
       errorGeneric: "No se pudo guardar. Inténtalo de nuevo.",
     },
     indexNowPage: {
+      helpTitle: "Indexación instantánea con IndexNow",
+      helpBody1: "IndexNow es un protocolo creado por Microsoft (Bing) y Yandex que permite avisar a los motores de búsqueda y a los rastreadores de IA en el momento en que tu tienda cambia, en lugar de esperar a que vuelvan a rastrearte por su cuenta. Eso puede reducir de días a minutos el tiempo entre una nueva descripción de producto, un nuevo título o un nuevo artículo de blog y su aparición en resultados de búsqueda y respuestas de IA.",
+      helpBody2: "Cuando actives IndexNow aquí, notificaremos automáticamente en segundo plano cada cambio relevante (productos, colecciones, páginas, artículos de blog) a Bing, Yandex y los rastreadores de IA compatibles. Abajo verás el estado actual, la clave generada (necesaria para que los motores te verifiquen como propietario) y un registro de los últimos envíos.",
       title: "IndexNow",
       enabled: "activo",
       disabled: "inactivo",

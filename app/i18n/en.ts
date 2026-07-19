@@ -1424,6 +1424,9 @@ export const en: Translation = {
       },
     },
     redirectsPage: {
+      helpTitle: "Why redirects matter",
+      helpBody1: "URL redirects (301 redirects) tell Google and visitors: the old page has moved, here's the new one. When you rename products or pages, restructure your shop, or delete content, only a redirect preserves your Google ranking, backlinks, and saved bookmarks — otherwise visitors land on a 404 error page and Google discards the ranking signals you built up.",
+      helpBody2: "Below you can create, edit, and import/export redirects via CSV. On top of that, we collect actual 404 errors from your storefront (once the app block is active in the theme) and suggest a matching target URL with one click, so you can turn each 404 into a redirect quickly.",
       redirectsTitle: "URL redirects",
       searchPlaceholder: "Search redirects (e.g. path:/old)",
       searchButton: "Search",
@@ -1540,6 +1543,9 @@ export const en: Translation = {
       },
     },
     searchConsolePage: {
+      helpTitle: "What does connecting Search Console get you?",
+      helpBody1: "Google Search Console (GSC) is Google's official tool for website owners and the only source of real data about how your shop shows up on Google — which queries surface your pages, how often they get clicked, what position you rank at, and whether there are indexing problems. Connect your shop here and we pull that data automatically and show it next to your content.",
+      helpBody2: "You'll see below: your top search queries with clicks, impressions and position; \"quick wins\" (queries ranking at position 4–20 with a low click-through rate — where a better title or meta description pays off most); and a URL inspection tool to check live whether a page is indexed. You can also submit your sitemap to Google here. Keyword rankings sync automatically once per day.",
       notConfigured: "The Google Search Console integration isn't set up for this app yet (OAuth credentials missing). Please contact the app operator.",
       connectTitle: "Connect Google Search Console",
       connectBody: "Connect your Google account to see real search queries, clicks, impressions and positions for your store. Your store must be verified in Search Console.",
@@ -1587,6 +1593,9 @@ export const en: Translation = {
       lastSyncedLabel: "Last synced",
     },
     aeoPage: {
+      helpTitle: "SEO for AI search (AEO)",
+      helpBody1: "AI systems like ChatGPT, Perplexity, Claude and Google AI Overviews search the web for answers and cite individual sites in their replies. Two things make your shop preferentially findable and citable by them: an llms.txt file that gives AI crawlers a clean map of your shop's content, and a robots.txt that doesn't accidentally block those crawlers.",
+      helpBody2: "Below you can auto-generate and keep your llms.txt up to date (it's served from your domain at /llms.txt), and you get an at-a-glance view of which AI bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, etc.) currently have access to your shop. If any are blocked, we show you what to change in Shopify to fix it.",
       llmsTitle: "llms.txt",
       llmsPresent: "present",
       llmsAbsent: "not present",
@@ -1656,6 +1665,9 @@ export const en: Translation = {
       errorGeneric: "Save failed. Please try again.",
     },
     indexNowPage: {
+      helpTitle: "Instant indexing with IndexNow",
+      helpBody1: "IndexNow is a protocol built by Microsoft (Bing) and Yandex that lets search engines and AI crawlers be notified the moment your shop changes — instead of waiting for them to crawl you again on their own. That can cut the time between a new product description, title or blog article and its appearance in search results and AI answers from days to minutes.",
+      helpBody2: "Once you enable IndexNow here, we automatically report every relevant change (products, collections, pages, blog articles) to Bing, Yandex and the compatible AI crawlers in the background. Below you'll see the current status, the generated key (needed so search engines can verify you as the site owner), and a log of the most recent submissions.",
       title: "IndexNow",
       enabled: "active",
       disabled: "inactive",

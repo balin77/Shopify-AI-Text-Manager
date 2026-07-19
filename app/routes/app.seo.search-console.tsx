@@ -322,6 +322,13 @@ export default function SeoSearchConsole() {
   return (
     <SeoSectionLayout sectionId="searchConsole">
       <BlockStack gap="400">
+        <Banner tone="info" title={g.helpTitle}>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">{g.helpBody1}</Text>
+            <Text as="p" variant="bodyMd">{g.helpBody2}</Text>
+          </BlockStack>
+        </Banner>
+
         {/* Status from the OAuth bounce-back */}
         {data.statusParam === "connected" && <Banner tone="success">{g.connectedBanner}</Banner>}
         {data.statusParam === "denied" && <Banner tone="warning">{g.deniedBanner}</Banner>}

@@ -23,7 +23,7 @@
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -425,22 +425,13 @@ export default function SeoStructuredData() {
     <SeoSectionLayout sectionId="structuredData">
       <BlockStack gap="400">
         {/* 1. What are structured data + why care */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingLg">
-              {(s as any).introTitle as string}
-            </Text>
-            <Text as="p" variant="bodyMd">
-              {(s as any).introBody1 as string}
-            </Text>
-            <Text as="p" variant="bodyMd">
-              {(s as any).introBody2 as string}
-            </Text>
-            <Text as="p" variant="bodyMd">
-              {(s as any).introBody3 as string}
-            </Text>
+        <Banner tone="info" title={(s as any).introTitle as string}>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
+            <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
+            <Text as="p" variant="bodyMd">{(s as any).introBody3 as string}</Text>
           </BlockStack>
-        </Card>
+        </Banner>
 
         {/* 2. Activation in the theme editor (the two app-embed blocks) */}
         <Card>

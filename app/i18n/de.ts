@@ -1421,6 +1421,9 @@ export const de = {
       },
     },
     redirectsPage: {
+      helpTitle: "Warum Weiterleitungen wichtig sind",
+      helpBody1: "URL-Weiterleitungen (301-Redirects) sagen Google und Besuchern: Die alte Seite ist umgezogen, hier ist die neue. Wenn du Produkte oder Seiten umbenennst, den Shop umstrukturierst oder Inhalte löschst, bleiben Google-Ranking, Backlinks und gespeicherte Lesezeichen nur mit einer Weiterleitung erhalten — sonst landen Besucher auf einer 404-Fehlerseite und Google entwertet die aufgebauten Ranking-Signale.",
+      helpBody2: "Unten kannst du Weiterleitungen anlegen, bearbeiten, per CSV importieren oder exportieren. Zusätzlich sammeln wir tatsächlich aufgetretene 404-Fehler auf deinem Storefront (sobald der App-Block im Theme aktiv ist) und schlagen mit einem Klick eine passende Ziel-URL vor, damit du sie schnell in eine Weiterleitung umwandeln kannst.",
       redirectsTitle: "URL-Weiterleitungen",
       searchPlaceholder: "Weiterleitungen durchsuchen (z. B. path:/alt)",
       searchButton: "Suchen",
@@ -1537,6 +1540,9 @@ export const de = {
       },
     },
     searchConsolePage: {
+      helpTitle: "Was bringt dir die Search-Console-Verbindung?",
+      helpBody1: "Google Search Console (GSC) ist Googles offizielles Tool für Website-Betreiber und liefert die einzigen echten Daten darüber, wie dein Shop bei Google auftaucht — welche Suchanfragen dich zeigen, wie oft geklickt wird, auf welcher Position du rankst und ob es Indexierungsprobleme gibt. Verbindest du deinen Shop hier, holen wir diese Daten automatisch und zeigen sie direkt neben deinen Inhalten.",
+      helpBody2: "Konkret siehst du unten: deine Top-Suchanfragen mit Klicks, Impressionen und Position, \"schnelle Erfolge\" (Anfragen auf Position 4–20 mit niedriger Klickrate, wo ein besserer Titel/Meta viel bringt), sowie ein URL-Prüftool, mit dem du live abfragst, ob eine Seite indexiert ist. Zusätzlich kannst du hier deine Sitemap an Google melden. Verbundene Keyword-Rankings werden einmal täglich automatisch synchronisiert.",
       notConfigured: "Die Google-Search-Console-Integration ist für diese App noch nicht eingerichtet (OAuth-Zugangsdaten fehlen). Bitte wende dich an den App-Betreiber.",
       connectTitle: "Mit Google Search Console verbinden",
       connectBody: "Verbinde dein Google-Konto, um echte Suchanfragen, Klicks, Impressionen und Positionen für deinen Shop zu sehen. Dein Shop muss in der Search Console verifiziert sein.",
@@ -1584,6 +1590,9 @@ export const de = {
       lastSyncedLabel: "Zuletzt synchronisiert",
     },
     aeoPage: {
+      helpTitle: "SEO für KI-Suche (AEO)",
+      helpBody1: "KI-Systeme wie ChatGPT, Perplexity, Claude oder Google AI Overviews suchen im Web nach Antworten und zitieren einzelne Websites in ihren Antworten. Damit dein Shop dabei bevorzugt gefunden und zitiert wird, gibt es zwei Stellschrauben: eine llms.txt-Datei, die KI-Crawlern eine klare Content-Übersicht deines Shops liefert, und eine robots.txt, die diese Crawler nicht versehentlich blockiert.",
+      helpBody2: "Unten kannst du deine llms.txt automatisch erzeugen und aktuell halten (wird auf deiner Domain unter /llms.txt bereitgestellt) und du siehst auf einen Blick, welche KI-Bots (GPTBot, ClaudeBot, PerplexityBot, Google-Extended usw.) aktuell Zugriff auf deinen Shop haben. Falls dort etwas blockiert ist, zeigen wir dir, welche Anpassung in Shopify nötig wäre.",
       llmsTitle: "llms.txt",
       llmsPresent: "vorhanden",
       llmsAbsent: "nicht vorhanden",
@@ -1653,6 +1662,9 @@ export const de = {
       errorGeneric: "Speichern fehlgeschlagen. Bitte erneut versuchen.",
     },
     indexNowPage: {
+      helpTitle: "Sofort-Indexierung mit IndexNow",
+      helpBody1: "IndexNow ist ein von Microsoft (Bing) und Yandex entwickeltes Protokoll, mit dem Suchmaschinen und KI-Crawler bei jeder Änderung an deinem Shop sofort informiert werden — statt zu warten, bis der Crawler von selbst vorbeikommt. Das kann von mehreren Tagen auf wenige Minuten verkürzen, bis eine neue Produkt-Beschreibung, ein neuer Titel oder ein neuer Blog-Artikel in Suchergebnissen und KI-Antworten auftaucht.",
+      helpBody2: "Sobald du IndexNow hier aktivierst, melden wir alle relevanten Änderungen (Produkte, Kollektionen, Seiten, Blog-Artikel) automatisch im Hintergrund an Bing, Yandex und die kompatiblen KI-Crawler. Unten siehst du den aktuellen Status, den generierten Schlüssel (nötig, damit Suchmaschinen dich als Eigentümer verifizieren können) und ein Protokoll der letzten Meldungen.",
       title: "IndexNow",
       enabled: "aktiv",
       disabled: "inaktiv",
