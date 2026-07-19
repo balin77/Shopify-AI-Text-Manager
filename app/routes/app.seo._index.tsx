@@ -498,15 +498,18 @@ export default function SeoDashboard() {
                         id={`seo-problem-panel-${p.code}`}
                         transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
                       >
-                        {/* Gate the ENTIRE padded wrapper on isOpen — not just
-                            the item map inside. If padding/border stays mounted
-                            while items unmount, Collapsible re-measures the
-                            now-tiny (padding-only) height mid-close and
-                            animates from ~14px → 0, giving a visible pop.
-                            Mirrors the pattern the Worst-Offenders panel uses.
-                            Also keeps the mount-cost benefit: buckets × 100
-                            Polaris Buttons don't mount while closed. */}
-                        {isOpen && (
+                        {/* Do NOT gate children on isOpen — Polaris Collapsible
+                            already manages the child lifecycle: children stay
+                            mounted during the exit animation and unmount at
+                            transitionend once `isFullyClosed` is true (see
+                            polaris/Collapsible.js:24). Gating here unmounts
+                            children BEFORE Polaris measures scrollHeight, so
+                            the animation runs from 0 → 0 and the panel
+                            visually snaps to just-padding-height (~14px) for
+                            one frame before disappearing — that's the
+                            "briefly bigger" pop the user reported. Polaris
+                            already skips mounting when isFullyClosed, so
+                            initial render is cheap too. */}
                         <div
                           style={{
                             paddingLeft: "1.25rem",
@@ -576,7 +579,6 @@ export default function SeoDashboard() {
                             )}
                           </BlockStack>
                         </div>
-                        )}
                       </Collapsible>
                     )}
                   </BlockStack>
@@ -707,17 +709,16 @@ export default function SeoDashboard() {
                                   id={`seo-offender-panel-${row.id}`}
                                   transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
                                 >
-                                  {isOpen && (
-                                    <div
-                                      style={{
-                                        padding: "6px 8px 10px 0",
-                                        borderInlineStart: "2px solid var(--p-color-border-subdued)",
-                                        marginLeft: "0.25rem",
-                                        paddingLeft: "1.25rem",
-                                      }}
-                                    >
-                                      <BlockStack gap="100">
-                                        {rowProblems.map((code) => {
+                                  <div
+                                    style={{
+                                      padding: "6px 8px 10px 0",
+                                      borderInlineStart: "2px solid var(--p-color-border-subdued)",
+                                      marginLeft: "0.25rem",
+                                      paddingLeft: "1.25rem",
+                                    }}
+                                  >
+                                    <BlockStack gap="100">
+                                      {rowProblems.map((code) => {
                                           const label =
                                             (d.problems as Record<string, string>)[code] || code;
                                           const canFix = AI_FIXABLE_PROBLEM_CODES.has(code);
@@ -757,9 +758,8 @@ export default function SeoDashboard() {
                                             </InlineStack>
                                           );
                                         })}
-                                      </BlockStack>
-                                    </div>
-                                  )}
+                                    </BlockStack>
+                                  </div>
                                 </Collapsible>
                               </td>
                             </tr>
