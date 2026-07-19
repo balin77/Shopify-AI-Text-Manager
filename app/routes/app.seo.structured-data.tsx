@@ -95,15 +95,23 @@ async function fetchShopBrand(admin: any, fallbackShop: string): Promise<ShopInf
   try {
     const res = await admin.graphql(SHOP_BRAND_QUERY);
     const j: any = await res.json();
+    if (j?.errors) {
+      console.warn("[seo/structured-data] SHOP_BRAND_QUERY errors:", JSON.stringify(j.errors));
+    }
     const s = j?.data?.shop;
     const logoUrl =
       s?.brand?.logo?.image?.url || s?.brand?.squareLogo?.image?.url || null;
+    console.log(
+      "[seo/structured-data] shop.brand:",
+      JSON.stringify({ hasBrand: !!s?.brand, logoUrl }),
+    );
     return {
       name: s?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: s?.primaryDomain?.host || fallbackShop,
       logoUrl,
     };
-  } catch {
+  } catch (e) {
+    console.error("[seo/structured-data] SHOP_BRAND_QUERY threw:", e);
     return {
       name: fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: fallbackShop,
@@ -123,7 +131,21 @@ async function fetchProductPreviewData(
   try {
     const res = await admin.graphql(PRODUCT_SAMPLE_QUERY, { variables: { id: productId } });
     const j: any = await res.json();
+    if (j?.errors) {
+      console.warn("[seo/structured-data] PRODUCT_SAMPLE_QUERY errors:", JSON.stringify(j.errors));
+    }
     const p = j?.data?.product;
+    console.log(
+      "[seo/structured-data] product live sample:",
+      JSON.stringify({
+        productId,
+        hasProduct: !!p,
+        price: p?.priceRangeV2?.minVariantPrice?.amount ?? null,
+        currency: p?.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
+        availableForSale: p?.availableForSale ?? null,
+        featuredImage: p?.featuredImage?.url ?? null,
+      }),
+    );
     return {
       price: p?.priceRangeV2?.minVariantPrice?.amount ?? null,
       currency: p?.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
@@ -131,7 +153,8 @@ async function fetchProductPreviewData(
       imageUrl:
         p?.featuredImage?.url || p?.images?.edges?.[0]?.node?.url || null,
     };
-  } catch {
+  } catch (e) {
+    console.error("[seo/structured-data] PRODUCT_SAMPLE_QUERY threw:", e);
     return { price: null, currency: null, available: null, imageUrl: null };
   }
 }
