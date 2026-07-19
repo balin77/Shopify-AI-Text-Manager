@@ -1277,6 +1277,7 @@ export const en: Translation = {
     dashboard: {
       averageScore: "Average SEO score",
       itemsScanned: "Items scanned",
+      distributionTitle: "Score distribution",
       distributionGood: "Good (≥70)",
       distributionMedium: "Medium (40-69)",
       distributionPoor: "Poor (<40)",
@@ -1304,7 +1305,6 @@ export const en: Translation = {
       primaryLocaleSuffix: "Primary",
       foreignLocaleBanner: "SEO analysis for {locale}. Score, problems, and AI fixes apply to this language — the primary-locale score stays separate.",
       scanStartError: "Couldn't start the scan. Please try again.",
-      trendTitle: "Score trend",
       problemsTruncated: "Showing {shown} of {total} affected items.",
       problems: {
         metaDescriptionMissing: "Meta description missing",

@@ -42,9 +42,7 @@ import {
   analyzeStore,
   saveAuditSnapshot,
   getLatestAuditSnapshot,
-  getAuditTrend,
   type AuditType,
-  type AuditTrendPoint,
 } from "../services/seo/audit.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
@@ -115,8 +113,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     snapshot = { audit, createdAt: new Date() };
   }
 
-  const trend = await getAuditTrend(db, session.shop, activeLocaleKey);
-
   // Cheap existence checks so the buttons render disabled/loading after a
   // reload instead of only reacting to the click in THIS tab (the handlers'
   // own single-flight checks are the source of truth; this is just so the UI
@@ -135,7 +131,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     audit: snapshot.audit,
     lastScannedAt: snapshot.createdAt.toISOString(),
-    trend,
     bulkFixRunning: !!runningBulkFix,
     scanRunning: !!runningScan,
     shopLocales,
@@ -156,7 +151,6 @@ export default function SeoDashboard() {
   const {
     audit,
     lastScannedAt,
-    trend,
     bulkFixRunning,
     scanRunning,
     shopLocales,
@@ -260,14 +254,14 @@ export default function SeoDashboard() {
   // first 3s poll window, so the loader reports `scanRunning: false` on every
   // revalidation and a false→false "transition" never fires an effect keyed
   // only on that value — leaving the button disabled and the poller running
-  // forever. `trend` gets a fresh array identity on every revalidation, so it
+  // forever. `audit` gets a fresh object identity on every revalidation, so it
   // serves as a per-revalidation tick; the 5s grace skips the still-stale
   // loader data present at click time (first fresh poll lands at ~3s).
   useEffect(() => {
     if (!rescanStarted || scanRunning) return;
     if (Date.now() - rescanStartedAtRef.current > 5000) setRescanStarted(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanRunning, rescanStarted, lastScannedAt, trend]);
+  }, [scanRunning, rescanStarted, lastScannedAt, audit]);
 
   // "Fix with AI" — posts straight to the shared /api/ai route (same route
   // every other AI action in the app uses), so the server re-audits and runs
@@ -473,14 +467,6 @@ export default function SeoDashboard() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {d.itemsScanned}: {audit.totalScanned}
                 </Text>
-                {trend.length > 3 && (
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {d.trendTitle}
-                    </Text>
-                    <TrendChart points={trend} />
-                  </BlockStack>
-                )}
               </BlockStack>
             </Card>
           </div>
@@ -488,6 +474,9 @@ export default function SeoDashboard() {
           <div style={{ flex: "2 1 320px" }}>
             <Card>
               <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {d.distributionTitle}
+                </Text>
                 <DistributionRow
                   label={d.distributionGood}
                   count={audit.distribution.good}
@@ -918,61 +907,6 @@ function DistributionRow({
         </Text>
       </div>
     </InlineStack>
-  );
-}
-
-/**
- * Minimal inline sparkline of averageScore over time — a plain SVG polyline,
- * no charting library (the trend has at most MAX_SNAPSHOTS_PER_SHOP=30
- * points, so there's nothing here that needs one). `points` is already
- * oldest -> newest (getAuditTrend's contract).
- *
- * Only `averageScore` is rendered, so the prop type accepts the loader's
- * json()-serialized trend (where `createdAt` is a string, not a Date) without
- * needing to re-widen AuditTrendPoint itself.
- */
-function TrendChart({ points }: { points: Pick<AuditTrendPoint, "averageScore">[] }) {
-  const width = 240;
-  const height = 40;
-  const padding = 4;
-
-  const scores = points.map((p) => p.averageScore);
-  const min = Math.min(...scores);
-  const max = Math.max(...scores);
-  // Avoid a zero-height range collapsing every point onto one flat line's
-  // midpoint in a visually confusing way — treat a flat trend as its own case.
-  const range = max - min || 1;
-
-  const coords = points.map((p, i) => {
-    const x = padding + (i / (points.length - 1)) * (width - padding * 2);
-    const y = height - padding - ((p.averageScore - min) / range) * (height - padding * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-
-  const latest = scores[scores.length - 1];
-  const first = scores[0];
-  // Rising, falling, or flat vs. the oldest point in the window — colors the
-  // line the same way the score badges elsewhere on this page are toned.
-  const lineColor = latest > first ? "#008060" : latest < first ? "#D82C0D" : "#8A8A8A";
-
-  return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      role="img"
-      aria-label={`${first} -> ${latest}`}
-      style={{ display: "block" }}
-    >
-      <polyline
-        fill="none"
-        stroke={lineColor}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={coords.join(" ")}
-      />
-    </svg>
   );
 }
 

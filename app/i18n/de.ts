@@ -1274,6 +1274,7 @@ export const de = {
     dashboard: {
       averageScore: "Durchschnittlicher SEO-Score",
       itemsScanned: "Analysierte Inhalte",
+      distributionTitle: "Bewertungsverteilung",
       distributionGood: "Gut (≥70)",
       distributionMedium: "Mittel (40-69)",
       distributionPoor: "Schlecht (<40)",
@@ -1301,7 +1302,6 @@ export const de = {
       primaryLocaleSuffix: "Primär",
       foreignLocaleBanner: "SEO-Analyse für {locale}. Score, Probleme und KI-Fixes gelten für diese Sprache — der Primärsprachen-Score bleibt separat.",
       scanStartError: "Der Scan konnte nicht gestartet werden. Bitte erneut versuchen.",
-      trendTitle: "Score-Verlauf",
       problemsTruncated: "{shown} von {total} betroffenen Inhalten werden angezeigt.",
       problems: {
         metaDescriptionMissing: "Meta-Description fehlt",

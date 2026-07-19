@@ -1276,6 +1276,7 @@ export const es: Translation = {
     dashboard: {
       averageScore: "Puntuación SEO media",
       itemsScanned: "Elementos analizados",
+      distributionTitle: "Distribución de puntuaciones",
       distributionGood: "Buena (≥70)",
       distributionMedium: "Media (40-69)",
       distributionPoor: "Baja (<40)",
@@ -1303,7 +1304,6 @@ export const es: Translation = {
       primaryLocaleSuffix: "Principal",
       foreignLocaleBanner: "Análisis SEO para {locale}. La puntuación, los problemas y las correcciones con IA se aplican a este idioma — la puntuación del idioma principal permanece separada.",
       scanStartError: "No se pudo iniciar el análisis. Inténtalo de nuevo.",
-      trendTitle: "Tendencia de la puntuación",
       problemsTruncated: "Mostrando {shown} de {total} elementos afectados.",
       problems: {
         metaDescriptionMissing: "Falta la meta descripción",
