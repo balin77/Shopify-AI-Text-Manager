@@ -24,6 +24,7 @@ import {
   Card,
   BlockStack,
   InlineStack,
+  InlineGrid,
   Text,
   Badge,
   Button,
@@ -448,57 +449,55 @@ export default function SeoDashboard() {
           </Button>
         </InlineStack>
 
-        {/* Headline score + distribution */}
-        <InlineStack gap="400" align="start" blockAlign="stretch" wrap>
-          <div style={{ flex: "1 1 220px" }}>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {d.averageScore}
-                </Text>
-                <Text as="p" variant="heading2xl" fontWeight="bold">
-                  {audit.averageScore}
-                </Text>
-                <ProgressBar
-                  progress={audit.averageScore}
-                  tone={progressTone(audit.averageScore)}
-                  size="small"
-                />
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {d.itemsScanned}: {audit.totalScanned}
-                </Text>
-              </BlockStack>
-            </Card>
-          </div>
+        {/* Headline score + distribution — InlineGrid so both cards stretch to
+            the taller row height (CSS Grid default), which InlineStack won't do
+            for Polaris Card children (Card doesn't fill its flex parent). */}
+        <InlineGrid columns={{ xs: 1, sm: ["oneThird", "twoThirds"] }} gap="400">
+          <Card>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {d.averageScore}
+              </Text>
+              <Text as="p" variant="heading2xl" fontWeight="bold">
+                {audit.averageScore}
+              </Text>
+              <ProgressBar
+                progress={audit.averageScore}
+                tone={progressTone(audit.averageScore)}
+                size="small"
+              />
+              <Text as="p" variant="bodySm" tone="subdued">
+                {d.itemsScanned}: {audit.totalScanned}
+              </Text>
+            </BlockStack>
+          </Card>
 
-          <div style={{ flex: "2 1 320px" }}>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {d.distributionTitle}
-                </Text>
-                <DistributionRow
-                  label={d.distributionGood}
-                  count={audit.distribution.good}
-                  total={audit.totalScanned}
-                  tone="success"
-                />
-                <DistributionRow
-                  label={d.distributionMedium}
-                  count={audit.distribution.medium}
-                  total={audit.totalScanned}
-                  tone="warning"
-                />
-                <DistributionRow
-                  label={d.distributionPoor}
-                  count={audit.distribution.poor}
-                  total={audit.totalScanned}
-                  tone="critical"
-                />
-              </BlockStack>
-            </Card>
-          </div>
-        </InlineStack>
+          <Card>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {d.distributionTitle}
+              </Text>
+              <DistributionRow
+                label={d.distributionGood}
+                count={audit.distribution.good}
+                total={audit.totalScanned}
+                tone="success"
+              />
+              <DistributionRow
+                label={d.distributionMedium}
+                count={audit.distribution.medium}
+                total={audit.totalScanned}
+                tone="warning"
+              />
+              <DistributionRow
+                label={d.distributionPoor}
+                count={audit.distribution.poor}
+                total={audit.totalScanned}
+                tone="critical"
+              />
+            </BlockStack>
+          </Card>
+        </InlineGrid>
 
         {/* Score by content type */}
         <Card>
