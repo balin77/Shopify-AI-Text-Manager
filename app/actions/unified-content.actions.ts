@@ -21,6 +21,7 @@ import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/valida
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../utils/error-handler";
 import { getInstructionWithDefault, getWritingStyleInstructions, getCharacterLimitRequirement } from "~/utils/ai-instructions.utils";
+import { resolveSeoContext } from "../routes/api-ai-handlers/shared";
 import { findMetaobjectLabelField } from "../constants/shopifyFields";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
@@ -101,10 +102,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const gateway = new ShopifyApiGateway(admin, session.shop);
   const shopifyContentService = new ShopifyContentService(gateway as any);
 
-  // Effective SEO title limit (accounts for shop name suffix appended by Shopify)
-  const seoTitleMaxChars = aiSettings?.seoTitleSuffixEnabled && aiSettings.seoTitleSuffix
-    ? 60 - aiSettings.seoTitleSuffix.length
-    : 60;
+  // Resolve merchant SEO knobs (title cap + limits blob + translation mode)
+  // in one place so every downstream handler sees the same numbers.
+  const { seoTitleMaxChars, seoLimits, translationMode } = resolveSeoContext(aiSettings);
 
   // Shared context for extracted handler modules
   const ctx: ContentActionHandlerContext = {
@@ -116,6 +116,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     aiInstructions,
     itemId: itemId || "",
     seoTitleMaxChars,
+    seoLimits,
+    translationMode,
     shopifyContentService,
     provider,
     serviceConfig,
@@ -245,7 +247,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimit = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
+        const charLimit = getCharacterLimitRequirement(instructionsKey || "", { seoTitleMaxChars, limits: seoLimits });
         if (charLimit) {
           prompt += `\n- Length: ${charLimit}`;
         }
@@ -315,7 +317,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
+        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "", { seoTitleMaxChars, limits: seoLimits });
         if (charLimitHtml) {
           prompt += `\n- Length: ${charLimitHtml}`;
         }

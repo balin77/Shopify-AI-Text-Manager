@@ -43,6 +43,25 @@ import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
 import { getImageOperationUsage } from "~/utils/imageOperations.server";
 
+/**
+ * Shallow value-equality for the sparse `seoLimits` JSON blob. Used by the
+ * saveSeoSettings action to decide whether a payload would actually change
+ * the DB row — so a no-op submission (e.g. a stale reset from a downgraded
+ * shop) skips the Pro plan gate instead of spuriously 403-ing.
+ */
+function shallowEqualLimits(
+  a: Record<string, number> | null,
+  b: Record<string, number> | null,
+): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return a === b;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
@@ -505,6 +524,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
 
+        // Merchant-editable SEO character limits (Pro+). null = defaults
+        // from character-limits.ts — no need to widen the client bundle with
+        // the full default set, the SettingsSEOTab reads them from there.
+        seoLimits: (settings.seoLimits ?? null) as Record<string, number> | null,
+
+        // Translation policy: "exact" (default) or "seo_optimized". Piped
+        // into AIInstructionsTabs so the radio pre-selects the stored value.
+        translationMode: (settings.translationMode === 'seo_optimized' ? 'seo_optimized' : 'exact') as 'exact' | 'seo_optimized',
+
         // Theme-settings richtext handling: "autofix" | "normalize" | "error"
         themeRichtextMode: settings.themeRichtextMode || 'autofix',
       },
@@ -679,6 +707,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
+      // Translation mode ("exact" | "seo_optimized") is stored on AISettings
+      // and piggybacks on the same submit so the Translations sub-section has
+      // a single Save button covering the radio + custom instructions.
+      const rawMode = String(formData.get("translationMode") || "");
+      if (rawMode === "exact" || rawMode === "seo_optimized") {
+        await db.aISettings.upsert({
+          where: { shop: session.shop },
+          update: { translationMode: rawMode },
+          create: { shop: session.shop, translationMode: rawMode, preferredProvider: "claude" },
+        });
+      }
+
       return json({ success: true, actionType });
     } else if (actionType === "saveAppLanguage") {
       // Narrow update: only touch `appLanguage`. The legacy LanguageTab used to
@@ -703,10 +743,75 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
+      // Merchant-editable SEO character limits (Pro+). Parse first, then
+      // decide whether the plan gate needs to fire — a payload that would
+      // NOT change the stored value (e.g. a stale "{}" reset from a
+      // downgraded shop whose DB row is already null) is a no-op regardless
+      // of plan, so it must not 403. The gate stays authoritative for any
+      // payload that would actually write to the seoLimits column.
+      const rawLimits = String(formData.get("seoLimits") || "");
+      let seoLimitsUpdate: Record<string, number> | null | undefined = undefined;
+      if (rawLimits) {
+        let cleaned: Record<string, number> = {};
+        try {
+          const parsed = JSON.parse(rawLimits);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const allowedKeys = new Set([
+              "titleMin", "titleMax", "seoTitleMax",
+              "metaDescMin", "metaDescMax", "descriptionMin",
+              "handleMin", "handleMax", "altTextMin", "altTextMax",
+            ]);
+            for (const [k, v] of Object.entries(parsed)) {
+              if (!allowedKeys.has(k)) continue;
+              const n = typeof v === "number" ? v : parseInt(String(v), 10);
+              if (Number.isFinite(n) && n > 0 && n <= 9999) {
+                cleaned[k] = Math.floor(n);
+              }
+            }
+          }
+        } catch {
+          return json({ success: false, error: "Invalid seoLimits payload", actionType }, { status: 400 });
+        }
+        // Empty object → intentional reset to defaults (write null).
+        const proposed: Record<string, number> | null =
+          Object.keys(cleaned).length > 0 ? cleaned : null;
+
+        // Compare to the current DB row — if the write would be a no-op,
+        // skip both the plan gate AND the update. Prevents a spurious 403
+        // when a downgraded shop's client re-submits stale limits.
+        const currentRow = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoLimits: true },
+        });
+        const currentLimits = (currentRow?.seoLimits ?? null) as Record<string, number> | null;
+        const wouldChange = !shallowEqualLimits(currentLimits, proposed);
+
+        if (wouldChange) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const plan = (currentRow?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!meetsPlan(plan, "pro")) {
+            return json(
+              { success: false, error: "SEO limits are editable from the Pro plan onwards.", actionType },
+              { status: 403 },
+            );
+          }
+          seoLimitsUpdate = proposed;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
-        update: { seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
-        create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
+        update: {
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
+          ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+        },
+        create: {
+          shop: session.shop,
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
+          ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+        },
       });
 
       return json({ success: true, actionType });
@@ -1324,6 +1429,7 @@ export default function SettingsPage() {
                     shopLocales={shopLocales}
                     primaryShopLocale={primaryShopLocale}
                     onGlossaryHasChangesChange={setHasGlossaryChanges}
+                    translationMode={settings.translationMode}
                   />
                 </>
               )}
@@ -1335,6 +1441,7 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   shopDisplayName={shopDisplayName}
+                  subscriptionPlan={subscriptionPlan as Plan}
                   onHasChangesChange={setHasAIChanges}
                 />
               )}

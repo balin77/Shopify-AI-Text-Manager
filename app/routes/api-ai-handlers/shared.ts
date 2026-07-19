@@ -16,6 +16,8 @@ import type { AISettings, AIInstructions } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
+import type { SeoLimits } from "../../utils/character-limits";
+import { resolveSeoLimits } from "../../utils/character-limits";
 
 // ─── Content type config map ──────────────────────────────────────────────────
 
@@ -57,6 +59,8 @@ export interface ShopifyGraphQLResponse {
   errors?: Array<{ message: string }>;
 }
 
+export type TranslationMode = "exact" | "seo_optimized";
+
 /** Context passed to every action handler. */
 export interface AIActionContext {
   session: Session;
@@ -65,8 +69,36 @@ export interface AIActionContext {
   formData: FormData;
   settings: AISettings | null;
   seoTitleMaxChars: number;
+  /** Fully-resolved merchant SEO limits (defaults filled in) — same value used
+   * across generation, translation, and bulk-fix prompts. */
+  seoLimits: SeoLimits;
+  /** Merchant translation policy (AISettings.translationMode). "exact" is the
+   * default and preserves source length; "seo_optimized" appends per-field
+   * character caps to the translate prompt. */
+  translationMode: TranslationMode;
   contentType: string;
   itemId: string;
+}
+
+/**
+ * Read the two SEO knobs off `AISettings` in the same place, so every ctx
+ * builder (api.ai.tsx + unified-content.actions.ts) stays consistent.
+ */
+export function resolveSeoContext(settings: AISettings | null): {
+  seoTitleMaxChars: number;
+  seoLimits: SeoLimits;
+  translationMode: TranslationMode;
+} {
+  const seoLimits = resolveSeoLimits(
+    (settings?.seoLimits ?? null) as Partial<SeoLimits> | null,
+  );
+  const seoTitleMaxChars =
+    settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
+      ? Math.max(1, seoLimits.seoTitleMax - settings.seoTitleSuffix.length)
+      : seoLimits.seoTitleMax;
+  const translationMode: TranslationMode =
+    settings?.translationMode === "seo_optimized" ? "seo_optimized" : "exact";
+  return { seoTitleMaxChars, seoLimits, translationMode };
 }
 
 // ─── Error helpers ────────────────────────────────────────────────────────────

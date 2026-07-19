@@ -21,7 +21,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
-import { getCharacterLimitRequirement } from "~/utils/character-limits";
+import { getCharacterLimitRequirement, type SeoLimits } from "~/utils/character-limits";
 import { analyzeStore, type AuditType, type AuditProblemBucket } from "~/services/seo/audit.service";
 import { seoTitleEffectiveLimit } from "~/utils/seo-score";
 import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
@@ -76,7 +76,7 @@ const AUDIT_TYPE_TO_CONTENT_TYPE: Record<AuditType, string> = {
 };
 
 export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> {
-  const { session, admin, db, settings, formData, seoTitleMaxChars } = ctx;
+  const { session, admin, db, settings, formData, seoTitleMaxChars, seoLimits } = ctx;
   const problemCode = getFormString(formData, "problemCode");
   // Foreign-locale mode: dashboard's language switcher passes ?locale=xx
   // through as a form field, so the same handler covers primary + every
@@ -223,6 +223,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
           problemCode,
           items,
           seoTitleMaxChars,
+          seoLimits,
           foreignLocale: localeResolution.foreignLocale,
           targetLanguageName: localeResolution.targetLanguageName,
         });
@@ -261,7 +262,7 @@ async function handleFixAllForItem(
   itemType: AuditType | "",
   requestedLocale: string,
 ): Promise<Response> {
-  const { session, admin, db, settings, seoTitleMaxChars } = ctx;
+  const { session, admin, db, settings, seoTitleMaxChars, seoLimits } = ctx;
 
   if (!itemId || !itemType) {
     return json(
@@ -386,6 +387,7 @@ async function handleFixAllForItem(
     itemType: itemType as AuditType,
     codes: applicableCodes,
     seoTitleMaxChars,
+    seoLimits,
     foreignLocale: localeResolution.foreignLocale,
     targetLanguageName: localeResolution.targetLanguageName,
   }).catch(async (err: unknown) => {
@@ -445,6 +447,9 @@ interface RunArgs {
   problemCode: string;
   items: { type: AuditType; id: string }[];
   seoTitleMaxChars: number;
+  /** Fully-resolved merchant SEO limits (defaults filled in). Threaded so
+   * every generated prompt uses the same numbers the merchant sees in the UI. */
+  seoLimits: SeoLimits;
   /** "" or empty = primary-locale run. Non-empty = foreign locale code
    * (validated in the outer handler) — every persist call goes through
    * translationsRegister + ContentTranslation instead of the direct content
@@ -476,6 +481,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     problemCode,
     items,
     seoTitleMaxChars,
+    seoLimits,
     foreignLocale,
     targetLanguageName,
   } = args;
@@ -619,6 +625,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
             title: row.title,
             description: row.description,
             seoTitleMaxChars,
+            seoLimits,
             mainLanguage,
             outputLanguage,
             aiInstructions,
@@ -1221,6 +1228,7 @@ interface PromptContext {
   title: string;
   description: string;
   seoTitleMaxChars: number;
+  seoLimits: SeoLimits;
   mainLanguage: string;
   /** Language the AI writes the output in. For primary runs this equals
    * mainLanguage; for foreign-locale runs it's the target language name so
@@ -1305,7 +1313,7 @@ function buildFixPrompt(field: TextField, ctx: PromptContext): string {
     }
 
     prompt += `\n\nRequirements:`;
-    const charLimit = getCharacterLimitRequirement(ctx.aiInstructionsKey, ctx.seoTitleMaxChars);
+    const charLimit = getCharacterLimitRequirement(ctx.aiInstructionsKey, { seoTitleMaxChars: ctx.seoTitleMaxChars, limits: ctx.seoLimits });
     if (charLimit) prompt += `\n- Length: ${charLimit}`;
     prompt += `\n- Preserve the meaning of the primary text; adapt wording only if the literal translation violates a hard requirement`;
     prompt += `\n- SEO-friendly wording where applicable`;
@@ -1365,7 +1373,7 @@ function buildFixPrompt(field: TextField, ctx: PromptContext): string {
   }
 
   prompt += `\n\nRequirements:`;
-  const charLimit = getCharacterLimitRequirement(ctx.aiInstructionsKey, ctx.seoTitleMaxChars);
+  const charLimit = getCharacterLimitRequirement(ctx.aiInstructionsKey, { seoTitleMaxChars: ctx.seoTitleMaxChars, limits: ctx.seoLimits });
   if (charLimit) prompt += `\n- Length: ${charLimit}`;
   prompt += `\n- Clear and concise`;
   prompt += `\n- SEO-friendly where applicable`;
@@ -1531,6 +1539,7 @@ interface FixAllRunArgs {
   itemType: AuditType;
   codes: string[];
   seoTitleMaxChars: number;
+  seoLimits: SeoLimits;
   /** See RunArgs.foreignLocale. */
   foreignLocale: string;
   targetLanguageName: string;
@@ -1553,6 +1562,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
     itemType,
     codes,
     seoTitleMaxChars,
+    seoLimits,
     foreignLocale,
     targetLanguageName,
   } = args;
@@ -1649,6 +1659,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
           title: row.title,
           description: row.description,
           seoTitleMaxChars,
+          seoLimits,
           mainLanguage,
           outputLanguage,
           aiInstructions,

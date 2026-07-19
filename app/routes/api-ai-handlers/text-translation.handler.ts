@@ -10,7 +10,6 @@ import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
-import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";

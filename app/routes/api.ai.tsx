@@ -22,6 +22,7 @@ import {
   noAiKeyResponse,
   isAuthError,
   aiAuthErrorResponse,
+  resolveSeoContext,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
 import {
@@ -91,10 +92,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return noAiKeyResponse(settings, missingKey);
     }
 
-    // Compute effective SEO title limit (accounts for shop name suffix appended by Shopify)
-    const seoTitleMaxChars = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
-      ? 60 - settings.seoTitleSuffix.length
-      : 60;
+    // Resolve merchant SEO knobs once — used across generation, translation
+    // and bulk-fix prompts so limits stay consistent. Includes the effective
+    // SEO title cap (adjusted for the shop-name suffix Shopify appends).
+    const { seoTitleMaxChars, seoLimits, translationMode } = resolveSeoContext(settings);
 
     const ctx: AIActionContext = {
       session,
@@ -103,6 +104,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       formData,
       settings,
       seoTitleMaxChars,
+      seoLimits,
+      translationMode,
       contentType,
       itemId,
     };

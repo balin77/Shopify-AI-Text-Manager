@@ -103,7 +103,7 @@ Return only the formatted text, without explanations.`;
 }
 
 export async function handleGenerateAIText(ctx: AIActionContext): Promise<Response> {
-  const { session, db, settings, seoTitleMaxChars, contentType, itemId } = ctx;
+  const { session, db, settings, seoTitleMaxChars, seoLimits, contentType, itemId } = ctx;
   const formData = ctx.formData;
 
   const fieldType = getFormString(formData, "fieldType");
@@ -176,7 +176,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   prompt += `\n\nRequirements:`;
 
   // Add character limit if available
-  const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey, seoTitleMaxChars) : null;
+  const charLimit = genInstructionsKey ? getCharacterLimitRequirement(genInstructionsKey, { seoTitleMaxChars, limits: seoLimits }) : null;
   if (charLimit) {
     prompt += `\n- Length: ${charLimit}`;
   }

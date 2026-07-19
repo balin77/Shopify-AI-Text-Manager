@@ -22,6 +22,8 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";
+import type { SeoLimits } from "../../utils/character-limits";
+import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -32,6 +34,11 @@ export interface ContentActionHandlerContext {
   aiInstructions: AIInstructions | null;
   itemId: string;
   seoTitleMaxChars: number;
+  /** Fully-resolved merchant SEO character limits (defaults filled in). */
+  seoLimits: SeoLimits;
+  /** Merchant translation policy — "exact" preserves source length,
+   * "seo_optimized" appends per-field caps to the translate prompt. */
+  translationMode: TranslationMode;
   shopifyContentService: ShopifyContentService;
   provider: ReturnType<typeof toValidProvider>;
   serviceConfig: {

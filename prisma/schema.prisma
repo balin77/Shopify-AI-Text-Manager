@@ -115,6 +115,21 @@ model AISettings {
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
 
+  // Translation length policy. "exact" (default) preserves source length —
+  // legal/rechts pages must not shrink. "seo_optimized" appends per-field
+  // character constraints to the translate prompt for SEO-critical fields
+  // (title, seoTitle, metaDescription, altText), so a long German meta title
+  // gets paraphrased to fit the 60-char SEO limit instead of overflowing.
+  translationMode String @default("exact") // "exact" | "seo_optimized"
+
+  // Merchant-editable SEO character limits (Pro+). null = fall back to the
+  // built-in defaults in app/utils/character-limits.ts. Shape (all optional):
+  //   { titleMin, titleMax, seoTitleMax, metaDescMin, metaDescMax,
+  //     handleMin, handleMax, altTextMin, altTextMax, descriptionMin }
+  // Consumed by getCharacterLimitRequirement() to build the length hint in AI
+  // prompts, and by the seo-optimized translation mode above.
+  seoLimits Json?
+
   // Metafields settings tab: timestamp of the last product metafield-definition
   // scan. Also doubles as the lazy-backfill guard — when null, the loaders run
   // a one-time backfill of already-translatable definitions into

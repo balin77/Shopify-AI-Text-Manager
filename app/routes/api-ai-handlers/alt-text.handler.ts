@@ -77,7 +77,7 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
 
     // Add requirements
     prompt += `\n\nRequirements:`;
-    const altTextCharLimit = getCharacterLimitRequirement("productAltText");
+    const altTextCharLimit = getCharacterLimitRequirement("productAltText", { limits: ctx.seoLimits });
     if (altTextCharLimit) {
       prompt += `\n- Length: ${altTextCharLimit}`;
     }
@@ -165,7 +165,7 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
   });
   const sharedFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
   const sharedInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
-  const charLimit = getCharacterLimitRequirement("productAltText");
+  const charLimit = getCharacterLimitRequirement("productAltText", { limits: ctx.seoLimits });
 
   const bulkTask = await db.task.create({
     data: {

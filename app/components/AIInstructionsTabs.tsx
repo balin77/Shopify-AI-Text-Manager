@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BlockStack, Text, Button, InlineStack, Card, TextField } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { HelpTooltip } from "./HelpTooltip";
@@ -86,6 +86,11 @@ interface AIInstructionsTabsProps {
   shopLocales: GlossaryShopLocale[];
   primaryShopLocale: string;
   onGlossaryHasChangesChange?: (hasChanges: boolean) => void;
+  // AISettings.translationMode — "exact" preserves source length,
+  // "seo_optimized" tells the AI to paraphrase within SEO caps. Saved as part
+  // of the same "saveInstructions" submit so a single button covers the
+  // entire Translations sub-section.
+  translationMode: "exact" | "seo_optimized";
 }
 
 export function AIInstructionsTabs({
@@ -97,11 +102,13 @@ export function AIInstructionsTabs({
   shopLocales,
   primaryShopLocale,
   onGlossaryHasChangesChange,
+  translationMode,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
+  const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -184,6 +191,10 @@ export function AIInstructionsTabs({
       formData.append(key, value);
     });
 
+    // Translation mode piggybacks on the same save so one button covers the
+    // entire Translations sub-section (radio + custom instructions).
+    formData.append("translationMode", localTranslationMode);
+
     fetcher.submit(formData, { method: "POST" });
   };
 
@@ -194,8 +205,10 @@ export function AIInstructionsTabs({
     }));
   };
 
-  // Check if there are unsaved changes
-  const hasChanges = JSON.stringify(localInstructions) !== JSON.stringify(instructions);
+  // Check if there are unsaved changes (instructions OR translation mode)
+  const hasChanges =
+    JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
+    localTranslationMode !== translationMode;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -206,6 +219,7 @@ export function AIInstructionsTabs({
 
   const handleDiscard = () => {
     setLocalInstructions(instructions);
+    setLocalTranslationMode(translationMode);
   };
 
   return (
@@ -319,8 +333,58 @@ export function AIInstructionsTabs({
       {/* Tab Content */}
       <div style={{ opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
         <BlockStack gap="400" inlineAlign="stretch">
-            {/* TRANSLATIONS SUB-SECTION — Translate Instructions block */}
+            {/* TRANSLATIONS SUB-SECTION — mode picker + Translate Instructions block */}
             {subSection === "translations" && (
+              <BlockStack gap="400">
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
+                  <InlineStack gap="100" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.translationModeLabel || 'Übersetzungsstrategie'}
+                    </Text>
+                  </InlineStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {t.settings.translationModeDescription ||
+                      'Steuert, wie die KI Übersetzungen an die SEO-Zeichenlimits anpasst. Die Limits selbst pflegst du unter SEO.'}
+                  </Text>
+                  <ChoiceList
+                    title={t.settings.translationModeLabel || 'Übersetzungsstrategie'}
+                    titleHidden
+                    selected={[localTranslationMode]}
+                    onChange={(selected) => {
+                      const next = selected[0];
+                      if (next === 'exact' || next === 'seo_optimized') {
+                        setLocalTranslationMode(next);
+                      }
+                    }}
+                    disabled={readOnly}
+                    choices={[
+                      {
+                        label: t.settings.translationModeExact || 'Exakte Übersetzung (empfohlen)',
+                        value: 'exact',
+                        helpText:
+                          t.settings.translationModeExactHelp ||
+                          'Der Ausgangstext wird 1:1 übersetzt. Länge bleibt erhalten — wichtig für Rechtstexte, AGB, Widerruf.',
+                      },
+                      {
+                        label: t.settings.translationModeSeo || 'SEO-optimierte Übersetzung',
+                        value: 'seo_optimized',
+                        helpText:
+                          t.settings.translationModeSeoHelp ||
+                          'Bei SEO-Titel, Meta-Beschreibung, Titel und Alt-Text darf die KI kürzen/umschreiben, um die SEO-Limits einzuhalten. Bodies bleiben unverändert.',
+                      },
+                    ]}
+                  />
+                  {localTranslationMode === 'seo_optimized' && (
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm">
+                        {t.settings.translationModeSeoNote ||
+                          'Aktiv nur für SEO-kritische Felder. Beschreibungen/Bodies werden weiterhin exakt übersetzt.'}
+                      </Text>
+                    </Banner>
+                  )}
+                </BlockStack>
+              </div>
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                 <BlockStack gap="400">
                   <InlineStack gap="100" blockAlign="center">
@@ -355,6 +419,7 @@ export function AIInstructionsTabs({
                   </div>
                 </BlockStack>
               </div>
+              </BlockStack>
             )}
 
             {/* CONTENT GENERATION SUB-SECTION — original entity tabs */}
