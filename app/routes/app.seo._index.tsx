@@ -498,10 +498,15 @@ export default function SeoDashboard() {
                         id={`seo-problem-panel-${p.code}`}
                         transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
                       >
-                        {/* Gate children on isOpen so a fully-collapsed dashboard
-                            with several buckets doesn't mount up to
-                            (buckets × MAX_PROBLEM_BUCKET_ITEMS) Polaris Buttons
-                            just to have Collapsible hide them at height 0. */}
+                        {/* Gate the ENTIRE padded wrapper on isOpen — not just
+                            the item map inside. If padding/border stays mounted
+                            while items unmount, Collapsible re-measures the
+                            now-tiny (padding-only) height mid-close and
+                            animates from ~14px → 0, giving a visible pop.
+                            Mirrors the pattern the Worst-Offenders panel uses.
+                            Also keeps the mount-cost benefit: buckets × 100
+                            Polaris Buttons don't mount while closed. */}
+                        {isOpen && (
                         <div
                           style={{
                             paddingLeft: "1.25rem",
@@ -510,7 +515,7 @@ export default function SeoDashboard() {
                           }}
                         >
                           <BlockStack gap="100">
-                            {isOpen && items.map((it) => {
+                            {items.map((it) => {
                               const itemFixKey = `${p.code}:${it.id}`;
                               const showAiButton = AI_FIXABLE_PROBLEM_CODES.has(p.code);
                               return (
@@ -571,6 +576,7 @@ export default function SeoDashboard() {
                             )}
                           </BlockStack>
                         </div>
+                        )}
                       </Collapsible>
                     )}
                   </BlockStack>
