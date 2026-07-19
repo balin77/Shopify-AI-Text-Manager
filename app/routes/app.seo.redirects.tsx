@@ -150,7 +150,7 @@ type ImportError = { row: number; path: string; error: string };
 type ActionResult =
   | { ok: true; kind: "created" | "updated" | "deleted" | "dismissed" }
   | { ok: true; kind: "imported"; created: number; skipped: number; errors: ImportError[] }
-  | { ok: false; error: string };
+  | { ok: false; error: string; detail?: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
@@ -166,7 +166,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
     const res = await createRedirect(admin, { path, target });
     if (res.userErrors.length > 0 || !res.redirect) {
-      return json<ActionResult>({ ok: false, error: "createFailed" }, { status: 400 });
+      const detail = res.userErrors.map((e) => e.message).filter(Boolean).join("; ") || undefined;
+      return json<ActionResult>({ ok: false, error: "createFailed", detail }, { status: 400 });
     }
     if (actionType === "createFromHit") {
       const hitId = getFormString(form, "hitId");
@@ -184,7 +185,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
     const res = await updateRedirect(admin, id, { path, target });
     if (res.userErrors.length > 0 || !res.redirect) {
-      return json<ActionResult>({ ok: false, error: "updateFailed" }, { status: 400 });
+      const detail = res.userErrors.map((e) => e.message).filter(Boolean).join("; ") || undefined;
+      return json<ActionResult>({ ok: false, error: "updateFailed", detail }, { status: 400 });
     }
     return json<ActionResult>({ ok: true, kind: "updated" });
   }
@@ -287,13 +289,15 @@ function parseCsv(text: string): Array<{ path: string; target: string }> {
 }
 
 export default function SeoRedirects() {
-  const {
-    redirects: loaderRedirects,
-    hasNextPage: loaderHasNextPage,
-    endCursor: loaderEndCursor,
-    q,
-    hits,
-  } = useLoaderData() as LoaderData;
+  // Defensive defaults: if the loader ever bails to an error boundary or
+  // `useLoaderData` returns a partial payload, the render still yields empty
+  // sections rather than throwing "Cannot read properties of undefined".
+  const raw = (useLoaderData() as Partial<LoaderData>) ?? {};
+  const loaderRedirects = raw.redirects ?? [];
+  const loaderHasNextPage = raw.hasNextPage ?? false;
+  const loaderEndCursor = raw.endCursor ?? null;
+  const q = raw.q ?? "";
+  const hits = raw.hits ?? [];
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -363,19 +367,35 @@ export default function SeoRedirects() {
     }
   }, [rowFetcher.state, rowFetcher.data]);
 
+  // Surface the Shopify userError message when the action forwarded one
+  // (`detail`) — e.g. "Path is already taken" or a scope-permission complaint.
+  // Without it the merchant only sees the generic i18n string and has no idea
+  // whether to change the path, re-authorize, or contact support.
+  const appendDetail = (base: string, detail?: string): string =>
+    detail ? `${base} (${detail})` : base;
+
   const createError =
     createFetcher.data && !createFetcher.data.ok
-      ? (r.errors as Record<string, string>)[createFetcher.data.error] || r.errors.createFailed
+      ? appendDetail(
+          (r.errors as Record<string, string>)[createFetcher.data.error] || r.errors.createFailed,
+          createFetcher.data.detail,
+        )
       : null;
 
   const rowError =
     rowFetcher.data && !rowFetcher.data.ok
-      ? (r.errors as Record<string, string>)[rowFetcher.data.error] || r.errors.createFailed
+      ? appendDetail(
+          (r.errors as Record<string, string>)[rowFetcher.data.error] || r.errors.createFailed,
+          rowFetcher.data.detail,
+        )
       : null;
 
   const importError =
     importFetcher.data && !importFetcher.data.ok
-      ? (r.errors as Record<string, string>)[importFetcher.data.error] || r.errors.createFailed
+      ? appendDetail(
+          (r.errors as Record<string, string>)[importFetcher.data.error] || r.errors.createFailed,
+          importFetcher.data.detail,
+        )
       : null;
 
   const importResult =
