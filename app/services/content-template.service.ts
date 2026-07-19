@@ -17,6 +17,7 @@
  */
 
 import type { ContentTemplate } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { db } from "../db.server";
 import {
   substituteTemplateVariables,
@@ -25,6 +26,26 @@ import {
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
 import { canUseContentTemplates } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
+
+/**
+ * Thrown when two concurrent writes both try to become the single `isDefault`
+ * template for the same (shop, contentType, fieldType) slot. The partial
+ * unique index (migration) catches the second commit as P2002; the caller
+ * translates this to a merchant-friendly "reload the page" message.
+ */
+export class ContentTemplateDefaultRaceError extends Error {
+  constructor() {
+    super("Another window changed the default for this slot at the same time.");
+    this.name = "ContentTemplateDefaultRaceError";
+  }
+}
+
+function isDefaultUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2002"
+  );
+}
 
 /** Content types a template can target (mirrors CONTENT_CONFIGS keys). */
 export const TEMPLATE_CONTENT_TYPES = [
@@ -169,28 +190,33 @@ export async function updateTemplate(
     isDefault: !!input.isDefault,
   };
 
-  return db.$transaction(async (tx) => {
-    // Ownership check INSIDE the transaction so the read and the write see a
-    // consistent snapshot (no TOCTOU between findFirst and update).
-    const existing = await tx.contentTemplate.findFirst({
-      where: { id, shop },
-    });
-    if (!existing) return null;
-
-    if (data.isDefault) {
-      await tx.contentTemplate.updateMany({
-        where: {
-          shop,
-          contentType: data.contentType,
-          fieldType: data.fieldType,
-          isDefault: true,
-          id: { not: id },
-        },
-        data: { isDefault: false },
+  try {
+    return await db.$transaction(async (tx) => {
+      // Ownership check INSIDE the transaction so the read and the write see a
+      // consistent snapshot (no TOCTOU between findFirst and update).
+      const existing = await tx.contentTemplate.findFirst({
+        where: { id, shop },
       });
-    }
-    return tx.contentTemplate.update({ where: { id }, data });
-  });
+      if (!existing) return null;
+
+      if (data.isDefault) {
+        await tx.contentTemplate.updateMany({
+          where: {
+            shop,
+            contentType: data.contentType,
+            fieldType: data.fieldType,
+            isDefault: true,
+            id: { not: id },
+          },
+          data: { isDefault: false },
+        });
+      }
+      return tx.contentTemplate.update({ where: { id }, data });
+    });
+  } catch (err) {
+    if (isDefaultUniqueViolation(err)) throw new ContentTemplateDefaultRaceError();
+    throw err;
+  }
 }
 
 /**
@@ -214,27 +240,32 @@ export async function setDefaultTemplate(
   shop: string,
   id: string,
 ): Promise<ContentTemplate | null> {
-  return db.$transaction(async (tx) => {
-    const existing = await tx.contentTemplate.findFirst({
-      where: { id, shop },
-    });
-    if (!existing) return null;
+  try {
+    return await db.$transaction(async (tx) => {
+      const existing = await tx.contentTemplate.findFirst({
+        where: { id, shop },
+      });
+      if (!existing) return null;
 
-    await tx.contentTemplate.updateMany({
-      where: {
-        shop,
-        contentType: existing.contentType,
-        fieldType: existing.fieldType,
-        isDefault: true,
-        id: { not: id },
-      },
-      data: { isDefault: false },
+      await tx.contentTemplate.updateMany({
+        where: {
+          shop,
+          contentType: existing.contentType,
+          fieldType: existing.fieldType,
+          isDefault: true,
+          id: { not: id },
+        },
+        data: { isDefault: false },
+      });
+      return tx.contentTemplate.update({
+        where: { id },
+        data: { isDefault: true },
+      });
     });
-    return tx.contentTemplate.update({
-      where: { id },
-      data: { isDefault: true },
-    });
-  });
+  } catch (err) {
+    if (isDefaultUniqueViolation(err)) throw new ContentTemplateDefaultRaceError();
+    throw err;
+  }
 }
 
 /**

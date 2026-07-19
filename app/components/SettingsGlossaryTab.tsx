@@ -291,7 +291,11 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
   );
 
   return (
-    <Card>
+    <BlockStack gap="400">
+      <Banner tone="info">
+        <Text as="p">{t.settings.glossaryScopeNote}</Text>
+      </Banner>
+      <Card>
       <BlockStack gap="400">
         <InlineStack align="space-between" blockAlign="center" wrap>
           <Text as="h2" variant="headingLg">
@@ -476,6 +480,7 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
           isSavingCurrentItem={submitting && fetcher.formData?.get("actionType") === "saveGlossary"}
         />
       </BlockStack>
-    </Card>
+      </Card>
+    </BlockStack>
   );
 }

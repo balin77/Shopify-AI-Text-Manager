@@ -14,6 +14,15 @@ import {
   EmptyState,
   Divider,
 } from "@shopify/polaris";
+import { useI18n } from "../contexts/I18nContext";
+import {
+  PRODUCTS_CONFIG,
+  COLLECTIONS_CONFIG,
+  BLOGS_CONFIG,
+  PAGES_CONFIG,
+  POLICIES_CONFIG,
+} from "../config/content-fields.config";
+import type { ContentEditorConfig, FieldDefinition } from "../types/content-editor.types";
 
 export interface ContentTemplateEntry {
   id: string;
@@ -30,44 +39,41 @@ interface Props {
   upgradeNotice?: string;
 }
 
-const CONTENT_TYPE_OPTIONS = [
-  { label: "Products", value: "products" },
-  { label: "Collections", value: "collections" },
-  { label: "Blog articles", value: "blogs" },
-  { label: "Pages", value: "pages" },
-  { label: "Policies", value: "policies" },
-];
-
-// Field keys mirror the editor's field.key values used by the AI handler.
-const FIELD_OPTIONS_BY_TYPE: Record<string, { label: string; value: string }[]> = {
-  products: [
-    { label: "Title", value: "title" },
-    { label: "Description", value: "description" },
-    { label: "SEO title", value: "seoTitle" },
-    { label: "Meta description", value: "metaDescription" },
-    { label: "URL handle", value: "handle" },
-  ],
-  collections: [
-    { label: "Title", value: "title" },
-    { label: "Description", value: "description" },
-    { label: "SEO title", value: "seoTitle" },
-    { label: "Meta description", value: "metaDescription" },
-    { label: "URL handle", value: "handle" },
-  ],
-  blogs: [
-    { label: "Title", value: "title" },
-    { label: "Description", value: "description" },
-    { label: "SEO title", value: "seoTitle" },
-    { label: "Meta description", value: "metaDescription" },
-    { label: "URL handle", value: "handle" },
-  ],
-  pages: [
-    { label: "Title", value: "title" },
-    { label: "Description", value: "description" },
-    { label: "URL handle", value: "handle" },
-  ],
-  policies: [{ label: "Description", value: "description" }],
+// Content types that support prompt templates. Same 5 as CONTENT_CONFIGS in
+// api-ai-handlers/shared.ts. Kept as a single map so the field-options list
+// below derives from the SAME field definitions the editor + AI handler use.
+const CONFIGS_BY_TYPE: Record<string, ContentEditorConfig> = {
+  products: PRODUCTS_CONFIG,
+  collections: COLLECTIONS_CONFIG,
+  blogs: BLOGS_CONFIG,
+  pages: PAGES_CONFIG,
+  policies: POLICIES_CONFIG,
 };
+
+// Fields that can be targeted by a prompt template = the AI-generatable
+// text-style fields. Skips image-galleries, dates, non-AI structural fields.
+const TEMPLATEABLE_FIELD_TYPES = new Set<FieldDefinition["type"]>([
+  "text",
+  "textarea",
+  "html",
+  "slug",
+]);
+
+function getTemplateableFieldOptions(contentType: string): { label: string; value: string }[] {
+  const cfg = CONFIGS_BY_TYPE[contentType];
+  if (!cfg) return [];
+  return cfg.fieldDefinitions
+    .filter(
+      (f) =>
+        f.supportsAI &&
+        TEMPLATEABLE_FIELD_TYPES.has(f.type) &&
+        // aiInstructionsKey is the same anchor the handler uses to pick up
+        // writingStyle/formatExample/fieldInstructions — a field without it
+        // has no AI-prompt path, so a template can't attach.
+        Boolean(f.aiInstructionsKey),
+    )
+    .map((f) => ({ label: f.label, value: f.key }));
+}
 
 const AVAILABLE_VARIABLES = [
   "{{title}}",
@@ -89,7 +95,9 @@ const EMPTY_DRAFT = {
 };
 
 export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props) {
-  const fetcher = useFetcher<{ success?: boolean; error?: string }>();
+  const { t } = useI18n();
+  const s = t.settings;
+  const fetcher = useFetcher<{ success?: boolean; error?: string; errorCode?: string }>();
   const [draft, setDraft] = useState({ ...EMPTY_DRAFT });
   const [editing, setEditing] = useState(false);
   const submitting = fetcher.state !== "idle";
@@ -102,8 +110,19 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
     }
   }, [fetcher.state, fetcher.data, editing]);
 
+  const contentTypeOptions = useMemo(
+    () => [
+      { label: s.contentTemplatesContentTypeProducts, value: "products" },
+      { label: s.contentTemplatesContentTypeCollections, value: "collections" },
+      { label: s.contentTemplatesContentTypeBlogs, value: "blogs" },
+      { label: s.contentTemplatesContentTypePages, value: "pages" },
+      { label: s.contentTemplatesContentTypePolicies, value: "policies" },
+    ],
+    [s],
+  );
+
   const fieldOptions = useMemo(
-    () => FIELD_OPTIONS_BY_TYPE[draft.contentType] ?? FIELD_OPTIONS_BY_TYPE.products,
+    () => getTemplateableFieldOptions(draft.contentType),
     [draft.contentType],
   );
 
@@ -123,7 +142,8 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
   }
 
   function startCreate() {
-    setDraft({ ...EMPTY_DRAFT });
+    const firstField = getTemplateableFieldOptions("products")[0]?.value ?? "title";
+    setDraft({ ...EMPTY_DRAFT, fieldType: firstField });
     setEditing(true);
   }
 
@@ -144,27 +164,41 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
     });
   }
 
+  function contentTypeLabel(key: string): string {
+    return contentTypeOptions.find((o) => o.value === key)?.label ?? key;
+  }
+
+  function fieldLabel(contentType: string, fieldKey: string): string {
+    const opt = getTemplateableFieldOptions(contentType).find((o) => o.value === fieldKey);
+    return opt?.label ?? fieldKey;
+  }
+
+  const availableVarsHelp = s.contentTemplatesAvailableVars.replace(
+    "{vars}",
+    AVAILABLE_VARIABLES.join(", "),
+  );
+
   return (
     <Card>
       <BlockStack gap="400">
         <BlockStack gap="100">
           <Text as="h2" variant="headingMd">
-            Content templates
+            {s.contentTemplates}
           </Text>
-          <Text as="p" tone="subdued" variant="bodySm">
-            Reusable AI prompt presets. Use {"{{variables}}"} that are replaced
-            with the current content before the AI call. Set one template as the
-            default per content type and field — it is then applied
-            automatically when generating that field.
+          <Text as="p" variant="bodyMd" tone="subdued">
+            {s.contentTemplatesDescription}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {s.contentTemplatesApplyNote}
           </Text>
         </BlockStack>
 
         {!canUse && (
           <Banner tone="info">
             <Text as="p" fontWeight="semibold">
-              Content templates are available on the Pro and Max plans.
+              {s.contentTemplatesUpgradeNotice}
             </Text>
-            {upgradeNotice && (
+            {upgradeNotice && upgradeNotice !== s.contentTemplatesUpgradeNotice && (
               <Text as="p" variant="bodySm" tone="subdued">
                 {upgradeNotice}
               </Text>
@@ -172,16 +206,20 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
           </Banner>
         )}
 
-        {fetcher.data?.error && (
+        {(fetcher.data?.error || fetcher.data?.errorCode) && (
           <Banner tone="critical">
-            <Text as="p">{fetcher.data.error}</Text>
+            <Text as="p">
+              {fetcher.data?.errorCode === "defaultRace"
+                ? s.contentTemplatesDefaultRaceError
+                : fetcher.data?.error}
+            </Text>
           </Banner>
         )}
 
         {canUse && !editing && (
           <InlineStack>
             <Button variant="primary" onClick={startCreate}>
-              New template
+              {s.contentTemplatesNewTemplate}
             </Button>
           </InlineStack>
         )}
@@ -190,10 +228,10 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
           <Card background="bg-surface-secondary">
             <BlockStack gap="300">
               <Text as="h3" variant="headingSm">
-                {draft.id ? "Edit template" : "New template"}
+                {draft.id ? s.contentTemplatesEditTemplate : s.contentTemplatesNewTemplate}
               </Text>
               <TextField
-                label="Name"
+                label={s.contentTemplatesName}
                 autoComplete="off"
                 value={draft.name}
                 onChange={(v) => setDraft((d) => ({ ...d, name: v }))}
@@ -202,11 +240,11 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
               <InlineStack gap="300" wrap={false}>
                 <div style={{ flex: 1 }}>
                   <Select
-                    label="Content type"
-                    options={CONTENT_TYPE_OPTIONS}
+                    label={s.contentTemplatesContentType}
+                    options={contentTypeOptions}
                     value={draft.contentType}
                     onChange={(v) => {
-                      const opts = FIELD_OPTIONS_BY_TYPE[v] ?? [];
+                      const opts = getTemplateableFieldOptions(v);
                       setDraft((d) => ({
                         ...d,
                         contentType: v,
@@ -217,7 +255,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                 </div>
                 <div style={{ flex: 1 }}>
                   <Select
-                    label="Field"
+                    label={s.contentTemplatesField}
                     options={fieldOptions}
                     value={draft.fieldType}
                     onChange={(v) => setDraft((d) => ({ ...d, fieldType: v }))}
@@ -225,16 +263,16 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                 </div>
               </InlineStack>
               <TextField
-                label="Template"
+                label={s.contentTemplatesPrompt}
                 autoComplete="off"
                 multiline={6}
                 value={draft.template}
                 onChange={(v) => setDraft((d) => ({ ...d, template: v }))}
                 maxLength={8000}
-                helpText={`Available variables: ${AVAILABLE_VARIABLES.join(", ")}`}
+                helpText={availableVarsHelp}
               />
               <Checkbox
-                label="Apply automatically (default for this content type + field)"
+                label={s.contentTemplatesIsDefault}
                 checked={draft.isDefault}
                 onChange={(v) => setDraft((d) => ({ ...d, isDefault: v }))}
               />
@@ -244,7 +282,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                   loading={submitting}
                   onClick={saveDraft}
                 >
-                  Save
+                  {s.contentTemplatesSave}
                 </Button>
                 <Button
                   disabled={submitting}
@@ -253,7 +291,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                     setDraft({ ...EMPTY_DRAFT });
                   }}
                 >
-                  Cancel
+                  {s.contentTemplatesCancel}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -264,13 +302,10 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
 
         {grouped.length === 0 ? (
           <EmptyState
-            heading="No templates yet"
+            heading={s.contentTemplatesEmptyHeading}
             image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
           >
-            <p>
-              Create reusable prompt presets to keep AI output consistent across
-              your catalog.
-            </p>
+            <p>{s.contentTemplatesEmptyBody}</p>
           </EmptyState>
         ) : (
           <BlockStack gap="300">
@@ -282,10 +317,10 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                       <Text as="span" fontWeight="semibold">
                         {tpl.name}
                       </Text>
-                      <Badge>{tpl.contentType}</Badge>
-                      <Badge>{tpl.fieldType}</Badge>
+                      <Badge>{contentTypeLabel(tpl.contentType)}</Badge>
+                      <Badge>{fieldLabel(tpl.contentType, tpl.fieldType)}</Badge>
                       {tpl.isDefault && (
-                        <Badge tone="success">Default</Badge>
+                        <Badge tone="success">{s.contentTemplatesDefaultBadge}</Badge>
                       )}
                     </InlineStack>
                     {canUse && (
@@ -301,7 +336,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                               })
                             }
                           >
-                            Make default
+                            {s.contentTemplatesMakeDefault}
                           </Button>
                         )}
                         <Button
@@ -309,7 +344,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                           disabled={submitting}
                           onClick={() => startEdit(tpl)}
                         >
-                          Edit
+                          {s.contentTemplatesEditRow}
                         </Button>
                         <Button
                           size="slim"
@@ -322,7 +357,7 @@ export function SettingsTemplatesTab({ templates, canUse, upgradeNotice }: Props
                             })
                           }
                         >
-                          Delete
+                          {s.contentTemplatesDeleteRow}
                         </Button>
                       </InlineStack>
                     )}

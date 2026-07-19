@@ -33,12 +33,40 @@ export async function handleFormatField(ctx: AIActionContext): Promise<Response>
   const formatInstruction = sanitizePromptInput(rawFormatInstruction, { fieldType: "general", allowNewlines: true });
 
   // Build the prompt
-  const prompt = `${formatInstruction}
+  let prompt = `${formatInstruction}
 
 Text to format:
 ${sourceText}
 
 Return only the formatted text, without explanations.`;
+
+  // Content-Template (Pro/Max): parity with the generate path — if the shop
+  // has a default template for this contentType+field, append it so Format
+  // honours the same merchant-authored prompt shape as Generate. Only
+  // {{current_value}} and {{field_label}} are available in this context
+  // (no title/description/language); missing vars resolve to empty strings
+  // in the service. A downstream failure must never block formatting.
+  try {
+    const plan = (ctx.settings?.subscriptionPlan || "free") as Plan;
+    const resolvedTemplate = await resolveTemplateInstruction({
+      shop: session.shop,
+      plan,
+      contentType,
+      fieldType,
+      vars: {
+        current_value: sourceText,
+        field_label: fieldType,
+      },
+    });
+    if (resolvedTemplate) {
+      prompt += `\n\nTemplate:\n${resolvedTemplate.instruction}`;
+    }
+  } catch (templateErr) {
+    logger.warn("[API-AI] Content template resolution failed (formatField)", {
+      context: "AI",
+      error: templateErr instanceof Error ? templateErr.message : String(templateErr),
+    });
+  }
 
   // Create task entry with prompt
   const taskFieldLabel3 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
@@ -477,6 +505,38 @@ Do NOT:
       }
     }
     prompt += `\n\nReturn ONLY the formatted ${fieldLabel} as plain text (no HTML). Keep the original language. Output the result in ${mainLanguage}.`;
+  }
+
+  // Content-Template (Pro/Max): parity with the generate path — if the shop
+  // has a default template for this contentType+field, append it so Format
+  // honours the same merchant-authored prompt shape as Generate. Full var
+  // set is available here (title/description/language). A downstream
+  // failure must never block formatting.
+  try {
+    const plan = (ctx.settings?.subscriptionPlan || "free") as Plan;
+    const resolvedTemplate = await resolveTemplateInstruction({
+      shop: session.shop,
+      plan,
+      contentType,
+      fieldType,
+      vars: {
+        title: sanitizedContextTitle,
+        name: sanitizedContextTitle,
+        product_name: sanitizedContextTitle,
+        description: sanitizedContextDescription,
+        current_value: currentValue,
+        language: mainLanguage,
+        field_label: fieldLabel,
+      },
+    });
+    if (resolvedTemplate) {
+      prompt += `\n\nTemplate:\n${resolvedTemplate.instruction}`;
+    }
+  } catch (templateErr) {
+    logger.warn("[API-AI] Content template resolution failed (formatAIText)", {
+      context: "AI",
+      error: templateErr instanceof Error ? templateErr.message : String(templateErr),
+    });
   }
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)

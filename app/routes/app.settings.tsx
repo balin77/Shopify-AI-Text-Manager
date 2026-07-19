@@ -830,6 +830,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         deleteTemplate,
         setDefaultTemplate,
         validateTemplateInput,
+        ContentTemplateDefaultRaceError,
       } = await import("../services/content-template.service");
       const { canUseContentTemplates } = await import("../utils/planUtils");
       const planRow = await db.aISettings.findUnique({
@@ -858,8 +859,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (!id) {
           return json({ success: false, error: "Missing template id.", actionType }, { status: 400 });
         }
-        const updated = await setDefaultTemplate(session.shop, id);
-        return json({ success: !!updated, actionType });
+        try {
+          const updated = await setDefaultTemplate(session.shop, id);
+          return json({ success: !!updated, actionType });
+        } catch (err) {
+          if (err instanceof ContentTemplateDefaultRaceError) {
+            return json(
+              { success: false, errorCode: "defaultRace", actionType },
+              { status: 409 },
+            );
+          }
+          throw err;
+        }
       }
 
       // saveTemplate (create or update)
@@ -878,15 +889,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           { status: 400 },
         );
       }
-      if (id) {
-        const updated = await updateTemplate(session.shop, id, input);
-        if (!updated) {
-          return json({ success: false, error: "Template not found.", actionType }, { status: 404 });
+      try {
+        if (id) {
+          const updated = await updateTemplate(session.shop, id, input);
+          if (!updated) {
+            return json({ success: false, error: "Template not found.", actionType }, { status: 404 });
+          }
+        } else {
+          await createTemplate(session.shop, input);
         }
-      } else {
-        await createTemplate(session.shop, input);
+        return json({ success: true, actionType });
+      } catch (err) {
+        if (err instanceof ContentTemplateDefaultRaceError) {
+          return json(
+            { success: false, errorCode: "defaultRace", actionType },
+            { status: 409 },
+          );
+        }
+        throw err;
       }
-      return json({ success: true, actionType });
     } else if (actionType === "scanProductMetafieldDefinitions") {
       // Data-driven scan: sources from the actual product metafields (incl.
       // third-party / definition-less ones like Google & Judge.me), enriched
