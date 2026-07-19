@@ -251,13 +251,15 @@ Die ursprüngliche SEO-Tabelle (§2.2) stammt aus 01/2026 und verpasst den **def
 | Custom Prompts | ✅ | ✅ | ✅ | ✅ |
 | Multi-Language | ✅ | ✅ 30+ | ✅ | ✅ |
 | Bulk-Generierung | 🔄 Queue | ✅ | ✅ | ✅ |
-| **Content-Templates** | ❌ | ✅ | ✅ | ✅ |
+| **Content-Templates** ⁵ | ❌ (bewusst) | ✅ | ✅ | ✅ |
 | **Auto-Generate neues Produkt** | ❌ | ✅ | ❌ | ❌ |
 | **AI Blog-Post-Generator** | ❌ | ❌ | ✅ | ✅ |
 | **AI Image Generator** | ❌ | ❌ | ❌ | ✅ |
 | **AI Email/Marketing** | ❌ | ❌ | ❌ | ✅ |
 | **AI Social Media Posts** | ❌ | ❌ | ❌ | ✅ |
 | **Image-to-Description** | ❌ | ❌ | ❌ | ✅ |
+
+> ⁵ **Content-Templates — bewusst nicht implementiert** (Rollback 2026-07-19): das Feature war vom 2026-07-17 bis 2026-07-19 auf `develop` gemergt und wurde nach Design-Review wieder zurückgezogen. Analyse ergab, dass das Kern-Feature — `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution — der KI **keine Information lieferte, die der Handler nicht bereits als eigene Prompt-Zeilen** (`Context - Title: …`, `Context - Description: …`, `Language: …`, `Current {field}: …`) sendet. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions (AI-Einstellungen) mit einer rein textuellen Umpositionierung der gleichen Info — zwei Konzepte für dieselbe Prompt-Steuerung, kein realer Merchant-Nutzen. Der Rollback ist commit `69e7b8b`; die DB-Migration `20260518100000_add_content_template` wird via Reverse-Migration `20260719130000_drop_content_template` zurückgerollt. **Bedingung für ein Re-Design:** die Variablen müssen dann Daten liefern, die die KI heute noch NICHT bekommt — z. B. `{{brand}}` / `{{price}}` / `{{tags}}` / `{{vendor}}` / `{{product_type}}` / `{{similar_products}}` aus Shopify. Erst dann rechtfertigt sich ein zweites Prompt-Steuerungs-Konzept neben Custom-Instructions.
 
 **Preise der Wettbewerber:**
 - ChatGPT-AI: ~$1 pro 100 Beschreibungen
@@ -441,7 +443,7 @@ Diese Features haben die meisten Wettbewerber und Kunden erwarten sie:
 | 2 | **Rich Snippets (Product, Review, Breadcrumb)** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
 | ~~3~~ | ~~**Glossar/Terminologie-Management**~~ ✅ erledigt (2026-07, Settings-Tab „Glossar" + zentrale Prompt-Injektion in `src/services/ai.service.ts`; Plan: `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md`) | — | — | — |
 | ~~4~~ | ~~**Language/Currency Switcher Widget**~~ ✅ erledigt (2026-06, `extensions/storefront/blocks/locale-switcher.liquid`) | — | — | — |
-| 5 | **Content-Templates/Vorlagen** | Hoch | Niedrig | ChatGPT-AI, WritePilot, SEO On |
+| ~~5~~ | ~~**Content-Templates/Vorlagen**~~ ⛔ **bewusst nicht** (Rollback 2026-07-19 nach 2-Tage-Test auf `develop`; `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Context-Zeilen bekam — siehe §2.3 Fußnote ⁵) | — | — | — |
 
 #### Details:
 
@@ -488,19 +490,18 @@ Warum wichtig:
 - Ohne Widget: Übersetzungen nutzlos für Kunden
 ```
 
-**4. Content-Templates/Vorlagen**
-```
-Was fehlt:
-- Wiederverwendbare Prompt-Templates
-- Variablen-System ({{product_name}}, {{category}})
-- Template-Bibliothek
-- Template-Sharing zwischen Produkten
+**4. Content-Templates/Vorlagen — ⛔ zurückgezogen (2026-07-19)**
 
-Warum wichtig:
-- Konsistente Markensprache
-- Schnellere Content-Erstellung
-- Weniger manuelle Anpassungen
-```
+Feature war vom 2026-07-17 bis 2026-07-19 auf `develop` gemergt und in einem
+2-Tages-Design-Review wieder entfernt. Historie:
+
+- **2026-07-17** — Aus `origin/feature/content-templates` (b4be11f, Mai 2026) cherry-picked und an aktuelles develop angepasst: `ContentTemplate`-Prisma-Model, Substitution-Util, CRUD-Service mit Single-Default-Invariante, Settings-Tab „Vorlagen" (Pro/Max), Integration in `text-generation.handler.ts`, GDPR-Purge, 40 Unit-Tests. Merge-Commit `266b00a`.
+- **2026-07-19** — Nach kritischer Nutzerfrage („Ist die neue Vorlage und die KI-Instruktionen nicht redundant? Welche Infos kriegt die KI durch `{{variables}}` überhaupt, die sie sonst nicht hätte?") ergab die Analyse:
+  - Alle 6 unterstützten Variablen (`{{title}}`, `{{name}}`, `{{product_name}}`, `{{description}}`, `{{current_value}}`, `{{language}}`, `{{field_label}}`) landeten in Werten, die der Handler ohnehin schon als eigene Prompt-Zeilen sendet (`Context - Title: …`, `Context - Description: …`, `Current {label}: …`, `Language: …`).
+  - Templates duplizierten damit die bestehenden per-Field-Custom-Instructions (AISettings) mit rein **textueller Umpositionierung** derselben Info. Zwei Prompt-Steuerungs-Konzepte für den identischen Effekt.
+  - Rollback-Commit `69e7b8b` — alle Feature-Dateien, Handler-Blöcke, Plan-Flag, i18n, Route-Integration entfernt; Reverse-Migration `20260719130000_drop_content_template` rollt die DB-Änderung beim nächsten Railway-Deploy zurück.
+
+**Bedingung für einen späteren Wiedereinstieg:** die Variablen müssen dann Informationen liefern, die die KI heute NICHT bekommt — z. B. `{{brand}}`, `{{price}}`, `{{tags}}`, `{{vendor}}`, `{{product_type}}`, `{{similar_products}}`, `{{previous_generation}}` aus Shopify-Daten, die im Handler heute nicht durchgereicht werden. Solange die Variablen nur bestehende Context-Werte spiegeln, decken Custom-Instructions denselben Bedarf ab, ohne den Merchant vor eine zweite Konfigurationsfläche zu stellen.
 
 ---
 
@@ -655,12 +656,15 @@ Voraussetzung für Google Shopping. Wir generieren SEO-Titel/Meta schon, aber
 nicht den CTR-wirksamen strukturierten Teil. Umsetzung = Service, der JSON-LD
 aus vorhandenen Daten erzeugt und ins Theme injiziert.
 
-**4. Content-Templates/Vorlagen.** Wiederverwendbare Prompt-Vorlagen mit
-Platzhaltern (`{{product_name}}`, `{{category}}`). AI-Pipeline + Custom-
-Instructions existieren schon; Kern = Prisma-Tabelle + Editor-UI + Variablen-
-Substitution vor dem AI-Call. **Bestes Aufwand/Nutzen** und taugt zugleich als
-*zusätzliches* Pro/Max-Differenzial (Befund 4 ist bereits gelöst — Templates
-optional obendrauf, z. B. erst ab Pro).
+**4. ~~Content-Templates/Vorlagen.~~** ⛔ **bewusst zurückgezogen (2026-07-19).**
+Feature war 2 Tage auf `develop` gemergt, Analyse ergab dass die `{{variables}}`
+(title/description/language/current_value/field_label) der KI keine Info
+lieferten, die sie nicht über die existierenden Handler-Context-Zeilen bereits
+bekam — reine textuelle Umpositionierung. Damit deckte das Konzept die
+Custom-Instructions doppelt ab, ohne dem Merchant echten Zusatzwert zu bieten.
+Ein späterer Wiedereinstieg lohnt nur, wenn neue Variablen echte Zusatz-Info
+bringen (`{{brand}}`, `{{price}}`, `{{tags}}`, `{{vendor}}`, `{{product_type}}`).
+Details → §3.1 Punkt 5 / §2.3 Fußnote ⁵.
 
 ### 🟠 Hoch
 
@@ -691,16 +695,24 @@ Image-to-Description, OCR). Nice-to-have, kein Kaufentscheidungs-Treiber.
 LOCALE_CONTENT, kein Gap. Third-Party-App-Übersetzung = ✅ via Direct
 Translations, siehe §2.1 Fußnote ².)
 
-### Strategisches Big Picture
-Schwächen = „Sichtbarkeit & SEO-Mechanik" (Switcher, Structured Data).
-Stärken = „AI-Qualität & Breite" (6 Provider, BYO-Key = ∞ günstige AI, Custom-
-Instructions, Bild-Tools, viele Content-Typen). → Kritische Lücken schließen,
-damit man nicht an Basis-Erwartungen scheitert; *vermarkten* aber die Stärken,
-die kein Übersetzungs-Konkurrent hat.
+### Strategisches Big Picture (aktualisiert 2026-07-19)
+Die früheren „kritischen" Schwächen sind alle geschlossen: Switcher-Widget
+(2026-06), Glossar (2026-07), JSON-LD + kompletter SEO-Tab (2026-07). Der
+5. Kandidat auf der Kritikum-Liste — **Content-Templates** — wurde ausprobiert
+und bewusst wieder zurückgezogen (siehe §3.1 Punkt 5), weil die
+`{{variables}}` in der aktuellen Form der KI keine zusätzliche Information
+lieferten und damit die bestehenden Custom-Instructions redundant duplizierten.
+Damit ist die „Kritikum-Liste" leer, und der Fokus verschiebt sich auf
+**Vermarktung** der geschlossenen Lücken + der USPs (mehrsprachige AEO,
+Foreign-Locale-SEO-Audit, unbegrenzte Sprachen, BYO-Key, Multi-Provider-AI,
+6-Provider-Breite).
 
 **Empfohlene Reihenfolge (wenn Bugs erledigt):** ~~#1 Switcher-Widget~~ ✅
-erledigt → #4 Templates (billig, nutzt vorhandene Infra, zusätzliches
-Pro/Max-Differenzial) → ~~#2 Glossar~~ ✅ erledigt + #3 JSON-LD parallel.
+erledigt → ~~#2 Glossar~~ ✅ erledigt → ~~#3 JSON-LD~~ ✅ erledigt (2026-07,
+kompletter SEO-Tab) → ~~#4 Content-Templates~~ ⛔ zurückgezogen. **Nächste
+sinnvolle Kandidaten sind keine „Kritika" mehr, sondern Hoch-Prio-Erweiterungen:**
+AI Blog-Post-Generator (§3.2 #10, AI-Infra steht) oder Geolocation Auto-Detect
+(§3.2 #7, koppelt mit dem Switcher). Beides ist Ausbau, keine Basis-Erwartung.
 
 ---
 
@@ -738,29 +750,25 @@ Umgesetzt nach `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md` — das dortige
 Datenmodell (Entry + per-Locale-Übersetzungen) ersetzt den früher hier
 skizzierten flachen `GlossaryTerm`-Entwurf.
 
-#### 1.3 Content-Templates
-- [ ] Template-Datenmodell
-- [ ] Template-Editor UI
-- [ ] Variablen-System ({{product_name}}, {{category}}, etc.)
-- [ ] Template pro Content-Typ
-- [ ] Template-Auswahl bei Generierung
-- [ ] Standard-Templates mitliefern
+#### 1.3 Content-Templates — ⛔ zurückgezogen (2026-07-19)
 
-**Technische Umsetzung:**
-```prisma
-// prisma/schema.prisma
-model ContentTemplate {
-  id          String   @id @default(cuid())
-  shop        String
-  name        String
-  contentType String   // "product", "collection", "article", etc.
-  fieldType   String   // "title", "description", "seoTitle", etc.
-  template    String   // Der Prompt mit {{variablen}}
-  isDefault   Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-```
+Feature war vom 2026-07-17 bis 2026-07-19 in einem 2-Tages-Sprint komplett
+integriert (`ContentTemplate`-Model + Migration + Service + `{{variable}}`-
+Substitution + Settings-Tab + Handler-Integration in generate/format + Plan-Gate
+Pro/Max + GDPR-Purge + 40 Unit-Tests + i18n in de/en/es, alles auf `develop`).
+
+Nach kritischem Nutzer-Review komplett zurückgezogen — die Variablen boten der
+KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam.
+Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle
+beim nächsten Deploy weg. Details → §3.1 Punkt 5 (Rollback-Historie) + §2.3
+Fußnote ⁵ (Analyse).
+
+**Bedingung für einen späteren Re-Einstieg** (nicht eingeplant):
+Variablen müssten Zusatz-Info liefern, die der Handler heute NICHT
+durchreicht — z. B. `{{brand}}`, `{{price}}`, `{{tags}}`, `{{vendor}}`,
+`{{product_type}}`, `{{similar_products}}`, `{{previous_generation}}` aus
+Shopify-Daten. Pro neuer Variable ~30 min Aufwand (GraphQL-Feld im Handler
+laden + in `vars`-Objekt reichen).
 
 ---
 
@@ -869,4 +877,6 @@ model ContentTemplate {
 | 2026-06-29 | **§2.4 Korrektur — Lightbox/Zoom** ist vorhanden (war fälschlich als Lücke gelistet): der App-**Embed** `variant-gallery-embed.js` hat eine selbstgebaute `<dialog>`-Lightbox (`_bindLightbox`/`_openLightbox`) + 2×-Klick-Zoom (`_bindScaleZoom`), Zoom-Modus aus Dawns `image_zoom`-Setting geerbt. Erste Analyse hatte nur den schlanken App-**Block** `variant-gallery.js` geprüft. Intro um „Zwei Storefront-Varianten" ergänzt; Lücken-Liste auf nur noch Produktseiten-Swatches + Collection-Swatches + Free-Tarif reduziert. |
 | 2026-06-29 | **§2.4 Korrektur — Bulk-Auto-Zuweisung** ist vorhanden (war fälschlich als Lücke gelistet): deterministisches Dateiname↔SKU/Image-Key-Matching (`BulkImageUploadPanel.tsx`, `parseFilenames.ts`, `api.update-variant-match-key.tsx`) + 1-Klick-Key-Generator + Cross-Produkt-Option-Value-Memory (eigener USP, kein Konkurrent hat das). Neuer Erklär-Block, zwei neue Tabellenzeilen; „Auto-Zuweisung" aus der Lücken-Liste entfernt — bewusster Verzicht nur auf Pixel-AI-Bilderkennung (Rubik). |
 | 2026-06-29 | **§2.2.1 Nachtrag — übersehene & neue Funktionsweisen** ergänzt (Web-Recherche 06/2026): AEO/GEO als definierender 2026-Layer, llms.txt, IndexNow/Instant-Indexing, AI-Crawler-Zugriff (robots.txt), GTIN/Brand im Product-Schema für AI-Shopping, erweiterte Schema-Typen (FAQ/Review/LocalBusiness/Video), internes Linking, manueller Bulk-Meta-Editor, Bild-Dateinamen-SEO, AI-Referral-Tracking, OG/Twitter-Cards, Autopilot-Design-Warnung. Strategie: **mehrsprachige AEO** als unbesetzter USP. Fließt in den SEO-Tab-Plan (`docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md`) ein. |
+| 2026-07-19 | **SEO-Tab Phasen 0–8 ausgeliefert** — kompletter Umbau von §1.4/§2.2/§2.2.1/§3 und den Roadmap-Phasen. Neu live: store-weites Audit-Dashboard mit Score-Trend/Snapshots, JSON-LD Structured Data (Product inkl. GTIN/Offer, Organization, Breadcrumb, Article, Review/AggregateRating, FAQ), Open Graph / Twitter Cards, Redirects & 404-Tracking, hreflang-Audit, Keyword-Tracking + On-Page-Analyse per-Locale, Google Search Console Pro+ mit täglicher Auto-Sync, AEO (`llms.txt` + `robots.txt`-AI-Crawler-Audit), IndexNow / Instant Indexing Pro+, manueller Bulk-Meta-Editor, Bulk „Fix with AI", Foreign-Locale SEO-Audit + AI-Fix. Damit sind die kritischen SEO-Gaps #1/#2 (JSON-LD/Rich Snippets), #8 (GSC), #9 (Broken Link Detection), #15 (Keyword Research) erledigt. |
+| 2026-07-19 | **Content-Templates ⛔ zurückgezogen** nach 2-Tages-Test auf `develop` (Merge `266b00a` → Rollback `69e7b8b`). Kritischer Nutzer-Review ergab: die `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution lieferte der KI keine Info, die sie nicht bereits über die Handler-Prompt-Zeilen (`Context - Title:`, `Language:` etc.) bekam. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions mit rein textueller Umpositionierung. Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle beim nächsten Deploy weg. §2.3 Fußnote ⁵, §3.1 Punkt 5, §3.5 „Big Picture", §4 Phase 1.3 alle aktualisiert. **Bedingung für einen späteren Wiedereinstieg:** Variablen müssen Zusatz-Info liefern, die die KI heute nicht bekommt (`{{brand}}`/`{{price}}`/`{{tags}}`/`{{vendor}}`/`{{product_type}}`/`{{similar_products}}` aus Shopify). Ohne diese Bedingung deckt Custom-Instructions denselben Bedarf ohne zweite Konfigurationsfläche ab. |
 
