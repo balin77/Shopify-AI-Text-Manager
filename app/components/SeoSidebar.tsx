@@ -52,6 +52,14 @@ interface SeoSidebarProps {
    */
   structuredData?: JsonLd | null;
   /**
+   * When true, `validateJsonLd` runs in preview mode: warnings that depend on
+   * data the editor can't supply (Offer from variant price, Article.publishedAt,
+   * Organization.logo) are suppressed. The storefront Liquid block emits these
+   * from native/metafield/shop-brand data — flagging them here would be a
+   * false positive. See structured-data.service.ValidateJsonLdOptions.
+   */
+  structuredDataPreviewMode?: boolean;
+  /**
    * Optional target-keyword tracking (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5 / A6
    * companion). When BOTH resourceId and resourceType are provided, a collapsible
    * "Target keyword" section is shown: it loads/saves the one tracked keyword for
@@ -75,6 +83,7 @@ export function SeoSidebar({
   excludeDescription = false,
   excludeImages = false,
   structuredData = null,
+  structuredDataPreviewMode = false,
   resourceId,
   resourceType,
 }: SeoSidebarProps) {
@@ -86,8 +95,11 @@ export function SeoSidebar({
     [structuredData],
   );
   const jsonLdWarnings = useMemo(
-    () => (structuredData ? validateJsonLd(structuredData) : []),
-    [structuredData],
+    () =>
+      structuredData
+        ? validateJsonLd(structuredData, { previewMode: structuredDataPreviewMode })
+        : [],
+    [structuredData, structuredDataPreviewMode],
   );
   const { seoTitleSuffix } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);

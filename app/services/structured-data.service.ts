@@ -344,12 +344,25 @@ export interface JsonLdWarning {
   message: string;
 }
 
+export interface ValidateJsonLdOptions {
+  /** In-editor preview mode: the caller cannot supply data that lives outside
+   *  the editor (product Offer built from variant price, Article.publishedAt,
+   *  Organization.logo from shop brand). The storefront Liquid block still
+   *  emits these from native/metafield/shop-brand data, so warning here would
+   *  be a false positive. Off by default so the standalone preview page and
+   *  audits keep flagging genuinely missing data. */
+  previewMode?: boolean;
+}
+
 /**
  * Lightweight schema.org sanity check for the SEO sidebar. Reports missing
  * required/recommended fields (the same things Google's Rich Results test
  * flags) without pulling in a heavy validator.
  */
-export function validateJsonLd(jsonLd: JsonLd | null): JsonLdWarning[] {
+export function validateJsonLd(
+  jsonLd: JsonLd | null,
+  options: ValidateJsonLdOptions = {},
+): JsonLdWarning[] {
   const w: JsonLdWarning[] = [];
   if (!jsonLd) {
     return [{ severity: "error", message: "No structured data generated." }];
@@ -377,10 +390,12 @@ export function validateJsonLd(jsonLd: JsonLd | null): JsonLdWarning[] {
       });
     const offers = jsonLd.offers as JsonLd | undefined;
     if (!offers) {
-      w.push({
-        severity: "warning",
-        message: "No Offer (price/availability) — required for price snippets.",
-      });
+      if (!options.previewMode) {
+        w.push({
+          severity: "warning",
+          message: "No Offer (price/availability) — required for price snippets.",
+        });
+      }
     } else {
       if (!offers.priceCurrency) {
         w.push({
@@ -447,14 +462,14 @@ export function validateJsonLd(jsonLd: JsonLd | null): JsonLdWarning[] {
         severity: "warning",
         message: "Article has no image — recommended for rich results.",
       });
-    if (!jsonLd.datePublished)
+    if (!jsonLd.datePublished && !options.previewMode)
       w.push({
         severity: "warning",
         message: "Article has no datePublished.",
       });
   }
 
-  if (type === "Organization" && !jsonLd.logo) {
+  if (type === "Organization" && !jsonLd.logo && !options.previewMode) {
     w.push({
       severity: "warning",
       message: "Organization has no logo — recommended for knowledge panel.",

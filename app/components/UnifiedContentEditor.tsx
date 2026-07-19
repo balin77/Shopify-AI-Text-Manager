@@ -436,8 +436,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
     // Calculate image alt text stats for SEO score
     // Include featured image if no gallery images exist (e.g. articles)
-    const images = (item as TranslatableContentItem & { images?: Array<{ altText?: string | null }> }).images ?? [];
-    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { altText?: string | null } }).featuredImage;
+    const images = (item as TranslatableContentItem & { images?: Array<{ url?: string; altText?: string | null }> }).images ?? [];
+    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { url?: string; altText?: string | null } }).featuredImage;
     let totalImages = images.length;
     let imagesWithAlt = images.filter((img, index) => {
       const localAltText = state.imageAltTexts?.[index];
@@ -463,11 +463,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const handle = editableValues.handle || "";
     const metaDescription = editableValues.metaDescription || "";
     const sdShop = { domain: "", name: "" };
+    // Fall back to the first gallery image when Shopify's `featuredImage` is
+    // null (variant-only products, articles synced before featuredImage was
+    // populated). Otherwise the sidebar warns "Product has no image" even
+    // though the storefront Liquid block will render one from the same media.
+    const primaryImageUrl =
+      featuredImg?.url || (images.length > 0 ? images[0]?.url : undefined) || undefined;
     let structuredData: JsonLd | null = null;
     if (!isBlogContainer && title) {
       if (config.contentType === "products") {
         structuredData = buildProductJsonLd(
-          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          {
+            title,
+            descriptionHtml: desc,
+            handle,
+            seoDescription: metaDescription,
+            featuredImageUrl: primaryImageUrl,
+          },
           sdShop,
         );
       } else if (config.contentType === "collections") {
@@ -476,8 +488,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           sdShop,
         );
       } else if (config.contentType === "blogs") {
+        // blogHandle is derived from the article's blog TITLE (slugified),
+        // matching how the standalone Structured Data preview route builds it.
+        // Using `handle` here would produce `/blogs/<article-handle>/<article-handle>`.
+        // Currently masked by `sdShop.domain = ""` (absoluteUrl returns ""), but
+        // keeping the shape correct guards against future domain wiring.
+        const blogTitle =
+          (item as TranslatableContentItem & { blogTitle?: string }).blogTitle || "";
+        const blogHandle = blogTitle
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || handle;
         structuredData = buildArticleJsonLd(
-          { title, body: desc, handle, blogHandle: handle },
+          { title, body: desc, handle, blogHandle, imageUrl: primaryImageUrl },
           sdShop,
         );
       }
@@ -503,6 +527,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         excludeDescription={isBlogContainer}
         excludeImages={isBlogContainer}
         structuredData={structuredData}
+        structuredDataPreviewMode
         resourceId={keywordResourceType ? item.id : undefined}
         resourceType={keywordResourceType}
       />

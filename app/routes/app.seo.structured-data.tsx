@@ -54,21 +54,126 @@ interface PreviewBlock {
   warnings: JsonLdWarning[];
 }
 
+// The DB lacks the fields the schema.org validator needs to check the SEO-
+// relevant warnings — Product has no price/currency/availability columns
+// (variants don't either), Article has no publishedAt, and Shop.brand.logo
+// isn't synced at all. We fetch just those bits live from Admin GraphQL for
+// the sample product/article we've picked from the DB, so the preview reflects
+// the same data the storefront Liquid block emits rather than false-positive
+// warnings. Sample-only — not a full sync, no shape drift.
+const SHOP_BRAND_QUERY = `#graphql
+  query seoStructuredDataShop {
+    shop {
+      name
+      primaryDomain { host }
+      brand {
+        logo { image { url } }
+        squareLogo { image { url } }
+      }
+    }
+  }
+`;
+
+const PRODUCT_SAMPLE_QUERY = `#graphql
+  query seoStructuredDataProduct($id: ID!) {
+    product(id: $id) {
+      availableForSale
+      featuredImage { url }
+      images(first: 1) { edges { node { url } } }
+      priceRangeV2 { minVariantPrice { amount currencyCode } }
+    }
+  }
+`;
+
+const ARTICLE_SAMPLE_QUERY = `#graphql
+  query seoStructuredDataArticle($id: ID!) {
+    article(id: $id) { publishedAt }
+  }
+`;
+
+async function fetchShopBrand(admin: any, fallbackShop: string): Promise<ShopInfo> {
+  try {
+    const res = await admin.graphql(SHOP_BRAND_QUERY);
+    const j: any = await res.json();
+    const s = j?.data?.shop;
+    const logoUrl =
+      s?.brand?.logo?.image?.url || s?.brand?.squareLogo?.image?.url || null;
+    return {
+      name: s?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
+      domain: s?.primaryDomain?.host || fallbackShop,
+      logoUrl,
+    };
+  } catch {
+    return {
+      name: fallbackShop.replace(/\.myshopify\.com$/, ""),
+      domain: fallbackShop,
+    };
+  }
+}
+
+async function fetchProductPreviewData(
+  admin: any,
+  productId: string,
+): Promise<{
+  price: string | null;
+  currency: string | null;
+  available: boolean | null;
+  imageUrl: string | null;
+}> {
+  try {
+    const res = await admin.graphql(PRODUCT_SAMPLE_QUERY, { variables: { id: productId } });
+    const j: any = await res.json();
+    const p = j?.data?.product;
+    return {
+      price: p?.priceRangeV2?.minVariantPrice?.amount ?? null,
+      currency: p?.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
+      available: typeof p?.availableForSale === "boolean" ? p.availableForSale : null,
+      imageUrl:
+        p?.featuredImage?.url || p?.images?.edges?.[0]?.node?.url || null,
+    };
+  } catch {
+    return { price: null, currency: null, available: null, imageUrl: null };
+  }
+}
+
+async function fetchArticlePublishedAt(
+  admin: any,
+  articleId: string,
+): Promise<string | null> {
+  try {
+    const res = await admin.graphql(ARTICLE_SAMPLE_QUERY, { variables: { id: articleId } });
+    const j: any = await res.json();
+    return j?.data?.article?.publishedAt ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
-
-  const shopInfo: ShopInfo = {
-    domain: shop,
-    name: shop.replace(/\.myshopify\.com$/, ""),
-  };
 
   const [product, collection, article] = await Promise.all([
     db.product.findFirst({
       where: { shop },
       orderBy: { lastSyncedAt: "desc" },
-      select: { title: true, descriptionHtml: true, handle: true, seoDescription: true, featuredImageUrl: true },
+      select: {
+        id: true,
+        title: true,
+        descriptionHtml: true,
+        handle: true,
+        seoDescription: true,
+        featuredImageUrl: true,
+        // Fallback: first ProductImage when featuredImageUrl is null (variant-
+        // only products). Ordered by position so it matches what the theme
+        // renders first.
+        images: {
+          select: { url: true },
+          orderBy: { position: "asc" },
+          take: 1,
+        },
+      },
     }),
     db.collection.findFirst({
       where: { shop },
@@ -78,8 +183,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.article.findFirst({
       where: { shop },
       orderBy: { lastSyncedAt: "desc" },
-      select: { title: true, body: true, handle: true, blogTitle: true, imageUrl: true, shopifyUpdatedAt: true },
+      select: { id: true, title: true, body: true, handle: true, blogTitle: true, imageUrl: true, shopifyUpdatedAt: true },
     }),
+  ]);
+
+  const [shopInfo, productLive, articlePublishedAt] = await Promise.all([
+    fetchShopBrand(admin, shop),
+    product ? fetchProductPreviewData(admin, product.id) : Promise.resolve(null),
+    article ? fetchArticlePublishedAt(admin, article.id) : Promise.resolve(null),
   ]);
 
   const previews: PreviewBlock[] = [];
@@ -89,13 +200,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   previews.push({ labelKey: "schemaOrganization", code: renderJsonLdScript(org), warnings: validateJsonLd(org) });
 
   if (product) {
+    const imageUrl =
+      productLive?.imageUrl || product.featuredImageUrl || product.images[0]?.url || null;
     const p = buildProductJsonLd(
       {
         title: product.title,
         descriptionHtml: product.descriptionHtml,
         handle: product.handle,
         seoDescription: product.seoDescription,
-        featuredImageUrl: product.featuredImageUrl,
+        featuredImageUrl: imageUrl,
+        price: productLive?.price,
+        currency: productLive?.currency,
+        available: productLive?.available,
       },
       shopInfo,
     );
@@ -123,6 +239,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         handle: article.handle,
         blogHandle: slug(article.blogTitle || ""),
         imageUrl: article.imageUrl,
+        publishedAt: articlePublishedAt,
         updatedAt: article.shopifyUpdatedAt,
       },
       shopInfo,
