@@ -45,14 +45,6 @@ export interface PlanLimits {
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
-  /**
-   * Reusable Content-Templates feature (Pro+): merchant-authored prompt
-   * templates with {{variable}} placeholders that are substituted at
-   * generation time. Mirrors aiInstructionsEditable gating. Enforced by
-   * canUseContentTemplates() in planUtils and re-checked inside
-   * resolveTemplateInstruction() (defence in depth for downgraded shops).
-   */
-  contentTemplates: boolean;
   variantImageManager: boolean;
   cacheEnabled: {
     products: boolean;
@@ -84,7 +76,6 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "featured-only",
     contentTypes: ["products", "collections", "onlineStoreExtras"],
     aiInstructionsEditable: false,
-    contentTemplates: false,
     // Image processing suite (VariantImageManager, WebP conversion, bulk
     // upload, bulk alt-text) is Pro+ only — monthlyImageOperations is 0
     // here anyway, so without this flag the merchant saw the UI but every
@@ -115,7 +106,6 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies", "delivery", "onlineStoreExtras"],
     aiInstructionsEditable: false,
-    contentTemplates: false,
     // Same Pro+ gate as free — see comment on free.variantImageManager above.
     variantImageManager: false,
     cacheEnabled: {
@@ -142,7 +132,6 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
-    contentTemplates: true,
     variantImageManager: true,
     cacheEnabled: {
       products: true,
@@ -168,7 +157,6 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
-    contentTemplates: true,
     variantImageManager: true,
     cacheEnabled: {
       products: true,

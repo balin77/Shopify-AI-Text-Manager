@@ -25,7 +25,6 @@ import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
 import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
-import { SettingsTemplatesTab } from "../components/SettingsTemplatesTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -453,21 +452,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translations: Object.fromEntries(e.translations.map((tr) => [tr.locale, tr.value])),
     }));
 
-    // Content-Templates (Pro/Max). The list is always loaded so a later
-    // upgrade renders the merchant's prior templates in place; the tab uses
-    // canUseTemplates in the UI and re-checked in the action.
-    const { listTemplates } = await import("../services/content-template.service");
-    const { canUseContentTemplates } = await import("../utils/planUtils");
-    const canUseTemplates = canUseContentTemplates(subscriptionPlan as Plan);
-    const contentTemplates = (await listTemplates(session.shop)).map((t) => ({
-      id: t.id,
-      name: t.name,
-      contentType: t.contentType,
-      fieldType: t.fieldType,
-      template: t.template,
-      isDefault: t.isDefault,
-    }));
-
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -496,8 +480,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       primaryShopLocale,
       shopLocales,
       glossaryEntries,
-      canUseTemplates,
-      contentTemplates,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
         definitionId: d.definitionId,
@@ -817,97 +799,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const message = err instanceof Error ? err.message : "Could not import glossary";
         return json({ success: false, error: message, actionType }, { status: 400 });
       }
-    } else if (
-      actionType === "saveTemplate" ||
-      actionType === "deleteTemplate" ||
-      actionType === "setDefaultTemplate"
-    ) {
-      // Content-Templates are Pro/Max only — enforce on every mutating call
-      // (defence in depth; the UI also hides the section for Free/Basic).
-      const {
-        createTemplate,
-        updateTemplate,
-        deleteTemplate,
-        setDefaultTemplate,
-        validateTemplateInput,
-        ContentTemplateDefaultRaceError,
-      } = await import("../services/content-template.service");
-      const { canUseContentTemplates } = await import("../utils/planUtils");
-      const planRow = await db.aISettings.findUnique({
-        where: { shop: session.shop },
-        select: { subscriptionPlan: true },
-      });
-      const plan = (planRow?.subscriptionPlan || "free") as Plan;
-      if (!canUseContentTemplates(plan)) {
-        return json(
-          { success: false, error: "Content templates require the Pro or Max plan.", actionType },
-          { status: 403 },
-        );
-      }
-
-      if (actionType === "deleteTemplate") {
-        const id = getFormString(formData, "id");
-        if (!id) {
-          return json({ success: false, error: "Missing template id.", actionType }, { status: 400 });
-        }
-        const ok = await deleteTemplate(session.shop, id);
-        return json({ success: ok, actionType });
-      }
-
-      if (actionType === "setDefaultTemplate") {
-        const id = getFormString(formData, "id");
-        if (!id) {
-          return json({ success: false, error: "Missing template id.", actionType }, { status: 400 });
-        }
-        try {
-          const updated = await setDefaultTemplate(session.shop, id);
-          return json({ success: !!updated, actionType });
-        } catch (err) {
-          if (err instanceof ContentTemplateDefaultRaceError) {
-            return json(
-              { success: false, errorCode: "defaultRace", actionType },
-              { status: 409 },
-            );
-          }
-          throw err;
-        }
-      }
-
-      // saveTemplate (create or update)
-      const id = getFormString(formData, "id");
-      const input = {
-        name: getFormString(formData, "name") || "",
-        contentType: getFormString(formData, "contentType") || "",
-        fieldType: getFormString(formData, "fieldType") || "",
-        template: getFormString(formData, "template") || "",
-        isDefault: formData.get("isDefault") === "true",
-      };
-      const errors = validateTemplateInput(input);
-      if (errors.length > 0) {
-        return json(
-          { success: false, error: errors.map((e) => e.message).join(" "), actionType },
-          { status: 400 },
-        );
-      }
-      try {
-        if (id) {
-          const updated = await updateTemplate(session.shop, id, input);
-          if (!updated) {
-            return json({ success: false, error: "Template not found.", actionType }, { status: 404 });
-          }
-        } else {
-          await createTemplate(session.shop, input);
-        }
-        return json({ success: true, actionType });
-      } catch (err) {
-        if (err instanceof ContentTemplateDefaultRaceError) {
-          return json(
-            { success: false, errorCode: "defaultRace", actionType },
-            { status: 409 },
-          );
-        }
-        throw err;
-      }
     } else if (actionType === "scanProductMetafieldDefinitions") {
       // Data-driven scan: sources from the actual product metafields (incl.
       // third-party / definition-less ones like Google & Judge.me), enriched
@@ -1097,7 +988,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], canUseTemplates = false, contentTemplates = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1110,7 +1001,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "templates" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
+  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Don't honor deep-links to prod-gated future tabs (would render blank).
@@ -1120,13 +1011,13 @@ export default function SettingsPage() {
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "templates", "language", "translations", "glossary", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "templates" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "glossary", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "templates" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -1138,7 +1029,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "templates" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
+  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -1193,7 +1084,6 @@ export default function SettingsPage() {
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "language", title: t.settings.appLanguage },
       ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
-      { id: "templates", title: t.settings.contentTemplates || "Content templates" },
       { id: "glossary", title: t.settings.glossary || "Glossary" },
       { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
@@ -1332,25 +1222,6 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
-              <button
-                onClick={() => handleSectionChange("templates")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "templates" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "templates" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "templates" ? "semibold" : "regular"}>
-                  {t.settings.contentTemplates || "Content templates"}
-                </Text>
-              </button>
               <button
                 onClick={() => handleSectionChange("glossary")}
                 style={{
@@ -1594,15 +1465,6 @@ export default function SettingsPage() {
                   groupedFieldTranslations={groupedFieldTranslations}
                   primaryShopLocale={primaryShopLocale}
                   t={t}
-                />
-              )}
-
-              {/* Content Templates — reusable AI prompt templates (Pro/Max) */}
-              {selectedSection === "templates" && (
-                <SettingsTemplatesTab
-                  templates={contentTemplates}
-                  canUse={canUseTemplates}
-                  upgradeNotice={t.settings?.contentTemplatesUpgradeNotice}
                 />
               )}
 

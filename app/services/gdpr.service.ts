@@ -448,14 +448,6 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${glossaryEntriesDeleted.count} glossary entries`);
-
-    // Content-Templates: merchant-authored reusable AI prompt templates
-    // (Pro/Max feature). Shop-scoped config, no external references — a plain
-    // deleteMany is sufficient.
-    const contentTemplatesDeleted = await tx.contentTemplate.deleteMany({
-      where: { shop: shop_domain },
-    });
-    logger.debug(`[GDPR] Deleted ${contentTemplatesDeleted.count} content templates`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
