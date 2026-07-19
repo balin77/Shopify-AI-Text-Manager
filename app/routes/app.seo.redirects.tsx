@@ -48,7 +48,6 @@ import {
 import { getFormString } from "../utils/form-data.utils";
 
 const IMPORT_ROW_CAP = 1000;
-const EXPORT_ROW_CAP = 10_000;
 
 type HitWithSuggestion = Omit<Hit404, "firstSeenAt" | "lastSeenAt"> & {
   firstSeenAt: string | Date;
@@ -64,9 +63,7 @@ interface LoaderData {
   hits: HitWithSuggestion[];
 }
 
-function csvEscape(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
-}
+type ExportPayload = { csv: string; filename: string; rowCount: number };
 
 async function fetchAllHandles(admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"]): Promise<string[]> {
   // Missing scopes (products/collections/pages) or a shop-side hiccup on any
@@ -101,30 +98,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const q = url.searchParams.get("q") || "";
   const after = url.searchParams.get("after") || null;
-  const exportMode = url.searchParams.get("export") === "1";
-
-  if (exportMode) {
-    const all: Array<{ path: string; target: string }> = [];
-    let cursor: string | null = null;
-    for (let i = 0; i < 200 && all.length < EXPORT_ROW_CAP; i++) {
-      const page = await listRedirects(admin, { first: 250, after: cursor, query: q });
-      for (const r of page.redirects) {
-        all.push({ path: r.path, target: r.target });
-        if (all.length >= EXPORT_ROW_CAP) break;
-      }
-      if (!page.hasNextPage || !page.endCursor) break;
-      cursor = page.endCursor;
-    }
-    const header = "path,target\n";
-    const body = all.map((r) => `${csvEscape(r.path)},${csvEscape(r.target)}`).join("\n");
-    const shopSlug = session.shop.replace(/\.myshopify\.com$/, "").replace(/[^a-z0-9-]/gi, "-");
-    return new Response(header + body + (body ? "\n" : ""), {
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="redirects-${shopSlug}.csv"`,
-      },
-    });
-  }
 
   const [redirectsResult, hits, handles] = await Promise.all([
     listRedirects(admin, { first: 50, after, query: q }),
@@ -306,6 +279,7 @@ export default function SeoRedirects() {
   const createFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
   const importFetcher = useFetcher<ActionResult>();
+  const exportFetcher = useFetcher<ExportPayload>();
   // Dedicated fetcher for "Load more" — GET requests to the same loader, kept
   // separate from rowFetcher (used for 404-hit row actions/deletes) so paging
   // never cancels/gets cancelled by an unrelated row action.
@@ -452,44 +426,34 @@ export default function SeoRedirects() {
     );
   };
 
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const handleExport = async () => {
+  // Guards the effect below so one export click yields exactly one download —
+  // otherwise switching locales or a fetcher re-render would re-fire the
+  // Blob build against the same cached response.
+  const consumedExportKey = useRef<string | null>(null);
+  const handleExport = () => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
-    params.set("export", "1");
-    // A top-level navigation to the CSV response blanks the embedded iframe
-    // (App Bridge session token isn't attached to a raw `window.location.href`
-    // request, so `authenticate.admin` bounces to auth). Same-origin `fetch`
-    // carries the session cookie and lets us assemble the download client-side.
-    setExporting(true);
-    setExportError(null);
-    try {
-      const res = await fetch(`/app/seo/redirects?${params.toString()}`, {
-        credentials: "same-origin",
-      });
-      if (!res.ok) {
-        setExportError(r.errors.createFailed);
-        return;
-      }
-      const blob = await res.blob();
-      const disp = res.headers.get("Content-Disposition") || "";
-      const match = disp.match(/filename="?([^"]+)"?/);
-      const filename = match ? match[1] : "redirects.csv";
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch {
-      setExportError(r.errors.createFailed);
-    } finally {
-      setExporting(false);
-    }
+    // Keying by URL is enough: a re-search yields a different URL and lets
+    // the effect fire again for the same route load.
+    exportFetcher.load(`/app/seo/redirects/export?${params.toString()}`);
   };
+
+  useEffect(() => {
+    if (exportFetcher.state !== "idle" || !exportFetcher.data) return;
+    const key = exportFetcher.data.filename + ":" + exportFetcher.data.rowCount;
+    if (consumedExportKey.current === key) return;
+    consumedExportKey.current = key;
+
+    const blob = new Blob([exportFetcher.data.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportFetcher.data.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [exportFetcher.state, exportFetcher.data]);
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -645,7 +609,7 @@ export default function SeoRedirects() {
                 >
                   {r.importCsvButton}
                 </Button>
-                <Button onClick={handleExport} loading={exporting}>{r.exportCsvButton}</Button>
+                <Button onClick={handleExport} loading={exportFetcher.state !== "idle"}>{r.exportCsvButton}</Button>
               </InlineStack>
             </InlineStack>
             <input
@@ -657,7 +621,6 @@ export default function SeoRedirects() {
             />
             {createError && <Banner tone="critical">{createError}</Banner>}
             {importError && <Banner tone="critical">{importError}</Banner>}
-            {exportError && <Banner tone="critical">{exportError}</Banner>}
             {importResult && (
               <Banner tone={importResult.errors.length > 0 ? "warning" : "success"}>
                 <BlockStack gap="100">
