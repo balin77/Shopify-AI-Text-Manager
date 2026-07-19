@@ -39,11 +39,17 @@ export function SettingsLanguageTab({ settings, fetcher, t, onHasChangesChange }
     }
   }, [appLanguage, settings.appLanguage, onHasChangesChange]);
 
-  // Reload page after language change is saved
+  // Reload page after language change is saved. The fetcher is SHARED with
+  // other settings saves (AI, SEO, instructions), so we must gate on the
+  // returned `actionType` — otherwise saving anything else while a stale
+  // languageChanged flag is set would nuke the page mid-edit.
   useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.success && languageChanged) {
-      // Language was saved successfully, navigate to the settings page with a forced reload
-      // This ensures the new language is loaded from the server
+    if (
+      fetcher.state === "idle" &&
+      fetcher.data?.success &&
+      fetcher.data?.actionType === "saveAppLanguage" &&
+      languageChanged
+    ) {
       const currentUrl = new URL(window.location.href);
       const settingsUrl = `${currentUrl.origin}${currentUrl.pathname}${currentUrl.search}`;
       window.location.href = settingsUrl;

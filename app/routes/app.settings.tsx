@@ -14,11 +14,8 @@ import { resolveMerchantLocale } from "../utils/locale.server";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
-import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
-import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
-import { SettingsGlossaryTab } from "../components/SettingsGlossaryTab";
+import { SettingsRecurringValuesTab } from "../components/SettingsRecurringValuesTab";
 import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
-import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsRichtextTab } from "../components/SettingsRichtextTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
@@ -414,7 +411,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan as Plan,
       newFeaturesEnabled,
     );
-    const showTranslationsTab = true;
     // Dev-only diagnostic surface: only visible when APP_ENV === "development".
     const showTranslationProbeTab = process.env.APP_ENV === "development";
 
@@ -472,7 +468,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       imageManagerSettings,
       showImageManagerTab,
       showSkuTab,
-      showTranslationsTab,
       showTranslationProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
@@ -988,7 +983,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1001,23 +996,28 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
+  type Section = "setup" | "ai" | "instructions" | "recurring" | "metafields" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+
+  const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
-    // Don't honor deep-links to prod-gated future tabs (would render blank).
-    if (tabParam === "sku" && !showSkuTab) return "setup";
-    if (tabParam === "translations" && !showTranslationsTab) return "setup";
+    // Legacy deep-links keep working: language/glossary landed inside the
+    // AI-Instructions & Setup tabs respectively; translations/sku merged into
+    // the new "recurring" tab.
+    if (tabParam === "language") return "setup";
+    if (tabParam === "glossary") return "instructions";
+    if (tabParam === "translations" || tabParam === "sku") return "recurring";
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "glossary", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+    if (tabParam && ["setup", "ai", "instructions", "recurring", "metafields", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+      return tabParam as Section;
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
+  const [selectedSection, setSelectedSection] = useState<Section>(getInitialSection);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -1029,7 +1029,7 @@ export default function SettingsPage() {
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "glossary" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
+  const handleSectionChange = async (newSection: Section) => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -1082,10 +1082,8 @@ export default function SettingsPage() {
       { id: "setup", title: t.settings.appSetup },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
-      { id: "language", title: t.settings.appLanguage },
-      ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
-      { id: "glossary", title: t.settings.glossary || "Glossary" },
-      { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
+      { id: "recurring", title: t.settings.recurringValues || "Wiederkehrende Werte" },
+      { id: "metafields", title: t.settings.metafields || "Metafields" },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
       { id: "plan", title: t.settings.plan },
@@ -1183,62 +1181,22 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("language")}
+                onClick={() => handleSectionChange("recurring")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "language" ? "#f1f8f5" : "white",
+                  background: selectedSection === "recurring" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "language" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "recurring" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
-                  {t.settings.appLanguage}
-                </Text>
-              </button>
-              {showTranslationsTab && (
-              <button
-                onClick={() => handleSectionChange("translations")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "translations" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "translations" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translations" ? "semibold" : "regular"}>
-                  {t.settings.translations}
-                </Text>
-              </button>
-              )}
-              <button
-                onClick={() => handleSectionChange("glossary")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "glossary" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "glossary" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "glossary" ? "semibold" : "regular"}>
-                  {t.settings.glossary || "Glossary"}
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "recurring" ? "semibold" : "regular"}>
+                  {t.settings.recurringValues || "Wiederkehrende Werte"}
                 </Text>
               </button>
               <button
@@ -1260,27 +1218,6 @@ export default function SettingsPage() {
                   {t.settings.metafields || "Metafields"}
                 </Text>
               </button>
-              {showSkuTab && (
-              <button
-                onClick={() => handleSectionChange("sku")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "sku" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "sku" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "sku" ? "semibold" : "regular"}>
-                  {t.settings.sku}
-                </Text>
-              </button>
-              )}
               <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
@@ -1417,6 +1354,9 @@ export default function SettingsPage() {
                   translationCount={translationCount}
                   webhookCount={webhookCount}
                   t={t}
+                  languageSettings={settings}
+                  languageFetcher={fetcher}
+                  onLanguageHasChangesChange={setHasLanguageChanges}
                 />
               )}
 
@@ -1426,7 +1366,8 @@ export default function SettingsPage() {
                   settings={settings}
                   fetcher={fetcher}
                   t={t}
-                  onHasChangesChange={setHasAIChanges}                />
+                  onHasChangesChange={setHasAIChanges}
+                />
               )}
 
               {/* AI Instructions */}
@@ -1446,36 +1387,23 @@ export default function SettingsPage() {
                     instructions={instructions}
                     fetcher={fetcher}
                     readOnly={aiInstructionsReadOnly}
-                    onHasChangesChange={setHasInstructionsChanges}                  />
+                    onHasChangesChange={setHasInstructionsChanges}
+                    glossaryEntries={glossaryEntries}
+                    shopLocales={shopLocales}
+                    primaryShopLocale={primaryShopLocale}
+                    onGlossaryHasChangesChange={setHasGlossaryChanges}
+                  />
                 </>
               )}
 
-              {/* Language Settings */}
-              {selectedSection === "language" && (
-                <SettingsLanguageTab
-                  settings={settings}
-                  fetcher={fetcher}
-                  t={t}
-                  onHasChangesChange={setHasLanguageChanges}                />
-              )}
-
-              {/* Translations Mapping (productType) */}
-              {selectedSection === "translations" && showTranslationsTab && (
-                <SettingsTranslationsTab
+              {/* Recurring Values — productType translations + SKU option-value keys */}
+              {selectedSection === "recurring" && (
+                <SettingsRecurringValuesTab
                   groupedFieldTranslations={groupedFieldTranslations}
+                  optionValueMemory={optionValueMemory}
                   primaryShopLocale={primaryShopLocale}
+                  showSkuTab={showSkuTab}
                   t={t}
-                />
-              )}
-
-              {/* Glossary — per-shop terminology for AI translations */}
-              {selectedSection === "glossary" && (
-                <SettingsGlossaryTab
-                  entries={glossaryEntries}
-                  shopLocales={shopLocales}
-                  primaryShopLocale={primaryShopLocale}
-                  t={t}
-                  onHasChangesChange={setHasGlossaryChanges}
                 />
               )}
 
@@ -1489,14 +1417,6 @@ export default function SettingsPage() {
                 />
               )}
 
-              {/* SKU / variant match keys */}
-              {selectedSection === "sku" && showSkuTab && (
-                <SettingsSkuTab
-                  optionValueMemory={optionValueMemory}
-                  t={t}
-                />
-              )}
-
               {/* SEO Settings */}
               {selectedSection === "seo" && (
                 <SettingsSEOTab
@@ -1504,7 +1424,8 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   shopDisplayName={shopDisplayName}
-                  onHasChangesChange={setHasAIChanges}                />
+                  onHasChangesChange={setHasAIChanges}
+                />
               )}
 
               {/* Rich-text formatting (theme-settings richtext handling) */}
@@ -1570,7 +1491,8 @@ export default function SettingsPage() {
                 <SettingsImageManagerTab
                   settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
                   shop={shop}
-                  onHasChangesChange={setHasImageManagerChanges}                />
+                  onHasChangesChange={setHasImageManagerChanges}
+                />
               )}
 
               {/* Feedback */}

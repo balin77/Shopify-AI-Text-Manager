@@ -577,8 +577,15 @@ export const de = {
     tabBlogs: "Blogs",
     tabPages: "Seiten",
     tabPolicies: "Richtlinien",
+    // AI Instructions Top-Level Sections
+    subtabContentGeneration: "Inhalte erstellen",
+    subtabTranslations: "Übersetzungen",
+    // Recurring Values Tab (SKU keys + productType translations)
+    recurringValues: "Wiederkehrende Werte",
+    recurringValuesDescription: "Werte, die die KI einmal erzeugt und dann bei mehreren Produkten wiederverwendet. Hier kannst du sie überschreiben oder löschen.",
+    recurringValuesSkuProGate: "Optionswert-Schlüssel sind ab dem Pro-Plan verfügbar.",
     // General Tab
-    generalTabDescription: "Diese allgemeinen Anweisungen steuern, wie die \"Formatieren\"- und \"Übersetzen\"-Funktionen arbeiten.",
+    generalTabDescription: "Diese allgemeinen Anweisungen steuern, wie die \"Formatieren\"-Funktion arbeitet.",
     writingStyleInstructionsLabel: "Schreibstil",
     writingStyleInstructionsPlaceholder: "Anweisungen für den Schreibstil...",
     writingStyleInstructionsHelp: "Diese Anweisungen definieren den allgemeinen Schreibstil und Tonfall für alle KI-generierten Inhalte.",

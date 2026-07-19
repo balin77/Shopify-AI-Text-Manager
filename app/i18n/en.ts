@@ -580,8 +580,15 @@ export const en: Translation = {
     tabBlogs: "Blogs",
     tabPages: "Pages",
     tabPolicies: "Policies",
+    // AI Instructions Top-Level Sections
+    subtabContentGeneration: "Content generation",
+    subtabTranslations: "Translations",
+    // Recurring Values Tab (SKU keys + productType translations)
+    recurringValues: "Recurring values",
+    recurringValuesDescription: "Values the AI generates once and then reuses across multiple products. You can override or delete them here.",
+    recurringValuesSkuProGate: "Option-value keys are available from the Pro plan onward.",
     // General Tab
-    generalTabDescription: "These general instructions control how the \"Format\" and \"Translate\" functions work.",
+    generalTabDescription: "These general instructions control how the \"Format\" function works.",
     writingStyleInstructionsLabel: "Writing Style",
     writingStyleInstructionsPlaceholder: "Instructions for writing style...",
     writingStyleInstructionsHelp: "These instructions define the general writing style and tone for all AI-generated content.",
