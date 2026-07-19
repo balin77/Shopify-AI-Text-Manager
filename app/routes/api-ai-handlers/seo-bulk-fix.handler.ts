@@ -78,6 +78,22 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
   const { session, admin, db, settings, formData, seoTitleMaxChars } = ctx;
   const problemCode = getFormString(formData, "problemCode");
 
+  // Optional single-item mode: the dashboard's per-row KI button POSTs
+  // itemId + itemType so only ONE item runs, instead of the whole bucket.
+  // Still validated against the server-side audit below (never trust the
+  // client — a stale/foreign GID must not slip through).
+  const singleItemId = getFormString(formData, "itemId");
+  const singleItemType = getFormString(formData, "itemType") as AuditType | "";
+
+  // "Fix all issues for this item" mode — the dashboard's per-row bulk KI
+  // button on the worst-offenders card. Server derives every applicable
+  // AI-fixable code for the item and runs them sequentially in ONE task.
+  // problemCode is ignored in this mode.
+  const fixAllForItem = getFormString(formData, "fixAllForItem") === "true";
+  if (fixAllForItem) {
+    return handleFixAllForItem(ctx, singleItemId, singleItemType);
+  }
+
   const field = FIXABLE_CODE_TO_FIELD[problemCode];
   if (!field) {
     return json(
@@ -85,13 +101,6 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
       { status: 400 },
     );
   }
-
-  // Optional single-item mode: the dashboard's per-row KI button POSTs
-  // itemId + itemType so only ONE item runs, instead of the whole bucket.
-  // Still validated against the server-side audit below (never trust the
-  // client — a stale/foreign GID must not slip through).
-  const singleItemId = getFormString(formData, "itemId");
-  const singleItemType = getFormString(formData, "itemType") as AuditType | "";
 
   // Single-flight: only one seoBulkFix run per shop at a time — a second click
   // (or a second bucket) while one is in flight would double-spend AI calls
@@ -201,6 +210,152 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
   });
 
   return json({ success: true, taskId: task.id, total: items.length });
+}
+
+// ─── "Fix all issues for one item" mode ────────────────────────────────────
+
+/**
+ * Handler for the worst-offenders' per-row bulk KI button. Never trusts the
+ * client's list of codes — re-audits and derives applicable codes from the
+ * server's own bucket membership, same fail-closed guard the single-item
+ * path uses. Runs every applicable AI-fixable code sequentially inside ONE
+ * task so the Tasks tab shows one row, not N.
+ */
+async function handleFixAllForItem(
+  ctx: AIActionContext,
+  itemId: string,
+  itemType: AuditType | "",
+): Promise<Response> {
+  const { session, admin, db, settings, seoTitleMaxChars } = ctx;
+
+  if (!itemId || !itemType) {
+    return json(
+      { success: false, error: "fixAllForItem requires itemId and itemType." },
+      { status: 400 },
+    );
+  }
+
+  const runningTask = await db.task.findFirst({
+    where: { shop: session.shop, type: "seoBulkFix", status: "running" },
+    select: { id: true },
+  });
+  if (runningTask) {
+    return json(
+      {
+        success: false,
+        code: "ALREADY_RUNNING",
+        error: "An SEO bulk-fix is already running for this store. Check the Tasks tab for progress.",
+        taskId: runningTask.id,
+      },
+      { status: 409 },
+    );
+  }
+
+  const aiSettingsRow = await db.aISettings.findUnique({
+    where: { shop: session.shop },
+    select: { subscriptionPlan: true, seoTitleSuffixEnabled: true, seoTitleSuffix: true },
+  });
+  const plan = (aiSettingsRow?.subscriptionPlan || "free") as Plan;
+  const suffix =
+    aiSettingsRow?.seoTitleSuffixEnabled && aiSettingsRow.seoTitleSuffix ? aiSettingsRow.seoTitleSuffix : "";
+  const audit = await analyzeStore(session.shop, {
+    db,
+    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
+    plan,
+  });
+
+  // Applicable codes for this item = every AI-fixable bucket that lists it.
+  const rawCodes: string[] = [];
+  for (const bucket of audit.problems) {
+    if (!FIXABLE_CODE_TO_FIELD[bucket.code]) continue;
+    if (bucket.items.some((it) => it.id === itemId && it.type === itemType)) {
+      rawCodes.push(bucket.code);
+    }
+  }
+
+  // Order + dedup applicable codes so the run is deterministic and doesn't
+  // waste AI calls:
+  //  1. Source-field codes (title, description) run BEFORE the derived-SEO
+  //     codes so the fresh title becomes the seed for seoTitle regen, and the
+  //     fresh description becomes the seed for metaDescription regen.
+  //  2. When two codes target the SAME field (e.g. seoTitleTooLong AND
+  //     duplicateSeoTitle both regen `seoTitle`), keep the one with the
+  //     richer prompt — the duplicate-* variant carries the sibling-avoid
+  //     hint, and length codes only carry char limits. Otherwise the second
+  //     regen overwrites the first, spending one AI call for nothing.
+  const CODE_PRIORITY: Record<string, number> = {
+    titleLength: 10,
+    descriptionTooShort: 11,
+    imagesMissingAlt: 20,
+    seoTitleMissing: 100,
+    seoTitleTooLong: 101,
+    duplicateSeoTitle: 102, // wins tiebreak vs. length/missing on the same field
+    metaDescriptionMissing: 200,
+    metaDescriptionLength: 201,
+    duplicateSeoDescription: 202,
+  };
+  const bestByField = new Map<FixableField, string>();
+  for (const code of rawCodes) {
+    const field = FIXABLE_CODE_TO_FIELD[code];
+    if (!field) continue;
+    const existing = bestByField.get(field);
+    if (!existing || (CODE_PRIORITY[code] ?? 0) > (CODE_PRIORITY[existing] ?? 0)) {
+      bestByField.set(field, code);
+    }
+  }
+  const applicableCodes = [...bestByField.values()].sort(
+    (a, b) => (CODE_PRIORITY[a] ?? 999) - (CODE_PRIORITY[b] ?? 999),
+  );
+
+  if (applicableCodes.length === 0) {
+    return json(
+      {
+        success: false,
+        error: "This item has no AI-fixable issues remaining — reload the dashboard.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const task = await db.task.create({
+    data: {
+      shop: session.shop,
+      type: "seoBulkFix",
+      status: "running",
+      resourceType: "seo",
+      resourceTitle: `fixAllForItem:${itemType}:${itemId.split("/").pop()}`,
+      fieldType: "multi",
+      total: applicableCodes.length,
+      processed: 0,
+      progress: 0,
+      expiresAt: getTaskExpirationDate(),
+    },
+  });
+
+  void runFixAllForItem(task.id, {
+    db,
+    settings,
+    shop: session.shop,
+    admin,
+    itemId,
+    itemType: itemType as AuditType,
+    codes: applicableCodes,
+    seoTitleMaxChars,
+  }).catch(async (err: unknown) => {
+    logger.error("[API-AI] SEO fixAllForItem crashed", {
+      context: "AI",
+      taskId: task.id,
+      error: errorMessage(err),
+    });
+    await db.task
+      .update({
+        where: { id: task.id },
+        data: { status: "failed", completedAt: new Date(), error: errorMessage(err).substring(0, 1000) },
+      })
+      .catch(() => {});
+  });
+
+  return json({ success: true, taskId: task.id, total: applicableCodes.length });
 }
 
 // ─── Runner ────────────────────────────────────────────────────────────────
@@ -1051,5 +1206,323 @@ async function persistField(params: PersistArgs): Promise<void> {
       await db.article.update({ where: { shop_id: { shop, id } }, data: articleDbData });
       break;
     }
+  }
+}
+
+// ─── "Fix all issues for one item" runner ──────────────────────────────────
+
+interface FixAllRunArgs {
+  db: PrismaClient;
+  settings: AISettings | null;
+  shop: string;
+  admin: AdminApiContext;
+  itemId: string;
+  itemType: AuditType;
+  codes: string[];
+  seoTitleMaxChars: number;
+}
+
+/**
+ * Iterate every AI-fixable bucket code for ONE item and dispatch to the
+ * right generation + persist path per code (text via runSeoBulkFix's
+ * pattern, alt text via runAltTextBulkFix's per-image loop). Everything
+ * runs inside ONE Task row so the Tasks tab shows a single "fix all"
+ * entry; progress ticks per code.
+ */
+async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<void> {
+  const { db, settings, shop, admin, itemId, itemType, codes, seoTitleMaxChars } = args;
+
+  const gateway = new ShopifyApiGateway(admin, shop);
+  const contentService = new ShopifyContentService(gateway as any);
+  const aiService = createAIService(settings, shop, taskId);
+
+  const aiInstructions = (await db.aIInstructions.findUnique({ where: { shop } })) as Record<
+    string,
+    string | null
+  > | null;
+  let mainLanguage = "English";
+  try {
+    const { shopLocales } = await contentService.loadShopLocales();
+    const primary = shopLocales.find((l: { primary: boolean; name?: string }) => l.primary);
+    if (primary?.name) mainLanguage = primary.name;
+  } catch (err: unknown) {
+    logger.warn("[API-AI] SEO fixAllForItem: failed to load shop locales, defaulting", {
+      context: "AI",
+      taskId,
+      error: errorMessage(err),
+    });
+  }
+
+  const rowMap = await loadRows(db, shop, itemType, [itemId]);
+  const row = rowMap.get(itemId);
+  if (!row) {
+    await db.task.update({
+      where: { id: taskId },
+      data: {
+        status: "failed",
+        progress: 100,
+        completedAt: new Date(),
+        error: "Item no longer exists in the content cache",
+      },
+    });
+    return;
+  }
+
+  const succeeded: { code: string }[] = [];
+  const failed: { code: string; error: string }[] = [];
+  const total = codes.length;
+  let authErrorSeen = false;
+
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i];
+    const field = FIXABLE_CODE_TO_FIELD[code];
+
+    if (authErrorSeen) {
+      failed.push({ code, error: "Skipped after provider API key was rejected" });
+    } else if (!field) {
+      failed.push({ code, error: `Not AI-fixable: ${code}` });
+    } else if (field === "altText") {
+      try {
+        await runAltTextForOneItem({
+          db,
+          shop,
+          admin,
+          itemType,
+          itemId,
+          aiInstructions,
+          mainLanguage,
+          aiService,
+          contentService,
+          gateway,
+        });
+        succeeded.push({ code });
+      } catch (err: unknown) {
+        failed.push({ code, error: errorMessage(err) });
+        if (isAuthError(err)) authErrorSeen = true;
+      }
+    } else {
+      try {
+        const contentType = AUDIT_TYPE_TO_CONTENT_TYPE[itemType];
+        const fieldDef = CONTENT_CONFIGS[contentType]?.fieldDefinitions.find((f) => f.key === field);
+        const aiInstructionsKey = fieldDef?.aiInstructionsKey || field;
+        const fieldLabel = fieldDef?.label || field;
+
+        const prompt = buildFixPrompt(field, {
+          fieldLabel,
+          aiInstructionsKey,
+          title: row.title,
+          description: row.description,
+          seoTitleMaxChars,
+          mainLanguage,
+          aiInstructions,
+        });
+
+        const generated = (
+          field === "description"
+            ? await aiService.generateProductDescription(row.title, prompt)
+            : await aiService.generateProductTitle(prompt)
+        ).trim();
+
+        if (generated.length === 0) {
+          throw new Error("AI returned an empty value — nothing was saved.");
+        }
+
+        await persistField({
+          db,
+          shop,
+          type: itemType,
+          id: itemId,
+          field,
+          value: generated,
+          contentService,
+          gateway,
+        });
+
+        // Refresh the in-memory row so a later code in the loop (e.g.
+        // seoTitleMissing after titleLength) reads the new title instead
+        // of the pre-fix one.
+        if (field === "title") row.title = generated;
+        else if (field === "description") row.description = generated;
+        else if (field === "seoTitle") row.seoTitle = generated;
+        else if (field === "metaDescription") row.metaDescription = generated;
+
+        succeeded.push({ code });
+      } catch (err: unknown) {
+        failed.push({ code, error: errorMessage(err) });
+        logger.error("[API-AI] SEO fixAllForItem: code failed", {
+          context: "AI",
+          taskId,
+          code,
+          error: errorMessage(err),
+        });
+        if (isAuthError(err)) authErrorSeen = true;
+      }
+    }
+
+    const progressPercent = Math.round(((i + 1) / total) * 100);
+    await db.task
+      .update({
+        where: { id: taskId },
+        data: {
+          progress: progressPercent,
+          processed: i + 1,
+          result: JSON.stringify({ succeeded, failed }),
+        },
+      })
+      .catch((err: unknown) => {
+        logger.error("[API-AI] SEO fixAllForItem: progress persist failed", {
+          context: "AI",
+          taskId,
+          error: errorMessage(err),
+        });
+      });
+  }
+
+  const finalStatus = succeeded.length === 0 ? "failed" : "completed";
+  const failureSummary =
+    failed.length > 0
+      ? `${failed.length} of ${total} fix(es) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      : null;
+
+  await db.task.update({
+    where: { id: taskId },
+    data: {
+      status: finalStatus,
+      progress: 100,
+      completedAt: new Date(),
+      result: JSON.stringify({ succeeded, failed }),
+      error: failureSummary ? failureSummary.substring(0, 1000) : null,
+    },
+  });
+}
+
+interface AltTextForOneItemArgs {
+  db: PrismaClient;
+  shop: string;
+  admin: AdminApiContext;
+  itemType: AuditType;
+  itemId: string;
+  aiInstructions: Record<string, string | null> | null;
+  mainLanguage: string;
+  aiService: ReturnType<typeof createAIService>;
+  contentService: ShopifyContentService;
+  gateway: ShopifyApiGateway;
+}
+
+/** Single-item alt-text loop — mirrors runAltTextBulkFix's job enumeration
+ * and per-image generation, but scoped to ONE item, no task heartbeat.
+ * Called by runFixAllForItem, which owns the outer heartbeat. */
+async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> {
+  const { db, shop, itemType, itemId, aiInstructions, mainLanguage, aiService, contentService, gateway } =
+    args;
+
+  interface Job {
+    imageUrl: string;
+    mediaId?: string | null;
+    productImageId?: string;
+    isFeatured?: boolean;
+    productTitle: string;
+  }
+  const jobs: Job[] = [];
+
+  if (itemType === "product") {
+    const product = await db.product.findUnique({
+      where: { shop_id: { shop, id: itemId } },
+      select: {
+        title: true,
+        featuredImageUrl: true,
+        featuredImageAlt: true,
+        images: {
+          select: { id: true, url: true, altText: true, mediaId: true, position: true },
+          orderBy: { position: "asc" },
+        },
+      },
+    });
+    // A missing record here means the content cache is stale relative to
+    // the audit that flagged this item — treat as a hard failure so the
+    // outer runner marks the code failed instead of silently succeeding.
+    if (!product) throw new Error("Product no longer exists in the content cache");
+    const missing = product.images.filter((img) => !img.altText || img.altText.trim() === "");
+    for (const img of missing) {
+      jobs.push({
+        imageUrl: img.url,
+        mediaId: img.mediaId,
+        productImageId: img.id,
+        productTitle: product.title,
+      });
+    }
+    if (
+      jobs.length === 0 &&
+      product.images.length === 0 &&
+      product.featuredImageUrl &&
+      (!product.featuredImageAlt || product.featuredImageAlt.trim() === "")
+    ) {
+      jobs.push({
+        imageUrl: product.featuredImageUrl,
+        isFeatured: true,
+        productTitle: product.title,
+      });
+    }
+  } else if (itemType === "collection") {
+    const c = await db.collection.findUnique({
+      where: { shop_id: { shop, id: itemId } },
+      select: { title: true, imageUrl: true, imageAltText: true },
+    });
+    if (!c) throw new Error("Collection no longer exists in the content cache");
+    if (c.imageUrl && (!c.imageAltText || c.imageAltText.trim() === "")) {
+      jobs.push({ imageUrl: c.imageUrl, productTitle: c.title });
+    }
+  } else if (itemType === "article") {
+    const a = await db.article.findUnique({
+      where: { shop_id: { shop, id: itemId } },
+      select: { title: true, imageUrl: true, imageAltText: true },
+    });
+    if (!a) throw new Error("Article no longer exists in the content cache");
+    if (a.imageUrl && (!a.imageAltText || a.imageAltText.trim() === "")) {
+      jobs.push({ imageUrl: a.imageUrl, productTitle: a.title });
+    }
+  }
+
+  // Empty jobs = merchant filled alt text between audit and run (or the audit
+  // was over-eager). Not a failure — the code is effectively already fixed.
+  if (jobs.length === 0) return;
+
+  const failures: string[] = [];
+  for (const job of jobs) {
+    try {
+      const sanitizedTitle = sanitizePromptInput(job.productTitle || "", { fieldType: "title" });
+      let prompt = `Create an optimized alt text for a product image.\nProduct: ${sanitizedTitle}\nImage URL: ${job.imageUrl}`;
+      if (aiInstructions?.productAltTextFormat) {
+        prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+      }
+      if (aiInstructions?.productAltTextInstructions) {
+        prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+      }
+      prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
+
+      const altText = (await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)).trim();
+      if (altText.length === 0) throw new Error("AI returned an empty alt text");
+
+      // Drop productTitle before handing off — persistImageAltText's
+      // interface never reads it and we don't want the extra prop drifting
+      // into an implicit contract via object spread.
+      const { productTitle: _unused, ...jobForPersist } = job;
+      await persistImageAltText({
+        db,
+        shop,
+        job: { type: itemType, id: itemId, ...jobForPersist },
+        altText,
+        contentService,
+        gateway,
+      });
+    } catch (err: unknown) {
+      failures.push(errorMessage(err));
+    }
+  }
+
+  // If every image failed, the outer runner should mark this code as failed
+  // rather than a spurious success — throw so the caller catches.
+  if (failures.length === jobs.length) {
+    throw new Error(`All ${jobs.length} image(s) failed: ${failures[0]}`);
   }
 }

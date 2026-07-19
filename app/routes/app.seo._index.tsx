@@ -19,7 +19,7 @@
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -247,14 +247,34 @@ export default function SeoDashboard() {
     });
   };
 
+  // Same pattern for the worst-offenders rows — each row expands to its own
+  // issue list (row.problems) with a per-finding KI button.
+  const [expandedOffenders, setExpandedOffenders] = useState<Set<string>>(new Set());
+  const toggleOffender = (rowId: string) => {
+    setExpandedOffenders((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  };
+
   // singleItem is the per-row KI button in the expanded list — same handler,
-  // just narrowed to one GID on the server.
+  // just narrowed to one GID on the server. fixAllForItem is the row-level
+  // bulk button on worstOffenders — server derives every applicable code
+  // for this item and runs them serially in one task.
   const handleFixWithAi = (
     problemCode: string,
     singleItem?: { type: AuditType; id: string },
+    fixAllForItem?: boolean,
   ) => {
     if (disableFixButtons || fixFetcher.state !== "idle") return;
-    setFixingCode(singleItem ? `${problemCode}:${singleItem.id}` : problemCode);
+    const key = fixAllForItem && singleItem
+      ? `__all:${singleItem.id}`
+      : singleItem
+        ? `${problemCode}:${singleItem.id}`
+        : problemCode;
+    setFixingCode(key);
     const formData = new FormData();
     formData.append("action", "seoBulkFix");
     // seoBulkFix spans every content type and re-derives affected items
@@ -266,6 +286,7 @@ export default function SeoDashboard() {
       formData.append("itemId", singleItem.id);
       formData.append("itemType", singleItem.type);
     }
+    if (fixAllForItem) formData.append("fixAllForItem", "true");
     fixFetcher.submit(formData, { method: "post", action: "/api/ai" });
   };
 
@@ -570,6 +591,7 @@ export default function SeoDashboard() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
+                      <th style={{ padding: "6px 8px", width: "1.5rem" }} />
                       <th style={{ padding: "6px 8px" }}>
                         <Text as="span" variant="bodySm" tone="subdued">{d.colItem}</Text>
                       </th>
@@ -586,36 +608,159 @@ export default function SeoDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {audit.worstOffenders.map((row) => (
-                      <tr key={`${row.type}:${row.id}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                        <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
-                          <Text as="span" variant="bodyMd" truncate>
-                            {row.title || row.id}
-                          </Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {d.types[row.type] || row.type}
-                          </Text>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
-                        </td>
-                        <td style={{ padding: "6px 8px" }}>
-                          <Text as="span" variant="bodySm">{row.issueCount}</Text>
-                        </td>
-                        <td style={{ padding: "6px 8px", textAlign: "right" }}>
-                          <Tooltip content={d.openInEditor}>
-                            <Button
-                              variant="plain"
-                              icon={EditIcon}
-                              accessibilityLabel={d.openInEditor}
-                              onClick={() => openInEditor(row.type, row.id)}
-                            />
-                          </Tooltip>
-                        </td>
-                      </tr>
-                    ))}
+                    {audit.worstOffenders.map((row) => {
+                      const rowProblems = row.problems ?? [];
+                      const fixableProblems = rowProblems.filter((c) => AI_FIXABLE_PROBLEM_CODES.has(c));
+                      const isOpen = expandedOffenders.has(row.id);
+                      const hasProblems = rowProblems.length > 0;
+                      const bulkFixKey = `__all:${row.id}`;
+                      return (
+                        <React.Fragment key={`${row.type}:${row.id}`}>
+                          <tr
+                            style={{
+                              borderBottom: isOpen ? "none" : "1px solid #f1f2f3",
+                              cursor: hasProblems ? "pointer" : "default",
+                            }}
+                            onClick={() => hasProblems && toggleOffender(row.id)}
+                            {...(hasProblems && {
+                              role: "button",
+                              tabIndex: 0,
+                              "aria-expanded": isOpen,
+                              "aria-controls": `seo-offender-panel-${row.id}`,
+                              onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  toggleOffender(row.id);
+                                }
+                              },
+                            })}
+                          >
+                            <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                              {hasProblems && (
+                                <Text as="span" tone="subdued" variant="bodySm">
+                                  <span aria-hidden="true">{isOpen ? "▼" : "▶"}</span>
+                                </Text>
+                              )}
+                            </td>
+                            <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
+                              <Text as="span" variant="bodyMd" truncate>
+                                {row.title || row.id}
+                              </Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {d.types[row.type] || row.type}
+                              </Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.issueCount}</Text>
+                            </td>
+                            {/* Row-actions cell: sibling nav consumers (buttons)
+                                MUST NOT trigger the row-level expand click, so
+                                stopPropagation on the wrapper. */}
+                            <td
+                              style={{ padding: "6px 8px", textAlign: "right" }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <InlineStack gap="200" blockAlign="center" align="end">
+                                {fixableProblems.length > 0 && (
+                                  <Button
+                                    size="slim"
+                                    onClick={() =>
+                                      handleFixWithAi("__all", { type: row.type, id: row.id }, true)
+                                    }
+                                    disabled={disableFixButtons || fixFetcher.state !== "idle"}
+                                    loading={fixingCode === bulkFixKey && fixFetcher.state !== "idle"}
+                                  >
+                                    {d.fixAllWithAi}
+                                  </Button>
+                                )}
+                                <Tooltip content={d.openInEditor}>
+                                  <Button
+                                    variant="plain"
+                                    icon={EditIcon}
+                                    accessibilityLabel={d.openInEditor}
+                                    onClick={() => openInEditor(row.type, row.id)}
+                                  />
+                                </Tooltip>
+                              </InlineStack>
+                            </td>
+                          </tr>
+                          {hasProblems && (
+                            <tr style={{ borderBottom: "1px solid #f1f2f3" }}>
+                              <td />
+                              <td
+                                colSpan={5}
+                                style={{ padding: 0 }}
+                              >
+                                <Collapsible
+                                  open={isOpen}
+                                  id={`seo-offender-panel-${row.id}`}
+                                  transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
+                                >
+                                  {isOpen && (
+                                    <div
+                                      style={{
+                                        padding: "6px 8px 10px 0",
+                                        borderInlineStart: "2px solid var(--p-color-border-subdued)",
+                                        marginLeft: "0.25rem",
+                                        paddingLeft: "1.25rem",
+                                      }}
+                                    >
+                                      <BlockStack gap="100">
+                                        {rowProblems.map((code) => {
+                                          const label =
+                                            (d.problems as Record<string, string>)[code] || code;
+                                          const canFix = AI_FIXABLE_PROBLEM_CODES.has(code);
+                                          const perFinding = `${code}:${row.id}`;
+                                          return (
+                                            <InlineStack
+                                              key={`${row.id}:${code}`}
+                                              gap="200"
+                                              align="space-between"
+                                              blockAlign="center"
+                                            >
+                                              <Text as="span" variant="bodySm">
+                                                {label}
+                                              </Text>
+                                              {canFix && (
+                                                <Button
+                                                  variant="plain"
+                                                  size="slim"
+                                                  onClick={() =>
+                                                    handleFixWithAi(code, {
+                                                      type: row.type,
+                                                      id: row.id,
+                                                    })
+                                                  }
+                                                  disabled={
+                                                    disableFixButtons ||
+                                                    fixFetcher.state !== "idle"
+                                                  }
+                                                  loading={
+                                                    fixingCode === perFinding &&
+                                                    fixFetcher.state !== "idle"
+                                                  }
+                                                >
+                                                  {d.fixWithAi}
+                                                </Button>
+                                              )}
+                                            </InlineStack>
+                                          );
+                                        })}
+                                      </BlockStack>
+                                    </div>
+                                  )}
+                                </Collapsible>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -258,7 +258,7 @@ const SAMPLE_AUDIT: AuditAggregate = {
   distribution: { good: 2, medium: 1, poor: 0 },
   byType: [{ type: "product", count: 3, avgScore: 77, good: 2, medium: 1, poor: 0 }],
   problems: [{ code: "seoTitleMissing", count: 1, items: [{ type: "product", id: "gid-1", title: "T" }] }],
-  worstOffenders: [{ id: "gid-1", type: "product", title: "T", score: 50, issueCount: 2 }],
+  worstOffenders: [{ id: "gid-1", type: "product", title: "T", score: 50, issueCount: 2, problems: ["seoTitleMissing"] }],
   capped: false,
 };
 

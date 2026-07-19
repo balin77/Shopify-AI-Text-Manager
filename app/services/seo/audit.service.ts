@@ -28,6 +28,13 @@ export interface AuditItemRow {
   score: number;
   /** Number of error+warning findings (severity !== "success"). */
   issueCount: number;
+  /** Bucket codes (dashboard i18n keys) this item triggers — same codes that
+   * appear in `AuditAggregate.problems[].code`. Populated on every scored
+   * row and threaded through worstOffenders so the dashboard's expandable
+   * row can render per-finding rows + per-finding "Fix with AI" buttons
+   * without cross-referencing bucket item lists (which are capped and
+   * unordered). Empty array when the item has no non-success findings. */
+  problems: string[];
 }
 
 export interface AuditTypeStat {
@@ -150,7 +157,10 @@ function scoreOne(
     if (bucket) buckets.add(bucket);
   }
 
-  return { row: { id, type, title, score: result.score, issueCount }, buckets };
+  return {
+    row: { id, type, title, score: result.score, issueCount, problems: [...buckets] },
+    buckets,
+  };
 }
 
 export interface AnalyzeStoreDeps {
@@ -472,6 +482,13 @@ export async function analyzeStore(
 
   const averageScore = totalScanned > 0 ? Math.round(scoreSum / totalScanned) : 0;
 
+  // rowById lets the duplicate loops below tag each affected row's
+  // AuditItemRow.problems with the duplicate bucket code — worstOffenders
+  // otherwise wouldn't know about duplicate-SEO findings (they're
+  // detected AFTER the scored loop).
+  const rowById = new Map<string, AuditItemRow>();
+  for (const s of scored) rowById.set(s.row.id, s.row);
+
   // Finding #5: store-wide duplicate SEO title / description. An item is
   // "affected" if it shares its (normalized, non-empty) value with at least
   // one other item — a group of size 1 is unique, not a duplicate.
@@ -481,7 +498,11 @@ export async function analyzeStore(
       duplicateSeoTitleCount += ids.length;
       for (const id of ids) {
         const type = typeById.get(id);
-        if (type) addBucketItem("duplicateSeoTitle", type, id, titleById.get(id) ?? "");
+        if (type) {
+          addBucketItem("duplicateSeoTitle", type, id, titleById.get(id) ?? "");
+          const r = rowById.get(id);
+          if (r && !r.problems.includes("duplicateSeoTitle")) r.problems.push("duplicateSeoTitle");
+        }
       }
     }
   }
@@ -491,7 +512,12 @@ export async function analyzeStore(
       duplicateSeoDescriptionCount += ids.length;
       for (const id of ids) {
         const type = typeById.get(id);
-        if (type) addBucketItem("duplicateSeoDescription", type, id, titleById.get(id) ?? "");
+        if (type) {
+          addBucketItem("duplicateSeoDescription", type, id, titleById.get(id) ?? "");
+          const r = rowById.get(id);
+          if (r && !r.problems.includes("duplicateSeoDescription"))
+            r.problems.push("duplicateSeoDescription");
+        }
       }
     }
   }
