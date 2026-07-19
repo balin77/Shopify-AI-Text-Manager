@@ -10,6 +10,8 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
+import { resolveTemplateInstruction } from "~/services/content-template.service";
+import type { Plan } from "~/config/plans";
 
 export async function handleFormatField(ctx: AIActionContext): Promise<Response> {
   const { session, db, settings, contentType, itemId } = ctx;
@@ -213,6 +215,50 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   // Add field-specific instructions (compact)
   if (fieldInstructions) {
     prompt += `\n\nGuidelines:\n${fieldInstructions}`;
+  }
+
+  // Content-Template (Pro/Max only): if the shop configured a default prompt
+  // template for this contentType+field, substitute its {{variables}} from the
+  // current content data and append it. Plan re-checked + values sanitized
+  // inside the service (defence in depth against prompt injection).
+  //
+  // Layered order (matches user-confirmed design decision, 2026-07):
+  //   1. Custom-Instructions from AISettings (writingStyle/formatExample/
+  //      fieldInstructions) — already appended ABOVE (see ~line 206–218).
+  //   2. Template (this hunk) — appended here so it cannot override the
+  //      merchant-configured writing style.
+  //   3. Glossary — injected centrally inside AIService (translation paths
+  //      only today; generation path does not glossary-inject).
+  // A downstream failure here must never block generation.
+  try {
+    const plan = (ctx.settings?.subscriptionPlan || "free") as Plan;
+    const resolvedTemplate = await resolveTemplateInstruction({
+      shop: session.shop,
+      plan,
+      contentType,
+      fieldType,
+      vars: {
+        // Pass the already-sanitized context values (the service sanitizes
+        // again as defence in depth, but never rely on a single layer).
+        title: sanitizedContextTitle,
+        name: sanitizedContextTitle,
+        product_name: sanitizedContextTitle,
+        description: sanitizedContextDescription,
+        current_value: currentValue,
+        language: mainLanguage,
+        field_label: genFieldLabel,
+      },
+    });
+    if (resolvedTemplate) {
+      prompt += `\n\nTemplate:\n${resolvedTemplate.instruction}`;
+    }
+  } catch (templateErr) {
+    // A template failure must never block generation — log and continue with
+    // the standard prompt.
+    logger.warn("[API-AI] Content template resolution failed", {
+      context: "AI",
+      error: templateErr instanceof Error ? templateErr.message : String(templateErr),
+    });
   }
 
   // Hard length override — placed last so it wins over any conflicting instruction above

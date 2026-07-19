@@ -84,6 +84,16 @@ export function canEditAIInstructions(plan: Plan): boolean {
 }
 
 /**
+ * Check if reusable Content-Templates are available in the given plan.
+ * Pro/Max only (mirrors aiInstructionsEditable gating). Re-checked inside
+ * resolveTemplateInstruction() so a downgrade takes effect immediately
+ * without a background cleanup.
+ */
+export function canUseContentTemplates(plan: Plan): boolean {
+  return getPlanLimits(plan).contentTemplates;
+}
+
+/**
  * Check if product images (beyond featured) should be cached
  */
 export function shouldCacheAllProductImages(plan: Plan): boolean {

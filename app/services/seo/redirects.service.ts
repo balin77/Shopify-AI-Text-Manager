@@ -340,3 +340,54 @@ export async function deleteRedirect(
     userErrors: payload?.userErrors ?? [],
   };
 }
+
+// ── 404 → redirect target suggestions (fuzzy handle match) ───────────────────
+//
+// `handles` carries entries already prefixed with resource type, e.g.
+// ["/products/red-shoe", "/collections/summer", "/pages/about"]. Pure so tests
+// stay Admin-API-free.
+
+const SUGGEST_THRESHOLD = 0.6;
+const SUGGEST_PREFIXES = ["/products/", "/collections/", "/pages/", "/blogs/"];
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = new Array(b.length + 1);
+  let curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b.length];
+}
+
+export function suggestRedirectTarget(handles: string[], hitPath: string): string | null {
+  if (!handles || handles.length === 0) return null;
+  const path = (hitPath ?? "").trim();
+  if (!path) return null;
+
+  const prefix = SUGGEST_PREFIXES.find((p) => path.startsWith(p));
+  if (!prefix) return null;
+
+  const guessed = path.slice(prefix.length).replace(/\/+$/, "").toLowerCase();
+  if (!guessed) return null;
+
+  let best: { full: string; score: number } | null = null;
+  for (const full of handles) {
+    if (!full.startsWith(prefix)) continue;
+    const candidate = full.slice(prefix.length).toLowerCase();
+    if (!candidate) continue;
+    const maxLen = Math.max(guessed.length, candidate.length);
+    const score = 1 - levenshtein(guessed, candidate) / maxLen;
+    if (!best || score > best.score) best = { full, score };
+  }
+  if (!best || best.score < SUGGEST_THRESHOLD) return null;
+  return best.full;
+}

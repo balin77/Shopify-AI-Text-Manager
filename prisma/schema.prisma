@@ -1087,3 +1087,28 @@ model SeoScoreSnapshot {
 
   @@index([shop, locale, createdAt])
 }
+
+/// Reusable AI-prompt templates with {{variable}} placeholders.
+/// One default per (shop, contentType, fieldType) is enforced at the DB level
+/// via a partial unique index (see migration SQL). Values are substituted at
+/// request time by app/utils/template-substitution.utils.ts before being
+/// injected into the prompt inside the AI-generation handler (defence in
+/// depth). Deleted on shop/redact via the shop-scoped GDPR wipe.
+model ContentTemplate {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  contentType String // "products" | "collections" | "blogs" | "pages" | "policies"
+  fieldType   String // field key, e.g. "title" | "description" | "seoTitle"
+  template    String   @db.Text // prompt body containing {{variables}}
+  isDefault   Boolean  @default(false) // the one applied automatically for this contentType+fieldType
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // NOTE: a PARTIAL unique index
+  //   UNIQUE(shop, contentType, fieldType) WHERE isDefault = true
+  // is created in the migration SQL (Prisma cannot express partial uniques).
+  // It enforces the "at most one default per slot" invariant at the DB level.
+  @@index([shop])
+  @@index([shop, contentType, fieldType])
+}
