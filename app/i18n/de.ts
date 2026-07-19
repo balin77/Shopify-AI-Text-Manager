@@ -471,6 +471,9 @@ export const de = {
     metafieldsSaveFailed: "Einige Definitionen konnten nicht aktiviert werden (App-eigen): {keys}",
     metafieldsEmptyHeading: "Keine Metafield-Definitionen gefunden",
     metafieldsEmptyBody: "Starte einen Scan, um Produkt-Metafields zu finden, die du für die Übersetzung aktivieren kannst.",
+    // Content-Templates (Pro/Max)
+    contentTemplates: "Vorlagen",
+    contentTemplatesUpgradeNotice: "Upgrade auf den Pro- oder Max-Plan, um wiederverwendbare Inhalts-Vorlagen zu nutzen.",
     // Glossar-Tab
     glossary: "Glossar",
     glossaryDescription: "Begriffsdatenbank für KI-Übersetzungen: Lege fest, welche Begriffe nie übersetzt werden (z. B. Markennamen) oder immer eine feste Übersetzung erhalten (z. B. Fachbegriffe). Das Glossar wird jeder KI-Übersetzung automatisch mitgegeben.",

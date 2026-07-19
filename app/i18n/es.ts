@@ -473,6 +473,9 @@ export const es: Translation = {
     metafieldsSaveFailed: "Algunas definiciones no se pudieron activar (propiedad de la app): {keys}",
     metafieldsEmptyHeading: "No se encontraron definiciones de metafield",
     metafieldsEmptyBody: "Ejecuta un escaneo para descubrir metafields de producto que puedes activar para traducción.",
+    // Plantillas de contenido (Pro/Max)
+    contentTemplates: "Plantillas",
+    contentTemplatesUpgradeNotice: "Actualiza al plan Pro o Max para usar plantillas de contenido reutilizables.",
     // Pestaña Glosario
     glossary: "Glosario",
     glossaryDescription: "Base de datos terminológica para traducciones con IA: define términos que nunca deben traducirse (p. ej. nombres de marca) o que siempre reciben una traducción fija (p. ej. términos técnicos). El glosario se incluye automáticamente en cada traducción con IA.",

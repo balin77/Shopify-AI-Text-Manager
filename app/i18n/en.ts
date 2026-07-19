@@ -474,6 +474,9 @@ export const en: Translation = {
     metafieldsSaveFailed: "Some definitions could not be enabled (app-owned): {keys}",
     metafieldsEmptyHeading: "No metafield definitions found",
     metafieldsEmptyBody: "Run a scan to discover product metafields you can enable for translation.",
+    // Content Templates (Pro/Max)
+    contentTemplates: "Content templates",
+    contentTemplatesUpgradeNotice: "Upgrade to the Pro or Max plan to use reusable content templates.",
     // Glossary tab
     glossary: "Glossary",
     glossaryDescription: "Terminology database for AI translations: define terms that must never be translated (e.g. brand names) or always get a fixed translation (e.g. technical terms). The glossary is automatically included in every AI translation.",
