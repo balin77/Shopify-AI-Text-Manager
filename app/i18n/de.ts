@@ -508,6 +508,7 @@ export const de = {
     skuFormatHint: "Schlüssel dürfen nur Buchstaben (A–Z, a–z), Ziffern, Punkt, Unterstrich und Bindestrich enthalten.",
     plan: "Plan",
     feedback: "Feedback",
+    otherSettings: "Weiteres",
     // Feedback Tab
     feedbackTitle: "Feedback senden",
     feedbackDescription: "Wir freuen uns über Ihr Feedback! Klicken Sie auf den Button unten, um uns eine E-Mail mit Ihren Anregungen, Wünschen oder Fehlermeldungen zu senden.",

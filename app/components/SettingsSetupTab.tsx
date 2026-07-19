@@ -296,6 +296,26 @@ export function SettingsSetupTab({
           </p>
         </Banner>
       )}
+
+      <Card>
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingLg">
+            {t.settings.feedbackTitle}
+          </Text>
+          <Text as="p" variant="bodyMd" tone="subdued">
+            {t.settings.feedbackDescription}
+          </Text>
+          <div>
+            <Button
+              variant="primary"
+              url={`mailto:hans.maarhofer@gmail.com?subject=${encodeURIComponent(t.settings.feedbackSubject)}`}
+              external
+            >
+              {t.settings.feedbackButton}
+            </Button>
+          </div>
+        </BlockStack>
+      </Card>
     </>
   );
 }

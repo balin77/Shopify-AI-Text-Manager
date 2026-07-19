@@ -510,6 +510,7 @@ export const es: Translation = {
     skuFormatHint: "Las claves solo pueden contener letras (A–Z, a–z), dígitos, punto, guion bajo y guion.",
     plan: "Plan",
     feedback: "Feedback",
+    otherSettings: "Otros",
     // Feedback Tab
     feedbackTitle: "Enviar comentarios",
     feedbackDescription: "¡Agradecemos tus comentarios! Haz clic en el botón de abajo para enviarnos un correo electrónico con tus sugerencias, solicitudes de funciones o informes de errores.",

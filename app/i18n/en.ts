@@ -511,6 +511,7 @@ export const en: Translation = {
     skuFormatHint: "Keys may only contain letters (A–Z, a–z), digits, dot, underscore and hyphen.",
     plan: "Plan",
     feedback: "Feedback",
+    otherSettings: "More",
     // Feedback Tab
     feedbackTitle: "Send Feedback",
     feedbackDescription: "We appreciate your feedback! Click the button below to send us an email with your suggestions, feature requests, or bug reports.",

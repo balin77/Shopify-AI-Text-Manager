@@ -7,7 +7,6 @@ import {
   Text,
   BlockStack,
   Banner,
-  Button,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { resolveMerchantLocale } from "../utils/locale.server";
@@ -996,22 +995,24 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "recurring" | "metafields" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+  type Section = "setup" | "ai" | "instructions" | "recurring" | "other" | "seo" | "plan" | "imagemanager" | "translationprobe";
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
     // Legacy deep-links keep working: language/glossary landed inside the
     // AI-Instructions & Setup tabs respectively; translations/sku merged into
-    // the new "recurring" tab.
-    if (tabParam === "language") return "setup";
+    // the new "recurring" tab; metafields/richtext merged into "other";
+    // feedback merged into the setup tab.
+    if (tabParam === "language" || tabParam === "feedback") return "setup";
     if (tabParam === "glossary") return "instructions";
     if (tabParam === "translations" || tabParam === "sku") return "recurring";
+    if (tabParam === "metafields" || tabParam === "richtext") return "other";
     // imagemanager is the deep-link target of the first-run theme-extension
     // hint; same prod/plan gate as the tab itself so it never renders blank.
     if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "recurring", "metafields", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
+    if (tabParam && ["setup", "ai", "instructions", "recurring", "other", "seo", "plan", "imagemanager", "translationprobe"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
@@ -1083,11 +1084,10 @@ export default function SettingsPage() {
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
       { id: "recurring", title: t.settings.recurringValues || "Wiederkehrende Werte" },
-      { id: "metafields", title: t.settings.metafields || "Metafields" },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
-      { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
+      { id: "other", title: t.settings.otherSettings || "Weiteres" },
+      ...(showImageManagerTab ? [{ id: "imagemanager", title: "Image Manager" }] : []),
       { id: "plan", title: t.settings.plan },
-      { id: "feedback", title: t.settings.feedback },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
     ];
 
@@ -1200,25 +1200,6 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("metafields")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "metafields" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "metafields" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
-                  {t.settings.metafields || "Metafields"}
-                </Text>
-              </button>
-              <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
                   width: "100%",
@@ -1238,41 +1219,22 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("richtext")}
+                onClick={() => handleSectionChange("other")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "richtext" ? "#f1f8f5" : "white",
+                  background: selectedSection === "other" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "richtext" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "other" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "richtext" ? "semibold" : "regular"}>
-                  {t.settings.richtextFormatting || "Rich-text formatting"}
-                </Text>
-              </button>
-              <button
-                onClick={() => handleSectionChange("plan")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "plan" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "plan" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "plan" ? "semibold" : "regular"}>
-                  {t.settings.plan}
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "other" ? "semibold" : "regular"}>
+                  {t.settings.otherSettings || "Weiteres"}
                 </Text>
               </button>
               {showImageManagerTab && (
@@ -1297,22 +1259,22 @@ export default function SettingsPage() {
                 </button>
               )}
               <button
-                onClick={() => handleSectionChange("feedback")}
+                onClick={() => handleSectionChange("plan")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "feedback" ? "#f1f8f5" : "white",
+                  background: selectedSection === "plan" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "feedback" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "plan" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "feedback" ? "semibold" : "regular"}>
-                  {t.settings.feedback}
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "plan" ? "semibold" : "regular"}>
+                  {t.settings.plan}
                 </Text>
               </button>
               {showTranslationProbeTab && (
@@ -1407,16 +1369,6 @@ export default function SettingsPage() {
                 />
               )}
 
-              {/* Metafields — enable third-party / shop metafields for translation */}
-              {selectedSection === "metafields" && (
-                <SettingsMetafieldsTab
-                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
-                  metafieldsLastScanAt={metafieldsLastScanAt}
-                  t={t}
-                  onHasChangesChange={setHasMetafieldChanges}
-                />
-              )}
-
               {/* SEO Settings */}
               {selectedSection === "seo" && (
                 <SettingsSEOTab
@@ -1428,14 +1380,22 @@ export default function SettingsPage() {
                 />
               )}
 
-              {/* Rich-text formatting (theme-settings richtext handling) */}
-              {selectedSection === "richtext" && (
-                <SettingsRichtextTab
-                  settings={settings}
-                  fetcher={fetcher}
-                  t={t}
-                  onHasChangesChange={setHasAIChanges}
-                />
+              {/* Weiteres — bundles Metafields + Rich-text formatting */}
+              {selectedSection === "other" && (
+                <>
+                  <SettingsMetafieldsTab
+                    enabledMetafieldDefinitions={enabledMetafieldDefinitions}
+                    metafieldsLastScanAt={metafieldsLastScanAt}
+                    t={t}
+                    onHasChangesChange={setHasMetafieldChanges}
+                  />
+                  <SettingsRichtextTab
+                    settings={settings}
+                    fetcher={fetcher}
+                    t={t}
+                    onHasChangesChange={setHasAIChanges}
+                  />
+                </>
               )}
 
               {/* Plan Settings */}
@@ -1493,29 +1453,6 @@ export default function SettingsPage() {
                   shop={shop}
                   onHasChangesChange={setHasImageManagerChanges}
                 />
-              )}
-
-              {/* Feedback */}
-              {selectedSection === "feedback" && (
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingLg">
-                      {t.settings.feedbackTitle}
-                    </Text>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {t.settings.feedbackDescription}
-                    </Text>
-                    <div>
-                      <Button
-                        variant="primary"
-                        url={`mailto:hans.maarhofer@gmail.com?subject=${encodeURIComponent(t.settings.feedbackSubject)}`}
-                        external
-                      >
-                        {t.settings.feedbackButton}
-                      </Button>
-                    </div>
-                  </BlockStack>
-                </Card>
               )}
 
               {/* Translation Coverage Probe (Phase 0 dev tool) */}
