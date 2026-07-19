@@ -1,10 +1,12 @@
 /**
  * Manual bulk-meta editor (SEO_TAB_IMPLEMENTATION_PLAN.md Anhang C3) — Basic+.
  *
- * A spreadsheet-like grid for editing Title / SEO-Title / Meta-Description /
- * Handle across the catalog, one content type at a time. Complements the AI
- * bulk-fix (app.seo._index.tsx's "Fix with AI") for merchants who'd rather
- * type the values themselves.
+ * A spreadsheet-like grid for editing every field an entry offers (Title,
+ * Description/Body, SEO-Title, Meta-Description, Handle, plus type-specific
+ * fields like productType/status/summary). A column picker modal lets the
+ * merchant choose which cells to see; a thumbnail column shows the primary
+ * image (read-only). Complements the AI bulk-fix (app.seo._index.tsx's "Fix
+ * with AI") for merchants who'd rather type the values themselves.
  *
  * Diff-only save-all: only cells whose value actually changed are submitted
  * (computeDiff, app/services/seo/bulk-meta.service.ts). Up to MAX_SYNC_SAVE
@@ -26,8 +28,12 @@ import {
   TextField,
   Select,
   Banner,
-  IndexTable,
+  Modal,
+  Checkbox,
+  Tooltip,
+  Thumbnail,
 } from "@shopify/polaris";
+import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -41,11 +47,16 @@ import type { Plan } from "../config/plans";
 // (ShopifyApiGateway → logger.server) into the client bundle.
 import {
   computeDiff,
+  isFieldAllowedForType,
   BULK_META_TYPES,
   BULK_META_FIELDS,
+  BULK_META_FIELDS_BY_TYPE,
+  BULK_META_READONLY_BY_TYPE,
   BULK_META_PAGE_SIZE,
   MAX_SYNC_SAVE,
   type BulkMetaType,
+  type BulkMetaField,
+  type BulkMetaReadOnlyColumn,
   type BulkMetaRow,
   type BulkMetaDiffEntry,
   type BulkMetaFailure,
@@ -164,6 +175,95 @@ interface BulkFetcherResult {
   total?: number;
 }
 
+/** Localstorage key holding the user's per-type visible column selection.
+ * Namespaced by type so switching Product↔Collection remembers each. */
+const COLUMNS_STORAGE_KEY = "contentpilot:bulkMeta:columns";
+
+/** Combined column identity — either an editable field or a read-only meta
+ * column. The grid renders in the same order the user selects them. */
+type BulkColumn = BulkMetaField | BulkMetaReadOnlyColumn;
+
+/** Which columns are visible by default when the merchant first opens the
+ * grid for a type. Product defaults to a compact "Bild + Meta" view to fit
+ * on-screen without horizontal scrolling for the common case. */
+const DEFAULT_COLUMNS: Record<BulkMetaType, BulkColumn[]> = {
+  product: ["image", "title", "productType", "handle", "seoTitle", "seoDescription"],
+  collection: ["image", "title", "handle", "seoTitle", "seoDescription"],
+  article: ["image", "title", "summary", "handle", "seoTitle", "seoDescription"],
+  page: ["title", "handle", "seoTitle", "seoDescription"],
+};
+
+/** All possible columns for a type, in canonical (picker) order. */
+function allColumnsForType(type: BulkMetaType): BulkColumn[] {
+  return [...BULK_META_READONLY_BY_TYPE[type], ...BULK_META_FIELDS_BY_TYPE[type]];
+}
+
+/** Column width per field — keeps the grid predictable when horizontal
+ * scrolling kicks in. Longer-text fields get more room; single-line fields
+ * stay compact. */
+function columnMinWidth(col: BulkColumn): number {
+  switch (col) {
+    case "image":
+      return 72;
+    case "blogTitle":
+      return 140;
+    case "title":
+    case "handle":
+    case "productType":
+      return 180;
+    case "status":
+      return 130;
+    case "seoTitle":
+      return 200;
+    case "summary":
+      return 240;
+    case "seoDescription":
+    case "descriptionHtml":
+    case "body":
+      return 280;
+  }
+}
+
+/** True if a column is read-only (image, blogTitle) — those never appear in
+ * BULK_META_FIELDS_BY_TYPE, so this is just a set check. */
+function isReadOnlyColumn(col: BulkColumn): col is BulkMetaReadOnlyColumn {
+  return col === "image" || col === "blogTitle";
+}
+
+/**
+ * Restore the merchant's saved column selection for a type, or fall back to
+ * the default set. Stale columns (from an older release that offered a field
+ * we've since removed) are filtered out silently.
+ */
+function loadColumnPrefs(type: BulkMetaType): BulkColumn[] {
+  if (typeof window === "undefined") return DEFAULT_COLUMNS[type];
+  try {
+    const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (!raw) return DEFAULT_COLUMNS[type];
+    const all = JSON.parse(raw) as Partial<Record<BulkMetaType, BulkColumn[]>>;
+    const saved = all[type];
+    if (!Array.isArray(saved) || saved.length === 0) return DEFAULT_COLUMNS[type];
+    const allowed = new Set<BulkColumn>(allColumnsForType(type));
+    const filtered = saved.filter((c) => allowed.has(c));
+    return filtered.length > 0 ? filtered : DEFAULT_COLUMNS[type];
+  } catch {
+    return DEFAULT_COLUMNS[type];
+  }
+}
+
+function saveColumnPrefs(type: BulkMetaType, cols: BulkColumn[]) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
+    const all = (raw ? JSON.parse(raw) : {}) as Partial<Record<BulkMetaType, BulkColumn[]>>;
+    all[type] = cols;
+    window.localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    // localStorage may be unavailable (private mode / SSR mismatch) — the
+    // grid still works, we just don't remember the selection for next time.
+  }
+}
+
 export default function SeoBulkMeta() {
   const { gated, rows, type, page, total, pageSize } = useLoaderData<typeof loader>();
   const { t } = useI18n();
@@ -178,6 +278,16 @@ export default function SeoBulkMeta() {
   const [lastFailures, setLastFailures] = useState<BulkMetaFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
   const [queuedBanner, setQueuedBanner] = useState(false);
+
+  // Column visibility — merchant-picked, persisted per type. Rehydrated
+  // whenever `type` changes so switching Products↔Pages restores each
+  // type's saved layout (not a shared one that would leak fields).
+  const [visibleColumns, setVisibleColumns] = useState<BulkColumn[]>(() => loadColumnPrefs(type));
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    setVisibleColumns(loadColumnPrefs(type));
+  }, [type]);
 
   // A navigation to a different page/type starts from a clean slate — stale
   // edits from a different page/type would silently target the wrong rows
@@ -219,17 +329,25 @@ export default function SeoBulkMeta() {
   useEffect(() => {
     if (bulkFetcher.state !== "idle" || !bulkFetcher.data) return;
     if (bulkFetcher.data.success) {
-      setEdits({});
+      // Deliberately DO NOT clear edits here: the async path enqueues a Task
+      // whose per-row outcome (successes AND failures) is surfaced later in
+      // the Tasks tab, not here. If we cleared edits now and any row failed
+      // in the background, the merchant would lose their typed values with
+      // no way to retry. Merchant clears them explicitly via "Discard" once
+      // the task completes.
       setQueuedBanner(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkFetcher.state, bulkFetcher.data]);
 
-  const setEdit = (id: string, field: string, value: string) => {
+  const setEdit = (id: string, field: BulkMetaField, value: string) => {
     setEdits((prev) => ({ ...prev, [`${id}:${field}`]: value }));
   };
-  const valueFor = (row: BulkMetaRow, field: keyof BulkMetaRow) =>
-    edits[`${row.id}:${field}`] ?? (row[field] as string);
+  const valueFor = (row: BulkMetaRow, field: BulkMetaField): string => {
+    const editKey = `${row.id}:${field}`;
+    if (editKey in edits) return edits[editKey];
+    return (row[field] as string | undefined) ?? "";
+  };
 
   const handleTypeChange = (value: string) => {
     setQueuedBanner(false);
@@ -250,8 +368,12 @@ export default function SeoBulkMeta() {
   const handleSave = () => {
     if (dirty.length === 0 || saving) return;
     if (dirty.length > MAX_SYNC_SAVE) {
+      // `contentType` is currently ignored by seo-bulk-meta.handler.ts (it
+      // drives off each diff entry's own `type`), but sending the actual
+      // current type makes request logs / Tasks tab records honest instead of
+      // labeling every async save as "products".
       bulkFetcher.submit(
-        { action: "seoBulkMeta", contentType: "products", diff: JSON.stringify(dirty) },
+        { action: "seoBulkMeta", contentType: type, diff: JSON.stringify(dirty) },
         { method: "post", action: "/api/ai" },
       );
     } else {
@@ -268,6 +390,25 @@ export default function SeoBulkMeta() {
     setLastSavedCount(null);
   };
 
+  const toggleColumn = (col: BulkColumn) => {
+    setVisibleColumns((prev) => {
+      const next = prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col];
+      // Preserve canonical order — otherwise the column re-appears at the
+      // end after re-checking it, which feels wrong to merchants used to a
+      // stable layout.
+      const canonical = allColumnsForType(type);
+      const ordered = canonical.filter((c) => next.includes(c));
+      saveColumnPrefs(type, ordered);
+      return ordered;
+    });
+  };
+
+  const resetColumns = () => {
+    const def = DEFAULT_COLUMNS[type];
+    setVisibleColumns(def);
+    saveColumnPrefs(type, def);
+  };
+
   const typeOptions = (BULK_META_TYPES as BulkMetaType[]).map((rt) => ({ label: b.types[rt], value: rt }));
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -277,6 +418,16 @@ export default function SeoBulkMeta() {
 
   const saveError = saveFetcher.data && !saveFetcher.data.ok ? b.errorGeneric : null;
   const bulkError = bulkFetcher.data && !bulkFetcher.data.success ? bulkFetcher.data.error || b.errorGeneric : null;
+
+  // Which columns actually render — filter out any the merchant deselected,
+  // but never render an editable column that isn't valid for this type
+  // (defensive: DEFAULT_COLUMNS is per-type, but preserved localStorage from
+  // a previous release might list a since-removed field).
+  const activeColumns = visibleColumns.filter((c) =>
+    isReadOnlyColumn(c)
+      ? BULK_META_READONLY_BY_TYPE[type].includes(c)
+      : isFieldAllowedForType(type, c),
+  );
 
   return (
     <SeoSectionLayout sectionId="bulkMeta">
@@ -312,9 +463,12 @@ export default function SeoBulkMeta() {
                 </Banner>
               )}
 
-              <div style={{ maxWidth: "220px" }}>
-                <Select label={b.typeLabel} options={typeOptions} value={type} onChange={handleTypeChange} />
-              </div>
+              <InlineStack align="space-between" blockAlign="end" gap="200">
+                <div style={{ maxWidth: "220px", flex: "0 0 220px" }}>
+                  <Select label={b.typeLabel} options={typeOptions} value={type} onChange={handleTypeChange} />
+                </div>
+                <Button onClick={() => setPickerOpen(true)}>{b.chooseColumns}</Button>
+              </InlineStack>
 
               {rows.length === 0 ? (
                 <Text as="p" tone="subdued">
@@ -322,81 +476,24 @@ export default function SeoBulkMeta() {
                 </Text>
               ) : (
                 <BlockStack gap="200">
-                  <IndexTable
-                    itemCount={rows.length}
-                    selectable={false}
-                    headings={[
-                      { title: b.colTitle },
-                      { title: b.colSeoTitle },
-                      { title: b.colMetaDescription },
-                      { id: "handle", title: b.colHandle, tooltipContent: b.handleWarning },
-                      { title: "" },
-                    ]}
-                  >
-                    {(rows as BulkMetaRow[]).map((row, index) => (
-                      <IndexTable.Row id={row.id} key={row.id} position={index}>
-                        <IndexTable.Cell>
-                          <div style={{ minWidth: "160px" }}>
-                            <TextField
-                              label=""
-                              labelHidden
-                              autoComplete="off"
-                              value={valueFor(row, "title")}
-                              onChange={(v) => setEdit(row.id, "title", v)}
-                            />
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ minWidth: "160px" }}>
-                            <TextField
-                              label=""
-                              labelHidden
-                              autoComplete="off"
-                              value={valueFor(row, "seoTitle")}
-                              onChange={(v) => setEdit(row.id, "seoTitle", v)}
-                            />
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ minWidth: "220px" }}>
-                            <TextField
-                              label=""
-                              labelHidden
-                              autoComplete="off"
-                              multiline={2}
-                              value={valueFor(row, "seoDescription")}
-                              onChange={(v) => setEdit(row.id, "seoDescription", v)}
-                            />
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <div style={{ minWidth: "160px" }}>
-                            <TextField
-                              label=""
-                              labelHidden
-                              autoComplete="off"
-                              value={valueFor(row, "handle")}
-                              onChange={(v) => setEdit(row.id, "handle", v)}
-                            />
-                          </div>
-                        </IndexTable.Cell>
-                        <IndexTable.Cell>
-                          <InlineStack align="end">
-                            <Button
-                              variant="plain"
-                              onClick={() =>
-                                handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                                  searchParams: new URLSearchParams({ select: row.id }),
-                                })
-                              }
-                            >
-                              {b.openInEditor}
-                            </Button>
-                          </InlineStack>
-                        </IndexTable.Cell>
-                      </IndexTable.Row>
-                    ))}
-                  </IndexTable>
+                  <BulkMetaGrid
+                    rows={rows as BulkMetaRow[]}
+                    type={type}
+                    columns={activeColumns}
+                    valueFor={valueFor}
+                    setEdit={setEdit}
+                    edits={edits}
+                    openInEditorLabel={b.openInEditor}
+                    onOpenInEditor={(row) =>
+                      handleNavigate(TYPE_EDITOR_PATH[row.type], {
+                        searchParams: new URLSearchParams({ select: row.id }),
+                      })
+                    }
+                    columnHeading={b.columns}
+                    statusOptions={b.statusOptions}
+                    handleWarning={b.handleWarning}
+                    caption={b.types[type]}
+                  />
 
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="span" variant="bodySm" tone="subdued">
@@ -447,8 +544,278 @@ export default function SeoBulkMeta() {
               </Card>
             </div>
           )}
+
+          <Modal
+            open={pickerOpen}
+            onClose={() => setPickerOpen(false)}
+            title={b.columnPicker.title}
+            primaryAction={{ content: b.columnPicker.done, onAction: () => setPickerOpen(false) }}
+            secondaryActions={[{ content: b.columnPicker.reset, onAction: resetColumns }]}
+          >
+            <Modal.Section>
+              <BlockStack gap="200">
+                <Text as="p" tone="subdued">
+                  {b.columnPicker.intro}
+                </Text>
+                <BlockStack gap="100">
+                  {allColumnsForType(type).map((col) => (
+                    <Checkbox
+                      key={col}
+                      label={b.columns[col]}
+                      checked={visibleColumns.includes(col)}
+                      onChange={() => toggleColumn(col)}
+                    />
+                  ))}
+                </BlockStack>
+              </BlockStack>
+            </Modal.Section>
+          </Modal>
         </BlockStack>
       )}
     </SeoSectionLayout>
+  );
+}
+
+// ─── Grid ─────────────────────────────────────────────────────────────────
+
+interface BulkMetaGridProps {
+  rows: BulkMetaRow[];
+  type: BulkMetaType;
+  columns: BulkColumn[];
+  valueFor: (row: BulkMetaRow, field: BulkMetaField) => string;
+  setEdit: (id: string, field: BulkMetaField, value: string) => void;
+  edits: Record<string, string>;
+  openInEditorLabel: string;
+  onOpenInEditor: (row: BulkMetaRow) => void;
+  columnHeading: Record<BulkColumn, string>;
+  statusOptions: { active: string; draft: string; archived: string };
+  handleWarning: string;
+  /** Visually-hidden `<caption>` — pass the localized content-type label
+   * (e.g. "Products") so screen readers can announce what the grid is. */
+  caption: string;
+}
+
+/**
+ * Excel-like grid: borderless textareas that auto-grow with content, tight
+ * padding, horizontal scrolling when columns don't fit, a pencil icon for
+ * "Open in editor" (matching the SEO overview tab), and a read-only image
+ * thumbnail column for products/collections/articles.
+ *
+ * Not built on Polaris IndexTable — IndexTable renders row backgrounds and
+ * checkbox gutters that fight the "no chrome, values feel primary" look the
+ * merchant asked for. A plain `<table>` inside an overflow-x wrapper gives
+ * us exact control over cell borders and lets the auto-grow textareas own
+ * the row height.
+ */
+function BulkMetaGrid({
+  rows,
+  type,
+  columns,
+  valueFor,
+  setEdit,
+  edits,
+  openInEditorLabel,
+  onOpenInEditor,
+  columnHeading,
+  statusOptions,
+  handleWarning,
+  caption,
+}: BulkMetaGridProps) {
+  return (
+    <div style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-meta-scroll">
+      {/* Scoped styles: hide the auto-grown textarea's inner scrollbar and
+          make borderless multiline TextFields feel like flat spreadsheet
+          cells. Both selectors target Polaris' generated class stability
+          points (data-attributes / role="textbox"). */}
+      <style>{`
+        .cp-bulk-meta-scroll table {
+          border-collapse: collapse;
+          width: max-content;
+          min-width: 100%;
+        }
+        .cp-bulk-meta-scroll th,
+        .cp-bulk-meta-scroll td {
+          padding: 4px 6px;
+          vertical-align: top;
+          border-bottom: 1px solid var(--p-color-border, #e1e3e5);
+        }
+        .cp-bulk-meta-scroll th {
+          text-align: left;
+          font-weight: 500;
+          font-size: 12px;
+          color: var(--p-color-text-secondary, #6d7175);
+          background: var(--p-color-bg-surface-secondary, #f6f6f7);
+          position: sticky;
+          top: 0;
+          z-index: 1;
+        }
+        .cp-bulk-meta-cell textarea {
+          overflow: hidden !important;
+          resize: none !important;
+        }
+        .cp-bulk-meta-cell .Polaris-TextField {
+          background: transparent;
+        }
+      `}</style>
+      <table>
+        {/* Visually-hidden caption gives screen readers a table label. Not
+            using Polaris' visually-hidden helper class here because this is
+            a scoped inline table, not part of a design-system-provided
+            component. */}
+        <caption
+          style={{
+            position: "absolute",
+            width: 1,
+            height: 1,
+            padding: 0,
+            margin: -1,
+            overflow: "hidden",
+            clip: "rect(0,0,0,0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
+        >
+          {caption}
+        </caption>
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th key={col} scope="col" style={{ minWidth: columnMinWidth(col) }}>
+                {col === "handle" ? (
+                  <Tooltip content={handleWarning}>
+                    <span>{columnHeading[col]}</span>
+                  </Tooltip>
+                ) : (
+                  columnHeading[col]
+                )}
+              </th>
+            ))}
+            <th scope="col" style={{ minWidth: 48, width: 48 }} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              {columns.map((col) => (
+                <td
+                  key={col}
+                  className="cp-bulk-meta-cell"
+                  style={{ minWidth: columnMinWidth(col) }}
+                >
+                  <BulkMetaCell
+                    row={row}
+                    column={col}
+                    type={type}
+                    valueFor={valueFor}
+                    setEdit={setEdit}
+                    edits={edits}
+                    statusOptions={statusOptions}
+                  />
+                </td>
+              ))}
+              <td style={{ width: 48, textAlign: "right" }}>
+                <Tooltip content={openInEditorLabel}>
+                  <Button
+                    variant="plain"
+                    size="slim"
+                    icon={EditIcon}
+                    accessibilityLabel={openInEditorLabel}
+                    onClick={() => onOpenInEditor(row)}
+                  />
+                </Tooltip>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface BulkMetaCellProps {
+  row: BulkMetaRow;
+  column: BulkColumn;
+  type: BulkMetaType;
+  valueFor: (row: BulkMetaRow, field: BulkMetaField) => string;
+  setEdit: (id: string, field: BulkMetaField, value: string) => void;
+  edits: Record<string, string>;
+  statusOptions: { active: string; draft: string; archived: string };
+}
+
+/** Fields that render as auto-growing multi-line textareas rather than
+ * single-line inputs. Everything else (title, handle, seoTitle, productType)
+ * is a compact one-line borderless TextField. */
+const MULTILINE_FIELDS = new Set<BulkMetaField>([
+  "descriptionHtml",
+  "body",
+  "summary",
+  "seoDescription",
+]);
+
+function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: BulkMetaCellProps) {
+  // Read-only meta columns first — no edit path, just render the value.
+  if (column === "image") {
+    if (!row.imageUrl) {
+      // Empty spacer keeps row height consistent with rows that DO have a
+      // thumbnail, avoiding a bouncy layout as the merchant scrolls.
+      return <div style={{ width: 48, height: 48 }} />;
+    }
+    return (
+      <Thumbnail source={row.imageUrl} alt={row.imageAlt ?? ""} size="small" />
+    );
+  }
+  if (column === "blogTitle") {
+    return (
+      <Text as="span" variant="bodySm" tone="subdued">
+        {row.blogTitle ?? ""}
+      </Text>
+    );
+  }
+
+  // Editable fields.
+  const field = column;
+  const value = valueFor(row, field);
+  const isDirty = `${row.id}:${field}` in edits;
+
+  if (field === "status") {
+    // Non-null in the schema, but a partial sync could leave it "" — show a
+    // placeholder row instead of silently defaulting the display to ACTIVE
+    // (which would cause a no-op click to write ACTIVE where the DB had "").
+    const hasStatus = value === "ACTIVE" || value === "DRAFT" || value === "ARCHIVED";
+    return (
+      <Select
+        label=""
+        labelHidden
+        options={[
+          ...(hasStatus
+            ? []
+            : [{ label: "—", value: "", disabled: true } as const]),
+          { label: statusOptions.active, value: "ACTIVE" },
+          { label: statusOptions.draft, value: "DRAFT" },
+          { label: statusOptions.archived, value: "ARCHIVED" },
+        ]}
+        value={hasStatus ? value : ""}
+        onChange={(v) => setEdit(row.id, field, v)}
+      />
+    );
+  }
+
+  const multiline = MULTILINE_FIELDS.has(field);
+
+  // No maxHeight on purpose — merchant explicitly asked for full autogrow, no
+  // inner scrollbars anywhere. Very long HTML pastes therefore produce very
+  // tall rows; that's the intended trade-off (the pencil icon jumps to the
+  // full editor for real long-form work).
+  return (
+    <TextField
+      label=""
+      labelHidden
+      autoComplete="off"
+      variant="borderless"
+      multiline={multiline || undefined}
+      value={value}
+      onChange={(v) => setEdit(row.id, field, v)}
+      tone={isDirty ? "magic" : undefined}
+    />
   );
 }

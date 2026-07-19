@@ -1,7 +1,6 @@
 /**
  * Manual bulk-meta editor (SEO_TAB_IMPLEMENTATION_PLAN.md Anhang C3) — a
- * spreadsheet-like editor for Title / SEO-Title / Meta-Description / Handle
- * across the catalog, distinct from the AI bulk-fix
+ * spreadsheet-like editor across the catalog, distinct from the AI bulk-fix
  * (api-ai-handlers/seo-bulk-fix.handler.ts).
  *
  * Persistence reuses the SAME Shopify mutation paths the single-item editor
@@ -19,7 +18,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
-import { groupDiffByRow } from "./bulk-meta.shared";
+import { groupDiffByRow, isFieldAllowedForType } from "./bulk-meta.shared";
 import type {
   BulkMetaType,
   BulkMetaField,
@@ -36,27 +35,9 @@ export * from "./bulk-meta.shared";
 
 // ─── Loading a page of rows (select-minimized, take-capped) ───────────────
 
-interface CacheRow {
-  id: string;
-  title: string;
-  seoTitle: string | null;
-  seoDescription: string | null;
-  handle: string;
-}
-
-function normalizeRow(type: BulkMetaType, row: CacheRow): BulkMetaRow {
-  return {
-    id: row.id,
-    type,
-    title: row.title,
-    seoTitle: row.seoTitle ?? "",
-    seoDescription: row.seoDescription ?? "",
-    handle: row.handle,
-  };
-}
-
-/** One page of the content cache for `type`, select-minimized to exactly the
- * four editable fields (+ id), offset-paged via skip/take. */
+/** One page of the content cache for `type`, select-minimized to the fields
+ * shown in the bulk-meta grid (editable + read-only meta columns).
+ * Offset-paged via skip/take. */
 export async function loadBulkMetaPage(
   db: PrismaClient,
   shop: string,
@@ -64,37 +45,132 @@ export async function loadBulkMetaPage(
   opts: { skip: number; take: number },
 ): Promise<{ rows: BulkMetaRow[]; total: number }> {
   const { skip, take } = opts;
-  const select = { id: true, title: true, seoTitle: true, seoDescription: true, handle: true } as const;
   const orderBy = { title: "asc" as const };
 
   switch (type) {
     case "product": {
+      const select = {
+        id: true,
+        title: true,
+        seoTitle: true,
+        seoDescription: true,
+        handle: true,
+        descriptionHtml: true,
+        productType: true,
+        status: true,
+        featuredImageUrl: true,
+        featuredImageAlt: true,
+      } as const;
       const [items, total] = await Promise.all([
         db.product.findMany({ where: { shop }, select, orderBy, skip, take }),
         db.product.count({ where: { shop } }),
       ]);
-      return { rows: items.map((i) => normalizeRow("product", i)), total };
+      return {
+        rows: items.map((i) => ({
+          id: i.id,
+          type: "product" as const,
+          title: i.title,
+          seoTitle: i.seoTitle ?? "",
+          seoDescription: i.seoDescription ?? "",
+          handle: i.handle,
+          descriptionHtml: i.descriptionHtml ?? "",
+          productType: i.productType ?? "",
+          status: i.status ?? "",
+          imageUrl: i.featuredImageUrl ?? undefined,
+          imageAlt: i.featuredImageAlt ?? undefined,
+        })),
+        total,
+      };
     }
     case "collection": {
+      const select = {
+        id: true,
+        title: true,
+        seoTitle: true,
+        seoDescription: true,
+        handle: true,
+        descriptionHtml: true,
+        imageUrl: true,
+        imageAltText: true,
+      } as const;
       const [items, total] = await Promise.all([
         db.collection.findMany({ where: { shop }, select, orderBy, skip, take }),
         db.collection.count({ where: { shop } }),
       ]);
-      return { rows: items.map((i) => normalizeRow("collection", i)), total };
+      return {
+        rows: items.map((i) => ({
+          id: i.id,
+          type: "collection" as const,
+          title: i.title,
+          seoTitle: i.seoTitle ?? "",
+          seoDescription: i.seoDescription ?? "",
+          handle: i.handle,
+          descriptionHtml: i.descriptionHtml ?? "",
+          imageUrl: i.imageUrl ?? undefined,
+          imageAlt: i.imageAltText ?? undefined,
+        })),
+        total,
+      };
     }
     case "article": {
+      const select = {
+        id: true,
+        title: true,
+        seoTitle: true,
+        seoDescription: true,
+        handle: true,
+        body: true,
+        summary: true,
+        imageUrl: true,
+        imageAltText: true,
+        blogTitle: true,
+      } as const;
       const [items, total] = await Promise.all([
         db.article.findMany({ where: { shop }, select, orderBy, skip, take }),
         db.article.count({ where: { shop } }),
       ]);
-      return { rows: items.map((i) => normalizeRow("article", i)), total };
+      return {
+        rows: items.map((i) => ({
+          id: i.id,
+          type: "article" as const,
+          title: i.title,
+          seoTitle: i.seoTitle ?? "",
+          seoDescription: i.seoDescription ?? "",
+          handle: i.handle,
+          body: i.body ?? "",
+          summary: i.summary ?? "",
+          imageUrl: i.imageUrl ?? undefined,
+          imageAlt: i.imageAltText ?? undefined,
+          blogTitle: i.blogTitle ?? undefined,
+        })),
+        total,
+      };
     }
     case "page": {
+      const select = {
+        id: true,
+        title: true,
+        seoTitle: true,
+        seoDescription: true,
+        handle: true,
+        body: true,
+      } as const;
       const [items, total] = await Promise.all([
         db.page.findMany({ where: { shop }, select, orderBy, skip, take }),
         db.page.count({ where: { shop } }),
       ]);
-      return { rows: items.map((i) => normalizeRow("page", i)), total };
+      return {
+        rows: items.map((i) => ({
+          id: i.id,
+          type: "page" as const,
+          title: i.title,
+          seoTitle: i.seoTitle ?? "",
+          seoDescription: i.seoDescription ?? "",
+          handle: i.handle,
+          body: i.body ?? "",
+        })),
+        total,
+      };
     }
   }
 }
@@ -107,12 +183,24 @@ interface ApplyContext {
   admin: AdminApiContext;
 }
 
+const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
+
 async function persistRow(
   group: { type: BulkMetaType; id: string; fields: Partial<Record<BulkMetaField, string>> },
   deps: { db: PrismaClient; shop: string; gateway: ShopifyApiGateway; contentService: ShopifyContentService },
 ): Promise<void> {
   const { type, id, fields } = group;
   const { db, shop, gateway, contentService } = deps;
+
+  // Per-type field guard — the route validator only checks against the global
+  // allowlist; this rejects e.g. `productType` on a page or `body` on a
+  // product before either Shopify or the DB has a chance to complain
+  // inconsistently.
+  for (const key of Object.keys(fields) as BulkMetaField[]) {
+    if (!isFieldAllowedForType(type, key)) {
+      throw new Error(`Field "${key}" is not editable on ${type}.`);
+    }
+  }
 
   // Shopify rejects an empty title outright for every one of these resource
   // types — reject it here too so it counts as a per-row failure instead of
@@ -122,25 +210,58 @@ async function persistRow(
     throw new Error("Title cannot be empty.");
   }
 
+  // Product status is an enum on Shopify; reject anything else before we send
+  // it. The Select in the UI only offers valid values, but the diff-only save
+  // still runs the value through here.
+  if (fields.status !== undefined) {
+    const s = fields.status.trim().toUpperCase();
+    if (!PRODUCT_STATUSES.has(s)) {
+      throw new Error(`Invalid status "${fields.status}" — expected ACTIVE, DRAFT or ARCHIVED.`);
+    }
+    fields.status = s;
+  }
+
+  // Build the DB patch mirror. Every editable field maps 1:1 to its Prisma
+  // column with the same name — no renames — so a single loop is enough.
   const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
-  if (fields.title !== undefined) dbData.title = fields.title;
-  if (fields.seoTitle !== undefined) dbData.seoTitle = fields.seoTitle;
-  if (fields.seoDescription !== undefined) dbData.seoDescription = fields.seoDescription;
-  if (fields.handle !== undefined) dbData.handle = fields.handle;
+  for (const key of Object.keys(fields) as BulkMetaField[]) {
+    dbData[key] = fields[key];
+  }
 
   switch (type) {
     case "product": {
       // Minimal partial productUpdate — only the fields that changed are
       // sent, so everything else is left untouched by Shopify (omitted
       // GraphQL input fields = "no change"). Same shape as
-      // seo-bulk-fix.handler.ts's persistField, extended to title/handle.
+      // seo-bulk-fix.handler.ts's persistField, extended to title/handle/
+      // descriptionHtml/productType/status.
       const input: Record<string, unknown> = { id };
       if (fields.title !== undefined) input.title = fields.title;
       if (fields.handle !== undefined) input.handle = fields.handle;
+      if (fields.descriptionHtml !== undefined) input.descriptionHtml = fields.descriptionHtml;
+      if (fields.productType !== undefined) input.productType = fields.productType;
+      if (fields.status !== undefined) input.status = fields.status;
       if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
+        // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
+        // sending only `title` wipes the existing description (and vice versa).
+        // When only one half is dirty, load the untouched half from the DB
+        // cache and send it too. See "Partial SEO clobber" bug pattern in the
+        // repo memory / CLAUDE.md.
+        const partialSeo =
+          (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
+        let untouched: { seoTitle: string | null; seoDescription: string | null } | null = null;
+        if (partialSeo) {
+          untouched = await db.product.findUnique({
+            where: { shop_id: { shop, id } },
+            select: { seoTitle: true, seoDescription: true },
+          });
+        }
         input.seo = {
-          ...(fields.seoTitle !== undefined ? { title: fields.seoTitle } : {}),
-          ...(fields.seoDescription !== undefined ? { description: fields.seoDescription } : {}),
+          title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.seoTitle ?? "",
+          description:
+            fields.seoDescription !== undefined
+              ? fields.seoDescription
+              : untouched?.seoDescription ?? "",
         };
       }
       const response = await gateway.graphql(
@@ -162,16 +283,31 @@ async function persistRow(
       break;
     }
     case "collection": {
-      const seo =
-        fields.seoTitle !== undefined || fields.seoDescription !== undefined
-          ? {
-              ...(fields.seoTitle !== undefined ? { title: fields.seoTitle } : {}),
-              ...(fields.seoDescription !== undefined ? { description: fields.seoDescription } : {}),
-            }
-          : undefined;
+      // Same partial-SEO clobber guard as product above — collectionUpdate
+      // also treats `seo` as a unit.
+      let seo: { title: string; description: string } | undefined;
+      if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
+        const partialSeo =
+          (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
+        let untouched: { seoTitle: string | null; seoDescription: string | null } | null = null;
+        if (partialSeo) {
+          untouched = await db.collection.findUnique({
+            where: { shop_id: { shop, id } },
+            select: { seoTitle: true, seoDescription: true },
+          });
+        }
+        seo = {
+          title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.seoTitle ?? "",
+          description:
+            fields.seoDescription !== undefined
+              ? fields.seoDescription
+              : untouched?.seoDescription ?? "",
+        };
+      }
       await contentService.updateCollection(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
+        ...(fields.descriptionHtml !== undefined ? { descriptionHtml: fields.descriptionHtml } : {}),
         ...(seo ? { seo } : {}),
       });
       await db.collection.update({ where: { shop_id: { shop, id } }, data: dbData });
@@ -181,6 +317,7 @@ async function persistRow(
       await contentService.updatePage(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
+        ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
       });
@@ -194,6 +331,8 @@ async function persistRow(
       await contentService.updateArticle(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
+        ...(fields.body !== undefined ? { body: fields.body } : {}),
+        ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
       });

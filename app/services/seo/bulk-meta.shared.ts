@@ -12,10 +12,74 @@
  */
 
 export type BulkMetaType = "product" | "collection" | "article" | "page";
-export type BulkMetaField = "title" | "seoTitle" | "seoDescription" | "handle";
+
+/**
+ * All editable field keys across every content type. Not every field is valid
+ * for every type — BULK_META_FIELDS_BY_TYPE keeps the per-type allowlist and
+ * the server validates diff entries against it (persistRow in
+ * bulk-meta.service.ts). The union stays flat because the client edit map
+ * uses `${id}:${field}` keys regardless of type.
+ */
+export type BulkMetaField =
+  | "title"
+  | "seoTitle"
+  | "seoDescription"
+  | "handle"
+  | "descriptionHtml"
+  | "productType"
+  | "status"
+  | "body"
+  | "summary";
 
 export const BULK_META_TYPES: BulkMetaType[] = ["product", "collection", "article", "page"];
-export const BULK_META_FIELDS: BulkMetaField[] = ["title", "seoTitle", "seoDescription", "handle"];
+
+export const BULK_META_FIELDS: BulkMetaField[] = [
+  "title",
+  "seoTitle",
+  "seoDescription",
+  "handle",
+  "descriptionHtml",
+  "productType",
+  "status",
+  "body",
+  "summary",
+];
+
+/**
+ * Per-type allowlist of editable fields. Used both by the UI (column picker
+ * modal + which columns to render) and by the server (persistRow rejects any
+ * diff entry whose field isn't listed for its type).
+ *
+ * Order = default column order for that type.
+ */
+export const BULK_META_FIELDS_BY_TYPE: Record<BulkMetaType, BulkMetaField[]> = {
+  product: [
+    "title",
+    "descriptionHtml",
+    "productType",
+    "status",
+    "handle",
+    "seoTitle",
+    "seoDescription",
+  ],
+  collection: ["title", "descriptionHtml", "handle", "seoTitle", "seoDescription"],
+  article: ["title", "summary", "body", "handle", "seoTitle", "seoDescription"],
+  page: ["title", "body", "handle", "seoTitle", "seoDescription"],
+};
+
+/**
+ * Read-only meta columns (image thumbnail, blog title). Displayed in the grid
+ * but not part of BulkMetaField — never appear in the client edit map or the
+ * server diff.
+ */
+export type BulkMetaReadOnlyColumn = "image" | "blogTitle";
+
+export const BULK_META_READONLY_BY_TYPE: Record<BulkMetaType, BulkMetaReadOnlyColumn[]> = {
+  product: ["image"],
+  collection: ["image"],
+  article: ["image", "blogTitle"],
+  page: [],
+};
 
 /** Rows shown per page in the grid (A2-style take cap, offset-paged via ?page=). */
 export const BULK_META_PAGE_SIZE = 100;
@@ -36,6 +100,16 @@ export interface BulkMetaRow {
   seoTitle: string;
   seoDescription: string;
   handle: string;
+  // Per-type optional editable fields.
+  descriptionHtml?: string;
+  productType?: string;
+  status?: string;
+  body?: string;
+  summary?: string;
+  // Read-only display fields.
+  imageUrl?: string;
+  imageAlt?: string;
+  blogTitle?: string;
 }
 
 export interface BulkMetaDiffEntry {
@@ -54,6 +128,13 @@ export interface BulkMetaFailure {
 export interface BulkMetaApplyResult {
   saved: number;
   failures: BulkMetaFailure[];
+}
+
+/** True if `field` is a valid editable column for `type`. Used server-side as
+ * a per-row validation guard AND client-side to skip stale edits when the
+ * merchant switches types with pending changes. */
+export function isFieldAllowedForType(type: BulkMetaType, field: BulkMetaField): boolean {
+  return BULK_META_FIELDS_BY_TYPE[type].includes(field);
 }
 
 // ─── Pure diff computation (unit-tested) ──────────────────────────────────
@@ -85,8 +166,9 @@ export function computeDiff(rows: BulkMetaRow[], edits: Record<string, string>):
 
     const row = byId.get(id);
     if (!row) continue;
+    if (!isFieldAllowedForType(row.type, field)) continue;
 
-    const original = (row[field] ?? "").trim();
+    const original = ((row[field] as string | undefined) ?? "").trim();
     const next = (edits[key] ?? "").trim();
     if (next !== original) {
       diff.push({ id: row.id, type: row.type, field, value: next });
