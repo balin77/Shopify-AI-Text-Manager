@@ -13,13 +13,10 @@ import { resolveMerchantLocale } from "../utils/locale.server";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
-import { SettingsRecurringValuesTab } from "../components/SettingsRecurringValuesTab";
-import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
-import { SettingsRichtextTab } from "../components/SettingsRichtextTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
-import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
+import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
@@ -995,30 +992,45 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "recurring" | "other" | "seo" | "plan" | "imagemanager" | "translationprobe";
+  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe";
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
-    // Legacy deep-links keep working: language/glossary landed inside the
-    // AI-Instructions & Setup tabs respectively; translations/sku merged into
-    // the new "recurring" tab; metafields/richtext merged into "other";
-    // feedback merged into the setup tab.
+    // Legacy deep-links keep working: language/glossary/feedback landed inside
+    // the Setup / AI-Instructions tabs; translations/sku/metafields/richtext/
+    // recurring/imagemanager all now live inside the "Weiteres" (other) tab.
     if (tabParam === "language" || tabParam === "feedback") return "setup";
     if (tabParam === "glossary") return "instructions";
-    if (tabParam === "translations" || tabParam === "sku") return "recurring";
-    if (tabParam === "metafields" || tabParam === "richtext") return "other";
-    // imagemanager is the deep-link target of the first-run theme-extension
-    // hint; same prod/plan gate as the tab itself so it never renders blank.
-    if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
+    if (
+      tabParam === "translations" ||
+      tabParam === "sku" ||
+      tabParam === "recurring" ||
+      tabParam === "metafields" ||
+      tabParam === "richtext" ||
+      tabParam === "imagemanager"
+    ) return "other";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "recurring", "other", "seo", "plan", "imagemanager", "translationprobe"].includes(tabParam)) {
+    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
   };
 
+  // Deep-link target inside the "Weiteres" tab. imagemanager only makes sense
+  // when the merchant's plan actually shows the sub-tab; fall back to
+  // metafields otherwise so the tab does not open on a blank panel.
+  const getInitialOtherSubTab = (): OtherSubTab | undefined => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "metafields") return "metafields";
+    if (tabParam === "richtext") return "richtext";
+    if (tabParam === "recurring" || tabParam === "translations" || tabParam === "sku") return "recurring";
+    if (tabParam === "imagemanager") return showImageManagerTab ? "imagemanager" : "metafields";
+    return undefined;
+  };
+
   const [selectedSection, setSelectedSection] = useState<Section>(getInitialSection);
+  const [initialOtherSubTab] = useState<OtherSubTab | undefined>(getInitialOtherSubTab);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -1083,10 +1095,8 @@ export default function SettingsPage() {
       { id: "setup", title: t.settings.appSetup },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
-      { id: "recurring", title: t.settings.recurringValues || "Wiederkehrende Werte" },
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "other", title: t.settings.otherSettings || "Weiteres" },
-      ...(showImageManagerTab ? [{ id: "imagemanager", title: "Image Manager" }] : []),
       { id: "plan", title: t.settings.plan },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
     ];
@@ -1181,25 +1191,6 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("recurring")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "recurring" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "recurring" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "recurring" ? "semibold" : "regular"}>
-                  {t.settings.recurringValues || "Wiederkehrende Werte"}
-                </Text>
-              </button>
-              <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
                   width: "100%",
@@ -1237,27 +1228,6 @@ export default function SettingsPage() {
                   {t.settings.otherSettings || "Weiteres"}
                 </Text>
               </button>
-              {showImageManagerTab && (
-                <button
-                  onClick={() => handleSectionChange("imagemanager")}
-                  style={{
-                    width: "100%",
-                    padding: "1rem",
-                    background: selectedSection === "imagemanager" ? "#f1f8f5" : "white",
-                    borderTop: "1px solid #e1e3e5",
-                    borderRight: "none",
-                    borderBottom: "none",
-                    borderLeft: selectedSection === "imagemanager" ? "3px solid #008060" : "3px solid transparent",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <Text as="p" variant="bodyMd" fontWeight={selectedSection === "imagemanager" ? "semibold" : "regular"}>
-                    Image Manager
-                  </Text>
-                </button>
-              )}
               <button
                 onClick={() => handleSectionChange("plan")}
                 style={{
@@ -1358,17 +1328,6 @@ export default function SettingsPage() {
                 </>
               )}
 
-              {/* Recurring Values — productType translations + SKU option-value keys */}
-              {selectedSection === "recurring" && (
-                <SettingsRecurringValuesTab
-                  groupedFieldTranslations={groupedFieldTranslations}
-                  optionValueMemory={optionValueMemory}
-                  primaryShopLocale={primaryShopLocale}
-                  showSkuTab={showSkuTab}
-                  t={t}
-                />
-              )}
-
               {/* SEO Settings */}
               {selectedSection === "seo" && (
                 <SettingsSEOTab
@@ -1380,22 +1339,27 @@ export default function SettingsPage() {
                 />
               )}
 
-              {/* Weiteres — bundles Metafields + Rich-text formatting */}
+              {/* Weiteres — horizontal sub-nav bundling Metafields,
+                  Rich-text formatting, Wiederkehrende Werte + (Pro) Image Manager */}
               {selectedSection === "other" && (
-                <>
-                  <SettingsMetafieldsTab
-                    enabledMetafieldDefinitions={enabledMetafieldDefinitions}
-                    metafieldsLastScanAt={metafieldsLastScanAt}
-                    t={t}
-                    onHasChangesChange={setHasMetafieldChanges}
-                  />
-                  <SettingsRichtextTab
-                    settings={settings}
-                    fetcher={fetcher}
-                    t={t}
-                    onHasChangesChange={setHasAIChanges}
-                  />
-                </>
+                <SettingsOtherTab
+                  t={t}
+                  fetcher={fetcher}
+                  initialSubTab={initialOtherSubTab}
+                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
+                  metafieldsLastScanAt={metafieldsLastScanAt}
+                  onMetafieldHasChangesChange={setHasMetafieldChanges}
+                  richtextSettings={settings}
+                  onRichtextHasChangesChange={setHasAIChanges}
+                  groupedFieldTranslations={groupedFieldTranslations}
+                  optionValueMemory={optionValueMemory}
+                  primaryShopLocale={primaryShopLocale}
+                  showSkuTab={showSkuTab}
+                  showImageManagerTab={showImageManagerTab}
+                  imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
+                  shop={shop}
+                  onImageManagerHasChangesChange={setHasImageManagerChanges}
+                />
               )}
 
               {/* Plan Settings */}
@@ -1444,15 +1408,6 @@ export default function SettingsPage() {
                     t={t}
                   />
                 </>
-              )}
-
-              {/* Image Manager Settings */}
-              {selectedSection === "imagemanager" && showImageManagerTab && (
-                <SettingsImageManagerTab
-                  settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
-                  shop={shop}
-                  onHasChangesChange={setHasImageManagerChanges}
-                />
               )}
 
               {/* Translation Coverage Probe (Phase 0 dev tool) */}
