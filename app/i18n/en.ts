@@ -1449,6 +1449,9 @@ export const en: Translation = {
       },
     },
     hreflangPage: {
+      helpTitle: "What does this audit show?",
+      helpBody1: "hreflang tags tell Google which language version of a page to serve visitors in each country. Shopify emits these tags automatically — but they only work if your content is actually translated in that language. If it isn't, hreflang points at the same primary-language text and Google counts it as duplicate content.",
+      helpBody2: "Below you'll see, for each published secondary language, the percentage of your catalog (products, collections, pages, blog articles) that's actually translated. Missing items are listed per language — click \"Translate\" to jump straight into the editor for that item.",
       primaryLocale: "Primary language",
       noPrimary: "No primary language set",
       xDefaultOk: "x-default is covered (primary language present).",
@@ -1464,6 +1467,9 @@ export const en: Translation = {
       showLess: "Show less",
     },
     keywordsPage: {
+      helpTitle: "What can you do here?",
+      helpBody1: "Pick a focus keyword for each important item (product, collection, page, or blog article) — the term you want that page to rank for on Google. We automatically check whether the keyword appears in the key SEO spots (title, H1, SEO title, meta description, body copy) and whether the keyword density sits in the healthy range.",
+      helpBody2: "The table below shows an on-page score per keyword and what's still missing. \"Open in editor\" jumps straight to the item so you can fix it. Once you connect Google Search Console, the real average Google ranking position will show up here too.",
       addTitle: "Add a target keyword",
       intro: "Set a focus keyword per item. The on-page analysis runs locally (no external API).",
       typeLabel: "Type",

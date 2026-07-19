@@ -1446,6 +1446,9 @@ export const de = {
       },
     },
     hreflangPage: {
+      helpTitle: "Was zeigt dieser Audit?",
+      helpBody1: "hreflang-Tags sagen Google, welche Sprachversion einer Seite Besuchern in welchem Land ausgeliefert werden soll. Shopify erzeugt diese Tags automatisch — aber sie funktionieren nur, wenn dein Inhalt in der jeweiligen Sprache auch tatsächlich übersetzt ist. Ist er das nicht, verweist hreflang auf denselben Text in der Primärsprache und Google wertet das als doppelten Inhalt.",
+      helpBody2: "Unten siehst du für jede veröffentlichte Zweitsprache, wie viel Prozent deines Katalogs (Produkte, Kollektionen, Seiten, Blog-Artikel) tatsächlich übersetzt ist. Fehlende Inhalte werden pro Sprache aufgelistet — mit \"Übersetzen\" springst du direkt zum jeweiligen Editor.",
       primaryLocale: "Primärsprache",
       noPrimary: "Keine Primärsprache gesetzt",
       xDefaultOk: "x-default ist abgedeckt (Primärsprache vorhanden).",
@@ -1461,6 +1464,9 @@ export const de = {
       showLess: "Weniger anzeigen",
     },
     keywordsPage: {
+      helpTitle: "Was kannst du hier tun?",
+      helpBody1: "Lege für jeden wichtigen Inhalt (Produkt, Kollektion, Seite oder Blog-Artikel) ein Fokus-Keyword fest — also den Begriff, für den diese Seite bei Google ranken soll. Wir prüfen automatisch, ob das Keyword an den entscheidenden SEO-Stellen vorkommt (Titel, H1, SEO-Titel, Meta-Description, Fließtext) und ob die Keyword-Dichte im optimalen Bereich liegt.",
+      helpBody2: "In der Tabelle unten siehst du pro Keyword einen On-Page-Score und woran es noch hakt. Mit \"Im Editor öffnen\" springst du direkt zum Inhalt, um ihn zu optimieren. Sobald du Google Search Console verbunden hast, erscheint hier zusätzlich die echte durchschnittliche Google-Ranking-Position.",
       addTitle: "Ziel-Keyword hinzufügen",
       intro: "Lege pro Inhalt ein Fokus-Keyword fest. Die On-Page-Analyse läuft lokal (keine externe API).",
       typeLabel: "Typ",

@@ -364,6 +364,13 @@ export default function SeoKeywords() {
   return (
     <SeoSectionLayout sectionId="keywords">
       <BlockStack gap="400">
+        <Banner tone="info" title={k.helpTitle}>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">{k.helpBody1}</Text>
+            <Text as="p" variant="bodyMd">{k.helpBody2}</Text>
+          </BlockStack>
+        </Banner>
+
         {/* Add keyword */}
         <Card>
           <BlockStack gap="300">

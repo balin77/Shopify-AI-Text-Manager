@@ -57,6 +57,13 @@ export default function SeoHreflang() {
   return (
     <SeoSectionLayout sectionId="hreflang">
       <BlockStack gap="400">
+        <Banner tone="info" title={h.helpTitle}>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">{h.helpBody1}</Text>
+            <Text as="p" variant="bodyMd">{h.helpBody2}</Text>
+          </BlockStack>
+        </Banner>
+
         {/* x-default / primary status */}
         <Card>
           <BlockStack gap="200">

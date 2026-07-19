@@ -1448,6 +1448,9 @@ export const es: Translation = {
       },
     },
     hreflangPage: {
+      helpTitle: "¿Qué muestra esta auditoría?",
+      helpBody1: "Las etiquetas hreflang le indican a Google qué versión de idioma de una página mostrar a los visitantes de cada país. Shopify las genera automáticamente, pero solo funcionan si tu contenido está realmente traducido a ese idioma. Si no lo está, hreflang apunta al mismo texto del idioma principal y Google lo trata como contenido duplicado.",
+      helpBody2: "Abajo verás, para cada idioma secundario publicado, el porcentaje de tu catálogo (productos, colecciones, páginas, artículos de blog) que está realmente traducido. Los elementos que faltan se listan por idioma; con «Traducir» saltas directamente al editor.",
       primaryLocale: "Idioma principal",
       noPrimary: "No hay idioma principal configurado",
       xDefaultOk: "x-default está cubierto (idioma principal presente).",
@@ -1463,6 +1466,9 @@ export const es: Translation = {
       showLess: "Mostrar menos",
     },
     keywordsPage: {
+      helpTitle: "¿Qué puedes hacer aquí?",
+      helpBody1: "Elige una palabra clave de enfoque para cada elemento importante (producto, colección, página o artículo de blog): el término por el que quieres que esa página se posicione en Google. Comprobamos automáticamente si la palabra clave aparece en los lugares SEO clave (título, H1, título SEO, meta descripción, texto) y si su densidad está en el rango óptimo.",
+      helpBody2: "La tabla de abajo muestra una puntuación on-page por palabra clave y qué le falta aún. «Abrir en el editor» te lleva directamente al contenido para optimizarlo. Cuando conectes Google Search Console, aquí también aparecerá la posición real promedio en Google.",
       addTitle: "Añadir una palabra clave objetivo",
       intro: "Define una palabra clave de enfoque por elemento. El análisis on-page se ejecuta localmente (sin API externa).",
       typeLabel: "Tipo",
