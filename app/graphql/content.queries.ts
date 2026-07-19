@@ -424,3 +424,42 @@ export const GET_THEME_TRANSLATIONS = `#graphql
     }
   }
 `;
+
+// SEO tab Phase 3: handle lists used to fuzzy-match 404 hits against real
+// storefront resources. Deliberately narrow — only the handle field — so a
+// single 250-node page stays cheap.
+export const GET_PRODUCT_HANDLES = `#graphql
+  query getProductHandles($first: Int!) {
+    products(first: $first) {
+      edges {
+        node {
+          handle
+        }
+      }
+    }
+  }
+`;
+
+export const GET_COLLECTION_HANDLES = `#graphql
+  query getCollectionHandles($first: Int!) {
+    collections(first: $first) {
+      edges {
+        node {
+          handle
+        }
+      }
+    }
+  }
+`;
+
+export const GET_PAGE_HANDLES = `#graphql
+  query getPageHandles($first: Int!) {
+    pages(first: $first) {
+      edges {
+        node {
+          handle
+        }
+      }
+    }
+  }
+`;

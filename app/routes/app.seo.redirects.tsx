@@ -1,18 +1,19 @@
 /**
  * Redirects & 404 section (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 3 / A4).
  *
- * - Native URL redirect management via the Admin API (list/create/delete),
- *   paginated + searchable.
+ * - Native URL redirect management via the Admin API (list/create/update/delete),
+ *   paginated + searchable, with inline edit and CSV import/export.
  * - A "frequent 404s" panel fed by the self-hosted Seo404Hit collector, with a
  *   one-click "create redirect" that prefills the missing path and marks the
- *   hit redirected.
+ *   hit redirected. When a fuzzy-matching handle exists on the shop, the target
+ *   field is pre-suggested (placeholder only).
  *
  * All writes go through the route action; the page uses fetchers so it stays put.
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -31,12 +32,67 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import {
   listRedirects,
   createRedirect,
+  updateRedirect,
   deleteRedirect,
   list404Hits,
   set404Status,
   validateRedirect,
+  suggestRedirectTarget,
+  type Hit404,
 } from "../services/seo/redirects.service";
+import {
+  GET_PRODUCT_HANDLES,
+  GET_COLLECTION_HANDLES,
+  GET_PAGE_HANDLES,
+} from "../graphql/content.queries";
 import { getFormString } from "../utils/form-data.utils";
+
+const IMPORT_ROW_CAP = 1000;
+const EXPORT_ROW_CAP = 10_000;
+
+type HitWithSuggestion = Omit<Hit404, "firstSeenAt" | "lastSeenAt"> & {
+  firstSeenAt: string | Date;
+  lastSeenAt: string | Date;
+  suggestedTarget: string | null;
+};
+
+interface LoaderData {
+  redirects: Array<{ id: string; path: string; target: string }>;
+  hasNextPage: boolean;
+  endCursor: string | null;
+  q: string;
+  hits: HitWithSuggestion[];
+}
+
+function csvEscape(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+async function fetchAllHandles(admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"]): Promise<string[]> {
+  // Missing scopes (products/collections/pages) or a shop-side hiccup on any
+  // single fetch degrades to an empty list for that resource — suggestions are
+  // best-effort, not a source of truth.
+  const safeFetch = async (query: string, prefix: string): Promise<string[]> => {
+    try {
+      const res = await admin.graphql(query, { variables: { first: 250 } });
+      const body = await res.json();
+      const key = prefix === "/products/" ? "products" : prefix === "/collections/" ? "collections" : "pages";
+      const edges = body?.data?.[key]?.edges ?? [];
+      return edges
+        .map((e: { node?: { handle?: string } }) => e?.node?.handle)
+        .filter((h: unknown): h is string => typeof h === "string" && h.length > 0)
+        .map((h: string) => `${prefix}${h}`);
+    } catch {
+      return [];
+    }
+  };
+  const [products, collections, pages] = await Promise.all([
+    safeFetch(GET_PRODUCT_HANDLES, "/products/"),
+    safeFetch(GET_COLLECTION_HANDLES, "/collections/"),
+    safeFetch(GET_PAGE_HANDLES, "/pages/"),
+  ]);
+  return [...products, ...collections, ...pages];
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -45,23 +101,55 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const q = url.searchParams.get("q") || "";
   const after = url.searchParams.get("after") || null;
+  const exportMode = url.searchParams.get("export") === "1";
 
-  const [redirectsResult, hits] = await Promise.all([
+  if (exportMode) {
+    const all: Array<{ path: string; target: string }> = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 200 && all.length < EXPORT_ROW_CAP; i++) {
+      const page = await listRedirects(admin, { first: 250, after: cursor, query: q });
+      for (const r of page.redirects) {
+        all.push({ path: r.path, target: r.target });
+        if (all.length >= EXPORT_ROW_CAP) break;
+      }
+      if (!page.hasNextPage || !page.endCursor) break;
+      cursor = page.endCursor;
+    }
+    const header = "path,target\n";
+    const body = all.map((r) => `${csvEscape(r.path)},${csvEscape(r.target)}`).join("\n");
+    const shopSlug = session.shop.replace(/\.myshopify\.com$/, "").replace(/[^a-z0-9-]/gi, "-");
+    return new Response(header + body + (body ? "\n" : ""), {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="redirects-${shopSlug}.csv"`,
+      },
+    });
+  }
+
+  const [redirectsResult, hits, handles] = await Promise.all([
     listRedirects(admin, { first: 50, after, query: q }),
     list404Hits(db, session.shop, { status: "new", limit: 100 }),
+    fetchAllHandles(admin),
   ]);
+
+  const enrichedHits: HitWithSuggestion[] = hits.map((h) => ({
+    ...h,
+    suggestedTarget: suggestRedirectTarget(handles, h.path),
+  }));
 
   return json({
     redirects: redirectsResult.redirects,
     hasNextPage: redirectsResult.hasNextPage,
     endCursor: redirectsResult.endCursor,
     q,
-    hits,
+    hits: enrichedHits,
   });
 };
 
+type ImportError = { row: number; path: string; error: string };
 type ActionResult =
-  | { ok: true; kind: "created" | "deleted" | "dismissed" }
+  | { ok: true; kind: "created" | "updated" | "deleted" | "dismissed" }
+  | { ok: true; kind: "imported"; created: number; skipped: number; errors: ImportError[] }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
@@ -87,6 +175,20 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "created" });
   }
 
+  if (actionType === "updateRedirect") {
+    const id = getFormString(form, "id");
+    const path = getFormString(form, "path");
+    const target = getFormString(form, "target");
+    const err = validateRedirect({ path, target });
+    if (err) return json<ActionResult>({ ok: false, error: err }, { status: 400 });
+
+    const res = await updateRedirect(admin, id, { path, target });
+    if (res.userErrors.length > 0 || !res.redirect) {
+      return json<ActionResult>({ ok: false, error: "updateFailed" }, { status: 400 });
+    }
+    return json<ActionResult>({ ok: true, kind: "updated" });
+  }
+
   if (actionType === "deleteRedirect") {
     const id = getFormString(form, "id");
     if (id) await deleteRedirect(admin, id);
@@ -99,8 +201,90 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "dismissed" });
   }
 
+  if (actionType === "importCsv") {
+    const rowsRaw = getFormString(form, "rows");
+    let parsed: Array<{ path: string; target: string }>;
+    try {
+      parsed = JSON.parse(rowsRaw);
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+    } catch {
+      return json<ActionResult>({ ok: false, error: "importParseFailed" }, { status: 400 });
+    }
+    if (parsed.length > IMPORT_ROW_CAP) {
+      return json<ActionResult>({ ok: false, error: "importTooLarge" }, { status: 400 });
+    }
+
+    let created = 0;
+    let skipped = 0;
+    const errors: ImportError[] = [];
+    // Sequential — Shopify rate-limits burst redirect creates and there is no
+    // batch mutation for urlRedirectCreate.
+    for (let i = 0; i < parsed.length; i++) {
+      const row = parsed[i] ?? { path: "", target: "" };
+      const path = String(row.path ?? "").trim();
+      const target = String(row.target ?? "").trim();
+      const err = validateRedirect({ path, target });
+      if (err) {
+        skipped++;
+        errors.push({ row: i + 1, path, error: err });
+        continue;
+      }
+      const res = await createRedirect(admin, { path, target });
+      if (res.userErrors.length > 0 || !res.redirect) {
+        skipped++;
+        errors.push({ row: i + 1, path, error: "createFailed" });
+        continue;
+      }
+      created++;
+    }
+    return json<ActionResult>({ ok: true, kind: "imported", created, skipped, errors });
+  }
+
   return json<ActionResult>({ ok: false, error: "createFailed" }, { status: 400 });
 };
+
+function parseCsv(text: string): Array<{ path: string; target: string }> {
+  const rows: string[][] = [];
+  let field = "";
+  let row: string[] = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+    if (ch === '"') { inQuotes = true; continue; }
+    if (ch === ",") { row.push(field); field = ""; continue; }
+    if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((c) => c.length > 0)) rows.push(row);
+      row = [];
+      continue;
+    }
+    field += ch;
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    if (row.some((c) => c.length > 0)) rows.push(row);
+  }
+
+  const out: Array<{ path: string; target: string }> = [];
+  for (let idx = 0; idx < rows.length; idx++) {
+    const r = rows[idx];
+    if (idx === 0 && (r[0] ?? "").trim().toLowerCase() === "path") continue;
+    const path = (r[0] ?? "").trim();
+    const target = (r[1] ?? "").trim();
+    if (!path && !target) continue;
+    out.push({ path, target });
+  }
+  return out;
+}
 
 export default function SeoRedirects() {
   const {
@@ -109,7 +293,7 @@ export default function SeoRedirects() {
     endCursor: loaderEndCursor,
     q,
     hits,
-  } = useLoaderData<typeof loader>();
+  } = useLoaderData() as LoaderData;
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -117,10 +301,11 @@ export default function SeoRedirects() {
 
   const createFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
+  const importFetcher = useFetcher<ActionResult>();
   // Dedicated fetcher for "Load more" — GET requests to the same loader, kept
   // separate from rowFetcher (used for 404-hit row actions/deletes) so paging
   // never cancels/gets cancelled by an unrelated row action.
-  const loadMoreFetcher = useFetcher<typeof loader>();
+  const loadMoreFetcher = useFetcher<LoaderData>();
 
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -134,9 +319,14 @@ export default function SeoRedirects() {
   const [items, setItems] = useState(loaderRedirects);
   const [cursor, setCursor] = useState(loaderEndCursor);
   const [hasMore, setHasMore] = useState(loaderHasNextPage);
-  // Which row's delete is in flight — lets the shared rowFetcher show a
-  // spinner on the correct button instead of every row reacting the same way.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingEditId, setPendingEditId] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editPath, setEditPath] = useState("");
+  const [editTarget, setEditTarget] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setItems(loaderRedirects);
@@ -144,7 +334,6 @@ export default function SeoRedirects() {
     setHasMore(loaderHasNextPage);
   }, [loaderRedirects, loaderEndCursor, loaderHasNextPage]);
 
-  // Append the next page once the load-more fetcher resolves.
   useEffect(() => {
     if (loadMoreFetcher.state === "idle" && loadMoreFetcher.data) {
       const data = loadMoreFetcher.data;
@@ -154,7 +343,6 @@ export default function SeoRedirects() {
     }
   }, [loadMoreFetcher.state, loadMoreFetcher.data]);
 
-  // Clear the create form once a creation succeeds.
   useEffect(() => {
     if (createFetcher.state === "idle" && createFetcher.data?.ok && createFetcher.data.kind === "created") {
       setFrom("");
@@ -162,29 +350,41 @@ export default function SeoRedirects() {
     }
   }, [createFetcher.state, createFetcher.data]);
 
-  // rowFetcher going idle means whatever row action was in flight finished.
   useEffect(() => {
-    if (rowFetcher.state === "idle") setPendingDeleteId(null);
-  }, [rowFetcher.state]);
+    if (rowFetcher.state === "idle") {
+      setPendingDeleteId(null);
+      if (rowFetcher.data?.ok && rowFetcher.data.kind === "updated") {
+        setEditingId(null);
+        setPendingEditId(null);
+      }
+      if (rowFetcher.data && !rowFetcher.data.ok) {
+        setPendingEditId(null);
+      }
+    }
+  }, [rowFetcher.state, rowFetcher.data]);
 
   const createError =
     createFetcher.data && !createFetcher.data.ok
       ? (r.errors as Record<string, string>)[createFetcher.data.error] || r.errors.createFailed
       : null;
 
-  // Row actions (create-from-404 / dismiss / delete) report failures through
-  // rowFetcher; surface them too, otherwise a rejected action is silent.
   const rowError =
     rowFetcher.data && !rowFetcher.data.ok
       ? (r.errors as Record<string, string>)[rowFetcher.data.error] || r.errors.createFailed
       : null;
 
+  const importError =
+    importFetcher.data && !importFetcher.data.ok
+      ? (r.errors as Record<string, string>)[importFetcher.data.error] || r.errors.createFailed
+      : null;
+
+  const importResult =
+    importFetcher.state === "idle" && importFetcher.data?.ok && importFetcher.data.kind === "imported"
+      ? importFetcher.data
+      : null;
+
   const submitSearch = () => {
     const params = new URLSearchParams();
-    // Always set q explicitly (even empty) so clearing the field actually
-    // clears a previously-searched term instead of handleNavigate carrying
-    // the stale one over from the current URL. Always drop "after" too, so a
-    // new search never starts from a stale pagination cursor.
     params.set("q", search);
     params.set("after", "");
     handleNavigate("/app/seo/redirects", { searchParams: params });
@@ -210,6 +410,68 @@ export default function SeoRedirects() {
     if (!ok) return;
     setPendingDeleteId(redirect.id);
     rowFetcher.submit({ actionType: "deleteRedirect", id: redirect.id }, { method: "post" });
+  };
+
+  const beginEdit = (redirect: { id: string; path: string; target: string }) => {
+    setEditingId(redirect.id);
+    setEditPath(redirect.path);
+    setEditTarget(redirect.target);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditPath("");
+    setEditTarget("");
+  };
+
+  const saveEdit = (id: string) => {
+    setPendingEditId(id);
+    rowFetcher.submit(
+      { actionType: "updateRedirect", id, path: editPath, target: editTarget },
+      { method: "post" },
+    );
+  };
+
+  const handleExport = () => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    params.set("export", "1");
+    // Direct navigation — a fetcher would try to parse the CSV response as JSON.
+    window.location.href = `/app/seo/redirects?${params.toString()}`;
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportFile = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = "";
+    if (!file) return;
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      importFetcher.submit(
+        { actionType: "importCsv", rows: "not-json" },
+        { method: "post" },
+      );
+      return;
+    }
+    let rows: Array<{ path: string; target: string }>;
+    try {
+      rows = parseCsv(text);
+    } catch {
+      importFetcher.submit(
+        { actionType: "importCsv", rows: "not-json" },
+        { method: "post" },
+      );
+      return;
+    }
+    importFetcher.submit(
+      { actionType: "importCsv", rows: JSON.stringify(rows) },
+      { method: "post" },
+    );
   };
 
   return (
@@ -240,63 +502,79 @@ export default function SeoRedirects() {
                   { title: "" },
                 ]}
               >
-                {hits.map((hit, index) => (
-                  <IndexTable.Row id={hit.id} key={hit.id} position={index}>
-                    <IndexTable.Cell>
-                      <div style={{ maxWidth: "300px" }}>
-                        <Text as="span" variant="bodyMd" truncate>
-                          {hit.path}
-                        </Text>
-                      </div>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodySm">{hit.count}</Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <InlineStack gap="200" blockAlign="center" wrap={false}>
-                        <div style={{ flex: 1, minWidth: "140px" }}>
-                          <TextField
-                            label=""
-                            labelHidden
-                            autoComplete="off"
-                            placeholder={r.targetForHitPlaceholder}
-                            value={hitTargets[hit.id] ?? ""}
-                            onChange={(v) => setHitTargets((m) => ({ ...m, [hit.id]: v }))}
-                          />
+                {hits.map((hit, index) => {
+                  const typed = hitTargets[hit.id] ?? "";
+                  const placeholder = hit.suggestedTarget || r.targetForHitPlaceholder;
+                  const effectiveTarget = typed.trim() || (hit.suggestedTarget ?? "");
+                  return (
+                    <IndexTable.Row id={hit.id} key={hit.id} position={index}>
+                      <IndexTable.Cell>
+                        <div style={{ maxWidth: "300px" }}>
+                          <Text as="span" variant="bodyMd" truncate>
+                            {hit.path}
+                          </Text>
                         </div>
-                        <Button
-                          variant="primary"
-                          size="slim"
-                          disabled={!(hitTargets[hit.id] ?? "").trim()}
-                          onClick={() =>
-                            rowFetcher.submit(
-                              {
-                                actionType: "createFromHit",
-                                path: hit.path,
-                                target: hitTargets[hit.id] ?? "",
-                                hitId: hit.id,
-                              },
-                              { method: "post" },
-                            )
-                          }
-                        >
-                          {r.createRedirectFromHit}
-                        </Button>
-                        <Button
-                          size="slim"
-                          onClick={() =>
-                            rowFetcher.submit(
-                              { actionType: "dismiss404", hitId: hit.id },
-                              { method: "post" },
-                            )
-                          }
-                        >
-                          {r.dismiss}
-                        </Button>
-                      </InlineStack>
-                    </IndexTable.Cell>
-                  </IndexTable.Row>
-                ))}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodySm">{hit.count}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <InlineStack gap="200" blockAlign="center" wrap={false}>
+                          <div style={{ flex: 1, minWidth: "140px" }}>
+                            <TextField
+                              label=""
+                              labelHidden
+                              autoComplete="off"
+                              placeholder={placeholder}
+                              value={typed}
+                              onChange={(v) => setHitTargets((m) => ({ ...m, [hit.id]: v }))}
+                            />
+                          </div>
+                          {hit.suggestedTarget && !typed.trim() && (
+                            <Button
+                              size="slim"
+                              variant="plain"
+                              onClick={() =>
+                                setHitTargets((m) => ({ ...m, [hit.id]: hit.suggestedTarget! }))
+                              }
+                            >
+                              {r.useSuggestion}
+                            </Button>
+                          )}
+                          <Button
+                            variant="primary"
+                            size="slim"
+                            disabled={!effectiveTarget.trim()}
+                            onClick={() =>
+                              rowFetcher.submit(
+                                {
+                                  actionType: "createFromHit",
+                                  path: hit.path,
+                                  target: effectiveTarget,
+                                  hitId: hit.id,
+                                },
+                                { method: "post" },
+                              )
+                            }
+                          >
+                            {r.createRedirectFromHit}
+                          </Button>
+                          <Button
+                            size="slim"
+                            onClick={() =>
+                              rowFetcher.submit(
+                                { actionType: "dismiss404", hitId: hit.id },
+                                { method: "post" },
+                              )
+                            }
+                          >
+                            {r.dismiss}
+                          </Button>
+                        </InlineStack>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  );
+                })}
               </IndexTable>
             )}
           </BlockStack>
@@ -305,10 +583,52 @@ export default function SeoRedirects() {
         {/* Create redirect */}
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {r.redirectsTitle}
-            </Text>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h3" variant="headingMd">
+                {r.redirectsTitle}
+              </Text>
+              <InlineStack gap="200">
+                <Button
+                  onClick={handleImportClick}
+                  loading={importFetcher.state !== "idle"}
+                >
+                  {r.importCsvButton}
+                </Button>
+                <Button onClick={handleExport}>{r.exportCsvButton}</Button>
+              </InlineStack>
+            </InlineStack>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: "none" }}
+              onChange={handleImportFile}
+            />
             {createError && <Banner tone="critical">{createError}</Banner>}
+            {importError && <Banner tone="critical">{importError}</Banner>}
+            {importResult && (
+              <Banner tone={importResult.errors.length > 0 ? "warning" : "success"}>
+                <BlockStack gap="100">
+                  <Text as="p">
+                    {r.importResultSummary
+                      .replace("{{created}}", String(importResult.created))
+                      .replace("{{skipped}}", String(importResult.skipped))}
+                  </Text>
+                  {importResult.errors.length > 0 && (
+                    <BlockStack gap="050">
+                      <Text as="p" variant="bodySm" fontWeight="semibold">
+                        {r.importResultErrors}
+                      </Text>
+                      {importResult.errors.slice(0, 5).map((e) => (
+                        <Text as="p" variant="bodySm" key={`${e.row}-${e.path}`}>
+                          #{e.row} {e.path}: {(r.errors as Record<string, string>)[e.error] || e.error}
+                        </Text>
+                      ))}
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              </Banner>
+            )}
             <InlineStack gap="200" blockAlign="end" wrap>
               <div style={{ flex: "1 1 200px" }}>
                 <TextField
@@ -372,33 +692,87 @@ export default function SeoRedirects() {
                   { title: "" },
                 ]}
               >
-                {items.map((redirect, index) => (
-                  <IndexTable.Row id={redirect.id} key={redirect.id} position={index}>
-                    <IndexTable.Cell>
-                      <div style={{ maxWidth: "280px" }}>
-                        <Text as="span" variant="bodyMd" truncate>{redirect.path}</Text>
-                      </div>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <div style={{ maxWidth: "280px" }}>
-                        <Text as="span" variant="bodyMd" truncate>{redirect.target}</Text>
-                      </div>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <InlineStack align="end">
-                        <Button
-                          variant="plain"
-                          tone="critical"
-                          loading={rowFetcher.state !== "idle" && pendingDeleteId === redirect.id}
-                          disabled={rowFetcher.state !== "idle" && pendingDeleteId !== redirect.id}
-                          onClick={() => handleDeleteRedirect(redirect)}
-                        >
-                          {r.deleteButton}
-                        </Button>
-                      </InlineStack>
-                    </IndexTable.Cell>
-                  </IndexTable.Row>
-                ))}
+                {items.map((redirect, index) => {
+                  const isEditing = editingId === redirect.id;
+                  const rowBusy = rowFetcher.state !== "idle";
+                  return (
+                    <IndexTable.Row id={redirect.id} key={redirect.id} position={index}>
+                      <IndexTable.Cell>
+                        {isEditing ? (
+                          <TextField
+                            label=""
+                            labelHidden
+                            autoComplete="off"
+                            value={editPath}
+                            onChange={setEditPath}
+                          />
+                        ) : (
+                          <div style={{ maxWidth: "280px" }}>
+                            <Text as="span" variant="bodyMd" truncate>{redirect.path}</Text>
+                          </div>
+                        )}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        {isEditing ? (
+                          <TextField
+                            label=""
+                            labelHidden
+                            autoComplete="off"
+                            value={editTarget}
+                            onChange={setEditTarget}
+                          />
+                        ) : (
+                          <div style={{ maxWidth: "280px" }}>
+                            <Text as="span" variant="bodyMd" truncate>{redirect.target}</Text>
+                          </div>
+                        )}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <InlineStack align="end" gap="200">
+                          {isEditing ? (
+                            <>
+                              <Button
+                                variant="primary"
+                                size="slim"
+                                loading={rowBusy && pendingEditId === redirect.id}
+                                disabled={rowBusy && pendingEditId !== redirect.id}
+                                onClick={() => saveEdit(redirect.id)}
+                              >
+                                {r.saveButton}
+                              </Button>
+                              <Button
+                                size="slim"
+                                disabled={rowBusy && pendingEditId === redirect.id}
+                                onClick={cancelEdit}
+                              >
+                                {r.cancelButton}
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                variant="plain"
+                                disabled={rowBusy}
+                                onClick={() => beginEdit(redirect)}
+                              >
+                                {r.editButton}
+                              </Button>
+                              <Button
+                                variant="plain"
+                                tone="critical"
+                                loading={rowBusy && pendingDeleteId === redirect.id}
+                                disabled={rowBusy && pendingDeleteId !== redirect.id}
+                                onClick={() => handleDeleteRedirect(redirect)}
+                              >
+                                {r.deleteButton}
+                              </Button>
+                            </>
+                          )}
+                        </InlineStack>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  );
+                })}
               </IndexTable>
             )}
 

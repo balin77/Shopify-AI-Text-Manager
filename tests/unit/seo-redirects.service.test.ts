@@ -5,6 +5,7 @@ import {
   record404Hit,
   analyze404,
   allow404Hit,
+  suggestRedirectTarget,
   MAX_404_HITS_PER_SHOP,
 } from "~/services/seo/redirects.service";
 
@@ -200,6 +201,44 @@ describe("allow404Hit — per-shop token bucket for the 404 beacon", () => {
 
     // activeShop's own budget was never disturbed by idleShop's cleanup.
     expect(allow404Hit(activeShop, tLater)).toBe(true);
+  });
+});
+
+describe("suggestRedirectTarget", () => {
+  const handles = [
+    "/products/red-shoe",
+    "/products/blue-shirt",
+    "/collections/summer-sale",
+    "/pages/about-us",
+  ];
+
+  it("returns exact-match target", () => {
+    expect(suggestRedirectTarget(handles, "/products/red-shoe")).toBe("/products/red-shoe");
+  });
+
+  it("returns near miss above the 0.6 threshold", () => {
+    // "red-shoes" vs "red-shoe" — one insertion, len 9 → 1 - 1/9 ≈ 0.89
+    expect(suggestRedirectTarget(handles, "/products/red-shoes")).toBe("/products/red-shoe");
+  });
+
+  it("returns null when best score is below the threshold", () => {
+    expect(suggestRedirectTarget(handles, "/products/completely-different-name")).toBeNull();
+  });
+
+  it("returns null for an empty handles array", () => {
+    expect(suggestRedirectTarget([], "/products/red-shoe")).toBeNull();
+  });
+
+  it("returns null for an unknown resource-type prefix", () => {
+    expect(suggestRedirectTarget(handles, "/unknown/red-shoe")).toBeNull();
+    expect(suggestRedirectTarget(handles, "/products")).toBeNull();
+    expect(suggestRedirectTarget(handles, "")).toBeNull();
+  });
+
+  it("only matches within the same resource type", () => {
+    // A collection handle should not shadow a product-prefixed hit.
+    const productOnly = ["/collections/red-shoe"];
+    expect(suggestRedirectTarget(productOnly, "/products/red-shoe")).toBeNull();
   });
 });
 
