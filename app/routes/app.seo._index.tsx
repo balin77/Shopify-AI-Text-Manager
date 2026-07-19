@@ -487,7 +487,7 @@ export default function SeoDashboard() {
                             disabled={disableFixButtons || fixFetcher.state !== "idle"}
                             loading={fixingCode === p.code && fixFetcher.state !== "idle"}
                           >
-                            {d.fixWithAi}
+                            {d.fixAllWithAi}
                           </Button>
                         )}
                       </InlineStack>
