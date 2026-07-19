@@ -23,7 +23,7 @@
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Badge, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -47,6 +47,13 @@ function slug(value: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/** Extract the trailing numeric id from a GID like "gid://shopify/Product/123". */
+function gidToNumericId(gid: string | null | undefined): string | null {
+  if (!gid) return null;
+  const m = gid.match(/(\d+)(?:\?|$)/);
+  return m ? m[1] : null;
 }
 
 interface PreviewBlock {
@@ -337,20 +344,61 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Shown next to the Organization "no logo" warning so the merchant can
   // fix it in one click.
   const brandingUrl = `https://${shop}/admin/settings/general/branding`;
+  // Deep-links to the specific sample product/article the preview was built
+  // from, so warning hints (missing image, no price, draft article, etc.)
+  // can jump straight to the item the merchant needs to fix. Null when we
+  // couldn't fetch a sample (empty catalog / no articles).
+  const productAdminId = gidToNumericId(product?.id);
+  const articleAdminId = gidToNumericId(article?.id);
+  const sampleProductAdminUrl = productAdminId
+    ? `https://${shop}/admin/products/${productAdminId}`
+    : null;
+  const sampleArticleAdminUrl = articleAdminId
+    ? `https://${shop}/admin/articles/${articleAdminId}`
+    : null;
 
-  return json({ previews, themeEditorUrl, themeEditorUrlSocialMeta, brandingUrl });
+  return json({
+    previews,
+    themeEditorUrl,
+    themeEditorUrlSocialMeta,
+    brandingUrl,
+    sampleProductAdminUrl,
+    sampleArticleAdminUrl,
+  });
 };
 
-// Matches the exact wording emitted by structured-data.service.validateJsonLd
-// so we can attach a Settings-link fix-up next to it. If the copy in the
-// service changes, keep this in sync.
-const ORG_LOGO_WARNING = "Organization has no logo — recommended for knowledge panel.";
+// Which warnings get a "fix it here" deep-link button next to them, and
+// where it goes. Keys are JsonLdWarningCode values from structured-data.service;
+// unmatched codes render the hint text only (no button). Kept as a plain map
+// so a compile error surfaces the moment we add a warning code without
+// deciding whether it deserves a button.
+type FixLinkKind = "branding" | "productAdmin" | "articleAdmin";
+const FIX_LINK_BY_CODE: Record<string, FixLinkKind> = {
+  orgNoLogo: "branding",
+  productMissingName: "productAdmin",
+  productNoImage: "productAdmin",
+  productNoDescription: "productAdmin",
+  productNoOffer: "productAdmin",
+  offerNoAvailability: "productAdmin",
+  productNoGtinMpn: "productAdmin",
+  articleMissingHeadline: "articleAdmin",
+  articleNoImage: "articleAdmin",
+  articleNoDatePublished: "articleAdmin",
+};
 
 export default function SeoStructuredData() {
-  const { previews, themeEditorUrl, themeEditorUrlSocialMeta, brandingUrl } =
-    useLoaderData<typeof loader>();
+  const {
+    previews,
+    themeEditorUrl,
+    themeEditorUrlSocialMeta,
+    brandingUrl,
+    sampleProductAdminUrl,
+    sampleArticleAdminUrl,
+  } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const s = t.seo.structuredDataPage;
+  const warningCopy = (s as any).warnings as Record<string, string>;
+  const hintCopy = (s as any).hints as Record<string, string>;
 
   const schemaTypeKeys = [
     "schemaProduct",
@@ -360,72 +408,103 @@ export default function SeoStructuredData() {
     "schemaBreadcrumb",
   ];
 
+  const fixUrlFor = (kind: FixLinkKind): string | null => {
+    if (kind === "branding") return brandingUrl;
+    if (kind === "productAdmin") return sampleProductAdminUrl;
+    if (kind === "articleAdmin") return sampleArticleAdminUrl;
+    return null;
+  };
+  const fixLabelFor = (kind: FixLinkKind): string => {
+    if (kind === "branding") return s.setBrandLogo;
+    if (kind === "productAdmin") return (s as any).openSampleProduct as string;
+    if (kind === "articleAdmin") return (s as any).openSampleArticle as string;
+    return "";
+  };
+
   return (
     <SeoSectionLayout sectionId="structuredData">
       <BlockStack gap="400">
-        {/* Status */}
+        {/* 1. What are structured data + why care */}
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {s.statusTitle}
+            <Text as="h2" variant="headingLg">
+              {(s as any).introTitle as string}
             </Text>
-            <Banner tone="info">{s.statusUnknown}</Banner>
-            <InlineStack>
-              <Button url={themeEditorUrl} target="_blank" variant="primary">
-                {s.activateInThemeEditor}
-              </Button>
-            </InlineStack>
+            <Text as="p" variant="bodyMd">
+              {(s as any).introBody1 as string}
+            </Text>
+            <Text as="p" variant="bodyMd">
+              {(s as any).introBody2 as string}
+            </Text>
+            <Text as="p" variant="bodyMd">
+              {(s as any).introBody3 as string}
+            </Text>
           </BlockStack>
         </Card>
 
-        {/* Open Graph / Twitter Cards (plan §C4) */}
+        {/* 2. Activation in the theme editor (the two app-embed blocks) */}
         <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {s.ogTitle}
-            </Text>
-            <Banner tone="info">{s.ogBody}</Banner>
-            <InlineStack>
-              <Button url={themeEditorUrlSocialMeta} target="_blank" variant="primary">
-                {s.ogActivate}
-              </Button>
-            </InlineStack>
-          </BlockStack>
-        </Card>
-
-        {/* How it works */}
-        <Card>
-          <BlockStack gap="200">
-            <Text as="h3" variant="headingMd">
-              {s.howItWorks}
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingLg">
+              {(s as any).activationTitle as string}
             </Text>
             <Text as="p" variant="bodyMd" tone="subdued">
-              {s.howItWorksBody}
+              {(s as any).activationBody as string}
             </Text>
+
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingMd">
+                {(s as any).activationJsonLdTitle as string}
+              </Text>
+              <InlineStack>
+                <Button url={themeEditorUrl} target="_blank" variant="primary">
+                  {s.activateInThemeEditor}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingMd">
+                {(s as any).activationOgTitle as string}
+              </Text>
+              <InlineStack>
+                <Button url={themeEditorUrlSocialMeta} target="_blank" variant="primary">
+                  {s.ogActivate}
+                </Button>
+              </InlineStack>
+            </BlockStack>
           </BlockStack>
         </Card>
 
-        {/* Active schema types */}
+        {/* 3. What you see below (preview intro + schema types) */}
         <Card>
-          <BlockStack gap="200">
-            <Text as="h3" variant="headingMd">
-              {s.schemaTypesTitle}
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingLg">
+              {(s as any).previewIntroTitle as string}
             </Text>
-            <InlineStack gap="200" wrap>
-              {schemaTypeKeys.map((k) => (
-                <Badge key={k} tone="success">
-                  {(s as Record<string, string>)[k]}
-                </Badge>
-              ))}
-            </InlineStack>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {(s as any).previewIntroBody as string}
+            </Text>
+            <BlockStack gap="100">
+              <Text as="h3" variant="headingMd">
+                {s.schemaTypesTitle}
+              </Text>
+              <InlineStack gap="200" wrap>
+                {schemaTypeKeys.map((k) => (
+                  <Badge key={k} tone="success">
+                    {(s as unknown as Record<string, string>)[k]}
+                  </Badge>
+                ))}
+              </InlineStack>
+            </BlockStack>
           </BlockStack>
         </Card>
 
-        {/* Live preview */}
+        {/* 4. Live preview with per-warning hints + fix-up buttons */}
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h3" variant="headingMd">
+              <Text as="h2" variant="headingLg">
                 {s.previewTitle}
               </Text>
               <Button url={GOOGLE_RICH_RESULTS_TEST} target="_blank" variant="plain">
@@ -439,29 +518,48 @@ export default function SeoStructuredData() {
               </Text>
             ) : (
               previews.map((block) => (
-                <BlockStack key={block.labelKey} gap="100">
+                <BlockStack key={block.labelKey} gap="200">
                   <Text as="p" variant="headingSm">
-                    {(s as Record<string, string>)[block.labelKey]}
+                    {(s as unknown as Record<string, string>)[block.labelKey]}
                   </Text>
                   {block.warnings.length === 0 ? (
                     <Badge tone="success">{t.seo.structuredDataValid}</Badge>
                   ) : (
-                    <BlockStack gap="100">
-                      {block.warnings.map((w, i) => (
-                        <InlineStack key={i} gap="100" blockAlign="center">
-                          <Badge tone={w.severity === "error" ? "critical" : "warning"}>
-                            {w.severity}
-                          </Badge>
-                          <Text as="span" variant="bodySm">
-                            {w.message}
-                          </Text>
-                          {w.message === ORG_LOGO_WARNING ? (
-                            <Button url={brandingUrl} target="_blank" variant="plain">
-                              {s.setBrandLogo}
-                            </Button>
-                          ) : null}
-                        </InlineStack>
-                      ))}
+                    <BlockStack gap="200">
+                      {block.warnings.map((w, i) => {
+                        // Remix's JsonifyObject drops the `code` string-union
+                        // through Jsonify, so read it via a widening cast.
+                        const code = (w as unknown as { code: string }).code;
+                        const localizedMessage = warningCopy?.[code] || w.message;
+                        const hint = hintCopy?.[code] || "";
+                        const linkKind = FIX_LINK_BY_CODE[code];
+                        const fixUrl = linkKind ? fixUrlFor(linkKind) : null;
+                        const fixLabel = linkKind ? fixLabelFor(linkKind) : "";
+                        return (
+                          <BlockStack key={i} gap="100">
+                            <InlineStack gap="100" blockAlign="center">
+                              <Badge tone={w.severity === "error" ? "critical" : "warning"}>
+                                {w.severity}
+                              </Badge>
+                              <Text as="span" variant="bodySm">
+                                {localizedMessage}
+                              </Text>
+                            </InlineStack>
+                            {hint ? (
+                              <Text as="p" variant="bodySm" tone="subdued">
+                                {hint}
+                              </Text>
+                            ) : null}
+                            {fixUrl ? (
+                              <InlineStack>
+                                <Button url={fixUrl} target="_blank" variant="plain">
+                                  {fixLabel}
+                                </Button>
+                              </InlineStack>
+                            ) : null}
+                          </BlockStack>
+                        );
+                      })}
                     </BlockStack>
                   )}
                   <pre

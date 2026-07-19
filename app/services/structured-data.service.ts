@@ -339,9 +339,33 @@ export function buildFaqJsonLd(entries: FaqEntry[] | null | undefined): JsonLd |
 
 // ─────────────────────────── validation ────────────────────────────────────
 
+/** Stable, translation-friendly identifier for every warning validateJsonLd
+ *  can emit. The UI uses this to look up localized copy + optional fix-up
+ *  hints (deep-links to Settings → Brand, sample-product admin URL, etc.).
+ *  `message` remains the fallback English copy for callers without i18n. */
+export type JsonLdWarningCode =
+  | "noStructuredData"
+  | "missingContext"
+  | "missingType"
+  | "productMissingName"
+  | "productNoImage"
+  | "productNoDescription"
+  | "productNoOffer"
+  | "offerNoCurrency"
+  | "offerNoAvailability"
+  | "productNoGtinMpn"
+  | "ratingNoValue"
+  | "ratingNoReviewCount"
+  | "faqNoQuestions"
+  | "articleMissingHeadline"
+  | "articleNoImage"
+  | "articleNoDatePublished"
+  | "orgNoLogo";
+
 export interface JsonLdWarning {
   severity: "error" | "warning";
   message: string;
+  code: JsonLdWarningCode;
 }
 
 export interface ValidateJsonLdOptions {
@@ -365,27 +389,29 @@ export function validateJsonLd(
 ): JsonLdWarning[] {
   const w: JsonLdWarning[] = [];
   if (!jsonLd) {
-    return [{ severity: "error", message: "No structured data generated." }];
+    return [{ severity: "error", code: "noStructuredData", message: "No structured data generated." }];
   }
   const type = jsonLd["@type"];
   if (!jsonLd["@context"]) {
-    w.push({ severity: "error", message: "Missing @context." });
+    w.push({ severity: "error", code: "missingContext", message: "Missing @context." });
   }
   if (!type) {
-    w.push({ severity: "error", message: "Missing @type." });
+    w.push({ severity: "error", code: "missingType", message: "Missing @type." });
   }
 
   if (type === "Product") {
     if (!jsonLd.name)
-      w.push({ severity: "error", message: "Product is missing a name." });
+      w.push({ severity: "error", code: "productMissingName", message: "Product is missing a name." });
     if (!jsonLd.image)
       w.push({
         severity: "warning",
+        code: "productNoImage",
         message: "Product has no image — Google strongly recommends one.",
       });
     if (!jsonLd.description)
       w.push({
         severity: "warning",
+        code: "productNoDescription",
         message: "Product has no description.",
       });
     const offers = jsonLd.offers as JsonLd | undefined;
@@ -393,6 +419,7 @@ export function validateJsonLd(
       if (!options.previewMode) {
         w.push({
           severity: "warning",
+          code: "productNoOffer",
           message: "No Offer (price/availability) — required for price snippets.",
         });
       }
@@ -400,12 +427,14 @@ export function validateJsonLd(
       if (!offers.priceCurrency) {
         w.push({
           severity: "warning",
+          code: "offerNoCurrency",
           message: "Offer is missing priceCurrency.",
         });
       }
       if (!offers.availability) {
         w.push({
           severity: "warning",
+          code: "offerNoAvailability",
           message: "Offer is missing availability.",
         });
       }
@@ -420,6 +449,7 @@ export function validateJsonLd(
     ) {
       w.push({
         severity: "warning",
+        code: "productNoGtinMpn",
         message:
           "Product has no GTIN/MPN — reduces matchability in Google/AI shopping results.",
       });
@@ -431,6 +461,7 @@ export function validateJsonLd(
       if (!aggregateRating.ratingValue) {
         w.push({
           severity: "warning",
+          code: "ratingNoValue",
           message: "AggregateRating is missing ratingValue.",
         });
       }
@@ -438,6 +469,7 @@ export function validateJsonLd(
       if (reviewCount == null || reviewCount <= 0) {
         w.push({
           severity: "warning",
+          code: "ratingNoReviewCount",
           message: "AggregateRating has no reviewCount (or it is 0).",
         });
       }
@@ -449,6 +481,7 @@ export function validateJsonLd(
     if (!mainEntity || mainEntity.length === 0) {
       w.push({
         severity: "error",
+        code: "faqNoQuestions",
         message: "FAQPage has no questions (mainEntity is empty).",
       });
     }
@@ -456,15 +489,17 @@ export function validateJsonLd(
 
   if (type === "BlogPosting") {
     if (!jsonLd.headline)
-      w.push({ severity: "error", message: "Article is missing a headline." });
+      w.push({ severity: "error", code: "articleMissingHeadline", message: "Article is missing a headline." });
     if (!jsonLd.image)
       w.push({
         severity: "warning",
+        code: "articleNoImage",
         message: "Article has no image — recommended for rich results.",
       });
     if (!jsonLd.datePublished && !options.previewMode)
       w.push({
         severity: "warning",
+        code: "articleNoDatePublished",
         message: "Article has no datePublished.",
       });
   }
@@ -472,6 +507,7 @@ export function validateJsonLd(
   if (type === "Organization" && !jsonLd.logo && !options.previewMode) {
     w.push({
       severity: "warning",
+      code: "orgNoLogo",
       message: "Organization has no logo — recommended for knowledge panel.",
     });
   }

@@ -407,18 +407,28 @@ export function SeoSidebar({
                   </Badge>
                 ) : (
                   <BlockStack gap="100">
-                    {jsonLdWarnings.map((w, i) => (
-                      <InlineStack key={i} gap="100" blockAlign="center">
-                        <Badge
-                          tone={w.severity === "error" ? "critical" : "warning"}
-                        >
-                          {w.severity}
-                        </Badge>
-                        <Text as="span" variant="bodySm">
-                          {w.message}
-                        </Text>
-                      </InlineStack>
-                    ))}
+                    {jsonLdWarnings.map((w, i) => {
+                      // Prefer the localized copy via the stable warning code;
+                      // fall back to the validator's English default so a
+                      // future warning without a translation still renders.
+                      const localized =
+                        (t.seo?.structuredDataPage?.warnings as
+                          | Record<string, string>
+                          | undefined
+                        )?.[w.code];
+                      return (
+                        <InlineStack key={i} gap="100" blockAlign="center">
+                          <Badge
+                            tone={w.severity === "error" ? "critical" : "warning"}
+                          >
+                            {w.severity}
+                          </Badge>
+                          <Text as="span" variant="bodySm">
+                            {localized || w.message}
+                          </Text>
+                        </InlineStack>
+                      );
+                    })}
                   </BlockStack>
                 )}
                 <pre
