@@ -1359,6 +1359,7 @@ export const en: Translation = {
       ogTitle: "Open Graph / Twitter Cards",
       ogBody: "Activation can't be detected automatically. Enable the Open Graph / Twitter Cards app block in the theme editor so shared links show a title, description and image on Facebook, X, LinkedIn, Slack and AI chat link previews.",
       ogActivate: "Activate Open Graph in theme editor",
+      setBrandLogo: "Set logo in shop brand assets",
     },
     redirectsPage: {
       redirectsTitle: "URL redirects",

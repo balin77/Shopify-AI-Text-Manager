@@ -1356,6 +1356,7 @@ export const de = {
       ogTitle: "Open Graph / Twitter Cards",
       ogBody: "Die Aktivierung lässt sich nicht automatisch erkennen. Aktiviere den App-Block \"Open Graph / Twitter Cards\" im Theme-Editor, damit geteilte Links auf Facebook, X, LinkedIn, Slack und in KI-Chat-Linkvorschauen Titel, Beschreibung und Bild zeigen.",
       ogActivate: "Open Graph im Theme-Editor aktivieren",
+      setBrandLogo: "Logo in Shop-Markenassets festlegen",
     },
     redirectsPage: {
       redirectsTitle: "URL-Weiterleitungen",

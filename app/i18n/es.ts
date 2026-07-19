@@ -1358,6 +1358,7 @@ export const es: Translation = {
       ogTitle: "Open Graph / Twitter Cards",
       ogBody: "La activación no se puede detectar automáticamente. Activa el bloque de la app \"Open Graph / Twitter Cards\" en el editor de temas para que los enlaces compartidos muestren título, descripción e imagen en Facebook, X, LinkedIn, Slack y las vistas previas de enlaces de chats de IA.",
       ogActivate: "Activar Open Graph en el editor de temas",
+      setBrandLogo: "Configurar logo en los activos de marca",
     },
     redirectsPage: {
       redirectsTitle: "Redirecciones de URL",

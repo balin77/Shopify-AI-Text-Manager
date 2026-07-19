@@ -56,20 +56,28 @@ interface PreviewBlock {
 
 // The DB lacks the fields the schema.org validator needs to check the SEO-
 // relevant warnings — Product has no price/currency/availability columns
-// (variants don't either), Article has no publishedAt, and Shop.brand.logo
-// isn't synced at all. We fetch just those bits live from Admin GraphQL for
-// the sample product/article we've picked from the DB, so the preview reflects
-// the same data the storefront Liquid block emits rather than false-positive
-// warnings. Sample-only — not a full sync, no shape drift.
-const SHOP_BRAND_QUERY = `#graphql
+// (variants don't either), Article has no publishedAt. We fetch those bits
+// live from Admin GraphQL for the sample product/article we've picked, so
+// the preview reflects the same data the storefront Liquid block emits.
+//
+// FIELD-EXISTENCE NOTES (Admin API 2025-10 — hit at runtime, do not "re-add"):
+//   • `Shop.brand`: NOT queryable from the Admin API root schema (schema error:
+//     "Field 'brand' doesn't exist on type 'Shop'"). Brand assets live under
+//     the online-store surface here and are only readable via Liquid on the
+//     storefront (which the app-embed structured-data block already does).
+//     Consequence: we cannot detect a shop's brand logo in-app — the
+//     Organization JSON-LD preview is emitted without `logo`, and the
+//     resulting "no logo" warning is escalated with a deep-link to
+//     Settings → Brand so the merchant fixes it in one click.
+//   • `Product.availableForSale`: NOT on the Admin `Product` type; the field
+//     lives on `ProductVariant`. We read the first variant's availability
+//     (matches the storefront Liquid block's `product.available` semantics
+//     closely enough for the preview) and use `priceRangeV2` for price.
+const SHOP_INFO_QUERY = `#graphql
   query seoStructuredDataShop {
     shop {
       name
       primaryDomain { host }
-      brand {
-        logo { image { url } }
-        squareLogo { image { url } }
-      }
     }
   }
 `;
@@ -77,10 +85,10 @@ const SHOP_BRAND_QUERY = `#graphql
 const PRODUCT_SAMPLE_QUERY = `#graphql
   query seoStructuredDataProduct($id: ID!) {
     product(id: $id) {
-      availableForSale
       featuredImage { url }
       images(first: 1) { edges { node { url } } }
       priceRangeV2 { minVariantPrice { amount currencyCode } }
+      variants(first: 1) { edges { node { availableForSale } } }
     }
   }
 `;
@@ -91,27 +99,17 @@ const ARTICLE_SAMPLE_QUERY = `#graphql
   }
 `;
 
-async function fetchShopBrand(admin: any, fallbackShop: string): Promise<ShopInfo> {
+async function fetchShopInfo(admin: any, fallbackShop: string): Promise<ShopInfo> {
   try {
-    const res = await admin.graphql(SHOP_BRAND_QUERY);
+    const res = await admin.graphql(SHOP_INFO_QUERY);
     const j: any = await res.json();
-    if (j?.errors) {
-      console.warn("[seo/structured-data] SHOP_BRAND_QUERY errors:", JSON.stringify(j.errors));
-    }
     const s = j?.data?.shop;
-    const logoUrl =
-      s?.brand?.logo?.image?.url || s?.brand?.squareLogo?.image?.url || null;
-    console.log(
-      "[seo/structured-data] shop.brand:",
-      JSON.stringify({ hasBrand: !!s?.brand, logoUrl }),
-    );
     return {
       name: s?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: s?.primaryDomain?.host || fallbackShop,
-      logoUrl,
+      // logoUrl is intentionally unset — see FIELD-EXISTENCE NOTES above.
     };
-  } catch (e) {
-    console.error("[seo/structured-data] SHOP_BRAND_QUERY threw:", e);
+  } catch {
     return {
       name: fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: fallbackShop,
@@ -131,30 +129,17 @@ async function fetchProductPreviewData(
   try {
     const res = await admin.graphql(PRODUCT_SAMPLE_QUERY, { variables: { id: productId } });
     const j: any = await res.json();
-    if (j?.errors) {
-      console.warn("[seo/structured-data] PRODUCT_SAMPLE_QUERY errors:", JSON.stringify(j.errors));
-    }
     const p = j?.data?.product;
-    console.log(
-      "[seo/structured-data] product live sample:",
-      JSON.stringify({
-        productId,
-        hasProduct: !!p,
-        price: p?.priceRangeV2?.minVariantPrice?.amount ?? null,
-        currency: p?.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
-        availableForSale: p?.availableForSale ?? null,
-        featuredImage: p?.featuredImage?.url ?? null,
-      }),
-    );
+    const firstVariantAvailable = p?.variants?.edges?.[0]?.node?.availableForSale;
     return {
       price: p?.priceRangeV2?.minVariantPrice?.amount ?? null,
       currency: p?.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
-      available: typeof p?.availableForSale === "boolean" ? p.availableForSale : null,
+      available:
+        typeof firstVariantAvailable === "boolean" ? firstVariantAvailable : null,
       imageUrl:
         p?.featuredImage?.url || p?.images?.edges?.[0]?.node?.url || null,
     };
-  } catch (e) {
-    console.error("[seo/structured-data] PRODUCT_SAMPLE_QUERY threw:", e);
+  } catch {
     return { price: null, currency: null, available: null, imageUrl: null };
   }
 }
@@ -211,7 +196,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ]);
 
   const [shopInfo, productLive, articlePublishedAt] = await Promise.all([
-    fetchShopBrand(admin, shop),
+    fetchShopInfo(admin, shop),
     product ? fetchProductPreviewData(admin, product.id) : Promise.resolve(null),
     article ? fetchArticlePublishedAt(admin, article.id) : Promise.resolve(null),
   ]);
@@ -277,12 +262,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const themeEditorUrlSocialMeta = apiKey
     ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/social-meta`
     : `https://${shop}/admin/themes/current/editor?context=apps`;
+  // Direct link to Settings → Brand where `shop.brand.logo` (the field the
+  // Storefront Liquid block reads for the Organization JSON-LD logo) is set.
+  // Shown next to the Organization "no logo" warning so the merchant can
+  // fix it in one click.
+  const brandingUrl = `https://${shop}/admin/settings/general/branding`;
 
-  return json({ previews, themeEditorUrl, themeEditorUrlSocialMeta });
+  return json({ previews, themeEditorUrl, themeEditorUrlSocialMeta, brandingUrl });
 };
 
+// Matches the exact wording emitted by structured-data.service.validateJsonLd
+// so we can attach a Settings-link fix-up next to it. If the copy in the
+// service changes, keep this in sync.
+const ORG_LOGO_WARNING = "Organization has no logo — recommended for knowledge panel.";
+
 export default function SeoStructuredData() {
-  const { previews, themeEditorUrl, themeEditorUrlSocialMeta } = useLoaderData<typeof loader>();
+  const { previews, themeEditorUrl, themeEditorUrlSocialMeta, brandingUrl } =
+    useLoaderData<typeof loader>();
   const { t } = useI18n();
   const s = t.seo.structuredDataPage;
 
@@ -389,6 +385,11 @@ export default function SeoStructuredData() {
                           <Text as="span" variant="bodySm">
                             {w.message}
                           </Text>
+                          {w.message === ORG_LOGO_WARNING ? (
+                            <Button url={brandingUrl} target="_blank" variant="plain">
+                              {s.setBrandLogo}
+                            </Button>
+                          ) : null}
                         </InlineStack>
                       ))}
                     </BlockStack>
