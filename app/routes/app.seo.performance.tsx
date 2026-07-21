@@ -38,6 +38,8 @@ import {
   isAllowedAuditUrl,
   runPageSpeedAudit,
   listPageSpeedHistory,
+  findLatestPageSpeedAudit,
+  PageSpeedQuotaExceededError,
 } from "../services/seo/pagespeed.service";
 import type {
   PageSpeedStrategy,
@@ -150,6 +152,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const result = await runPageSpeedAudit({ db, shop, url, strategy, force });
     return json<ActionResult>({ ok: true, result });
   } catch (err: any) {
+    // Google's daily/per-minute PSI quota is exhausted. Try to serve a stored
+    // audit (any age) so the merchant sees something rather than a hard error.
+    if (err instanceof PageSpeedQuotaExceededError) {
+      const stale = await findLatestPageSpeedAudit(db, shop, url, strategy);
+      if (stale) return json<ActionResult>({ ok: true, result: stale });
+      return json<ActionResult>({ ok: false, error: "quotaExceeded" }, { status: 429 });
+    }
     return json<ActionResult>(
       { ok: false, error: "auditFailed", detail: String(err?.message || err) },
       { status: 502 },
@@ -255,7 +264,9 @@ export default function SeoPerformance() {
     data && !data.ok
       ? data.error === "invalidUrl"
         ? p.errors.invalidUrl
-        : `${p.errors.auditFailed}${data.detail ? `: ${data.detail}` : ""}`
+        : data.error === "quotaExceeded"
+          ? p.errors.quotaExceeded
+          : `${p.errors.auditFailed}${data.detail ? `: ${data.detail}` : ""}`
       : null;
 
   const submitAudit = (force: boolean) => {
@@ -341,6 +352,7 @@ export default function SeoPerformance() {
 
         {result && (
           <BlockStack gap="400">
+            {result.stale && <Banner tone="warning">{p.staleQuotaNotice}</Banner>}
             {/* Score header */}
             <Card>
               <BlockStack gap="200">

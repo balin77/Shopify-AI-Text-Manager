@@ -1478,6 +1478,7 @@ export const de = {
         updateFailed: "Weiterleitung konnte nicht aktualisiert werden.",
         importParseFailed: "CSV-Datei konnte nicht gelesen werden.",
         importTooLarge: "Zu viele Zeilen (maximal 1000 pro Import).",
+        unsupportedRegex: "Regex-Weiterleitungen werden von Shopify nicht unterstützt — Zeile übersprungen.",
       },
     },
     hreflangPage: {
@@ -1519,7 +1520,9 @@ export const de = {
       errors: {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",
         auditFailed: "Der Test konnte nicht durchgeführt werden. Bitte erneut versuchen.",
+        quotaExceeded: "Googles PageSpeed-Insights-Tageskontingent ist erschöpft. Bitte später erneut versuchen — für höhere Kontingente kann ein eigener Google PageSpeed API-Key hinterlegt werden (PAGESPEED_API_KEY).",
       },
+      staleQuotaNotice: "Zwischengespeichertes Ergebnis — ein frischer Test war nicht möglich, weil Googles PageSpeed-Insights-Tageskontingent erschöpft ist.",
       scoreTitle: "Performance-Score",
       testedLabel: "Getestet: {url} · {strategy} · {date}",
       metricsTitle: "Core Web Vitals",
@@ -2128,6 +2131,28 @@ export const de = {
         "Strg+Klick zum Aktivieren/Deaktivieren",
         "Deaktivierte Sprachen werden rot angezeigt",
         "Hauptsprache kann nicht deaktiviert werden",
+      ],
+    },
+
+    // SEO – Redirects CSV import/export format
+    redirectsCsvFormat: {
+      title: "CSV-Format für Weiterleitungen",
+      summary: "Import & Export nutzen zwei Spalten: Quellpfad und Zielpfad. Der Import erkennt zusätzlich Shopify-, Yoast- und Rank-Math-Exporte.",
+      details:
+        "Export: Der Exportbutton lädt eine UTF-8-CSV mit dem Header \"path,target\" herunter. Jede Zeile enthält den Quellpfad (z. B. /alte-seite) und das Ziel (z. B. /neue-seite oder https://extern.de/…). Werte mit Sonderzeichen sind in Anführungszeichen gesetzt (RFC 4180). Bis zu 10.000 Weiterleitungen; der aktuelle Suchfilter wird berücksichtigt.\n\nImport: Bis zu 1000 Zeilen pro Datei. Der Parser erkennt automatisch: (1) den Trenner — Komma, Semikolon (deutsches Excel) oder Tab; (2) die Kopfzeile mit Aliasnamen wie \"Redirect from/Redirect to\" (Shopify), \"Source URL/Target URL\" (Yoast), \"source/destination\" (Rank Math); (3) die Spaltenreihenfolge — wenn Header erkannt werden, ist die Reihenfolge egal. Absolute URLs wie \"https://ihr-shop.de/foo\" werden automatisch auf den Pfad \"/foo\" reduziert (Query- und Fragment-Teile werden entfernt, da Shopifys Redirect-Matcher sie ohnehin ignoriert). Zusatzspalten wie Statuscode werden ignoriert.",
+      tips: [
+        "Quellpfad muss mit \"/\" beginnen und darf nicht identisch mit dem Ziel sein",
+        "Shopify legt immer 301-Redirects an — eine Typ-Spalte (302/307) wird ignoriert",
+        "Wildcards und Regex werden nicht unterstützt (Shopify-Limitierung); solche Zeilen werden mit Fehler übersprungen",
+        "Trailing-Slash zählt: /foo und /foo/ sind zwei verschiedene Weiterleitungen",
+        "Kopfzeile ist optional — ohne Header werden Spalte 1 als Quelle und Spalte 2 als Ziel gelesen",
+      ],
+      examples: [
+        "path,target",
+        "/alte-seite,/neue-seite",
+        "\"/produkt/schuh-42\",\"/products/schuh\"",
+        "Auch akzeptiert (Shopify-Export): Redirect from,Redirect to",
+        "Auch akzeptiert (Yoast): Source URL,Target URL,Type",
       ],
     },
   },

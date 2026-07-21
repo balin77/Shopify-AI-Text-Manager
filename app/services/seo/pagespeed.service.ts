@@ -44,6 +44,18 @@ const PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed
 const PSI_TIMEOUT_MS = 60_000;
 
 /**
+ * Thrown when Google PSI returns 429 (per-day or per-minute quota). Callers
+ * can catch this specifically to fall back to a stale cached result instead of
+ * surfacing Google's raw English error message to the merchant.
+ */
+export class PageSpeedQuotaExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PageSpeedQuotaExceededError";
+  }
+}
+
+/**
  * True when `url` is https and its hostname matches one of `allowedHosts`
  * (case-insensitive, exact match — no subdomain/wildcard matching).
  */
@@ -131,6 +143,9 @@ async function fetchPageSpeedInsights(url: string, strategy: PageSpeedStrategy):
       } catch {
         // body wasn't JSON (or empty) — fall through with no detail.
       }
+      if (res.status === 429) {
+        throw new PageSpeedQuotaExceededError(`PageSpeed Insights returned 429${detail}`);
+      }
       throw new Error(`PageSpeed Insights returned ${res.status}${detail}`);
     }
     return await res.json();
@@ -151,6 +166,27 @@ async function pruneHistory(db: any, shop: string, url: string, strategy: PageSp
       where: { id: { in: stale.map((r: { id: string }) => r.id) } },
     });
   }
+}
+
+/**
+ * Return the newest stored audit for (shop, url, strategy) regardless of age,
+ * marked `stale: true`. Used as a graceful fallback when a fresh PSI run can't
+ * be made (e.g. Google's daily quota was exhausted). Returns null when nothing
+ * has ever been cached for this target.
+ */
+export async function findLatestPageSpeedAudit(
+  db: any,
+  shop: string,
+  url: string,
+  strategy: PageSpeedStrategy,
+): Promise<PageSpeedAuditResult | null> {
+  const cached = await db.seoPageSpeedAudit.findFirst({
+    where: { shop, url, strategy },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!cached) return null;
+  const result = cached.result as PageSpeedAuditResult;
+  return { ...result, stale: true };
 }
 
 export interface ListPageSpeedHistoryOptions {

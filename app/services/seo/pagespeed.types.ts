@@ -93,6 +93,8 @@ export interface PageSpeedAuditResult {
   annotations: PageSpeedAnnotation[];
   opportunities: PageSpeedOpportunity[];
   fieldData: PageSpeedFieldData | null;
+  /** True when this result is a stored older audit served because a fresh PSI run couldn't be made (e.g. Google's daily quota was exhausted). */
+  stale?: boolean;
 }
 
 /** Lightweight history row (no heavy result JSON) for the trend list. */

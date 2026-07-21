@@ -1480,6 +1480,7 @@ export const es: Translation = {
         updateFailed: "No se pudo actualizar la redirección.",
         importParseFailed: "No se pudo leer el archivo CSV.",
         importTooLarge: "Demasiadas filas (máximo 1000 por importación).",
+        unsupportedRegex: "Shopify no admite redirecciones regex — fila omitida.",
       },
     },
     hreflangPage: {
@@ -1521,7 +1522,9 @@ export const es: Translation = {
       errors: {
         invalidUrl: "Esa URL no pertenece a tu tienda y no se puede probar.",
         auditFailed: "No se pudo completar la prueba. Inténtalo de nuevo.",
+        quotaExceeded: "Se ha agotado la cuota diaria de Google PageSpeed Insights. Inténtalo de nuevo más tarde — para cuotas mayores puedes configurar una clave de API propia (PAGESPEED_API_KEY).",
       },
+      staleQuotaNotice: "Mostrando un resultado en caché — no se pudo hacer una prueba nueva porque la cuota diaria de Google PageSpeed Insights está agotada.",
       scoreTitle: "Puntuación de rendimiento",
       testedLabel: "Probado: {url} · {strategy} · {date}",
       metricsTitle: "Core Web Vitals",
@@ -2130,6 +2133,28 @@ export const es: Translation = {
         "Ctrl+Clic para habilitar/deshabilitar",
         "Los idiomas deshabilitados aparecen en rojo",
         "El idioma principal no se puede deshabilitar",
+      ],
+    },
+
+    // SEO – Redirects CSV import/export format
+    redirectsCsvFormat: {
+      title: "Formato CSV para redirecciones",
+      summary: "La importación y exportación usan dos columnas: ruta de origen y ruta de destino. El importador también acepta exportaciones de Shopify, Yoast y Rank Math.",
+      details:
+        "Exportar: El botón Exportar descarga un CSV en UTF-8 con la cabecera \"path,target\". Cada fila contiene la ruta de origen (p. ej. /pagina-antigua) y el destino (p. ej. /pagina-nueva o https://externo.com/…). Los valores con caracteres especiales van entre comillas (RFC 4180). Hasta 10.000 redirecciones; se respeta el filtro de búsqueda actual.\n\nImportar: Hasta 1000 filas por archivo. El parser detecta automáticamente: (1) el separador — coma, punto y coma (Excel alemán) o tabulador; (2) la cabecera con alias como \"Redirect from/Redirect to\" (Shopify), \"Source URL/Target URL\" (Yoast) o \"source/destination\" (Rank Math); (3) el orden de columnas — con una cabecera reconocida, el orden no importa. Las URL absolutas como \"https://tu-tienda.com/foo\" se reducen a la ruta \"/foo\" (query y fragmento se descartan porque el matcher de Shopify los ignora igualmente). Las columnas extra como código de estado se ignoran.",
+      tips: [
+        "La ruta de origen debe empezar con \"/\" y no puede coincidir con el destino",
+        "Shopify siempre crea redirecciones 301 — se ignora una columna de tipo (302/307)",
+        "Wildcards y regex no están soportados (limitación de Shopify); esas filas se omiten con error",
+        "La barra final importa: /foo y /foo/ son dos redirecciones distintas",
+        "La cabecera es opcional — sin ella, la columna 1 se lee como origen y la 2 como destino",
+      ],
+      examples: [
+        "path,target",
+        "/pagina-antigua,/pagina-nueva",
+        "\"/producto/zapato-42\",\"/products/zapato\"",
+        "También aceptado (exportación de Shopify): Redirect from,Redirect to",
+        "También aceptado (Yoast): Source URL,Target URL,Type",
       ],
     },
   },

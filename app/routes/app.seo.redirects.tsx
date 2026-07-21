@@ -29,6 +29,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { HelpTooltip } from "../components/HelpTooltip";
 import {
   listRedirects,
   createRedirect,
@@ -40,6 +41,10 @@ import {
   suggestRedirectTarget,
   type Hit404,
 } from "../services/seo/redirects.service";
+import {
+  parseRedirectsCsv,
+  type RedirectCsvError,
+} from "../services/seo/redirects-csv";
 import {
   GET_PRODUCT_HANDLES,
   GET_COLLECTION_HANDLES,
@@ -177,89 +182,55 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
 
   if (actionType === "importCsv") {
-    const rowsRaw = getFormString(form, "rows");
-    let parsed: Array<{ path: string; target: string }>;
+    const payloadRaw = getFormString(form, "payload");
+    let payload: { rows: Array<{ path: string; target: string; csvRow: number }>; errors: RedirectCsvError[] };
     try {
-      parsed = JSON.parse(rowsRaw);
-      if (!Array.isArray(parsed)) throw new Error("not an array");
+      const parsed = JSON.parse(payloadRaw);
+      if (!parsed || !Array.isArray(parsed.rows) || !Array.isArray(parsed.errors)) {
+        throw new Error("bad shape");
+      }
+      payload = parsed;
     } catch {
       return json<ActionResult>({ ok: false, error: "importParseFailed" }, { status: 400 });
     }
-    if (parsed.length > IMPORT_ROW_CAP) {
+    if (payload.rows.length > IMPORT_ROW_CAP) {
       return json<ActionResult>({ ok: false, error: "importTooLarge" }, { status: 400 });
     }
 
     let created = 0;
-    let skipped = 0;
-    const errors: ImportError[] = [];
+    let skipped = payload.errors.length;
+    // Pre-errors from the parser (e.g. unsupportedRegex) start the list;
+    // per-row validation and Shopify-userError entries are appended below.
+    const errors: ImportError[] = payload.errors.map((e) => ({
+      row: e.row,
+      path: e.path,
+      error: e.error,
+    }));
     // Sequential — Shopify rate-limits burst redirect creates and there is no
     // batch mutation for urlRedirectCreate.
-    for (let i = 0; i < parsed.length; i++) {
-      const row = parsed[i] ?? { path: "", target: "" };
+    for (const row of payload.rows) {
       const path = String(row.path ?? "").trim();
       const target = String(row.target ?? "").trim();
       const err = validateRedirect({ path, target });
       if (err) {
         skipped++;
-        errors.push({ row: i + 1, path, error: err });
+        errors.push({ row: row.csvRow, path, error: err });
         continue;
       }
       const res = await createRedirect(admin, { path, target });
       if (res.userErrors.length > 0 || !res.redirect) {
         skipped++;
-        errors.push({ row: i + 1, path, error: "createFailed" });
+        errors.push({ row: row.csvRow, path, error: "createFailed" });
         continue;
       }
       created++;
     }
+    errors.sort((a, b) => a.row - b.row);
     return json<ActionResult>({ ok: true, kind: "imported", created, skipped, errors });
   }
 
   return json<ActionResult>({ ok: false, error: "createFailed" }, { status: 400 });
 };
-
-function parseCsv(text: string): Array<{ path: string; target: string }> {
-  const rows: string[][] = [];
-  let field = "";
-  let row: string[] = [];
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
-      } else {
-        field += ch;
-      }
-      continue;
-    }
-    if (ch === '"') { inQuotes = true; continue; }
-    if (ch === ",") { row.push(field); field = ""; continue; }
-    if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      row.push(field); field = "";
-      if (row.some((c) => c.length > 0)) rows.push(row);
-      row = [];
-      continue;
-    }
-    field += ch;
-  }
-  if (field.length > 0 || row.length > 0) {
-    row.push(field);
-    if (row.some((c) => c.length > 0)) rows.push(row);
-  }
-
-  const out: Array<{ path: string; target: string }> = [];
-  for (let idx = 0; idx < rows.length; idx++) {
-    const r = rows[idx];
-    if (idx === 0 && (r[0] ?? "").trim().toLowerCase() === "path") continue;
-    const path = (r[0] ?? "").trim();
-    const target = (r[1] ?? "").trim();
-    if (!path && !target) continue;
-    out.push({ path, target });
-  }
-  return out;
-}
 
 export default function SeoRedirects() {
   // Defensive defaults: if the loader ever bails to an error boundary or
@@ -468,23 +439,23 @@ export default function SeoRedirects() {
       text = await file.text();
     } catch {
       importFetcher.submit(
-        { actionType: "importCsv", rows: "not-json" },
+        { actionType: "importCsv", payload: "not-json" },
         { method: "post" },
       );
       return;
     }
-    let rows: Array<{ path: string; target: string }>;
+    let payload: ReturnType<typeof parseRedirectsCsv>;
     try {
-      rows = parseCsv(text);
+      payload = parseRedirectsCsv(text);
     } catch {
       importFetcher.submit(
-        { actionType: "importCsv", rows: "not-json" },
+        { actionType: "importCsv", payload: "not-json" },
         { method: "post" },
       );
       return;
     }
     importFetcher.submit(
-      { actionType: "importCsv", rows: JSON.stringify(rows) },
+      { actionType: "importCsv", payload: JSON.stringify(payload) },
       { method: "post" },
     );
   };
@@ -609,7 +580,7 @@ export default function SeoRedirects() {
               <Text as="h3" variant="headingMd">
                 {r.redirectsTitle}
               </Text>
-              <InlineStack gap="200">
+              <InlineStack gap="200" blockAlign="center">
                 <Button
                   onClick={handleImportClick}
                   loading={importFetcher.state !== "idle"}
@@ -617,6 +588,7 @@ export default function SeoRedirects() {
                   {r.importCsvButton}
                 </Button>
                 <Button onClick={handleExport} loading={exportFetcher.state !== "idle"}>{r.exportCsvButton}</Button>
+                <HelpTooltip helpKey="redirectsCsvFormat" position="below" />
               </InlineStack>
             </InlineStack>
             <input

@@ -1481,6 +1481,7 @@ export const en: Translation = {
         updateFailed: "Could not update the redirect.",
         importParseFailed: "Could not read the CSV file.",
         importTooLarge: "Too many rows (max 1000 per import).",
+        unsupportedRegex: "Regex redirects aren't supported by Shopify — row skipped.",
       },
     },
     hreflangPage: {
@@ -1522,7 +1523,9 @@ export const en: Translation = {
       errors: {
         invalidUrl: "That URL doesn't belong to your store and can't be tested.",
         auditFailed: "The test could not be completed. Please try again.",
+        quotaExceeded: "Google's PageSpeed Insights daily quota is exhausted. Please try again later — for higher quotas, a dedicated Google PageSpeed API key can be configured (PAGESPEED_API_KEY).",
       },
+      staleQuotaNotice: "Showing a cached result — a fresh test wasn't possible because Google's PageSpeed Insights daily quota is exhausted.",
       scoreTitle: "Performance score",
       testedLabel: "Tested: {url} · {strategy} · {date}",
       metricsTitle: "Core Web Vitals",
@@ -2131,6 +2134,28 @@ export const en: Translation = {
         "Ctrl+Click to enable/disable",
         "Disabled languages appear in red",
         "Primary language cannot be disabled",
+      ],
+    },
+
+    // SEO – Redirects CSV import/export format
+    redirectsCsvFormat: {
+      title: "CSV format for redirects",
+      summary: "Import and export use two columns: source path and target path. The importer also accepts Shopify, Yoast and Rank Math exports.",
+      details:
+        "Export: The Export button downloads a UTF-8 CSV with the header \"path,target\". Each row is the source path (e.g. /old-page) and the target (e.g. /new-page or https://external.com/…). Values with special characters are quoted (RFC 4180). Up to 10,000 redirects; the current search filter is honored.\n\nImport: Up to 1000 rows per file. The parser auto-detects: (1) the delimiter — comma, semicolon (German Excel) or tab; (2) the header row with aliases like \"Redirect from/Redirect to\" (Shopify), \"Source URL/Target URL\" (Yoast) or \"source/destination\" (Rank Math); (3) the column order — with a recognized header, order doesn't matter. Absolute URLs like \"https://your-shop.com/foo\" are collapsed to the path \"/foo\" (query and fragment are stripped since Shopify's redirect matcher ignores them anyway). Extra columns like a status code are ignored.",
+      tips: [
+        "Source path must start with \"/\" and cannot equal the target",
+        "Shopify always creates 301 redirects — a type column (302/307) is ignored",
+        "Wildcards and regex are not supported (Shopify limitation); such rows are skipped with an error",
+        "Trailing slash matters: /foo and /foo/ are two distinct redirects",
+        "The header row is optional — without one, column 1 is read as the source and column 2 as the target",
+      ],
+      examples: [
+        "path,target",
+        "/old-page,/new-page",
+        "\"/product/shoe-42\",\"/products/shoe\"",
+        "Also accepted (Shopify export): Redirect from,Redirect to",
+        "Also accepted (Yoast): Source URL,Target URL,Type",
       ],
     },
   },
