@@ -339,6 +339,14 @@ export default function SeoPerformance() {
 
   const strategyLabel = (s: PageSpeedStrategy) => (s === "desktop" ? p.strategyDesktop : p.strategyMobile);
 
+  // History/banner/score-header display of the tested URL: swap the bare "/"
+  // for the same friendly homepage label used in the picker dropdown, so past
+  // runs of the homepage read as "Homepage"/"Startseite" instead of "/".
+  const displayPath = (url: string): string => {
+    const path = pathOnly(url);
+    return path === "/" ? p.homepageOption : path;
+  };
+
   const annotationIndexById = useMemo(() => {
     const map = new Map<string, number>();
     result?.annotations.forEach((a, i) => map.set(a.id, i));
@@ -423,7 +431,7 @@ export default function SeoPerformance() {
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd">
                     {p.viewingHistoryBody
-                      .replace("{url}", pathOnly(result.url))
+                      .replace("{url}", displayPath(result.url))
                       .replace("{strategy}", strategyLabel(result.strategy))}
                   </Text>
                   <InlineStack>
@@ -446,7 +454,7 @@ export default function SeoPerformance() {
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
                   {p.testedLabel
-                    .replace("{url}", pathOnly(result.url))
+                    .replace("{url}", displayPath(result.url))
                     .replace("{strategy}", strategyLabel(result.strategy))
                     .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
                 </Text>
@@ -808,7 +816,7 @@ export default function SeoPerformance() {
                         <IndexTable.Cell>
                           <InlineStack gap="200" blockAlign="center">
                             <Text as="span" variant="bodyMd" fontWeight={isOpen ? "semibold" : "regular"}>
-                              {pathOnly(entry.url)}
+                              {displayPath(entry.url)}
                             </Text>
                             {isOpen && <Badge tone="info">{p.historyOpenBadge}</Badge>}
                           </InlineStack>
