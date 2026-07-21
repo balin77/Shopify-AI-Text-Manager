@@ -247,19 +247,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
     const { startDate, endDate } = defaultDateRange(new Date());
-    base.topQueries = await querySearchAnalytics(accessToken, propertyUrl, {
+    // rowLimit 1000 (not 25): the table only shows the first 25, but
+    // lost-query detection below must see the FULL current query set —
+    // comparing the previous period against just the top 25 would flag every
+    // query currently ranked 26+ as "lost". Same quota cost either way.
+    const currentRows = await querySearchAnalytics(accessToken, propertyUrl, {
       startDate,
       endDate,
       dimensions: ["query"],
-      rowLimit: 25,
+      rowLimit: 1000,
     });
+    base.topQueries = currentRows.slice(0, 25);
 
     // Period-over-period comparison: the 28 days immediately before the
-    // window above. Best-effort — a rowLimit of 1000 (vs. 25 for the table
-    // itself) so the previous-period fetch is generous enough that deltas
-    // resolve for all 25 top queries and lost-query detection isn't starved by
-    // the cap. Any failure here just leaves deltas/lostQueries empty; the
-    // table renders exactly as before.
+    // window above. Best-effort — any failure here just leaves
+    // deltas/lostQueries empty; the table renders exactly as before.
     try {
       const prevRange = previousDateRange(new Date());
       const previousRows = await querySearchAnalytics(accessToken, propertyUrl, {
@@ -269,7 +271,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         rowLimit: 1000,
       });
       base.deltas = Object.fromEntries(computeQueryDeltas(base.topQueries, previousRows));
-      base.lostQueries = findLostQueries(base.topQueries, previousRows);
+      base.lostQueries = findLostQueries(currentRows, previousRows);
     } catch {
       base.deltas = {};
       base.lostQueries = [];
