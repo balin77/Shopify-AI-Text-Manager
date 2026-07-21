@@ -30,7 +30,6 @@ import {
   Modal,
   Checkbox,
   Tooltip,
-  Thumbnail,
 } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -615,8 +614,15 @@ function BulkMetaGrid({
   // columns share leftover horizontal space when the grid is wider than the
   // sum of minimums; the enclosing overflow-x wrapper kicks in when even
   // the minimums don't fit.
+  // Image column sizes to `max-content` — its width follows whichever
+  // visible image ends up widest once each one is scaled to its row's
+  // height. Everything else uses `minmax(<min>, 1fr)` so text columns share
+  // the leftover horizontal space evenly. Trailing 48px is the pencil-icon
+  // action column.
   const gridTemplateColumns =
-    columns.map((c) => `minmax(${columnMinWidth(c)}px, 1fr)`).join(" ") + " 48px";
+    columns
+      .map((c) => (c === "image" ? "max-content" : `minmax(${columnMinWidth(c)}px, 1fr)`))
+      .join(" ") + " 48px";
 
   return (
     <div style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-meta-scroll">
@@ -659,11 +665,24 @@ function BulkMetaGrid({
           align-items: flex-end;
           justify-content: flex-start;
         }
-        /* Only the textarea stretches to fill the cell — Thumbnails and
-           Selects keep their intrinsic size (a 40-px Thumbnail flex-growing
-           to 200 px would waste the whole row height). */
+        /* Only the textarea stretches to fill the cell — image and Select
+           keep their intrinsic sizing so they don't waste the row height
+           or fight the image's aspect-ratio-driven width. */
         .cp-bulk-meta-cell > .cp-bulk-meta-textarea {
           flex: 1 1 auto;
+        }
+        /* Image cell: scale to row height, width follows aspect ratio.
+           Combined with grid-template-columns using max-content for the
+           image column, the shared column width becomes the widest
+           rendered image across all visible rows — a mix of 1:1 and 16:9
+           products picks the 16:9 width, all squares picks the smaller
+           square width. */
+        .cp-bulk-meta-img {
+          display: block;
+          height: 100%;
+          width: auto;
+          max-height: 100%;
+          object-fit: contain;
         }
         /* Custom borderless textarea (see CellTextArea): visually invisible
            until focused, autogrows via JS, and — critical for the merchant's
@@ -763,13 +782,21 @@ interface BulkMetaCellProps {
 function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: BulkMetaCellProps) {
   // Read-only meta columns first — no edit path, just render the value.
   if (column === "image") {
-    if (!row.imageUrl) {
-      // Empty spacer keeps row height consistent with rows that DO have a
-      // thumbnail, avoiding a bouncy layout as the merchant scrolls.
-      return <div style={{ width: 48, height: 48 }} />;
-    }
+    // Empty rows render nothing so they DON'T inflate the max-content
+    // image column — width follows the widest actual image only.
+    if (!row.imageUrl) return null;
+    // <img> instead of Polaris Thumbnail because Thumbnail hard-codes a
+    // 40×40 box. We want height:100% (fills the row track) with width:auto,
+    // so the image's aspect ratio drives its own width — a square image
+    // renders narrower than a 16:9 one in the same row, and the shared
+    // grid column shrinks to the widest one via `max-content`.
     return (
-      <Thumbnail source={row.imageUrl} alt={row.imageAlt ?? ""} size="small" />
+      <img
+        src={row.imageUrl}
+        alt={row.imageAlt ?? ""}
+        className="cp-bulk-meta-img"
+        loading="lazy"
+      />
     );
   }
   if (column === "blogTitle") {
