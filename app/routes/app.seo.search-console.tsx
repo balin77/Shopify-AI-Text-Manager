@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
 import {
   Card,
   BlockStack,
@@ -168,12 +168,28 @@ async function resolveQuickWinResources(
   });
 }
 
+// Only lowercase alpha-3 (ISO-3166-1) is a valid GSC country expression; a
+// device value must be one of the three GSC actually reports. Anything else
+// is ignored (filter falls back to "all") rather than sent through and
+// silently returning zero rows.
+const GSC_COUNTRY_RE = /^[a-z]{3}$/i;
+const GSC_DEVICES = ["DESKTOP", "MOBILE", "TABLET"] as const;
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const url = new URL(request.url);
   const host = url.searchParams.get("host") || "";
   const statusParam = url.searchParams.get("gsc") || null;
+
+  const rawCountry = url.searchParams.get("gscCountry");
+  const filterCountry = rawCountry && GSC_COUNTRY_RE.test(rawCountry) ? rawCountry.toLowerCase() : null;
+  const rawDevice = url.searchParams.get("gscDevice")?.toUpperCase() || null;
+  const filterDevice = rawDevice && (GSC_DEVICES as readonly string[]).includes(rawDevice) ? rawDevice : null;
+  const analyticsFilters = {
+    country: filterCountry ?? undefined,
+    device: (filterDevice as "DESKTOP" | "MOBILE" | "TABLET" | undefined) ?? undefined,
+  };
 
   const base = {
     gated: false,
@@ -197,6 +213,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // "Sync keyword rankings" click) — trivially available on the connection
     // row already loaded below, so surfaced here for the auto-sync note.
     lastKeywordSyncAt: null as string | null,
+    // Active country/device filters (from ?gscCountry/?gscDevice), echoed back
+    // so the UI can pre-select the Select inputs from a shared/bookmarked URL.
+    filterCountry,
+    filterDevice,
+    // Countries actually seen in this store's traffic (best-effort, unfiltered
+    // query below) — populates the country Select's options.
+    availableCountries: [] as Array<{ code: string; impressions: number }>,
   };
 
   const plan = await loadPlan(db, session.shop);
@@ -256,6 +279,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       endDate,
       dimensions: ["query"],
       rowLimit: 1000,
+      filters: analyticsFilters,
     });
     base.topQueries = currentRows.slice(0, 25);
 
@@ -269,6 +293,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         endDate: prevRange.endDate,
         dimensions: ["query"],
         rowLimit: 1000,
+        filters: analyticsFilters,
       });
       base.deltas = Object.fromEntries(computeQueryDeltas(base.topQueries, previousRows));
       base.lostQueries = findLostQueries(currentRows, previousRows);
@@ -287,10 +312,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         endDate,
         dimensions: ["query", "page"],
         rowLimit: 1000,
+        filters: analyticsFilters,
       });
       base.opportunities = await resolveQuickWinResources(db, session.shop, findCtrOpportunities(pageRows));
     } catch {
       base.opportunities = [];
+    }
+
+    // Country options for the filter Select: the countries actually present in
+    // this store's traffic, UNFILTERED (so switching the device filter doesn't
+    // narrow which countries you can then pick). Best-effort, same reasoning as
+    // Quick wins above — only fired once the main call proved token/property ok.
+    try {
+      base.availableCountries = (
+        await querySearchAnalytics(accessToken, propertyUrl, {
+          startDate,
+          endDate,
+          dimensions: ["country"],
+          rowLimit: 15,
+        })
+      )
+        .map((r) => ({ code: r.keys[0] ?? "", impressions: r.impressions }))
+        .filter((c) => c.code);
+    } catch {
+      base.availableCountries = [];
     }
   } catch (e) {
     if (e instanceof GscReconnectRequiredError) {
@@ -449,6 +494,22 @@ export default function SeoSearchConsole() {
   const { t } = useI18n();
   const g = t.seo.searchConsolePage;
   const fetcher = useFetcher<ActionResult>();
+  const [, setSearchParams] = useSearchParams();
+
+  // Country/device filters: reflected in the URL (?gscCountry/?gscDevice) so the
+  // loader re-runs with the new filter and the choice survives a reload/share.
+  // Other params (host, gsc status, etc.) are preserved via the prev-params spread.
+  const setGscFilterParam = (key: "gscCountry" | "gscDevice", value: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set(key, value);
+        else next.delete(key);
+        return next;
+      },
+      { preventScrollReset: true },
+    );
+  };
   // Property picker (only relevant when data.needsPropertySelection is true).
   const [selectedProperty, setSelectedProperty] = useState(data.availableProperties[0]?.siteUrl || "");
   // Separate fetcher for the Inspect URL card so its result doesn't get mixed
@@ -664,6 +725,38 @@ export default function SeoSearchConsole() {
                   )}
                 </BlockStack>
               </Card>
+            )}
+
+            {/* Country/device filters — apply to Top queries, its deltas, Lost queries and
+                Quick wins (all three analytics calls in the loader); the keyword-sync
+                call stays global/unfiltered on purpose. */}
+            {!data.needsPropertySelection && (
+              <InlineStack gap="300" wrap>
+                <div style={{ minWidth: "160px" }}>
+                  <Select
+                    label={g.filterDevice}
+                    options={[
+                      { label: g.filterAll, value: "" },
+                      { label: g.deviceDesktop, value: "DESKTOP" },
+                      { label: g.deviceMobile, value: "MOBILE" },
+                      { label: g.deviceTablet, value: "TABLET" },
+                    ]}
+                    value={data.filterDevice ?? ""}
+                    onChange={(value) => setGscFilterParam("gscDevice", value)}
+                  />
+                </div>
+                <div style={{ minWidth: "160px" }}>
+                  <Select
+                    label={g.filterCountry}
+                    options={[
+                      { label: g.filterAll, value: "" },
+                      ...data.availableCountries.map((c) => ({ label: c.code.toUpperCase(), value: c.code })),
+                    ]}
+                    value={data.filterCountry ?? ""}
+                    onChange={(value) => setGscFilterParam("gscCountry", value)}
+                  />
+                </div>
+              </InlineStack>
             )}
 
             {!data.needsPropertySelection && (

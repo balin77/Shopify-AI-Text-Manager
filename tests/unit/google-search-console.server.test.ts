@@ -21,6 +21,8 @@ import {
   findCtrOpportunities,
   resolveGscPagePath,
   summarizeInspection,
+  buildDimensionFilterGroups,
+  querySearchAnalytics,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
 } from "~/services/google-search-console.server";
@@ -825,5 +827,69 @@ describe("submitSitemap — requires a full absolute sitemap URL", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(encodeURIComponent("https://example.com/sitemap.xml"));
     expect(init?.method).toBe("PUT");
+  });
+});
+
+describe("buildDimensionFilterGroups — country/device analytics filters", () => {
+  it("returns undefined when no filters are set", () => {
+    expect(buildDimensionFilterGroups()).toBeUndefined();
+    expect(buildDimensionFilterGroups({})).toBeUndefined();
+  });
+
+  it("builds a single-filter group for country only", () => {
+    expect(buildDimensionFilterGroups({ country: "deu" })).toEqual([
+      { filters: [{ dimension: "country", operator: "equals", expression: "deu" }] },
+    ]);
+  });
+
+  it("builds a single-filter group for device only", () => {
+    expect(buildDimensionFilterGroups({ device: "MOBILE" })).toEqual([
+      { filters: [{ dimension: "device", operator: "equals", expression: "MOBILE" }] },
+    ]);
+  });
+
+  it("combines both filters in ONE group (AND semantics — country AND device)", () => {
+    const groups = buildDimensionFilterGroups({ country: "usa", device: "DESKTOP" });
+    expect(groups).toHaveLength(1);
+    expect(groups![0].filters).toEqual([
+      { dimension: "country", operator: "equals", expression: "usa" },
+      { dimension: "device", operator: "equals", expression: "DESKTOP" },
+    ]);
+  });
+});
+
+describe("querySearchAnalytics — request body filter wiring", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("omits dimensionFilterGroups from the request body when no filters are passed", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, { rows: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await querySearchAnalytics("at", "sc-domain:example.com", {
+      startDate: "2026-06-01",
+      endDate: "2026-06-28",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body));
+    expect(body).not.toHaveProperty("dimensionFilterGroups");
+  });
+
+  it("includes dimensionFilterGroups in the request body when filters are passed", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, { rows: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await querySearchAnalytics("at", "sc-domain:example.com", {
+      startDate: "2026-06-01",
+      endDate: "2026-06-28",
+      filters: { country: "deu", device: "MOBILE" },
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body));
+    expect(body.dimensionFilterGroups).toEqual([
+      {
+        filters: [
+          { dimension: "country", operator: "equals", expression: "deu" },
+          { dimension: "device", operator: "equals", expression: "MOBILE" },
+        ],
+      },
+    ]);
   });
 });

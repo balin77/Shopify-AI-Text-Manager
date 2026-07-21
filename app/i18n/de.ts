@@ -1593,6 +1593,12 @@ export const de = {
       inspectFailed: "Diese URL konnte nicht geprüft werden. Bitte erneut versuchen.",
       autoSyncNote: "Rankings werden einmal täglich automatisch synchronisiert.",
       lastSyncedLabel: "Zuletzt synchronisiert",
+      filterDevice: "Gerät",
+      filterCountry: "Land",
+      filterAll: "Alle",
+      deviceDesktop: "Desktop",
+      deviceMobile: "Mobil",
+      deviceTablet: "Tablet",
     },
     aeoPage: {
       helpTitle: "SEO für KI-Suche (AEO)",

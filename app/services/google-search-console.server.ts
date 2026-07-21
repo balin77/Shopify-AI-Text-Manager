@@ -408,11 +408,41 @@ export interface SearchAnalyticsRow {
   position: number;
 }
 
+/** Country = ISO-3166-1-alpha-3, lowercase (GSC's own format, e.g. "deu", "usa"). */
+export interface SearchAnalyticsFilters {
+  country?: string;
+  device?: "DESKTOP" | "MOBILE" | "TABLET";
+}
+
 export interface SearchAnalyticsOptions {
   startDate: string; // YYYY-MM-DD
   endDate: string;
   dimensions?: string[]; // e.g. ["query"], ["query","page"]
   rowLimit?: number;
+  filters?: SearchAnalyticsFilters;
+}
+
+interface GscDimensionFilter {
+  dimension: string;
+  operator: string;
+  expression: string;
+}
+
+/**
+ * Build the GSC `dimensionFilterGroups` request fragment from our country/device
+ * filter shape. Both filters (when both are set) go into a SINGLE group — GSC
+ * ANDs the filters within one group, which is what "queries from Germany on
+ * mobile" needs (a second group would OR against the first). Pure and exported
+ * so this mapping is unit-testable without mocking fetch.
+ */
+export function buildDimensionFilterGroups(
+  filters?: SearchAnalyticsFilters,
+): Array<{ filters: GscDimensionFilter[] }> | undefined {
+  if (!filters?.country && !filters?.device) return undefined;
+  const group: GscDimensionFilter[] = [];
+  if (filters.country) group.push({ dimension: "country", operator: "equals", expression: filters.country });
+  if (filters.device) group.push({ dimension: "device", operator: "equals", expression: filters.device });
+  return [{ filters: group }];
 }
 
 export async function querySearchAnalytics(
@@ -421,6 +451,7 @@ export async function querySearchAnalytics(
   opts: SearchAnalyticsOptions,
 ): Promise<SearchAnalyticsRow[]> {
   const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/searchAnalytics/query`;
+  const dimensionFilterGroups = buildDimensionFilterGroups(opts.filters);
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -430,6 +461,7 @@ export async function querySearchAnalytics(
       dimensions: opts.dimensions ?? ["query"],
       rowLimit: opts.rowLimit ?? 25,
       dataState: "final", // GSC has 2–3d latency; only settled data
+      ...(dimensionFilterGroups ? { dimensionFilterGroups } : {}),
     }),
     signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
   });

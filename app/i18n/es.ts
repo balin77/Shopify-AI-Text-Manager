@@ -1595,6 +1595,12 @@ export const es: Translation = {
       inspectFailed: "No se pudo inspeccionar esta URL. Inténtalo de nuevo.",
       autoSyncNote: "Las posiciones se sincronizan automáticamente una vez al día.",
       lastSyncedLabel: "Última sincronización",
+      filterDevice: "Dispositivo",
+      filterCountry: "País",
+      filterAll: "Todos",
+      deviceDesktop: "Escritorio",
+      deviceMobile: "Móvil",
+      deviceTablet: "Tablet",
     },
     aeoPage: {
       helpTitle: "SEO para búsquedas con IA (AEO)",
