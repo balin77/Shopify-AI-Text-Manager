@@ -32,30 +32,83 @@ interface SettingsSEOTabProps {
   onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
-// Field ordering + labels for the limits grid. Kept local (vs. deriving from
-// DEFAULT_SEO_LIMITS keys) so each row keeps a stable order and a meaningful
-// title-cased label without a separate mapping table.
-const LIMIT_FIELDS: Array<{
+// Field ordering mirrors the product editor (images → title → description →
+// handle → SEO title → meta description). Each group is one visual row with
+// its own heading and the min/max inputs beneath.
+interface LimitField {
   key: keyof SeoLimits;
   labelKey: string;
   fallbackLabel: string;
-}> = [
-  { key: "titleMin", labelKey: "seoLimitTitleMin", fallbackLabel: "Titel min." },
-  { key: "titleMax", labelKey: "seoLimitTitleMax", fallbackLabel: "Titel max." },
-  { key: "seoTitleMax", labelKey: "seoLimitSeoTitleMax", fallbackLabel: "SEO-Titel max." },
-  { key: "metaDescMin", labelKey: "seoLimitMetaDescMin", fallbackLabel: "Meta-Beschreibung min." },
-  { key: "metaDescMax", labelKey: "seoLimitMetaDescMax", fallbackLabel: "Meta-Beschreibung max." },
-  { key: "descriptionMin", labelKey: "seoLimitDescriptionMin", fallbackLabel: "Beschreibung min." },
-  { key: "handleMin", labelKey: "seoLimitHandleMin", fallbackLabel: "URL-Slug min." },
-  { key: "handleMax", labelKey: "seoLimitHandleMax", fallbackLabel: "URL-Slug max." },
-  { key: "altTextMin", labelKey: "seoLimitAltTextMin", fallbackLabel: "Alt-Text min." },
-  { key: "altTextMax", labelKey: "seoLimitAltTextMax", fallbackLabel: "Alt-Text max." },
+}
+interface LimitGroup {
+  id: string;
+  headingKey: string;
+  fallbackHeading: string;
+  fields: LimitField[];
+}
+const LIMIT_GROUPS: LimitGroup[] = [
+  {
+    id: "altText",
+    headingKey: "seoLimitGroupAltText",
+    fallbackHeading: "Alt-Text",
+    fields: [
+      { key: "altTextMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
+      { key: "altTextMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
+    ],
+  },
+  {
+    id: "title",
+    headingKey: "seoLimitGroupTitle",
+    fallbackHeading: "Titel",
+    fields: [
+      { key: "titleMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
+      { key: "titleMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
+    ],
+  },
+  {
+    id: "description",
+    headingKey: "seoLimitGroupDescription",
+    fallbackHeading: "Beschreibung",
+    fields: [
+      { key: "descriptionMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
+    ],
+  },
+  {
+    id: "handle",
+    headingKey: "seoLimitGroupHandle",
+    fallbackHeading: "URL-Slug",
+    fields: [
+      { key: "handleMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
+      { key: "handleMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
+    ],
+  },
+  {
+    id: "seoTitle",
+    headingKey: "seoLimitGroupSeoTitle",
+    fallbackHeading: "SEO-Titel",
+    fields: [
+      { key: "seoTitleMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
+    ],
+  },
+  {
+    id: "metaDescription",
+    headingKey: "seoLimitGroupMetaDescription",
+    fallbackHeading: "Meta-Beschreibung",
+    fields: [
+      { key: "metaDescMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
+      { key: "metaDescMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
+    ],
+  },
 ];
+
+const ALL_LIMIT_KEYS: Array<keyof SeoLimits> = LIMIT_GROUPS.flatMap((g) =>
+  g.fields.map((f) => f.key),
+);
 
 function toDraft(stored: Partial<SeoLimits> | null): Record<keyof SeoLimits, string> {
   const resolved = resolveSeoLimits(stored);
   const out = {} as Record<keyof SeoLimits, string>;
-  for (const { key } of LIMIT_FIELDS) out[key] = String(resolved[key]);
+  for (const key of ALL_LIMIT_KEYS) out[key] = String(resolved[key]);
   return out;
 }
 
@@ -81,7 +134,7 @@ export function SettingsSEOTab({
     const suffixChanged =
       seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
       seoTitleSuffix !== (settings.seoTitleSuffix || "");
-    const limitsChanged = LIMIT_FIELDS.some(({ key }) => limits[key] !== initialDraft[key]);
+    const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
     const changed = suffixChanged || limitsChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
@@ -97,7 +150,7 @@ export function SettingsSEOTab({
     // render on free/basic plans.
     const limitsChanged =
       canEditLimits &&
-      LIMIT_FIELDS.some(({ key }) => limits[key] !== initialDraft[key]);
+      ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
     fetcher.submit(
       {
         actionType: "saveSeoSettings",
@@ -240,29 +293,38 @@ export function SettingsSEOTab({
             </Banner>
           )}
 
-          <InlineGrid columns={{ xs: 1, sm: 2, md: 3 }} gap="300">
-            {LIMIT_FIELDS.map(({ key, labelKey, fallbackLabel }) => (
-              <TextField
-                key={key}
-                label={t.settings[labelKey] || fallbackLabel}
-                value={limits[key]}
-                onChange={setLimit(key)}
-                type="number"
-                min={1}
-                max={9999}
-                disabled={!canEditLimits}
-                autoComplete="off"
-                helpText={
-                  canEditLimits
-                    ? (t.settings.seoLimitDefaultHint || "Standard: {n}").replace(
-                        "{n}",
-                        String(DEFAULT_SEO_LIMITS[key]),
-                      )
-                    : undefined
-                }
-              />
+          <BlockStack gap="400">
+            {LIMIT_GROUPS.map((group) => (
+              <BlockStack gap="200" key={group.id}>
+                <Text as="h4" variant="headingSm">
+                  {t.settings[group.headingKey] || group.fallbackHeading}
+                </Text>
+                <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+                  {group.fields.map(({ key, labelKey, fallbackLabel }) => (
+                    <TextField
+                      key={key}
+                      label={t.settings[labelKey] || fallbackLabel}
+                      value={limits[key]}
+                      onChange={setLimit(key)}
+                      type="number"
+                      min={1}
+                      max={9999}
+                      disabled={!canEditLimits}
+                      autoComplete="off"
+                      helpText={
+                        canEditLimits
+                          ? (t.settings.seoLimitDefaultHint || "Standard: {n}").replace(
+                              "{n}",
+                              String(DEFAULT_SEO_LIMITS[key]),
+                            )
+                          : undefined
+                      }
+                    />
+                  ))}
+                </InlineGrid>
+              </BlockStack>
             ))}
-          </InlineGrid>
+          </BlockStack>
         </BlockStack>
       </BlockStack>
     </Card>
@@ -276,7 +338,7 @@ export function SettingsSEOTab({
  */
 function coerceLimits(draft: Record<keyof SeoLimits, string>): Partial<SeoLimits> {
   const out: Partial<SeoLimits> = {};
-  for (const { key } of LIMIT_FIELDS) {
+  for (const key of ALL_LIMIT_KEYS) {
     const n = parseInt(draft[key], 10);
     if (Number.isFinite(n) && n > 0 && n !== DEFAULT_SEO_LIMITS[key]) {
       out[key] = n;
