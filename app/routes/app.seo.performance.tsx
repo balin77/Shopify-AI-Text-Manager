@@ -45,6 +45,8 @@ import type {
   PageSpeedMetricId,
   CruxCategory,
 } from "../services/seo/pagespeed.types";
+import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
+import type { WebVitalDevice } from "../services/seo/web-vitals.types";
 
 const SHOP_HOST_QUERY = `#graphql
   query seoPerformanceShopHost {
@@ -77,7 +79,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const domain = await getShopHost(admin, shop);
 
-  const [products, collections, pages, history] = await Promise.all([
+  const [products, collections, pages, history, rum] = await Promise.all([
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },
@@ -99,9 +101,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       take: PICKER_CAP,
     }),
     listPageSpeedHistory({ db, shop, limit: HISTORY_LOAD_LIMIT }),
+    getWebVitalsSummary({ db, shop }),
   ]);
 
-  return json({ domain, products, collections, pages, history });
+  // Theme-editor deep link for enabling the RUM app embed — house pattern from
+  // app.seo.structured-data.tsx: myshopify domain (custom domains only proxy
+  // /admin via redirect) + activateAppId to preselect the embed when possible.
+  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  const rumEmbedUrl = apiKey
+    ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/web-vitals`
+    : `https://${shop}/admin/themes/current/editor?context=apps`;
+
+  return json({ domain, products, collections, pages, history, rum, rumEmbedUrl });
 };
 
 type ActionResult =
@@ -191,8 +202,19 @@ function pathOnly(url: string): string {
   }
 }
 
+/**
+ * Core Web Vitals thresholds (good / needs-improvement / poor) applied to the
+ * RUM (real-user) p75 aggregates — same bands Google uses for LCP/CLS/INP.
+ */
+function cwvTone(value: number | null, goodMax: number, poorMin: number): "success" | "warning" | "critical" | undefined {
+  if (value == null) return undefined;
+  if (value <= goodMax) return "success";
+  if (value > poorMin) return "critical";
+  return "warning";
+}
+
 export default function SeoPerformance() {
-  const { domain, products, collections, pages, history } = useLoaderData<typeof loader>();
+  const { products, collections, pages, history, rum, rumEmbedUrl } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
 
@@ -550,6 +572,117 @@ export default function SeoPerformance() {
             </div>
           </BlockStack>
         )}
+
+        {/* Real-user Web Vitals (RUM) */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">{p.rum.title}</Text>
+            {rum.totalSamples === 0 ? (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodyMd" tone="subdued">{p.rum.emptyBody}</Text>
+                <InlineStack>
+                  <Button url={rumEmbedUrl} target="_blank">
+                    {p.rum.emptyButton}
+                  </Button>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">{p.rum.emptyHint}</Text>
+              </BlockStack>
+            ) : (
+              <BlockStack gap="300">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {p.rum.summary
+                    .replace("{count}", String(rum.totalSamples))
+                    .replace("{days}", String(rum.windowDays))}
+                </Text>
+                <IndexTable
+                  itemCount={rum.rows.length}
+                  selectable={false}
+                  headings={[
+                    { title: p.rum.colTemplate },
+                    { title: p.rum.colDevice },
+                    { title: p.rum.colSamples },
+                    { title: p.rum.colLcp },
+                    { title: p.rum.colCls },
+                    { title: p.rum.colInp },
+                  ]}
+                >
+                  {rum.rows.map((row, index) => (
+                    <IndexTable.Row
+                      id={`${row.template}-${row.device}`}
+                      key={`${row.template}-${row.device}`}
+                      position={index}
+                    >
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd">{row.template}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd">
+                          {(row.device as WebVitalDevice) === "mobile" ? p.strategyMobile : p.strategyDesktop}
+                        </Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd">{row.samples}</Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        {row.lcpP75Ms != null ? (
+                          <Badge tone={cwvTone(row.lcpP75Ms, 2500, 4000)}>{formatMs(row.lcpP75Ms)}</Badge>
+                        ) : (
+                          <Text as="span" tone="subdued">–</Text>
+                        )}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        {row.clsP75 != null ? (
+                          <Badge tone={cwvTone(row.clsP75, 0.1, 0.25)}>{row.clsP75.toFixed(2)}</Badge>
+                        ) : (
+                          <Text as="span" tone="subdued">–</Text>
+                        )}
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        {row.inpP75Ms != null ? (
+                          <Badge tone={cwvTone(row.inpP75Ms, 200, 500)}>{formatMs(row.inpP75Ms)}</Badge>
+                        ) : (
+                          <Text as="span" tone="subdued">–</Text>
+                        )}
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
+
+                {rum.slowPaths.length > 0 && (
+                  <BlockStack gap="150">
+                    <Text as="h4" variant="headingSm">{p.rum.slowPathsTitle}</Text>
+                    {rum.slowPaths.map((sp) => (
+                      <InlineStack key={sp.path} align="space-between" blockAlign="center">
+                        <Text as="span" variant="bodyMd">{sp.path}</Text>
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {p.rum.slowPathSamples.replace("{count}", String(sp.samples))}
+                          </Text>
+                          <Badge tone={cwvTone(sp.lcpP75Ms, 2500, 4000)}>{formatMs(sp.lcpP75Ms)}</Badge>
+                        </InlineStack>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                )}
+
+                {rum.elements.length > 0 && (
+                  <BlockStack gap="150">
+                    <Text as="h4" variant="headingSm">{p.rum.elementsTitle}</Text>
+                    {rum.elements.map((el, i) => (
+                      <InlineStack key={`${el.kind}-${i}`} gap="200" blockAlign="center" wrap>
+                        <Text as="span" variant="bodyMd">{p.rum.elementKind[el.kind]}</Text>
+                        <code style={{ fontSize: "12px" }}>{el.label}</code>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {p.rum.elementOccurrences.replace("{count}", String(el.occurrences))}
+                        </Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Card>
 
         {/* History */}
         <Card>
