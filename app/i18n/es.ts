@@ -1581,6 +1581,8 @@ export const es: Translation = {
       quickWinsHint: "Consultas que ya se posicionan en la página 1-2 (posición 4-20) con impresiones reales pero un CTR bajo — aquí un mejor título o meta descripción tiene el mayor impacto.",
       colCtr: "CTR",
       colPage: "Página",
+      colAction: "Acción",
+      quickWinOptimize: "Optimizar",
       inspectTitle: "Inspeccionar URL",
       inspectPlaceholder: "/products/ejemplo o URL completa",
       inspectButton: "Inspeccionar",

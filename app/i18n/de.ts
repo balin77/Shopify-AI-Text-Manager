@@ -1579,6 +1579,8 @@ export const de = {
       quickWinsHint: "Suchanfragen, die bereits auf Seite 1-2 ranken (Position 4-20) mit echten Impressionen, aber niedriger Klickrate — hier bringt ein besserer Titel oder eine bessere Meta-Beschreibung am meisten.",
       colCtr: "CTR",
       colPage: "Seite",
+      colAction: "Aktion",
+      quickWinOptimize: "Optimieren",
       inspectTitle: "URL prüfen",
       inspectPlaceholder: "/products/beispiel oder vollständige URL",
       inspectButton: "Prüfen",

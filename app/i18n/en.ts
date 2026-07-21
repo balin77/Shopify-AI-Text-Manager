@@ -1582,6 +1582,8 @@ export const en: Translation = {
       quickWinsHint: "Queries that already rank on page 1-2 (position 4-20) with real impressions but a low click-through rate — a better title or meta description here has the most leverage.",
       colCtr: "CTR",
       colPage: "Page",
+      colAction: "Action",
+      quickWinOptimize: "Optimize",
       inspectTitle: "Inspect URL",
       inspectPlaceholder: "/products/example or full URL",
       inspectButton: "Inspect",

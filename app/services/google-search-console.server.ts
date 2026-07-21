@@ -480,6 +480,51 @@ export function findCtrOpportunities(rows: SearchAnalyticsRow[], limit = OPPORTU
     }));
 }
 
+/** A GSC page URL resolved to the store resource it points at (for the Quick
+ *  wins "Optimize" deep-link — see resolveGscPagePath). */
+export interface ResolvedGscPage {
+  resourceType: "Product" | "Collection" | "Page" | "Article";
+  handle: string;
+}
+
+// Matches an optional leading locale segment in a storefront path, e.g.
+// "/de/products/foo" or "/en-us/collections/bar" — Shopify prefixes every
+// path with the active locale under an internationalized domain/subfolder
+// setup, and that segment must be stripped before matching /products/ etc.
+const LOCALE_SEGMENT_RE = /^[a-z]{2}(-[a-z]{2,4})?$/i;
+
+/**
+ * Map a GSC "page" URL (as returned by the query/page-dimensioned Search
+ * Analytics rows) back to the store resource it points at, so the Quick wins
+ * table's "Optimize" button knows what to track/deep-link to. Pure and
+ * exported for unit testing. Returns null for anything that isn't a
+ * recognized content path (home page, /search, cart, unknown routes, or an
+ * unparsable URL) — the caller must not render the Optimize button then.
+ */
+export function resolveGscPagePath(pageUrl: string): ResolvedGscPage | null {
+  let path: string;
+  try {
+    path = new URL(pageUrl).pathname;
+  } catch {
+    return null;
+  }
+
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length > 0 && LOCALE_SEGMENT_RE.test(segments[0])) {
+    segments.shift();
+  }
+  if (segments.length === 0) return null;
+
+  const [first, second, third] = segments;
+  if (first === "products" && second) return { resourceType: "Product", handle: second };
+  if (first === "collections" && second) return { resourceType: "Collection", handle: second };
+  if (first === "pages" && second) return { resourceType: "Page", handle: second };
+  // /blogs/<blogHandle>/<articleHandle> — the article's own handle (third
+  // segment) is what SeoKeyword/Article rows are keyed by, not the blog handle.
+  if (first === "blogs" && second && third) return { resourceType: "Article", handle: third };
+  return null;
+}
+
 /**
  * Submit a sitemap to GSC. `sitemapUrl` must be the sitemap's FULL absolute URL
  * (e.g. "https://shop.example.com/sitemap.xml") — the sitemaps.submit API takes

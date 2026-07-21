@@ -16,6 +16,7 @@ import {
   revokeGoogleToken,
   submitSitemap,
   findCtrOpportunities,
+  resolveGscPagePath,
   summarizeInspection,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
@@ -559,6 +560,66 @@ describe("findCtrOpportunities — Search Console page 'Quick wins'", () => {
 
   it("returns an empty list for no rows", () => {
     expect(findCtrOpportunities([])).toEqual([]);
+  });
+});
+
+describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", () => {
+  it("resolves a product page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/products/blue-shoes")).toEqual({
+      resourceType: "Product",
+      handle: "blue-shoes",
+    });
+  });
+
+  it("resolves a collection page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/collections/summer-sale")).toEqual({
+      resourceType: "Collection",
+      handle: "summer-sale",
+    });
+  });
+
+  it("resolves a page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/pages/about-us")).toEqual({
+      resourceType: "Page",
+      handle: "about-us",
+    });
+  });
+
+  it("resolves an article, using the article handle (not the blog handle)", () => {
+    expect(resolveGscPagePath("https://shop.example.com/blogs/news/our-launch")).toEqual({
+      resourceType: "Article",
+      handle: "our-launch",
+    });
+  });
+
+  it("strips a two-letter locale prefix before matching", () => {
+    expect(resolveGscPagePath("https://shop.example.com/de/products/blaue-schuhe")).toEqual({
+      resourceType: "Product",
+      handle: "blaue-schuhe",
+    });
+  });
+
+  it("strips a locale-region prefix (e.g. en-us) before matching", () => {
+    expect(resolveGscPagePath("https://shop.example.com/en-us/collections/summer-sale")).toEqual({
+      resourceType: "Collection",
+      handle: "summer-sale",
+    });
+  });
+
+  it("returns null for the root path", () => {
+    expect(resolveGscPagePath("https://shop.example.com/")).toBeNull();
+  });
+
+  it("returns null for an unknown/unmapped path", () => {
+    expect(resolveGscPagePath("https://shop.example.com/search?q=shoes")).toBeNull();
+  });
+
+  it("returns null for a blogs path missing the article handle", () => {
+    expect(resolveGscPagePath("https://shop.example.com/blogs/news")).toBeNull();
+  });
+
+  it("returns null for an invalid URL", () => {
+    expect(resolveGscPagePath("not-a-url")).toBeNull();
   });
 });
 

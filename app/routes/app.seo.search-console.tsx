@@ -7,7 +7,7 @@
  * OAuth), then view top queries, sync keyword rankings, and submit the sitemap.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import {
@@ -23,6 +23,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
@@ -44,6 +45,7 @@ import {
   revokeGoogleToken,
   inspectUrl,
   findCtrOpportunities,
+  resolveGscPagePath,
   summarizeInspection,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
@@ -51,6 +53,7 @@ import {
   type CtrOpportunity,
   type UrlInspectionSummary,
 } from "../services/google-search-console.server";
+import { normalizeKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -82,6 +85,84 @@ async function getShopPrimaryDomain(admin: any, fallbackShop: string): Promise<s
   }
 }
 
+/** A Quick-win row enriched with the store resource its page URL resolves to
+ *  (null when unresolvable) — drives the "Optimize" button's target. */
+export interface QuickWinOpportunity extends CtrOpportunity {
+  resourceType: KeywordResourceType | null;
+  resourceId: string | null;
+}
+
+const QUICK_WIN_RESOURCE_MODELS = ["Product", "Collection", "Page", "Article"] as const;
+
+/**
+ * Best-effort resolve each Quick-win row's underlying store resource
+ * (Product/Collection/Page/Article), scoped to this shop, so the "Optimize"
+ * button knows which resource to track a keyword against / deep-link to. Uses
+ * one batched findMany per resource type instead of one query per row. A DB
+ * failure here must not break the whole page — affected rows just don't get
+ * a button (resourceId stays null).
+ */
+async function resolveQuickWinResources(
+  db: any,
+  shop: string,
+  opportunities: CtrOpportunity[],
+): Promise<QuickWinOpportunity[]> {
+  const parsed = opportunities.map((opp) => ({ opp, resolved: resolveGscPagePath(opp.page) }));
+
+  const handlesByType: Record<(typeof QUICK_WIN_RESOURCE_MODELS)[number], Set<string>> = {
+    Product: new Set(),
+    Collection: new Set(),
+    Page: new Set(),
+    Article: new Set(),
+  };
+  for (const { resolved } of parsed) {
+    if (resolved) handlesByType[resolved.resourceType].add(resolved.handle);
+  }
+
+  const idByTypeAndHandle = new Map<string, string>(); // key: `${resourceType}::${handle}`
+  try {
+    const [products, collections, pages, articles] = await Promise.all([
+      handlesByType.Product.size
+        ? db.product.findMany({
+            where: { shop, handle: { in: Array.from(handlesByType.Product) } },
+            select: { id: true, handle: true },
+          })
+        : Promise.resolve([]),
+      handlesByType.Collection.size
+        ? db.collection.findMany({
+            where: { shop, handle: { in: Array.from(handlesByType.Collection) } },
+            select: { id: true, handle: true },
+          })
+        : Promise.resolve([]),
+      handlesByType.Page.size
+        ? db.page.findMany({
+            where: { shop, handle: { in: Array.from(handlesByType.Page) } },
+            select: { id: true, handle: true },
+          })
+        : Promise.resolve([]),
+      handlesByType.Article.size
+        ? db.article.findMany({
+            where: { shop, handle: { in: Array.from(handlesByType.Article) } },
+            select: { id: true, handle: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    for (const p of products as { id: string; handle: string }[]) idByTypeAndHandle.set(`Product::${p.handle}`, p.id);
+    for (const c of collections as { id: string; handle: string }[]) idByTypeAndHandle.set(`Collection::${c.handle}`, c.id);
+    for (const pg of pages as { id: string; handle: string }[]) idByTypeAndHandle.set(`Page::${pg.handle}`, pg.id);
+    for (const a of articles as { id: string; handle: string }[]) idByTypeAndHandle.set(`Article::${a.handle}`, a.id);
+  } catch {
+    // Best-effort: leave idByTypeAndHandle empty — every row falls back to "no
+    // button" below rather than failing the whole page load.
+  }
+
+  return parsed.map(({ opp, resolved }) => {
+    if (!resolved) return { ...opp, resourceType: null, resourceId: null };
+    const id = idByTypeAndHandle.get(`${resolved.resourceType}::${resolved.handle}`);
+    return { ...opp, resourceType: id ? resolved.resourceType : null, resourceId: id ?? null };
+  });
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -97,7 +178,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     property: null as string | null,
     email: null as string | null,
     topQueries: [] as SearchAnalyticsRow[],
-    opportunities: [] as CtrOpportunity[],
+    opportunities: [] as QuickWinOpportunity[],
     needsReconnect: false,
     needsPropertySelection: false,
     availableProperties: [] as GscSite[],
@@ -175,7 +256,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         dimensions: ["query", "page"],
         rowLimit: 1000,
       });
-      base.opportunities = findCtrOpportunities(pageRows);
+      base.opportunities = await resolveQuickWinResources(db, session.shop, findCtrOpportunities(pageRows));
     } catch {
       base.opportunities = [];
     }
@@ -194,7 +275,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 type ActionResult =
   | { ok: true; kind: "disconnected" | "synced" | "sitemap" | "propertySelected"; count?: number }
   | { ok: true; kind: "inspected"; inspection: UrlInspectionSummary }
+  | { ok: true; kind: "quickWinTracked" }
   | { ok: false; error: string };
+
+const QUICK_WIN_RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
+
+/** Editor list route per resource type — same mapping as app.seo.keywords.tsx's
+ *  KEYWORD_TYPE_PATH (kept local here: two small maps, not worth sharing a
+ *  cross-route import for). */
+const QUICK_WIN_TYPE_PATH: Record<string, string> = {
+  Product: "/app/products",
+  Collection: "/app/collections",
+  Article: "/app/blog",
+  Page: "/app/pages",
+};
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
@@ -281,6 +375,40 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     }
   }
 
+  if (actionType === "trackQuickWin") {
+    const resourceType = getFormString(form, "resourceType") as KeywordResourceType;
+    const resourceId = getFormString(form, "resourceId");
+    const query = getFormString(form, "query");
+    if (
+      !QUICK_WIN_RESOURCE_TYPES.includes(resourceType) ||
+      !resourceId ||
+      !query.trim() ||
+      query.trim().length > MAX_KEYWORD_LENGTH
+    ) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    // Quick wins always track against the PRIMARY locale ("") — same
+    // convention as the keyword→AI-prompt bridge in text-generation.handler.ts,
+    // which only ever looks up locale "". Don't overwrite an existing keyword:
+    // the merchant may have deliberately chosen a different target keyword for
+    // this resource already, and a one-click "optimize" shouldn't clobber that.
+    const existing = await db.seoKeyword.findUnique({
+      where: { shop_resourceId_locale: { shop: session.shop, resourceId, locale: "" } },
+    });
+    if (!existing) {
+      await db.seoKeyword.create({
+        data: {
+          shop: session.shop,
+          resourceType,
+          resourceId,
+          keyword: normalizeKeyword(query),
+          locale: "",
+        },
+      });
+    }
+    return json<ActionResult>({ ok: true, kind: "quickWinTracked" });
+  }
+
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
 
@@ -295,6 +423,38 @@ export default function SeoSearchConsole() {
   // into (or cleared by) the disconnect/sync/sitemap/property actionMsg banner.
   const inspectFetcher = useFetcher<ActionResult>();
   const [inspectValue, setInspectValue] = useState("");
+
+  // Quick wins "Optimize" button: its own fetcher so the disconnect/sync/
+  // sitemap/property actionMsg banner above isn't clobbered by this action.
+  const { handleNavigate } = useAppNavigation();
+  const quickWinFetcher = useFetcher<ActionResult>();
+  const [optimizingResourceId, setOptimizingResourceId] = useState<string | null>(null);
+  // The row being submitted, remembered across the fetcher round-trip so the
+  // success effect below knows which editor to deep-link into (the fetcher's
+  // own response carries no row identity back).
+  const optimizeTargetRef = useRef<{ resourceType: string; resourceId: string } | null>(null);
+
+  const handleOptimize = (row: { resourceType: string; resourceId: string; query: string }) => {
+    optimizeTargetRef.current = { resourceType: row.resourceType, resourceId: row.resourceId };
+    setOptimizingResourceId(row.resourceId);
+    quickWinFetcher.submit(
+      { actionType: "trackQuickWin", resourceType: row.resourceType, resourceId: row.resourceId, query: row.query },
+      { method: "post" },
+    );
+  };
+
+  useEffect(() => {
+    if (quickWinFetcher.state !== "idle" || !quickWinFetcher.data) return;
+    setOptimizingResourceId(null);
+    if (quickWinFetcher.data.ok && quickWinFetcher.data.kind === "quickWinTracked") {
+      const target = optimizeTargetRef.current;
+      optimizeTargetRef.current = null;
+      if (target) {
+        const path = QUICK_WIN_TYPE_PATH[target.resourceType];
+        if (path) handleNavigate(path, { searchParams: new URLSearchParams({ select: target.resourceId }) });
+      }
+    }
+  }, [quickWinFetcher.state, quickWinFetcher.data, handleNavigate]);
 
   const actionMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -563,6 +723,9 @@ export default function SeoSearchConsole() {
                           <th style={{ padding: "6px 8px" }}>
                             <Text as="span" variant="bodySm" tone="subdued">{g.colCtr}</Text>
                           </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colAction}</Text>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -585,11 +748,32 @@ export default function SeoSearchConsole() {
                             <td style={{ padding: "6px 8px" }}>
                               <Text as="span" variant="bodySm">{(row.ctr * 100).toFixed(1)}%</Text>
                             </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              {row.resourceId && row.resourceType && (
+                                <Button
+                                  size="slim"
+                                  loading={quickWinFetcher.state !== "idle" && optimizingResourceId === row.resourceId}
+                                  disabled={quickWinFetcher.state !== "idle" && optimizingResourceId !== row.resourceId}
+                                  onClick={() =>
+                                    handleOptimize({
+                                      resourceType: row.resourceType as string,
+                                      resourceId: row.resourceId as string,
+                                      query: row.query,
+                                    })
+                                  }
+                                >
+                                  {g.quickWinOptimize}
+                                </Button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  {quickWinFetcher.state === "idle" && quickWinFetcher.data && !quickWinFetcher.data.ok && (
+                    <Banner tone="critical">{g.errorGeneric}</Banner>
+                  )}
                 </BlockStack>
               </Card>
             )}
