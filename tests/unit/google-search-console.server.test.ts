@@ -463,10 +463,10 @@ describe("enrichKeywordsFromGsc", () => {
         }),
         deleteMany: async () => ({ count: 0 }),
       },
-      seoKeyword: {
+      seoKeywordAssignment: {
         findMany: async () => [
-          { id: "k1", keyword: "blue shoes" },
-          { id: "k2", keyword: "missing keyword" },
+          { id: "k1", keyword: { keyword: "blue shoes" } },
+          { id: "k2", keyword: { keyword: "missing keyword" } },
         ],
         update: async (args: any) => {
           updates.push(args);
@@ -512,8 +512,10 @@ describe("enrichKeywordsFromGsc", () => {
         }),
         deleteMany: async () => ({ count: 0 }),
       },
-      seoKeyword: {
-        findMany: async () => opts.keywords,
+      // Assignment shape since the keywords expansion: the keyword text hangs
+      // off the joined keyword row.
+      seoKeywordAssignment: {
+        findMany: async () => opts.keywords.map((k) => ({ id: k.id, keyword: { keyword: k.keyword } })),
         update: async () => ({}),
       },
       seoKeywordSnapshot: {
@@ -544,11 +546,11 @@ describe("enrichKeywordsFromGsc", () => {
 
     expect(upserts).toHaveLength(1);
     expect(upserts[0].where).toEqual({
-      keywordId_capturedAt: { keywordId: "k1", capturedAt: new Date("2026-06-29T00:00:00.000Z") },
+      assignmentId_capturedAt: { assignmentId: "k1", capturedAt: new Date("2026-06-29T00:00:00.000Z") },
     });
     expect(upserts[0].create).toMatchObject({
       shop: "s.myshopify.com",
-      keywordId: "k1",
+      assignmentId: "k1",
       capturedAt: new Date("2026-06-29T00:00:00.000Z"),
       position: 7.5,
       clicks: 12,
@@ -592,7 +594,7 @@ describe("enrichKeywordsFromGsc", () => {
 
     expect(enriched).toBe(1);
     expect(upserts).toHaveLength(1);
-    expect(upserts[0].create.keywordId).toBe("k1");
+    expect(upserts[0].create.assignmentId).toBe("k1");
   });
 });
 

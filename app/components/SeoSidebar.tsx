@@ -17,9 +17,19 @@ import {
 } from "../utils/seo-score";
 import {
   analyzeOnPage,
+  analyzeMultiKeyword,
+  MAX_KEYWORDS_PER_ITEM,
   type KeywordResourceType,
+  type KeywordRole,
   type DensityBand,
 } from "../services/seo/keywords.service";
+
+/** One tracked keyword row as served by /api/seo-keyword. */
+interface SidebarKeywordEntry {
+  id: string; // assignment id
+  keyword: string;
+  role: KeywordRole;
+}
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -60,13 +70,13 @@ interface SeoSidebarProps {
    */
   structuredDataPreviewMode?: boolean;
   /**
-   * Optional target-keyword tracking (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5 / A6
-   * companion). When BOTH resourceId and resourceType are provided, a collapsible
-   * "Target keyword" section is shown: it loads/saves the one tracked keyword for
-   * this item (via /api/seo-keyword) and shows live on-page presence/density
-   * feedback computed from the current edited title/seoTitle/metaDescription/
-   * description as the merchant types. Omit either prop and the section is not
-   * rendered — existing callers are unaffected.
+   * Optional keyword tracking (PLAN_KEYWORDS_EXPANSION.md Phase 1). When BOTH
+   * resourceId and resourceType are provided, the Keywords tab is shown: it
+   * loads/edits the item's tracked keywords (1 primary + secondaries, max 5,
+   * via /api/seo-keyword) and shows live on-page presence/density feedback for
+   * the primary keyword computed from the current edited title/seoTitle/
+   * metaDescription/description as the merchant types. Omit either prop and
+   * the section is not rendered — existing callers are unaffected.
    */
   resourceId?: string;
   resourceType?: KeywordResourceType;
@@ -108,21 +118,25 @@ export function SeoSidebar({
   // that raised the cap to 70 doesn't get flagged at char 61.
   const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix, seoLimits ?? null);
 
-  // ── Target keyword (only when the caller supplies both ids) ──
+  // ── Tracked keywords (only when the caller supplies both ids) ──
+  // Since the keywords expansion (PLAN_KEYWORDS_EXPANSION.md Phase 1) an item
+  // tracks up to MAX_KEYWORDS_PER_ITEM keywords: 1 primary + secondaries.
   const keywordTrackingEnabled = !!resourceId && !!resourceType;
+  const [keywords, setKeywords] = useState<SidebarKeywordEntry[]>([]);
   const [keywordInput, setKeywordInput] = useState("");
-  const [trackedKeyword, setTrackedKeyword] = useState<string | null>(null);
-  const [keywordSaved, setKeywordSaved] = useState(false);
-  const keywordLoadFetcher = useFetcher<{ keyword: string | null }>();
-  const keywordSaveFetcher = useFetcher<{ ok: boolean; keyword?: string | null; error?: string }>();
+  const keywordLoadFetcher = useFetcher<{ keywords: SidebarKeywordEntry[] }>();
+  const keywordOpFetcher = useFetcher<{
+    ok: boolean;
+    keywords?: SidebarKeywordEntry[];
+    error?: string;
+  }>();
 
-  // Reload the tracked keyword whenever the selected item changes. Fetching
+  // Reload the tracked keywords whenever the selected item changes. Fetching
   // eagerly (not gated on showKeywordSection) means the badges below are
   // ready the moment the merchant expands the section.
   useEffect(() => {
-    setKeywordSaved(false);
     if (!resourceId || !resourceType) {
-      setTrackedKeyword(null);
+      setKeywords([]);
       setKeywordInput("");
       return;
     }
@@ -134,45 +148,74 @@ export function SeoSidebar({
 
   useEffect(() => {
     if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
-      const loaded = keywordLoadFetcher.data.keyword ?? "";
-      setTrackedKeyword(keywordLoadFetcher.data.keyword ?? null);
-      setKeywordInput(loaded);
+      setKeywords(keywordLoadFetcher.data.keywords ?? []);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
 
+  // Every mutation answers with the fresh list — no follow-up load needed.
   useEffect(() => {
-    if (keywordSaveFetcher.state === "idle" && keywordSaveFetcher.data?.ok) {
-      setTrackedKeyword(keywordSaveFetcher.data.keyword ?? null);
-      setKeywordSaved(true);
-      const timeout = setTimeout(() => setKeywordSaved(false), 2000);
-      return () => clearTimeout(timeout);
+    if (keywordOpFetcher.state === "idle" && keywordOpFetcher.data?.ok && keywordOpFetcher.data.keywords) {
+      setKeywords(keywordOpFetcher.data.keywords);
+      setKeywordInput("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keywordSaveFetcher.state, keywordSaveFetcher.data]);
+  }, [keywordOpFetcher.state, keywordOpFetcher.data]);
 
-  const handleSaveKeyword = () => {
-    if (!resourceId || !resourceType) return;
-    keywordSaveFetcher.submit(
-      { resourceId, resourceType, keyword: keywordInput },
+  const handleAddKeyword = () => {
+    if (!resourceId || !resourceType || !keywordInput.trim()) return;
+    // First keyword becomes the primary; everything after joins as secondary
+    // (promote later via the row's "make primary" action).
+    const role = keywords.some((k) => k.role === "primary") ? "secondary" : "primary";
+    keywordOpFetcher.submit(
+      { op: "add", resourceId, resourceType, keyword: keywordInput, role },
       { method: "post", action: "/api/seo-keyword" },
     );
   };
 
-  // Live on-page analysis of the TRACKED (saved) keyword against the current
-  // edited field values — so toggling between title/description drafts updates
-  // the badges immediately without re-saving the keyword itself.
+  const handleRemoveKeyword = (id: string) => {
+    if (!resourceId) return;
+    keywordOpFetcher.submit(
+      { op: "remove", id, resourceId },
+      { method: "post", action: "/api/seo-keyword" },
+    );
+  };
+
+  const handleMakePrimary = (id: string) => {
+    if (!resourceId) return;
+    keywordOpFetcher.submit(
+      { op: "makePrimary", id, resourceId },
+      { method: "post", action: "/api/seo-keyword" },
+    );
+  };
+
+  const primaryKeyword = keywords.find((k) => k.role === "primary")?.keyword ?? null;
+
+  // Live on-page analysis of the PRIMARY keyword against the current edited
+  // field values — so toggling between title/description drafts updates the
+  // badges immediately. Secondaries don't carry their own score (it would
+  // dilute or double-count); the aggregate below guards against stuffing.
   const keywordAnalysis = useMemo(() => {
-    if (!trackedKeyword) return null;
+    if (!primaryKeyword) return null;
     return analyzeOnPage({
-      keyword: trackedKeyword,
+      keyword: primaryKeyword,
       title,
       seoTitle,
       metaDescription,
       bodyHtml: description,
       resourceType,
     });
-  }, [trackedKeyword, title, seoTitle, metaDescription, description, resourceType]);
+  }, [primaryKeyword, title, seoTitle, metaDescription, description, resourceType]);
+
+  // Cross-keyword stuffing aggregate (§3.3): combined density of ALL tracked
+  // keywords > 5 % → warn, even when each keyword individually looks fine.
+  const aggregateStuffing = useMemo(() => {
+    if (keywords.length < 2) return false;
+    return analyzeMultiKeyword(
+      { title, seoTitle, metaDescription, bodyHtml: description, resourceType },
+      keywords.map((k) => k.keyword),
+    ).aggregateStuffing;
+  }, [keywords, title, seoTitle, metaDescription, description, resourceType]);
 
   const densityTone: Record<DensityBand, "success" | "warning" | "critical" | undefined> = {
     ok: "success",
@@ -515,30 +558,89 @@ export function SeoSidebar({
         {/* Keywords tab */}
         {currentTab === "keywords" && keywordTrackingEnabled && (
               <BlockStack gap="200">
-                <TextField
-                  label={t.seo?.targetKeywordLabel || "Target keyword"}
-                  autoComplete="off"
-                  placeholder={t.seo?.targetKeywordPlaceholder || "e.g. blue running shoes"}
-                  value={keywordInput}
-                  onChange={setKeywordInput}
-                  disabled={keywordLoadFetcher.state !== "idle"}
-                />
-                <InlineStack gap="200" blockAlign="center">
-                  <Button
-                    size="slim"
-                    onClick={handleSaveKeyword}
-                    loading={keywordSaveFetcher.state !== "idle"}
-                  >
-                    {keywordSaved
-                      ? t.seo?.targetKeywordSaved || "Saved"
-                      : t.seo?.targetKeywordSave || "Save"}
-                  </Button>
-                  {!keywordInput.trim() && trackedKeyword && (
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      {t.seo?.targetKeywordRemoveHint || "Clear the field and save to stop tracking this keyword."}
-                    </Text>
-                  )}
-                </InlineStack>
+                {/* Tracked keywords (1 primary + secondaries, max 5) */}
+                {keywords.map((entry) => (
+                  <InlineStack key={entry.id} gap="200" blockAlign="center" wrap={false}>
+                    <Badge tone={entry.role === "primary" ? "info" : undefined}>
+                      {entry.role === "primary"
+                        ? `★ ${kw?.role?.primary || "Primary"}`
+                        : kw?.role?.secondary || "Secondary"}
+                    </Badge>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text as="span" variant="bodyMd" truncate>
+                        {entry.keyword}
+                      </Text>
+                    </div>
+                    {entry.role === "secondary" && (
+                      <Button
+                        variant="plain"
+                        size="micro"
+                        disabled={keywordOpFetcher.state !== "idle"}
+                        onClick={() => handleMakePrimary(entry.id)}
+                      >
+                        {t.seo?.keywordMakePrimary || "Make primary"}
+                      </Button>
+                    )}
+                    <Button
+                      variant="plain"
+                      tone="critical"
+                      size="micro"
+                      disabled={keywordOpFetcher.state !== "idle"}
+                      onClick={() => handleRemoveKeyword(entry.id)}
+                    >
+                      {t.seo?.keywordRemove || "Remove"}
+                    </Button>
+                  </InlineStack>
+                ))}
+
+                {keywords.length < MAX_KEYWORDS_PER_ITEM ? (
+                  <InlineStack gap="200" blockAlign="end" wrap={false}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <TextField
+                        label={t.seo?.targetKeywordLabel || "Target keyword"}
+                        labelHidden={keywords.length > 0}
+                        autoComplete="off"
+                        placeholder={t.seo?.targetKeywordPlaceholder || "e.g. blue running shoes"}
+                        value={keywordInput}
+                        onChange={setKeywordInput}
+                        disabled={keywordLoadFetcher.state !== "idle"}
+                      />
+                    </div>
+                    <Button
+                      size="slim"
+                      onClick={handleAddKeyword}
+                      disabled={!keywordInput.trim()}
+                      loading={keywordOpFetcher.state !== "idle"}
+                    >
+                      {t.seo?.keywordAddButton || "Add"}
+                    </Button>
+                  </InlineStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
+                      "{max}",
+                      String(MAX_KEYWORDS_PER_ITEM),
+                    )}
+                  </Text>
+                )}
+
+                {keywordOpFetcher.data && !keywordOpFetcher.data.ok && (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    {keywordOpFetcher.data.error === "tooMany"
+                      ? (t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
+                          "{max}",
+                          String(MAX_KEYWORDS_PER_ITEM),
+                        )
+                      : t.seo?.keywordOpError || "Could not update keywords. Please reload and try again."}
+                  </Text>
+                )}
+
+                {aggregateStuffing && (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    {t.seo?.keywordAggregateStuffing ||
+                      "Combined keyword density is above 5% — risk of keyword stuffing."}
+                  </Text>
+                )}
 
                 {keywordAnalysis && (
                   <BlockStack gap="200">

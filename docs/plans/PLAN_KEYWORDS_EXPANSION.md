@@ -23,8 +23,8 @@
 **Search-Console** ([app.seo.search-console.tsx](app/routes/app.seo.search-console.tsx)):
 - Top-Queries (28 Tage) und Quick-Wins (Position 4–20, CTR-schwach) rendern als reine Anzeige-Tabellen — kein Weg von einer GSC-Zeile in den Keyword-Tracker.
 
-**GDPR** ([gdpr.service.ts:200-422](app/services/gdpr.service.ts#L200-L422)):
-- `SeoKeyword` in `SHOP_SCOPED_MODELS` + `redactShopData` per `deleteMany`. Für **jedes** neu eingeführte shop-scoped Modell in diesem Plan gilt dieselbe Pflicht.
+**GDPR** ([gdpr.service.ts:190-225](app/services/gdpr.service.ts#L190-L225)):
+- `SeoKeyword` wird in `redactShopData` per `deleteMany` gelöscht und ist im Coverage-Kommentarblock gelistet. **Achtung:** Es gibt KEINE Code-Konstante `SHOP_SCOPED_MODELS` — die „Liste" ist der Kommentarblock über `redactShopData`; der Drift-Guard lebt in [tests/unit/gdpr.service.test.ts](tests/unit/gdpr.service.test.ts) und parst `schema.prisma`. Für **jedes** neu eingeführte shop-scoped Modell in diesem Plan gilt: `deleteMany` in `redactShopData` + Kommentarblock ergänzen, sonst wird der Guard-Test rot.
 
 **Bekannte Grenzen (Anlass dieses Plans):**
 1. Merchant kann pro Item nur _ein_ Keyword tracken — realistisch wollen sie 3–5.
@@ -51,13 +51,13 @@ Ein **Keyword** ist ab jetzt ein eigenständiges shop-scoped Objekt (nicht mehr 
 - Entry-Point für die **AI-Verteilung** (§4).
 - **Nie** wird eine Gruppe als Ganzes einem Item zugewiesen — Zuweisung passiert immer pro einzelnem Keyword. Das entzieht der Kannibalisierungs-Falle die Grundlage.
 
-**AI-Verteilung** (die Auszahlung des Modells): Merchant lädt 100 Vasen-Keywords in Gruppe „Vasen 2026" → Button _„Auf Produkte verteilen"_ → Embedding-Shortlist pro Keyword (Top-5 semantisch nächste Produkte) → LLM-Feinranking → **Preview-Tabelle** mit Vorschlägen → Merchant akzeptiert/ändert → Batch-Zuweisung als Task.
+**AI-Verteilung** (die Auszahlung des Modells): Merchant lädt 100 Vasen-Keywords in Gruppe „Vasen 2026" → Button _„Auf Produkte verteilen"_ → batchweise LLM-Zuweisung (jeder Call sieht ALLE Keywords + einen Produkt-Batch, Details §5.4 — **keine** Embedding-Pipeline, siehe §10) → **Preview-Tabelle** mit Vorschlägen → Merchant akzeptiert/ändert → Batch-Zuweisung als Task.
 
 ---
 
 ## 2. Datenmodell-Migration
 
-**Neue Modelle** (alle shop-scoped, in `SHOP_SCOPED_MODELS` + `redactShopData` eintragen — Drift-Guard-Test schlägt sonst fehl).
+**Neue Modelle** (alle shop-scoped — in `redactShopData` per `deleteMany` löschen + im Coverage-Kommentarblock listen, sonst schlägt der Drift-Guard-Test fehl; siehe §0 GDPR-Hinweis).
 
 ```prisma
 model SeoKeyword {
@@ -101,9 +101,13 @@ model SeoKeywordAssignment {
 
   // Höchstens EIN primary pro (Item, Locale) — via App-Layer sichergestellt,
   // Prisma kann das nicht direkt ausdrücken (Locale hängt am Keyword). Der
-  // Assignment-Writer liest die Locale des Keywords und prüft/tauscht.
+  // Assignment-Writer liest die Locale des Keywords und macht Check+Swap
+  // IN EINER TRANSAKTION (sonst können zwei parallele Writer zwei Primaries
+  // erzeugen). Rest-Duplikate, die trotzdem entstehen, fängt die
+  // Kannibalisierungs-Karte aus Phase 5 (§7.1) sichtbar ab.
   @@unique([shop, keywordId, resourceId])
   @@index([shop, resourceType, resourceId])
+  @@index([shop, resourceId]) // Handler-Query (§2.2) filtert OHNE resourceType
   @@index([shop, keywordId])
 }
 
@@ -144,7 +148,8 @@ Die alte `SeoKeyword`-Zeile war effektiv „Keyword + primary Assignment + GSC-D
 2. Für jede alte Zeile:
    - `INSERT INTO SeoKeyword(shop, keyword, locale)` mit `upsert` (Duplikate zusammenfassen — dieselbe Merchant-Keyword-Kombination kann auf mehreren Items existiert haben);
    - `INSERT INTO SeoKeywordAssignment(...)` mit `role='primary'`, GSC-Feldern kopiert;
-3. Alte Tabelle droppen.
+3. **`SeoKeywordSnapshot` umhängen** (im ursprünglichen Plan übersehen): Die Ranking-Historie hing per `keywordId` an der alten Zeile. Da GSC-Daten pro (query, page) sind, gehört sie ans **Assignment**. Trick der Migration: das Assignment übernimmt die **id der Legacy-Zeile** (Legacy-Zeile ≈ genau ein Primary-Assignment, 1:1) — dann bleiben die Snapshot-FK-Werte gültig und es reicht ein Spalten-Rename `keywordId → assignmentId` + neuer FK auf `SeoKeywordAssignment`.
+4. Alte Tabelle droppen.
 
 **Rollback-Sicherheit:** Prisma-Migrations sind hier explizit als `-- SQL` mit `BEGIN … COMMIT` zu schreiben (kein `prisma migrate` Automagic-Rename), damit ein Fehler nichts halb hinterlässt. Datenverlust-Risiko ist real → **vorher Snapshot auf Railway erzwingen** und die Migration hinter einem `MAINTENANCE_MODE`-Flag laufen lassen (Merchant-Traffic pausiert).
 
@@ -162,9 +167,11 @@ db.seoKeywordAssignment.findMany({
 
 Das ergibt `[{ role:'primary', keyword:{…} }, { role:'secondary', … }, …]`. Prompt-Erweiterung siehe Phase 1.
 
+**Index-Hinweis:** Diese Query filtert auf `(shop, resourceId)` ohne `resourceType` — dafür existiert der dedizierte `@@index([shop, resourceId])` im Schema oben. (Alternative wäre, `resourceType` in die Handler-Query aufzunehmen; der Handler kennt den Typ, aber der Extra-Index ist robuster gegenüber weiteren Callern.)
+
 ### 2.3 GDPR (Pflicht, sonst Test rot)
 
-Neu in `SHOP_SCOPED_MODELS` und `redactShopData` ([gdpr.service.ts:200](app/services/gdpr.service.ts#L200)):
+Neu in `redactShopData` (per `deleteMany`) und im Coverage-Kommentarblock ([gdpr.service.ts:190-225](app/services/gdpr.service.ts#L190-L225)) — es gibt keine Code-Konstante, siehe §0:
 - `SeoKeyword` (Name bleibt, Struktur neu)
 - `SeoKeywordAssignment` (Cascade über `keyword.shop` würde reichen — trotzdem explizit per `deleteMany({ where: { shop } })` löschen, weil der Drift-Guard-Test _shop-Feld_ prüft, nicht Cascades)
 - `SeoKeywordGroup`
@@ -200,7 +207,11 @@ if (secondaries.length) {
 }
 ```
 
-**Hart erzwungene Regel im Handler (nicht nur Prompt):** Nach der Generation läuft ein Post-Check über `analyzeOnPage` — wenn Density > 3 % für _irgendein_ Keyword → **Regenerate mit Warnung** an das Model („previous output stuffed keyword X, rewrite with lower density"). Max 1 Retry, danach akzeptieren und Warn-Banner im UI. Verhindert offensichtliche Stuffing-Regressionen.
+**Hart erzwungene Regel im Handler (nicht nur Prompt):** Nach der Generation läuft ein Post-Check — **feldtyp-abhängig**, weil eine globale Density-Schwelle für Kurzfelder nicht funktioniert (ein 5-Wort-SEO-Titel mit einem 2-Wort-Keyword hat per Definition ~40 % Density):
+- **Long-Content** (`description`/Body): Density-Check über `analyzeOnPage` — Density > 3 % für _irgendein_ Keyword → Regenerate.
+- **Kurzfelder** (`title`, `seoTitle`, `metaDescription`): kein Density-Check. Stattdessen Occurrence-Check: dasselbe Keyword > 1× im Output → Regenerate.
+
+Bei Verstoß: **Regenerate mit Warnung** an das Model („previous output stuffed keyword X, rewrite with lower density/single mention"). Max 1 Retry, danach akzeptieren und Warn-Banner im UI. Verhindert offensichtliche Stuffing-Regressionen.
 
 ### 3.3 On-Page-Analyse
 
@@ -239,6 +250,8 @@ Der Handler:
 1. Resolviert `page → resourceType/resourceId` (falls page dabei ist).
 2. Legt `SeoKeyword` an (upsert nach `(shop, keyword, locale='')`).
 3. Legt `SeoKeywordAssignment` mit `role` und mit den GSC-Metriken _sofort befüllt_ an — die 4 Werte liegen ja bereits im aktuellen Loader-Result vor.
+
+**Locale-Hinweis:** GSC-Queries tragen keine Locale — der Default `locale=''` ist bei mehrsprachigen Shops nicht immer richtig (eine französische Query rankt auf der FR-Seite). Da der URL→Item-Resolver den Pfad ohnehin parst, soll er ein erkanntes Locale-Prefix (`/fr/products/...`) mit extrahieren und als **Locale-Vorschlag** an den Adopt-Handler geben (Merchant kann übersteuern). Siehe auch §11 Frage 6.
 
 ### 4.3 UI-Feedback
 
@@ -322,7 +335,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
    ```
    **Anti-Kannibalisierungs-Regel im Prompt** ist Pflicht: „Weise jedes Keyword höchstens einem Primary in diesem Batch zu."
 
-3. **Merge über Batches.** Weil jeder Batch nur seine Produkte sieht, kann dasselbe Keyword in mehreren Batches ein Primary bekommen. Merge-Regel: für jedes Keyword das Primary mit **höchster Confidence** gewinnt; alle anderen Primaries werden zu Secondaries **oder** verworfen (wenn die Cap der Secondaries erreicht ist). Diese Cross-Batch-Auflösung passiert deterministisch im Service, kostet kein weiteres LLM.
+3. **Merge über Batches.** Weil jeder Batch nur seine Produkte sieht, kann dasselbe Keyword in mehreren Batches ein Primary bekommen. Merge-Regel: für jedes Keyword das Primary mit **höchster Confidence** gewinnt; alle anderen Primaries werden zu Secondaries **oder** verworfen (wenn die Cap der Secondaries erreicht ist). Diese Cross-Batch-Auflösung passiert deterministisch im Service, kostet kein weiteres LLM. **Einschränkung ehrlich benennen:** Confidence-Werte aus verschiedenen LLM-Calls sind nicht kalibriert („0.83 aus Batch 3" vs „0.79 aus Batch 7" ist kein echter Vergleich) — als Tie-Breaker-Heuristik okay, aber nicht als verlässliches Ranking verkaufen; die Preview-Tabelle ist der eigentliche Qualitäts-Gate.
 
 4. **Preview-Tabelle** rendern — _keine_ Auto-Anwendung.
    - Spalten: Keyword · vorgeschlagenes Primary · vorgeschlagene Secondaries · Konfidenz · Begründung (aufklappbar).
@@ -338,7 +351,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 
 **Randfälle:**
 - **Nur ein Batch nötig** (Store hat ≤ `ITEMS_PER_BATCH` Produkte) → Merge-Schritt entfällt, direkt in die Preview. Für einen typischen kleinen Shop bleibt es damit tatsächlich bei **einem** LLM-Call, wie du es beschrieben hast.
-- **Sehr großer Store** (>1000 Produkte in Zielmenge): das Modal warnt vorher („Diese Verteilung wird ~67 LLM-Calls auslösen, geschätzt ~1,20 €. Fortfahren?"). Cost-Preview kommt aus einer trivialen Vorab-Rechnung, nicht aus einem Test-Call.
+- **Sehr großer Store** (>1000 Produkte in Zielmenge): das Modal warnt vorher („Diese Verteilung wird ~67 LLM-Calls auslösen, geschätzt ~2,70 $. Fortfahren?"). Rechnung: 67 × ~5,8k Input ≈ 390k Tokens ($1,17) **plus** 67 × ~1,5k Output ≈ 100k Tokens ($1,50). Cost-Preview kommt aus einer trivialen Vorab-Rechnung, nicht aus einem Test-Call — und die Formel MUSS Output-Tokens mitrechnen (Output ist bei diesem Task der teurere Posten).
 - **Kein passendes Item für ein Keyword** → `primaryItemId=null` aus dem LLM → Zeile in der Preview als „keine Zuweisung" markiert, Merchant kann das Keyword manuell zuweisen oder ignorieren.
 
 **Optionaler Fallback (Phase 6, nicht jetzt bauen):** Wenn Merchants mit sehr großen Katalogen (5000+ Produkte) systematisch klagen, kann eine **optionale** Embedding-Vorstufe pro Keyword die Zielmenge auf Top-50 Produkte reduzieren und die Batch-Anzahl senken. Erst dann bauen, wenn der Bedarf empirisch da ist — nicht spekulativ.
@@ -357,7 +370,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 - Priorität-Spalte + Prompt-Sortierung
 - CSV-Importer (klein → sync, groß → Task)
 - LLM-Verteiler (`app/services/seo/keyword-distribution.service.ts`) — Batch-Splitting, Prompt-Bau, JSON-Parsing, Cross-Batch-Merge
-- Cost-Preview-Utility (rein rechnerisch, kein Netz-Call)
+- Cost-Preview-Utility (rein rechnerisch, kein Netz-Call; Input- UND Output-Tokens in der Formel)
 - Task-Runner `runDistributeKeywords` + Recovery-Registrierung
 - Preview-UI + Bulk-Apply-UI
 - i18n (viele neue Strings — vor allem Preview-Tabelle + Konflikt-Meldungen + Cost-Preview)
@@ -376,7 +389,9 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 - Erweiterungs-Muster (aus etablierter SEO-Praxis):
   - `<seed> a`, `<seed> b`, … `<seed> z` → 26 Calls → 100–200 Long-Tail-Vorschläge.
   - `<question-word> <seed>` (wie/was/wo/…) → Fragen-Vorschläge (gut für Blog-Ideen).
-- Rate: Google droßelt bei > ~5 QPS. Serverseitig sequentiell mit ~200 ms delay + `p-limit` (bereits im repo verwendet?). Pro Seed 30 Sekunden Laufzeit → **synchron akzeptabel**, kein Task nötig.
+- Rate: Google drosselt bei > ~5 QPS. Serverseitig **sequentiell mit ~200 ms Delay** — eine simple `for`-Schleife, keine Dependency nötig (`p-limit` ist nicht im Repo und wird für sequentielles Fetchen auch nicht gebraucht). Pro Seed ~30 Sekunden Laufzeit → grenzwertig für eine synchrone Remix-Action im embedded Iframe (langer Spinner, Timeout-Risiko hinter Proxies). Start: synchron mit reduziertem Umfang (Direkt-Vorschläge + Fragen sofort, Alphabet-Erweiterung als opt-in „Mehr laden") — wird das zu lang, auf Task umstellen.
+
+**⚠ Größtes Risiko dieser Phase — vor JEDEM UI-Bau validieren:** Railway-IPs sind Datacenter-IPs, und Google drosselt/blockt `suggestqueries` für Datacenter-Traffic deutlich aggressiver als für Consumer-IPs — 26+ Calls pro Seed können schon beim ersten Merchant scheitern. **Pflicht-Spike (~1 h) von Railway aus**, ob der Endpoint dort überhaupt zuverlässig antwortet. Phase 4 ist als „nice-to-have, kann ersatzlos sterben" einzustufen (Escape-Hatch §6.3 existiert bereits); scheitert der Spike, wird die Phase gestrichen oder auf eine bezahlte Quelle (Phase 6/DataForSEO) verschoben.
 
 ### 6.2 UI
 
@@ -394,6 +409,7 @@ Google's Autocomplete-Endpoint hat keine offizielle API und keine dokumentierten
 
 ### 6.4 Deliverables Phase 4
 
+- **Railway-Spike (VOR allem anderen, ~1 h):** `suggestqueries`-Erreichbarkeit von Railway aus verifizieren (§6.1) — scheitert er, entfällt der Rest dieser Liste
 - `keyword-suggestions.service.ts` (Autocomplete-Fetcher + Alphabet-Erweiterung + Question-Modifier)
 - Rate-Limiter
 - Recherche-Panel-UI
@@ -463,7 +479,7 @@ GROUP BY keywordId, resourceType HAVING c > 1;
   - CSV-Parser: Encoding, Header-Varianten (Reuse [redirects-csv.ts](app/services/seo/redirects-csv.ts) Test-Fixtures).
   - URL→Item-Resolver (Query-Params, Trailing-Slash, Locale-Prefix).
   - Autocomplete-Fetcher: Rate-Limit, 429-Handling, malformed JSON.
-  - Embedding-Cache: Invalidierung bei contentHash-Änderung.
+  - Cross-Batch-Merge des Verteilers: Confidence-Gewinner, Secondary-Abstufung, Cap-Verwurf.
 - **Integration:**
   - Distribution end-to-end mit gemocktem LLM-Provider (deterministische Zuweisungen prüfen).
   - Assignment-Writer: Primary-Konflikt löst Rolle-Swap aus, nicht Duplikat.
@@ -491,3 +507,4 @@ Damit der Scope nicht wächst:
 3. **Verteilungs-Batch-Größe (`ITEMS_PER_BATCH`)** — Startwert 15 basiert auf grober Kontext-Rechnung (§5.4). Bei ersten echten Läufen kalibrieren: bricht die JSON-Antwort ab? Wird die Zuweisungs-Qualität schlechter bei größeren Batches (weil das Modell die Übersicht verliert)? Feature-Flag oder Env-Var pro Deployment einbauen, damit ohne Redeploy justiert werden kann.
 4. **Provider-Wahl für die Verteilung** — Claude Sonnet ist wegen JSON-Zuverlässigkeit ein guter Default. Gemini 2.x wäre billiger, hat aber historisch mehr Slop bei strukturiertem Output. Vorschlag: Sonnet als default, im `AISettings.aiProvider` überschreibbar (Merchant weiß dann selbst, was er tut).
 5. **Sidebar-UI** — passt eine Chip-Liste in die aktuelle Sidebar-Breite, oder braucht es ein Modal? Zu prüfen bei Umsetzungsstart, nicht jetzt.
+6. **Locale beim GSC-Adopt** — reicht der Locale-Prefix-Vorschlag aus dem URL-Resolver (§4.2), oder braucht es einen expliziten Locale-Select im Adopt-Modal? Bei Shops ohne Fremdsprachen ist `locale=''` immer korrekt; die Frage stellt sich nur für mehrsprachige Shops.

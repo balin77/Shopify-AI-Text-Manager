@@ -196,9 +196,10 @@ export class GscAutoSyncService {
         return;
       }
 
-      // Cheap count before burning GSC quota — a shop with no tracked
-      // keywords has nothing for enrichKeywordsFromGsc to write.
-      const keywordCount = await db.seoKeyword.count({ where: { shop } });
+      // Cheap count before burning GSC quota — a shop with no keyword
+      // assignments has nothing for enrichKeywordsFromGsc to write (the GSC
+      // columns live on the assignment, not the keyword).
+      const keywordCount = await db.seoKeywordAssignment.count({ where: { shop } });
       if (keywordCount === 0) {
         stats.skippedNoKeywords++;
         await this.stamp(shop, now);

@@ -199,7 +199,9 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings, Seo404Hit, SeoKeyword, SeoKeywordSnapshot,
+ *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
+ *      SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample          (all scoped by `shop`)
@@ -415,15 +417,36 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
 
-    // Ranking history for SEO keywords (shop-scoped). Deleted before SeoKeyword
-    // even though it also cascades on keywordId, so the count logged here is
-    // meaningful rather than always zero.
+    // Ranking history for SEO keyword assignments (shop-scoped). Deleted
+    // before the assignment/keyword tables even though it also cascades on
+    // assignmentId, so the count logged here is meaningful rather than
+    // always zero.
     const seoKeywordSnapshotsDeleted = await tx.seoKeywordSnapshot.deleteMany({
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoKeywordSnapshotsDeleted.count} SEO keyword snapshots`);
 
-    // SEO tab Phase 5: per-item target keywords (shop-scoped).
+    // Keywords expansion (PLAN_KEYWORDS_EXPANSION.md §2.3): assignment /
+    // group / membership rows all carry their own shop column and are deleted
+    // explicitly (the schema-coverage guard checks the shop field, not
+    // cascades), children before parents so the logged counts stay meaningful.
+    const seoKeywordAssignmentsDeleted = await tx.seoKeywordAssignment.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordAssignmentsDeleted.count} SEO keyword assignments`);
+
+    const seoKeywordGroupMembershipsDeleted = await tx.seoKeywordGroupMembership.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordGroupMembershipsDeleted.count} SEO keyword group memberships`);
+
+    const seoKeywordGroupsDeleted = await tx.seoKeywordGroup.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordGroupsDeleted.count} SEO keyword groups`);
+
+    // SEO tab Phase 5: tracked keywords (shop-scoped; standalone objects since
+    // the keywords expansion — assignment rows above carry the item linkage).
     const seoKeywordsDeleted = await tx.seoKeyword.deleteMany({
       where: { shop: shop_domain },
     });

@@ -60,7 +60,7 @@ import {
   type QueryDelta,
   type LostQuery,
 } from "../services/google-search-console.server";
-import { normalizeKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
+import { assignKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -468,23 +468,19 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     }
     // Quick wins always track against the PRIMARY locale ("") — same
     // convention as the keyword→AI-prompt bridge in text-generation.handler.ts,
-    // which only ever looks up locale "". Don't overwrite an existing keyword:
+    // which only ever looks up locale "". Don't overwrite an existing primary:
     // the merchant may have deliberately chosen a different target keyword for
-    // this resource already, and a one-click "optimize" shouldn't clobber that.
-    const existing = await db.seoKeyword.findUnique({
-      where: { shop_resourceId_locale: { shop: session.shop, resourceId, locale: "" } },
+    // this resource already, and a one-click "optimize" shouldn't clobber that
+    // — assignKeyword without demoteExisting returns `primaryExists` instead
+    // of writing, which we treat as "already tracked, fine". A full item at
+    // the keyword cap (`tooMany`) is equally fine to skip silently here.
+    await assignKeyword(db, session.shop, {
+      resourceType,
+      resourceId,
+      keyword: query,
+      locale: "",
+      role: "primary",
     });
-    if (!existing) {
-      await db.seoKeyword.create({
-        data: {
-          shop: session.shop,
-          resourceType,
-          resourceId,
-          keyword: normalizeKeyword(query),
-          locale: "",
-        },
-      });
-    }
     return json<ActionResult>({ ok: true, kind: "quickWinTracked" });
   }
 

@@ -10,6 +10,33 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
+import { analyzeOnPage, getItemKeywords } from "~/services/seo/keywords.service";
+
+/**
+ * Post-generation stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). Field-type
+ * aware, because one global density threshold can't work: a 5-word SEO title
+ * containing a 2-word keyword is ~40 % density by definition.
+ *   - long content: density > 3 % for any tracked keyword
+ *   - short fields: the same keyword occurring more than once
+ * Returns the first offending keyword, or null when the output is clean.
+ */
+function findStuffedKeyword(
+  generated: string,
+  keywords: string[],
+  isLongContent: boolean,
+): string | null {
+  for (const keyword of keywords) {
+    if (!keyword) continue;
+    // analyzeOnPage is pure; feeding the generated text as body gives us
+    // occurrence + density counting with the same word-boundary rules the
+    // keywords tab uses.
+    const analysis = analyzeOnPage({ keyword, bodyHtml: generated });
+    if (isLongContent ? analysis.densityPct > 3 : analysis.occurrences > 1) {
+      return keyword;
+    }
+  }
+  return null;
+}
 
 export async function handleFormatField(ctx: AIActionContext): Promise<Response> {
   const { session, db, settings, contentType, itemId } = ctx;
@@ -135,13 +162,13 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   const formatExample = genFormatKey ? getInstructionWithDefault(genAiInstructions, genFormatKey) : null;
   const fieldInstructions = genInstructionsTextKey ? getInstructionWithDefault(genAiInstructions, genInstructionsTextKey) : null;
 
-  // SEO Phase 5→AI bridge: the keywords tab lets a merchant track one target
-  // keyword per item, then flags when that keyword is missing from the
-  // title/meta — but generation itself never knew about it. `itemId` here is
-  // the same Shopify GID the keywords route stores as `resourceId` (both come
-  // straight from the content editor's `selectedItem.id`, e.g. db.product.id),
-  // and locale "" is the primary-locale row the keywords feature manages, so
-  // this lookup matches keys 1:1 with no normalization needed.
+  // SEO keywords→AI bridge (PLAN_KEYWORDS_EXPANSION.md §2.2/§3.2): an item can
+  // track one primary + several secondary keywords per locale; generation
+  // weaves them into the prompt. `itemId` here is the same Shopify GID the
+  // keywords feature stores as `resourceId` (both come straight from the
+  // content editor's `selectedItem.id`, e.g. db.product.id), and locale "" is
+  // the primary-locale keyword set, so this lookup matches keys 1:1 with no
+  // normalization needed.
   //
   // Locale dimension (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5b): `mainLanguage`
   // here is a human-readable display name (e.g. "German"), not a Shopify
@@ -149,15 +176,18 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   // language — locale "" therefore stays correct. If a future translation-
   // generation flow starts passing an explicit target locale/language code
   // through `ctx`/formData, the lookup below should switch to that locale's
-  // SeoKeyword row instead of hardcoding "".
-  const trackedKeywordRow = ["title", "seoTitle", "metaDescription", "description"].includes(fieldType)
-    ? await db.seoKeyword.findUnique({
-        where: { shop_resourceId_locale: { shop: session.shop, resourceId: itemId, locale: "" } },
-      })
-    : null;
-  const sanitizedTrackedKeyword = trackedKeywordRow
-    ? sanitizePromptInput(trackedKeywordRow.keyword, { fieldType: "general" })
-    : null;
+  // keyword set instead of hardcoding "".
+  const trackedKeywordRows = ["title", "seoTitle", "metaDescription", "description"].includes(fieldType)
+    ? await getItemKeywords(db, session.shop, itemId, "")
+    : [];
+  const sanitizedTrackedKeyword = (() => {
+    const primary = trackedKeywordRows.find((r) => r.role === "primary");
+    return primary ? sanitizePromptInput(primary.keyword, { fieldType: "general" }) : null;
+  })();
+  const sanitizedSecondaryKeywords = trackedKeywordRows
+    .filter((r) => r.role === "secondary")
+    .map((r) => sanitizePromptInput(r.keyword, { fieldType: "general" }))
+    .filter(Boolean);
 
   // Build field-type-aware prompt
   let prompt = `Create an improved ${genFieldLabel} for the following content.`;
@@ -183,6 +213,9 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
 
   if (sanitizedTrackedKeyword) {
     prompt += `\n- Naturally include the target keyword "${sanitizedTrackedKeyword}" (do not stuff it).`;
+  }
+  if (sanitizedSecondaryKeywords.length) {
+    prompt += `\n- If it fits naturally, you may also mention: ${sanitizedSecondaryKeywords.map((s) => `"${s}"`).join(", ")}. Only use those that flow with the sentence; skip any that would sound forced or repetitive. Never use more than one per sentence.`;
   }
 
   if (genField?.type === "slug") {
@@ -256,12 +289,40 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
     });
 
     // Use appropriate method based on field type
-    let generatedContent: string;
     const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
-    if (isGenLongContent) {
-      generatedContent = await aiService.generateProductDescription(sanitizedContextTitle, prompt, imageUrlToSend);
-    } else {
-      generatedContent = await aiService.generateProductTitle(prompt, imageUrlToSend);
+    const generate = (p: string) =>
+      isGenLongContent
+        ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend)
+        : aiService.generateProductTitle(p, imageUrlToSend);
+    let generatedContent = await generate(prompt);
+
+    // Stuffing guard (§3.2): hard-enforced in the handler, not just the
+    // prompt. One retry with an explicit warning; if the retry still stuffs,
+    // accept the output and surface a warning flag to the client.
+    const allTrackedKeywords = [
+      ...(sanitizedTrackedKeyword ? [sanitizedTrackedKeyword] : []),
+      ...sanitizedSecondaryKeywords,
+    ];
+    let keywordStuffingWarning = false;
+    if (allTrackedKeywords.length > 0) {
+      const stuffed = findStuffedKeyword(generatedContent, allTrackedKeywords, isGenLongContent);
+      if (stuffed) {
+        logger.debug("[API-AI] Keyword stuffing detected, regenerating once", {
+          context: "AI",
+          fieldType,
+          keyword: stuffed,
+        });
+        const retryPrompt =
+          prompt +
+          `\n\nWARNING: A previous attempt stuffed the keyword "${stuffed}". Rewrite with ${
+            isGenLongContent
+              ? "lower keyword density (well below 3%) — mention each keyword only where it truly fits"
+              : "each keyword mentioned at most once"
+          }.`;
+        generatedContent = await generate(retryPrompt);
+        keywordStuffingWarning =
+          findStuffedKeyword(generatedContent, allTrackedKeywords, isGenLongContent) !== null;
+      }
     }
 
     // Sanitize slugs
@@ -283,7 +344,9 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
     return json({
       success: true,
       generatedContent,
-      fieldType
+      fieldType,
+      // §3.2: retry still stuffed — client may show a warning banner.
+      keywordStuffingWarning,
     });
   } catch (error: unknown) {
     // Update task to failed

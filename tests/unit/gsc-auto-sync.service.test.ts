@@ -89,7 +89,7 @@ vi.mock("~/db.server", () => ({
       updateMany: (args: any) => mockUpdateMany(args),
     },
     aISettings: { findUnique: (args: any) => mockAiFindUnique(args) },
-    seoKeyword: { count: (args: any) => mockKeywordCount(args) },
+    seoKeywordAssignment: { count: (args: any) => mockKeywordCount(args) },
   },
 }));
 

@@ -9,7 +9,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -31,13 +31,15 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone } from "../utils/seo-score";
 import {
   analyzeOnPage,
-  listKeywords,
-  setKeyword,
-  deleteKeyword,
+  listAssignments,
+  assignKeyword,
+  promoteAssignment,
+  removeAssignment,
   MAX_KEYWORD_LENGTH,
   buildTranslatedContentInput,
   TRANSLATED_CONTENT_KEYS,
   type KeywordResourceType,
+  type KeywordRole,
   type DensityBand,
   type TranslationRow,
 } from "../services/seo/keywords.service";
@@ -73,7 +75,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const primaryLocale = shopLocales.find((l: any) => l.primary);
   const secondaryLocales = shopLocales.filter((l: any) => !l.primary && l.published);
 
-  const rows = await listKeywords(db, shop);
+  // Rows are ASSIGNMENTS since the keywords expansion (one keyword can be
+  // assigned to several items; an item carries 1 primary + N secondaries).
+  const rows = await listAssignments(db, shop);
 
   // Resolve item content for the tracked keywords, batched per type.
   const idsByType: Record<string, string[]> = {};
@@ -181,18 +185,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       resourceId: row.resourceId,
       keyword: row.keyword,
       locale: row.locale,
+      role: row.role,
       // Display code for the Locale column badge: primary rows are stored as
       // "" so they show the shop's actual primary locale code, not a blank badge.
       localeDisplay: row.locale || primaryLocale?.locale || "",
       itemTitle: c?.title ?? "",
       itemMissing: !c,
-      score: analysis.score,
+      // Only the primary carries the 0-100 on-page score — it is
+      // presence-weighted and would dilute or double-count across several
+      // keywords. Secondaries keep presence/density (factual per keyword).
+      score: row.role === "primary" ? analysis.score : null,
       densityPct: analysis.densityPct,
       densityBand: analysis.densityBand,
       presence: analysis.presence,
       gscPosition: row.gscPosition,
     };
   });
+
+  // Stable listing: item → role (primary first) → keyword, so an item's
+  // keyword block reads as one visual unit instead of shuffling on updates.
+  keywords.sort(
+    (a, b) =>
+      (a.itemTitle || a.resourceId).localeCompare(b.itemTitle || b.resourceId) ||
+      a.role.localeCompare(b.role) ||
+      a.keyword.localeCompare(b.keyword),
+  );
 
   // Lightweight per-type pickers for the add form (capped).
   const [products, collections, articles, pages] = await Promise.all([
@@ -219,7 +236,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({ keywords, pickers, localeOptions });
 };
 
-type ActionResult = { ok: true; kind: "saved" | "deleted" } | { ok: false; error: string };
+type ActionResult =
+  | { ok: true; kind: "saved" | "deleted" | "promoted" }
+  | { ok: false; error: "invalid" | "tooMany"; existingKeyword?: never }
+  // A different keyword already holds the primary role for this (item, locale)
+  // — the UI confirms the swap and re-submits with demoteExisting=true.
+  | { ok: false; error: "primaryExists"; existingKeyword: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
@@ -232,6 +254,9 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const resourceId = getFormString(form, "resourceId");
     const keyword = getFormString(form, "keyword");
     const localeInput = getFormString(form, "locale");
+    const roleInput = getFormString(form, "role");
+    const role: KeywordRole = roleInput === "secondary" ? "secondary" : "primary";
+    const demoteExisting = getFormString(form, "demoteExisting") === "true";
     if (
       !RESOURCE_TYPES.includes(resourceType) ||
       !resourceId ||
@@ -253,14 +278,36 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       }
       locale = localeInput;
     }
-    await setKeyword(db, session.shop, { resourceType, resourceId, keyword, locale });
+    const result = await assignKeyword(db, session.shop, {
+      resourceType,
+      resourceId,
+      keyword,
+      locale,
+      role,
+      demoteExisting,
+    });
+    if (!result.ok) {
+      if (result.reason === "primaryExists") {
+        return json<ActionResult>(
+          { ok: false, error: "primaryExists", existingKeyword: result.existingKeyword },
+          { status: 409 },
+        );
+      }
+      return json<ActionResult>({ ok: false, error: "tooMany" }, { status: 409 });
+    }
     return json<ActionResult>({ ok: true, kind: "saved" });
   }
 
   if (actionType === "deleteKeyword") {
     const id = getFormString(form, "id");
-    if (id) await deleteKeyword(db, session.shop, id);
+    if (id) await removeAssignment(db, session.shop, id);
     return json<ActionResult>({ ok: true, kind: "deleted" });
+  }
+
+  if (actionType === "makePrimary") {
+    const id = getFormString(form, "id");
+    if (id) await promoteAssignment(db, session.shop, id);
+    return json<ActionResult>({ ok: true, kind: "promoted" });
   }
 
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
@@ -300,21 +347,67 @@ export default function SeoKeywords() {
   // "" = primary locale (default). Not reset after save, same as `type`, so
   // tracking several keywords in a row for the same secondary locale is quick.
   const [locale, setLocale] = useState("");
-  // Which row's delete is in flight — the rowFetcher is shared across rows,
+  // Role for the add form (Phase 1): primary is the default; secondaries
+  // supplement it (max 5 keywords per item, enforced server-side).
+  const [role, setRole] = useState<KeywordRole>("primary");
+  // Which row's action is in flight — the rowFetcher is shared across rows,
   // so this is what lets us spinner the right button and disable the rest.
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingRowId, setPendingRowId] = useState<string | null>(null);
+  // Last setKeyword payload, kept for the primary-swap confirm flow: when the
+  // server answers `primaryExists`, we confirm with the merchant and re-submit
+  // the SAME payload with demoteExisting=true.
+  const lastSubmitRef = useRef<Record<string, string> | null>(null);
 
   useEffect(() => {
-    if (saveFetcher.state === "idle" && saveFetcher.data?.ok && saveFetcher.data.kind === "saved") {
+    if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
+    const data = saveFetcher.data;
+    if (data.ok && data.kind === "saved") {
       setKeywordInput("");
       setItemId("");
       setItemInputValue("");
+      lastSubmitRef.current = null;
+      return;
     }
+    if (!data.ok && data.error === "primaryExists" && lastSubmitRef.current) {
+      const payload = lastSubmitRef.current;
+      lastSubmitRef.current = null; // one confirm per submission
+      const existing = data.existingKeyword;
+      void (async () => {
+        const ok = await confirm({
+          title: k.primarySwapTitle || "Replace primary keyword?",
+          message: (
+            k.primarySwapBody ||
+            `"${existing}" is currently the primary keyword for this item. Demote it to secondary and make "${payload.keyword}" the new primary?`
+          )
+            .replace("{existing}", existing)
+            .replace("{next}", payload.keyword),
+          confirmLabel: k.primarySwapConfirm || "Replace",
+        });
+        if (ok) {
+          saveFetcher.submit({ ...payload, demoteExisting: "true" }, { method: "post" });
+        }
+      })();
+    }
+    // confirm/saveFetcher are stable; k strings don't change mid-flow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveFetcher.state, saveFetcher.data]);
 
   useEffect(() => {
-    if (rowFetcher.state === "idle") setPendingDeleteId(null);
+    if (rowFetcher.state === "idle") setPendingRowId(null);
   }, [rowFetcher.state]);
+
+  const handleSubmitKeyword = () => {
+    const payload: Record<string, string> = {
+      actionType: "setKeyword",
+      resourceType: type,
+      resourceId: itemId,
+      keyword,
+      locale,
+      role,
+    };
+    lastSubmitRef.current = payload;
+    saveFetcher.submit(payload, { method: "post" });
+  };
 
   const handleDeleteKeyword = async (row: { id: string; keyword: string }) => {
     const ok = await confirm({
@@ -326,8 +419,13 @@ export default function SeoKeywords() {
       destructive: true,
     });
     if (!ok) return;
-    setPendingDeleteId(row.id);
+    setPendingRowId(row.id);
     rowFetcher.submit({ actionType: "deleteKeyword", id: row.id }, { method: "post" });
+  };
+
+  const handleMakePrimary = (row: { id: string }) => {
+    setPendingRowId(row.id);
+    rowFetcher.submit({ actionType: "makePrimary", id: row.id }, { method: "post" });
   };
 
   const items = pickers[type] ?? [];
@@ -436,20 +534,32 @@ export default function SeoKeywords() {
                   onChange={setLocale}
                 />
               </div>
+              <div style={{ minWidth: "150px" }}>
+                <Select
+                  label={k.roleLabel || "Role"}
+                  options={[
+                    { label: k.role?.primary || "Primary", value: "primary" },
+                    { label: k.role?.secondary || "Secondary", value: "secondary" },
+                  ]}
+                  value={role}
+                  onChange={(v) => setRole(v as KeywordRole)}
+                />
+              </div>
               <Button
                 variant="primary"
                 disabled={!canSave}
                 loading={saveFetcher.state !== "idle"}
-                onClick={() =>
-                  saveFetcher.submit(
-                    { actionType: "setKeyword", resourceType: type, resourceId: itemId, keyword, locale },
-                    { method: "post" },
-                  )
-                }
+                onClick={handleSubmitKeyword}
               >
                 {k.addButton}
               </Button>
             </InlineStack>
+            {saveFetcher.data && !saveFetcher.data.ok && saveFetcher.data.error === "tooMany" && (
+              <Banner tone="warning">
+                {k.tooManyKeywords ||
+                  "This item already tracks the maximum number of keywords for this locale."}
+              </Banner>
+            )}
             {items.length >= PICKER_CAP && (
               <Text as="p" variant="bodySm" tone="subdued">
                 {k.pickerCapped.replace("{cap}", String(PICKER_CAP))}
@@ -478,6 +588,7 @@ export default function SeoKeywords() {
                   headings={[
                     { title: k.colItem },
                     { title: k.colKeyword },
+                    { title: k.colRole || "Role" },
                     { title: k.colLocale },
                     { title: k.colScore },
                     { title: k.colDensity },
@@ -503,10 +614,26 @@ export default function SeoKeywords() {
                         <Text as="span" variant="bodyMd">{row.keyword}</Text>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
+                        <Badge tone={row.role === "primary" ? "info" : undefined}>
+                          {row.role === "primary"
+                            ? k.role?.primary || "Primary"
+                            : k.role?.secondary || "Secondary"}
+                        </Badge>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
                         <Badge>{row.localeDisplay || "–"}</Badge>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
+                        {row.score == null ? (
+                          // Secondaries carry no 0-100 score — it is
+                          // presence-weighted for ONE target keyword and would
+                          // dilute across several (§3.1).
+                          <Text as="span" variant="bodyMd" tone="subdued">
+                            –
+                          </Text>
+                        ) : (
+                          <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
+                        )}
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge tone={DENSITY_TONE[row.densityBand as DensityBand]}>
@@ -536,11 +663,21 @@ export default function SeoKeywords() {
                           >
                             {k.openInEditor}
                           </Button>
+                          {row.role === "secondary" && (
+                            <Button
+                              variant="plain"
+                              loading={rowFetcher.state !== "idle" && pendingRowId === row.id}
+                              disabled={rowFetcher.state !== "idle" && pendingRowId !== row.id}
+                              onClick={() => handleMakePrimary(row)}
+                            >
+                              {k.makePrimary || "Make primary"}
+                            </Button>
+                          )}
                           <Button
                             variant="plain"
                             tone="critical"
-                            loading={rowFetcher.state !== "idle" && pendingDeleteId === row.id}
-                            disabled={rowFetcher.state !== "idle" && pendingDeleteId !== row.id}
+                            loading={rowFetcher.state !== "idle" && pendingRowId === row.id}
+                            disabled={rowFetcher.state !== "idle" && pendingRowId !== row.id}
                             onClick={() => handleDeleteKeyword(row)}
                           >
                             {k.delete}

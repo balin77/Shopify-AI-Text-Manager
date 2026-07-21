@@ -753,9 +753,13 @@ const SNAPSHOT_RETENTION_DAYS = 400;
 
 /**
  * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
- * back onto matching SeoKeyword rows (exact, case-insensitive query match).
- * Returns the number of keyword rows enriched. Caller must pass `now` (the
- * service stays deterministic / testable).
+ * back onto matching SeoKeywordAssignment rows (exact, case-insensitive query
+ * match — the GSC columns live on the assignment since the keywords expansion,
+ * PLAN_KEYWORDS_EXPANSION.md §2). Still query-dimension only: every assignment
+ * of the same keyword receives the same aggregate metrics; the per-(query,
+ * page) split is the Phase-2 loader consolidation. Returns the number of
+ * assignment rows enriched. Caller must pass `now` (the service stays
+ * deterministic / testable).
  */
 export async function enrichKeywordsFromGsc(
   db: PrismaClient,
@@ -778,14 +782,17 @@ export async function enrichKeywordsFromGsc(
     if (kw) byKeyword.set(kw, row);
   }
 
-  const keywords = await db.seoKeyword.findMany({ where: { shop }, select: { id: true, keyword: true } });
+  const assignments = await db.seoKeywordAssignment.findMany({
+    where: { shop },
+    select: { id: true, keyword: { select: { keyword: true } } },
+  });
   const capturedAt = utcMidnight(now);
   let enriched = 0;
-  for (const k of keywords) {
-    const row = byKeyword.get(k.keyword.toLowerCase());
+  for (const a of assignments) {
+    const row = byKeyword.get(a.keyword.keyword.toLowerCase());
     if (!row) continue;
-    await db.seoKeyword.update({
-      where: { id: k.id },
+    await db.seoKeywordAssignment.update({
+      where: { id: a.id },
       data: {
         gscPosition: row.position,
         gscClicks: row.clicks,
@@ -795,10 +802,10 @@ export async function enrichKeywordsFromGsc(
       },
     });
     await db.seoKeywordSnapshot.upsert({
-      where: { keywordId_capturedAt: { keywordId: k.id, capturedAt } },
+      where: { assignmentId_capturedAt: { assignmentId: a.id, capturedAt } },
       create: {
         shop,
-        keywordId: k.id,
+        assignmentId: a.id,
         capturedAt,
         position: row.position,
         clicks: row.clicks,

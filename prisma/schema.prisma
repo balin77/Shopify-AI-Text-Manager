@@ -1000,55 +1000,125 @@ model Seo404Hit {
   @@index([shop, count])
 }
 
-// SEO tab Phase 5: one target keyword per content item (per locale), with
-// optional Google Search Console enrichment columns (Phase 6). Shop-scoped;
-// purged in redactShopData (the GDPR schema-coverage guard requires it).
-// keyword is stored lowercased; the (shop, keyword) index backs the GSC join.
+// Keywords expansion (PLAN_KEYWORDS_EXPANSION.md §2): a keyword is a
+// standalone shop-scoped object — item linkage lives in SeoKeywordAssignment,
+// group membership in SeoKeywordGroupMembership. keyword is stored lowercased
+// + single-spaced (normalizeKeyword). Shop-scoped; purged in redactShopData
+// (the GDPR schema-coverage guard requires it).
 model SeoKeyword {
+  id       String  @id @default(cuid())
+  shop     String
+  keyword  String // lowercased, single-spaced (normalizeKeyword)
+  locale   String  @default("") // "" = primary/default locale
+  priority Int     @default(2) // 1 = high, 2 = medium, 3 = low
+  intent   String? // "informational" | "commercial" | "transactional" | "navigational"
+
+  assignments SeoKeywordAssignment[]
+  groups      SeoKeywordGroupMembership[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, keyword, locale])
+  @@index([shop, priority])
+  @@index([shop, keyword])
+}
+
+// One keyword ↔ item link with an explicit role. GSC enrichment lives HERE
+// (not on SeoKeyword) because GSC reports (query, page) tuples — the same
+// query can rank on two items with different positions.
+//
+// At most ONE role='primary' per (item, locale) — enforced in the app layer
+// (the locale hangs off the keyword, Prisma can't express it): the assignment
+// writer does check+swap INSIDE a transaction (two parallel writers could
+// otherwise both create a primary). Leftover duplicates are surfaced by the
+// Phase-5 cannibalization card rather than silently kept.
+model SeoKeywordAssignment {
   id           String @id @default(cuid())
   shop         String
+  keywordId    String
   resourceType String // "Product" | "Collection" | "Article" | "Page"
   resourceId   String // Shopify GID
-  keyword      String // lowercased on write
-  locale       String @default("") // "" = primary/default locale
+  role         String // "primary" | "secondary"
 
-  // GSC enrichment (written by Phase 6 sync; null until connected).
+  // GSC enrichment (written by the GSC sync; null until connected).
   gscPosition    Float?
   gscClicks      Int?
   gscImpressions Int?
   gscCtr         Float?
   gscUpdatedAt   DateTime?
 
+  keyword   SeoKeyword           @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  snapshots SeoKeywordSnapshot[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([shop, keywordId, resourceId])
+  @@index([shop, resourceType, resourceId])
+  // The AI-prompt bridge (text-generation.handler.ts) filters on
+  // (shop, resourceId) WITHOUT resourceType — this index backs that query.
+  @@index([shop, resourceId])
+  @@index([shop, keywordId])
+}
+
+// Keyword groups are pure management containers (CSV import target, table
+// facet, AI-distribution entry point). A group is NEVER assigned to an item
+// as a whole — assignment is always per keyword (see the plan §1).
+model SeoKeywordGroup {
+  id          String  @id @default(cuid())
+  shop        String
+  name        String
+  description String?
+
+  memberships SeoKeywordGroupMembership[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  snapshots SeoKeywordSnapshot[]
-
-  @@unique([shop, resourceId, locale])
-  @@index([shop, keyword])
+  @@unique([shop, name])
   @@index([shop])
 }
 
-// Ranking history for SeoKeyword: one row per (keyword, sync day), so the UI
-// can chart position/clicks/impressions/ctr over time instead of only ever
-// seeing the latest GSC values. capturedAt is truncated to UTC midnight so a
-// manual sync and the daily auto-sync on the same day collapse into one row
-// (see the unique index). Shop-scoped; purged in redactShopData (GDPR
-// schema-coverage guard) and pruned by enrichKeywordsFromGsc after 400 days.
+// M:N keyword ↔ group. Carries its own `shop` column (denormalized) so the
+// GDPR purge can deleteMany({ shop }) directly — the schema-coverage guard
+// checks for a shop field, not for cascades.
+model SeoKeywordGroupMembership {
+  id        String @id @default(cuid())
+  shop      String
+  groupId   String
+  keywordId String
+
+  group   SeoKeywordGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  keyword SeoKeyword      @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([groupId, keywordId])
+  @@index([shop])
+}
+
+// Ranking history: one row per (assignment, sync day), so the UI can chart
+// position/clicks/impressions/ctr over time instead of only ever seeing the
+// latest GSC values. Hangs off the ASSIGNMENT (like the live GSC columns)
+// because GSC data is per (query, page). capturedAt is truncated to UTC
+// midnight so a manual sync and the daily auto-sync on the same day collapse
+// into one row (see the unique index). Shop-scoped; purged in redactShopData
+// (GDPR schema-coverage guard) and pruned by enrichKeywordsFromGsc after 400
+// days.
 model SeoKeywordSnapshot {
-  id          String   @id @default(cuid())
-  shop        String
-  keywordId   String
-  capturedAt  DateTime
-  position    Float?
-  clicks      Int?
-  impressions Int?
-  ctr         Float?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  shop         String
+  assignmentId String
+  capturedAt   DateTime
+  position     Float?
+  clicks       Int?
+  impressions  Int?
+  ctr          Float?
+  createdAt    DateTime @default(now())
 
-  keyword SeoKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  assignment SeoKeywordAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
-  @@unique([keywordId, capturedAt])
+  @@unique([assignmentId, capturedAt])
   @@index([shop])
 }
 
