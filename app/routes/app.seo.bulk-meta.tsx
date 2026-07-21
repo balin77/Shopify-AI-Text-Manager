@@ -38,6 +38,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { AppSaveBar } from "../components/AppSaveBar";
 import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import { isValidShopifyGID } from "../utils/validation";
@@ -516,34 +517,18 @@ export default function SeoBulkMeta() {
             </BlockStack>
           </Card>
 
-          {/* Sticky save bar — only shown once there's something dirty to act on. */}
-          {dirty.length > 0 && (
-            <div
-              style={{
-                position: "sticky",
-                bottom: 0,
-                zIndex: 1,
-                background: "var(--p-color-bg-surface, #fff)",
-                paddingTop: "0.5rem",
-              }}
-            >
-              <Card>
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="span" variant="bodyMd">
-                    {b.dirtyCount.replace("{count}", String(dirty.length))}
-                  </Text>
-                  <InlineStack gap="200">
-                    <Button onClick={handleDiscard} disabled={saving}>
-                      {b.discardButton}
-                    </Button>
-                    <Button variant="primary" onClick={handleSave} loading={saving}>
-                      {b.saveButton}
-                    </Button>
-                  </InlineStack>
-                </InlineStack>
-              </Card>
-            </div>
-          )}
+          {/* Native App Bridge save bar — same one used by the content editors
+              (see AppSaveBar). Renders above the embedded app, outside the
+              iframe, and satisfies the Built-for-Shopify requirement to use
+              Shopify's native save/discard UI instead of custom buttons. */}
+          <AppSaveBar
+            hasChanges={dirty.length > 0}
+            onSave={handleSave}
+            onDiscard={handleDiscard}
+            loading={saving}
+            saveText={b.saveButton}
+            discardText={b.discardButton}
+          />
 
           <Modal
             open={pickerOpen}
@@ -742,16 +727,6 @@ interface BulkMetaCellProps {
   statusOptions: { active: string; draft: string; archived: string };
 }
 
-/** Fields that render as auto-growing multi-line textareas rather than
- * single-line inputs. Everything else (title, handle, seoTitle, productType)
- * is a compact one-line borderless TextField. */
-const MULTILINE_FIELDS = new Set<BulkMetaField>([
-  "descriptionHtml",
-  "body",
-  "summary",
-  "seoDescription",
-]);
-
 function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: BulkMetaCellProps) {
   // Read-only meta columns first — no edit path, just render the value.
   if (column === "image") {
@@ -800,19 +775,22 @@ function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: 
     );
   }
 
-  const multiline = MULTILINE_FIELDS.has(field);
-
-  // No maxHeight on purpose — merchant explicitly asked for full autogrow, no
-  // inner scrollbars anywhere. Very long HTML pastes therefore produce very
-  // tall rows; that's the intended trade-off (the pencil icon jumps to the
-  // full editor for real long-form work).
+  // Every editable text cell is multi-line + autogrow. Merchant asked for
+  // this explicitly: cells that used to be single-line (title, handle,
+  // productType, seoTitle) would clip long content invisibly at the visible
+  // column width. Multi-line + autogrow means long values wrap and become
+  // fully visible, and table-layout naturally makes the row as tall as its
+  // tallest cell so short cells sit at their content height in the same row.
+  // No maxHeight on purpose — merchant explicitly asked for no inner
+  // scrollbars anywhere; very long HTML pastes therefore produce very tall
+  // rows (the pencil icon jumps to the full editor for real long-form work).
   return (
     <TextField
       label=""
       labelHidden
       autoComplete="off"
       variant="borderless"
-      multiline={multiline || undefined}
+      multiline
       value={value}
       onChange={(v) => setEdit(row.id, field, v)}
       tone={isDirty ? "magic" : undefined}
