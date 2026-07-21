@@ -443,6 +443,12 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${seoScoreSnapshotsDeleted.count} SEO score snapshots`);
 
+    // PageSpeed audits: cached PSI results incl. storefront screenshots (shop-scoped).
+    const pageSpeedAuditsDeleted = await tx.seoPageSpeedAudit.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${pageSpeedAuditsDeleted.count} PageSpeed audits`);
+
     // Glossary: merchant terminology (GlossaryEntryTranslation cascades).
     const glossaryEntriesDeleted = await tx.glossaryEntry.deleteMany({
       where: { shop: shop_domain },

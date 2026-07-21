@@ -1102,3 +1102,23 @@ model SeoScoreSnapshot {
 
   @@index([shop, locale, createdAt])
 }
+
+// SEO tab Performance section: cached PageSpeed Insights v5 runs, keyed by
+// (shop, url, strategy). `result` is the parsed PageSpeedAuditResult (see
+// app/services/seo/pagespeed.types.ts + pagespeed.service.ts) — `score` is a
+// denormalized copy of result.performanceScore so the trend/history list
+// (listPageSpeedHistory) never has to parse the JSON blob. Pruned to the
+// newest 10 rows per (shop, url, strategy) on every write (runPageSpeedAudit).
+// Shop-scoped; purged in redactShopData (GDPR schema-coverage guard).
+model SeoPageSpeedAudit {
+  id        String   @id @default(cuid())
+  shop      String
+  url       String
+  strategy  String // "mobile" | "desktop"
+  score     Int? // Lighthouse performance score 0-100 (denormalized for history lists)
+  result    Json // PageSpeedAuditResult
+  createdAt DateTime @default(now())
+
+  @@index([shop, url, strategy, createdAt])
+  @@index([shop, createdAt])
+}
