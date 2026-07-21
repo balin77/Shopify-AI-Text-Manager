@@ -1806,22 +1806,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ],
           }],
         });
-        const content = message.content[0];
-        if (!content) throw new Error('Claude returned empty response');
-        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
-        if (!content.text.trim()) throw new Error('Claude returned empty text');
-        return content.text;
+        const textBlock = message.content.find((b) => b.type === 'text');
+        if (!textBlock) throw new Error('Claude returned no text block');
+        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
+        return textBlock.text;
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
           max_tokens: 8192,
           messages: [{ role: 'user', content: prompt }],
         });
-        const content = message.content[0];
-        if (!content) throw new Error('Claude returned empty response');
-        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
-        if (!content.text.trim()) throw new Error('Claude returned empty text');
-        return content.text;
+        const textBlock = message.content.find((b) => b.type === 'text');
+        if (!textBlock) throw new Error('Claude returned no text block');
+        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
+        return textBlock.text;
       }
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
