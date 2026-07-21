@@ -671,17 +671,17 @@ function BulkMetaGrid({
         .cp-bulk-meta-cell > .cp-bulk-meta-textarea {
           flex: 1 1 auto;
         }
-        /* Image cell: scale to row height, width follows aspect ratio.
-           Combined with grid-template-columns using max-content for the
-           image column, the shared column width becomes the widest
-           rendered image across all visible rows — a mix of 1:1 and 16:9
-           products picks the 16:9 width, all squares picks the smaller
-           square width. */
+        /* Image cell: capped at 64 px tall (typical spreadsheet thumbnail)
+           so a row with a long descriptionHtml doesn't inflate the image
+           to hundreds of px along with the text. Width auto-follows the
+           aspect ratio at that height — a square lands at 64 px wide, a
+           16:9 at ~114 px. Grid column is max-content, so the shared
+           column width becomes the widest rendered image across visible
+           rows (all squares → narrow column, any 16:9 → wider column). */
         .cp-bulk-meta-img {
           display: block;
-          height: 100%;
+          max-height: 64px;
           width: auto;
-          max-height: 100%;
           object-fit: contain;
         }
         /* Custom borderless textarea (see CellTextArea): visually invisible
