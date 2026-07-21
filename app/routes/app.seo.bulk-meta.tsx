@@ -617,12 +617,18 @@ function BulkMetaGrid({
   // Image column sizes to `max-content` — its width follows whichever
   // visible image ends up widest once each one is scaled to its row's
   // height. Everything else uses `minmax(<min>, 1fr)` so text columns share
-  // the leftover horizontal space evenly. Trailing 48px is the pencil-icon
-  // action column.
+  // the leftover horizontal space evenly.
+  //
+  // Trailing 48px pencil-icon action column ONLY when there's no image
+  // column: the image cell doubles as the "open in editor" affordance via
+  // a hover overlay (see BulkMetaImageCell), so the right-side icon
+  // becomes redundant for types with images. Page type has no image
+  // column at all, so it keeps the action column as its editor hook.
+  const showActionsColumn = !columns.includes("image");
   const gridTemplateColumns =
     columns
       .map((c) => (c === "image" ? "max-content" : `minmax(${columnMinWidth(c)}px, 1fr)`))
-      .join(" ") + " 48px";
+      .join(" ") + (showActionsColumn ? " 48px" : "");
 
   return (
     <div style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-meta-scroll">
@@ -684,6 +690,58 @@ function BulkMetaGrid({
           width: auto;
           object-fit: contain;
         }
+        /* Whole image cell = one click target. Reset the default button
+           chrome, keep it position:relative so the overlay can absolutely
+           position over the image (or placeholder). */
+        .cp-bulk-meta-img-btn {
+          position: relative;
+          display: inline-block;
+          padding: 0;
+          margin: 0;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          line-height: 0;
+          border-radius: 4px;
+        }
+        .cp-bulk-meta-img-btn:focus-visible {
+          outline: 2px solid var(--p-color-border-focus, #005ab4);
+          outline-offset: 2px;
+        }
+        /* Placeholder for rows without a featured image — a subtle grey
+           square keeps the hover affordance uniform across all rows so
+           merchants always know where to click to open the editor. */
+        .cp-bulk-meta-img-placeholder {
+          display: block;
+          width: 64px;
+          height: 64px;
+          background: var(--p-color-bg-surface-secondary, #f6f6f7);
+          border-radius: 4px;
+        }
+        /* Dark overlay + centered pencil icon revealed on hover/focus.
+           Positioned inset:0 so it precisely covers the image (or
+           placeholder). opacity transition keeps the reveal smooth. */
+        .cp-bulk-meta-img-overlay {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(0, 0, 0, 0.55);
+          opacity: 0;
+          transition: opacity 120ms ease-out;
+          border-radius: 4px;
+          pointer-events: none;
+        }
+        .cp-bulk-meta-img-btn:hover .cp-bulk-meta-img-overlay,
+        .cp-bulk-meta-img-btn:focus-visible .cp-bulk-meta-img-overlay {
+          opacity: 1;
+        }
+        .cp-bulk-meta-img-overlay svg {
+          width: 20px;
+          height: 20px;
+          fill: #fff;
+        }
         /* Custom borderless textarea (see CellTextArea): visually invisible
            until focused, autogrows via JS, and — critical for the merchant's
            ask — fills the whole grid cell so click targets aren't dead
@@ -734,34 +792,54 @@ function BulkMetaGrid({
               )}
             </div>
           ))}
-          <div role="columnheader" className="cp-bulk-meta-th" aria-hidden="true" />
+          {showActionsColumn && (
+            <div role="columnheader" className="cp-bulk-meta-th" aria-hidden="true" />
+          )}
         </div>
         {rows.map((row) => (
           <div key={row.id} role="row" className="cp-bulk-meta-row">
-            {columns.map((col) => (
-              <div key={col} role="cell" className="cp-bulk-meta-cell">
-                <BulkMetaCell
-                  row={row}
-                  column={col}
-                  type={type}
-                  valueFor={valueFor}
-                  setEdit={setEdit}
-                  edits={edits}
-                  statusOptions={statusOptions}
-                />
+            {columns.map((col) => {
+              // Image cell is a click target for "open in editor" via a
+              // hover overlay — see BulkMetaImageCell. Text/status/blogTitle
+              // cells route through BulkMetaCell as before.
+              if (col === "image") {
+                return (
+                  <div key={col} role="cell" className="cp-bulk-meta-cell cp-bulk-meta-cell-image">
+                    <BulkMetaImageCell
+                      row={row}
+                      onOpen={onOpenInEditor}
+                      openLabel={openInEditorLabel}
+                    />
+                  </div>
+                );
+              }
+              return (
+                <div key={col} role="cell" className="cp-bulk-meta-cell">
+                  <BulkMetaCell
+                    row={row}
+                    column={col}
+                    type={type}
+                    valueFor={valueFor}
+                    setEdit={setEdit}
+                    edits={edits}
+                    statusOptions={statusOptions}
+                  />
+                </div>
+              );
+            })}
+            {showActionsColumn && (
+              <div role="cell" className="cp-bulk-meta-actions">
+                <Tooltip content={openInEditorLabel}>
+                  <Button
+                    variant="plain"
+                    size="slim"
+                    icon={EditIcon}
+                    accessibilityLabel={openInEditorLabel}
+                    onClick={() => onOpenInEditor(row)}
+                  />
+                </Tooltip>
               </div>
-            ))}
-            <div role="cell" className="cp-bulk-meta-actions">
-              <Tooltip content={openInEditorLabel}>
-                <Button
-                  variant="plain"
-                  size="slim"
-                  icon={EditIcon}
-                  accessibilityLabel={openInEditorLabel}
-                  onClick={() => onOpenInEditor(row)}
-                />
-              </Tooltip>
-            </div>
+            )}
           </div>
         ))}
       </div>
@@ -780,25 +858,11 @@ interface BulkMetaCellProps {
 }
 
 function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: BulkMetaCellProps) {
-  // Read-only meta columns first — no edit path, just render the value.
-  if (column === "image") {
-    // Empty rows render nothing so they DON'T inflate the max-content
-    // image column — width follows the widest actual image only.
-    if (!row.imageUrl) return null;
-    // <img> instead of Polaris Thumbnail because Thumbnail hard-codes a
-    // 40×40 box. We want height:100% (fills the row track) with width:auto,
-    // so the image's aspect ratio drives its own width — a square image
-    // renders narrower than a 16:9 one in the same row, and the shared
-    // grid column shrinks to the widest one via `max-content`.
-    return (
-      <img
-        src={row.imageUrl}
-        alt={row.imageAlt ?? ""}
-        className="cp-bulk-meta-img"
-        loading="lazy"
-      />
-    );
-  }
+  // Defensive: the grid routes "image" through BulkMetaImageCell (needs the
+  // open-in-editor callback for the hover overlay), so this branch is dead
+  // in practice — but it narrows the type below so `field = column` can
+  // safely be treated as BulkMetaField.
+  if (column === "image") return null;
   if (column === "blogTitle") {
     return (
       <Text as="span" variant="bodySm" tone="subdued">
@@ -903,5 +967,48 @@ function CellTextArea({ value, onChange, isDirty }: CellTextAreaProps) {
       rows={1}
       spellCheck={false}
     />
+  );
+}
+
+interface BulkMetaImageCellProps {
+  row: BulkMetaRow;
+  onOpen: (row: BulkMetaRow) => void;
+  openLabel: string;
+}
+
+/**
+ * Image cell that doubles as the "open in editor" affordance: hovering
+ * reveals a dark overlay with a pencil icon in the middle; clicking
+ * anywhere on the cell jumps to the full editor for that row. Replaces
+ * the previous right-side action column when the image column is visible,
+ * saving the merchant a long horizontal scroll on wide grids.
+ *
+ * Rows with no imageUrl still render a placeholder box so the hover
+ * affordance is uniform across all rows of the type — the merchant can
+ * always click the leftmost cell to open the row, whether or not Shopify
+ * has a featured image for it.
+ */
+function BulkMetaImageCell({ row, onOpen, openLabel }: BulkMetaImageCellProps) {
+  return (
+    <button
+      type="button"
+      className="cp-bulk-meta-img-btn"
+      onClick={() => onOpen(row)}
+      aria-label={openLabel}
+    >
+      {row.imageUrl ? (
+        <img
+          src={row.imageUrl}
+          alt={row.imageAlt ?? ""}
+          className="cp-bulk-meta-img"
+          loading="lazy"
+        />
+      ) : (
+        <span className="cp-bulk-meta-img-placeholder" aria-hidden="true" />
+      )}
+      <span className="cp-bulk-meta-img-overlay" aria-hidden="true">
+        <EditIcon />
+      </span>
+    </button>
   );
 }
