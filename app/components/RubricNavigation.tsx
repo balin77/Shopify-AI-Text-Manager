@@ -17,15 +17,6 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { CONTENT_RUBRICS, getActiveRubric, type RubricDef } from "../config/content-rubrics";
 import { SubNavBar, type SubNavBarItem } from "./nav/SubNavBar";
 
-// Fallback labels if the i18n bundle hasn't been updated yet.
-const RUBRIC_FALLBACK: Record<string, string> = {
-  catalog: "Catalog",
-  onlineStore: "Online Store",
-  theme: "Theme",
-  system: "System",
-  directTranslations: "Direct Translations",
-};
-
 export function RubricNavigation() {
   const location = useLocation();
   const { handleNavigate } = useAppNavigation();
@@ -37,9 +28,7 @@ export function RubricNavigation() {
   if (!activeRubric) return null;
 
   const rubricLabel = (r: RubricDef) =>
-    (t as unknown as { rubrics?: Record<string, string> }).rubrics?.[r.id] ||
-    RUBRIC_FALLBACK[r.id] ||
-    r.id;
+    (t as unknown as { rubrics?: Record<string, string> }).rubrics?.[r.id] || r.id;
 
   const items: SubNavBarItem[] = CONTENT_RUBRICS.map((r) => ({
     id: r.id,

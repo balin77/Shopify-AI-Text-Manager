@@ -1,4 +1,4 @@
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+﻿import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { logger } from "~/utils/logger.server";
 import {
   GET_SHOP_LOCALES,
@@ -8,11 +8,8 @@ import {
   GET_SHOP_POLICIES,
   GET_SHOP_METADATA,
   GET_MENUS,
-  GET_THEMES,
   GET_METAOBJECT_DEFINITIONS,
   GET_METAOBJECTS,
-  GET_THEME_TRANSLATABLE_RESOURCES,
-  GET_THEME_TRANSLATIONS,
   GET_PRODUCT_METAFIELD_DEFINITIONS,
   GET_TRANSLATABLE_CONTENT
 } from "../graphql/content.queries";
@@ -72,7 +69,7 @@ export interface ProductMetafieldDef {
   type: string;
   /** Whether the definition's `translatable` capability is already enabled. */
   translatable: boolean;
-  /** "shop" | "third-party" | "contentpilot" — drives UI grouping + patchability. */
+  /** "shop" | "third-party" | "contentpilot" â€” drives UI grouping + patchability. */
   ownerCategory: MetafieldOwnerCategory;
   /** Display name of the owning app when known (third-party only). */
   appName?: string;
@@ -242,7 +239,7 @@ export class ContentService {
   /**
    * List ALL product metafield definitions in the shop (paginated), each
    * categorized by owner. This is the scanner backing the Metafields settings
-   * tab — it surfaces third-party app definitions that `translatableContent`
+   * tab â€” it surfaces third-party app definitions that `translatableContent`
    * never returns. Pattern mirrors getShopMetadata() pagination above.
    */
   async getProductMetafieldDefinitions(): Promise<ProductMetafieldDef[]> {
@@ -311,7 +308,7 @@ export class ContentService {
    * access to PUBLIC_READ (the only lever Shopify exposes for metafield
    * translatability). NOTE: this publishes the metafield's values to the public
    * Storefront API. Returns ok:false (with the Shopify error) for definitions
-   * owned by another app — the caller treats that as "cannot enable" rather
+   * owned by another app â€” the caller treats that as "cannot enable" rather
    * than throwing.
    */
   async updateMetafieldDefinitionTranslatable(
@@ -390,7 +387,7 @@ export class ContentService {
    * Probe whether a specific metafield is translatable: a metafield is
    * translatable iff `translatableResource(<metafieldGID>).translatableContent`
    * returns at least one entry. This is the definitive, app-visibility-
-   * independent signal — it works even for app-owned definitions we can't see
+   * independent signal â€” it works even for app-owned definitions we can't see
    * via `metafieldDefinitions` (e.g. Judge.me).
    */
   async isMetafieldTranslatable(metafieldGid: string): Promise<boolean> {
@@ -465,7 +462,7 @@ export class ContentService {
         const logMenuItems = (items: Record<string, unknown>[], level: number = 0) => {
           for (const item of items || []) {
             const indent = '  '.repeat(level);
-            console.log(`${indent}└─ "${item.title}" (${item.id})`);
+            console.log(`${indent}â””â”€ "${item.title}" (${item.id})`);
             console.log(`${indent}   URL: ${item.url}`);
             console.log(`${indent}   Type: ${item.type}`);
             if (item.items && (item.items as Record<string, unknown>[]).length > 0) {
@@ -591,7 +588,7 @@ export class ContentService {
         });
       }
 
-      console.log(`\n=== 🍔 MENUS: Fetch complete - ${menusWithTranslations.length} menus loaded ===\n`);
+      console.log(`\n=== ðŸ” MENUS: Fetch complete - ${menusWithTranslations.length} menus loaded ===\n`);
       return menusWithTranslations;
 
        * ======================================================================== */
@@ -694,328 +691,6 @@ export class ContentService {
     return results;
   }
 
-  async getThemes(first: number = 250) {
-    try {
-      logger.debug('Fetching theme translatable resources', { context: 'ContentService' });
-
-      // Define the working resource types (based on test results)
-      const WORKING_RESOURCE_TYPES = [
-        { type: 'ONLINE_STORE_THEME', label: 'Theme Content' },
-        { type: 'ONLINE_STORE_THEME_JSON_TEMPLATE', label: 'JSON Templates' },
-        { type: 'ONLINE_STORE_THEME_LOCALE_CONTENT', label: 'Locale Content' },
-        { type: 'ONLINE_STORE_THEME_SECTION_GROUP', label: 'Section Groups' },
-        { type: 'ONLINE_STORE_THEME_SETTINGS_CATEGORY', label: 'Settings Categories' },
-      ];
-
-      // Limit to prevent memory issues - Shopify max is 250 per query
-      const safeLimit = Math.min(first, 250);
-
-      // Define key patterns to filter and group by
-      // Each pattern creates a separate navigation item on the left
-      const KEY_PATTERNS = [
-        // Article pages
-        { pattern: /^section\.article\./, name: 'Article', groupId: 'article', icon: '📝' },
-
-        // Collection pages
-        { pattern: /^section\.collection\./, name: 'Collection', groupId: 'collection', icon: '📂' },
-
-        // Homepage/Index
-        { pattern: /^section\.index\./, name: 'Index Page', groupId: 'index', icon: '🏠' },
-
-        // Password page
-        { pattern: /^section\.password\./, name: 'Password Page', groupId: 'password', icon: '🔒' },
-
-        // Product pages
-        { pattern: /^section\.product\./, name: 'Product', groupId: 'product', icon: '🛍️' },
-
-        // Individual page sections (e.g., About, Contact, etc.)
-        // These will be further sub-grouped by page name
-        { pattern: /^section\.page\.([^.]+)\./, name: 'Pages', groupId: 'pages', icon: '📄', extractSubgroup: true },
-
-        // Collections template
-        { pattern: /^collections\.json\./, name: 'Collections Template', groupId: 'collections_template', icon: '📋' },
-
-        // Theme groups
-        { pattern: /^group\.json\./, name: 'Theme Groups', groupId: 'groups', icon: '🎨' },
-
-        // Announcement bars
-        { pattern: /^bar\./, name: 'Announcement Bars', groupId: 'bars', icon: '📢' },
-
-        // Settings
-        { pattern: /^Settings Categories:/, name: 'Settings', groupId: 'settings', icon: '⚙️' },
-      ];
-
-      logger.debug('Loading theme resource types', { context: 'ContentService', count: WORKING_RESOURCE_TYPES.length });
-
-      // Get shop locales to know which languages to fetch translations for
-      const shopLocales = await this.getShopLocales();
-      const nonPrimaryLocales = shopLocales.filter((l) => !l.primary).map((l) => l.locale);
-      logger.debug('Non-primary locales for themes', { context: 'ContentService', locales: nonPrimaryLocales });
-
-      // Collect all theme resources
-      const allThemeResources: Array<{
-        id: string;
-        title: string;
-        name: string;
-        role: string;
-        resourceType: string;
-        resourceTypeLabel: string;
-        translatableContent: TranslatableContentItem[];
-        contentByGroup: Record<string, ThemeContentItem[]>;
-        contentCount: number;
-        keyPatterns: typeof KEY_PATTERNS;
-      }> = [];
-
-      // Fetch resources for each working resource type
-      for (const resourceTypeConfig of WORKING_RESOURCE_TYPES) {
-        logger.debug('Loading theme resource', { context: 'ContentService', label: resourceTypeConfig.label, type: resourceTypeConfig.type });
-
-        try {
-          const translatableResponse = await this.admin.graphql(GET_THEME_TRANSLATABLE_RESOURCES, {
-            variables: { first: safeLimit, resourceType: resourceTypeConfig.type }
-          });
-          const translatableData = await translatableResponse.json();
-
-          if ((translatableData as Record<string, unknown>).errors) {
-            const errors = (translatableData as Record<string, unknown>).errors as Array<{ message: string }>;
-            logger.error('Error loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error: errors[0].message });
-            continue;
-          }
-
-          const resources: Array<{ resourceId: string; translatableContent: TranslatableContentItem[] }> =
-            (translatableData as Record<string, unknown>).data
-              ? (((translatableData as Record<string, unknown>).data as Record<string, unknown>)?.translatableResources as Record<string, unknown>)?.edges
-                ? ((((translatableData as Record<string, unknown>).data as Record<string, unknown>).translatableResources as Record<string, unknown>).edges as GraphQLEdge<{ resourceId: string; translatableContent: TranslatableContentItem[] }>[]).map((edge) => edge.node)
-                : []
-              : [];
-          const totalContent = resources.reduce((sum: number, r) => sum + (r.translatableContent?.length || 0), 0);
-
-          logger.debug('Theme resource loaded', { context: 'ContentService', label: resourceTypeConfig.label, resources: resources.length, fields: totalContent });
-
-          // Process each resource
-          for (const resource of resources) {
-            // OPTIMIZATION: Skip fetching translations from Shopify API during sync
-            // Translations are already stored in database and loaded on-demand
-            // This dramatically reduces sync time (from 150+ API calls to 0)
-
-            // Determine a good title for this resource
-            let resourceTitle = resourceTypeConfig.label;
-            if (resource.translatableContent && resource.translatableContent.length > 0) {
-              // Use the first translatable content's key as a more specific title
-              const firstKey = resource.translatableContent[0].key;
-              if (firstKey && firstKey.length < 100) {
-                resourceTitle = `${resourceTypeConfig.label}: ${firstKey}`;
-              }
-
-              // Log sample translatable content structure
-              if (resource.translatableContent.length > 0) {
-                logger.debug('Sample translatable content', {
-                  context: 'ContentService',
-                  samples: resource.translatableContent.slice(0, 3).map((c) => ({
-                    key: c.key,
-                    value: c.value?.substring(0, 50)
-                  }))
-                });
-              }
-            }
-
-            // Group translatable content by key patterns
-            const contentByGroup: Record<string, ThemeContentItem[]> = {};
-            const unmatchedContent: TranslatableContentItem[] = [];
-
-            for (const item of resource.translatableContent || []) {
-              let matched = false;
-
-              for (const patternConfig of KEY_PATTERNS) {
-                const match = item.key.match(patternConfig.pattern);
-                if (match) {
-                  let groupId = patternConfig.groupId;
-
-                  // Handle sub-grouping for pages (e.g., section.page.about, section.page.contact)
-                  if (patternConfig.extractSubgroup && match[1]) {
-                    groupId = `page_${match[1]}`; // e.g., "page_about", "page_contact"
-                  }
-
-                  if (!contentByGroup[groupId]) {
-                    contentByGroup[groupId] = [];
-                  }
-                  contentByGroup[groupId].push({
-                    ...item,
-                    _groupId: groupId,
-                    _groupName: patternConfig.extractSubgroup && match[1] ?
-                      `Page: ${match[1].charAt(0).toUpperCase() + match[1].slice(1)}` :
-                      patternConfig.name,
-                    _groupIcon: patternConfig.icon
-                  });
-                  matched = true;
-                  break;
-                }
-              }
-
-              if (!matched) {
-                unmatchedContent.push(item);
-              }
-            }
-
-            // Instead of lumping all unmatched content into one group,
-            // create intelligent sub-groups based on key prefixes
-            if (unmatchedContent.length > 0) {
-              logger.debug('Found unmatched items', { context: 'ContentService', count: unmatchedContent.length, sampleKeys: unmatchedContent.slice(0, 10).map(c => c.key) });
-
-              // Group unmatched content by their top-level prefix
-              const unmatchedByPrefix: Record<string, TranslatableContentItem[]> = {};
-
-              for (const item of unmatchedContent) {
-                // Extract the first meaningful part of the key
-                let prefix = 'other';
-                const key = item.key;
-
-                // Try to extract a meaningful prefix
-                if (key.startsWith('section.')) {
-                  // e.g., "section.cart" -> "cart"
-                  const parts = key.split('.');
-                  if (parts.length >= 2 && parts[1]) {
-                    prefix = `section_${parts[1]}`;
-                  }
-                } else if (key.includes('.')) {
-                  // Take the first part before the dot
-                  prefix = key.split('.')[0];
-                } else {
-                  // Single-word keys
-                  prefix = key.split(/[:\s]/)[0] || 'other';
-                }
-
-                if (!unmatchedByPrefix[prefix]) {
-                  unmatchedByPrefix[prefix] = [];
-                }
-                unmatchedByPrefix[prefix].push(item);
-              }
-
-              // Create separate groups for each prefix
-              for (const [prefix, items] of Object.entries(unmatchedByPrefix)) {
-                // Generate a human-readable group name
-                let groupName = prefix
-                  .replace(/^section_/, '')
-                  .replace(/_/g, ' ')
-                  .split(' ')
-                  .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                  .join(' ');
-
-                const groupId = `misc_${prefix}`;
-
-                // Choose an appropriate icon
-                let icon = '📦';
-                if (prefix.includes('cart')) icon = '🛒';
-                else if (prefix.includes('search')) icon = '🔍';
-                else if (prefix.includes('footer')) icon = '🦶';
-                else if (prefix.includes('header')) icon = '🎯';
-                else if (prefix.includes('nav')) icon = '🧭';
-                else if (prefix.includes('blog')) icon = '📝';
-                else if (prefix.includes('list')) icon = '📋';
-                else if (prefix.includes('form')) icon = '📝';
-                else if (prefix.includes('contact')) icon = '📧';
-                else if (prefix.includes('image')) icon = '🖼️';
-                else if (prefix.includes('video')) icon = '🎥';
-                else if (prefix.includes('slideshow')) icon = '🎞️';
-                else if (prefix.includes('featured')) icon = '⭐';
-
-                contentByGroup[groupId] = items.map(item => ({
-                  ...item,
-                  _groupId: groupId,
-                  _groupName: groupName,
-                  _groupIcon: icon
-                }));
-
-                logger.debug('Created theme group', { context: 'ContentService', groupName, itemCount: items.length });
-              }
-            }
-
-            // Store grouped content for this resource
-            if (Object.keys(contentByGroup).length > 0) {
-              allThemeResources.push({
-                id: resource.resourceId,
-                title: resourceTitle,
-                name: resourceTitle,
-                role: 'CONTENT',
-                resourceType: resourceTypeConfig.type,
-                resourceTypeLabel: resourceTypeConfig.label,
-                translatableContent: resource.translatableContent || [], // Keep all for reference
-                contentByGroup, // New: grouped content
-                contentCount: Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0),
-                keyPatterns: KEY_PATTERNS
-              });
-
-              const totalMatched = Object.values(contentByGroup).reduce((sum, arr) => sum + arr.length, 0);
-              logger.debug('Content grouped', { context: 'ContentService', categories: Object.keys(contentByGroup).length, items: totalMatched });
-            }
-          }
-        } catch (error) {
-          // NOTE (review MEDIUM "sync bypasses gateway throttling"): a THROTTLED
-          // error here is logged and this resource type is skipped (partial
-          // data), because content discovery uses this.admin.graphql directly
-          // rather than ShopifyApiGateway's throttle-aware retry queue. This is
-          // a KNOWN, ACCEPTED tradeoff for now: theme/content discovery is a
-          // read-only, fully re-runnable operation (the user can re-open the
-          // section / re-trigger sync, and the next pass picks up what was
-          // skipped), so a transient skip is self-healing and never corrupts
-          // stored data. Routing every sync path through the gateway is a
-          // cross-cutting refactor with real regression risk and is
-          // intentionally deferred rather than done piecemeal here.
-          logger.error('Exception loading theme resource type', { context: 'ContentService', type: resourceTypeConfig.type, error });
-        }
-      }
-
-      // Consolidate all groups across all resources
-      const consolidatedGroups: Record<string, {
-        id: string;
-        title: string;
-        name: string;
-        icon: string;
-        groupId: string;
-        role: string;
-        translatableContent: ThemeContentItem[];
-        contentCount: number;
-      }> = {};
-
-      for (const resource of allThemeResources) {
-        for (const [groupId, items] of Object.entries(resource.contentByGroup)) {
-          if (!consolidatedGroups[groupId]) {
-            // Use metadata from first item in group
-            const firstItem = items[0];
-            consolidatedGroups[groupId] = {
-              id: `group_${groupId}`,
-              title: firstItem._groupName,
-              name: firstItem._groupName,
-              icon: firstItem._groupIcon,
-              groupId,
-              role: 'THEME_GROUP',
-              translatableContent: [],
-              contentCount: 0
-            };
-          }
-
-          // Merge items into consolidated group
-          consolidatedGroups[groupId].translatableContent.push(...items);
-          consolidatedGroups[groupId].contentCount += items.length;
-        }
-      }
-
-      const groupedThemes = Object.values(consolidatedGroups);
-
-      logger.info('Themes fetch complete', {
-        context: 'ContentService',
-        totalGroups: groupedThemes.length,
-        totalFields: groupedThemes.reduce((sum, g) => sum + g.contentCount, 0),
-        groups: groupedThemes.map(g => ({ title: g.title, fields: g.contentCount }))
-      });
-
-      return groupedThemes;
-    } catch (error) {
-      logger.error('Error fetching themes', { context: 'ContentService', error });
-      return [];
-    }
-  }
-
   async getMetaobjectDefinitions(first: number = 50) {
     try {
       const response = await this.admin.graphql(GET_METAOBJECT_DEFINITIONS, {
@@ -1090,32 +765,4 @@ export class ContentService {
     }
   }
 
-  async getAllContent() {
-    const [shopLocales, blogs, collections, pages, policies, metadata, menus, themes, metaobjects] = await Promise.all([
-      this.getShopLocales(),
-      this.getBlogs(),
-      this.getCollections(),
-      this.getPages(),
-      this.getShopPolicies(),
-      this.getShopMetadata(),
-      this.getMenus(),
-      this.getThemes(),
-      this.getMetaobjects()
-    ]);
-
-    const primaryLocale = shopLocales.find((l) => l.primary)?.locale || "en";
-
-    return {
-      shopLocales,
-      blogs,
-      collections,
-      pages,
-      policies,
-      metadata,
-      menus,
-      themes,
-      metaobjects,
-      primaryLocale
-    };
-  }
 }
