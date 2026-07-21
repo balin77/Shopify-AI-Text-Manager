@@ -459,7 +459,7 @@ vi.mock('@shopify/shopify-api', () => ({ ... }));
 
 - [Vitest Docs](https://vitest.dev/)
 - [React Testing Library](https://testing-library.com/react)
-- [Test README](../tests/README.md)
+- [Test README](../../tests/README.md)
 - [Mock Factories](../tests/mocks/)
 
 ---

@@ -383,7 +383,7 @@ Before deploying to production:
 ## Support
 
 For issues or questions:
-1. Check [SECURITY_IMPROVEMENTS.md](./SECURITY_IMPROVEMENTS.md)
+1. Check [SECURITY_IMPROVEMENTS.md](../architecture/SECURITY_IMPROVEMENTS.md)
 2. Review [API_KEY_ENCRYPTION_SETUP.md](./API_KEY_ENCRYPTION_SETUP.md) (similar setup)
 3. Examine migration logs for errors
 

@@ -273,8 +273,8 @@ Geltendes Recht: Ontario, Kanada (ausschließlicher Gerichtsstand Ontario).
 - Shopify = Controller für direkt erhobene Partnerdaten, Processor für Merchant-Kundendaten (Merchant = Controller, App ≈ Sub-Processor).
 - Kein separates „Data Protection Addendum“ – DPA-Pflichten sind in den API Terms + Partner Privacy Policy eingebettet.
 
-> Repo-Referenz: `docs/architecture/GDPR_COMPLIANCE.md`, `docs/SESSION_PII_ENCRYPTION_SETUP.md`,
-> `docs/API_KEY_ENCRYPTION_SETUP.md` gegen diese Pflichten prüfen.
+> Repo-Referenz: `docs/architecture/GDPR_COMPLIANCE.md`, `docs/setup/SESSION_PII_ENCRYPTION_SETUP.md`,
+> `docs/setup/API_KEY_ENCRYPTION_SETUP.md` gegen diese Pflichten prüfen.
 
 ---
 

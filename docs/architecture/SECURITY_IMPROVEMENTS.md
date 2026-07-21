@@ -456,8 +456,8 @@ Nachher: 9yfseqqHYgbZgw:R9Q242ra3O:6Zc2fB1H...
 - Keine Breaking Changes
 
 **Dokumentation:**
-- Setup Guide: `docs/API_KEY_ENCRYPTION_SETUP.md`
-- Testing Guide: `docs/TESTING_ENCRYPTION.md`
+- Setup Guide: `docs/setup/API_KEY_ENCRYPTION_SETUP.md`
+- Testing Guide: `docs/operations/TESTING_GUIDE.md`
 - Railway Commands: `RAILWAY_DEPLOY_COMMANDS.md`
 
 ---
@@ -896,7 +896,7 @@ den App-Settings. Ein gesetzter Shared-Key würde den Compliance-Fix **B4**
 (merchant-owned keys) aushebeln und den ursprünglichen App-Store-Verstoß
 (KI-Training auf Merchant-Inhalten ohne Einwilligung) wieder einführen.
 `scripts/validate-env.js` erwartet diese Vars bewusst **nicht** als
-Pflicht-Env. Querverweis: `docs/SHOPIFY_COMPLIANCE_AUDIT.md` → R6 / B4.
+Pflicht-Env. Querverweis: `docs/app-store/SHOPIFY_COMPLIANCE_AUDIT.md` → R6 / B4.
 
 ---
 

@@ -5,7 +5,7 @@
 -- information the AI wasn't already receiving via the handler's
 -- Context/Language/Current-value prompt lines, making the feature a
 -- redundant second surface next to the existing per-field AISettings
--- custom instructions. See docs/COMPETITIVE_ANALYSIS.md changelog.
+-- custom instructions. See docs/reference/COMPETITIVE_ANALYSIS.md changelog.
 
 -- DropIndex
 DROP INDEX IF EXISTS "ContentTemplate_default_uniq";

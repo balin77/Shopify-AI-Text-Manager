@@ -1,94 +1,111 @@
-# 📚 Dokumentation - Shopify AI Text Manager
+# 📚 Dokumentation — ContentPilot
 
-Übersicht aller Projektdokumentationen.
+Nur zwei Dokumente liegen direkt hier: dieser Index und die Roadmap. Alles andere ist
+nach Zweck sortiert.
 
-## 📖 Verfügbare Dokumente
+| Ordner | Inhalt | Lebensdauer |
+|--------|--------|-------------|
+| [architecture/](architecture/) | System-Design-Verträge und Konventionen | dauerhaft gültig |
+| [setup/](setup/) | Deployment- und Einrichtungs-Anleitungen | gültig, bis sich die Infrastruktur ändert |
+| [operations/](operations/) | Runbooks für den laufenden Betrieb | gültig, bis sich der Betrieb ändert |
+| [app-store/](app-store/) | Shopify-App-Store: Anforderungen, Compliance, Launch | bis zum Launch bzw. Policy-Update |
+| [reference/](reference/) | Nachschlagewerke und Recherchen | Snapshot mit Datum |
+| [plans/](plans/) | Aktive Umsetzungs-Pläne | wird nach Abschluss in `architecture/` überführt und gelöscht |
 
-### 📍 Roadmap & Planning
+> **Wohin gehört ein neues Dokument?** Beschreibt es, **wie das System funktioniert** →
+> `architecture/`. Beschreibt es, **wie man etwas einmalig einrichtet** → `setup/`.
+> Beschreibt es, **was man tut, wenn X passiert** → `operations/`. Ist es ein Plan für
+> noch nicht gebaute Arbeit → `plans/` (und nach der Umsetzung als Contract nach
+> `architecture/` extrahieren).
 
-| Dokument | Beschreibung |
-|----------|--------------|
-| [ROADMAP.md](ROADMAP.md) | **⭐ Product Roadmap** - Zukunftsvision, geplante Features, Timeline |
-| [APP-STORE-READINESS.md](APP-STORE-READINESS.md) | App Store Launch Checklist - Status & nächste Schritte |
-| [plans/](plans/) | Aktive Umsetzungs-Pläne (keywords, SEO-Suite, theme selection, translation coverage, batch translation) |
+---
 
-### 🚀 Deployment & Setup
-
-| Dokument | Beschreibung |
-|----------|--------------|
-| [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) | **⭐ Custom Start Command** für Railway mit automatischen Migrationen |
-| [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md) | Production-Deployment-Checkliste |
-| [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md) | **Haupt-Guide** für Datenbank-Migrationen auf Railway |
-| [WEBHOOK-SETUP-GUIDE.md](WEBHOOK-SETUP-GUIDE.md) | Setup-Anleitung für das Webhook-System |
-| [API_KEY_ENCRYPTION_SETUP.md](API_KEY_ENCRYPTION_SETUP.md) | Setup der API-Key-Verschlüsselung |
-| [SESSION_PII_ENCRYPTION_SETUP.md](SESSION_PII_ENCRYPTION_SETUP.md) | Setup der Session-PII-Verschlüsselung |
-| [GOOGLE_SEARCH_CONSOLE_SETUP.md](GOOGLE_SEARCH_CONSOLE_SETUP.md) | OAuth-Setup für Google Search Console |
-
-### 🏛️ Architektur
-
-Dauerhaft gültige System-Design-Verträge und technische Konventionen. Siehe [architecture/](architecture/).
+## 📍 Direkt hier
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [architecture/SEO_SECTION_CONTRACT.md](architecture/SEO_SECTION_CONTRACT.md) | Architektur-Vertrag für alle SEO-Sections (Descriptor, Findings, Tasks, GDPR) |
-| [architecture/PLAN_SYSTEM.md](architecture/PLAN_SYSTEM.md) | Subscription-Plan-System (4 Pläne, Gates, Limits) |
-| [architecture/BILLING_SYSTEM.md](architecture/BILLING_SYSTEM.md) | Shopify-Billing-Integration (App-Subscription-Flow, Webhooks) |
-| [architecture/GDPR_COMPLIANCE.md](architecture/GDPR_COMPLIANCE.md) | GDPR-Implementation (Compliance-Webhooks, `redactShopData`) |
-| [architecture/SECURITY_IMPROVEMENTS.md](architecture/SECURITY_IMPROVEMENTS.md) | Sicherheits-Architektur (Verschlüsselung, Secret-Rotation) |
-| [architecture/LOGGING_GUIDE.md](architecture/LOGGING_GUIDE.md) | Strukturiertes Logging mit Winston (Konventionen, „NIEMALS loggen"-Liste) |
-| [architecture/THEME_RICHTEXT_HANDLING.md](architecture/THEME_RICHTEXT_HANDLING.md) | Theme-Richtext-Konvention (Autofix, Save-Error-Coverage) |
+| [ROADMAP.md](ROADMAP.md) | **⭐ Product Roadmap** — Vision, geplante Features, Timeline, Pricing |
 
-### 🛠️ Betrieb
+## 🏛️ Architektur — [architecture/](architecture/)
+
+Dauerhaft gültige Verträge. Wenn Code und Doku sich widersprechen, gilt der Code — dann
+die Doku korrigieren.
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [DATABASE_MAINTENANCE.md](DATABASE_MAINTENANCE.md) | Wartungsanleitung für Datenbank-Cleanup |
-| [TESTING_GUIDE.md](TESTING_GUIDE.md) | Test-Setup und -Workflows |
+| [SYNC_AND_WEBHOOKS.md](architecture/SYNC_AND_WEBHOOKS.md) | Webhook-Topics, HMAC/Async-Contract, Retry, Drift-Reconcile, Scheduler-Parameter |
+| [DATA_RETENTION_AND_CLEANUP.md](architecture/DATA_RETENTION_AND_CLEANUP.md) | Was der stündliche Cleanup löscht + Retention-Pflicht für neue Tabellen |
+| [THEME_SELECTION.md](architecture/THEME_SELECTION.md) | Theme-Auswahl (Option B-lite), Theme-Scoping von Sync und Translations |
+| [TRANSLATION_COVERAGE.md](architecture/TRANSLATION_COVERAGE.md) | Abdeckung der übersetzbaren Shopify-Ressourcen |
+| [AI_BATCH_TRANSLATION.md](architecture/AI_BATCH_TRANSLATION.md) | Batch-Übersetzung über die AI-Provider |
+| [THEME_RICHTEXT_HANDLING.md](architecture/THEME_RICHTEXT_HANDLING.md) | Richtext-Konvention für Theme-Settings (Autofix, Save-Error-Coverage) |
+| [SEO_SECTION_CONTRACT.md](architecture/SEO_SECTION_CONTRACT.md) | Vertrag für alle SEO-Sections (Descriptor, Findings, Tasks, GDPR) |
+| [PLAN_SYSTEM.md](architecture/PLAN_SYSTEM.md) | Subscription-Pläne, Gates, Limits |
+| [BILLING_SYSTEM.md](architecture/BILLING_SYSTEM.md) | Shopify-Billing-Integration (Subscription-Flow, Webhooks) |
+| [GDPR_COMPLIANCE.md](architecture/GDPR_COMPLIANCE.md) | Compliance-Webhooks, `redactShopData` |
+| [SECURITY_IMPROVEMENTS.md](architecture/SECURITY_IMPROVEMENTS.md) | Verschlüsselung, Secret-Rotation-Runbook |
+| [LOGGING_GUIDE.md](architecture/LOGGING_GUIDE.md) | Strukturiertes Logging mit Winston, „NIEMALS loggen"-Liste |
 
-### 🛒 Shopify App Store
+## 🚀 Setup & Deployment — [setup/](setup/)
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [SHOPIFY-PUBLIC-APP-GUIDE.md](SHOPIFY-PUBLIC-APP-GUIDE.md) | Guide für die Public-App-Distribution |
-| [SHOPIFY_APP_STORE_REQUIREMENTS.md](SHOPIFY_APP_STORE_REQUIREMENTS.md) | App-Store-Anforderungen |
-| [SHOPIFY_APPROVAL_REQUIREMENTS.md](SHOPIFY_APPROVAL_REQUIREMENTS.md) | Approval-Prozess-Anforderungen |
-| [SHOPIFY_COMPLIANCE_AUDIT.md](SHOPIFY_COMPLIANCE_AUDIT.md) | Compliance-Audit (Findings + Runbook) |
+| [RAILWAY_DEPLOYMENT.md](setup/RAILWAY_DEPLOYMENT.md) | **⭐ Custom Start Command** für Railway mit automatischen Migrationen |
+| [PRODUCTION_DEPLOYMENT.md](setup/PRODUCTION_DEPLOYMENT.md) | Production-Deployment-Checkliste |
+| [PRISMA_MIGRATION_GUIDE.md](setup/PRISMA_MIGRATION_GUIDE.md) | **Haupt-Guide** für Datenbank-Migrationen auf Railway |
+| [WEBHOOK-SETUP-GUIDE.md](setup/WEBHOOK-SETUP-GUIDE.md) | Webhooks registrieren und initialen Sync fahren |
+| [API_KEY_ENCRYPTION_SETUP.md](setup/API_KEY_ENCRYPTION_SETUP.md) | Setup der API-Key-Verschlüsselung |
+| [SESSION_PII_ENCRYPTION_SETUP.md](setup/SESSION_PII_ENCRYPTION_SETUP.md) | Setup der Session-PII-Verschlüsselung |
+| [GOOGLE_SEARCH_CONSOLE_SETUP.md](setup/GOOGLE_SEARCH_CONSOLE_SETUP.md) | OAuth-Setup für Google Search Console |
 
-### 📚 Referenz
+## 🛠️ Betrieb — [operations/](operations/)
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md](SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md) | Komplette Liste aller Shopify Content-Types |
-| [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) | Wettbewerbsanalyse + Feature-Gaps |
-| [TECHNICAL_DEBT.md](TECHNICAL_DEBT.md) | Technical Debt aus Code-Reviews |
-| [AI_PROVIDER_BALANCE_FEASIBILITY.md](AI_PROVIDER_BALANCE_FEASIBILITY.md) | Machbarkeitsanalyse: Restguthaben pro AI-Provider in Settings anzeigen (recherchiert, nicht umgesetzt) |
+| [DATABASE_MAINTENANCE.md](operations/DATABASE_MAINTENANCE.md) | Runbook: DB-Größe prüfen, Cleanup fahren, Disk-Full beheben |
+| [TESTING_GUIDE.md](operations/TESTING_GUIDE.md) | Test-Setup, Mock-Factories, Workflows |
+
+## 🛒 App Store — [app-store/](app-store/)
+
+| Dokument | Beschreibung |
+|----------|--------------|
+| [APP-STORE-READINESS.md](app-store/APP-STORE-READINESS.md) | Launch-Checkliste — Status & nächste Schritte |
+| [SHOPIFY_COMPLIANCE_AUDIT.md](app-store/SHOPIFY_COMPLIANCE_AUDIT.md) | Compliance-Audit (Blocker, Risiken, Runbook) |
+| [SHOPIFY_APPROVAL_REQUIREMENTS.md](app-store/SHOPIFY_APPROVAL_REQUIREMENTS.md) | Genehmigungs-Pflichten inkl. Schwellenwerte und Quellen |
+| [SHOPIFY_APP_STORE_REQUIREMENTS.md](app-store/SHOPIFY_APP_STORE_REQUIREMENTS.md) | Anforderungs-Kurzreferenz nach Kategorie |
+| [SHOPIFY-PUBLIC-APP-GUIDE.md](app-store/SHOPIFY-PUBLIC-APP-GUIDE.md) | Public-App-Distribution von Development bis Listing |
+
+## 📚 Referenz — [reference/](reference/)
+
+| Dokument | Beschreibung |
+|----------|--------------|
+| [SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md](reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md) | Komplette Liste aller übersetzbaren Shopify-Content-Types |
+| [COMPETITIVE_ANALYSIS.md](reference/COMPETITIVE_ANALYSIS.md) | Wettbewerbsanalyse + Feature-Gaps |
+| [TECHNICAL_DEBT.md](reference/TECHNICAL_DEBT.md) | Technical Debt aus Code-Reviews |
+| [AI_PROVIDER_BALANCE_FEASIBILITY.md](reference/AI_PROVIDER_BALANCE_FEASIBILITY.md) | Machbarkeitsanalyse Restguthaben pro AI-Provider (recherchiert, nicht umgesetzt) |
+
+## 📋 Pläne — [plans/](plans/)
+
+| Dokument | Beschreibung |
+|----------|--------------|
+| [PLAN_KEYWORDS_EXPANSION.md](plans/PLAN_KEYWORDS_EXPANSION.md) | Keyword-Ausbau (in Arbeit) |
+| [PLAN_SEO_SUITE_COMPLETION.md](plans/PLAN_SEO_SUITE_COMPLETION.md) | Fertigstellung der SEO-Suite |
 
 ---
 
 ## 🎯 Quick Links
 
-### Railway Deployment (Custom Start Command)
-→ [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md#custom-start-command)
-
-### Neue Migration erstellen
-→ [PRISMA_MIGRATION_GUIDE.md](PRISMA_MIGRATION_GUIDE.md#schnellanleitung)
-
-### Webhooks einrichten
-→ [WEBHOOK-SETUP-GUIDE.md](WEBHOOK-SETUP-GUIDE.md#deployment-schritte)
-
-### Plan-System verstehen
-→ [architecture/PLAN_SYSTEM.md](architecture/PLAN_SYSTEM.md#übersicht)
-
-### Datenbank aufräumen
-→ [DATABASE_MAINTENANCE.md](DATABASE_MAINTENANCE.md#solutions-implemented)
-
-### Neue SEO-Section bauen
-→ [architecture/SEO_SECTION_CONTRACT.md](architecture/SEO_SECTION_CONTRACT.md)
+- **Railway Custom Start Command** → [setup/RAILWAY_DEPLOYMENT.md](setup/RAILWAY_DEPLOYMENT.md#custom-start-command)
+- **Neue Migration erstellen** → [setup/PRISMA_MIGRATION_GUIDE.md](setup/PRISMA_MIGRATION_GUIDE.md#schnellanleitung)
+- **Webhooks einrichten** → [setup/WEBHOOK-SETUP-GUIDE.md](setup/WEBHOOK-SETUP-GUIDE.md#deployment-schritte)
+- **Wie Sync & Webhooks funktionieren** → [architecture/SYNC_AND_WEBHOOKS.md](architecture/SYNC_AND_WEBHOOKS.md)
+- **Datenbank läuft voll** → [operations/DATABASE_MAINTENANCE.md](operations/DATABASE_MAINTENANCE.md#wenn-die-datenbank-wieder-vollläuft)
+- **Plan-System verstehen** → [architecture/PLAN_SYSTEM.md](architecture/PLAN_SYSTEM.md#übersicht)
+- **Neue SEO-Section bauen** → [architecture/SEO_SECTION_CONTRACT.md](architecture/SEO_SECTION_CONTRACT.md)
 
 ---
 
-## 📝 Weitere Informationen
-
-Die Hauptdokumentation der App findest du in [../README.md](../README.md).
+Die Hauptdokumentation der App liegt in [../README.md](../README.md), die
+Architektur-Kurzfassung für Claude Code in [../CLAUDE.md](../CLAUDE.md).
 
 **Letzte Aktualisierung:** 2026-07-21

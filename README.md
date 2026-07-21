@@ -1078,22 +1078,25 @@ railway logs | grep "ContentSync"
 
 ## 📚 Weitere Dokumentation
 
-Detaillierte Dokumentationen findest du im [docs/](docs/) Ordner:
+Detaillierte Dokumentationen findest du im [docs/](docs/) Ordner — der Index dort
+([docs/README.md](docs/README.md)) erklärt die Aufteilung nach `architecture/`,
+`setup/`, `operations/`, `app-store/`, `reference/` und `plans/`.
 
 ### Setup & Deployment
-- **[Prisma Migration Guide](docs/PRISMA_MIGRATION_GUIDE.md)** - Datenbank-Migrationen auf Railway
-- **[Webhook Setup Guide](docs/WEBHOOK-SETUP-GUIDE.md)** - Einrichtung des Webhook-Systems
-- **[Database Maintenance](docs/DATABASE_MAINTENANCE.md)** - Datenbank-Wartung
+- **[Prisma Migration Guide](docs/setup/PRISMA_MIGRATION_GUIDE.md)** - Datenbank-Migrationen auf Railway
+- **[Webhook Setup Guide](docs/setup/WEBHOOK-SETUP-GUIDE.md)** - Einrichtung des Webhook-Systems
+- **[Database Maintenance](docs/operations/DATABASE_MAINTENANCE.md)** - Datenbank-Wartung
 
 ### Features & Architektur
+- **[Sync & Webhooks](docs/architecture/SYNC_AND_WEBHOOKS.md)** - Wie Daten von Shopify in die DB kommen
+- **[Data Retention & Cleanup](docs/architecture/DATA_RETENTION_AND_CLEANUP.md)** - Was automatisch aufgeräumt wird
 - **[Plan System](docs/architecture/PLAN_SYSTEM.md)** - Subscription-Plan-System
-- **[Shopify Content Types](docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md)** - Referenz aller Content-Types
+- **[Shopify Content Types](docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md)** - Referenz aller Content-Types
 
 ### Entwicklung & Best Practices
-- **[Code Evaluation](docs/CODE_EVALUATION.md)** - Vollständige Code-Evaluierung & Qualitätsanalyse
 - **[Logging Guide](docs/architecture/LOGGING_GUIDE.md)** - Strukturiertes Logging mit Winston
 - **[Security Improvements](docs/architecture/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
-- **[Improvements 2026-01-15](docs/IMPROVEMENTS_2026-01-15.md)** - Aktuelle Code-Verbesserungen
+- **[Testing Guide](docs/operations/TESTING_GUIDE.md)** - Test-Setup und Mock-Factories
 
 ## 📄 Lizenz
 

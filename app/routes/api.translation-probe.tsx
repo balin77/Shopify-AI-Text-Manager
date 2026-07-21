@@ -5,7 +5,7 @@
  * reports key shapes, sample values, total counts, locale coverage, and
  * write-test results. Output is consumed by the Settings → Translation
  * Probe tab as a paste-ready markdown report. See
- * docs/PLAN_TRANSLATION_COVERAGE.md §10 Phase 0 / §12 spike findings.
+ * docs/architecture/TRANSLATION_COVERAGE.md §10 Phase 0 / §12 spike findings.
  *
  * Read-only by default. Pass formData "writeTest=true" to attempt a single
  * SHOP write against an enabled non-primary locale (used to answer the
@@ -265,7 +265,7 @@ function summarize(node: { resourceId: string; translatableContent: Array<{ key:
 export async function loader({ request }: LoaderFunctionArgs) {
   // GET → just authenticate and tell the caller this endpoint is POST-only.
   await authenticate.admin(request);
-  return json({ ok: true, hint: "POST to run the probe. See docs/PLAN_TRANSLATION_COVERAGE.md §10 Phase 0." });
+  return json({ ok: true, hint: "POST to run the probe. See docs/architecture/TRANSLATION_COVERAGE.md §10 Phase 0." });
 }
 
 export async function action({ request }: ActionFunctionArgs) {

@@ -3,7 +3,7 @@
  *
  * One-shot UI that hits /api/translation-probe and renders a
  * paste-ready markdown report. Use this to populate
- * docs/PLAN_TRANSLATION_COVERAGE.md §12 spike findings before
+ * docs/architecture/TRANSLATION_COVERAGE.md §12 spike findings before
  * starting Phase 1 backend work.
  *
  * Read-only by default. "Run + write test" attempts a single SHOP
@@ -243,7 +243,7 @@ function formatMarkdown(report: ProbeReport): string {
   lines.push(``);
   lines.push(`---`);
   lines.push(``);
-  lines.push(`_Paste this report back into the assistant to populate \`docs/PLAN_TRANSLATION_COVERAGE.md\` §12 spike findings._`);
+  lines.push(`_Paste this report back into the assistant to populate \`docs/architecture/TRANSLATION_COVERAGE.md\` §12 spike findings._`);
 
   return lines.join("\n");
 }

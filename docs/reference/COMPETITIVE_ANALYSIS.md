@@ -120,7 +120,7 @@
 > Eigener Konverter ist nur in Edge-Cases relevant (Händler ohne Shopify
 > Payments, reiner Display-Switcher für nicht konfigurierte Märkte,
 > Custom-Rundung wie 9,99). Details + Entscheidung →
-> [ROADMAP.md](ROADMAP.md) §4.3 Localization.
+> [ROADMAP.md](../ROADMAP.md) §4.3 Localization.
 >
 > ² **Third-Party-App-Übersetzung — vollständig ausgeliefert** (Direct
 > Translations, Stand 2026-06): Ein Theme-App-Embed liest jeden Textknoten
@@ -679,7 +679,7 @@ Details → §3.1 Punkt 5 / §2.3 Fußnote ⁵.
   Display-Switcher für Märkte ohne Markets-Konfig, Custom-Rundung
   (9,99 statt 9,87). Empfehlung: **nicht als Vollfeature bauen**, ggf.
   schmaler Display-Switcher + Rundungsregeln als Pro-Add-on. Details →
-  [ROADMAP.md](ROADMAP.md) §4.3.
+  [ROADMAP.md](../ROADMAP.md) §4.3.
 - **AI Blog-Post-Generator** — ganze Artikel statt nur Beschreibungen. Niedriger
   Aufwand (AI-Infra steht), guter Marketing-Hebel.
 - **Google Search Console Integration** — Indexierung/Klicks/Impressionen in der

@@ -744,7 +744,7 @@ export class ShopifyContentService {
       // ShopPolicy is the only resource type where both mutation and translation key
       // use plain "body".
       //
-      // See also: docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
+      // See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
       const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
       const keyMapping: Record<string, string> = {
         title: 'title',

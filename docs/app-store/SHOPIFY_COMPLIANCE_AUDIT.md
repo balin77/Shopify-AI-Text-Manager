@@ -1,7 +1,7 @@
 # Shopify App Store Compliance-Audit — ContentPilot
 
 > **Erstellt:** 2026-05-16 · **Branch:** `develop` · **Methode:** Code-Audit gegen
-> `docs/SHOPIFY_APPROVAL_REQUIREMENTS.md` + parallele Subagenten (Webhooks, KI-Datenfluss,
+> `docs/app-store/SHOPIFY_APPROVAL_REQUIREMENTS.md` + parallele Subagenten (Webhooks, KI-Datenfluss,
 > Auth/App-Bridge, Billing, Protected Customer Data).
 >
 > Repo-Doku wurde **gegen den echten Code verifiziert** – mehrere Doku-Aussagen sind
@@ -129,20 +129,20 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   `onlineAccessInfo`, Fehler ⇒ nur Log, kein Re-Auth) bleibt als **harmloser,
   defensiver No-Op** erhalten — wirkungslos auf `null`, aber sinnvolle
   Zukunftsabsicherung, falls je Online-Tokens aktiviert werden. typecheck +
-  `encryption.test.ts` grün. `docs/SESSION_PII_ENCRYPTION_SETUP.md` wäre
+  `encryption.test.ts` grün. `docs/setup/SESSION_PII_ENCRYPTION_SETUP.md` wäre
   präziser mit dem Zusatz „greift nur bei Online-Tokens; Standardbetrieb ist
   offline ⇒ Felder null".
 - **Anforderung:** Protected-Customer-Data Level 1 — Verschlüsselung at rest & in
   transit; Datenschutz-Transparenz. (<https://shopify.dev/docs/apps/launch/protected-customer-data>)
 - **Dateien:** [app/utils/encrypted-session-storage.server.ts:24-47](app/utils/encrypted-session-storage.server.ts#L24-L47),
-  [docs/SESSION_PII_ENCRYPTION_SETUP.md](docs/SESSION_PII_ENCRYPTION_SETUP.md) (Z. ~174, 210)
+  [docs/setup/SESSION_PII_ENCRYPTION_SETUP.md](../setup/SESSION_PII_ENCRYPTION_SETUP.md) (Z. ~174, 210)
 - **Ist-Zustand:** `EncryptedPrismaSessionStorage.storeSession` verschlüsselt **nur**
   `accessToken`/`refreshToken`. `firstName`/`lastName`/`email` werden unverändert an
   `PrismaSessionStorage` durchgereicht → **Klartext bei jedem Login/Token-Refresh**.
   `encryptPII()` existiert in `encryption.server.ts`, wird aber **nirgendwo** im
   Laufzeitcode aufgerufen (nur im einmaligen Backfill-Skript
   `scripts/migrate-encrypt-session-pii.ts`). Neue Zeilen führen sofort wieder Klartext
-  ein. `docs/SESSION_PII_ENCRYPTION_SETUP.md` behauptet Verschlüsselung-at-rest — für
+  ein. `docs/setup/SESSION_PII_ENCRYPTION_SETUP.md` behauptet Verschlüsselung-at-rest — für
   Live-Daten **falsch**. (Hinweis: Diese Daten sind Merchant-/Staff-PII, nicht Käufer-PII;
   dennoch Verschlüsselungs- und Wahrheitspflicht.)
 - **Fix:** `storeSession`/`loadSession` um `encryptPII`/`decryptPII` für
@@ -450,7 +450,7 @@ akkumulieren (7-Tage-Karenz für Inspektion/Retry). typecheck grün.
 - ✅ `docs/architecture/GDPR_COMPLIANCE.md` „TODO HMAC/Audit-Log" entfernt — als umgesetzt
   dokumentiert (`authenticate.webhook()` → 401, `GdprAuditLog` + 3-Jahres-
   Cleanup, 500→Retry); Status-Footer aktualisiert.
-- ✅ `docs/architecture/BILLING_SYSTEM.md` (Trial) und `docs/SESSION_PII_ENCRYPTION_SETUP.md`
+- ✅ `docs/architecture/BILLING_SYSTEM.md` (Trial) und `docs/setup/SESSION_PII_ENCRYPTION_SETUP.md`
   (PII-at-rest) wurden bereits mit R5 bzw. B3 zutreffend gemacht.
 
 ---

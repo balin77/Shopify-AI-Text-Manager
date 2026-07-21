@@ -64,7 +64,7 @@ createSubscription(admin, session, plan, returnUrl)
   schließen daher kurz auf `AISettings.devForcedPlan` (Plan-Wechsel frei über
   die UI, persistent). Hart gegated über die Dev-client_id +
   `APP_ENV !== 'production'` → im Public-Build beweisbar toter Code. Details:
-  [docs/SHOPIFY_COMPLIANCE_AUDIT.md](../SHOPIFY_COMPLIANCE_AUDIT.md) §„B2-Folge".
+  [docs/app-store/SHOPIFY_COMPLIANCE_AUDIT.md](../app-store/SHOPIFY_COMPLIANCE_AUDIT.md) §„B2-Folge".
 
 #### Subscription kündigen
 ```typescript

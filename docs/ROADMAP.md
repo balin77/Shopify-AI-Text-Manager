@@ -124,7 +124,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 | Feature | Beschreibung | Priorität |
 |---------|--------------|-----------|
 | Scheduled Translations | Zeitgesteuerte Übersetzungen | High |
-| ~~Content Templates~~ | ~~Wiederverwendbare Vorlagen~~ ⛔ **verworfen 2026-07-19** — 2-Tages-Test ergab: `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam (siehe `docs/COMPETITIVE_ANALYSIS.md` §3.1 Punkt 5). Re-Einstieg nur bei echten Zusatz-Variablen (`{{brand}}`, `{{price}}`, `{{tags}}` etc. aus Shopify). | — |
+| ~~Content Templates~~ | ~~Wiederverwendbare Vorlagen~~ ⛔ **verworfen 2026-07-19** — 2-Tages-Test ergab: `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam (siehe `docs/reference/COMPETITIVE_ANALYSIS.md` §3.1 Punkt 5). Re-Einstieg nur bei echten Zusatz-Variablen (`{{brand}}`, `{{price}}`, `{{tags}}` etc. aus Shopify). | — |
 | Version History | Änderungsverlauf für Content | Medium |
 | Content Approval Workflow | Multi-User Freigabe-Prozess | Low |
 
@@ -192,7 +192,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
     + Rundungsregeln** reduzieren, klar kommuniziert als „nur Anzeige,
     Abrechnung in Shop-Währung". Keine Doppelung von Shopify-Markets-
     Funktionalität bauen. Siehe auch Hinweise in
-    [docs/COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) §Switcher-Widget.
+    [docs/reference/COMPETITIVE_ANALYSIS.md](reference/COMPETITIVE_ANALYSIS.md) §Switcher-Widget.
 - [ ] **Cultural Adaptation** - Kulturspezifische Anpassungen
 - [ ] **RTL Support** - Arabisch, Hebräisch
 
@@ -455,10 +455,10 @@ keine Kunden).
 
 ## Resources & Links
 
-- [App Store Readiness Checklist](APP-STORE-READINESS.md)
+- [App Store Readiness Checklist](app-store/APP-STORE-READINESS.md)
 - [Billing System Documentation](architecture/BILLING_SYSTEM.md)
 - [Security Documentation](architecture/SECURITY_IMPROVEMENTS.md)
-- [Technical Debt & Future Improvements](TECHNICAL_DEBT.md)
+- [Technical Debt & Future Improvements](reference/TECHNICAL_DEBT.md)
 - [Shopify App Store Requirements](https://shopify.dev/docs/apps/store/requirements)
 - [Shopify Partner Dashboard](https://partners.shopify.com/)
 
