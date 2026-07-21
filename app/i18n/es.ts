@@ -1481,7 +1481,8 @@ export const es: Translation = {
         importParseFailed: "No se pudo leer el archivo CSV.",
         importTooLarge: "Demasiadas filas (máximo 1000 por importación).",
         unsupportedRegex: "Shopify no admite redirecciones regex — fila omitida.",
-        unsupportedWildcard: "Shopify no admite redirecciones con comodines (contains/startsWith/endsWith) — fila omitida.",
+        unsupportedWildcard: "Shopify no admite redirecciones con comodines (contains/startsWith/endsWith/start/end) — fila omitida.",
+        duplicateInCsv: "Ruta de origen duplicada en el CSV — solo se importa la primera fila con esa ruta.",
       },
     },
     hreflangPage: {

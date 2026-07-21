@@ -1482,7 +1482,8 @@ export const en: Translation = {
         importParseFailed: "Could not read the CSV file.",
         importTooLarge: "Too many rows (max 1000 per import).",
         unsupportedRegex: "Regex redirects aren't supported by Shopify — row skipped.",
-        unsupportedWildcard: "Wildcard redirects (contains/startsWith/endsWith) aren't supported by Shopify — row skipped.",
+        unsupportedWildcard: "Wildcard redirects (contains/startsWith/endsWith/start/end) aren't supported by Shopify — row skipped.",
+        duplicateInCsv: "Duplicate source path in the CSV — only the first row with this path is imported.",
       },
     },
     hreflangPage: {

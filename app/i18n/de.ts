@@ -1479,7 +1479,8 @@ export const de = {
         importParseFailed: "CSV-Datei konnte nicht gelesen werden.",
         importTooLarge: "Zu viele Zeilen (maximal 1000 pro Import).",
         unsupportedRegex: "Regex-Weiterleitungen werden von Shopify nicht unterstützt — Zeile übersprungen.",
-        unsupportedWildcard: "Wildcard-Weiterleitungen (contains/startsWith/endsWith) werden von Shopify nicht unterstützt — Zeile übersprungen.",
+        unsupportedWildcard: "Wildcard-Weiterleitungen (contains/startsWith/endsWith/start/end) werden von Shopify nicht unterstützt — Zeile übersprungen.",
+        duplicateInCsv: "Doppelter Quellpfad in der CSV — nur die erste Zeile mit diesem Pfad wird importiert.",
       },
     },
     hreflangPage: {

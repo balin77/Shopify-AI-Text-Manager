@@ -249,12 +249,20 @@ export function coerceTargetPath(raw: string): string {
 /**
  * Should we treat the first row as a header?
  *
- * Two cases:
- *  1. Any cell matches a known header alias — obvious header.
- *  2. No known alias, but the first cell doesn't look like a redirect
- *     source (no leading `/`, not an http(s):// URL) — treat as an unknown
- *     header rather than misreading it as data. This handles exotic
- *     header names like `oldpath|newpath` that we haven't aliased.
+ * Only skip the first row when at least one cell matches a known alias
+ * (path / target / meta). If nothing is recognized we treat the whole file
+ * as headerless — the row then either passes `validateRedirect` (rare but
+ * fine — that means it was data, not a header) or fails with a visible
+ * `pathLeadingSlash` error that the merchant can act on.
+ *
+ * This is intentionally NOT clever: earlier we heuristically skipped a
+ * first row that "didn't look like a path" (no `/`, no `http`), on the
+ * theory that unknown headers should still be trimmed. But that silently
+ * dropped edge-case data rows like `regex,plain` in the (contrived) case
+ * where a CSV started with those exact strings as data. Silent data loss
+ * is worse than a noisy validation error on a legit unknown header —
+ * the merchant knows to delete a header line, they can't recover a lost
+ * row without a re-import.
  */
 function detectHeader(headerRow: string[]): {
   isHeader: boolean;
@@ -285,11 +293,8 @@ function detectHeader(headerRow: string[]): {
       metaColumns,
     };
   }
-  const firstCell = (headerRow[0] ?? "").trim();
-  const looksLikeData =
-    firstCell.startsWith("/") || /^https?:\/\//i.test(firstCell);
   return {
-    isHeader: !looksLikeData && firstCell.length > 0,
+    isHeader: false,
     pathIdx: 0,
     targetIdx: 1,
     metaColumns: [],

@@ -190,6 +190,86 @@ describe("parseRedirectsCsv — column-order tolerance", () => {
   });
 });
 
+describe("parseRedirectsCsv — header/data collision (no silent loss)", () => {
+  it("no known headers: first row is treated as data, not silently dropped as a guessed header", () => {
+    // Critical: if a CSV happens to start with content that isn't a known
+    // alias (no leading slash, no http://), the old heuristic used to skip
+    // it as an "assumed header". Now it flows through to validation —
+    // merchant sees a clear error on that row rather than losing the data.
+    const csv = "somelabel,anotherlabel\n/foo,/bar\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([]);
+    // Both rows come through; downstream validateRedirect will flag row 1
+    // (pathLeadingSlash) but row 2 imports cleanly.
+    expect(rows).toEqual([
+      { path: "somelabel", target: "anotherlabel", csvRow: 1 },
+      { path: "/foo", target: "/bar", csvRow: 2 },
+    ]);
+  });
+
+  it("no known headers but data-looking first row still works", () => {
+    // Same code path as the collision case above, just with actual data —
+    // sanity check that removing the heuristic didn't regress this.
+    const csv = "/old,/new\n/a,/b\n";
+    const { rows } = parseRedirectsCsv(csv);
+    expect(rows).toEqual([
+      { path: "/old", target: "/new", csvRow: 1 },
+      { path: "/a", target: "/b", csvRow: 2 },
+    ]);
+  });
+});
+
+describe("parseRedirectsCsv — multiple meta markers in the same row", () => {
+  it("first flagging column wins, row is still rejected exactly once", () => {
+    // Yoast Premium can carry BOTH Type=Regex AND Format=regex on the same
+    // row. We should surface the row once with a single error, not twice.
+    const csv =
+      "Origin,Target,Type,Format\n" +
+      "/foo/.*,/foo,Regex,regex\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([
+      { row: 2, path: "/foo/.*", error: "unsupportedRegex" },
+    ]);
+  });
+});
+
+describe("parseRedirectsCsv — trailing slash preservation", () => {
+  it("keeps /foo and /foo/ as distinct paths (Shopify treats them separately)", () => {
+    const csv = "path,target\n/foo,/x\n/foo/,/y\n";
+    const { rows } = parseRedirectsCsv(csv);
+    expect(rows.map((r) => r.path)).toEqual(["/foo", "/foo/"]);
+  });
+
+  it("does not auto-add or auto-strip trailing slashes on either side", () => {
+    const csv = "path,target\n/a/,/b\n/c,/d/\n";
+    const { rows } = parseRedirectsCsv(csv);
+    expect(rows.map((r) => [r.path, r.target])).toEqual([
+      ["/a/", "/b"],
+      ["/c", "/d/"],
+    ]);
+  });
+});
+
+describe("parseRedirectsCsv — SEOPress `enable` column", () => {
+  it("imports rows regardless of the enable column value (merchant reviews after import)", () => {
+    // Deliberate choice: skipping enable=0 rows silently would risk losing
+    // "temporarily disabled" migrations the merchant DID want. Bringing
+    // them in as active redirects is the safer default; the merchant can
+    // delete unwanted ones after review.
+    const csv =
+      "URL to match,URL to redirect,type,enable\n" +
+      "/foo,/bar,301,1\n" +
+      "/baz,/qux,301,0\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { path: "/foo", target: "/bar", csvRow: 2 },
+      { path: "/baz", target: "/qux", csvRow: 3 },
+    ]);
+  });
+});
+
 describe("parseRedirectsCsv — edge cases", () => {
   it("returns empty result on empty input without throwing", () => {
     expect(parseRedirectsCsv("")).toEqual({ rows: [], errors: [] });

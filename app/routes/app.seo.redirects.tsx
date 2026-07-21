@@ -206,6 +206,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       path: e.path,
       error: e.error,
     }));
+    // In-CSV duplicates: catch these BEFORE hitting Shopify — otherwise the
+    // second row surfaces as a generic "Path is already taken" userError
+    // (createFailed), which is indistinguishable from a duplicate against
+    // an EXISTING redirect on the shop. Explicit `duplicateInCsv` lets the
+    // merchant know it's their own file that has the dupe.
+    const seenPaths = new Set<string>();
     // Sequential — Shopify rate-limits burst redirect creates and there is no
     // batch mutation for urlRedirectCreate.
     for (const row of payload.rows) {
@@ -217,6 +223,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
         errors.push({ row: row.csvRow, path, error: err });
         continue;
       }
+      if (seenPaths.has(path)) {
+        skipped++;
+        errors.push({ row: row.csvRow, path, error: "duplicateInCsv" });
+        continue;
+      }
+      seenPaths.add(path);
       const res = await createRedirect(admin, { path, target });
       if (res.userErrors.length > 0 || !res.redirect) {
         skipped++;
