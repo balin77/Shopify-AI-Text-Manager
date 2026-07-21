@@ -441,7 +441,7 @@ Diese Features haben die meisten Wettbewerber und Kunden erwarten sie:
 |---|---------|--------|---------|--------------|
 | 1 | **JSON-LD Structured Data** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
 | 2 | **Rich Snippets (Product, Review, Breadcrumb)** | Hoch | Mittel | Yoast, SEOWILL, StoreSEO |
-| ~~3~~ | ~~**Glossar/Terminologie-Management**~~ ✅ erledigt (2026-07, Settings-Tab „Glossar" + zentrale Prompt-Injektion in `src/services/ai.service.ts`; Plan: `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md`) | — | — | — |
+| ~~3~~ | ~~**Glossar/Terminologie-Management**~~ ✅ erledigt (2026-07, Settings-Tab „Glossar" + zentrale Prompt-Injektion in `src/services/ai.service.ts`) | — | — | — |
 | ~~4~~ | ~~**Language/Currency Switcher Widget**~~ ✅ erledigt (2026-06, `extensions/storefront/blocks/locale-switcher.liquid`) | — | — | — |
 | ~~5~~ | ~~**Content-Templates/Vorlagen**~~ ⛔ **bewusst nicht** (Rollback 2026-07-19 nach 2-Tage-Test auf `develop`; `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Context-Zeilen bekam — siehe §2.3 Fußnote ⁵) | — | — | — |
 
@@ -648,7 +648,7 @@ pro Shop: „nie übersetzen" / „immer exakt so übersetzen" pro Zielsprache,
 Settings-Tab „Glossar" mit Locale-Buttons, CSV-Import/Export. Injektion sitzt
 zentral in `AIService` (nur Begriffe, die im Quelltext vorkommen), deckt also
 alle Übersetzungspfade ab (Editoren, Theme-Content, Direct Translations,
-Alt-Texte, SEO). Plan/Details: `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md`.
+Alt-Texte, SEO).
 
 **3. JSON-LD Structured Data.** Maschinenlesbares Markup (Product/Breadcrumb/
 Article/Review) → Rich Snippets in Google (Sterne, Preis, Verfügbarkeit) +
@@ -746,9 +746,8 @@ AI Blog-Post-Generator (§3.2 #10, AI-Infra steht) oder Geolocation Auto-Detect
 - [x] Glossar beim Übersetzen anwenden (zentral in `AIService`, alle Übersetzungspfade)
 - [x] Import/Export (CSV)
 
-Umgesetzt nach `docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md` — das dortige
-Datenmodell (Entry + per-Locale-Übersetzungen) ersetzt den früher hier
-skizzierten flachen `GlossaryTerm`-Entwurf.
+Umgesetzt mit einem Entry-plus-per-Locale-Übersetzungen-Datenmodell (ersetzt
+den früher hier skizzierten flachen `GlossaryTerm`-Entwurf).
 
 #### 1.3 Content-Templates — ⛔ zurückgezogen (2026-07-19)
 
