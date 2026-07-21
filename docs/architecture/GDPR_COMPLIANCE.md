@@ -363,7 +363,7 @@ Alle GDPR Requests werden geloggt für Compliance Audit Trail:
 ✅ **Umgesetzt:** Shopify GDPR Webhooks verwenden **HMAC-Signatur** zur
 Authentifizierung. Die Verifikation ist **vollständig implementiert** über
 Shopifys eingebautes `authenticate.webhook(request)` (`~/shopify.server`), das
-in [app/routes/webhooks.compliance.tsx](../app/routes/webhooks.compliance.tsx)
+in [app/routes/webhooks.compliance.tsx](../../app/routes/webhooks.compliance.tsx)
 sowie allen anderen Webhook-Handlern aufgerufen wird.
 
 - [x] HMAC Verification implementiert (`authenticate.webhook()`)

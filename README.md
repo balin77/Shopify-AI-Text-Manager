@@ -1086,13 +1086,13 @@ Detaillierte Dokumentationen findest du im [docs/](docs/) Ordner:
 - **[Database Maintenance](docs/DATABASE_MAINTENANCE.md)** - Datenbank-Wartung
 
 ### Features & Architektur
-- **[Plan System](docs/PLAN_SYSTEM.md)** - Subscription-Plan-System
+- **[Plan System](docs/architecture/PLAN_SYSTEM.md)** - Subscription-Plan-System
 - **[Shopify Content Types](docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md)** - Referenz aller Content-Types
 
 ### Entwicklung & Best Practices
 - **[Code Evaluation](docs/CODE_EVALUATION.md)** - Vollständige Code-Evaluierung & Qualitätsanalyse
-- **[Logging Guide](docs/LOGGING_GUIDE.md)** - Strukturiertes Logging mit Winston
-- **[Security Improvements](docs/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
+- **[Logging Guide](docs/architecture/LOGGING_GUIDE.md)** - Strukturiertes Logging mit Winston
+- **[Security Improvements](docs/architecture/SECURITY_IMPROVEMENTS.md)** - Sicherheitsverbesserungen
 - **[Improvements 2026-01-15](docs/IMPROVEMENTS_2026-01-15.md)** - Aktuelle Code-Verbesserungen
 
 ## 📄 Lizenz

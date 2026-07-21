@@ -4,7 +4,7 @@
 
 Die App implementiert ein vier-stufiges Subscription-Plan-System:
 
-> Quelle der Wahrheit: [`app/config/plans.ts`](../app/config/plans.ts) (`PLAN_CONFIG`).
+> Quelle der Wahrheit: [`app/config/plans.ts`](../../app/config/plans.ts) (`PLAN_CONFIG`).
 > Diese Tabelle spiegelt exakt die dortigen Werte wider.
 
 | Plan | Max Produkte | Max Collections | Max Pages | Max Articles | Locales | Produkt-Bilder | Content-Types | AI Instructions editierbar |

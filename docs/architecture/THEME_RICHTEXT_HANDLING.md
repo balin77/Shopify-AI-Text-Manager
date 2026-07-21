@@ -12,7 +12,7 @@ Shopify enforces a strict rule on rich-text setting values:
 > Setting '…' is invalid. **All top level nodes must be `<p>`, `<ul>`, `<ol>` or
 > `<h1>`-`<h6>` tags.**
 
-Our editor for these fields ([AIEditableHTMLField](../app/components/AIEditableHTMLField.tsx))
+Our editor for these fields ([AIEditableHTMLField](../../app/components/AIEditableHTMLField.tsx))
 is a `contentEditable` div that saves its raw `innerHTML`. While typing, browsers
 routinely emit **top-level bare text, `<br>` and `<div>` nodes**, e.g. typing
 `test` in front of the field's initial empty paragraph yields `test<p></p>`.
@@ -22,13 +22,13 @@ only affects the theme-settings save path.)
 ## 2. Where it is handled
 
 Primary-language theme-settings saves run through
-[templates-update.action.ts](../app/actions/templates/templates-update.action.ts)
+[templates-update.action.ts](../../app/actions/templates/templates-update.action.ts)
 (`handleUpdateContent`, primary-locale branch → `themeFilesUpsert` on
 `config/settings_data.json`).
 
 The fix normalizes the HTML so every top-level node is a block tag. Normalization
 is implemented in
-[richtext-normalize.server.ts](../app/utils/richtext-normalize.server.ts)
+[richtext-normalize.server.ts](../../app/utils/richtext-normalize.server.ts)
 (`normalizeShopifyRichtext`), built on `isomorphic-dompurify` (a prod dependency;
 `jsdom` is dev-only) so it runs on the server.
 
@@ -67,7 +67,7 @@ Two guardrails:
 
 `AISettings.themeRichtextMode` (default **`autofix`**), editable under
 **Settings → Rich-text formatting**
-([SettingsRichtextTab](../app/components/SettingsRichtextTab.tsx)):
+([SettingsRichtextTab](../../app/components/SettingsRichtextTab.tsx)):
 
 | Mode        | Behaviour                                                                                             |
 | ----------- | ---------------------------------------------------------------------------------------------------- |
@@ -106,7 +106,7 @@ success). Status as reviewed:
 **Surfaced correctly (error shown, nothing silently persisted):**
 
 - Content translations for products/collections/pages/blogs/articles —
-  [`updateContent`](../src/services/shopify-content.service.ts) throws on Shopify
+  [`updateContent`](../../src/services/shopify-content.service.ts) throws on Shopify
   `translationsRegister.userErrors` **before** the DB write, so a rejection aborts
   the whole save; the route action returns `success:false` and the UI shows it.
 - Primary resource updates (`updatePage` / `updateBlog` / `updateArticle` /

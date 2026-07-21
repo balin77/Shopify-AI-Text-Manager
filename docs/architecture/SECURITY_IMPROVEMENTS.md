@@ -682,7 +682,7 @@ if (!isValid) {
 Benötigt `SHOPIFY_API_SECRET` Environment Variable (wird automatisch von Shopify gesetzt).
 
 **Dokumentation:**
-- Complete Guide: `docs/GDPR_COMPLIANCE.md`
+- Complete Guide: `docs/architecture/GDPR_COMPLIANCE.md`
 
 **TODO für Production:**
 - [x] HMAC Signature Verification implementieren ✅

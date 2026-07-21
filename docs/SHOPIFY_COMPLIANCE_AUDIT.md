@@ -284,7 +284,7 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   ein solcher Job **existiert nicht** (kein `gdprAuditLog.deleteMany` in `scripts/`,
   `src/services/`, Scheduler). `customerEmail`/`customerId` wachsen unbegrenzt.
 - **Fix:** Geplanten Cleanup implementieren, der nur Zeilen `requestedAt < NOW() - 3 Jahre`
-  entfernt; in `docs/GDPR_COMPLIANCE.md` dokumentieren.
+  entfernt; in `docs/architecture/GDPR_COMPLIANCE.md` dokumentieren.
 
 ### R5 — Beworbener 7-Tage-Free-Trial wird nicht angewandt ✅ BEHOBEN
 
@@ -300,7 +300,7 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Ist-Zustand:** `trialDays` wird in `config/billing.ts` definiert und im Mutations-
   Result zurückgefragt, aber **nie in den `appSubscriptionCreate`-LineItems gesetzt**.
   UI ([SettingsPlanTab.tsx:298](app/components/SettingsPlanTab.tsx#L298)) und
-  `docs/BILLING_SYSTEM.md` versprechen einen Trial, der nicht geliefert wird → Sofort-
+  `docs/architecture/BILLING_SYSTEM.md` versprechen einen Trial, der nicht geliefert wird → Sofort-
   Charge entgegen Preisangabe.
 - **Fix:** `trialDays: planConfig.trialDays` in das LineItem aufnehmen — oder Trial-
   Versprechen aus UI/Doku entfernen.
@@ -312,7 +312,7 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
   Secret-Leak. Zusätzlich Code/Doku-seitig erledigt (P5): Provider-Keys in
   `.env.*.template` geleert, `validate-env.js` erwartet sie nicht; kein
   Codepfad liest noch `process.env.*_API_KEY` (BYO-Key, B4); Secret-Rotation-
-  Runbook in `docs/SECURITY_IMPROVEMENTS.md` (inkl. korrektem Hinweis,
+  Runbook in `docs/architecture/SECURITY_IMPROVEMENTS.md` (inkl. korrektem Hinweis,
   `ENCRYPTION_KEY` nicht blind zu rotieren).
 - **Anforderung:** Datenschutz/Sicherheit; KI/ML-Restriction (Free-Tier-Google nutzt
   Content u. U. zur Modellverbesserung).
@@ -416,7 +416,7 @@ bleiben unverändert (anderweitig genutzt).
 `ALTER TABLE "AISettings" ALTER COLUMN "subscriptionPlan" SET DEFAULT 'free'` —
 DB-Default jetzt deckungsgleich mit dem Prisma-Schema; bestehende Zeilen
 unverändert (App-Code setzt den Plan ohnehin explizit aus dem
-Shopify-verifizierten Abo). `docs/PLAN_SYSTEM.md`-Migrations-Snippet korrigiert.
+Shopify-verifizierten Abo). `docs/architecture/PLAN_SYSTEM.md`-Migrations-Snippet korrigiert.
 typecheck grün.
 
 ### H4 — Plan-Auflösung per Substring des Subscription-Namens ✅ BEHOBEN
@@ -441,16 +441,16 @@ zusätzlich **alle** `WebhookLog`-Zeilen älter als 7 Tage — unabhängig von
 akkumulieren (7-Tage-Karenz für Inspektion/Retry). typecheck grün.
 
 ### H7 — Doku-Abweichungen (Doku ≠ Code) ✅ BEHOBEN
-- ✅ `docs/PLAN_SYSTEM.md` Limit-Tabelle auf `app/config/plans.ts` angeglichen
+- ✅ `docs/architecture/PLAN_SYSTEM.md` Limit-Tabelle auf `app/config/plans.ts` angeglichen
   (Free 25 / Basic 75 / Pro 150 / Max 5000) inkl. korrekter Content-Types &
   AI-Instructions-Stufen (editierbar erst ab Pro); stale „15/100/250/∞"-Werte
   und der nicht mehr existente MainNavigation-4-Button-Selector korrigiert.
-- ✅ `docs/PLAN_SYSTEM.md` Plan-Flow bereits zuvor auf `SettingsPlanTab` via
+- ✅ `docs/architecture/PLAN_SYSTEM.md` Plan-Flow bereits zuvor auf `SettingsPlanTab` via
   Billing-API / `checkAndSyncSubscription` korrigiert.
-- ✅ `docs/GDPR_COMPLIANCE.md` „TODO HMAC/Audit-Log" entfernt — als umgesetzt
+- ✅ `docs/architecture/GDPR_COMPLIANCE.md` „TODO HMAC/Audit-Log" entfernt — als umgesetzt
   dokumentiert (`authenticate.webhook()` → 401, `GdprAuditLog` + 3-Jahres-
   Cleanup, 500→Retry); Status-Footer aktualisiert.
-- ✅ `docs/BILLING_SYSTEM.md` (Trial) und `docs/SESSION_PII_ENCRYPTION_SETUP.md`
+- ✅ `docs/architecture/BILLING_SYSTEM.md` (Trial) und `docs/SESSION_PII_ENCRYPTION_SETUP.md`
   (PII-at-rest) wurden bereits mit R5 bzw. B3 zutreffend gemacht.
 
 ---

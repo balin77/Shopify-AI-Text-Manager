@@ -1,7 +1,7 @@
 # SEO-Suite-Vervollständigung — Rudimentärer Plan (Phasen 1–5)
 
 **Status:** Skizze / Entwurf zur späteren Ausarbeitung
-**Baut auf:** vorhandene SEO-Oberfläche (Dashboard, Bulk-Meta, GSC, Structured Data, Redirects, Hreflang, IndexNow, AEO, Performance) unter [app/routes/app.seo*.tsx](../../app/routes/) + [PLAN_KEYWORDS_EXPANSION.md](./PLAN_KEYWORDS_EXPANSION.md). Section-Contract: [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md).
+**Baut auf:** vorhandene SEO-Oberfläche (Dashboard, Bulk-Meta, GSC, Structured Data, Redirects, Hreflang, IndexNow, AEO, Performance) unter [app/routes/app.seo*.tsx](../../app/routes/) + [PLAN_KEYWORDS_EXPANSION.md](./PLAN_KEYWORDS_EXPANSION.md). Section-Contract: [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md).
 **Ziel dieses Plans:** die Lücken schließen, die ContentPilot vom „SEO-Werkzeug für Content" zur echten SEO-Suite hebt — ohne Backlink-/Kompetitor-Datenmoats anzugehen.
 
 ---
@@ -188,7 +188,7 @@ Neuer Tab **„Site-Audit"** unter `app.seo.crawl.tsx` (Naming: bewusst NICHT �
 
 ### 3.5 Findings-Integration
 
-Broken Links + Orphans + Head-Drift fließen als eigene Codes in den Dashboard-Score (siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) §2). Ohne Doppelscoring: Findings, die schon der DB-Audit sieht (leere seoTitle etc.), bleiben dort — der Crawler ergänzt nur die technischen Codes, die DB-only nicht sehen kann.
+Broken Links + Orphans + Head-Drift fließen als eigene Codes in den Dashboard-Score (siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) §2). Ohne Doppelscoring: Findings, die schon der DB-Audit sieht (leere seoTitle etc.), bleiben dort — der Crawler ergänzt nur die technischen Codes, die DB-only nicht sehen kann.
 
 ### 3.6 Pro-Gate
 

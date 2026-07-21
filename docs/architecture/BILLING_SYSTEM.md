@@ -17,7 +17,7 @@ Subscriptions**. Bei einem Wechsel zwischen zwei bezahlten Plänen (paid→paid,
 
 ### 1. Konfiguration
 
-**Datei**: [`app/config/billing.ts`](../app/config/billing.ts)
+**Datei**: [`app/config/billing.ts`](../../app/config/billing.ts)
 
 Definiert alle Pläne mit:
 - Name
@@ -40,7 +40,7 @@ export const BILLING_PLANS: Record<Exclude<BillingPlan, 'free'>, PlanConfig> = {
 
 ### 2. Billing Service
 
-**Datei**: [`app/services/billing.server.ts`](../app/services/billing.server.ts)
+**Datei**: [`app/services/billing.server.ts`](../../app/services/billing.server.ts)
 
 Zentrale Funktionen für Abrechnung:
 
@@ -64,7 +64,7 @@ createSubscription(admin, session, plan, returnUrl)
   schließen daher kurz auf `AISettings.devForcedPlan` (Plan-Wechsel frei über
   die UI, persistent). Hart gegated über die Dev-client_id +
   `APP_ENV !== 'production'` → im Public-Build beweisbar toter Code. Details:
-  [docs/SHOPIFY_COMPLIANCE_AUDIT.md](SHOPIFY_COMPLIANCE_AUDIT.md) §„B2-Folge".
+  [docs/SHOPIFY_COMPLIANCE_AUDIT.md](../SHOPIFY_COMPLIANCE_AUDIT.md) §„B2-Folge".
 
 #### Subscription kündigen
 ```typescript
@@ -140,18 +140,18 @@ Response:
 
 ### 4. Webhooks
 
-**Datei**: [`app/routes/webhooks.subscription.tsx`](../app/routes/webhooks.subscription.tsx)
+**Datei**: [`app/routes/webhooks.subscription.tsx`](../../app/routes/webhooks.subscription.tsx)
 
 Handler für `APP_SUBSCRIPTIONS_UPDATE`:
 - Wird von Shopify getriggert bei Änderungen
 - Synchronisiert Status zur Datenbank
-- Registriert in [`webhook-registration.service.ts`](../app/services/webhook-registration.service.ts)
+- Registriert in [`webhook-registration.service.ts`](../../app/services/webhook-registration.service.ts)
 
 ### 5. UI
 
 #### Billing-Seite
 **Route**: `/app/billing`
-**Datei**: [`app/routes/app.billing.tsx`](../app/routes/app.billing.tsx)
+**Datei**: [`app/routes/app.billing.tsx`](../../app/routes/app.billing.tsx)
 
 Features:
 - Zeigt alle verfügbaren Pläne
@@ -161,7 +161,7 @@ Features:
 
 #### Callback nach Zahlung
 **Route**: `/app/billing/callback`
-**Datei**: [`app/routes/app.billing.callback.tsx`](../app/routes/app.billing.callback.tsx)
+**Datei**: [`app/routes/app.billing.callback.tsx`](../../app/routes/app.billing.callback.tsx)
 
 - Shopify redirected hierhin nach Zahlungsbestätigung
 - Synchronisiert Subscription
@@ -243,7 +243,7 @@ DB-Direktschreib-Bypass.
 Test-Charges (Shopify simuliert die Zahlung, keine echte Belastung) entstehen
 automatisch über das `test`-Flag der Billing-Mutation, sobald **eine** der
 folgenden Bedingungen zutrifft (siehe `useTestBilling` in
-[`billing.server.ts`](../app/services/billing.server.ts)):
+[`billing.server.ts`](../../app/services/billing.server.ts)):
 
 - `NODE_ENV=development`
 - `APP_ENV=development`
@@ -360,7 +360,7 @@ Keine zusätzlichen Variablen erforderlich! Billing nutzt:
 
 Um Preise zu ändern:
 
-1. Update [`app/config/billing.ts`](../app/config/billing.ts):
+1. Update [`app/config/billing.ts`](../../app/config/billing.ts):
    ```typescript
    basic: {
      name: 'Basic Plan',

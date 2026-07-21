@@ -152,7 +152,7 @@ Vorab-Selbstprüfung: Shopify AI Toolkit Befehl `/shopify-app-store-review` (nur
 > Jede App im App Store **muss** diese drei Webhooks implementieren – auch wenn keine
 > personenbezogenen Daten erhoben werden. Fehlende Implementierung = **Ablehnung**.
 > Im Repo existiert bereits `app/routes/webhooks.articles.tsx` (ungetrackt) sowie
-> `docs/GDPR_COMPLIANCE.md` – Abgleich mit diesen Anforderungen empfohlen.
+> `docs/architecture/GDPR_COMPLIANCE.md` – Abgleich mit diesen Anforderungen empfohlen.
 
 1. **`customers/data_request`** – Kunde fordert gespeicherte Daten an. Payload: `shop_id`, `shop_domain`, `orders_requested`, `customer {id,email,phone}`, `data_request {id}`. App muss Daten an Store-Owner liefern.
 
@@ -211,7 +211,7 @@ Backups verschlüsseln · Test-/Produktionsdaten trennen · Data-Loss-Prevention
 - Shopify übernimmt Chargebacks; Entwickler erhält automatisch Revenue Share.
 - Best Practice: einfache Preise, wenige Pläne, Free Trials (an Shopifys $1-Trial ausrichten), in lokaler Merchant-Währung abrechnen.
 
-> Repo-Referenz: `docs/BILLING_SYSTEM.md`, `docs/PLAN_SYSTEM.md` mit diesen Regeln abgleichen.
+> Repo-Referenz: `docs/architecture/BILLING_SYSTEM.md`, `docs/architecture/PLAN_SYSTEM.md` mit diesen Regeln abgleichen.
 
 ---
 
@@ -273,7 +273,7 @@ Geltendes Recht: Ontario, Kanada (ausschließlicher Gerichtsstand Ontario).
 - Shopify = Controller für direkt erhobene Partnerdaten, Processor für Merchant-Kundendaten (Merchant = Controller, App ≈ Sub-Processor).
 - Kein separates „Data Protection Addendum“ – DPA-Pflichten sind in den API Terms + Partner Privacy Policy eingebettet.
 
-> Repo-Referenz: `docs/GDPR_COMPLIANCE.md`, `docs/SESSION_PII_ENCRYPTION_SETUP.md`,
+> Repo-Referenz: `docs/architecture/GDPR_COMPLIANCE.md`, `docs/SESSION_PII_ENCRYPTION_SETUP.md`,
 > `docs/API_KEY_ENCRYPTION_SETUP.md` gegen diese Pflichten prüfen.
 
 ---
