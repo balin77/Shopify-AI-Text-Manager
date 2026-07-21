@@ -18,14 +18,13 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   BlockStack,
   InlineStack,
   Text,
   Button,
-  TextField,
   Select,
   Banner,
   Modal,
@@ -660,26 +659,44 @@ function BulkMetaGrid({
           align-items: flex-end;
           justify-content: flex-start;
         }
-        /* Stretch the Polaris multiline TextField vertically to fill the
-           cell. Polaris' default is align-items:center + auto height, which
-           left short values as a 30-px-tall control at the top of a taller
-           row. min-height (not height) keeps autogrow working: the internal
-           __Resizer can still push the cell taller when content demands. */
+        /* Every direct child of a cell (the CellTextArea, the Thumbnail,
+           the Select for status) is a flex item that fills the cell's
+           vertical space. min-height:100% resolves against the grid row
+           track height, which Grid pins to the tallest cell in the row. */
         .cp-bulk-meta-cell > * {
           flex: 1 1 auto;
           min-height: 100%;
         }
-        .cp-bulk-meta-cell .Polaris-TextField {
-          background: transparent;
-          align-items: stretch;
+        /* Custom borderless textarea (see CellTextArea): visually invisible
+           until focused, autogrows via JS, and — critical for the merchant's
+           ask — fills the whole grid cell so click targets aren't dead
+           below the text baseline. */
+        .cp-bulk-meta-textarea {
+          display: block;
+          width: 100%;
           min-height: 100%;
-        }
-        .cp-bulk-meta-cell .Polaris-TextField__Input,
-        .cp-bulk-meta-cell textarea {
-          overflow: hidden !important;
-          resize: none !important;
-          min-height: 100% !important;
+          border: none;
+          background: transparent;
+          font: inherit;
+          color: inherit;
+          padding: 4px;
+          margin: 0;
+          resize: none;
+          overflow: hidden;
+          outline: none;
           box-sizing: border-box;
+        }
+        .cp-bulk-meta-textarea:hover {
+          background: var(--p-color-bg-surface-hover, #f6f6f7);
+        }
+        .cp-bulk-meta-textarea:focus {
+          outline: 2px solid var(--p-color-border-focus, #005ab4);
+          outline-offset: -2px;
+          border-radius: 4px;
+          background: var(--p-color-bg-surface, #fff);
+        }
+        .cp-bulk-meta-textarea-dirty {
+          color: var(--p-color-text-magic, #7f56d9);
         }
       `}</style>
       <div
@@ -793,25 +810,65 @@ function BulkMetaCell({ row, column, valueFor, setEdit, edits, statusOptions }: 
     );
   }
 
-  // Every editable text cell is multi-line + autogrow. Merchant asked for
-  // this explicitly: cells that used to be single-line (title, handle,
-  // productType, seoTitle) would clip long content invisibly at the visible
-  // column width. Multi-line + autogrow means long values wrap and become
-  // fully visible, and table-layout naturally makes the row as tall as its
-  // tallest cell so short cells sit at their content height in the same row.
-  // No maxHeight on purpose — merchant explicitly asked for no inner
-  // scrollbars anywhere; very long HTML pastes therefore produce very tall
-  // rows (the pencil icon jumps to the full editor for real long-form work).
+  // Deliberately NOT using Polaris <TextField multiline>: Polaris' internal
+  // __Resizer measures content and writes the resulting height back onto the
+  // <textarea> via an inline `style="height: Xpx"`. That collapses the outer
+  // .Polaris-TextField wrapper to content-height too, which means our own
+  // `min-height: 100%` never has a taller ancestor to resolve against — so
+  // short values (title/handle) render as a ~30-px control at the top of a
+  // taller row with the rest of the cell dead to the click.
+  // Custom borderless textarea instead: our own scrollHeight-based autogrow
+  // (see CellTextArea below), with `min-height: 100%` targeting the textarea
+  // directly against the grid cell. Grid guarantees the cell's rendered
+  // height = tallest cell in its implicit row (align-items:stretch default),
+  // so the textarea fills the cell reliably. Autogrow still grows the row
+  // when content demands (min-height, not height).
   return (
-    <TextField
-      label=""
-      labelHidden
-      autoComplete="off"
-      variant="borderless"
-      multiline
+    <CellTextArea
       value={value}
       onChange={(v) => setEdit(row.id, field, v)}
-      tone={isDirty ? "magic" : undefined}
+      isDirty={isDirty}
+    />
+  );
+}
+
+interface CellTextAreaProps {
+  value: string;
+  onChange: (value: string) => void;
+  isDirty: boolean;
+}
+
+/**
+ * Borderless auto-growing textarea used by every editable text cell.
+ *
+ * Autogrow via scrollHeight measurement in a useLayoutEffect keyed on value:
+ * we reset `style.height` to `auto`, read `scrollHeight` (the browser's
+ * measurement of what the content needs), then write it back as an explicit
+ * height. The paired CSS rule `min-height: 100%` (targeting the textarea
+ * directly, no Polaris wrapper) ensures the textarea also fills the grid
+ * cell when it's shorter than the tallest cell in the row.
+ */
+function CellTextArea({ value, onChange, isDirty }: CellTextAreaProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Reset first so scrollHeight reflects the CURRENT content, not the
+    // previous rendered height. Without this, once the textarea grew to
+    // 200 px, deleting content wouldn't shrink it back.
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      className={`cp-bulk-meta-textarea${isDirty ? " cp-bulk-meta-textarea-dirty" : ""}`}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      rows={1}
+      spellCheck={false}
     />
   );
 }
