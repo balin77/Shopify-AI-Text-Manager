@@ -34,9 +34,10 @@ export type RedirectCsvResult = {
 };
 
 // Header aliases — normalized by lower-casing and stripping whitespace/`_`/`-`.
-// Covers Shopify's own export, common WordPress SEO plugins, and generic
-// spreadsheets. Order-agnostic: whichever column carries the recognized
-// header wins, regardless of position.
+// Covers Shopify's own export, common WordPress SEO plugins (Yoast, Rank Math,
+// SEOPress, Redirection), Screaming Frog reports, and generic spreadsheets.
+// Order-agnostic: whichever column carries the recognized header wins,
+// regardless of position.
 const PATH_HEADERS = new Set([
   "path",
   "from",
@@ -46,9 +47,12 @@ const PATH_HEADERS = new Set([
   "oldurl",
   "old",
   "origin",
+  "originurl",
   "originalurl",
   "requesturl",
   "url",
+  "address", // Screaming Frog redirect report
+  "urltomatch", // SEOPress
 ]);
 const TARGET_HEADERS = new Set([
   "target",
@@ -56,19 +60,82 @@ const TARGET_HEADERS = new Set([
   "destination",
   "targeturl",
   "redirectto",
+  "redirecturl", // Screaming Frog
   "newurl",
   "new",
   "destinationurl",
+  "urltoredirect", // SEOPress
 ]);
-const TYPE_HEADERS = new Set([
-  "type",
-  "code",
-  "redirecttype",
-  "statuscode",
-  "status",
-  "matchtype",
+
+/**
+ * Extra columns whose CONTENT decides whether a row is importable at all
+ * (Shopify only supports exact-path 301s — no wildcards, no regex).
+ *
+ * - `type` columns carry status codes AND sometimes match-type markers
+ *   ("regex"): Shopify native, Rank Math, Yoast Free.
+ * - `format` column: Yoast Premium exports `plain`/`regex` separately from
+ *   the HTTP `type`.
+ * - `matching` column: Rank Math exports `exact`/`contains`/`start`/`end`/
+ *   `regex` — the last four have no Shopify equivalent.
+ * - `regexflag` column: Redirection (John Godley) plugin exports a boolean
+ *   `regex` column with `0`/`1`.
+ */
+type ColumnKind = "type" | "format" | "matching" | "regexflag";
+
+const META_HEADER_KIND = new Map<string, ColumnKind>([
+  ["type", "type"],
+  ["code", "type"],
+  ["redirecttype", "type"],
+  ["statuscode", "type"],
+  ["status", "type"],
+  ["httpcode", "type"],
+  ["format", "format"],
+  ["matching", "matching"],
+  ["matchtype", "matching"],
+  ["regex", "regexflag"],
 ]);
-const REGEX_TYPE_MARKERS = new Set(["regex", "regexp", "regularexpression"]);
+
+/**
+ * Given a value from a meta column, decide whether the row is importable.
+ * Returns an i18n error code or null (row is fine).
+ */
+function classifyMetaCell(value: string, kind: ColumnKind): string | null {
+  const raw = value.trim().toLowerCase();
+  if (!raw) return null;
+
+  if (kind === "regexflag") {
+    // Redirection: `regex` column is 0/1. Also handle true/yes for tolerance.
+    if (raw === "1" || raw === "true" || raw === "yes") return "unsupportedRegex";
+    return null;
+  }
+
+  const norm = normHeader(raw);
+  if (kind === "type" || kind === "format") {
+    if (norm === "regex" || norm === "regexp" || norm === "regularexpression") {
+      return "unsupportedRegex";
+    }
+    return null;
+  }
+  if (kind === "matching") {
+    if (norm === "regex" || norm === "regexp" || norm === "regularexpression") {
+      return "unsupportedRegex";
+    }
+    // Rank Math wildcard modes — Shopify has no equivalent. Fail loudly
+    // instead of silently importing as an exact match (would look successful
+    // but never fire on the storefront).
+    if (
+      norm === "contains" ||
+      norm === "startswith" ||
+      norm === "endswith" ||
+      norm === "start" ||
+      norm === "end"
+    ) {
+      return "unsupportedWildcard";
+    }
+    return null;
+  }
+  return null;
+}
 
 function normHeader(s: string): string {
   return s.trim().toLowerCase().replace(/[\s_\-]+/g, "");
@@ -193,25 +260,29 @@ function detectHeader(headerRow: string[]): {
   isHeader: boolean;
   pathIdx: number;
   targetIdx: number;
-  typeIdx: number;
+  /** All meta columns present in this file, in header order. Yoast Premium
+   *  ships BOTH `Type` and `Format`, and we need to check both because Regex
+   *  is marked in the Format column, not the Type column. */
+  metaColumns: Array<{ index: number; kind: ColumnKind }>;
 } {
   const normalized = headerRow.map(normHeader);
   let pathIdx = -1;
   let targetIdx = -1;
-  let typeIdx = -1;
+  const metaColumns: Array<{ index: number; kind: ColumnKind }> = [];
   for (let i = 0; i < normalized.length; i++) {
     const h = normalized[i];
-    if (pathIdx < 0 && PATH_HEADERS.has(h)) pathIdx = i;
-    else if (targetIdx < 0 && TARGET_HEADERS.has(h)) targetIdx = i;
-    else if (typeIdx < 0 && TYPE_HEADERS.has(h)) typeIdx = i;
+    if (pathIdx < 0 && PATH_HEADERS.has(h)) { pathIdx = i; continue; }
+    if (targetIdx < 0 && TARGET_HEADERS.has(h)) { targetIdx = i; continue; }
+    const kind = META_HEADER_KIND.get(h);
+    if (kind) metaColumns.push({ index: i, kind });
   }
-  const anyRecognized = pathIdx >= 0 || targetIdx >= 0 || typeIdx >= 0;
+  const anyRecognized = pathIdx >= 0 || targetIdx >= 0 || metaColumns.length > 0;
   if (anyRecognized) {
     return {
       isHeader: true,
       pathIdx: pathIdx >= 0 ? pathIdx : 0,
       targetIdx: targetIdx >= 0 ? targetIdx : 1,
-      typeIdx,
+      metaColumns,
     };
   }
   const firstCell = (headerRow[0] ?? "").trim();
@@ -221,7 +292,7 @@ function detectHeader(headerRow: string[]): {
     isHeader: !looksLikeData && firstCell.length > 0,
     pathIdx: 0,
     targetIdx: 1,
-    typeIdx: -1,
+    metaColumns: [],
   };
 }
 
@@ -236,7 +307,7 @@ export function parseRedirectsCsv(text: string): RedirectCsvResult {
   const grid = parseCsvGrid(text, delimiter);
   if (grid.length === 0) return { rows, errors };
 
-  const { isHeader, pathIdx, targetIdx, typeIdx } = detectHeader(grid[0]);
+  const { isHeader, pathIdx, targetIdx, metaColumns } = detectHeader(grid[0]);
   const startRow = isHeader ? 1 : 0;
 
   for (let idx = startRow; idx < grid.length; idx++) {
@@ -247,16 +318,17 @@ export function parseRedirectsCsv(text: string): RedirectCsvResult {
 
     const csvRow = idx + 1;
 
-    if (typeIdx >= 0) {
-      const typeVal = normHeader(raw[typeIdx] ?? "");
-      if (REGEX_TYPE_MARKERS.has(typeVal)) {
-        errors.push({
-          row: csvRow,
-          path: sourceCell.trim(),
-          error: "unsupportedRegex",
-        });
-        continue;
-      }
+    // Check every meta column — Yoast Premium marks regex in `Format`, not
+    // `Type`, so we need to scan them all. First match wins; the row is
+    // skipped with that error code.
+    let metaError: string | null = null;
+    for (const meta of metaColumns) {
+      metaError = classifyMetaCell(raw[meta.index] ?? "", meta.kind);
+      if (metaError) break;
+    }
+    if (metaError) {
+      errors.push({ row: csvRow, path: sourceCell.trim(), error: metaError });
+      continue;
     }
 
     rows.push({

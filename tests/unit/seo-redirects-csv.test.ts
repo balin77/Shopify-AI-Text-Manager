@@ -71,6 +71,70 @@ describe("parseRedirectsCsv — WordPress SEO plugins", () => {
       { path: "/old", target: "/new", csvRow: 3 },
     ]);
   });
+
+  it("Rank Math matching=contains/start/end rows are flagged as unsupportedWildcard, not silently imported as exact", () => {
+    const csv =
+      "source,destination,matching,type\n" +
+      "/foo,/bar,contains,301\n" +
+      "/baz,/qux,startsWith,301\n" +
+      "/exact,/target,exact,301\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([
+      { row: 2, path: "/foo", error: "unsupportedWildcard" },
+      { row: 3, path: "/baz", error: "unsupportedWildcard" },
+    ]);
+    expect(rows).toEqual([
+      { path: "/exact", target: "/target", csvRow: 4 },
+    ]);
+  });
+
+  it("Yoast Premium marks regex in the separate `Format` column, not `Type` — must be caught there too", () => {
+    const csv =
+      "Origin,Target,Type,Format\n" +
+      "/blog/.*,/blog,301,regex\n" +
+      "/old,/new,301,plain\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([
+      { row: 2, path: "/blog/.*", error: "unsupportedRegex" },
+    ]);
+    expect(rows).toEqual([
+      { path: "/old", target: "/new", csvRow: 3 },
+    ]);
+  });
+
+  it("Redirection plugin: `regex` column is a boolean 0/1 flag, not a string marker", () => {
+    const csv =
+      "source URL,target URL,regex,http code\n" +
+      "/old,/new,0,301\n" +
+      "/api/.*,/api,1,301\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([
+      { row: 3, path: "/api/.*", error: "unsupportedRegex" },
+    ]);
+    expect(rows).toEqual([
+      { path: "/old", target: "/new", csvRow: 2 },
+    ]);
+  });
+});
+
+describe("parseRedirectsCsv — additional third-party headers", () => {
+  it("SEOPress: `URL to match,URL to redirect,type,enable`", () => {
+    const csv =
+      "URL to match,URL to redirect,type,enable\n" +
+      "/old,/new,301,1\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([{ path: "/old", target: "/new", csvRow: 2 }]);
+  });
+
+  it("Screaming Frog Redirect Report: `Address,Status Code,Redirect URL`", () => {
+    const csv =
+      "Address,Status Code,Status,Redirect URL\n" +
+      "https://example.com/old,301,Moved Permanently,https://example.com/new\n";
+    const { rows, errors } = parseRedirectsCsv(csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([{ path: "/old", target: "/new", csvRow: 2 }]);
+  });
 });
 
 describe("parseRedirectsCsv — delimiter autodetection", () => {
