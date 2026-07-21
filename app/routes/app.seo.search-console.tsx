@@ -22,6 +22,8 @@ import {
   Banner,
   Select,
   TextField,
+  Modal,
+  Autocomplete,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -50,6 +52,7 @@ import {
   revokeGoogleToken,
   inspectUrl,
   findCtrOpportunities,
+  aggregateQueryPageRows,
   resolveGscPagePath,
   summarizeInspection,
   GscReconnectRequiredError,
@@ -60,7 +63,13 @@ import {
   type QueryDelta,
   type LostQuery,
 } from "../services/google-search-console.server";
-import { assignKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
+import {
+  assignKeyword,
+  normalizeKeyword,
+  MAX_KEYWORD_LENGTH,
+  type KeywordResourceType,
+} from "../services/seo/keywords.service";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -222,6 +231,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Countries actually seen in this store's traffic (best-effort, unfiltered
     // query below) — populates the country Select's options.
     availableCountries: [] as Array<{ code: string; impressions: number }>,
+    // Adopt flow (PLAN_KEYWORDS_EXPANSION.md §4): each shown query's
+    // top-impression page URL (item suggestion for "track as keyword"), and
+    // the queries already tracked as keywords (any locale) so their rows show
+    // a "tracked" badge instead of the button.
+    topPages: {} as Record<string, string>,
+    trackedQueries: [] as string[],
+    // Per-type item pickers for the adopt modal (unresolvable rows) — same
+    // shape/cap as the keywords tab's add form.
+    pickers: { Product: [], Collection: [], Article: [], Page: [] } as Record<
+      KeywordResourceType,
+      Array<{ id: string; title: string }>
+    >,
   };
 
   const plan = await loadPlan(db, session.shop);
@@ -272,18 +293,30 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
     const { startDate, endDate } = defaultDateRange(new Date());
-    // rowLimit 1000 (not 25): the table only shows the first 25, but
-    // lost-query detection below must see the FULL current query set —
-    // comparing the previous period against just the top 25 would flag every
-    // query currently ranked 26+ as "lost". Same quota cost either way.
-    const currentRows = await querySearchAnalytics(accessToken, propertyUrl, {
+    // ONE (query, page)-dimensioned call feeds BOTH the Top-queries table
+    // (aggregated per query via aggregateQueryPageRows) and the Quick-wins
+    // detection (raw rows) — saving the previously separate query-dimensioned
+    // call (PLAN_KEYWORDS_EXPANSION.md §4.4). rowLimit 5000 (not 1000): the
+    // page dimension fans each query out over its ranking pages, so the same
+    // query coverage needs more rows; lost-query detection below must see the
+    // FULL current query set — comparing the previous period against just the
+    // top 25 would flag every query currently ranked 26+ as "lost".
+    const pageRows = await querySearchAnalytics(accessToken, propertyUrl, {
       startDate,
       endDate,
-      dimensions: ["query"],
-      rowLimit: 1000,
+      dimensions: ["query", "page"],
+      rowLimit: 5000,
       filters: analyticsFilters,
     });
+    const aggregated = aggregateQueryPageRows(pageRows);
+    const currentRows = aggregated.queries;
     base.topQueries = currentRows.slice(0, 25);
+    // Item suggestion for the adopt button — only the 25 shown rows need one.
+    for (const row of base.topQueries) {
+      const q = (row.keys[0] ?? "").toLowerCase();
+      const page = aggregated.topPageByQuery.get(q);
+      if (page) base.topPages[q] = page;
+    }
 
     // Period-over-period comparison: the 28 days immediately before the
     // window above. Best-effort — any failure here just leaves
@@ -304,21 +337,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       base.lostQueries = [];
     }
 
-    // "Quick wins": a second, page-dimensioned query — only fired once the
-    // first call above proved the token/property are good, so an auth failure
-    // doesn't cost a second wasted GSC request. Best-effort: any failure here
-    // just hides the Quick wins card instead of failing the whole page.
+    // "Quick wins" reuse the same raw rows — no extra GSC call.
+    base.opportunities = await resolveQuickWinResources(db, session.shop, findCtrOpportunities(pageRows));
+
+    // "Tracked" badges: which of the shown queries are already tracked as
+    // keywords (any locale). Best-effort — a DB error only loses the badges.
     try {
-      const pageRows = await querySearchAnalytics(accessToken, propertyUrl, {
-        startDate,
-        endDate,
-        dimensions: ["query", "page"],
-        rowLimit: 1000,
-        filters: analyticsFilters,
-      });
-      base.opportunities = await resolveQuickWinResources(db, session.shop, findCtrOpportunities(pageRows));
+      const shownQueries = Array.from(
+        new Set(
+          [...base.topQueries.map((r) => r.keys[0] ?? ""), ...base.opportunities.map((o) => o.query)]
+            .map((q) => normalizeKeyword(q))
+            .filter(Boolean),
+        ),
+      );
+      if (shownQueries.length) {
+        const tracked = await db.seoKeyword.findMany({
+          where: { shop: session.shop, keyword: { in: shownQueries } },
+          select: { keyword: true },
+        });
+        base.trackedQueries = Array.from(new Set(tracked.map((t: { keyword: string }) => t.keyword)));
+      }
     } catch {
-      base.opportunities = [];
+      base.trackedQueries = [];
+    }
+
+    // Item pickers for the adopt modal (unresolvable rows) — same cap/order
+    // as the keywords tab. Best-effort: without them the modal shows empty
+    // lists but the page still works.
+    try {
+      const [products, collections, articles, pages] = await Promise.all([
+        db.product.findMany({ where: { shop: session.shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: 250 }),
+        db.collection.findMany({ where: { shop: session.shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: 250 }),
+        db.article.findMany({ where: { shop: session.shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: 250 }),
+        db.page.findMany({ where: { shop: session.shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: 250 }),
+      ]);
+      base.pickers = { Product: products, Collection: collections, Article: articles, Page: pages };
+    } catch {
+      // keep empty pickers
     }
 
     // Country options for the filter Select: the countries actually present in
@@ -355,6 +410,12 @@ type ActionResult =
   | { ok: true; kind: "disconnected" | "synced" | "sitemap" | "propertySelected"; count?: number }
   | { ok: true; kind: "inspected"; inspection: UrlInspectionSummary }
   | { ok: true; kind: "quickWinTracked" }
+  // adoptKeyword: the tracked query, echoed back so the client can badge the
+  // right row (the fetcher response itself carries no row identity).
+  | { ok: true; kind: "keywordAdopted"; query: string }
+  // adoptKeyword could not map the row's page to a store item — the client
+  // opens the item-picker modal and re-submits with an explicit resource.
+  | { ok: false; error: "unresolved"; query: string }
   | { ok: false; error: string };
 
 const QUICK_WIN_RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
@@ -484,6 +545,105 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "quickWinTracked" });
   }
 
+  // 1-click adopt from the Top-queries / Quick-wins tables
+  // (PLAN_KEYWORDS_EXPANSION.md §4.2). Target resolution order: an explicit
+  // resource (item-picker modal) wins; otherwise the row's page URL is
+  // resolved via handle. Role: primary preferred, automatic fallback to
+  // secondary when the item already has a primary — a 1-click flow must not
+  // clobber a deliberate choice, but should still capture the keyword.
+  if (actionType === "adoptKeyword") {
+    const query = getFormString(form, "query").trim();
+    if (!query || query.length > MAX_KEYWORD_LENGTH) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+
+    let resourceType = getFormString(form, "resourceType") as KeywordResourceType | "";
+    let resourceId = getFormString(form, "resourceId");
+    let locale = "";
+
+    if (!resourceType || !resourceId) {
+      // Resolve the row's page URL → handle → cached item. The locale prefix
+      // (e.g. /fr/products/…) becomes the keyword's locale SUGGESTION —
+      // GSC queries carry no locale, but a French query ranking on the FR
+      // page should be tracked against the FR edition (§4.2 Locale-Hinweis).
+      const page = getFormString(form, "page");
+      const resolved = page ? resolveGscPagePath(page) : null;
+      if (resolved) {
+        try {
+          const model =
+            resolved.resourceType === "Product"
+              ? db.product
+              : resolved.resourceType === "Collection"
+                ? db.collection
+                : resolved.resourceType === "Page"
+                  ? db.page
+                  : db.article;
+          const item = await (model as any).findFirst({
+            where: { shop: session.shop, handle: resolved.handle },
+            select: { id: true },
+          });
+          if (item) {
+            resourceType = resolved.resourceType;
+            resourceId = item.id;
+            if (resolved.locale) {
+              const shopLocales = await getCachedShopLocales(admin, session.shop);
+              const isPublishedSecondary = shopLocales.some(
+                (l: any) => !l.primary && l.published && l.locale.toLowerCase() === resolved.locale,
+              );
+              if (isPublishedSecondary) locale = resolved.locale;
+            }
+          }
+        } catch {
+          // fall through to "unresolved" below
+        }
+      }
+      if (!resourceType || !resourceId) {
+        return json<ActionResult>({ ok: false, error: "unresolved", query }, { status: 422 });
+      }
+    } else if (!QUICK_WIN_RESOURCE_TYPES.includes(resourceType as KeywordResourceType)) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+
+    // GSC metrics from the row the merchant clicked — stamped onto the
+    // assignment immediately (§4.2 step 3), no waiting for the next sync.
+    const num = (name: string): number | null => {
+      const raw = getFormString(form, name);
+      if (!raw) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    };
+    const gsc = {
+      position: num("gscPosition"),
+      clicks: num("gscClicks"),
+      impressions: num("gscImpressions"),
+      ctr: num("gscCtr"),
+      updatedAt: new Date(),
+    };
+
+    const first = await assignKeyword(db, session.shop, {
+      resourceType: resourceType as KeywordResourceType,
+      resourceId,
+      keyword: query,
+      locale,
+      role: "primary",
+      gsc,
+    });
+    if (first.ok) return json<ActionResult>({ ok: true, kind: "keywordAdopted", query });
+    if (first.reason === "primaryExists") {
+      const second = await assignKeyword(db, session.shop, {
+        resourceType: resourceType as KeywordResourceType,
+        resourceId,
+        keyword: query,
+        locale,
+        role: "secondary",
+        gsc,
+      });
+      if (second.ok) return json<ActionResult>({ ok: true, kind: "keywordAdopted", query });
+      return json<ActionResult>({ ok: false, error: "tooMany" }, { status: 409 });
+    }
+    return json<ActionResult>({ ok: false, error: "tooMany" }, { status: 409 });
+  }
+
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
 
@@ -558,6 +718,106 @@ export default function SeoSearchConsole() {
       }
     }
   }, [quickWinFetcher.state, quickWinFetcher.data, handleNavigate]);
+
+  // ── "Track as keyword" adopt flow (PLAN_KEYWORDS_EXPANSION.md §4) ──
+  // Own fetcher so the disconnect/sync/sitemap banner isn't clobbered.
+  const adoptFetcher = useFetcher<ActionResult>();
+  // Queries adopted in THIS session — flips the row to its "tracked" badge
+  // without a reload; the loader's trackedQueries covers earlier sessions.
+  const [adoptedQueries, setAdoptedQueries] = useState<Set<string>>(new Set());
+  const [adoptingQuery, setAdoptingQuery] = useState<string | null>(null);
+  const [adoptError, setAdoptError] = useState<string | null>(null);
+  // Item-picker modal for rows whose page URL couldn't be resolved. Carries
+  // the row's GSC metrics along so the re-submit still stamps them.
+  const [adoptModal, setAdoptModal] = useState<{
+    query: string;
+    gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number };
+  } | null>(null);
+  const [adoptType, setAdoptType] = useState<KeywordResourceType>("Product");
+  const [adoptItemId, setAdoptItemId] = useState("");
+  const [adoptItemInput, setAdoptItemInput] = useState("");
+  // The click's row data, remembered across the fetcher round-trip — an
+  // "unresolved" response carries only the query back, so the modal gets the
+  // GSC metrics from here.
+  const pendingAdoptRef = useRef<{
+    query: string;
+    gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number };
+  } | null>(null);
+
+  const isQueryTracked = (query: string) => {
+    const q = query.trim().toLowerCase();
+    return adoptedQueries.has(q) || data.trackedQueries.includes(q);
+  };
+
+  const submitAdopt = (
+    query: string,
+    gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number },
+    target: { page?: string } | { resourceType: string; resourceId: string },
+  ) => {
+    setAdoptingQuery(query);
+    setAdoptError(null);
+    pendingAdoptRef.current = { query, gsc };
+    const payload: Record<string, string> = { actionType: "adoptKeyword", query };
+    if ("page" in target && target.page) payload.page = target.page;
+    if ("resourceId" in target) {
+      payload.resourceType = target.resourceType;
+      payload.resourceId = target.resourceId;
+    }
+    if (gsc.position != null) payload.gscPosition = String(gsc.position);
+    if (gsc.clicks != null) payload.gscClicks = String(gsc.clicks);
+    if (gsc.impressions != null) payload.gscImpressions = String(gsc.impressions);
+    if (gsc.ctr != null) payload.gscCtr = String(gsc.ctr);
+    adoptFetcher.submit(payload, { method: "post" });
+  };
+
+  /** Row click: resolve via the row's page when we have one, else straight to
+   *  the item-picker modal (no wasted server round-trip). */
+  const handleTrackClick = (
+    query: string,
+    gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number },
+    page?: string,
+  ) => {
+    if (page) submitAdopt(query, gsc, { page });
+    else {
+      setAdoptError(null);
+      setAdoptModal({ query, gsc });
+    }
+  };
+
+  useEffect(() => {
+    if (adoptFetcher.state !== "idle" || !adoptFetcher.data) return;
+    const res = adoptFetcher.data;
+    setAdoptingQuery(null);
+    if (res.ok && res.kind === "keywordAdopted") {
+      pendingAdoptRef.current = null;
+      setAdoptedQueries((prev) => new Set(prev).add(res.query.trim().toLowerCase()));
+      setAdoptModal(null);
+      setAdoptItemId("");
+      setAdoptItemInput("");
+      return;
+    }
+    if (!res.ok && res.error === "unresolved" && "query" in res) {
+      // No store item found for the row's page — let the merchant pick one.
+      const pending = pendingAdoptRef.current;
+      setAdoptModal({
+        query: res.query,
+        gsc: pending && pending.query === res.query ? pending.gsc : {},
+      });
+      return;
+    }
+    if (!res.ok) setAdoptError(res.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adoptFetcher.state, adoptFetcher.data]);
+
+  const adoptModalOptions = (data.pickers[adoptType] ?? []).map((i) => ({
+    label: i.title || i.id,
+    value: i.id,
+  }));
+  const filteredAdoptOptions = (() => {
+    const q = adoptItemInput.trim().toLowerCase();
+    if (!q) return adoptModalOptions;
+    return adoptModalOptions.filter((o) => o.label.toLowerCase().includes(q));
+  })();
 
   // Top Queries CSV export
   useEffect(() => {
@@ -847,6 +1107,11 @@ export default function SeoSearchConsole() {
                   <Text as="p" variant="bodySm" tone="subdued">
                     {g.deltaHint}
                   </Text>
+                  {adoptError && (
+                    <Banner tone="critical" onDismiss={() => setAdoptError(null)}>
+                      {adoptError === "tooMany" ? g.adoptTooMany : g.errorGeneric}
+                    </Banner>
+                  )}
                   {data.error === "fetch_failed" ? (
                     <Text as="p" tone="subdued">
                       {g.errorGeneric}
@@ -871,6 +1136,9 @@ export default function SeoSearchConsole() {
                             </th>
                             <th style={{ padding: "6px 8px" }}>
                               <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
+                            </th>
+                            <th style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm" tone="subdued">{g.colAction}</Text>
                             </th>
                           </tr>
                         </thead>
@@ -906,6 +1174,37 @@ export default function SeoSearchConsole() {
                                       </Text>
                                     )}
                                   </InlineStack>
+                                </td>
+                                <td style={{ padding: "6px 8px" }}>
+                                  {(() => {
+                                    const query = row.keys[0] ?? "";
+                                    if (!query) return null;
+                                    if (isQueryTracked(query)) {
+                                      return <Badge tone="success">{g.trackedBadge}</Badge>;
+                                    }
+                                    return (
+                                      <Button
+                                        size="slim"
+                                        variant="plain"
+                                        loading={adoptFetcher.state !== "idle" && adoptingQuery === query}
+                                        disabled={adoptFetcher.state !== "idle" && adoptingQuery !== query}
+                                        onClick={() =>
+                                          handleTrackClick(
+                                            query,
+                                            {
+                                              position: row.position,
+                                              clicks: row.clicks,
+                                              impressions: row.impressions,
+                                              ctr: row.ctr,
+                                            },
+                                            data.topPages[query.toLowerCase()],
+                                          )
+                                        }
+                                      >
+                                        {g.trackKeyword}
+                                      </Button>
+                                    );
+                                  })()}
                                 </td>
                               </tr>
                             );
@@ -991,22 +1290,47 @@ export default function SeoSearchConsole() {
                               <Text as="span" variant="bodySm">{(row.ctr * 100).toFixed(1)}%</Text>
                             </td>
                             <td style={{ padding: "6px 8px" }}>
-                              {row.resourceId && row.resourceType && (
-                                <Button
-                                  size="slim"
-                                  loading={quickWinFetcher.state !== "idle" && optimizingResourceId === row.resourceId}
-                                  disabled={quickWinFetcher.state !== "idle" && optimizingResourceId !== row.resourceId}
-                                  onClick={() =>
-                                    handleOptimize({
-                                      resourceType: row.resourceType as string,
-                                      resourceId: row.resourceId as string,
-                                      query: row.query,
-                                    })
-                                  }
-                                >
-                                  {g.quickWinOptimize}
-                                </Button>
-                              )}
+                              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                                {row.resourceId && row.resourceType && (
+                                  <Button
+                                    size="slim"
+                                    loading={quickWinFetcher.state !== "idle" && optimizingResourceId === row.resourceId}
+                                    disabled={quickWinFetcher.state !== "idle" && optimizingResourceId !== row.resourceId}
+                                    onClick={() =>
+                                      handleOptimize({
+                                        resourceType: row.resourceType as string,
+                                        resourceId: row.resourceId as string,
+                                        query: row.query,
+                                      })
+                                    }
+                                  >
+                                    {g.quickWinOptimize}
+                                  </Button>
+                                )}
+                                {isQueryTracked(row.query) ? (
+                                  <Badge tone="success">{g.trackedBadge}</Badge>
+                                ) : (
+                                  <Button
+                                    size="slim"
+                                    variant="plain"
+                                    loading={adoptFetcher.state !== "idle" && adoptingQuery === row.query}
+                                    disabled={adoptFetcher.state !== "idle" && adoptingQuery !== row.query}
+                                    onClick={() => {
+                                      const gsc = { position: row.position, impressions: row.impressions, ctr: row.ctr };
+                                      if (row.resourceId && row.resourceType) {
+                                        submitAdopt(row.query, gsc, {
+                                          resourceType: row.resourceType,
+                                          resourceId: row.resourceId,
+                                        });
+                                      } else {
+                                        handleTrackClick(row.query, gsc, row.page);
+                                      }
+                                    }}
+                                  >
+                                    {g.trackKeyword}
+                                  </Button>
+                                )}
+                              </InlineStack>
                             </td>
                           </tr>
                         ))}
@@ -1132,6 +1456,74 @@ export default function SeoSearchConsole() {
           </>
         )}
       </BlockStack>
+
+      {/* Item-picker modal for adopt rows whose page URL didn't resolve to a
+          cached store item (PLAN_KEYWORDS_EXPANSION.md §4.3). */}
+      <Modal
+        open={!!adoptModal}
+        onClose={() => setAdoptModal(null)}
+        title={g.adoptModalTitle}
+        primaryAction={{
+          content: g.trackKeyword,
+          disabled: !adoptItemId,
+          loading: adoptFetcher.state !== "idle",
+          onAction: () => {
+            if (adoptModal && adoptItemId) {
+              submitAdopt(adoptModal.query, adoptModal.gsc, {
+                resourceType: adoptType,
+                resourceId: adoptItemId,
+              });
+            }
+          },
+        }}
+        secondaryActions={[{ content: g.adoptModalCancel, onAction: () => setAdoptModal(null) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+          <Text as="p" variant="bodyMd">
+            {g.adoptModalBody.replace("{query}", adoptModal?.query ?? "")}
+          </Text>
+          {adoptError && (
+            <Banner tone="critical">{adoptError === "tooMany" ? g.adoptTooMany : g.errorGeneric}</Banner>
+          )}
+          <Select
+            label={t.seo.keywordsPage.typeLabel}
+            options={(["Product", "Collection", "Article", "Page"] as KeywordResourceType[]).map((rt) => ({
+              label: t.seo.keywordsPage.types[rt],
+              value: rt,
+            }))}
+            value={adoptType}
+            onChange={(v) => {
+              setAdoptType(v as KeywordResourceType);
+              setAdoptItemId("");
+              setAdoptItemInput("");
+            }}
+          />
+          <Autocomplete
+            options={filteredAdoptOptions}
+            selected={adoptItemId ? [adoptItemId] : []}
+            onSelect={(selected) => {
+              const id = selected[0] ?? "";
+              setAdoptItemId(id);
+              const match = adoptModalOptions.find((o) => o.value === id);
+              setAdoptItemInput(match ? match.label : "");
+            }}
+            textField={
+              <Autocomplete.TextField
+                label={t.seo.keywordsPage.itemLabel}
+                autoComplete="off"
+                placeholder={t.seo.keywordsPage.selectItem}
+                value={adoptItemInput}
+                onChange={(value) => {
+                  setAdoptItemInput(value);
+                  if (adoptItemId) setAdoptItemId("");
+                }}
+              />
+            }
+          />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </SeoSectionLayout>
   );
 }

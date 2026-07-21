@@ -318,6 +318,19 @@ export async function assignKeyword(
     locale?: string;
     role: KeywordRole;
     demoteExisting?: boolean;
+    /**
+     * Optional GSC metrics to stamp onto the assignment immediately — the
+     * GSC adopt flow (PLAN_KEYWORDS_EXPANSION.md §4.2) already holds the
+     * row's values, so the merchant sees them without waiting for the next
+     * ranking sync.
+     */
+    gsc?: {
+      position: number | null;
+      clicks: number | null;
+      impressions: number | null;
+      ctr: number | null;
+      updatedAt: Date;
+    };
   },
 ): Promise<AssignKeywordResult> {
   const keyword = normalizeKeyword(input.keyword);
@@ -361,6 +374,15 @@ export async function assignKeyword(
       }
     }
 
+    const gscData = input.gsc
+      ? {
+          gscPosition: input.gsc.position,
+          gscClicks: input.gsc.clicks,
+          gscImpressions: input.gsc.impressions,
+          gscCtr: input.gsc.ctr,
+          gscUpdatedAt: input.gsc.updatedAt,
+        }
+      : {};
     await tx.seoKeywordAssignment.upsert({
       where: {
         shop_keywordId_resourceId: {
@@ -375,8 +397,9 @@ export async function assignKeyword(
         resourceType: input.resourceType,
         resourceId: input.resourceId,
         role: input.role,
+        ...gscData,
       },
-      update: { role: input.role, resourceType: input.resourceType },
+      update: { role: input.role, resourceType: input.resourceType, ...gscData },
     });
 
     return { ok: true } as const;

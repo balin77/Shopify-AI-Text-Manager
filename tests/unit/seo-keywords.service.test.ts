@@ -274,6 +274,41 @@ describe("persistence helpers (keyword + assignment)", () => {
     expect(findArg.where.keyword).toEqual({ locale: "fr" });
   });
 
+  it("assignKeyword stamps provided GSC metrics onto create AND update (adopt flow)", async () => {
+    const { db, tx } = makeDb();
+    const updatedAt = new Date("2026-07-21T00:00:00Z");
+    await assignKeyword(db, SHOP, {
+      resourceType: "Product",
+      resourceId: P1,
+      keyword: "blue shoes",
+      role: "primary",
+      gsc: { position: 7.5, clicks: 12, impressions: 300, ctr: 0.04, updatedAt },
+    });
+    const asgArg = tx.seoKeywordAssignment.upsert.mock.calls[0][0];
+    const expected = {
+      gscPosition: 7.5,
+      gscClicks: 12,
+      gscImpressions: 300,
+      gscCtr: 0.04,
+      gscUpdatedAt: updatedAt,
+    };
+    expect(asgArg.create).toMatchObject(expected);
+    expect(asgArg.update).toMatchObject(expected);
+  });
+
+  it("assignKeyword without gsc leaves the assignment's GSC columns untouched", async () => {
+    const { db, tx } = makeDb();
+    await assignKeyword(db, SHOP, {
+      resourceType: "Product",
+      resourceId: P1,
+      keyword: "blue shoes",
+      role: "primary",
+    });
+    const asgArg = tx.seoKeywordAssignment.upsert.mock.calls[0][0];
+    expect(asgArg.update).not.toHaveProperty("gscPosition");
+    expect(asgArg.create).not.toHaveProperty("gscPosition");
+  });
+
   it("assignKeyword refuses a second primary without demoteExisting (no write)", async () => {
     const { db, tx } = makeDb({
       siblings: [

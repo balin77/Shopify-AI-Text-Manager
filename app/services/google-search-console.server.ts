@@ -512,11 +512,85 @@ export function findCtrOpportunities(rows: SearchAnalyticsRow[], limit = OPPORTU
     }));
 }
 
+/** aggregateQueryPageRows result: per-query totals + each query's top page. */
+export interface AggregatedQueryRows {
+  /** Query-level totals, sorted clicks desc then impressions desc (GSC's own
+   *  default ordering for the query dimension). keys = [query]. */
+  queries: SearchAnalyticsRow[];
+  /** query (lowercased) → the page URL with the most impressions for it —
+   *  the adopt flow's item suggestion (PLAN_KEYWORDS_EXPANSION.md §4.1a). */
+  topPageByQuery: Map<string, string>;
+}
+
+/**
+ * Aggregate (query, page)-dimensioned Search Analytics rows down to query
+ * totals, so ONE GSC call can feed both the Top-queries table (aggregated)
+ * and the Quick-wins detection (raw rows) — saving the separate
+ * query-dimensioned call (PLAN_KEYWORDS_EXPANSION.md §4.4). clicks and
+ * impressions sum; position is the impression-weighted mean (a straight mean
+ * would let a 2-impression page skew a 1000-impression query); ctr is
+ * recomputed as clicks/impressions. Pure and exported for unit testing.
+ */
+export function aggregateQueryPageRows(rows: SearchAnalyticsRow[]): AggregatedQueryRows {
+  interface Acc {
+    query: string;
+    clicks: number;
+    impressions: number;
+    positionWeighted: number; // Σ position·impressions (÷ impressions at the end)
+    topPage: string;
+    topPageImpressions: number;
+  }
+  const byQuery = new Map<string, Acc>();
+  for (const row of rows) {
+    const query = row.keys?.[0] ?? "";
+    const page = row.keys?.[1] ?? "";
+    if (!query) continue;
+    const key = query.toLowerCase();
+    let acc = byQuery.get(key);
+    if (!acc) {
+      acc = { query, clicks: 0, impressions: 0, positionWeighted: 0, topPage: page, topPageImpressions: row.impressions };
+      byQuery.set(key, acc);
+    } else if (row.impressions > acc.topPageImpressions) {
+      acc.topPage = page;
+      acc.topPageImpressions = row.impressions;
+    }
+    acc.clicks += row.clicks;
+    acc.impressions += row.impressions;
+    acc.positionWeighted += row.position * row.impressions;
+  }
+
+  const queries: SearchAnalyticsRow[] = Array.from(byQuery.values())
+    .map((acc) => ({
+      keys: [acc.query],
+      clicks: acc.clicks,
+      impressions: acc.impressions,
+      ctr: acc.impressions > 0 ? acc.clicks / acc.impressions : 0,
+      position: acc.impressions > 0 ? acc.positionWeighted / acc.impressions : 0,
+    }))
+    .sort((a, b) => b.clicks - a.clicks || b.impressions - a.impressions);
+
+  const topPageByQuery = new Map<string, string>();
+  for (const [key, acc] of byQuery) {
+    if (acc.topPage) topPageByQuery.set(key, acc.topPage);
+  }
+  return { queries, topPageByQuery };
+}
+
 /** A GSC page URL resolved to the store resource it points at (for the Quick
  *  wins "Optimize" deep-link — see resolveGscPagePath). */
 export interface ResolvedGscPage {
   resourceType: "Product" | "Collection" | "Page" | "Article";
   handle: string;
+  /**
+   * The locale prefix the path carried (e.g. "de" from "/de/products/foo"),
+   * lowercased, or null for an unprefixed path. GSC queries carry no locale —
+   * for a multilingual shop a French query ranks on the FR page, so the adopt
+   * flow (PLAN_KEYWORDS_EXPANSION.md §4.2) uses this as the LOCALE SUGGESTION
+   * for the tracked keyword (validated against the shop's published locales
+   * by the caller — a random two-letter first segment must not silently
+   * create keywords under a nonexistent locale).
+   */
+  locale: string | null;
 }
 
 // Matches an optional leading locale segment in a storefront path, e.g.
@@ -542,18 +616,20 @@ export function resolveGscPagePath(pageUrl: string): ResolvedGscPage | null {
   }
 
   const segments = path.split("/").filter(Boolean);
+  let locale: string | null = null;
   if (segments.length > 0 && LOCALE_SEGMENT_RE.test(segments[0])) {
+    locale = segments[0].toLowerCase();
     segments.shift();
   }
   if (segments.length === 0) return null;
 
   const [first, second, third] = segments;
-  if (first === "products" && second) return { resourceType: "Product", handle: second };
-  if (first === "collections" && second) return { resourceType: "Collection", handle: second };
-  if (first === "pages" && second) return { resourceType: "Page", handle: second };
+  if (first === "products" && second) return { resourceType: "Product", handle: second, locale };
+  if (first === "collections" && second) return { resourceType: "Collection", handle: second, locale };
+  if (first === "pages" && second) return { resourceType: "Page", handle: second, locale };
   // /blogs/<blogHandle>/<articleHandle> — the article's own handle (third
   // segment) is what SeoKeyword/Article rows are keyed by, not the blog handle.
-  if (first === "blogs" && second && third) return { resourceType: "Article", handle: third };
+  if (first === "blogs" && second && third) return { resourceType: "Article", handle: third, locale };
   return null;
 }
 

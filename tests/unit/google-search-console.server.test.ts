@@ -19,6 +19,7 @@ import {
   revokeGoogleToken,
   submitSitemap,
   findCtrOpportunities,
+  aggregateQueryPageRows,
   resolveGscPagePath,
   summarizeInspection,
   buildDimensionFilterGroups,
@@ -714,10 +715,11 @@ describe("findCtrOpportunities — Search Console page 'Quick wins'", () => {
 });
 
 describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", () => {
-  it("resolves a product page", () => {
+  it("resolves a product page (no locale prefix → locale null)", () => {
     expect(resolveGscPagePath("https://shop.example.com/products/blue-shoes")).toEqual({
       resourceType: "Product",
       handle: "blue-shoes",
+      locale: null,
     });
   });
 
@@ -725,6 +727,7 @@ describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", ()
     expect(resolveGscPagePath("https://shop.example.com/collections/summer-sale")).toEqual({
       resourceType: "Collection",
       handle: "summer-sale",
+      locale: null,
     });
   });
 
@@ -732,6 +735,7 @@ describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", ()
     expect(resolveGscPagePath("https://shop.example.com/pages/about-us")).toEqual({
       resourceType: "Page",
       handle: "about-us",
+      locale: null,
     });
   });
 
@@ -739,20 +743,23 @@ describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", ()
     expect(resolveGscPagePath("https://shop.example.com/blogs/news/our-launch")).toEqual({
       resourceType: "Article",
       handle: "our-launch",
+      locale: null,
     });
   });
 
-  it("strips a two-letter locale prefix before matching", () => {
+  it("strips a two-letter locale prefix and returns it as the locale suggestion", () => {
     expect(resolveGscPagePath("https://shop.example.com/de/products/blaue-schuhe")).toEqual({
       resourceType: "Product",
       handle: "blaue-schuhe",
+      locale: "de",
     });
   });
 
-  it("strips a locale-region prefix (e.g. en-us) before matching", () => {
-    expect(resolveGscPagePath("https://shop.example.com/en-us/collections/summer-sale")).toEqual({
+  it("strips a locale-region prefix (e.g. en-US) and returns it lowercased", () => {
+    expect(resolveGscPagePath("https://shop.example.com/en-US/collections/summer-sale")).toEqual({
       resourceType: "Collection",
       handle: "summer-sale",
+      locale: "en-us",
     });
   });
 
@@ -770,6 +777,73 @@ describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", ()
 
   it("returns null for an invalid URL", () => {
     expect(resolveGscPagePath("not-a-url")).toBeNull();
+  });
+});
+
+describe("aggregateQueryPageRows — one (query,page) call feeds Top queries + Quick wins", () => {
+  const row = (query: string, page: string, clicks: number, impressions: number, position: number): SearchAnalyticsRow => ({
+    keys: [query, page],
+    clicks,
+    impressions,
+    ctr: impressions > 0 ? clicks / impressions : 0,
+    position,
+  });
+
+  it("sums clicks/impressions per query and impression-weights the position", () => {
+    const { queries } = aggregateQueryPageRows([
+      row("blue shoes", "https://s.com/a", 10, 900, 5),
+      row("blue shoes", "https://s.com/b", 2, 100, 15),
+    ]);
+    expect(queries).toHaveLength(1);
+    const q = queries[0];
+    expect(q.keys).toEqual(["blue shoes"]);
+    expect(q.clicks).toBe(12);
+    expect(q.impressions).toBe(1000);
+    // (5·900 + 15·100) / 1000 = 6 — NOT the straight mean 10.
+    expect(q.position).toBe(6);
+    expect(q.ctr).toBeCloseTo(0.012, 6);
+  });
+
+  it("sorts queries by clicks desc, then impressions desc", () => {
+    const { queries } = aggregateQueryPageRows([
+      row("few-clicks", "https://s.com/a", 1, 5000, 3),
+      row("many-clicks", "https://s.com/b", 50, 200, 3),
+      row("no-clicks-many-imps", "https://s.com/c", 0, 9000, 30),
+      row("no-clicks-few-imps", "https://s.com/d", 0, 100, 30),
+    ]);
+    expect(queries.map((q) => q.keys[0])).toEqual([
+      "many-clicks",
+      "few-clicks",
+      "no-clicks-many-imps",
+      "no-clicks-few-imps",
+    ]);
+  });
+
+  it("picks each query's top page by impressions (adopt-flow item suggestion)", () => {
+    const { topPageByQuery } = aggregateQueryPageRows([
+      row("blue shoes", "https://s.com/products/old", 5, 100, 8),
+      row("blue shoes", "https://s.com/products/blue-shoes", 20, 800, 4),
+      row("vases", "https://s.com/collections/vases", 3, 300, 6),
+    ]);
+    expect(topPageByQuery.get("blue shoes")).toBe("https://s.com/products/blue-shoes");
+    expect(topPageByQuery.get("vases")).toBe("https://s.com/collections/vases");
+  });
+
+  it("merges the same query case-insensitively", () => {
+    const { queries } = aggregateQueryPageRows([
+      row("Blue Shoes", "https://s.com/a", 1, 100, 5),
+      row("blue shoes", "https://s.com/b", 1, 100, 5),
+    ]);
+    expect(queries).toHaveLength(1);
+    expect(queries[0].impressions).toBe(200);
+  });
+
+  it("skips rows without a query key and handles the empty input", () => {
+    expect(aggregateQueryPageRows([]).queries).toEqual([]);
+    const { queries } = aggregateQueryPageRows([
+      { keys: [], clicks: 1, impressions: 10, ctr: 0.1, position: 1 },
+    ]);
+    expect(queries).toEqual([]);
   });
 });
 
