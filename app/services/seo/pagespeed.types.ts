@@ -95,6 +95,13 @@ export interface PageSpeedAuditResult {
   fieldData: PageSpeedFieldData | null;
   /** True when this result is a stored older audit served because a fresh PSI run couldn't be made (e.g. Google's daily quota was exhausted). */
   stale?: boolean;
+  /**
+   * Reason Lighthouse could not produce the annotatable full-page screenshot,
+   * lifted from the raw PSI response (audit `errorMessage`, `runtimeError`,
+   * or first relevant `runWarnings` entry). Only set when `screenshot?.fullPage`
+   * is false. Empty string when the fallback fired but no reason was reported.
+   */
+  screenshotUnavailableReason?: string;
 }
 
 /** Lightweight history row (no heavy result JSON) for the trend list. */

@@ -298,7 +298,7 @@ function parsePageSpeedResponseInner(
   const opportunities = extractOpportunities(audits, imageAnnotationsByAuditId);
   const fieldData = extractFieldData(r);
 
-  return {
+  const base: PageSpeedAuditResult = {
     url,
     strategy,
     fetchedAt,
@@ -309,6 +309,37 @@ function parsePageSpeedResponseInner(
     opportunities,
     fieldData,
   };
+  if (screenshot && !screenshot.fullPage) {
+    base.screenshotUnavailableReason = extractScreenshotUnavailableReason(lighthouseResult, audits);
+  }
+  return base;
+}
+
+/**
+ * Best-effort text lifted from the raw PSI response explaining why Lighthouse
+ * fell back to the viewport-only `final-screenshot`. Checks the failing audit
+ * first, then a top-level `runtimeError`, then any `runWarnings` that mention
+ * screenshots. Returns an empty string when nothing informative was reported —
+ * the UI shows a generic explanation in that case.
+ */
+function extractScreenshotUnavailableReason(
+  lighthouseResult: any,
+  audits: Record<string, any>,
+): string {
+  const auditErr = audits?.["full-page-screenshot"]?.errorMessage;
+  if (typeof auditErr === "string" && auditErr.trim()) return auditErr.trim();
+
+  const runtimeMsg = lighthouseResult?.runtimeError?.message;
+  if (typeof runtimeMsg === "string" && runtimeMsg.trim()) return runtimeMsg.trim();
+
+  const warnings = lighthouseResult?.runWarnings;
+  if (Array.isArray(warnings)) {
+    const hit = warnings.find(
+      (w) => typeof w === "string" && /screenshot|element/i.test(w),
+    );
+    if (typeof hit === "string" && hit.trim()) return hit.trim();
+  }
+  return "";
 }
 
 function extractPerformanceScore(categories: any): number | null {
