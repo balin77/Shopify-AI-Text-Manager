@@ -1601,6 +1601,7 @@ export const es: Translation = {
       deviceDesktop: "Escritorio",
       deviceMobile: "Móvil",
       deviceTablet: "Tablet",
+      exportCsv: "Exportar como CSV",
     },
     aeoPage: {
       helpTitle: "SEO para búsquedas con IA (AEO)",

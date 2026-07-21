@@ -10,6 +10,8 @@
 import { useEffect, useRef, useState } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
+
+type ExportPayload = { csv: string; filename: string; rowCount: number };
 import {
   Card,
   BlockStack,
@@ -496,6 +498,14 @@ export default function SeoSearchConsole() {
   const fetcher = useFetcher<ActionResult>();
   const [, setSearchParams] = useSearchParams();
 
+  // Export fetchers: one per table (Top Queries, Quick Wins)
+  const topQueriesExportFetcher = useFetcher<ExportPayload>();
+  const quickWinsExportFetcher = useFetcher<ExportPayload>();
+
+  // Guards so one export click yields exactly one download
+  const consumedTopQueriesExportKey = useRef<string | null>(null);
+  const consumedQuickWinsExportKey = useRef<string | null>(null);
+
   // Country/device filters: reflected in the URL (?gscCountry/?gscDevice) so the
   // loader re-runs with the new filter and the choice survives a reload/share.
   // Other params (host, gsc status, etc.) are preserved via the prev-params spread.
@@ -548,6 +558,42 @@ export default function SeoSearchConsole() {
       }
     }
   }, [quickWinFetcher.state, quickWinFetcher.data, handleNavigate]);
+
+  // Top Queries CSV export
+  useEffect(() => {
+    if (topQueriesExportFetcher.state !== "idle" || !topQueriesExportFetcher.data) return;
+    const key = topQueriesExportFetcher.data.filename + ":" + topQueriesExportFetcher.data.rowCount;
+    if (consumedTopQueriesExportKey.current === key) return;
+    consumedTopQueriesExportKey.current = key;
+
+    const blob = new Blob([topQueriesExportFetcher.data.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = topQueriesExportFetcher.data.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [topQueriesExportFetcher.state, topQueriesExportFetcher.data]);
+
+  // Quick Wins CSV export
+  useEffect(() => {
+    if (quickWinsExportFetcher.state !== "idle" || !quickWinsExportFetcher.data) return;
+    const key = quickWinsExportFetcher.data.filename + ":" + quickWinsExportFetcher.data.rowCount;
+    if (consumedQuickWinsExportKey.current === key) return;
+    consumedQuickWinsExportKey.current = key;
+
+    const blob = new Blob([quickWinsExportFetcher.data.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = quickWinsExportFetcher.data.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [quickWinsExportFetcher.state, quickWinsExportFetcher.data]);
 
   const actionMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -762,9 +808,27 @@ export default function SeoSearchConsole() {
             {!data.needsPropertySelection && (
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h3" variant="headingMd">
-                    {g.topQueries}
-                  </Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {g.topQueries}
+                    </Text>
+                    {data.topQueries.length > 0 && (
+                      <Button
+                        size="slim"
+                        variant="plain"
+                        loading={topQueriesExportFetcher.state !== "idle"}
+                        onClick={() => {
+                          const params = new URLSearchParams();
+                          params.set("dataset", "top");
+                          if (data.filterCountry) params.set("gscCountry", data.filterCountry);
+                          if (data.filterDevice) params.set("gscDevice", data.filterDevice);
+                          topQueriesExportFetcher.load(`/app/seo/search-console/export?${params.toString()}`);
+                        }}
+                      >
+                        {g.exportCsv}
+                      </Button>
+                    )}
+                  </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
                     {g.deltaHint}
                   </Text>
@@ -845,9 +909,25 @@ export default function SeoSearchConsole() {
             {!data.needsPropertySelection && data.opportunities.length > 0 && (
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h3" variant="headingMd">
-                    {g.quickWinsTitle}
-                  </Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {g.quickWinsTitle}
+                    </Text>
+                    <Button
+                      size="slim"
+                      variant="plain"
+                      loading={quickWinsExportFetcher.state !== "idle"}
+                      onClick={() => {
+                        const params = new URLSearchParams();
+                        params.set("dataset", "quickwins");
+                        if (data.filterCountry) params.set("gscCountry", data.filterCountry);
+                        if (data.filterDevice) params.set("gscDevice", data.filterDevice);
+                        quickWinsExportFetcher.load(`/app/seo/search-console/export?${params.toString()}`);
+                      }}
+                    >
+                      {g.exportCsv}
+                    </Button>
+                  </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
                     {g.quickWinsHint}
                   </Text>

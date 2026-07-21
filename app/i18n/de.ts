@@ -1599,6 +1599,7 @@ export const de = {
       deviceDesktop: "Desktop",
       deviceMobile: "Mobil",
       deviceTablet: "Tablet",
+      exportCsv: "Als CSV exportieren",
     },
     aeoPage: {
       helpTitle: "SEO für KI-Suche (AEO)",
