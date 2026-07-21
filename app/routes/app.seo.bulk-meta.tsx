@@ -634,12 +634,36 @@ function BulkMetaGrid({
           top: 0;
           z-index: 1;
         }
+        /* Make every editable cell fill the row's full height so a short
+           value's textarea still occupies the whole cell (i.e. the click
+           target = the whole cell). Trick: <td height:100%> lets children use
+           height:100% relative to the row's tallest cell in modern browsers.
+           Polaris renders <TextField multiline> as .Polaris-TextField wrapping
+           a __Resizer mirror + <textarea>; we stretch the wrapper and force
+           the textarea's min-height to fill it. Autogrow still works because
+           the __Resizer measures content height as a hard MIN, and
+           min-height: 100% just raises the floor when content is shorter. */
+        .cp-bulk-meta-scroll td.cp-bulk-meta-cell {
+          height: 100%;
+        }
+        .cp-bulk-meta-cell .Polaris-TextField,
+        .cp-bulk-meta-cell .Polaris-TextField > div {
+          height: 100%;
+        }
         .cp-bulk-meta-cell textarea {
           overflow: hidden !important;
           resize: none !important;
+          min-height: 100% !important;
+          box-sizing: border-box;
         }
         .cp-bulk-meta-cell .Polaris-TextField {
           background: transparent;
+        }
+        /* Chrome/Firefox: <tr> needs an explicit height:100% for descendant
+           height:100% chains to resolve inside <table>. Setting it here (and
+           not on <table>) avoids stretching the header row. */
+        .cp-bulk-meta-scroll tbody tr {
+          height: 100%;
         }
       `}</style>
       <table>
