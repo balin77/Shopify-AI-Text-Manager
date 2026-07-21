@@ -14,6 +14,7 @@
 export interface SeoLimits {
   titleMin: number;
   titleMax: number;
+  seoTitleMin: number;
   seoTitleMax: number;
   metaDescMin: number;
   metaDescMax: number;
@@ -27,6 +28,11 @@ export interface SeoLimits {
 export const DEFAULT_SEO_LIMITS: SeoLimits = {
   titleMin: 30,
   titleMax: 70,
+  // Google flags very short SEO titles as "not descriptive" and often
+  // rewrites them itself. 30 char is the widely-quoted lower bound (matches
+  // the general titleMin) — a merchant can drop it to 1 in the SEO tab to
+  // effectively disable the floor.
+  seoTitleMin: 30,
   seoTitleMax: 60,
   metaDescMin: 120,
   metaDescMax: 160,
@@ -98,11 +104,21 @@ export function getCharacterLimitRequirement(
     pageDescription: `minimum ${l.descriptionMin} characters`,
     policyDescription: `minimum ${l.descriptionMin} characters`,
 
-    // SEO Titles (adjusted for shop name suffix when applicable)
-    productSeoTitle: `maximum ${seoTitleMax} characters`,
-    collectionSeoTitle: `maximum ${seoTitleMax} characters`,
-    blogSeoTitle: `maximum ${seoTitleMax} characters`,
-    pageSeoTitle: `maximum ${seoTitleMax} characters`,
+    // SEO Titles (upper bound adjusted for shop-name suffix when applicable).
+    // Skip the min in the human-readable hint when it's 1 (merchant disabled it)
+    // so the prompt stays clean.
+    productSeoTitle: l.seoTitleMin > 1
+      ? `${l.seoTitleMin}-${seoTitleMax} characters`
+      : `maximum ${seoTitleMax} characters`,
+    collectionSeoTitle: l.seoTitleMin > 1
+      ? `${l.seoTitleMin}-${seoTitleMax} characters`
+      : `maximum ${seoTitleMax} characters`,
+    blogSeoTitle: l.seoTitleMin > 1
+      ? `${l.seoTitleMin}-${seoTitleMax} characters`
+      : `maximum ${seoTitleMax} characters`,
+    pageSeoTitle: l.seoTitleMin > 1
+      ? `${l.seoTitleMin}-${seoTitleMax} characters`
+      : `maximum ${seoTitleMax} characters`,
 
     // Meta Descriptions
     productMetaDesc: `${l.metaDescMin}-${l.metaDescMax} characters`,
@@ -178,7 +194,9 @@ export function getTranslationLengthHint(
     case "title":
       return `keep under ${l.titleMax} characters`;
     case "seoTitle":
-      return `maximum ${seoTitleMax} characters — paraphrase to fit`;
+      return l.seoTitleMin > 1
+        ? `${l.seoTitleMin}-${seoTitleMax} characters — paraphrase to fit`
+        : `maximum ${seoTitleMax} characters — paraphrase to fit`;
     case "metaDescription":
       return `${l.metaDescMin}-${l.metaDescMax} characters — paraphrase to fit`;
     case "altText":

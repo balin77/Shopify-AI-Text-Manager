@@ -757,7 +757,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           const parsed = JSON.parse(rawLimits);
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
             const allowedKeys = new Set([
-              "titleMin", "titleMax", "seoTitleMax",
+              "titleMin", "titleMax", "seoTitleMin", "seoTitleMax",
               "metaDescMin", "metaDescMax", "descriptionMin",
               "handleMin", "handleMax", "altTextMin", "altTextMax",
             ]);

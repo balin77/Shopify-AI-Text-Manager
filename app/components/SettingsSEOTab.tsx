@@ -87,6 +87,7 @@ const LIMIT_GROUPS: LimitGroup[] = [
     headingKey: "seoLimitGroupSeoTitle",
     fallbackHeading: "SEO-Titel",
     fields: [
+      { key: "seoTitleMin", labelKey: "seoLimitFieldMin", fallbackLabel: "Min." },
       { key: "seoTitleMax", labelKey: "seoLimitFieldMax", fallbackLabel: "Max." },
     ],
   },
