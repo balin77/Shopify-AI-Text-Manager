@@ -926,7 +926,7 @@ export const es: Translation = {
     imageThumbLabel: "Imagen de producto",
     mainImage: "Imagen principal",
     upload: "Subir",
-    seoScoreTab: "SEO Score",
+    seoScoreTab: "SEO",
     imagesTab: "Procesamiento de imágenes",
     uploadTitle: "Subir imágenes",
     uploadMediaTitle: "Subir imágenes, vídeos o modelos 3D",
@@ -1187,6 +1187,11 @@ export const es: Translation = {
   // SEO Sidebar
   seo: {
     title: "Puntuación SEO",
+    sidebarTabs: {
+      score: "Score",
+      keywords: "Keywords",
+      jsonLd: "JSON-LD",
+    },
     issuesTitle: "Problemas encontrados",
     noIssuesTitle: "Análisis",
     recommendationsTitle: "Recomendaciones",

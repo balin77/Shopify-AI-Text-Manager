@@ -88,7 +88,6 @@ export function SeoSidebar({
   resourceType,
 }: SeoSidebarProps) {
   const { t } = useI18n();
-  const [showJsonLd, setShowJsonLd] = useState(false);
   const [copied, setCopied] = useState(false);
   const jsonLdString = useMemo(
     () => (structuredData ? renderJsonLdScript(structuredData) : ""),
@@ -109,9 +108,8 @@ export function SeoSidebar({
   // that raised the cap to 70 doesn't get flagged at char 61.
   const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix, seoLimits ?? null);
 
-  // ── Target keyword (collapsible, only when the caller supplies both ids) ──
+  // ── Target keyword (only when the caller supplies both ids) ──
   const keywordTrackingEnabled = !!resourceId && !!resourceType;
-  const [showKeywordSection, setShowKeywordSection] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
   const [trackedKeyword, setTrackedKeyword] = useState<string | null>(null);
   const [keywordSaved, setKeywordSaved] = useState(false);
@@ -230,9 +228,55 @@ export function SeoSidebar({
   const getScoreLabel = (scoreValue: number): string =>
     t.seo.scoreLabels[scoreLabelKey(scoreValue)];
 
+  // Sub-tabs (Score / Keywords / JSON-LD). Hide a tab entirely when its data
+  // isn't applicable to this caller (theme content has no JSON-LD, foreign
+  // locales have no keyword tracking) — otherwise merchants would land on an
+  // empty pane. With only "score" available, the tab bar is omitted.
+  type SidebarTab = "score" | "keywords" | "jsonld";
+  const availableTabs: SidebarTab[] = ["score"];
+  if (keywordTrackingEnabled) availableTabs.push("keywords");
+  if (structuredData) availableTabs.push("jsonld");
+  const [activeTab, setActiveTab] = useState<SidebarTab>("score");
+  const currentTab = availableTabs.includes(activeTab) ? activeTab : "score";
+  const tabLabels = (t.seo as unknown as { sidebarTabs?: Record<string, string> }).sidebarTabs;
+  const tabLabel = (id: SidebarTab): string => {
+    const key = id === "jsonld" ? "jsonLd" : id;
+    return tabLabels?.[key] ?? (id === "jsonld" ? "JSON-LD" : id === "keywords" ? "Keywords" : "Score");
+  };
+
   return (
     <Card>
       <BlockStack gap="400">
+        {/* Sub-tab bar (Score / Keywords / JSON-LD) */}
+        {availableTabs.length > 1 && (
+          <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginTop: "-0.25rem" }}>
+            {availableTabs.map((id) => {
+              const isActive = id === currentTab;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  style={{
+                    flex: 1,
+                    padding: "6px 4px",
+                    border: "none",
+                    background: "none",
+                    borderBottom: isActive ? "2px solid #005bd3" : "2px solid transparent",
+                    cursor: "pointer",
+                    fontWeight: isActive ? 600 : 400,
+                    fontSize: 12,
+                    color: isActive ? "#005bd3" : "#616161",
+                  }}
+                >
+                  {tabLabel(id)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {currentTab === "score" && (
+        <BlockStack gap="400">
         {/* SEO Score Header */}
         <div style={{ textAlign: "center" }}>
           <div
@@ -395,21 +439,12 @@ export function SeoSidebar({
         <Button onClick={() => setShowDetails(!showDetails)} variant="plain" size="slim">
           {showDetails ? t.seo.hideDetails : t.seo.showDetails}
         </Button>
+        </BlockStack>
+        )}
 
-        {/* Structured data (JSON-LD) — only when the caller supplies it */}
-        {structuredData && (
+        {/* JSON-LD tab */}
+        {currentTab === "jsonld" && structuredData && (
           <BlockStack gap="200">
-            <Button
-              onClick={() => setShowJsonLd((v) => !v)}
-              variant="plain"
-              size="slim"
-            >
-              {showJsonLd
-                ? t.seo?.hideStructuredData || "Hide structured data"
-                : t.seo?.showStructuredData || "Show structured data (JSON-LD)"}
-            </Button>
-            {showJsonLd && (
-              <BlockStack gap="200">
                 {jsonLdWarnings.length === 0 ? (
                   <Badge tone="success">
                     {t.seo?.structuredDataValid || "Schema looks valid"}
@@ -474,24 +509,11 @@ export function SeoSidebar({
                     ? t.seo?.copied || "Copied!"
                     : t.seo?.copyJsonLd || "Copy <script> tag"}
                 </Button>
-              </BlockStack>
-            )}
           </BlockStack>
         )}
 
-        {/* Target keyword — only when the caller supplies resourceId + resourceType */}
-        {keywordTrackingEnabled && (
-          <BlockStack gap="200">
-            <Button
-              onClick={() => setShowKeywordSection((v) => !v)}
-              variant="plain"
-              size="slim"
-            >
-              {showKeywordSection
-                ? t.seo?.targetKeywordHide || "Hide target keyword"
-                : t.seo?.targetKeywordShow || "Show target keyword"}
-            </Button>
-            {showKeywordSection && (
+        {/* Keywords tab */}
+        {currentTab === "keywords" && keywordTrackingEnabled && (
               <BlockStack gap="200">
                 <TextField
                   label={t.seo?.targetKeywordLabel || "Target keyword"}
@@ -538,8 +560,6 @@ export function SeoSidebar({
                   </BlockStack>
                 )}
               </BlockStack>
-            )}
-          </BlockStack>
         )}
       </BlockStack>
     </Card>

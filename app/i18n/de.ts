@@ -924,7 +924,7 @@ export const de = {
     imageThumbLabel: "Produktbild",
     mainImage: "Hauptbild",
     upload: "Upload",
-    seoScoreTab: "SEO Score",
+    seoScoreTab: "SEO",
     imagesTab: "Bildverarbeitung",
     uploadTitle: "Bilder hochladen",
     uploadMediaTitle: "Bilder, Videos oder 3D-Modelle hochladen",
@@ -1185,6 +1185,11 @@ export const de = {
   // SEO Sidebar
   seo: {
     title: "SEO-Score",
+    sidebarTabs: {
+      score: "Score",
+      keywords: "Keywords",
+      jsonLd: "JSON-LD",
+    },
     issuesTitle: "Gefundene Probleme",
     noIssuesTitle: "Analyse",
     recommendationsTitle: "Empfehlungen",
