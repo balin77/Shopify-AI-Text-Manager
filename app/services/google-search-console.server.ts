@@ -556,6 +556,18 @@ export function defaultDateRange(now: Date, days = 28): { startDate: string; end
   return { startDate: fmt(start), endDate: fmt(end) };
 }
 
+// A manual "Sync keyword rankings" click and the daily auto-sync can both fire
+// on the same calendar day; truncating to UTC midnight makes capturedAt a
+// stable per-day key so the (keywordId, capturedAt) unique index dedupes them
+// into a single snapshot row instead of one chart data point per sync.
+function utcMidnight(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+// One year of daily charts plus slack; bounds table growth without losing the
+// history the "last 12 months" ranking chart needs.
+const SNAPSHOT_RETENTION_DAYS = 400;
+
 /**
  * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
  * back onto matching SeoKeyword rows (exact, case-insensitive query match).
@@ -584,6 +596,7 @@ export async function enrichKeywordsFromGsc(
   }
 
   const keywords = await db.seoKeyword.findMany({ where: { shop }, select: { id: true, keyword: true } });
+  const capturedAt = utcMidnight(now);
   let enriched = 0;
   for (const k of keywords) {
     const row = byKeyword.get(k.keyword.toLowerCase());
@@ -598,7 +611,32 @@ export async function enrichKeywordsFromGsc(
         gscUpdatedAt: now,
       },
     });
+    await db.seoKeywordSnapshot.upsert({
+      where: { keywordId_capturedAt: { keywordId: k.id, capturedAt } },
+      create: {
+        shop,
+        keywordId: k.id,
+        capturedAt,
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+      },
+      update: {
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+      },
+    });
     enriched += 1;
   }
+
+  // Retention: one deleteMany per sync run rather than a separate scheduled
+  // job — cheap (an indexed range delete) and keeps the prune tied to the
+  // same shop-scoped code path that writes the snapshots.
+  const retentionCutoff = new Date(now.getTime() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  await db.seoKeywordSnapshot.deleteMany({ where: { shop, capturedAt: { lt: retentionCutoff } } });
+
   return enriched;
 }

@@ -324,6 +324,10 @@ describe("enrichKeywordsFromGsc", () => {
           return {};
         },
       },
+      seoKeywordSnapshot: {
+        upsert: async () => ({}),
+        deleteMany: async () => ({ count: 0 }),
+      },
     } as any;
 
     const enriched = await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
@@ -332,6 +336,114 @@ describe("enrichKeywordsFromGsc", () => {
     expect(updates[0].where).toEqual({ id: "k1" });
     expect(updates[0].data.gscPosition).toBe(7.5);
     expect(updates[0].data.gscClicks).toBe(12);
+  });
+
+  function stubGscFetch(rows: any[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/token")) return resp(true, { access_token: "at" });
+        if (String(url).includes("searchAnalytics")) return resp(true, { rows });
+        return resp(false, { error: { message: "unexpected" } });
+      }),
+    );
+  }
+
+  function makeDb(opts: {
+    keywords: Array<{ id: string; keyword: string }>;
+    onSnapshotUpsert: (args: any) => void;
+    onSnapshotDeleteMany: (args: any) => void;
+  }) {
+    return {
+      googleSearchConsoleConnection: {
+        findUnique: async () => ({
+          shop: "s.myshopify.com",
+          propertyUrl: "sc-domain:example.com",
+          refreshToken: encryptApiKey("rt"),
+        }),
+        deleteMany: async () => ({ count: 0 }),
+      },
+      seoKeyword: {
+        findMany: async () => opts.keywords,
+        update: async () => ({}),
+      },
+      seoKeywordSnapshot: {
+        upsert: async (args: any) => {
+          opts.onSnapshotUpsert(args);
+          return {};
+        },
+        deleteMany: async (args: any) => {
+          opts.onSnapshotDeleteMany(args);
+          return { count: 0 };
+        },
+      },
+    } as any;
+  }
+
+  it("writes a snapshot per enriched keyword with a UTC-midnight-truncated capturedAt", async () => {
+    stubGscFetch([{ keys: ["Blue Shoes"], clicks: 12, impressions: 300, ctr: 0.04, position: 7.5 }]);
+
+    const upserts: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: (args) => upserts.push(args),
+      onSnapshotDeleteMany: () => {},
+    });
+
+    // Mid-day timestamp — capturedAt must still land on the truncated midnight.
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T15:42:00Z"));
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].where).toEqual({
+      keywordId_capturedAt: { keywordId: "k1", capturedAt: new Date("2026-06-29T00:00:00.000Z") },
+    });
+    expect(upserts[0].create).toMatchObject({
+      shop: "s.myshopify.com",
+      keywordId: "k1",
+      capturedAt: new Date("2026-06-29T00:00:00.000Z"),
+      position: 7.5,
+      clicks: 12,
+      impressions: 300,
+      ctr: 0.04,
+    });
+    expect(upserts[0].update).toMatchObject({ position: 7.5, clicks: 12, impressions: 300, ctr: 0.04 });
+  });
+
+  it("prunes snapshots older than 400 days, scoped to the shop", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const deletes: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: () => {},
+      onSnapshotDeleteMany: (args) => deletes.push(args),
+    });
+
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].where.shop).toBe("s.myshopify.com");
+    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2025-05-25T00:00:00.000Z"));
+  });
+
+  it("does not write a snapshot for a keyword with no matching GSC row", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const upserts: any[] = [];
+    const db = makeDb({
+      keywords: [
+        { id: "k1", keyword: "blue shoes" },
+        { id: "k2", keyword: "no gsc data for this one" },
+      ],
+      onSnapshotUpsert: (args) => upserts.push(args),
+      onSnapshotDeleteMany: () => {},
+    });
+
+    const enriched = await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(enriched).toBe(1);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].create.keywordId).toBe("k1");
   });
 });
 

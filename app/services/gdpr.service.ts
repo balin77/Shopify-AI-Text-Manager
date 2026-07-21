@@ -199,7 +199,7 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      DirectTranslationSettings, Seo404Hit, SeoKeyword, SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot          (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
@@ -413,6 +413,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // Ranking history for SEO keywords (shop-scoped). Deleted before SeoKeyword
+    // even though it also cascades on keywordId, so the count logged here is
+    // meaningful rather than always zero.
+    const seoKeywordSnapshotsDeleted = await tx.seoKeywordSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordSnapshotsDeleted.count} SEO keyword snapshots`);
 
     // SEO tab Phase 5: per-item target keywords (shop-scoped).
     const seoKeywordsDeleted = await tx.seoKeyword.deleteMany({
