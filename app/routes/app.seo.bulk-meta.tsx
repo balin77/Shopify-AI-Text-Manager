@@ -659,13 +659,11 @@ function BulkMetaGrid({
           align-items: flex-end;
           justify-content: flex-start;
         }
-        /* Every direct child of a cell (the CellTextArea, the Thumbnail,
-           the Select for status) is a flex item that fills the cell's
-           vertical space. min-height:100% resolves against the grid row
-           track height, which Grid pins to the tallest cell in the row. */
-        .cp-bulk-meta-cell > * {
+        /* Only the textarea stretches to fill the cell — Thumbnails and
+           Selects keep their intrinsic size (a 40-px Thumbnail flex-growing
+           to 200 px would waste the whole row height). */
+        .cp-bulk-meta-cell > .cp-bulk-meta-textarea {
           flex: 1 1 auto;
-          min-height: 100%;
         }
         /* Custom borderless textarea (see CellTextArea): visually invisible
            until focused, autogrows via JS, and — critical for the merchant's
@@ -854,11 +852,19 @@ function CellTextArea({ value, onChange, isDirty }: CellTextAreaProps) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // Reset first so scrollHeight reflects the CURRENT content, not the
-    // previous rendered height. Without this, once the textarea grew to
-    // 200 px, deleting content wouldn't shrink it back.
+    // Feedback-loop guard: temporarily kill min-height while measuring so
+    // scrollHeight reflects the ACTUAL content, not the CSS-inflated cell
+    // height. Without this, min-height:100% from the stylesheet makes
+    // scrollHeight read the cell-track height, we write it back as
+    // style.height, which inflates the row further next time — every row
+    // ended up hundreds of px tall regardless of content.
+    // Reset height first so scrollHeight reflects CURRENT content (not the
+    // previous rendered height — otherwise deleting text wouldn't shrink).
+    el.style.minHeight = "0px";
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    const contentHeight = el.scrollHeight;
+    el.style.minHeight = "";
+    el.style.height = `${contentHeight}px`;
   }, [value]);
 
   return (
