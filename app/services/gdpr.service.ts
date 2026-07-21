@@ -201,7 +201,8 @@ export async function redactCustomerData(
  *      DirectTranslationItem, DirectTranslationCandidate,
  *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
- *      SeoIndexNowQueue, SeoScoreSnapshot          (all scoped by `shop`)
+ *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
+ *      GlossaryEntry, SeoWebVitalSample          (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -454,6 +455,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${glossaryEntriesDeleted.count} glossary entries`);
+
+    // SEO tab Performance section, Phase 2: real-user web-vitals (RUM)
+    // samples beaconed from the storefront (shop-scoped, no visitor
+    // identifiers — see web-vitals.types.ts).
+    const seoWebVitalSamplesDeleted = await tx.seoWebVitalSample.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoWebVitalSamplesDeleted.count} SEO web-vital samples`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
