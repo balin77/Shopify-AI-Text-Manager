@@ -101,11 +101,13 @@ export function SeoSidebar({
         : [],
     [structuredData, structuredDataPreviewMode],
   );
-  const { seoTitleSuffix } = useSeoSettings();
+  const { seoTitleSuffix, seoLimits } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);
 
-  // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
-  const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix);
+  // Effective upper limit accounts for the suffix Shopify appends (e.g., " – Shop Name").
+  // Passes the merchant's seoTitleMax override to the helper so a Pro shop
+  // that raised the cap to 70 doesn't get flagged at char 61.
+  const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix, seoLimits ?? null);
 
   // ── Target keyword (collapsible, only when the caller supplies both ids) ──
   const keywordTrackingEnabled = !!resourceId && !!resourceType;
@@ -197,6 +199,7 @@ export function SeoSidebar({
       excludeDescription,
       excludeImages,
       seoTitleEffectiveLimit: effectiveSeoTitleLimit,
+      limits: seoLimits ?? null,
     });
 
     const issues: SeoIssue[] = result.findings.map((f) => {
@@ -209,12 +212,18 @@ export function SeoSidebar({
       return { type: f.severity, message, points: f.points };
     });
 
-    const recommendations = result.recommendations.map(
-      (code) => (t.seo.recommendations as Record<string, string>)[code] ?? code,
-    );
+    const recommendations = result.recommendations.map((rec) => {
+      let message = (t.seo.recommendations as Record<string, string>)[rec.code] ?? rec.code;
+      if (rec.data) {
+        for (const [key, value] of Object.entries(rec.data)) {
+          message = message.replace(`{${key}}`, String(value));
+        }
+      }
+      return message;
+    });
 
     return { score: result.score, issues, recommendations };
-  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, effectiveSeoTitleLimit]);
+  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, effectiveSeoTitleLimit, seoLimits]);
 
   const getScoreColor = scoreTone;
 

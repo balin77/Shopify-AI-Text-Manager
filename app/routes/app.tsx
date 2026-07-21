@@ -96,6 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         preferredProvider: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
+        seoLimits: true,
         extensionSetupHintShownAt: true,
       },
     });
@@ -120,6 +121,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const seoTitleSuffix = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
       ? settings.seoTitleSuffix
       : "";
+    // Sparse merchant overrides for SEO limits (Pro+). null = defaults.
+    const seoLimits = (settings?.seoLimits ?? null) as Record<string, number> | null;
 
     // First-run hint: a shop that just reached Pro/Max still has to enable the
     // ContentPilot theme app extension in their theme editor for the variant
@@ -172,6 +175,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
+      seoLimits,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
       extensionSetupHint,
@@ -198,6 +202,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
       seoTitleSuffix: "",
+      seoLimits: null as Record<string, number> | null,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,
@@ -352,13 +357,13 @@ function AppContent() {
 }
 
 export default function App() {
-  const { appLanguage, subscriptionPlan, seoTitleSuffix, newFeaturesEnabled } = useLoaderData<typeof loader>();
+  const { appLanguage, subscriptionPlan, seoTitleSuffix, seoLimits, newFeaturesEnabled } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
         <PlanProvider plan={subscriptionPlan} newFeaturesEnabled={newFeaturesEnabled}>
-          <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""}>
+          <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""} seoLimits={seoLimits ?? null}>
           <InfoBoxProvider>
             <TaskCountProvider>
             <NavigationHeightProvider>

@@ -23,6 +23,8 @@
  *    make every seoTitle score as "too long".
  */
 
+import { resolveSeoLimits, type SeoLimits } from "./character-limits";
+
 export type SeoSeverity = "error" | "warning" | "success";
 
 /** A single scored finding — `code` is an i18n key under `t.seo.issues.*`. */
@@ -46,8 +48,20 @@ export interface SeoScoreInput {
   excludeDescription?: boolean;
   /** Skip image alt-text from scoring (e.g. blog containers have no images). */
   excludeImages?: boolean;
-  /** Effective SEO-title limit; defaults to 60. Caller subtracts the suffix length. */
+  /** Effective SEO-title UPPER limit; defaults to 60. Caller subtracts the suffix length. */
   seoTitleEffectiveLimit?: number;
+  /** Merchant-editable character caps (Pro+). Overrides the built-in
+   * defaults for every length-based finding in this scorer. Callers pass
+   * `AISettings.seoLimits`; anything omitted falls back to DEFAULT_SEO_LIMITS. */
+  limits?: Partial<SeoLimits> | null;
+}
+
+/** A single recommendation — `code` is an i18n key under
+ * `t.seo.recommendations.*`; `data` supplies `{placeholder}` values the
+ * consumer substitutes into the localized string (min/max, limit, count). */
+export interface SeoScoreRecommendation {
+  code: string;
+  data?: Record<string, string | number>;
 }
 
 export interface SeoScoreResult {
@@ -56,7 +70,7 @@ export interface SeoScoreResult {
   /** Findings in evaluation order — `code` keys map to `t.seo.issues.*`. */
   findings: SeoScoreFinding[];
   /** Recommendation codes — keys map to `t.seo.recommendations.*`. */
-  recommendations: string[];
+  recommendations: SeoScoreRecommendation[];
 }
 
 /** Default SEO title character budget when no shop-name suffix is configured. */
@@ -73,9 +87,13 @@ const MIN_SEO_TITLE_LIMIT = 20;
  * length can satisfy `0 < length <= limit`). Clamp to a sensible minimum
  * instead. Callers should switch to this helper instead of the inline formula.
  */
-export function seoTitleEffectiveLimit(suffix: string | null | undefined): number {
+export function seoTitleEffectiveLimit(
+  suffix: string | null | undefined,
+  limits?: Partial<SeoLimits> | null,
+): number {
   const suffixLength = suffix?.length ?? 0;
-  return Math.max(MIN_SEO_TITLE_LIMIT, DEFAULT_SEO_TITLE_LIMIT - suffixLength);
+  const base = limits ? resolveSeoLimits(limits).seoTitleMax : DEFAULT_SEO_TITLE_LIMIT;
+  return Math.max(MIN_SEO_TITLE_LIMIT, base - suffixLength);
 }
 
 // Named HTML entities stripHtml() decodes. Kept intentionally small — the
@@ -148,7 +166,14 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
     excludeDescription = false,
     excludeImages = false,
     seoTitleEffectiveLimit: rawSeoTitleEffectiveLimit = DEFAULT_SEO_TITLE_LIMIT,
+    limits: rawLimits = null,
   } = input;
+
+  // Merchant-editable caps merged over the defaults. Un-passed limits fall
+  // back to the built-in values so callers that haven't been updated yet
+  // (or don't have an AISettings row) behave identically to the pre-limits
+  // scorer.
+  const l = resolveSeoLimits(rawLimits ?? null);
 
   // Defensive clamp: callers still compute the suffix-adjusted limit inline
   // (see seoTitleEffectiveLimit() above, which they should switch to) — a
@@ -160,28 +185,40 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
   let score = 0;
   let maxScore = 0;
 
+  // Reusable placeholder bundles — kept next to the finding they annotate so
+  // the i18n string and the numeric arg never drift apart.
+  const titleRange = { min: l.titleMin, max: l.titleMax };
+  const metaRange = { min: l.metaDescMin, max: l.metaDescMax };
+
   // 1. Title length (15 points max)
   maxScore += 15;
   const titleLength = title.length;
-  if (titleLength >= 30 && titleLength <= 70) {
+  if (titleLength >= l.titleMin && titleLength <= l.titleMax) {
     score += 15;
-    findings.push({ code: "titleLengthGood", severity: "success", points: 15 });
-  } else if (titleLength < 30) {
-    findings.push({ code: "titleTooShort", severity: "warning", points: 0 });
+    findings.push({ code: "titleLengthGood", severity: "success", points: 15, data: titleRange });
+  } else if (titleLength < l.titleMin) {
+    findings.push({ code: "titleTooShort", severity: "warning", points: 0, data: titleRange });
   } else {
-    findings.push({ code: "titleTooLong", severity: "warning", points: 0 });
+    findings.push({ code: "titleTooLong", severity: "warning", points: 0, data: titleRange });
   }
 
-  // 2. SEO Title (15 points max) — limit adjusted for shop-name suffix
+  // 2. SEO Title (15 points max) — upper limit adjusted for shop-name suffix,
+  // lower limit from merchant setting (default 30). seoTitleMin === 1 means
+  // "no floor" so a short SEO title still scores full points; anything
+  // stricter emits the seoTitleTooShort finding.
   maxScore += 15;
   const seoTitleLength = seoTitle.length;
-  if (seoTitleLength > 0 && seoTitleLength <= seoTitleEffectiveLimit) {
-    score += 15;
-    findings.push({ code: "seoTitleGood", severity: "success", points: 15 });
-  } else if (seoTitleLength === 0) {
-    findings.push({ code: "seoTitleMissing", severity: "error", points: 0 });
+  const seoTitleMinEnforced = l.seoTitleMin > 1;
+  const seoTitleData = { min: l.seoTitleMin, max: seoTitleEffectiveLimit };
+  if (seoTitleLength === 0) {
+    findings.push({ code: "seoTitleMissing", severity: "error", points: 0, data: seoTitleData });
+  } else if (seoTitleLength > seoTitleEffectiveLimit) {
+    findings.push({ code: "seoTitleTooLong", severity: "warning", points: 0, data: seoTitleData });
+  } else if (seoTitleMinEnforced && seoTitleLength < l.seoTitleMin) {
+    findings.push({ code: "seoTitleTooShort", severity: "warning", points: 0, data: seoTitleData });
   } else {
-    findings.push({ code: "seoTitleTooLong", severity: "warning", points: 0 });
+    score += 15;
+    findings.push({ code: "seoTitleGood", severity: "success", points: 15, data: seoTitleData });
   }
 
   // 3. Description length (20 points max) — skipped for content without body
@@ -189,28 +226,29 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
   if (!excludeDescription) {
     maxScore += 20;
     descriptionLength = stripHtml(description).length;
-    if (descriptionLength >= 150) {
+    const descriptionData = { min: l.descriptionMin };
+    if (descriptionLength >= l.descriptionMin) {
       score += 20;
-      findings.push({ code: "descriptionGood", severity: "success", points: 20 });
+      findings.push({ code: "descriptionGood", severity: "success", points: 20, data: descriptionData });
     } else if (descriptionLength === 0) {
-      findings.push({ code: "descriptionMissing", severity: "error", points: 0 });
+      findings.push({ code: "descriptionMissing", severity: "error", points: 0, data: descriptionData });
     } else {
-      findings.push({ code: "descriptionTooShort", severity: "warning", points: 0 });
+      findings.push({ code: "descriptionTooShort", severity: "warning", points: 0, data: descriptionData });
     }
   }
 
   // 4. Meta Description (20 points max)
   maxScore += 20;
   const metaDescLength = metaDescription.length;
-  if (metaDescLength >= 120 && metaDescLength <= 160) {
+  if (metaDescLength >= l.metaDescMin && metaDescLength <= l.metaDescMax) {
     score += 20;
-    findings.push({ code: "metaDescriptionGood", severity: "success", points: 20 });
+    findings.push({ code: "metaDescriptionGood", severity: "success", points: 20, data: metaRange });
   } else if (metaDescLength === 0) {
-    findings.push({ code: "metaDescriptionMissing", severity: "error", points: 0 });
-  } else if (metaDescLength < 120) {
-    findings.push({ code: "metaDescriptionTooShort", severity: "warning", points: 0 });
+    findings.push({ code: "metaDescriptionMissing", severity: "error", points: 0, data: metaRange });
+  } else if (metaDescLength < l.metaDescMin) {
+    findings.push({ code: "metaDescriptionTooShort", severity: "warning", points: 0, data: metaRange });
   } else {
-    findings.push({ code: "metaDescriptionTooLong", severity: "warning", points: 0 });
+    findings.push({ code: "metaDescriptionTooLong", severity: "warning", points: 0, data: metaRange });
   }
 
   // 5. Image Alt Texts (30 points max) — skipped for content without images
@@ -232,18 +270,31 @@ export function computeSeoScore(input: SeoScoreInput): SeoScoreResult {
 
   const normalizedScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
 
-  // Recommendations (codes under t.seo.recommendations.*)
-  const recommendations: string[] = [];
-  if (titleLength < 30) recommendations.push("expandTitle");
-  if (titleLength > 70) recommendations.push("shortenTitle");
-  if (seoTitleLength === 0) recommendations.push("addSeoTitle");
-  if (seoTitleLength > seoTitleEffectiveLimit) recommendations.push("shortenSeoTitle");
-  if (!excludeDescription && descriptionLength < 150) recommendations.push("expandDescription");
-  if (metaDescLength === 0) recommendations.push("addMetaDescription");
-  if (metaDescLength < 120) recommendations.push("expandMetaDescription");
-  if (metaDescLength > 160) recommendations.push("shortenMetaDescription");
+  // Recommendations — same placeholder-substitution shape as findings so the
+  // localized message can carry live limit numbers ("shorten to max. 60") that
+  // stay in sync with the merchant setting.
+  const recommendations: SeoScoreRecommendation[] = [];
+  if (titleLength < l.titleMin) recommendations.push({ code: "expandTitle", data: titleRange });
+  if (titleLength > l.titleMax) recommendations.push({ code: "shortenTitle", data: titleRange });
+  if (seoTitleLength === 0) recommendations.push({ code: "addSeoTitle", data: seoTitleData });
+  if (seoTitleLength > seoTitleEffectiveLimit) {
+    recommendations.push({ code: "shortenSeoTitle", data: seoTitleData });
+  }
+  if (seoTitleMinEnforced && seoTitleLength > 0 && seoTitleLength < l.seoTitleMin) {
+    recommendations.push({ code: "expandSeoTitle", data: seoTitleData });
+  }
+  if (!excludeDescription && descriptionLength < l.descriptionMin) {
+    recommendations.push({ code: "expandDescription", data: { min: l.descriptionMin } });
+  }
+  if (metaDescLength === 0) recommendations.push({ code: "addMetaDescription", data: metaRange });
+  if (metaDescLength < l.metaDescMin) {
+    recommendations.push({ code: "expandMetaDescription", data: metaRange });
+  }
+  if (metaDescLength > l.metaDescMax) {
+    recommendations.push({ code: "shortenMetaDescription", data: metaRange });
+  }
   if (!excludeImages && totalImages > 0 && imagesWithAlt < totalImages) {
-    recommendations.push("addImageAlt");
+    recommendations.push({ code: "addImageAlt" });
   }
 
   return { score: normalizedScore, findings, recommendations };

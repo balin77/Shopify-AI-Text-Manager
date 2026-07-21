@@ -132,11 +132,12 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
   // be stale (edited/deleted) by the time this POST arrives.
   const aiSettingsRow = await db.aISettings.findUnique({
     where: { shop: session.shop },
-    select: { subscriptionPlan: true, seoTitleSuffixEnabled: true, seoTitleSuffix: true },
+    select: { subscriptionPlan: true, seoTitleSuffixEnabled: true, seoTitleSuffix: true, seoLimits: true },
   });
   const plan = (aiSettingsRow?.subscriptionPlan || "free") as Plan;
   const suffix =
     aiSettingsRow?.seoTitleSuffixEnabled && aiSettingsRow.seoTitleSuffix ? aiSettingsRow.seoTitleSuffix : "";
+  const auditSeoLimits = (aiSettingsRow?.seoLimits ?? null) as Record<string, number> | null;
 
   // Resolve target locale: validate against shopLocales, resolve target
   // language name for the prompt. An unknown/unpublished foreign locale is a
@@ -149,7 +150,8 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> 
 
   const audit = await analyzeStore(session.shop, {
     db,
-    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
+    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, auditSeoLimits),
+    seoLimits: auditSeoLimits,
     plan,
     locale: localeResolution.foreignLocale || undefined,
   });
@@ -289,11 +291,12 @@ async function handleFixAllForItem(
 
   const aiSettingsRow = await db.aISettings.findUnique({
     where: { shop: session.shop },
-    select: { subscriptionPlan: true, seoTitleSuffixEnabled: true, seoTitleSuffix: true },
+    select: { subscriptionPlan: true, seoTitleSuffixEnabled: true, seoTitleSuffix: true, seoLimits: true },
   });
   const plan = (aiSettingsRow?.subscriptionPlan || "free") as Plan;
   const suffix =
     aiSettingsRow?.seoTitleSuffixEnabled && aiSettingsRow.seoTitleSuffix ? aiSettingsRow.seoTitleSuffix : "";
+  const auditSeoLimits2 = (aiSettingsRow?.seoLimits ?? null) as Record<string, number> | null;
 
   const localeResolution = await resolveTargetLocale(admin, session.shop, requestedLocale);
   if (localeResolution.error) {
@@ -302,7 +305,8 @@ async function handleFixAllForItem(
 
   const audit = await analyzeStore(session.shop, {
     db,
-    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix),
+    seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, auditSeoLimits2),
+    seoLimits: auditSeoLimits2,
     plan,
     locale: localeResolution.foreignLocale || undefined,
   });

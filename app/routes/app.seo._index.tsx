@@ -73,13 +73,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan: true,
       seoTitleSuffixEnabled: true,
       seoTitleSuffix: true,
+      seoLimits: true,
     },
   });
 
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   const suffix =
     settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
-  const effectiveLimit = seoTitleEffectiveLimit(suffix);
+  const seoLimits = (settings?.seoLimits ?? null) as Record<string, number> | null;
+  const effectiveLimit = seoTitleEffectiveLimit(suffix, seoLimits);
 
   // Shop locales drive the language toolbar; primary determines what "" means
   // in the snapshot table. Fetches are cached (60s TTL) so this only hits
@@ -107,6 +109,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const audit = await analyzeStore(session.shop, {
       db,
       seoTitleEffectiveLimit: effectiveLimit,
+      seoLimits,
       plan,
       locale: activeLocaleKey || undefined,
     });

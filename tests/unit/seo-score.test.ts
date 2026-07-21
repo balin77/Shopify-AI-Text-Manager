@@ -49,7 +49,7 @@ describe("computeSeoScore — headline cases", () => {
       "descriptionMissing",
       "metaDescriptionMissing",
     ]);
-    expect(r.recommendations).toEqual([
+    expect(r.recommendations.map((rec) => rec.code)).toEqual([
       "expandTitle",
       "addSeoTitle",
       "expandDescription",
@@ -194,7 +194,17 @@ describe("computeSeoScore defensively clamps a caller-computed limit <= 0", () =
       imagesWithAlt: 0,
     };
     // Mirrors a caller still using the un-clamped `suffix ? 60 - suffix.length : 60`.
-    const r = computeSeoScore({ ...base, seoTitle: "S".repeat(15), seoTitleEffectiveLimit: 0 });
+    // After the internal clamp raises 0 → MIN_SEO_TITLE_LIMIT (20), a 15-char
+    // seoTitle must NOT be treated as too long. Disable the new seoTitleMin
+    // floor (default 30) with `limits: { seoTitleMin: 1 }` so this test stays
+    // focused on the upper-limit clamp it was written for — the floor gets
+    // its own coverage above.
+    const r = computeSeoScore({
+      ...base,
+      seoTitle: "S".repeat(15),
+      seoTitleEffectiveLimit: 0,
+      limits: { seoTitleMin: 1 },
+    });
     expect(r.findings.find((f) => f.code.startsWith("seoTitle"))?.code).toBe("seoTitleGood");
   });
 });

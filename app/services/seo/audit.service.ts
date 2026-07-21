@@ -93,6 +93,10 @@ const FINDING_TO_BUCKET: Record<string, string> = {
   titleTooLong: "titleLength",
   seoTitleMissing: "seoTitleMissing",
   seoTitleTooLong: "seoTitleTooLong",
+  // A too-short SEO title is now surfaced when the merchant sets a floor
+  // (default seoTitleMin=30). Bucketed together with too-long so both feed
+  // the same "seo title length" fix path.
+  seoTitleTooShort: "seoTitleTooLong",
   descriptionMissing: "descriptionTooShort",
   descriptionTooShort: "descriptionTooShort",
   metaDescriptionMissing: "metaDescriptionMissing",
@@ -138,6 +142,7 @@ function scoreOne(
     imagesWithAlt: number;
   },
   seoTitleEffectiveLimit: number,
+  seoLimits: Partial<import("~/utils/character-limits").SeoLimits> | null,
 ): ScoredItem {
   const result = computeSeoScore({
     title,
@@ -147,6 +152,7 @@ function scoreOne(
     totalImages: input.totalImages,
     imagesWithAlt: input.imagesWithAlt,
     seoTitleEffectiveLimit,
+    limits: seoLimits,
   });
 
   const buckets = new Set<string>();
@@ -165,6 +171,12 @@ function scoreOne(
 
 export interface AnalyzeStoreDeps {
   db: PrismaClient;
+  /**
+   * Sparse merchant overrides for the SEO character limits (Pro+). Passed
+   * through to the scorer so a shop that widened `titleMax` doesn't get
+   * "title too long" warnings for values it explicitly allows. `null` (or
+   * omitted) falls back to the built-in defaults. */
+  seoLimits?: Partial<import("~/utils/character-limits").SeoLimits> | null;
   /** `seoTitleSuffix ? 60 - suffix.length : 60`, computed by the caller. */
   seoTitleEffectiveLimit: number;
   plan: Plan;
@@ -317,7 +329,7 @@ async function loadProductAltCoverageForLocale(
 
 export async function analyzeStore(
   shop: string,
-  { db, seoTitleEffectiveLimit, plan, locale }: AnalyzeStoreDeps,
+  { db, seoTitleEffectiveLimit, plan, locale, seoLimits = null }: AnalyzeStoreDeps,
 ): Promise<AuditAggregate> {
   // Normalize "" / undefined to "primary". Consumers pass the sentinel "" for
   // primary snapshots so the audit + snapshot table share one call shape.
@@ -445,6 +457,7 @@ export async function analyzeStore(
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
+        seoLimits,
       );
       // Keep the DISPLAY title = primary so worst-offenders rows read like
       // the merchant expects (they recognize products by their primary name).
@@ -528,6 +541,7 @@ export async function analyzeStore(
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
+        seoLimits,
       );
       if (foreignLocale) item.row.title = c.title;
       scored.push(item);
@@ -598,6 +612,7 @@ export async function analyzeStore(
           imagesWithAlt,
         },
         seoTitleEffectiveLimit,
+        seoLimits,
       );
       if (foreignLocale) item.row.title = a.title;
       scored.push(item);
@@ -664,6 +679,7 @@ export async function analyzeStore(
           imagesWithAlt: 0,
         },
         seoTitleEffectiveLimit,
+        seoLimits,
       );
       if (foreignLocale) item.row.title = pg.title;
       scored.push(item);

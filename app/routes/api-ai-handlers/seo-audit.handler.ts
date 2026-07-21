@@ -56,7 +56,8 @@ export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   const suffix =
     settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
-  const effectiveLimit = seoTitleEffectiveLimit(suffix);
+  const seoLimits = (settings?.seoLimits ?? null) as Record<string, number> | null;
+  const effectiveLimit = seoTitleEffectiveLimit(suffix, seoLimits);
 
   const task = await db.task.create({
     data: {
@@ -80,6 +81,7 @@ export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
     shop: session.shop,
     plan,
     seoTitleEffectiveLimit: effectiveLimit,
+    seoLimits,
   }).catch((err: unknown) => {
     logger.error("[API-AI] SEO audit crashed", {
       context: "AI",
@@ -99,10 +101,11 @@ interface RunArgs {
   shop: string;
   plan: Plan;
   seoTitleEffectiveLimit: number;
+  seoLimits: Record<string, number> | null;
 }
 
 async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
-  const { db, admin, shop, plan, seoTitleEffectiveLimit: effectiveLimit } = args;
+  const { db, admin, shop, plan, seoTitleEffectiveLimit: effectiveLimit, seoLimits } = args;
 
   try {
     // Enumerate every shop locale so the SEO overview language switcher has a
@@ -156,6 +159,7 @@ async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
         const audit = await analyzeStore(shop, {
           db,
           seoTitleEffectiveLimit: effectiveLimit,
+          seoLimits,
           plan,
           locale: target.locale || undefined,
         });
