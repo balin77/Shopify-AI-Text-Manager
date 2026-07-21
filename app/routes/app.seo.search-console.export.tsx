@@ -22,8 +22,13 @@ import type { Plan } from "../config/plans";
 
 const EXPORT_ROW_CAP = 1000;
 
+// Leading '=', '+', '-', '@', tab or CR would make Excel/Sheets evaluate the
+// cell as a formula even inside quotes (CSV injection) — query strings come
+// from real Google searches, i.e. externally controllable input. Prefix a "'"
+// to force text interpretation before quoting.
 function csvEscape(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
+  const deFormulaed = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return `"${deFormulaed.replace(/"/g, '""')}"`;
 }
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
@@ -39,7 +44,7 @@ const GSC_COUNTRY_RE = /^[a-z]{3}$/i;
 const GSC_DEVICES = ["DESKTOP", "MOBILE", "TABLET"] as const;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
   // Pro-plan gate (server-side)

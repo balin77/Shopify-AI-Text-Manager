@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
 
-type ExportPayload = { csv: string; filename: string; rowCount: number };
+type ExportPayload = { csv: string; filename: string; rowCount: number } | { error: string };
 import {
   Card,
   BlockStack,
@@ -502,9 +502,13 @@ export default function SeoSearchConsole() {
   const topQueriesExportFetcher = useFetcher<ExportPayload>();
   const quickWinsExportFetcher = useFetcher<ExportPayload>();
 
-  // Guards so one export click yields exactly one download
-  const consumedTopQueriesExportKey = useRef<string | null>(null);
-  const consumedQuickWinsExportKey = useRef<string | null>(null);
+  // Guards so one export click yields exactly one download. Keyed on the
+  // fetcher.data object identity (each load produces a fresh object) — a
+  // filename/rowCount key would wrongly suppress a re-export whose filtered
+  // result happens to have the same row count.
+  const consumedTopQueriesExport = useRef<ExportPayload | null>(null);
+  const consumedQuickWinsExport = useRef<ExportPayload | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // Country/device filters: reflected in the URL (?gscCountry/?gscDevice) so the
   // loader re-runs with the new filter and the choice survives a reload/share.
@@ -562,9 +566,15 @@ export default function SeoSearchConsole() {
   // Top Queries CSV export
   useEffect(() => {
     if (topQueriesExportFetcher.state !== "idle" || !topQueriesExportFetcher.data) return;
-    const key = topQueriesExportFetcher.data.filename + ":" + topQueriesExportFetcher.data.rowCount;
-    if (consumedTopQueriesExportKey.current === key) return;
-    consumedTopQueriesExportKey.current = key;
+    if (consumedTopQueriesExport.current === topQueriesExportFetcher.data) return;
+    consumedTopQueriesExport.current = topQueriesExportFetcher.data;
+    // Error responses (gated/reconnect/export_failed) also land in fetcher.data
+    // — without this guard we'd Blob-download a file containing "undefined".
+    if ("error" in topQueriesExportFetcher.data) {
+      setExportError(topQueriesExportFetcher.data.error);
+      return;
+    }
+    setExportError(null);
 
     const blob = new Blob([topQueriesExportFetcher.data.csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -580,9 +590,13 @@ export default function SeoSearchConsole() {
   // Quick Wins CSV export
   useEffect(() => {
     if (quickWinsExportFetcher.state !== "idle" || !quickWinsExportFetcher.data) return;
-    const key = quickWinsExportFetcher.data.filename + ":" + quickWinsExportFetcher.data.rowCount;
-    if (consumedQuickWinsExportKey.current === key) return;
-    consumedQuickWinsExportKey.current = key;
+    if (consumedQuickWinsExport.current === quickWinsExportFetcher.data) return;
+    consumedQuickWinsExport.current = quickWinsExportFetcher.data;
+    if ("error" in quickWinsExportFetcher.data) {
+      setExportError(quickWinsExportFetcher.data.error);
+      return;
+    }
+    setExportError(null);
 
     const blob = new Blob([quickWinsExportFetcher.data.csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -638,6 +652,11 @@ export default function SeoSearchConsole() {
           <Banner tone="critical">{g.connectErrorBanner}</Banner>
         )}
         {actionMsg && <Banner tone={actionMsg.tone}>{actionMsg.msg}</Banner>}
+        {exportError && (
+          <Banner tone="critical" onDismiss={() => setExportError(null)}>
+            {exportError === "reconnect" ? g.errorReconnect : g.errorGeneric}
+          </Banner>
+        )}
 
         {!data.configured && !data.gated ? (
           <Card>

@@ -280,7 +280,7 @@ describe("previousDateRange", () => {
     const current = defaultDateRange(now);
     const previous = previousDateRange(now);
     expect(current).toEqual({ startDate: "2026-05-29", endDate: "2026-06-26" });
-    expect(previous).toEqual({ startDate: "2026-05-01", endDate: "2026-05-28" });
+    expect(previous).toEqual({ startDate: "2026-04-30", endDate: "2026-05-28" });
     // Butts directly up against the current window: previous.endDate is
     // exactly one day before current.startDate.
     const gapMs =
@@ -291,18 +291,20 @@ describe("previousDateRange", () => {
   it("respects a custom `days` window size", () => {
     const now = new Date("2026-06-29T00:00:00Z");
     const previous = previousDateRange(now, 7);
-    // 7-day window ending the day before the (7-day) current window starts.
+    // Window ending the day before the current window starts, spanning the
+    // SAME number of inclusive days as defaultDateRange(now, 7) — which is 8
+    // (start = end - 7). A shorter previous window would skew the deltas.
     const current = defaultDateRange(now, 7);
     expect(previous.endDate).toBe(
       new Date(new Date(`${current.startDate}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000)
         .toISOString()
         .slice(0, 10),
     );
-    const spanDays =
-      (new Date(`${previous.endDate}T00:00:00Z`).getTime() - new Date(`${previous.startDate}T00:00:00Z`).getTime()) /
+    const inclusiveSpan = (range: { startDate: string; endDate: string }) =>
+      (new Date(`${range.endDate}T00:00:00Z`).getTime() - new Date(`${range.startDate}T00:00:00Z`).getTime()) /
         (24 * 60 * 60 * 1000) +
       1;
-    expect(spanDays).toBe(7);
+    expect(inclusiveSpan(previous)).toBe(inclusiveSpan(current));
   });
 });
 

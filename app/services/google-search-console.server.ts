@@ -643,7 +643,10 @@ export function defaultDateRange(now: Date, days = 28): { startDate: string; end
 export function previousDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
   const { startDate: currentStart } = defaultDateRange(now, days);
   const end = new Date(new Date(`${currentStart}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000);
-  const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+  // `days` (not days - 1): defaultDateRange spans days+1 inclusive calendar
+  // days (start = end - days), so the previous window must too — a shorter
+  // window would systematically inflate clicks/impressions deltas by ~1/days.
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   return { startDate: fmt(start), endDate: fmt(end) };
 }
