@@ -1561,6 +1561,12 @@ export const es: Translation = {
       historyColScore: "Puntuación",
       historyColDate: "Fecha",
       historyEmpty: "Aún no hay pruebas realizadas.",
+      historyClickHint: "Haz clic en una fila para ver el resultado completo de esa prueba anterior.",
+      historyOpenBadge: "Abierto",
+      historyLoading: "Cargando prueba…",
+      viewingHistoryTitle: "Viendo prueba anterior del {date}",
+      viewingHistoryBody: "Este es el resultado guardado para {url} · {strategy}. Ejecuta una nueva prueba arriba para reemplazarlo.",
+      viewingHistoryBack: "Volver al último test",
       rum: {
         title: "Datos reales de visitantes",
         emptyBody: "Activa el bloque de app \"Web Vitals (RUM)\" en el editor de temas para empezar a recopilar datos reales de carga de tus visitantes.",

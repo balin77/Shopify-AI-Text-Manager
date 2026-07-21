@@ -15,7 +15,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   BlockStack,
@@ -39,6 +39,7 @@ import {
   runPageSpeedAudit,
   listPageSpeedHistory,
   findLatestPageSpeedAudit,
+  findPageSpeedAuditById,
   PageSpeedQuotaExceededError,
 } from "../services/seo/pagespeed.service";
 import type {
@@ -128,6 +129,21 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
   const form = await request.formData();
   const intent = getFormString(form, "intent");
+
+  // Load a stored past audit by id (History-row click). Same result shape as a
+  // fresh run — the UI reuses the same rendering block, gated by an
+  // "isHistorical" flag returned alongside so the client can show a banner.
+  if (intent === "loadHistory") {
+    const auditId = getFormString(form, "auditId");
+    if (!auditId) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const stored = await findPageSpeedAuditById(db, shop, auditId);
+    if (!stored) {
+      return json<ActionResult>({ ok: false, error: "notFound" }, { status: 404 });
+    }
+    return json<ActionResult>({ ok: true, result: stored });
+  }
 
   if (intent !== "runAudit") {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
@@ -228,10 +244,31 @@ export default function SeoPerformance() {
   const p = t.seo.performancePage;
 
   const fetcher = useFetcher<ActionResult>();
+  const historyFetcher = useFetcher<ActionResult>();
 
   const [selectedPath, setSelectedPath] = useState<string>("/");
   const [customUrl, setCustomUrl] = useState("");
   const [strategy, setStrategy] = useState<PageSpeedStrategy>("mobile");
+
+  // Which past-run row is currently opened via the History table (null = user
+  // is viewing the freshly-run audit / no history opened). Cleared by the
+  // "back to latest" button in the historical banner.
+  const [viewedHistoryId, setViewedHistoryId] = useState<string | null>(null);
+  const [viewedHistoryResult, setViewedHistoryResult] = useState<PageSpeedAuditResult | null>(null);
+
+  useEffect(() => {
+    if (historyFetcher.state === "idle" && historyFetcher.data && historyFetcher.data.ok) {
+      setViewedHistoryResult(historyFetcher.data.result);
+    }
+  }, [historyFetcher.state, historyFetcher.data]);
+
+  // Running a fresh audit closes any opened history view.
+  useEffect(() => {
+    if (fetcher.state !== "idle") {
+      setViewedHistoryId(null);
+      setViewedHistoryResult(null);
+    }
+  }, [fetcher.state]);
 
   const effectiveUrl = customUrl.trim() || selectedPath;
 
@@ -258,8 +295,13 @@ export default function SeoPerformance() {
   );
 
   const running = fetcher.state !== "idle";
+  const loadingHistory = historyFetcher.state !== "idle";
   const data = fetcher.data;
-  const result = data && data.ok ? data.result : null;
+  const liveResult = data && data.ok ? data.result : null;
+  // Historical selection wins visually: when a history row is opened, the
+  // result block shows that stored audit and the banner explains it.
+  const result = viewedHistoryResult ?? liveResult;
+  const isHistorical = viewedHistoryResult != null;
   const errorMessage =
     data && !data.ok
       ? data.error === "invalidUrl"
@@ -268,6 +310,25 @@ export default function SeoPerformance() {
           ? p.errors.quotaExceeded
           : `${p.errors.auditFailed}${data.detail ? `: ${data.detail}` : ""}`
       : null;
+
+  const openHistoryEntry = (entry: (typeof history)[number]) => {
+    // Mirror the row's URL + strategy into the controls so "Re-test" naturally
+    // targets the same page the merchant is looking at.
+    setStrategy(entry.strategy);
+    const path = pathOnly(entry.url);
+    setCustomUrl("");
+    setSelectedPath(path);
+    setViewedHistoryId(entry.id);
+    historyFetcher.submit(
+      { intent: "loadHistory", auditId: entry.id },
+      { method: "post" },
+    );
+  };
+
+  const closeHistoryView = () => {
+    setViewedHistoryId(null);
+    setViewedHistoryResult(null);
+  };
 
   const submitAudit = (force: boolean) => {
     fetcher.submit(
@@ -352,7 +413,26 @@ export default function SeoPerformance() {
 
         {result && (
           <BlockStack gap="400">
-            {result.stale && <Banner tone="warning">{p.staleQuotaNotice}</Banner>}
+            {isHistorical && (
+              <Banner
+                tone="info"
+                title={p.viewingHistoryTitle
+                  .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                onDismiss={closeHistoryView}
+              >
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">
+                    {p.viewingHistoryBody
+                      .replace("{url}", pathOnly(result.url))
+                      .replace("{strategy}", strategyLabel(result.strategy))}
+                  </Text>
+                  <InlineStack>
+                    <Button onClick={closeHistoryView}>{p.viewingHistoryBack}</Button>
+                  </InlineStack>
+                </BlockStack>
+              </Banner>
+            )}
+            {result.stale && !isHistorical && <Banner tone="warning">{p.staleQuotaNotice}</Banner>}
             {/* Score header */}
             <Card>
               <BlockStack gap="200">
@@ -703,39 +783,59 @@ export default function SeoPerformance() {
             {visibleHistory.length === 0 ? (
               <Text as="p" tone="subdued">{p.historyEmpty}</Text>
             ) : (
-              <IndexTable
-                itemCount={visibleHistory.length}
-                selectable={false}
-                headings={[
-                  { title: p.historyColUrl },
-                  { title: p.historyColStrategy },
-                  { title: p.historyColScore },
-                  { title: p.historyColDate },
-                ]}
-              >
-                {visibleHistory.map((entry, index) => (
-                  <IndexTable.Row id={entry.id} key={entry.id} position={index}>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodyMd">{pathOnly(entry.url)}</Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodyMd">{strategyLabel(entry.strategy)}</Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      {entry.performanceScore != null ? (
-                        <Badge tone={scoreTone(entry.performanceScore) as any}>{String(entry.performanceScore)}</Badge>
-                      ) : (
-                        <Text as="span" tone="subdued">–</Text>
-                      )}
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodyMd">
-                        {new Date(entry.createdAt).toLocaleDateString(undefined)}
-                      </Text>
-                    </IndexTable.Cell>
-                  </IndexTable.Row>
-                ))}
-              </IndexTable>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">{p.historyClickHint}</Text>
+                <IndexTable
+                  itemCount={visibleHistory.length}
+                  selectable={false}
+                  headings={[
+                    { title: p.historyColUrl },
+                    { title: p.historyColStrategy },
+                    { title: p.historyColScore },
+                    { title: p.historyColDate },
+                  ]}
+                >
+                  {visibleHistory.map((entry, index) => {
+                    const isOpen = entry.id === viewedHistoryId;
+                    return (
+                      <IndexTable.Row
+                        id={entry.id}
+                        key={entry.id}
+                        position={index}
+                        selected={isOpen}
+                        onClick={() => openHistoryEntry(entry)}
+                      >
+                        <IndexTable.Cell>
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text as="span" variant="bodyMd" fontWeight={isOpen ? "semibold" : "regular"}>
+                              {pathOnly(entry.url)}
+                            </Text>
+                            {isOpen && <Badge tone="info">{p.historyOpenBadge}</Badge>}
+                          </InlineStack>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Text as="span" variant="bodyMd">{strategyLabel(entry.strategy)}</Text>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          {entry.performanceScore != null ? (
+                            <Badge tone={scoreTone(entry.performanceScore) as any}>{String(entry.performanceScore)}</Badge>
+                          ) : (
+                            <Text as="span" tone="subdued">–</Text>
+                          )}
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          <Text as="span" variant="bodyMd">
+                            {new Date(entry.createdAt).toLocaleDateString(undefined)}
+                          </Text>
+                        </IndexTable.Cell>
+                      </IndexTable.Row>
+                    );
+                  })}
+                </IndexTable>
+                {loadingHistory && (
+                  <Text as="p" variant="bodySm" tone="subdued">{p.historyLoading}</Text>
+                )}
+              </BlockStack>
             )}
           </BlockStack>
         </Card>

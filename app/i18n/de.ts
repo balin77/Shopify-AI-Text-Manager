@@ -1559,6 +1559,12 @@ export const de = {
       historyColScore: "Score",
       historyColDate: "Datum",
       historyEmpty: "Noch keine Tests durchgeführt.",
+      historyClickHint: "Klicke auf eine Zeile, um das vollständige Ergebnis dieses Tests anzuzeigen.",
+      historyOpenBadge: "Geöffnet",
+      historyLoading: "Test wird geladen …",
+      viewingHistoryTitle: "Historischer Test vom {date}",
+      viewingHistoryBody: "Dies ist das gespeicherte Ergebnis für {url} · {strategy}. Starte oben einen neuen Test, um es zu ersetzen.",
+      viewingHistoryBack: "Zurück zum aktuellen Test",
       rum: {
         title: "Echte Besucherdaten",
         emptyBody: "Aktiviere den App-Embed \"Web Vitals (RUM)\" im Theme-Editor, um echte Ladezeitdaten deiner Besucher zu sammeln.",

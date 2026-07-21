@@ -1562,6 +1562,12 @@ export const en: Translation = {
       historyColScore: "Score",
       historyColDate: "Date",
       historyEmpty: "No runs yet.",
+      historyClickHint: "Click a row to view the full result of that past run.",
+      historyOpenBadge: "Viewing",
+      historyLoading: "Loading past run…",
+      viewingHistoryTitle: "Viewing past run from {date}",
+      viewingHistoryBody: "This is the stored result for {url} · {strategy}. Run a new test above to replace it.",
+      viewingHistoryBack: "Back to latest",
       rum: {
         title: "Real visitor data",
         emptyBody: "Enable the \"Web Vitals (RUM)\" app embed in your theme editor to start collecting real loading data from your visitors.",

@@ -189,6 +189,24 @@ export async function findLatestPageSpeedAudit(
   return { ...result, stale: true };
 }
 
+/**
+ * Fetch a stored audit by its row id, scoped to `shop` (so one shop cannot
+ * read another shop's audit even if it guesses the id). Returns the parsed
+ * `PageSpeedAuditResult` or null when the row does not exist / belongs to a
+ * different shop.
+ */
+export async function findPageSpeedAuditById(
+  db: any,
+  shop: string,
+  id: string,
+): Promise<PageSpeedAuditResult | null> {
+  const cached = await db.seoPageSpeedAudit.findFirst({
+    where: { id, shop },
+  });
+  if (!cached) return null;
+  return cached.result as PageSpeedAuditResult;
+}
+
 export interface ListPageSpeedHistoryOptions {
   db: any;
   shop: string;
