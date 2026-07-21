@@ -601,6 +601,109 @@ export function defaultDateRange(now: Date, days = 28): { startDate: string; end
   return { startDate: fmt(start), endDate: fmt(end) };
 }
 
+/**
+ * The 28-day window immediately BEFORE defaultDateRange(now, days) — used for
+ * the period-over-period deltas on the Top queries table. Butts directly up
+ * against the current window (previous.endDate = current.startDate - 1 day),
+ * no gap and no overlap, so every day in the trailing 56 days is counted
+ * exactly once between the two windows.
+ */
+export function previousDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
+  const { startDate: currentStart } = defaultDateRange(now, days);
+  const end = new Date(new Date(`${currentStart}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000);
+  const start = new Date(end.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+/** Per-query deltas the Top queries table renders (clicks/impressions/position/ctr). */
+export interface QueryDelta {
+  clicksDelta: number;
+  impressionsDelta: number;
+  positionDelta: number; // current - previous; negative = improved (lower position is better)
+  ctrDelta: number;
+}
+
+/**
+ * Match current/previous period rows by query (case-insensitive) and compute
+ * deltas. Only queries present in BOTH periods get an entry — a query with no
+ * previous-period row has nothing to compare against (see findLostQueries for
+ * the complementary "disappeared" case).
+ */
+export function computeQueryDeltas(
+  current: SearchAnalyticsRow[],
+  previous: SearchAnalyticsRow[],
+): Map<string, QueryDelta> {
+  const previousByQuery = new Map<string, SearchAnalyticsRow>();
+  for (const row of previous) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (q) previousByQuery.set(q, row);
+  }
+
+  const deltas = new Map<string, QueryDelta>();
+  for (const row of current) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (!q) continue;
+    const prev = previousByQuery.get(q);
+    if (!prev) continue;
+    deltas.set(q, {
+      clicksDelta: row.clicks - prev.clicks,
+      impressionsDelta: row.impressions - prev.impressions,
+      positionDelta: row.position - prev.position,
+      ctrDelta: row.ctr - prev.ctr,
+    });
+  }
+  return deltas;
+}
+
+/** One query that had meaningful traffic last period but no longer shows up at all. */
+export interface LostQuery {
+  query: string;
+  clicks: number;
+  impressions: number;
+  position: number;
+}
+
+// A query with fewer than this many previous-period impressions is too thin to
+// call "lost" with confidence — could just be normal long-tail noise dropping
+// in/out of GSC's rowLimit-capped response.
+const LOST_QUERY_MIN_IMPRESSIONS = 50;
+const LOST_QUERY_LIMIT = 10;
+
+/**
+ * Queries that had real traffic in the previous period but don't appear at all
+ * in the current one — a signal that content ranking for them may have
+ * regressed or been removed. Sorted by previous-period impressions descending
+ * (biggest drop-off first) and capped at `limit`. Pure/exported for unit
+ * testing without a live call.
+ */
+export function findLostQueries(
+  current: SearchAnalyticsRow[],
+  previous: SearchAnalyticsRow[],
+  minImpressions = LOST_QUERY_MIN_IMPRESSIONS,
+  limit = LOST_QUERY_LIMIT,
+): LostQuery[] {
+  const currentQueries = new Set<string>();
+  for (const row of current) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (q) currentQueries.add(q);
+  }
+
+  return previous
+    .filter((row) => {
+      const q = (row.keys?.[0] ?? "").toLowerCase();
+      return q && row.impressions >= minImpressions && !currentQueries.has(q);
+    })
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, limit)
+    .map((row) => ({
+      query: row.keys[0] ?? "",
+      clicks: row.clicks,
+      impressions: row.impressions,
+      position: row.position,
+    }));
+}
+
 // A manual "Sync keyword rankings" click and the daily auto-sync can both fire
 // on the same calendar day; truncating to UTC midnight makes capturedAt a
 // stable per-day key so the (keywordId, capturedAt) unique index dedupes them

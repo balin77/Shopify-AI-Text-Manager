@@ -11,6 +11,9 @@ import {
   emailFromIdToken,
   pickProperty,
   defaultDateRange,
+  previousDateRange,
+  computeQueryDeltas,
+  findLostQueries,
   enrichKeywordsFromGsc,
   getGscAccessToken,
   revokeGoogleToken,
@@ -266,6 +269,147 @@ describe("defaultDateRange", () => {
     const { startDate, endDate } = defaultDateRange(new Date("2026-06-29T00:00:00Z"));
     expect(endDate).toBe("2026-06-26");
     expect(startDate).toBe("2026-05-29");
+  });
+});
+
+describe("previousDateRange", () => {
+  it("is the 28-day window immediately before defaultDateRange's window, with no gap or overlap", () => {
+    const now = new Date("2026-06-29T00:00:00Z");
+    const current = defaultDateRange(now);
+    const previous = previousDateRange(now);
+    expect(current).toEqual({ startDate: "2026-05-29", endDate: "2026-06-26" });
+    expect(previous).toEqual({ startDate: "2026-05-01", endDate: "2026-05-28" });
+    // Butts directly up against the current window: previous.endDate is
+    // exactly one day before current.startDate.
+    const gapMs =
+      new Date(`${current.startDate}T00:00:00Z`).getTime() - new Date(`${previous.endDate}T00:00:00Z`).getTime();
+    expect(gapMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("respects a custom `days` window size", () => {
+    const now = new Date("2026-06-29T00:00:00Z");
+    const previous = previousDateRange(now, 7);
+    // 7-day window ending the day before the (7-day) current window starts.
+    const current = defaultDateRange(now, 7);
+    expect(previous.endDate).toBe(
+      new Date(new Date(`${current.startDate}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10),
+    );
+    const spanDays =
+      (new Date(`${previous.endDate}T00:00:00Z`).getTime() - new Date(`${previous.startDate}T00:00:00Z`).getTime()) /
+        (24 * 60 * 60 * 1000) +
+      1;
+    expect(spanDays).toBe(7);
+  });
+});
+
+describe("computeQueryDeltas", () => {
+  const row = (query: string, clicks: number, impressions: number, position: number, ctr = 0.01): SearchAnalyticsRow => ({
+    keys: [query],
+    clicks,
+    impressions,
+    ctr,
+    position,
+  });
+
+  it("only returns deltas for queries present in BOTH periods", () => {
+    const current = [row("blue shoes", 20, 400, 5), row("only in current", 5, 100, 10)];
+    const previous = [row("blue shoes", 12, 300, 7.5), row("only in previous", 3, 80, 12)];
+    const deltas = computeQueryDeltas(current, previous);
+    expect(deltas.size).toBe(1);
+    expect(deltas.has("blue shoes")).toBe(true);
+    expect(deltas.has("only in current")).toBe(false);
+    expect(deltas.has("only in previous")).toBe(false);
+  });
+
+  it("computes clicks/impressions/ctr deltas as current - previous", () => {
+    const current = [row("blue shoes", 20, 400, 5, 0.05)];
+    const previous = [row("blue shoes", 12, 300, 7.5, 0.04)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.clicksDelta).toBe(8);
+    expect(delta.impressionsDelta).toBe(100);
+    expect(delta.ctrDelta).toBeCloseTo(0.01);
+  });
+
+  it("positionDelta is negative when position improved (rank got smaller/better)", () => {
+    const current = [row("blue shoes", 20, 400, 5)]; // improved from 7.5 to 5
+    const previous = [row("blue shoes", 12, 300, 7.5)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.positionDelta).toBeCloseTo(-2.5);
+  });
+
+  it("positionDelta is positive when position got worse (rank got larger)", () => {
+    const current = [row("blue shoes", 12, 300, 9)]; // dropped from 5 to 9
+    const previous = [row("blue shoes", 20, 400, 5)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.positionDelta).toBeCloseTo(4);
+  });
+
+  it("matches queries case-insensitively", () => {
+    const current = [row("Blue Shoes", 20, 400, 5)];
+    const previous = [row("blue shoes", 12, 300, 7.5)];
+    const deltas = computeQueryDeltas(current, previous);
+    expect(deltas.has("blue shoes")).toBe(true);
+  });
+
+  it("returns an empty map for no overlap", () => {
+    expect(computeQueryDeltas([], [])).toEqual(new Map());
+  });
+});
+
+describe("findLostQueries", () => {
+  const row = (query: string, clicks: number, impressions: number, position: number): SearchAnalyticsRow => ({
+    keys: [query],
+    clicks,
+    impressions,
+    ctr: impressions ? clicks / impressions : 0,
+    position,
+  });
+
+  it("only surfaces previous-period queries with impressions >= threshold that are absent from current", () => {
+    const current = [row("still here", 5, 100, 10)];
+    const previous = [
+      row("still here", 8, 150, 8), // present in current -> not lost
+      row("gone big", 20, 500, 6), // absent, above threshold -> lost
+      row("gone small", 1, 10, 15), // absent, below threshold -> not lost
+    ];
+    const lost = findLostQueries(current, previous, 50, 10);
+    expect(lost.map((l) => l.query)).toEqual(["gone big"]);
+  });
+
+  it("uses the previous-period impressions/clicks/position values for the lost row", () => {
+    const previous = [row("gone big", 20, 500, 6.5)];
+    const lost = findLostQueries([], previous, 50, 10);
+    expect(lost).toEqual([{ query: "gone big", clicks: 20, impressions: 500, position: 6.5 }]);
+  });
+
+  it("sorts by previous-period impressions descending", () => {
+    const previous = [row("low", 1, 60, 10), row("high", 5, 900, 10), row("mid", 3, 300, 10)];
+    const lost = findLostQueries([], previous, 50, 10);
+    expect(lost.map((l) => l.query)).toEqual(["high", "mid", "low"]);
+  });
+
+  it("caps results at the given limit", () => {
+    const previous = [row("a", 1, 300, 10), row("b", 1, 200, 10), row("c", 1, 100, 10)];
+    const lost = findLostQueries([], previous, 50, 2);
+    expect(lost.map((l) => l.query)).toEqual(["a", "b"]);
+  });
+
+  it("excludes queries present in current even if impressions dropped a lot", () => {
+    const current = [row("still ranking", 1, 5, 40)];
+    const previous = [row("still ranking", 20, 500, 6)];
+    expect(findLostQueries(current, previous)).toEqual([]);
+  });
+
+  it("matches case-insensitively when checking presence in current", () => {
+    const current = [row("Still Here", 5, 100, 10)];
+    const previous = [row("still here", 8, 150, 8)];
+    expect(findLostQueries(current, previous)).toEqual([]);
+  });
+
+  it("returns an empty array when nothing qualifies", () => {
+    expect(findLostQueries([], [])).toEqual([]);
   });
 });
 

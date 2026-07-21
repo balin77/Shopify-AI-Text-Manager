@@ -42,6 +42,9 @@ import {
   buildGscAuthUrl,
   signOAuthState,
   defaultDateRange,
+  previousDateRange,
+  computeQueryDeltas,
+  findLostQueries,
   revokeGoogleToken,
   inspectUrl,
   findCtrOpportunities,
@@ -52,6 +55,8 @@ import {
   type GscSite,
   type CtrOpportunity,
   type UrlInspectionSummary,
+  type QueryDelta,
+  type LostQuery,
 } from "../services/google-search-console.server";
 import { normalizeKeyword, MAX_KEYWORD_LENGTH, type KeywordResourceType } from "../services/seo/keywords.service";
 
@@ -179,6 +184,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     email: null as string | null,
     topQueries: [] as SearchAnalyticsRow[],
     opportunities: [] as QuickWinOpportunity[],
+    // Period-over-period comparison (current 28d vs. the 28d before that) —
+    // best-effort, see the second querySearchAnalytics call below.
+    deltas: {} as Record<string, QueryDelta>,
+    lostQueries: [] as LostQuery[],
     needsReconnect: false,
     needsPropertySelection: false,
     availableProperties: [] as GscSite[],
@@ -244,6 +253,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       dimensions: ["query"],
       rowLimit: 25,
     });
+
+    // Period-over-period comparison: the 28 days immediately before the
+    // window above. Best-effort — a rowLimit of 1000 (vs. 25 for the table
+    // itself) so the previous-period fetch is generous enough that deltas
+    // resolve for all 25 top queries and lost-query detection isn't starved by
+    // the cap. Any failure here just leaves deltas/lostQueries empty; the
+    // table renders exactly as before.
+    try {
+      const prevRange = previousDateRange(new Date());
+      const previousRows = await querySearchAnalytics(accessToken, propertyUrl, {
+        startDate: prevRange.startDate,
+        endDate: prevRange.endDate,
+        dimensions: ["query"],
+        rowLimit: 1000,
+      });
+      base.deltas = Object.fromEntries(computeQueryDeltas(base.topQueries, previousRows));
+      base.lostQueries = findLostQueries(base.topQueries, previousRows);
+    } catch {
+      base.deltas = {};
+      base.lostQueries = [];
+    }
 
     // "Quick wins": a second, page-dimensioned query — only fired once the
     // first call above proved the token/property are good, so an auth failure
@@ -640,6 +670,9 @@ export default function SeoSearchConsole() {
                   <Text as="h3" variant="headingMd">
                     {g.topQueries}
                   </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {g.deltaHint}
+                  </Text>
                   {data.error === "fetch_failed" ? (
                     <Text as="p" tone="subdued">
                       {g.errorGeneric}
@@ -668,22 +701,41 @@ export default function SeoSearchConsole() {
                           </tr>
                         </thead>
                         <tbody>
-                          {data.topQueries.map((row, i) => (
-                            <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
-                              <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
-                                <Text as="span" variant="bodyMd" truncate>{row.keys[0]}</Text>
-                              </td>
-                              <td style={{ padding: "6px 8px" }}>
-                                <Text as="span" variant="bodySm">{row.clicks}</Text>
-                              </td>
-                              <td style={{ padding: "6px 8px" }}>
-                                <Text as="span" variant="bodySm">{row.impressions}</Text>
-                              </td>
-                              <td style={{ padding: "6px 8px" }}>
-                                <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
-                              </td>
-                            </tr>
-                          ))}
+                          {data.topQueries.map((row, i) => {
+                            const delta = data.deltas[(row.keys[0] ?? "").toLowerCase()];
+                            return (
+                              <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
+                                <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
+                                  <Text as="span" variant="bodyMd" truncate>{row.keys[0]}</Text>
+                                </td>
+                                <td style={{ padding: "6px 8px" }}>
+                                  <InlineStack gap="150" blockAlign="center">
+                                    <Text as="span" variant="bodySm">{row.clicks}</Text>
+                                    {delta && delta.clicksDelta !== 0 && (
+                                      <Text as="span" variant="bodySm" tone={delta.clicksDelta > 0 ? "success" : "critical"}>
+                                        {delta.clicksDelta > 0 ? "+" : "−"}
+                                        {Math.abs(delta.clicksDelta)}
+                                      </Text>
+                                    )}
+                                  </InlineStack>
+                                </td>
+                                <td style={{ padding: "6px 8px" }}>
+                                  <Text as="span" variant="bodySm">{row.impressions}</Text>
+                                </td>
+                                <td style={{ padding: "6px 8px" }}>
+                                  <InlineStack gap="150" blockAlign="center">
+                                    <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
+                                    {delta && delta.positionDelta !== 0 && (
+                                      <Text as="span" variant="bodySm" tone={delta.positionDelta < 0 ? "success" : "critical"}>
+                                        {delta.positionDelta < 0 ? "↑" : "↓"}
+                                        {Math.abs(delta.positionDelta).toFixed(1)}
+                                      </Text>
+                                    )}
+                                  </InlineStack>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -774,6 +826,61 @@ export default function SeoSearchConsole() {
                   {quickWinFetcher.state === "idle" && quickWinFetcher.data && !quickWinFetcher.data.ok && (
                     <Banner tone="critical">{g.errorGeneric}</Banner>
                   )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Lost queries: had real impressions last period but don't show up at all
+                this period — a signal that ranking content may have regressed or been
+                removed. Hidden entirely when nothing qualifies (or the best-effort
+                previous-period fetch didn't come back). */}
+            {!data.needsPropertySelection && data.lostQueries.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {g.lostQueriesTitle}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {g.lostQueriesHint}
+                  </Text>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colQuery}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colClicks}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colImpressions}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.lostQueries.map((row, i) => (
+                          <tr key={`${row.query}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
+                            <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
+                              <Text as="span" variant="bodyMd" truncate>{row.query}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.clicks}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.impressions}</Text>
+                            </td>
+                            <td style={{ padding: "6px 8px" }}>
+                              <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </BlockStack>
               </Card>
             )}
