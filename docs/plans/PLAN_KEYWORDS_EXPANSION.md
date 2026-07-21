@@ -1,8 +1,8 @@
 # Keyword-Feature Ausbau — Vollständiger Plan (Phasen 1–5)
 
 **Status:** Entwurf / umsetzungsbereit
-**Baut auf:** [SEO_TAB_IMPLEMENTATION_PLAN.md](./SEO_TAB_IMPLEMENTATION_PLAN.md) Phase 5 (Keywords) + Phase 6 (Search Console) — beide bereits produktiv.
-**Section-Contract:** siehe SEO_TAB_IMPLEMENTATION_PLAN.md §„Einheitliches Konzept" — dieser Plan **erfüllt denselben Vertrag**, führt keine neue Section ein (Keywords-Tab bleibt Container, GSC-Tab bleibt separater Verbindungs-Tab).
+**Baut auf:** vorhandener Keywords-Tab ([app.seo.keywords.tsx](app/routes/app.seo.keywords.tsx)) + Search-Console-Integration ([app.seo.search-console.tsx](app/routes/app.seo.search-console.tsx)) — beide bereits produktiv.
+**Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) — dieser Plan **erfüllt denselben Vertrag**, führt keine neue Section ein (Keywords-Tab bleibt Container, GSC-Tab bleibt separater Verbindungs-Tab).
 
 ---
 
@@ -278,7 +278,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 - Erwartet Spalten: `keyword` (Pflicht), `priority` (optional 1/2/3), `intent` (optional), `locale` (optional).
 - **Kein** `resourceId` in der CSV — Zuweisung passiert danach über AI-Verteilung oder manuell.
 - Upsert pro Zeile nach `(shop, keyword, locale)`; alle importierten Keywords landen in der Zielgruppe (Membership-Insert).
-- Cap 2000 Zeilen pro Import (dokumentiert im UI); alles darüber → Task-basiert (siehe Bulk-Muster in SEO_TAB_IMPLEMENTATION_PLAN.md §„Lange Operationen sind Tasks").
+- Cap 2000 Zeilen pro Import (dokumentiert im UI); alles darüber → Task-basiert (siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) §8).
 
 ### 5.4 AI-Verteilung (der neue Flow)
 
@@ -332,7 +332,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 
 5. **Batch-Anwenden** (zweite Task-Phase oder derselbe Task mit `stage:'apply'`).
    - Iteriert die akzeptierten Vorschläge; pro Zeile: upsert Assignment mit Rolle. Bei Primary-Konflikten die vorher gewählte Konflikt-Regel anwenden.
-   - Fortschritt pro 10 Items via `Task.progress` (Heartbeat-Pflicht — siehe SEO_TAB_IMPLEMENTATION_PLAN.md §„Lange Operationen").
+   - Fortschritt pro 10 Items via `Task.progress` (Heartbeat-Pflicht — siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) §8).
 
 **Task-Typ registrieren** in `LONG_RUNNING_TASK_TYPES` ([task-recovery.service.js:34](task-recovery.service.js#L34)): `distributeKeywords`. i18n-Label in `t.tasks.taskType.distributeKeywords`. Fortschritt = `processed / totalBatches` während §5.4-Schritt 2, dann `applied / accepted` während Schritt 5.
 
@@ -348,7 +348,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 - Ein durchschnittlicher Store mit 200 Produkten und 100 Keywords: 200/15 ≈ 14 Batches × ~6k Input-Tokens + ~1.5k Output-Tokens ≈ 100k Input + 20k Output. Bei Claude Sonnet Pricing ($3/MTok in, $15/MTok out) ≈ **60 ¢ pro Verteilung**.
 - Ein Store mit 50 Produkten: 4 Batches ≈ 20 ¢. Ein Store mit 15 Produkten: 1 Batch ≈ 5 ¢.
 - **Pro-gaten** trotzdem (dieselben `meetsPlan(plan, "pro")`-Gates wie bei GSC), sonst wird der Feature-Wert entwertet und die Kosten-Zurechnung wird schwierig.
-- Absicherung gegen Missbrauch: `distributeKeywords` max **1 laufender Task pro Shop** (dieselbe Concurrency-Regel wie andere Bulk-Tasks — siehe SEO_TAB_IMPLEMENTATION_PLAN.md §„Task"). Zweiter Aufruf zeigt Banner mit Link zum Aufgaben-Tab.
+- Absicherung gegen Missbrauch: `distributeKeywords` max **1 laufender Task pro Shop** (dieselbe Single-flight-Regel wie andere Bulk-Tasks — siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) §8). Zweiter Aufruf zeigt Banner mit Link zum Aufgaben-Tab.
 - Cost-Preview im Modal (siehe Randfälle oben) verhindert Überraschungen bei großen Katalogen.
 
 ### 5.6 Deliverables Phase 3
@@ -418,7 +418,7 @@ GROUP BY keywordId, resourceType HAVING c > 1;
 ```
 
 - Neue Karte im Keywords-Tab: _„Konflikte"_ mit einer Liste dieser Duplikate.
-- Findings-Codes im SEO-Dashboard (siehe SEO_TAB_IMPLEMENTATION_PLAN.md §„Finding-Modell") — kannibalisierte Keywords fließen in den Store-weiten Score ein.
+- Findings-Codes im SEO-Dashboard (siehe [SEO_SECTION_CONTRACT.md](../SEO_SECTION_CONTRACT.md) §2) — kannibalisierte Keywords fließen in den Store-weiten Score ein.
 - Zusätzlich Warnung im Assignment-Writer, wenn der Merchant _manuell_ ein Primary anlegt, das schon woanders primary ist (Confirm-Dialog).
 
 **Achtung `Product` ≠ `Collection`:** Ein Keyword darf durchaus einmal als Primary auf einem Produkt und einmal auf einer Kategorie-Collection existieren (Kategorie-Seite rankt für „Vasen", Produkt für „grüne Keramikvase") — das ist _kein_ Konflikt. Deshalb `GROUP BY keywordId, resourceType`, nicht nur `keywordId`.

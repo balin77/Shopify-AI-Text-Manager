@@ -26,6 +26,7 @@
 | [PLAN_SYSTEM.md](PLAN_SYSTEM.md) | Dokumentation des Subscription-Plan-Systems |
 | [DATABASE_MAINTENANCE.md](DATABASE_MAINTENANCE.md) | Wartungsanleitung für Datenbank-Cleanup |
 | [SECURITY_IMPROVEMENTS.md](SECURITY_IMPROVEMENTS.md) | Übersicht der Sicherheitsverbesserungen |
+| [SEO_SECTION_CONTRACT.md](SEO_SECTION_CONTRACT.md) | Architektur-Vertrag für alle SEO-Sections (Descriptor, Findings, Tasks, GDPR) |
 
 ### 📚 Referenz
 
