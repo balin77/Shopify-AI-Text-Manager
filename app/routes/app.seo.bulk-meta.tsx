@@ -634,36 +634,31 @@ function BulkMetaGrid({
           top: 0;
           z-index: 1;
         }
-        /* Make every editable cell fill the row's full height so a short
-           value's textarea still occupies the whole cell (i.e. the click
-           target = the whole cell). Trick: <td height:100%> lets children use
-           height:100% relative to the row's tallest cell in modern browsers.
-           Polaris renders <TextField multiline> as .Polaris-TextField wrapping
-           a __Resizer mirror + <textarea>; we stretch the wrapper and force
-           the textarea's min-height to fill it. Autogrow still works because
-           the __Resizer measures content height as a hard MIN, and
-           min-height: 100% just raises the floor when content is shorter. */
+        /* Make every editable cell's textarea fill the whole cell so short
+           values are still clickable across the entire cell area — not just
+           the top ~30px. Chain relies on the well-known table-cell trick:
+           td { height: 1px } gives descendants a definite ancestor height,
+           so min-height: 100% on the textarea resolves against the row's
+           actual (tallest-cell) height instead of collapsing to 0.
+           Polaris multiline root is display:flex with align-items:center;
+           we override to stretch so the textarea child fills vertically.
+           Autogrow still works because we use min-height (not height) —
+           the internal Resizer can still push the row taller when content
+           demands it. */
         .cp-bulk-meta-scroll td.cp-bulk-meta-cell {
-          height: 100%;
+          height: 1px;
         }
-        .cp-bulk-meta-cell .Polaris-TextField,
-        .cp-bulk-meta-cell .Polaris-TextField > div {
-          height: 100%;
+        .cp-bulk-meta-cell .Polaris-TextField {
+          background: transparent;
+          align-items: stretch;
+          min-height: 100%;
         }
+        .cp-bulk-meta-cell .Polaris-TextField__Input,
         .cp-bulk-meta-cell textarea {
           overflow: hidden !important;
           resize: none !important;
           min-height: 100% !important;
           box-sizing: border-box;
-        }
-        .cp-bulk-meta-cell .Polaris-TextField {
-          background: transparent;
-        }
-        /* Chrome/Firefox: <tr> needs an explicit height:100% for descendant
-           height:100% chains to resolve inside <table>. Setting it here (and
-           not on <table>) avoids stretching the header row. */
-        .cp-bulk-meta-scroll tbody tr {
-          height: 100%;
         }
       `}</style>
       <table>
