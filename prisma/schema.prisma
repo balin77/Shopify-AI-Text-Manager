@@ -1022,8 +1022,33 @@ model SeoKeyword {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  snapshots SeoKeywordSnapshot[]
+
   @@unique([shop, resourceId, locale])
   @@index([shop, keyword])
+  @@index([shop])
+}
+
+// Ranking history for SeoKeyword: one row per (keyword, sync day), so the UI
+// can chart position/clicks/impressions/ctr over time instead of only ever
+// seeing the latest GSC values. capturedAt is truncated to UTC midnight so a
+// manual sync and the daily auto-sync on the same day collapse into one row
+// (see the unique index). Shop-scoped; purged in redactShopData (GDPR
+// schema-coverage guard) and pruned by enrichKeywordsFromGsc after 400 days.
+model SeoKeywordSnapshot {
+  id          String   @id @default(cuid())
+  shop        String
+  keywordId   String
+  capturedAt  DateTime
+  position    Float?
+  clicks      Int?
+  impressions Int?
+  ctr         Float?
+  createdAt   DateTime @default(now())
+
+  keyword SeoKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@unique([keywordId, capturedAt])
   @@index([shop])
 }
 

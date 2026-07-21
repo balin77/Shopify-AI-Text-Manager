@@ -11,12 +11,18 @@ import {
   emailFromIdToken,
   pickProperty,
   defaultDateRange,
+  previousDateRange,
+  computeQueryDeltas,
+  findLostQueries,
   enrichKeywordsFromGsc,
   getGscAccessToken,
   revokeGoogleToken,
   submitSitemap,
   findCtrOpportunities,
+  resolveGscPagePath,
   summarizeInspection,
+  buildDimensionFilterGroups,
+  querySearchAnalytics,
   GscReconnectRequiredError,
   type SearchAnalyticsRow,
 } from "~/services/google-search-console.server";
@@ -268,6 +274,149 @@ describe("defaultDateRange", () => {
   });
 });
 
+describe("previousDateRange", () => {
+  it("is the 28-day window immediately before defaultDateRange's window, with no gap or overlap", () => {
+    const now = new Date("2026-06-29T00:00:00Z");
+    const current = defaultDateRange(now);
+    const previous = previousDateRange(now);
+    expect(current).toEqual({ startDate: "2026-05-29", endDate: "2026-06-26" });
+    expect(previous).toEqual({ startDate: "2026-04-30", endDate: "2026-05-28" });
+    // Butts directly up against the current window: previous.endDate is
+    // exactly one day before current.startDate.
+    const gapMs =
+      new Date(`${current.startDate}T00:00:00Z`).getTime() - new Date(`${previous.endDate}T00:00:00Z`).getTime();
+    expect(gapMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("respects a custom `days` window size", () => {
+    const now = new Date("2026-06-29T00:00:00Z");
+    const previous = previousDateRange(now, 7);
+    // Window ending the day before the current window starts, spanning the
+    // SAME number of inclusive days as defaultDateRange(now, 7) — which is 8
+    // (start = end - 7). A shorter previous window would skew the deltas.
+    const current = defaultDateRange(now, 7);
+    expect(previous.endDate).toBe(
+      new Date(new Date(`${current.startDate}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10),
+    );
+    const inclusiveSpan = (range: { startDate: string; endDate: string }) =>
+      (new Date(`${range.endDate}T00:00:00Z`).getTime() - new Date(`${range.startDate}T00:00:00Z`).getTime()) /
+        (24 * 60 * 60 * 1000) +
+      1;
+    expect(inclusiveSpan(previous)).toBe(inclusiveSpan(current));
+  });
+});
+
+describe("computeQueryDeltas", () => {
+  const row = (query: string, clicks: number, impressions: number, position: number, ctr = 0.01): SearchAnalyticsRow => ({
+    keys: [query],
+    clicks,
+    impressions,
+    ctr,
+    position,
+  });
+
+  it("only returns deltas for queries present in BOTH periods", () => {
+    const current = [row("blue shoes", 20, 400, 5), row("only in current", 5, 100, 10)];
+    const previous = [row("blue shoes", 12, 300, 7.5), row("only in previous", 3, 80, 12)];
+    const deltas = computeQueryDeltas(current, previous);
+    expect(deltas.size).toBe(1);
+    expect(deltas.has("blue shoes")).toBe(true);
+    expect(deltas.has("only in current")).toBe(false);
+    expect(deltas.has("only in previous")).toBe(false);
+  });
+
+  it("computes clicks/impressions/ctr deltas as current - previous", () => {
+    const current = [row("blue shoes", 20, 400, 5, 0.05)];
+    const previous = [row("blue shoes", 12, 300, 7.5, 0.04)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.clicksDelta).toBe(8);
+    expect(delta.impressionsDelta).toBe(100);
+    expect(delta.ctrDelta).toBeCloseTo(0.01);
+  });
+
+  it("positionDelta is negative when position improved (rank got smaller/better)", () => {
+    const current = [row("blue shoes", 20, 400, 5)]; // improved from 7.5 to 5
+    const previous = [row("blue shoes", 12, 300, 7.5)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.positionDelta).toBeCloseTo(-2.5);
+  });
+
+  it("positionDelta is positive when position got worse (rank got larger)", () => {
+    const current = [row("blue shoes", 12, 300, 9)]; // dropped from 5 to 9
+    const previous = [row("blue shoes", 20, 400, 5)];
+    const delta = computeQueryDeltas(current, previous).get("blue shoes")!;
+    expect(delta.positionDelta).toBeCloseTo(4);
+  });
+
+  it("matches queries case-insensitively", () => {
+    const current = [row("Blue Shoes", 20, 400, 5)];
+    const previous = [row("blue shoes", 12, 300, 7.5)];
+    const deltas = computeQueryDeltas(current, previous);
+    expect(deltas.has("blue shoes")).toBe(true);
+  });
+
+  it("returns an empty map for no overlap", () => {
+    expect(computeQueryDeltas([], [])).toEqual(new Map());
+  });
+});
+
+describe("findLostQueries", () => {
+  const row = (query: string, clicks: number, impressions: number, position: number): SearchAnalyticsRow => ({
+    keys: [query],
+    clicks,
+    impressions,
+    ctr: impressions ? clicks / impressions : 0,
+    position,
+  });
+
+  it("only surfaces previous-period queries with impressions >= threshold that are absent from current", () => {
+    const current = [row("still here", 5, 100, 10)];
+    const previous = [
+      row("still here", 8, 150, 8), // present in current -> not lost
+      row("gone big", 20, 500, 6), // absent, above threshold -> lost
+      row("gone small", 1, 10, 15), // absent, below threshold -> not lost
+    ];
+    const lost = findLostQueries(current, previous, 50, 10);
+    expect(lost.map((l) => l.query)).toEqual(["gone big"]);
+  });
+
+  it("uses the previous-period impressions/clicks/position values for the lost row", () => {
+    const previous = [row("gone big", 20, 500, 6.5)];
+    const lost = findLostQueries([], previous, 50, 10);
+    expect(lost).toEqual([{ query: "gone big", clicks: 20, impressions: 500, position: 6.5 }]);
+  });
+
+  it("sorts by previous-period impressions descending", () => {
+    const previous = [row("low", 1, 60, 10), row("high", 5, 900, 10), row("mid", 3, 300, 10)];
+    const lost = findLostQueries([], previous, 50, 10);
+    expect(lost.map((l) => l.query)).toEqual(["high", "mid", "low"]);
+  });
+
+  it("caps results at the given limit", () => {
+    const previous = [row("a", 1, 300, 10), row("b", 1, 200, 10), row("c", 1, 100, 10)];
+    const lost = findLostQueries([], previous, 50, 2);
+    expect(lost.map((l) => l.query)).toEqual(["a", "b"]);
+  });
+
+  it("excludes queries present in current even if impressions dropped a lot", () => {
+    const current = [row("still ranking", 1, 5, 40)];
+    const previous = [row("still ranking", 20, 500, 6)];
+    expect(findLostQueries(current, previous)).toEqual([]);
+  });
+
+  it("matches case-insensitively when checking presence in current", () => {
+    const current = [row("Still Here", 5, 100, 10)];
+    const previous = [row("still here", 8, 150, 8)];
+    expect(findLostQueries(current, previous)).toEqual([]);
+  });
+
+  it("returns an empty array when nothing qualifies", () => {
+    expect(findLostQueries([], [])).toEqual([]);
+  });
+});
+
 describe("refresh token is encrypted at rest", () => {
   it("encryptApiKey output is not the plaintext", () => {
     const enc = encryptApiKey("super-secret-refresh-token");
@@ -324,6 +473,10 @@ describe("enrichKeywordsFromGsc", () => {
           return {};
         },
       },
+      seoKeywordSnapshot: {
+        upsert: async () => ({}),
+        deleteMany: async () => ({ count: 0 }),
+      },
     } as any;
 
     const enriched = await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
@@ -332,6 +485,114 @@ describe("enrichKeywordsFromGsc", () => {
     expect(updates[0].where).toEqual({ id: "k1" });
     expect(updates[0].data.gscPosition).toBe(7.5);
     expect(updates[0].data.gscClicks).toBe(12);
+  });
+
+  function stubGscFetch(rows: any[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/token")) return resp(true, { access_token: "at" });
+        if (String(url).includes("searchAnalytics")) return resp(true, { rows });
+        return resp(false, { error: { message: "unexpected" } });
+      }),
+    );
+  }
+
+  function makeDb(opts: {
+    keywords: Array<{ id: string; keyword: string }>;
+    onSnapshotUpsert: (args: any) => void;
+    onSnapshotDeleteMany: (args: any) => void;
+  }) {
+    return {
+      googleSearchConsoleConnection: {
+        findUnique: async () => ({
+          shop: "s.myshopify.com",
+          propertyUrl: "sc-domain:example.com",
+          refreshToken: encryptApiKey("rt"),
+        }),
+        deleteMany: async () => ({ count: 0 }),
+      },
+      seoKeyword: {
+        findMany: async () => opts.keywords,
+        update: async () => ({}),
+      },
+      seoKeywordSnapshot: {
+        upsert: async (args: any) => {
+          opts.onSnapshotUpsert(args);
+          return {};
+        },
+        deleteMany: async (args: any) => {
+          opts.onSnapshotDeleteMany(args);
+          return { count: 0 };
+        },
+      },
+    } as any;
+  }
+
+  it("writes a snapshot per enriched keyword with a UTC-midnight-truncated capturedAt", async () => {
+    stubGscFetch([{ keys: ["Blue Shoes"], clicks: 12, impressions: 300, ctr: 0.04, position: 7.5 }]);
+
+    const upserts: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: (args) => upserts.push(args),
+      onSnapshotDeleteMany: () => {},
+    });
+
+    // Mid-day timestamp — capturedAt must still land on the truncated midnight.
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T15:42:00Z"));
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].where).toEqual({
+      keywordId_capturedAt: { keywordId: "k1", capturedAt: new Date("2026-06-29T00:00:00.000Z") },
+    });
+    expect(upserts[0].create).toMatchObject({
+      shop: "s.myshopify.com",
+      keywordId: "k1",
+      capturedAt: new Date("2026-06-29T00:00:00.000Z"),
+      position: 7.5,
+      clicks: 12,
+      impressions: 300,
+      ctr: 0.04,
+    });
+    expect(upserts[0].update).toMatchObject({ position: 7.5, clicks: 12, impressions: 300, ctr: 0.04 });
+  });
+
+  it("prunes snapshots older than 400 days, scoped to the shop", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const deletes: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: () => {},
+      onSnapshotDeleteMany: (args) => deletes.push(args),
+    });
+
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].where.shop).toBe("s.myshopify.com");
+    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2025-05-25T00:00:00.000Z"));
+  });
+
+  it("does not write a snapshot for a keyword with no matching GSC row", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const upserts: any[] = [];
+    const db = makeDb({
+      keywords: [
+        { id: "k1", keyword: "blue shoes" },
+        { id: "k2", keyword: "no gsc data for this one" },
+      ],
+      onSnapshotUpsert: (args) => upserts.push(args),
+      onSnapshotDeleteMany: () => {},
+    });
+
+    const enriched = await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(enriched).toBe(1);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].create.keywordId).toBe("k1");
   });
 });
 
@@ -450,6 +711,66 @@ describe("findCtrOpportunities — Search Console page 'Quick wins'", () => {
   });
 });
 
+describe("resolveGscPagePath — Quick wins 'Optimize' deep-link resolution", () => {
+  it("resolves a product page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/products/blue-shoes")).toEqual({
+      resourceType: "Product",
+      handle: "blue-shoes",
+    });
+  });
+
+  it("resolves a collection page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/collections/summer-sale")).toEqual({
+      resourceType: "Collection",
+      handle: "summer-sale",
+    });
+  });
+
+  it("resolves a page", () => {
+    expect(resolveGscPagePath("https://shop.example.com/pages/about-us")).toEqual({
+      resourceType: "Page",
+      handle: "about-us",
+    });
+  });
+
+  it("resolves an article, using the article handle (not the blog handle)", () => {
+    expect(resolveGscPagePath("https://shop.example.com/blogs/news/our-launch")).toEqual({
+      resourceType: "Article",
+      handle: "our-launch",
+    });
+  });
+
+  it("strips a two-letter locale prefix before matching", () => {
+    expect(resolveGscPagePath("https://shop.example.com/de/products/blaue-schuhe")).toEqual({
+      resourceType: "Product",
+      handle: "blaue-schuhe",
+    });
+  });
+
+  it("strips a locale-region prefix (e.g. en-us) before matching", () => {
+    expect(resolveGscPagePath("https://shop.example.com/en-us/collections/summer-sale")).toEqual({
+      resourceType: "Collection",
+      handle: "summer-sale",
+    });
+  });
+
+  it("returns null for the root path", () => {
+    expect(resolveGscPagePath("https://shop.example.com/")).toBeNull();
+  });
+
+  it("returns null for an unknown/unmapped path", () => {
+    expect(resolveGscPagePath("https://shop.example.com/search?q=shoes")).toBeNull();
+  });
+
+  it("returns null for a blogs path missing the article handle", () => {
+    expect(resolveGscPagePath("https://shop.example.com/blogs/news")).toBeNull();
+  });
+
+  it("returns null for an invalid URL", () => {
+    expect(resolveGscPagePath("not-a-url")).toBeNull();
+  });
+});
+
 describe("summarizeInspection — urlInspection response mapping", () => {
   it("extracts the indexStatusResult fields the UI needs", () => {
     const summary = summarizeInspection({
@@ -508,5 +829,69 @@ describe("submitSitemap — requires a full absolute sitemap URL", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(encodeURIComponent("https://example.com/sitemap.xml"));
     expect(init?.method).toBe("PUT");
+  });
+});
+
+describe("buildDimensionFilterGroups — country/device analytics filters", () => {
+  it("returns undefined when no filters are set", () => {
+    expect(buildDimensionFilterGroups()).toBeUndefined();
+    expect(buildDimensionFilterGroups({})).toBeUndefined();
+  });
+
+  it("builds a single-filter group for country only", () => {
+    expect(buildDimensionFilterGroups({ country: "deu" })).toEqual([
+      { filters: [{ dimension: "country", operator: "equals", expression: "deu" }] },
+    ]);
+  });
+
+  it("builds a single-filter group for device only", () => {
+    expect(buildDimensionFilterGroups({ device: "MOBILE" })).toEqual([
+      { filters: [{ dimension: "device", operator: "equals", expression: "MOBILE" }] },
+    ]);
+  });
+
+  it("combines both filters in ONE group (AND semantics — country AND device)", () => {
+    const groups = buildDimensionFilterGroups({ country: "usa", device: "DESKTOP" });
+    expect(groups).toHaveLength(1);
+    expect(groups![0].filters).toEqual([
+      { dimension: "country", operator: "equals", expression: "usa" },
+      { dimension: "device", operator: "equals", expression: "DESKTOP" },
+    ]);
+  });
+});
+
+describe("querySearchAnalytics — request body filter wiring", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("omits dimensionFilterGroups from the request body when no filters are passed", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, { rows: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await querySearchAnalytics("at", "sc-domain:example.com", {
+      startDate: "2026-06-01",
+      endDate: "2026-06-28",
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body));
+    expect(body).not.toHaveProperty("dimensionFilterGroups");
+  });
+
+  it("includes dimensionFilterGroups in the request body when filters are passed", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => resp(true, { rows: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await querySearchAnalytics("at", "sc-domain:example.com", {
+      startDate: "2026-06-01",
+      endDate: "2026-06-28",
+      filters: { country: "deu", device: "MOBILE" },
+    });
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body));
+    expect(body.dimensionFilterGroups).toEqual([
+      {
+        filters: [
+          { dimension: "country", operator: "equals", expression: "deu" },
+          { dimension: "device", operator: "equals", expression: "MOBILE" },
+        ],
+      },
+    ]);
   });
 });

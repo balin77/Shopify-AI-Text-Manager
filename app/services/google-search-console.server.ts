@@ -408,11 +408,41 @@ export interface SearchAnalyticsRow {
   position: number;
 }
 
+/** Country = ISO-3166-1-alpha-3, lowercase (GSC's own format, e.g. "deu", "usa"). */
+export interface SearchAnalyticsFilters {
+  country?: string;
+  device?: "DESKTOP" | "MOBILE" | "TABLET";
+}
+
 export interface SearchAnalyticsOptions {
   startDate: string; // YYYY-MM-DD
   endDate: string;
   dimensions?: string[]; // e.g. ["query"], ["query","page"]
   rowLimit?: number;
+  filters?: SearchAnalyticsFilters;
+}
+
+interface GscDimensionFilter {
+  dimension: string;
+  operator: string;
+  expression: string;
+}
+
+/**
+ * Build the GSC `dimensionFilterGroups` request fragment from our country/device
+ * filter shape. Both filters (when both are set) go into a SINGLE group — GSC
+ * ANDs the filters within one group, which is what "queries from Germany on
+ * mobile" needs (a second group would OR against the first). Pure and exported
+ * so this mapping is unit-testable without mocking fetch.
+ */
+export function buildDimensionFilterGroups(
+  filters?: SearchAnalyticsFilters,
+): Array<{ filters: GscDimensionFilter[] }> | undefined {
+  if (!filters?.country && !filters?.device) return undefined;
+  const group: GscDimensionFilter[] = [];
+  if (filters.country) group.push({ dimension: "country", operator: "equals", expression: filters.country });
+  if (filters.device) group.push({ dimension: "device", operator: "equals", expression: filters.device });
+  return [{ filters: group }];
 }
 
 export async function querySearchAnalytics(
@@ -421,6 +451,7 @@ export async function querySearchAnalytics(
   opts: SearchAnalyticsOptions,
 ): Promise<SearchAnalyticsRow[]> {
   const url = `${GSC_API}/sites/${encodeURIComponent(propertyUrl)}/searchAnalytics/query`;
+  const dimensionFilterGroups = buildDimensionFilterGroups(opts.filters);
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -430,6 +461,7 @@ export async function querySearchAnalytics(
       dimensions: opts.dimensions ?? ["query"],
       rowLimit: opts.rowLimit ?? 25,
       dataState: "final", // GSC has 2–3d latency; only settled data
+      ...(dimensionFilterGroups ? { dimensionFilterGroups } : {}),
     }),
     signal: AbortSignal.timeout(ANALYTICS_FETCH_TIMEOUT_MS),
   });
@@ -478,6 +510,51 @@ export function findCtrOpportunities(rows: SearchAnalyticsRow[], limit = OPPORTU
       position: r.position,
       ctr: r.ctr,
     }));
+}
+
+/** A GSC page URL resolved to the store resource it points at (for the Quick
+ *  wins "Optimize" deep-link — see resolveGscPagePath). */
+export interface ResolvedGscPage {
+  resourceType: "Product" | "Collection" | "Page" | "Article";
+  handle: string;
+}
+
+// Matches an optional leading locale segment in a storefront path, e.g.
+// "/de/products/foo" or "/en-us/collections/bar" — Shopify prefixes every
+// path with the active locale under an internationalized domain/subfolder
+// setup, and that segment must be stripped before matching /products/ etc.
+const LOCALE_SEGMENT_RE = /^[a-z]{2}(-[a-z]{2,4})?$/i;
+
+/**
+ * Map a GSC "page" URL (as returned by the query/page-dimensioned Search
+ * Analytics rows) back to the store resource it points at, so the Quick wins
+ * table's "Optimize" button knows what to track/deep-link to. Pure and
+ * exported for unit testing. Returns null for anything that isn't a
+ * recognized content path (home page, /search, cart, unknown routes, or an
+ * unparsable URL) — the caller must not render the Optimize button then.
+ */
+export function resolveGscPagePath(pageUrl: string): ResolvedGscPage | null {
+  let path: string;
+  try {
+    path = new URL(pageUrl).pathname;
+  } catch {
+    return null;
+  }
+
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length > 0 && LOCALE_SEGMENT_RE.test(segments[0])) {
+    segments.shift();
+  }
+  if (segments.length === 0) return null;
+
+  const [first, second, third] = segments;
+  if (first === "products" && second) return { resourceType: "Product", handle: second };
+  if (first === "collections" && second) return { resourceType: "Collection", handle: second };
+  if (first === "pages" && second) return { resourceType: "Page", handle: second };
+  // /blogs/<blogHandle>/<articleHandle> — the article's own handle (third
+  // segment) is what SeoKeyword/Article rows are keyed by, not the blog handle.
+  if (first === "blogs" && second && third) return { resourceType: "Article", handle: third };
+  return null;
 }
 
 /**
@@ -557,6 +634,124 @@ export function defaultDateRange(now: Date, days = 28): { startDate: string; end
 }
 
 /**
+ * The 28-day window immediately BEFORE defaultDateRange(now, days) — used for
+ * the period-over-period deltas on the Top queries table. Butts directly up
+ * against the current window (previous.endDate = current.startDate - 1 day),
+ * no gap and no overlap, so every day in the trailing 56 days is counted
+ * exactly once between the two windows.
+ */
+export function previousDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
+  const { startDate: currentStart } = defaultDateRange(now, days);
+  const end = new Date(new Date(`${currentStart}T00:00:00Z`).getTime() - 24 * 60 * 60 * 1000);
+  // `days` (not days - 1): defaultDateRange spans days+1 inclusive calendar
+  // days (start = end - days), so the previous window must too — a shorter
+  // window would systematically inflate clicks/impressions deltas by ~1/days.
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+/** Per-query deltas the Top queries table renders (clicks/impressions/position/ctr). */
+export interface QueryDelta {
+  clicksDelta: number;
+  impressionsDelta: number;
+  positionDelta: number; // current - previous; negative = improved (lower position is better)
+  ctrDelta: number;
+}
+
+/**
+ * Match current/previous period rows by query (case-insensitive) and compute
+ * deltas. Only queries present in BOTH periods get an entry — a query with no
+ * previous-period row has nothing to compare against (see findLostQueries for
+ * the complementary "disappeared" case).
+ */
+export function computeQueryDeltas(
+  current: SearchAnalyticsRow[],
+  previous: SearchAnalyticsRow[],
+): Map<string, QueryDelta> {
+  const previousByQuery = new Map<string, SearchAnalyticsRow>();
+  for (const row of previous) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (q) previousByQuery.set(q, row);
+  }
+
+  const deltas = new Map<string, QueryDelta>();
+  for (const row of current) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (!q) continue;
+    const prev = previousByQuery.get(q);
+    if (!prev) continue;
+    deltas.set(q, {
+      clicksDelta: row.clicks - prev.clicks,
+      impressionsDelta: row.impressions - prev.impressions,
+      positionDelta: row.position - prev.position,
+      ctrDelta: row.ctr - prev.ctr,
+    });
+  }
+  return deltas;
+}
+
+/** One query that had meaningful traffic last period but no longer shows up at all. */
+export interface LostQuery {
+  query: string;
+  clicks: number;
+  impressions: number;
+  position: number;
+}
+
+// A query with fewer than this many previous-period impressions is too thin to
+// call "lost" with confidence — could just be normal long-tail noise dropping
+// in/out of GSC's rowLimit-capped response.
+const LOST_QUERY_MIN_IMPRESSIONS = 50;
+const LOST_QUERY_LIMIT = 10;
+
+/**
+ * Queries that had real traffic in the previous period but don't appear at all
+ * in the current one — a signal that content ranking for them may have
+ * regressed or been removed. Sorted by previous-period impressions descending
+ * (biggest drop-off first) and capped at `limit`. Pure/exported for unit
+ * testing without a live call.
+ */
+export function findLostQueries(
+  current: SearchAnalyticsRow[],
+  previous: SearchAnalyticsRow[],
+  minImpressions = LOST_QUERY_MIN_IMPRESSIONS,
+  limit = LOST_QUERY_LIMIT,
+): LostQuery[] {
+  const currentQueries = new Set<string>();
+  for (const row of current) {
+    const q = (row.keys?.[0] ?? "").toLowerCase();
+    if (q) currentQueries.add(q);
+  }
+
+  return previous
+    .filter((row) => {
+      const q = (row.keys?.[0] ?? "").toLowerCase();
+      return q && row.impressions >= minImpressions && !currentQueries.has(q);
+    })
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, limit)
+    .map((row) => ({
+      query: row.keys[0] ?? "",
+      clicks: row.clicks,
+      impressions: row.impressions,
+      position: row.position,
+    }));
+}
+
+// A manual "Sync keyword rankings" click and the daily auto-sync can both fire
+// on the same calendar day; truncating to UTC midnight makes capturedAt a
+// stable per-day key so the (keywordId, capturedAt) unique index dedupes them
+// into a single snapshot row instead of one chart data point per sync.
+function utcMidnight(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+// One year of daily charts plus slack; bounds table growth without losing the
+// history the "last 12 months" ranking chart needs.
+const SNAPSHOT_RETENTION_DAYS = 400;
+
+/**
  * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
  * back onto matching SeoKeyword rows (exact, case-insensitive query match).
  * Returns the number of keyword rows enriched. Caller must pass `now` (the
@@ -584,6 +779,7 @@ export async function enrichKeywordsFromGsc(
   }
 
   const keywords = await db.seoKeyword.findMany({ where: { shop }, select: { id: true, keyword: true } });
+  const capturedAt = utcMidnight(now);
   let enriched = 0;
   for (const k of keywords) {
     const row = byKeyword.get(k.keyword.toLowerCase());
@@ -598,7 +794,32 @@ export async function enrichKeywordsFromGsc(
         gscUpdatedAt: now,
       },
     });
+    await db.seoKeywordSnapshot.upsert({
+      where: { keywordId_capturedAt: { keywordId: k.id, capturedAt } },
+      create: {
+        shop,
+        keywordId: k.id,
+        capturedAt,
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+      },
+      update: {
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+      },
+    });
     enriched += 1;
   }
+
+  // Retention: one deleteMany per sync run rather than a separate scheduled
+  // job — cheap (an indexed range delete) and keeps the prune tied to the
+  // same shop-scoped code path that writes the snapshots.
+  const retentionCutoff = new Date(now.getTime() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  await db.seoKeywordSnapshot.deleteMany({ where: { shop, capturedAt: { lt: retentionCutoff } } });
+
   return enriched;
 }
