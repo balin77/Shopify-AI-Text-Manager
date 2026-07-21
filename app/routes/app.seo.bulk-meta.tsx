@@ -586,11 +586,16 @@ interface BulkMetaGridProps {
  * "Open in editor" (matching the SEO overview tab), and a read-only image
  * thumbnail column for products/collections/articles.
  *
- * Not built on Polaris IndexTable — IndexTable renders row backgrounds and
- * checkbox gutters that fight the "no chrome, values feel primary" look the
- * merchant asked for. A plain `<table>` inside an overflow-x wrapper gives
- * us exact control over cell borders and lets the auto-grow textareas own
- * the row height.
+ * Implemented as CSS Grid (not <table>) because the merchant wants the
+ * textarea in every cell to fill the whole cell — the classic <td h:1px>
+ * table trick collapsed to 0 inside the embedded-iframe layout chain, so
+ * short values still only rendered a 30-px-tall textarea at the top of a
+ * taller row and clicks below the text missed. CSS Grid stretches cells
+ * with align-items:stretch by default, and children with min-height:100%
+ * reliably reference the cell's rendered height. `display:contents` on
+ * each row div lets its cells participate in the outer grid, so columns
+ * still align vertically and cells in the same visual row share height.
+ * Semantics are preserved via ARIA (role="table"/"row"/"cell"/"columnheader").
  */
 function BulkMetaGrid({
   rows,
@@ -606,25 +611,42 @@ function BulkMetaGrid({
   handleWarning,
   caption,
 }: BulkMetaGridProps) {
+  // Grid track sizing — one `minmax(<colMin>px, 1fr)` per data column plus a
+  // fixed 48-px track for the trailing pencil-icon action cell. `1fr` so
+  // columns share leftover horizontal space when the grid is wider than the
+  // sum of minimums; the enclosing overflow-x wrapper kicks in when even
+  // the minimums don't fit.
+  const gridTemplateColumns =
+    columns.map((c) => `minmax(${columnMinWidth(c)}px, 1fr)`).join(" ") + " 48px";
+
   return (
     <div style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-meta-scroll">
-      {/* Scoped styles: hide the auto-grown textarea's inner scrollbar and
-          make borderless multiline TextFields feel like flat spreadsheet
-          cells. Both selectors target Polaris' generated class stability
-          points (data-attributes / role="textbox"). */}
       <style>{`
-        .cp-bulk-meta-scroll table {
-          border-collapse: collapse;
-          width: max-content;
+        .cp-bulk-meta-grid {
+          display: grid;
           min-width: 100%;
+          width: max-content;
         }
-        .cp-bulk-meta-scroll th,
-        .cp-bulk-meta-scroll td {
+        /* display:contents makes each row-div disappear as a box; its
+           children (the cells) become direct grid items of .cp-bulk-meta-grid,
+           so all cells share ONE set of column tracks (column alignment) and
+           browser Grid layout groups them into implicit rows of length =
+           columns.length + 1. Cells in the same implicit row automatically
+           stretch to the tallest cell's height (align-items:stretch is the
+           Grid default). */
+        .cp-bulk-meta-row {
+          display: contents;
+        }
+        .cp-bulk-meta-th,
+        .cp-bulk-meta-cell,
+        .cp-bulk-meta-actions {
           padding: 4px 6px;
-          vertical-align: top;
           border-bottom: 1px solid var(--p-color-border, #e1e3e5);
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
         }
-        .cp-bulk-meta-scroll th {
+        .cp-bulk-meta-th {
           text-align: left;
           font-weight: 500;
           font-size: 12px;
@@ -634,19 +656,18 @@ function BulkMetaGrid({
           top: 0;
           z-index: 1;
         }
-        /* Make every editable cell's textarea fill the whole cell so short
-           values are still clickable across the entire cell area — not just
-           the top ~30px. Chain relies on the well-known table-cell trick:
-           td { height: 1px } gives descendants a definite ancestor height,
-           so min-height: 100% on the textarea resolves against the row's
-           actual (tallest-cell) height instead of collapsing to 0.
-           Polaris multiline root is display:flex with align-items:center;
-           we override to stretch so the textarea child fills vertically.
-           Autogrow still works because we use min-height (not height) —
-           the internal Resizer can still push the row taller when content
-           demands it. */
-        .cp-bulk-meta-scroll td.cp-bulk-meta-cell {
-          height: 1px;
+        .cp-bulk-meta-actions {
+          align-items: flex-end;
+          justify-content: flex-start;
+        }
+        /* Stretch the Polaris multiline TextField vertically to fill the
+           cell. Polaris' default is align-items:center + auto height, which
+           left short values as a 30-px-tall control at the top of a taller
+           row. min-height (not height) keeps autogrow working: the internal
+           __Resizer can still push the cell taller when content demands. */
+        .cp-bulk-meta-cell > * {
+          flex: 1 1 auto;
+          min-height: 100%;
         }
         .cp-bulk-meta-cell .Polaris-TextField {
           background: transparent;
@@ -661,77 +682,55 @@ function BulkMetaGrid({
           box-sizing: border-box;
         }
       `}</style>
-      <table>
-        {/* Visually-hidden caption gives screen readers a table label. Not
-            using Polaris' visually-hidden helper class here because this is
-            a scoped inline table, not part of a design-system-provided
-            component. */}
-        <caption
-          style={{
-            position: "absolute",
-            width: 1,
-            height: 1,
-            padding: 0,
-            margin: -1,
-            overflow: "hidden",
-            clip: "rect(0,0,0,0)",
-            whiteSpace: "nowrap",
-            border: 0,
-          }}
-        >
-          {caption}
-        </caption>
-        <thead>
-          <tr>
-            {columns.map((col) => (
-              <th key={col} scope="col" style={{ minWidth: columnMinWidth(col) }}>
-                {col === "handle" ? (
-                  <Tooltip content={handleWarning}>
-                    <span>{columnHeading[col]}</span>
-                  </Tooltip>
-                ) : (
-                  columnHeading[col]
-                )}
-              </th>
-            ))}
-            <th scope="col" style={{ minWidth: 48, width: 48 }} />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              {columns.map((col) => (
-                <td
-                  key={col}
-                  className="cp-bulk-meta-cell"
-                  style={{ minWidth: columnMinWidth(col) }}
-                >
-                  <BulkMetaCell
-                    row={row}
-                    column={col}
-                    type={type}
-                    valueFor={valueFor}
-                    setEdit={setEdit}
-                    edits={edits}
-                    statusOptions={statusOptions}
-                  />
-                </td>
-              ))}
-              <td style={{ width: 48, textAlign: "right" }}>
-                <Tooltip content={openInEditorLabel}>
-                  <Button
-                    variant="plain"
-                    size="slim"
-                    icon={EditIcon}
-                    accessibilityLabel={openInEditorLabel}
-                    onClick={() => onOpenInEditor(row)}
-                  />
+      <div
+        role="table"
+        aria-label={caption}
+        className="cp-bulk-meta-grid"
+        style={{ gridTemplateColumns }}
+      >
+        <div role="row" className="cp-bulk-meta-row">
+          {columns.map((col) => (
+            <div key={col} role="columnheader" className="cp-bulk-meta-th">
+              {col === "handle" ? (
+                <Tooltip content={handleWarning}>
+                  <span>{columnHeading[col]}</span>
                 </Tooltip>
-              </td>
-            </tr>
+              ) : (
+                columnHeading[col]
+              )}
+            </div>
           ))}
-        </tbody>
-      </table>
+          <div role="columnheader" className="cp-bulk-meta-th" aria-hidden="true" />
+        </div>
+        {rows.map((row) => (
+          <div key={row.id} role="row" className="cp-bulk-meta-row">
+            {columns.map((col) => (
+              <div key={col} role="cell" className="cp-bulk-meta-cell">
+                <BulkMetaCell
+                  row={row}
+                  column={col}
+                  type={type}
+                  valueFor={valueFor}
+                  setEdit={setEdit}
+                  edits={edits}
+                  statusOptions={statusOptions}
+                />
+              </div>
+            ))}
+            <div role="cell" className="cp-bulk-meta-actions">
+              <Tooltip content={openInEditorLabel}>
+                <Button
+                  variant="plain"
+                  size="slim"
+                  icon={EditIcon}
+                  accessibilityLabel={openInEditorLabel}
+                  onClick={() => onOpenInEditor(row)}
+                />
+              </Tooltip>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
