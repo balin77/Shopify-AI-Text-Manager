@@ -32,6 +32,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { HelpTooltip } from "../components/HelpTooltip";
 import { scoreTone } from "../utils/seo-score";
 import { getFormString } from "../utils/form-data.utils";
 import {
@@ -198,6 +199,14 @@ function annotationColor(index: number): string {
   return ANNOTATION_COLORS[index % ANNOTATION_COLORS.length];
 }
 
+const METRIC_HELP_KEYS: Record<PageSpeedMetricId, string> = {
+  lcp: "perfLcp",
+  cls: "perfCls",
+  tbt: "perfTbt",
+  fcp: "perfFcp",
+  si: "perfSi",
+};
+
 function metricTone(score: number | null): "success" | "warning" | "critical" | undefined {
   if (score == null) return undefined;
   if (score >= 0.9) return "success";
@@ -356,6 +365,25 @@ export default function SeoPerformance() {
   const annotatable = !!result?.screenshot?.fullPage;
   const visibleHistory = history.slice(0, HISTORY_VISIBLE_LIMIT);
 
+  // Toggle for the "Learn more" panel under the no-highlight banner. Reset
+  // whenever the underlying result changes so it doesn't leak between runs.
+  const [showNoHighlightReason, setShowNoHighlightReason] = useState(false);
+  useEffect(() => {
+    setShowNoHighlightReason(false);
+  }, [result]);
+
+  // Natural pixel width of the loaded screenshot — used to cap the rendered
+  // <img> so PSI's low-res JPEGs (especially the viewport-only fallback where
+  // `result.screenshot.width` is 0) aren't stretched beyond native size.
+  const [screenshotNaturalWidth, setScreenshotNaturalWidth] = useState<number | null>(null);
+  useEffect(() => {
+    setScreenshotNaturalWidth(null);
+  }, [result?.screenshot?.data]);
+  const screenshotMaxWidth =
+    result?.screenshot?.width && result.screenshot.width > 0
+      ? result.screenshot.width
+      : screenshotNaturalWidth ?? undefined;
+
   return (
     <SeoSectionLayout sectionId="performance">
       <BlockStack gap="400">
@@ -461,7 +489,36 @@ export default function SeoPerformance() {
               </BlockStack>
             </Card>
 
-            {!annotatable && <Banner tone="info">{p.noHighlightNote}</Banner>}
+            {!annotatable && (
+              <Banner
+                tone="info"
+                title={p.noHighlightTitle}
+                action={{
+                  content: p.noHighlightRetryAction,
+                  onAction: () => submitAudit(true),
+                  loading: running,
+                }}
+              >
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">{p.noHighlightBody}</Text>
+                  <InlineStack>
+                    <Button
+                      variant="plain"
+                      onClick={() => setShowNoHighlightReason((v) => !v)}
+                    >
+                      {showNoHighlightReason ? p.noHighlightHideDetails : p.noHighlightLearnMore}
+                    </Button>
+                  </InlineStack>
+                  {showNoHighlightReason && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {result?.screenshotUnavailableReason
+                        ? p.noHighlightGoogleReason.replace("{reason}", result.screenshotUnavailableReason)
+                        : p.noHighlightGenericReason}
+                    </Text>
+                  )}
+                </BlockStack>
+              </Banner>
+            )}
 
             <div
               style={{
@@ -476,10 +533,19 @@ export default function SeoPerformance() {
               {result.screenshot && (
                 <Card>
                   <div style={{ maxHeight: "70vh", overflowY: "auto" }}>
-                    <div style={{ position: "relative" }}>
+                    <div
+                      style={{
+                        position: "relative",
+                        maxWidth: screenshotMaxWidth ? `${screenshotMaxWidth}px` : undefined,
+                      }}
+                    >
                       <img
                         src={result.screenshot.data}
                         alt=""
+                        onLoad={(e) => {
+                          const nw = (e.currentTarget as HTMLImageElement).naturalWidth;
+                          if (nw > 0) setScreenshotNaturalWidth(nw);
+                        }}
                         style={{ width: "100%", display: "block" }}
                       />
                       {annotatable &&
@@ -524,14 +590,20 @@ export default function SeoPerformance() {
                 <Card>
                   <BlockStack gap="200">
                     <Text as="h3" variant="headingMd">{p.metricsTitle}</Text>
-                    {result.metrics.map((m) => (
-                      <InlineStack key={m.id} align="space-between" blockAlign="center">
-                        <Text as="span" variant="bodyMd">
-                          {p.metricNames[m.id as PageSpeedMetricId] || m.id}
-                        </Text>
-                        <Badge tone={metricTone(m.score)}>{m.displayValue}</Badge>
-                      </InlineStack>
-                    ))}
+                    {result.metrics.map((m) => {
+                      const helpKey = METRIC_HELP_KEYS[m.id as PageSpeedMetricId];
+                      return (
+                        <InlineStack key={m.id} align="space-between" blockAlign="center">
+                          <InlineStack gap="100" blockAlign="center" wrap={false}>
+                            <Text as="span" variant="bodyMd">
+                              {p.metricNames[m.id as PageSpeedMetricId] || m.id}
+                            </Text>
+                            {helpKey && <HelpTooltip helpKey={helpKey} position="below" />}
+                          </InlineStack>
+                          <Badge tone={metricTone(m.score)}>{m.displayValue}</Badge>
+                        </InlineStack>
+                      );
+                    })}
                   </BlockStack>
                 </Card>
 
