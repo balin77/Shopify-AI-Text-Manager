@@ -28,29 +28,26 @@ export interface SeoSectionDef {
 
 Die Layout-Route ([app.seo.tsx](../../app/routes/app.seo.tsx)) mappt über `SEO_SECTIONS` → Sub-Nav entsteht automatisch. **Ein neues Feature wird durch einen Array-Eintrag sichtbar** — nicht durch Nav-Code-Änderungen.
 
-### 2. Einheitliches Finding-Modell
+### 2. Sections rendern ihre eigenen Ergebnisse — es gibt kein geteiltes Finding-Modell
 
-Geteilter Typ in [app/utils/seo-score.ts](../../app/utils/seo-score.ts):
+> **Korrigiert 2026-07-22.** Frühere Fassungen dieses Vertrags beschrieben hier einen geteilten Typ `SeoFinding` in `app/utils/seo-score.ts`, den **jede** Section zurückgibt und den das Dashboard über alle Sections hinweg zu einem Gesamt-Score aggregiert. **Das wurde nie gebaut.** `SeoFinding` existiert im Code nicht (null Vorkommen), und keine der zehn Sections speist das Dashboard. Der Absatz beschrieb ein Zielbild, las sich aber wie Ist-Zustand — und hat dadurch mindestens einmal eine Planung in die Irre geführt. Wer die Aggregation will, baut sie bewusst; wer eine Section baut, verlässt sich nicht auf sie.
 
-```ts
-export interface SeoFinding {
-  sectionId: string;                               // welche Section meldet
-  code: string;                                    // i18n-Key + stabile ID (kein übersetzter String)
-  severity: "error" | "warning" | "success";
-  points?: number;                                 // optionaler Score-Beitrag
-  resourceType?: "product" | "collection" | "article" | "page" | "shop";
-  resourceId?: string;                             // Shopify GID für Deep-Link in den Editor
-  data?: Record<string, unknown>;                  // Platzhalter-Werte für die i18n-Message
-}
-```
+**Ist-Zustand:**
 
-**Jede** Section-Analyse gibt `SeoFinding[]` zurück. Das Dashboard aggregiert Findings **aller** Sections in den Gesamt-Score + Problem-Buckets — dadurch ist jede künftige Section ohne Sonderfall im Dashboard sichtbar. Die `SeoSidebar` mappt Codes → `t.seo.*`; **nie** übersetzte Strings durch die Schichten reichen.
+- Das Dashboard ([app.seo._index.tsx](../../app/routes/app.seo._index.tsx)) wird **ausschließlich** von `analyzeStore` ([audit.service.ts](../../app/services/seo/audit.service.ts)) gespeist, über einen persistierten Snapshot. `analyzeStore` ist **item-zentriert**: es liest die DB-Caches von Product/Collection/Article/Page, bewertet jedes Item und bucketet Probleme nach `code` (`AuditAggregate.problems[]`), was wiederum „Fix with AI" antreibt.
+- **Jede andere Section lebt vollständig auf ihrer eigenen Route** und definiert ihren eigenen Ergebnistyp. Das ist der geltende Normalfall, kein Defizit.
+
+**Für neue Sections gilt daher:**
+
+- `analyze()` gibt den Typ zurück, den die eigene Route rendert — kein erfundener gemeinsamer Nenner.
+- Codes statt übersetzter Strings durch die Schichten reichen bleibt richtig (i18n-Mapping erst in der UI, siehe §5).
+- Wer ins Dashboard will, muss `analyzeStore` erweitern — und sollte vorher prüfen, ob die eigenen Befunde überhaupt item-zentriert sind. Template- oder URL-bezogene Befunde (Ladezeit, Barrierefreiheit) sind es nicht und gehören dort nicht hinein.
 
 ### 3. Service-Contract
 
 Pro Section ein Service `app/services/seo/<id>.service.ts` mit:
 
-- **`analyze(shop, deps): Promise<SeoFinding[]>`** — read-only, **DB-Cache-first** (`Product` / `Collection` / `Article` / `Page` / `ProductImage` / `ContentTranslation`), **nie** ein Live-GraphQL-Sweep über den ganzen Katalog.
+- **`analyze(shop, deps)`** — read-only, **DB-Cache-first** (`Product` / `Collection` / `Article` / `Page` / `ProductImage` / `ContentTranslation`), **nie** ein Live-GraphQL-Sweep über den ganzen Katalog. Der Rückgabetyp gehört der Section (siehe §2) — es gibt keinen geteilten Finding-Typ.
 - optional **`fix(shop, params)`** — schreibende Massenaktionen **ausschließlich** über das vorhandene `Task`-Queue-System (Rate-Limit / Retry / Progress), nie ein neuer Job-Runner. Siehe §8.
 
 ### 4. Route- & UI-Shell

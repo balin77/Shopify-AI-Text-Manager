@@ -21,6 +21,8 @@
  * response degrades to nulls/empty arrays instead of throwing.
  */
 
+import type { Plan } from "../../config/plans";
+import { getDailyPageSpeedRunsLimit } from "../../utils/planUtils";
 import type {
   PageSpeedAnnotation,
   PageSpeedAuditResult,
@@ -36,23 +38,6 @@ import type {
 } from "./pagespeed.types";
 
 export const PAGESPEED_CACHE_TTL_MS = 30 * 60 * 1000;
-
-/**
- * Per-shop budget of real PSI runs per UTC day.
- *
- * Google's PageSpeed Insights quota is billed against OUR `PAGESPEED_API_KEY`
- * and is shared across every shop — unlike AI tokens, which are merchant-funded
- * (BYO key) and therefore left uncapped. This is consumption, not entitlement:
- * it is deliberately NOT a plan gate, mirroring the `monthlyImageOperations`
- * reasoning in config/plans.ts. A plan gate would only decide *who* may exhaust
- * the shared quota, not *how much* any one shop can take.
- *
- * Sized against the realistic worst case: a merchant sweeping 5 templates on
- * both strategies costs 10 runs, so 25 leaves room for two full sweeps plus
- * iteration. Cached hits (see PAGESPEED_CACHE_TTL_MS) do NOT count — only runs
- * that actually reach Google.
- */
-export const PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY = 25;
 
 /** History rows are pruned to this many per (shop, url, strategy) on every write. */
 const HISTORY_KEEP_PER_TARGET = 10;
@@ -73,9 +58,9 @@ export class PageSpeedQuotaExceededError extends Error {
 }
 
 /**
- * Thrown when the shop has used up `PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY`. Kept
- * distinct from `PageSpeedQuotaExceededError` so the UI can say "your daily
- * budget" rather than blaming Google for a limit that is ours.
+ * Thrown when the shop has used up its plan's `dailyPageSpeedRuns` budget.
+ * Kept distinct from `PageSpeedQuotaExceededError` so the UI can say "your
+ * daily budget" rather than blaming Google for a limit that is ours.
  */
 export class PageSpeedDailyLimitError extends Error {
   constructor(
@@ -129,10 +114,12 @@ export interface RunPageSpeedAuditOptions {
   url: string; // absolute https URL, already domain-validated by the caller
   strategy: PageSpeedStrategy;
   force?: boolean; // true = bypass cache and re-run
+  /** Drives the daily run budget. Resolved from AISettings.subscriptionPlan by the caller. */
+  plan: Plan;
 }
 
 export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise<PageSpeedAuditResult> {
-  const { db, shop, url, strategy, force } = opts;
+  const { db, shop, url, strategy, force, plan } = opts;
 
   if (!force) {
     const cached = await db.seoPageSpeedAudit.findFirst({
@@ -151,9 +138,10 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
   // Budget check sits AFTER the cache lookup on purpose: serving a cached
   // result costs no Google quota, so re-opening a recent audit must stay free.
   // Only runs that reach Google are budgeted.
+  const limit = getDailyPageSpeedRunsLimit(plan);
   const runsToday = await countPageSpeedRunsToday(db, shop);
-  if (runsToday >= PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY) {
-    throw new PageSpeedDailyLimitError(runsToday, PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY);
+  if (runsToday >= limit) {
+    throw new PageSpeedDailyLimitError(runsToday, limit);
   }
 
   const fetchedAt = new Date().toISOString();

@@ -42,6 +42,20 @@ export interface PlanLimits {
    * planCacheCleanup. See docs/ROADMAP.md §Limit-Review Befund 3.
    */
   monthlyImageOperations: number;
+  /**
+   * Real PageSpeed Insights runs per UTC day (SEO → Ladezeit, and the planned
+   * accessibility scan, which draws on the same budget).
+   *
+   * Same reasoning as monthlyImageOperations: PSI is billed against OUR
+   * PAGESPEED_API_KEY and the quota is shared across every shop, unlike AI
+   * tokens which are merchant-funded (BYO) and therefore uncapped. So this is
+   * usage data, NOT entitlement data — the section itself is deliberately
+   * ungated on every tier, only the volume is tiered. Cached results (30 min
+   * TTL) never count; only runs that actually reach Google do.
+   *
+   * Enforced in services/seo/pagespeed.service.ts via countPageSpeedRunsToday.
+   */
+  dailyPageSpeedRuns: number;
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
@@ -73,6 +87,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxThemeTranslations: 0,
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.free,
     monthlyImageOperations: 0,
+    dailyPageSpeedRuns: 5,
     productImages: "featured-only",
     contentTypes: ["products", "collections", "onlineStoreExtras"],
     aiInstructionsEditable: false,
@@ -103,6 +118,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxThemeTranslations: 0,
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.basic,
     monthlyImageOperations: 0,
+    dailyPageSpeedRuns: 20,
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies", "delivery", "onlineStoreExtras"],
     aiInstructionsEditable: false,
@@ -129,6 +145,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxThemeTranslations: 50000,
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
+    dailyPageSpeedRuns: 40,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
@@ -154,6 +171,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxThemeTranslations: 100000,
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.max,
     monthlyImageOperations: 10000,
+    dailyPageSpeedRuns: 80,
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,

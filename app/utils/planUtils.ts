@@ -219,6 +219,11 @@ export function getMonthlyImageOperationsLimit(plan: Plan): number {
   return getPlanLimits(plan).monthlyImageOperations;
 }
 
+/** Real PSI runs this plan may make per UTC day. See PlanLimits.dailyPageSpeedRuns. */
+export function getDailyPageSpeedRunsLimit(plan: Plan): number {
+  return getPlanLimits(plan).dailyPageSpeedRuns;
+}
+
 /**
  * Current quota period key in UTC, format "YYYY-MM". The counter table keys
  * rows by (shop, period); a new month starts a fresh row (lazy reset, no cron).

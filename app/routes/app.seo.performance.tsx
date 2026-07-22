@@ -44,8 +44,9 @@ import {
   countPageSpeedRunsToday,
   PageSpeedQuotaExceededError,
   PageSpeedDailyLimitError,
-  PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
 } from "../services/seo/pagespeed.service";
+import { getDailyPageSpeedRunsLimit } from "../utils/planUtils";
+import type { Plan } from "../config/plans";
 import type {
   PageSpeedStrategy,
   PageSpeedAuditResult,
@@ -62,6 +63,15 @@ const SHOP_HOST_QUERY = `#graphql
     }
   }
 `;
+
+/** Subscription plan for `shop`, defaulting to "free" — mirrors app.seo._index.tsx. */
+async function getShopPlan(db: any, shop: string): Promise<Plan> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  return (settings?.subscriptionPlan || "free") as Plan;
+}
 
 async function getShopHost(admin: any, fallbackShop: string): Promise<string> {
   try {
@@ -86,7 +96,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const domain = await getShopHost(admin, shop);
 
-  const [products, collections, pages, history, rum, runsToday] = await Promise.all([
+  const [products, collections, pages, history, rum, runsToday, plan] = await Promise.all([
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },
@@ -113,6 +123,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // This just lets the button render disabled after a reload instead of
     // inviting a click the server would reject.
     countPageSpeedRunsToday(db, shop),
+    getShopPlan(db, shop),
   ]);
 
   // Theme-editor deep link for enabling the RUM app embed — house pattern from
@@ -132,7 +143,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     rum,
     rumEmbedUrl,
     runsToday,
-    dailyLimit: PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
+    dailyLimit: getDailyPageSpeedRunsLimit(plan),
   });
 };
 
@@ -183,7 +194,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
 
   try {
-    const result = await runPageSpeedAudit({ db, shop, url, strategy, force });
+    const plan = await getShopPlan(db, shop);
+    const result = await runPageSpeedAudit({ db, shop, url, strategy, force, plan });
     return json<ActionResult>({ ok: true, result });
   } catch (err: any) {
     // Both budget failures degrade the same way: serve a stored audit of any

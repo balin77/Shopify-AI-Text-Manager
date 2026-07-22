@@ -5,8 +5,8 @@ import {
   runPageSpeedAudit,
   countPageSpeedRunsToday,
   PageSpeedDailyLimitError,
-  PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
 } from "~/services/seo/pagespeed.service";
+import { getDailyPageSpeedRunsLimit } from "~/utils/planUtils";
 import { mockPsiResponse } from "../mocks/pagespeed-psi-response.mock";
 
 /**
@@ -311,6 +311,7 @@ describe("isAllowedAuditUrl", () => {
  */
 describe("daily run budget", () => {
   const RESULT_ROW = { createdAt: new Date(), result: { url: "https://example.com/", cached: true } };
+  const FREE_LIMIT = getDailyPageSpeedRunsLimit("free");
 
   function makeDb(overrides: Record<string, any> = {}) {
     return {
@@ -341,10 +342,10 @@ describe("daily run budget", () => {
 
   it("throws PageSpeedDailyLimitError once the budget is used up", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const db = makeDb({ count: vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY) });
+    const db = makeDb({ count: vi.fn().mockResolvedValue(FREE_LIMIT) });
 
     await expect(
-      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true }),
+      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true, plan: "free" }),
     ).rejects.toBeInstanceOf(PageSpeedDailyLimitError);
 
     // The budget must be refused BEFORE any request reaches Google, otherwise
@@ -355,7 +356,7 @@ describe("daily run budget", () => {
 
   it("serves a fresh cache hit without consuming budget", async () => {
     // Cache hits cost no Google quota, so they must not be counted or refused.
-    const count = vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY);
+    const count = vi.fn().mockResolvedValue(FREE_LIMIT);
     const db = makeDb({ count, findFirst: vi.fn().mockResolvedValue(RESULT_ROW) });
 
     const r = await runPageSpeedAudit({
@@ -363,21 +364,36 @@ describe("daily run budget", () => {
       shop: "s.myshopify.com",
       url: "https://example.com/",
       strategy: "mobile",
+      plan: "free",
     });
 
     expect((r as any).cached).toBe(true);
     expect(count).not.toHaveBeenCalled();
   });
 
+  it("scales the budget with the plan — free's ceiling is not pro's", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const db = makeDb({ count: vi.fn().mockResolvedValue(FREE_LIMIT) });
+
+    // Same usage, higher plan: still under budget, so it proceeds to the fetch
+    // (which we let fail — reaching the network at all is what is asserted).
+    fetchSpy.mockRejectedValue(new Error("network disabled in tests"));
+    await expect(
+      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true, plan: "pro" }),
+    ).rejects.not.toBeInstanceOf(PageSpeedDailyLimitError);
+    expect(fetchSpy).toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it("still refuses when the cached row is too old to serve", async () => {
     const stale = { createdAt: new Date(Date.now() - 60 * 60 * 1000), result: {} }; // 1h > 30min TTL
     const db = makeDb({
-      count: vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY),
+      count: vi.fn().mockResolvedValue(FREE_LIMIT),
       findFirst: vi.fn().mockResolvedValue(stale),
     });
 
     await expect(
-      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile" }),
+      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", plan: "free" }),
     ).rejects.toBeInstanceOf(PageSpeedDailyLimitError);
   });
 });

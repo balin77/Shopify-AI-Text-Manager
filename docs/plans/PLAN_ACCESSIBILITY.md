@@ -158,9 +158,9 @@ Daraus folgt die zentrale Design-Entscheidung: **Ein Scan-Lauf fragt `performanc
 
 Der Preis: die Antwort wird deutlich größer und der Lighthouse-Lauf etwas länger. Beides tragbar, weil in einen kompakten eigenen Vertrag geparst wird — die Rohantwort wird nie gespeichert.
 
-**Kontingent-Rechnung:** 5 Templates (Startseite, Produkt, Kollektion, Seite, Warenkorb) × 2 Strategien = **10 Requests pro Voll-Scan**. Ohne `PAGESPEED_API_KEY` ist das grenzwertig; mit Key (25.000/Tag) unkritisch.
+**Kontingent-Rechnung:** 5 Templates (Startseite, Produkt, Kollektion, Seite, Warenkorb) × 2 Strategien = **10 Requests pro Voll-Scan**. Das ist gegen das Tagesbudget des Shops zu rechnen (§11.2) — auf Free passt ein Voll-Scan **nicht**, dort muss der Umfang aus dem Plan abgeleitet werden.
 
-**Konsequenz:** Vor dem Scan-Button prüfen, ob `PAGESPEED_API_KEY` gesetzt ist. Fehlt er, den Scan auf Mobil beschränken (5 Requests) und den bestehenden `staleQuotaNotice`-Mechanismus greifen lassen. Der 429-Pfad ist bereits gebaut und muss nur wiederverwendet werden.
+**Konsequenz:** Zusätzlich vor dem Scan-Button prüfen, ob `PAGESPEED_API_KEY` gesetzt ist. Fehlt er, den Scan auf Mobil beschränken und den bestehenden `staleQuotaNotice`-Mechanismus greifen lassen. Der 429-Pfad ist bereits gebaut und muss nur wiederverwendet werden.
 
 ---
 
@@ -264,9 +264,13 @@ Verworfen wurde außerdem, Barrierefreiheit als `AuditType` in `analyzeStore` zu
 
 **Begründung:** PSI wird gegen **unseren** `PAGESPEED_API_KEY` abgerechnet, ist also eine von der App bezahlte, über alle Shops geteilte Ressource — anders als AI-Tokens (BYO, deshalb ungedeckelt). Das ist Verbrauch, nicht Berechtigung. Dasselbe Muster wie `monthlyImageOperations` in [plans.ts](../../app/config/plans.ts), das dort ausdrücklich als „usage data, NOT entitlement data" geführt wird. Ein Gate würde nur entscheiden, *wer* das geteilte Kontingent leeren darf, nicht *wie viel* ein einzelner Shop nimmt.
 
-**Umsetzung (bereits gebaut für die Ladezeit-Seite):** `PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY` in [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts) + `countPageSpeedRunsToday`. Kein Zählmodell nötig — eine `SeoPageSpeedAudit`-Zeile entsteht nur nach einem Lauf, der Google tatsächlich erreicht hat, also **ist** der Zeilen-Count der Verbrauchszähler. Die Prüfung sitzt bewusst **nach** dem Cache-Lookup: ein zwischengespeichertes Ergebnis kostet kein Kontingent und darf nichts verbrauchen.
+**Umsetzung (bereits gebaut für die Ladezeit-Seite):** `PlanLimits.dailyPageSpeedRuns` in [plans.ts](../../app/config/plans.ts), gelesen über `getDailyPageSpeedRunsLimit`, durchgesetzt in [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts) via `countPageSpeedRunsToday`. Kein Zählmodell nötig — eine `SeoPageSpeedAudit`-Zeile entsteht nur nach einem Lauf, der Google tatsächlich erreicht hat, also **ist** der Zeilen-Count der Verbrauchszähler. Die Prüfung sitzt bewusst **nach** dem Cache-Lookup: ein zwischengespeichertes Ergebnis kostet kein Kontingent und darf nichts verbrauchen.
 
-**Für diesen Plan:** Der Quality-Scan zählt auf **dasselbe** Tagesbudget ein — beide Features ziehen aus derselben Google-Quote. `countPageSpeedRunsToday` muss dafür die `SeoQualityAudit`-Zeilen mitzählen (Kommentar steht bereits im Code). Bei 10 Läufen pro Voll-Scan gegen ein Budget von 25 heißt das: ein Voll-Scan pro Tag plus Spielraum für Einzeltests.
+**Staffelung:** Free 5 · Basic 20 · Pro 40 · Max 80 Läufe pro UTC-Tag. Gestaffelter Verbrauch, kein Zugangs-Gate — dieselbe Unterscheidung, die `monthlyImageOperations` bereits trifft.
+
+**Für diesen Plan:** Der Quality-Scan zählt auf **dasselbe** Tagesbudget ein — beide Features ziehen aus derselben Google-Quote. `countPageSpeedRunsToday` muss dafür die `SeoQualityAudit`-Zeilen mitzählen (Kommentar steht bereits im Code).
+
+**Achtung — Kollision auf Free:** Ein Voll-Scan über 5 Templates × 2 Strategien kostet 10 Läufe und passt damit **nicht** in das Free-Budget von 5. Der Scan-Umfang muss deshalb aus dem Plan abgeleitet werden, nicht fest verdrahtet: die Template-Auswahl folgt ohnehin `PLAN_CONFIG[plan].contentTypes` (Free hat keine Pages/Articles, also Startseite + Produkt + Kollektion = 3 Templates), und auf knappem Budget wird auf Mobil beschränkt — 3 Läufe, passt. Ohne diese Ableitung wäre der Scan-Button auf Free dauerhaft gesperrt und läse sich als kaputt statt als begrenzt. Gehört in Phase 4.
 
 **Plan-Gates insgesamt** werden separat neu überdacht; dieser Plan setzt deshalb **kein** `planGate` im Descriptor (§6.1).
 
