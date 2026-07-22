@@ -1,181 +1,32 @@
 /**
- * Manual bulk-meta editor (SEO_TAB_IMPLEMENTATION_PLAN.md Anhang C3) — a
- * spreadsheet-like editor across the catalog, distinct from the AI bulk-fix
- * (api-ai-handlers/seo-bulk-fix.handler.ts).
+ * Bulk editor — diff persistence (docs/plans/PLAN_BULK_EDITOR.md §3).
  *
- * Persistence reuses the SAME Shopify mutation paths the single-item editor
- * uses (a minimal partial `productUpdate` for Product, ShopifyContentService
- * for Collection/Article/Page — see seo-bulk-fix.handler.ts's persistField for
- * precedent), but groups every dirty field on one row into a SINGLE mutation
- * call instead of one call per field.
+ * Applies a diff-only payload to Shopify + the DB content cache, one row (not
+ * one cell) at a time. Persistence reuses the SAME Shopify mutation paths the
+ * single-item editor uses (a minimal partial `productUpdate` for Product,
+ * ShopifyContentService for Collection/Article/Page), grouping every dirty
+ * cell on one row into a SINGLE mutation call.
  *
- * `computeDiff` is the one pure, unit-tested piece: it turns the route's
- * client-side `${id}:${field}` edit map into a diff-only list of changed
- * cells, so "Save" only ever writes what actually changed (plan requirement).
+ * Server-only: ShopifyApiGateway drags logger.server into the bundle. The
+ * pure pieces (computeDiff, groupDiffByRow, descriptors) live in
+ * columns.shared.ts, which is client-safe.
  */
 
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
-import { groupDiffByRow, isFieldAllowedForType } from "./bulk-meta.shared";
-import type {
-  BulkMetaType,
-  BulkMetaField,
-  BulkMetaRow,
-  BulkMetaDiffEntry,
-  BulkMetaApplyResult,
-  BulkMetaFailure,
-} from "./bulk-meta.shared";
-
-// Types, constants and the pure diff computation live in bulk-meta.shared.ts
-// (client-safe — the route component uses them); re-export so server-side
-// consumers keep this single import path.
-export * from "./bulk-meta.shared";
-
-// ─── Loading a page of rows (select-minimized, take-capped) ───────────────
-
-/** One page of the content cache for `type`, select-minimized to the fields
- * shown in the bulk-meta grid (editable + read-only meta columns).
- * Offset-paged via skip/take. */
-export async function loadBulkMetaPage(
-  db: PrismaClient,
-  shop: string,
-  type: BulkMetaType,
-  opts: { skip: number; take: number },
-): Promise<{ rows: BulkMetaRow[]; total: number }> {
-  const { skip, take } = opts;
-  const orderBy = { title: "asc" as const };
-
-  switch (type) {
-    case "product": {
-      const select = {
-        id: true,
-        title: true,
-        seoTitle: true,
-        seoDescription: true,
-        handle: true,
-        descriptionHtml: true,
-        productType: true,
-        status: true,
-        featuredImageUrl: true,
-        featuredImageAlt: true,
-      } as const;
-      const [items, total] = await Promise.all([
-        db.product.findMany({ where: { shop }, select, orderBy, skip, take }),
-        db.product.count({ where: { shop } }),
-      ]);
-      return {
-        rows: items.map((i) => ({
-          id: i.id,
-          type: "product" as const,
-          title: i.title,
-          seoTitle: i.seoTitle ?? "",
-          seoDescription: i.seoDescription ?? "",
-          handle: i.handle,
-          descriptionHtml: i.descriptionHtml ?? "",
-          productType: i.productType ?? "",
-          status: i.status ?? "",
-          imageUrl: i.featuredImageUrl ?? undefined,
-          imageAlt: i.featuredImageAlt ?? undefined,
-        })),
-        total,
-      };
-    }
-    case "collection": {
-      const select = {
-        id: true,
-        title: true,
-        seoTitle: true,
-        seoDescription: true,
-        handle: true,
-        descriptionHtml: true,
-        imageUrl: true,
-        imageAltText: true,
-      } as const;
-      const [items, total] = await Promise.all([
-        db.collection.findMany({ where: { shop }, select, orderBy, skip, take }),
-        db.collection.count({ where: { shop } }),
-      ]);
-      return {
-        rows: items.map((i) => ({
-          id: i.id,
-          type: "collection" as const,
-          title: i.title,
-          seoTitle: i.seoTitle ?? "",
-          seoDescription: i.seoDescription ?? "",
-          handle: i.handle,
-          descriptionHtml: i.descriptionHtml ?? "",
-          imageUrl: i.imageUrl ?? undefined,
-          imageAlt: i.imageAltText ?? undefined,
-        })),
-        total,
-      };
-    }
-    case "article": {
-      const select = {
-        id: true,
-        title: true,
-        seoTitle: true,
-        seoDescription: true,
-        handle: true,
-        body: true,
-        summary: true,
-        imageUrl: true,
-        imageAltText: true,
-        blogTitle: true,
-      } as const;
-      const [items, total] = await Promise.all([
-        db.article.findMany({ where: { shop }, select, orderBy, skip, take }),
-        db.article.count({ where: { shop } }),
-      ]);
-      return {
-        rows: items.map((i) => ({
-          id: i.id,
-          type: "article" as const,
-          title: i.title,
-          seoTitle: i.seoTitle ?? "",
-          seoDescription: i.seoDescription ?? "",
-          handle: i.handle,
-          body: i.body ?? "",
-          summary: i.summary ?? "",
-          imageUrl: i.imageUrl ?? undefined,
-          imageAlt: i.imageAltText ?? undefined,
-          blogTitle: i.blogTitle ?? undefined,
-        })),
-        total,
-      };
-    }
-    case "page": {
-      const select = {
-        id: true,
-        title: true,
-        seoTitle: true,
-        seoDescription: true,
-        handle: true,
-        body: true,
-      } as const;
-      const [items, total] = await Promise.all([
-        db.page.findMany({ where: { shop }, select, orderBy, skip, take }),
-        db.page.count({ where: { shop } }),
-      ]);
-      return {
-        rows: items.map((i) => ({
-          id: i.id,
-          type: "page" as const,
-          title: i.title,
-          seoTitle: i.seoTitle ?? "",
-          seoDescription: i.seoDescription ?? "",
-          handle: i.handle,
-          body: i.body ?? "",
-        })),
-        total,
-      };
-    }
-  }
-}
-
-// ─── Applying a diff to Shopify + the DB cache ─────────────────────────────
+import {
+  groupDiffByRow,
+  isColumnEditableForType,
+  getColumnForType,
+  fieldNameOfColumn,
+  type BulkRowType,
+  type BulkDiffEntry,
+  type BulkDiffRowGroup,
+  type BulkApplyResult,
+  type BulkFailure,
+} from "./columns.shared";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -185,22 +36,40 @@ interface ApplyContext {
 
 const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
 
+/** Resolves a row group's cells (columnId → value) into flat field names
+ * (title, seoTitle, …), rejecting non-editable/unknown columns. */
+function fieldsOfGroup(group: BulkDiffRowGroup): Partial<Record<string, string>> {
+  const fields: Partial<Record<string, string>> = {};
+  for (const columnId of Object.keys(group.cells)) {
+    const column = getColumnForType(group.rowType, columnId);
+    // Per-type column guard — the route validator checks this too, but this
+    // path is also reached from the /api/ai task runner, so reject here as
+    // well before either Shopify or the DB can complain inconsistently.
+    if (!column || !isColumnEditableForType(group.rowType, columnId) || column.kind !== "field") {
+      throw new Error(`Column "${columnId}" is not editable on ${group.rowType}.`);
+    }
+    fields[fieldNameOfColumn(column)] = group.cells[columnId];
+  }
+  return fields;
+}
+
 async function persistRow(
-  group: { type: BulkMetaType; id: string; fields: Partial<Record<BulkMetaField, string>> },
+  group: BulkDiffRowGroup,
   deps: { db: PrismaClient; shop: string; gateway: ShopifyApiGateway; contentService: ShopifyContentService },
 ): Promise<void> {
-  const { type, id, fields } = group;
+  const { rowType: type, rowId: id } = group;
   const { db, shop, gateway, contentService } = deps;
 
-  // Per-type field guard — the route validator only checks against the global
-  // allowlist; this rejects e.g. `productType` on a page or `body` on a
-  // product before either Shopify or the DB has a chance to complain
-  // inconsistently.
-  for (const key of Object.keys(fields) as BulkMetaField[]) {
-    if (!isFieldAllowedForType(type, key)) {
-      throw new Error(`Field "${key}" is not editable on ${type}.`);
-    }
+  // Phase-1 guard: the translation write path (translationsRegister with
+  // digest + echo verification, Plan §6) lands in Phase 4. The diff format
+  // already carries locale/marketId, but only primary/global groups may be
+  // persisted here — anything else must fail loudly instead of silently
+  // writing a foreign value into the primary content.
+  if (group.locale !== "" || group.marketId !== "") {
+    throw new Error("Translated cells cannot be saved yet — the bulk editor currently edits the primary language only.");
   }
+
+  const fields = fieldsOfGroup(group);
 
   // Shopify rejects an empty title outright for every one of these resource
   // types — reject it here too so it counts as a per-row failure instead of
@@ -224,7 +93,7 @@ async function persistRow(
   // Build the DB patch mirror. Every editable field maps 1:1 to its Prisma
   // column with the same name — no renames — so a single loop is enough.
   const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
-  for (const key of Object.keys(fields) as BulkMetaField[]) {
+  for (const key of Object.keys(fields)) {
     dbData[key] = fields[key];
   }
 
@@ -232,9 +101,7 @@ async function persistRow(
     case "product": {
       // Minimal partial productUpdate — only the fields that changed are
       // sent, so everything else is left untouched by Shopify (omitted
-      // GraphQL input fields = "no change"). Same shape as
-      // seo-bulk-fix.handler.ts's persistField, extended to title/handle/
-      // descriptionHtml/productType/status.
+      // GraphQL input fields = "no change").
       const input: Record<string, unknown> = { id };
       if (fields.title !== undefined) input.title = fields.title;
       if (fields.handle !== undefined) input.handle = fields.handle;
@@ -339,27 +206,34 @@ async function persistRow(
       await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
     }
+    default: {
+      // Exhaustiveness backstop — a new BulkRowType without a persist branch
+      // must fail the row loudly, never silently skip the Shopify push while
+      // the caller reports success (the false-success pattern from CLAUDE.md).
+      const _never: never = type;
+      throw new Error(`Unsupported row type "${_never as BulkRowType}".`);
+    }
   }
 }
 
 /**
  * Applies a diff-only payload to Shopify + the DB content cache, one row (not
- * one field) at a time. A single row's userErrors (e.g. a handle collision)
+ * one cell) at a time. A single row's userErrors (e.g. a handle collision)
  * are caught and reported as a per-row failure — they never abort the rest of
  * the batch. `onProgress` lets callers (the detached Task runner) heartbeat
  * progress after every row.
  */
-export async function applyBulkMetaDiff(
+export async function applyBulkDiff(
   ctx: ApplyContext,
-  diff: BulkMetaDiffEntry[],
+  diff: BulkDiffEntry[],
   onProgress?: (processed: number, total: number) => void | Promise<void>,
-): Promise<BulkMetaApplyResult> {
+): Promise<BulkApplyResult> {
   const { db, shop, admin } = ctx;
   const gateway = new ShopifyApiGateway(admin, shop);
   const contentService = new ShopifyContentService(gateway as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const groups = groupDiffByRow(diff);
-  const failures: BulkMetaFailure[] = [];
+  const failures: BulkFailure[] = [];
   let saved = 0;
 
   for (let i = 0; i < groups.length; i++) {
@@ -369,8 +243,8 @@ export async function applyBulkMetaDiff(
       saved++;
     } catch (err: unknown) {
       failures.push({
-        id: group.id,
-        type: group.type,
+        rowId: group.rowId,
+        rowType: group.rowType,
         message: err instanceof Error ? err.message : String(err),
       });
     }

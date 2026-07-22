@@ -1,0 +1,225 @@
+/**
+ * Bulk editor — one grid cell (docs/plans/PLAN_BULK_EDITOR.md §2/§10.2).
+ *
+ * Cell states: unchanged · dirty (highlighted) · error (red + aria-invalid +
+ * aria-describedby) · read-only (grey + tooltip).
+ *
+ * Browser-load measure (§10.2): text cells render as a lightweight <div> and
+ * only swap in a real <textarea> when the merchant focuses/clicks the cell —
+ * 250 rows × 20 columns as live textareas is exactly the load the plan caps.
+ */
+
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Select, Text, Tooltip } from "@shopify/polaris";
+import type { BulkRow, ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
+
+export interface BulkCellStatusOptions {
+  active: string;
+  draft: string;
+  archived: string;
+}
+
+interface BulkCellProps {
+  row: BulkRow;
+  column: ColumnDescriptor;
+  value: string;
+  isDirty: boolean;
+  /** Per-row failure message from the last save — marks the cell invalid. */
+  error?: string;
+  /** Unique id for the visually-hidden error message (aria-describedby). */
+  errorId?: string;
+  statusOptions: BulkCellStatusOptions;
+  readOnlyTooltip: string;
+  onChange: (value: string) => void;
+}
+
+export function BulkCell({
+  row,
+  column,
+  value,
+  isDirty,
+  error,
+  errorId,
+  statusOptions,
+  readOnlyTooltip,
+  onChange,
+}: BulkCellProps) {
+  // Read-only columns (blogTitle today; non-translatable columns in a foreign
+  // locale from Phase 4 on): grey text + tooltip explaining why.
+  if (!column.editable) {
+    const display = column.id === "blogTitle" ? row.blogTitle ?? "" : value;
+    return (
+      <Tooltip content={readOnlyTooltip}>
+        <Text as="span" variant="bodySm" tone="subdued">
+          {display}
+        </Text>
+      </Tooltip>
+    );
+  }
+
+  if (column.inputType === "select") {
+    // Product status. Non-null in the schema, but a partial sync could leave
+    // it "" — show a placeholder row instead of silently defaulting the
+    // display to ACTIVE (which would cause a no-op click to write ACTIVE
+    // where the DB had "").
+    const hasStatus = value === "ACTIVE" || value === "DRAFT" || value === "ARCHIVED";
+    return (
+      <Select
+        label=""
+        labelHidden
+        options={[
+          ...(hasStatus ? [] : [{ label: "—", value: "", disabled: true } as const]),
+          { label: statusOptions.active, value: "ACTIVE" },
+          { label: statusOptions.draft, value: "DRAFT" },
+          { label: statusOptions.archived, value: "ARCHIVED" },
+        ]}
+        value={hasStatus ? value : ""}
+        onChange={onChange}
+      />
+    );
+  }
+
+  return (
+    <LazyTextCell
+      value={value}
+      isDirty={isDirty}
+      error={error}
+      errorId={errorId}
+      onChange={onChange}
+    />
+  );
+}
+
+interface LazyTextCellProps {
+  value: string;
+  isDirty: boolean;
+  error?: string;
+  errorId?: string;
+  onChange: (value: string) => void;
+}
+
+/**
+ * Text cell that renders as a cheap, focusable <div> until the merchant
+ * focuses or clicks it, then swaps in the real auto-growing textarea. The
+ * div participates in the tab order (tabIndex=0) so keyboard users reach it;
+ * receiving focus promotes it to the textarea, which takes focus itself.
+ */
+function LazyTextCell({ value, isDirty, error, errorId, onChange }: LazyTextCellProps) {
+  const [editing, setEditing] = useState(false);
+
+  const stateClass = `${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`;
+
+  if (!editing) {
+    return (
+      <div
+        role="textbox"
+        aria-readonly={false}
+        aria-multiline
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error && errorId ? errorId : undefined}
+        tabIndex={0}
+        className={`cp-bulk-cell-static${stateClass}`}
+        onFocus={() => setEditing(true)}
+        onClick={() => setEditing(true)}
+      >
+        {value}
+        {error && errorId && (
+          <span id={errorId} className="cp-bulk-visually-hidden">
+            {error}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <CellTextArea
+        value={value}
+        onChange={onChange}
+        onBlur={() => setEditing(false)}
+        className={`cp-bulk-textarea${stateClass}`}
+        ariaInvalid={!!error}
+        ariaDescribedBy={error && errorId ? errorId : undefined}
+      />
+      {error && errorId && (
+        <span id={errorId} className="cp-bulk-visually-hidden">
+          {error}
+        </span>
+      )}
+    </>
+  );
+}
+
+interface CellTextAreaProps {
+  value: string;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  className: string;
+  ariaInvalid: boolean;
+  ariaDescribedBy?: string;
+}
+
+/**
+ * Borderless auto-growing textarea used by every editable text cell.
+ *
+ * Autogrow via scrollHeight measurement in a useLayoutEffect keyed on value:
+ * we reset `style.height` to `auto`, read `scrollHeight` (the browser's
+ * measurement of what the content needs), then write it back as an explicit
+ * height. The paired CSS rule `min-height: 100%` (targeting the textarea
+ * directly, no Polaris wrapper) ensures the textarea also fills the grid
+ * cell when it's shorter than the tallest cell in the row.
+ *
+ * (Deliberately NOT Polaris <TextField multiline>: its internal __Resizer
+ * writes an inline height that collapses the wrapper to content-height, so
+ * short values render a ~30-px control with the rest of the cell dead to
+ * clicks — see the original bulk-meta grid notes.)
+ */
+function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDescribedBy }: CellTextAreaProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  // The cell just swapped from the static div: move focus into the textarea
+  // with the caret at the end, so typing continues where the merchant clicked.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    const end = el.value.length;
+    try {
+      el.setSelectionRange(end, end);
+    } catch {
+      // Some input types don't support selection ranges — focus is enough.
+    }
+    // Mount-only: the swap happens exactly once per editing session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Feedback-loop guard: temporarily kill min-height while measuring so
+    // scrollHeight reflects the ACTUAL content, not the CSS-inflated cell
+    // height. Reset height first so scrollHeight reflects CURRENT content
+    // (not the previous rendered height — otherwise deleting text wouldn't
+    // shrink).
+    el.style.minHeight = "0px";
+    el.style.height = "auto";
+    const contentHeight = el.scrollHeight;
+    el.style.minHeight = "";
+    el.style.height = `${contentHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      aria-invalid={ariaInvalid || undefined}
+      aria-describedby={ariaDescribedBy}
+      rows={1}
+      spellCheck={false}
+    />
+  );
+}
