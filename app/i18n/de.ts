@@ -1529,6 +1529,12 @@ export const de = {
       strategyMobile: "Mobil",
       strategyDesktop: "Desktop",
       testButton: "Jetzt testen",
+      recentRunTitle: "Diese Seite wurde gerade erst gemessen",
+      recentRunBody: "Die letzte Messung von {url} ({strategy}) ist etwa {minutes} Minuten alt. Eine neue Messung liefert bei so kurzem Abstand fast sicher dasselbe Ergebnis.",
+      recentRunBudgetHint: "Jede Messung zählt auf dein Tageskontingent: {used} von {limit} bereits verbraucht.",
+      recentRunViewAction: "Vorheriges Ergebnis ansehen",
+      recentRunRerunAction: "Trotzdem neu messen",
+      recentRunCancelAction: "Abbrechen",
       runningHint: "Das dauert etwa 15–30 Sekunden…",
       errors: {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",

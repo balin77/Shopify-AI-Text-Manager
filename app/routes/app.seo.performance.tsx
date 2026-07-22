@@ -32,6 +32,7 @@ import {
   IndexTable,
   Divider,
   Collapsible,
+  Modal,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -499,6 +500,13 @@ const FIELD_GRID_STYLE: CSSProperties = {
   gap: "20px 56px",
 };
 
+/**
+ * Below this age, re-measuring the same page is almost certainly an accident —
+ * the merchant is asked first, because every run costs one of the plan's daily
+ * runs (5/day on free).
+ */
+const RECENT_RUN_WINDOW_MS = 5 * 60 * 1000;
+
 /** Synthetic accordion ids for the two grouped rows (not Lighthouse audit ids). */
 const ELEMENTS_FINDING_ID = "__elements__";
 const PASSED_FINDING_ID = "__passed__";
@@ -922,7 +930,7 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit } =
+  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit } =
     useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
@@ -1029,6 +1037,54 @@ export default function SeoPerformance() {
       { intent: "runAudit", url: effectiveUrl, strategy, force: force ? "1" : "0" },
       { method: "post" },
     );
+  };
+
+  // Absolute form of what the controls currently target, so it can be compared
+  // with the stored (always absolute) audit URLs.
+  const targetUrl = effectiveUrl.startsWith("/") ? `https://${domain}${effectiveUrl}` : effectiveUrl;
+
+  /**
+   * Newest run of exactly this page+strategy that is younger than the window —
+   * either the audit on screen or a row from the history table. Drives the
+   * "you just measured this" confirmation.
+   */
+  const recentRun = useMemo(() => {
+    const normalize = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
+    const target = normalize(targetUrl);
+    const candidates: { id: string | null; at: number }[] = [];
+
+    for (const entry of history) {
+      if (entry.strategy !== strategy || normalize(entry.url) !== target) continue;
+      candidates.push({ id: entry.id, at: new Date(entry.createdAt).getTime() });
+    }
+    // The run currently on screen is newer than the loader's history snapshot.
+    if (result && result.strategy === strategy && normalize(result.url) === target) {
+      candidates.push({ id: null, at: new Date(result.fetchedAt).getTime() });
+    }
+
+    const newest = candidates.sort((a, b) => b.at - a.at)[0];
+    if (!newest || Number.isNaN(newest.at)) return null;
+    const age = Date.now() - newest.at;
+    return age >= 0 && age < RECENT_RUN_WINDOW_MS ? { ...newest, age } : null;
+  }, [history, result, strategy, targetUrl]);
+
+  const [confirmRerun, setConfirmRerun] = useState(false);
+
+  // Every run the merchant asks for is a real measurement — the only thing
+  // standing between two clicks and two consumed runs is this confirmation.
+  const requestAudit = () => {
+    if (recentRun) {
+      setConfirmRerun(true);
+      return;
+    }
+    submitAudit(true);
+  };
+
+  const showPreviousRun = () => {
+    setConfirmRerun(false);
+    if (!recentRun?.id) return; // already on screen
+    const entry = history.find((h) => h.id === recentRun.id);
+    if (entry) openHistoryEntry(entry);
   };
 
   const strategyLabel = (s: PageSpeedStrategy) => (s === "desktop" ? p.strategyDesktop : p.strategyMobile);
@@ -1184,7 +1240,7 @@ export default function SeoPerformance() {
                 variant="primary"
                 loading={running}
                 disabled={!effectiveUrl || budgetExhausted}
-                onClick={() => submitAudit(false)}
+                onClick={requestAudit}
               >
                 {p.testButton}
               </Button>
@@ -1201,6 +1257,41 @@ export default function SeoPerformance() {
             </Text>
           </BlockStack>
         </Card>
+
+        {/* Asked before a run that would almost certainly repeat one the
+            merchant already has — a run they cannot get back. */}
+        <Modal
+          open={confirmRerun}
+          onClose={() => setConfirmRerun(false)}
+          title={p.recentRunTitle}
+          primaryAction={{ content: p.recentRunViewAction, onAction: showPreviousRun }}
+          secondaryActions={[
+            {
+              content: p.recentRunRerunAction,
+              onAction: () => {
+                setConfirmRerun(false);
+                submitAudit(true);
+              },
+            },
+            { content: p.recentRunCancelAction, onAction: () => setConfirmRerun(false) },
+          ]}
+        >
+          <Modal.Section>
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">
+                {p.recentRunBody
+                  .replace("{url}", displayPath(targetUrl))
+                  .replace("{strategy}", strategyLabel(strategy))
+                  .replace("{minutes}", String(Math.max(1, Math.round((recentRun?.age ?? 0) / 60000))))}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {p.recentRunBudgetHint
+                  .replace("{used}", String(runsToday))
+                  .replace("{limit}", String(dailyLimit))}
+              </Text>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
 
         {errorMessage && <Banner tone="critical">{errorMessage}</Banner>}
 

@@ -1532,6 +1532,12 @@ export const en: Translation = {
       strategyMobile: "Mobile",
       strategyDesktop: "Desktop",
       testButton: "Test now",
+      recentRunTitle: "This page was just measured",
+      recentRunBody: "The last run of {url} ({strategy}) is about {minutes} minutes old. Measuring again this soon will almost certainly return the same result.",
+      recentRunBudgetHint: "Every run counts against your daily budget: {used} of {limit} used.",
+      recentRunViewAction: "View previous result",
+      recentRunRerunAction: "Measure again anyway",
+      recentRunCancelAction: "Cancel",
       runningHint: "This can take about 15–30 seconds…",
       errors: {
         invalidUrl: "That URL doesn't belong to your store and can't be tested.",

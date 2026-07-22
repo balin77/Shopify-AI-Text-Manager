@@ -50,7 +50,7 @@ Der `locale`-Parameter wird bereits mitgeschickt ([pagespeed.service.ts:185](../
 
 **Entscheidung: kein Descriptor-Eintrag, keine neue Route.** Der Inhalt kommt in [app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), aufgeteilt auf Tabs innerhalb einer Ergebnis-Card (§3).
 
-Begründung: Ein PSI-Aufruf liefert alle drei Kategorien in **einer** Antwort (§6). Eine zweite Section müsste denselben Testlauf ein zweites Mal anstoßen, ein zweites Mal cachen, ein zweites Mal historisieren — und der Merchant müsste dieselbe Seite zweimal testen, um beide Bilder zu sehen. Mit Tabs ist ein Test = ein Ergebnis = drei Blickwinkel darauf.
+Begründung: Ein PSI-Aufruf liefert **alle** Lighthouse-Kategorien in einer einzigen Antwort (§6). Eine zweite Section müsste denselben Testlauf ein zweites Mal anstoßen, ein zweites Mal cachen, ein zweites Mal historisieren — und der Merchant müsste dieselbe Seite zweimal testen, um beide Bilder zu sehen. Mit Tabs ist ein Test = ein Ergebnis = drei Blickwinkel darauf.
 
 **Was stabil bleibt:** `id: "performance"`, `path: "/app/seo/performance"`, `icon: "🚀"`, `labelKey: "performance"` in [seo-sections.ts:60-66](../../app/config/seo-sections.ts#L60-L66). Die Id steuert `getActiveSeoSection`, `SeoSectionLayout sectionId="performance"` und Deep Links — sie umzubenennen bringt nichts und bricht Lesezeichen und Tests.
 
@@ -162,9 +162,9 @@ Sie leistet genau das, was die Tabs allein nicht können: Der Merchant sieht **a
 
 - Der SEO-Ring wird angezeigt, hat aber **keinen Tab** und **keine Befundliste**.
 - Ein Klick darauf öffnet keinen Tab, sondern zeigt einen kurzen Hinweis mit Link auf die eigenen SEO-Werkzeuge (Overview / Meta-Daten).
-- Die Beschriftung muss ihn von unserem eigenen SEO-Score abgrenzen — Vorschlag „SEO (Google-Technik)" mit `HelpTooltip`. **Ungelöste Spannung, siehe §11.5:** Unser Dashboard-Score und Lighthouse' SEO-Score messen Verschiedenes und werden verschiedene Zahlen zeigen.
+- Die Beschriftung muss ihn von unserem eigenen SEO-Score abgrenzen — Vorschlag „SEO (Google-Technik)" mit `HelpTooltip`. **Ungelöste Spannung, siehe §11.4:** Unser Dashboard-Score und Lighthouse' SEO-Score messen Verschiedenes und werden verschiedene Zahlen zeigen.
 
-**„Agentisches Browsing"** (der fünfte Eintrag im PSI-Screenshot, ein Bestanden-Zähler „3/3", kein Score) ist neu und in der dokumentierten `category`-Aufzählung der PSI-API v5 nicht gesichert. **In Phase 1 prüfen**, ob die API sie liefert; wenn ja, als vierte/fünfte Kachel im selben Muster ergänzen (Zähler statt Ring), wenn nein, ersatzlos weglassen. Nicht raten — die Kachel steht oder fällt mit dem Response.
+**„Agentisches Browsing"** (der fünfte Eintrag im PSI-Screenshot, ein Bestanden-Zähler „3/3", kein Score) ist neu und in der dokumentierten `category`-Aufzählung der PSI-API v5 nicht gesichert. **In Phase 1 prüfen**, ob die API sie liefert; wenn ja, als weitere Kachel am Ende des Strips ergänzen (Zähler statt Ring), wenn nein, ersatzlos weglassen. Nicht raten — die Kachel steht oder fällt mit dem Response.
 
 ### 3.4 Tab 1 „Ladezeit" — der heutige Inhalt, unverändert in der Sache
 
@@ -260,7 +260,7 @@ async function fetchPageSpeedInsights(
 
 Alles andere in der Datei — Timeout, 429/`PageSpeedQuotaExceededError`, Tageslimit, Cache-Lookup, Prune — bleibt unverändert und wird geteilt. **Kein zweiter PSI-Client, kein zweiter Aufrufpfad.**
 
-**Zu messen in Phase 1:** `PSI_TIMEOUT_MS` steht auf 60s ([pagespeed.service.ts:50](../../app/services/seo/pagespeed.service.ts#L50)). Drei Kategorien bedeuten mehr Audits und eine spürbar größere Antwort; wenn Läufe an die Grenze stoßen, muss der Wert hoch (und der `runningHint`-Text von „15–30 Sekunden" mit ihm). Das ist die einzige Stelle, an der die Zusammenlegung etwas kosten kann — sie gehört gemessen, nicht geschätzt.
+**Zu messen in Phase 1:** `PSI_TIMEOUT_MS` steht auf 60s ([pagespeed.service.ts:50](../../app/services/seo/pagespeed.service.ts#L50)). Vier Kategorien bedeuten deutlich mehr Audits und eine spürbar größere Antwort; wenn Läufe an die Grenze stoßen, muss der Wert hoch (und der `runningHint`-Text von „15–30 Sekunden" mit ihm). Das ist die einzige Stelle, an der die Zusammenlegung etwas kosten kann — sie gehört gemessen, nicht geschätzt.
 
 ### 5.2 Parser: eine Erweiterung, kein zweiter Vertrag
 
@@ -311,9 +311,9 @@ Der Contract (§3) verlangt ein `analyze()` je Section. Diese Section hat keins 
 
 ## 6. Kontingent
 
-PSI zählt **Requests, nicht Kategorien**. Ein Aufruf mit drei Kategorien kostet exakt so viel wie einer mit einer.
+PSI zählt **Requests, nicht Kategorien**. Ein Aufruf mit vier Kategorien kostet exakt so viel wie einer mit einer.
 
-Daraus folgt die zentrale Eigenschaft dieser Fassung: **Der Merchant startet genau einen Test wie bisher und bekommt drei Auswertungen.** Die Qualitätsdaten sind, gemessen am Tagesbudget, umsonst.
+Daraus folgt die zentrale Eigenschaft dieser Fassung: **Der Merchant startet genau einen Test wie bisher und bekommt alle Kategorien auf einmal.** Die Qualitätsdaten sind, gemessen am Tagesbudget, umsonst.
 
 Damit ändert sich am Budget **nichts**:
 
@@ -351,7 +351,8 @@ Reihenfolge zwingend `de.ts` → `en.ts` → `es.ts` (`de.ts` definiert den `Tra
 
 - `t.seo.sections.performance` — der Section-Name (§1.1). Nur der String, nicht der Schlüssel.
 - `t.seo.performancePage.helpTitle` / `helpBody1` / `helpBody2` — erweitern, damit sie nicht länger nur den Ladezeit-Test beschreiben.
-- `t.seo.performancePage.tabs.{performance,accessibility,bestPractices}` — Tab-Beschriftungen.
+- `t.seo.performancePage.tabs.{performance,accessibility,bestPractices}` — Tab-Beschriftungen. **Dieselben Schlüssel** beschriften die Ringe im Score-Strip (§3.3); zwei Wörter für dieselbe Kategorie darf es nicht geben.
+- `t.seo.performancePage.strip.{seo,seoHint,agentic,scoreAriaLabel,noScore}` — SEO-Ring samt Abgrenzungshinweis (§11.4), optionale Agentic-Kachel, `aria-label`-Muster „{Kategorie}: {Score} von 100", Platzhalter „–".
 - `t.seo.performancePage.viewingHistoryHint` — ersetzt `viewingHistoryTitle` + `viewingHistoryBody` (§3.2); beide alten Schlüssel in allen drei Dateien löschen.
 - `t.seo.performancePage.a11y.*` — Ehrlichkeits-Hinweis (§1.3), Score-Titel, Leerzustand, Titel des Manuell-Blocks, Alt-Text-Button, Text für „nicht zuordenbar".
 - `t.seo.performancePage.bestPractices.*` — Einleitung, Leerzustand.
@@ -388,14 +389,16 @@ Was **bleibt**: der Logger-Namespace. Die neuen Parser-Zweige loggen unter dem b
 | Phase | Inhalt | Ergebnis |
 |---|---|---|
 | **0** | Spike §11.3: Alt-Text-Match-Trefferquote an echten Daten messen | Go/No-Go für §7 |
-| **1** | `fetchPageSpeedInsights` um Kategorien erweitern; Parser + `QualityResult`-Typen + Tests; Laufzeit gegen `PSI_TIMEOUT_MS` messen | Parser grün, Daten kommen an, noch keine UI |
+| **1** | `fetchPageSpeedInsights` um Kategorien erweitern (inkl. `seo`); Parser + `QualityResult`-Typen + Tests; prüfen, ob die API „Agentic browsing" liefert; Laufzeit gegen `PSI_TIMEOUT_MS` messen | Parser grün, Daten kommen an, noch keine UI |
 | **2** | Prisma: `a11yScore` + `bestPracticesScore` + Migration; Schreiben in `runPageSpeedAudit`; `listPageSpeedHistory` erweitern | Werte landen in der DB und in der History-Abfrage |
-| **3** | **Reines UI-Refactoring:** Tab-Card einziehen, Ladezeit-Tab = heutiger Inhalt (Card-in-Card auflösen), Historisch-Banner → Hinweiszeile, globale Banner über die Tabs | Seite sieht aufgeräumter aus, inhaltlich unverändert — gut isoliert prüfbar |
-| **4** | Tab „Barrierefreiheit": Score, Ehrlichkeits-Hinweis, Befundliste, manuelle Prüfpunkte, Leerzustand für Altbestand; Section-Umbenennung; i18n de→en→es | Der neue Nutzen ist sichtbar |
+| **3** | **Struktureller Umbau:** Tab-Card einziehen, Ladezeit-Tab = heutiger Inhalt (Card-in-Card auflösen), Historisch-Banner → Hinweiszeile, globale Banner über die Tabs, **Score-Strip** (§3.3) mit `ScoreGauge` als Größen-Prop | Alle Kategorie-Scores sichtbar, Details vorerst nur für Ladezeit |
+| **4** | Tab „Barrierefreiheit": Ehrlichkeits-Hinweis, Befundliste, manuelle Prüfpunkte, Leerzustand für Altbestand; Strip-Ring wird klickbar; Section-Umbenennung; i18n de→en→es | Der neue Nutzen ist sichtbar |
 | **5** | Alt-Text-Brückenschlag (§7) | Der Befund wird behebbar |
-| **6** | Tab „Best Practices" (ohne Score-Beitrag) + History-Spalte „Barrierefreiheit" | Das Goodie |
+| **6** | Tab „Best Practices" + History-Spalte „Barrierefreiheit" | Das Goodie |
 
-Phase 3 bewusst **vor** den neuen Inhalten: Der Umbau der bestehenden Seite ist der Teil mit dem größten Regressionsrisiko (Card-in-Card, Grid-Breiten, Bannerplatzierung). Ihn allein zu deployen heißt, ihn allein prüfen zu können — steckte er mit dem neuen Tab zusammen im selben Schritt, wäre bei einem Layout-Fehler nicht klar, welche Hälfte ihn verursacht hat.
+Phase 3 bewusst **vor** den neuen Tabs: Der Umbau der bestehenden Seite ist der Teil mit dem größten Regressionsrisiko (Card-in-Card, Grid-Breiten, Bannerplatzierung, `ScoreGauge`-Parametrisierung). Ihn allein zu deployen heißt, ihn allein prüfen zu können — steckte er mit dem neuen Tab zusammen im selben Schritt, wäre bei einem Layout-Fehler nicht klar, welche Hälfte ihn verursacht hat.
+
+In Phase 3 zeigt der Strip bereits alle Ringe (die Daten liegen seit Phase 1/2 vor), aber nur der Ladezeit-Ring hat ein Ziel. Die übrigen sind dort reine Anzeige und werden erst in Phase 4 bzw. 6 klickbar — ein Ring, der beim Klick nichts tut, braucht in Phase 3 keinen Cursor-Pointer.
 
 Nach jeder Phase ist ein benutzbarer Zwischenstand erreicht.
 
@@ -429,7 +432,17 @@ Verworfen wurde außerdem, Barrierefreiheit als `AuditType` in `analyzeStore` zu
 
 An einem echten Shop messen, welcher Anteil der `image-alt`-Befunde sich auf eine `ProductImage`-Zeile abbilden lässt (§7). Unter grob einem Drittel Trefferquote ist §7 kein tragender Nutzen und die Phasen 5/6 sind neu zu bewerten.
 
-### 11.4 Name der Section (offen, klein)
+### 11.4 Zwei SEO-Scores auf einer Seite — offen, vor Phase 3 zu entscheiden
+
+Der Score-Strip (§3.3) zeigt Lighthouse' SEO-Score, weil PSI ihn zeigt und eine Lücke in der Reihe auffiele. ContentPilot hat aber **einen eigenen** SEO-Score ([seo-score.ts](../../app/utils/seo-score.ts), Bänder 70/40) im Dashboard. Beide messen Verschiedenes: Lighthouse prüft technische Seiten-Grundlagen (Titel-Tag vorhanden, crawlbar, Viewport), unser Score prüft Inhalt und Abdeckung über den Katalog. Sie werden regelmäßig auseinanderliegen — „SEO 100" hier, „SEO 62" dort.
+
+**Empfehlung:** Ring zeigen, aber klar abgrenzen — Beschriftung „SEO (Google-Technik)" plus `HelpTooltip`, der in einem Satz sagt, dass es sich um Googles technische Prüfung dieser **einen** Seite handelt und nicht um die SEO-Bewertung des Shops. Zusätzlich Bänder unverändert bei 90/50 lassen (Lighthouse-Logik), damit nicht auch noch die Farbschwellen zweier Scores kollidieren.
+
+**Alternative, falls die Verwechslungsgefahr schwerer wiegt als die Lücke in der Reihe:** den Ring weglassen und im Strip nur Ladezeit · Barrierefreiheit · Best Practices zeigen. Das ist die konservative Variante und exakt das, was §12 inhaltlich vorgibt.
+
+Die Entscheidung fällt spätestens mit Phase 3, weil dort der Strip gebaut wird. Am Aufwand ändert sie fast nichts — ein Ring mehr oder weniger.
+
+### 11.5 Name der Section (offen, klein)
 
 „Ladezeit & Qualität" ist der Vorschlag (§1.1). Entscheidung fällt spätestens in Phase 4, weil dort die i18n-Strings ohnehin angefasst werden. Am Code ändert die Wahl nichts — es ist ein String in drei Dateien.
 
@@ -437,7 +450,7 @@ An einem echten Shop messen, welcher Anteil der `image-alt`-Befunde sich auf ein
 
 ## 12. Bewusst nicht in diesem Plan
 
-- **Lighthouse-Kategorie SEO.** Überschneidet sich fast vollständig mit [bulk-meta](../../app/routes/app.seo.bulk-meta.tsx), [hreflang](../../app/routes/app.seo.hreflang.tsx), [redirects](../../app/routes/app.seo.redirects.tsx) und dem eigenen Score in [seo-score.ts](../../app/utils/seo-score.ts). Ein zweiter, anders gewichteter SEO-Score neben dem eigenen verwirrt mehr, als er hilft. Der `structured-data`-Audit dort ist zudem ein reiner Handprüfungs-Hinweis ohne Validierung. (Technisch käme er inzwischen gratis im selben Request mit — der Grund gegen ihn ist inhaltlich, nicht budgetär.)
+- **Die Lighthouse-SEO-*Befunde*** (nicht der Score — der steht im Strip, §3.3/§11.4). Sie überschneiden sich fast vollständig mit [bulk-meta](../../app/routes/app.seo.bulk-meta.tsx), [hreflang](../../app/routes/app.seo.hreflang.tsx), [redirects](../../app/routes/app.seo.redirects.tsx) und dem eigenen Score in [seo-score.ts](../../app/utils/seo-score.ts). Eine zweite, anders gewichtete SEO-Befundliste neben den eigenen Werkzeugen verwirrt mehr, als sie hilft, und der `structured-data`-Audit dort ist ohnehin ein reiner Handprüfungs-Hinweis ohne Validierung. Der Parser verwirft die Audits dieser Kategorie deshalb bewusst und behält nur die Zahl.
 - **GitHub-Anbindung und KI-Analyse von Theme-Dateien.** Siehe §2 — Scope-Bewilligung und Werkzeug-Konkurrenz, nicht zurückgestellt sondern verworfen.
 - **Eigene axe-core-Ausführung** (statt PSI). Würde einen Headless-Browser auf Railway bedeuten — eine ganz andere Betriebsklasse als ein HTTP-Call.
 - **Mehr-Seiten-Scan** (mehrere Templates in einem Rutsch). Fiel mit dem Task weg (§9). Falls er später gewünscht wird, ist er ein eigenes Vorhaben mit eigener Budget-Rechnung — und er würde dann Ladezeit **und** Qualität gemeinsam betreffen, nicht nur die neuen Tabs.

@@ -1531,6 +1531,12 @@ export const es: Translation = {
       strategyMobile: "Móvil",
       strategyDesktop: "Escritorio",
       testButton: "Probar ahora",
+      recentRunTitle: "Esta página se acaba de medir",
+      recentRunBody: "La última medición de {url} ({strategy}) tiene unos {minutes} minutos. Volver a medir tan pronto devolverá casi con seguridad el mismo resultado.",
+      recentRunBudgetHint: "Cada medición cuenta para tu cuota diaria: {used} de {limit} usadas.",
+      recentRunViewAction: "Ver el resultado anterior",
+      recentRunRerunAction: "Medir de nuevo igualmente",
+      recentRunCancelAction: "Cancelar",
       runningHint: "Esto puede tardar entre 15 y 30 segundos…",
       errors: {
         invalidUrl: "Esa URL no pertenece a tu tienda y no se puede probar.",

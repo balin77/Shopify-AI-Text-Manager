@@ -45,11 +45,12 @@ import type {
 /**
  * How long a stored audit may still answer a plain (non-forced) run.
  *
- * This is a double-click guard, not a cache: the UI has a single "test" button
- * that the merchant expects to measure now, so the window is short. It cannot be
- * dropped entirely — the lookup happens BEFORE the daily budget check, so
- * without it two clicks in a row would cost two of the plan's runs (5/day on
- * free).
+ * The UI does not rely on this any more: its single "test" button always forces
+ * a real measurement, and asks first when one is this recent (see
+ * RECENT_RUN_WINDOW_MS in app.seo.performance.tsx) — a merchant who clicks
+ * "test" must never be handed an old result without being told. The window
+ * survives only as the guard for any non-forced caller, because the lookup
+ * happens BEFORE the daily budget check.
  */
 export const PAGESPEED_CACHE_TTL_MS = 5 * 60 * 1000;
 
