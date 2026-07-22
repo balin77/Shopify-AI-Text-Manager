@@ -33,6 +33,7 @@ import {
   Divider,
   Collapsible,
   Modal,
+  Tabs,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -61,6 +62,7 @@ import type {
   PageSpeedScreenshot,
   PageSpeedTable,
   CruxCategory,
+  QualityIssue,
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
@@ -745,24 +747,24 @@ const SCORE_WEIGHTS: { id: PageSpeedMetricId; weight: number }[] = [
   { id: "si", weight: 0.1 },
 ];
 
+/** Defaults = the big lab gauge; the score strip passes smaller values (§3.3). */
 const GAUGE_SIZE = 190;
-const GAUGE_CENTER = GAUGE_SIZE / 2;
 const GAUGE_RADIUS = 58;
 const GAUGE_STROKE = 8;
 /** Degrees of empty space between two metric arcs. */
 const GAUGE_ARC_GAP = 5;
 
 /** Point on the gauge circle; 0° is 12 o'clock, growing clockwise. */
-function gaugePoint(radius: number, degrees: number): [number, number] {
+function gaugePoint(center: number, radius: number, degrees: number): [number, number] {
   const rad = ((degrees - 90) * Math.PI) / 180;
-  return [GAUGE_CENTER + radius * Math.cos(rad), GAUGE_CENTER + radius * Math.sin(rad)];
+  return [center + radius * Math.cos(rad), center + radius * Math.sin(rad)];
 }
 
-function gaugeArc(radius: number, startDeg: number, endDeg: number): string {
+function gaugeArc(center: number, radius: number, startDeg: number, endDeg: number): string {
   // A full circle can't be expressed as one arc — nudge it just short of 360.
   const end = endDeg - startDeg >= 360 ? startDeg + 359.99 : endDeg;
-  const [x1, y1] = gaugePoint(radius, startDeg);
-  const [x2, y2] = gaugePoint(radius, end);
+  const [x1, y1] = gaugePoint(center, radius, startDeg);
+  const [x2, y2] = gaugePoint(center, radius, end);
   const largeArc = end - startDeg > 180 ? 1 : 0;
   return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
 }
@@ -770,20 +772,42 @@ function gaugeArc(radius: number, startDeg: number, endDeg: number): string {
 /**
  * Lighthouse-style score gauge. Hovering splits the ring into one arc per
  * metric — arc length = that metric's weight in the score, fill = its own
- * score — which is how PSI explains where a score comes from.
+ * score — which is how PSI explains where a score comes from. The split only
+ * exists when `metrics` are passed; the small strip rings pass none.
+ *
+ * Size defaults are the big lab gauge; the score strip shrinks it via props.
  */
 function ScoreGauge({
   score,
   label,
-  metrics,
+  metrics = [],
+  size = GAUGE_SIZE,
+  radius = GAUGE_RADIUS,
+  stroke = GAUGE_STROKE,
+  numberFontSize = 34,
+  showLabel = true,
+  neutralWhenNull = false,
 }: {
   score: number | null;
   label: string;
-  metrics: PageSpeedMetric[];
+  metrics?: PageSpeedMetric[];
+  size?: number;
+  radius?: number;
+  stroke?: number;
+  numberFontSize?: number;
+  /** The strip rings carry their own caption outside the button (§3.3). */
+  showLabel?: boolean;
+  /**
+   * Missing score → neutral grey ring instead of the warning tone. The strip
+   * needs it ("no value" is not "50–89"); the big gauge keeps today's look.
+   */
+  neutralWhenNull?: boolean;
 }) {
+  const center = size / 2;
   const [showSplit, setShowSplit] = useState(false);
-  const tone: PerfTone = score == null ? "warning" : lighthouseTone(score);
-  const color = PERF_COLOR[tone];
+  const tone: PerfTone | null = score == null ? (neutralWhenNull ? null : "warning") : lighthouseTone(score);
+  // Literal hex (not a CSS var) — the ring fill below appends an alpha suffix.
+  const color = tone ? PERF_COLOR[tone] : "#8c9196";
 
   const metricById = new Map(metrics.map((m) => [m.id, m]));
   const available = SCORE_WEIGHTS.filter((w) => metricById.has(w.id));
@@ -798,7 +822,7 @@ function ScoreGauge({
     const metric = metricById.get(w.id)!;
     const metricScore = metric.score ?? 0;
     const segTone = metricTone(metric.score);
-    const [labelX, labelY] = gaugePoint(GAUGE_RADIUS + 20, start + span / 2);
+    const [labelX, labelY] = gaugePoint(center, radius + 20, start + span / 2);
     return {
       id: w.id,
       color: segTone ? PERF_COLOR[segTone] : "var(--p-color-border, #c9cccf)",
@@ -813,33 +837,33 @@ function ScoreGauge({
   return (
     <BlockStack gap="150" inlineAlign="center">
       <div
-        style={{ position: "relative", width: `${GAUGE_SIZE}px`, height: `${GAUGE_SIZE}px` }}
+        style={{ position: "relative", width: `${size}px`, height: `${size}px` }}
         onMouseEnter={() => setShowSplit(true)}
         onMouseLeave={() => setShowSplit(false)}
       >
         <svg
-          width={GAUGE_SIZE}
-          height={GAUGE_SIZE}
-          viewBox={`0 0 ${GAUGE_SIZE} ${GAUGE_SIZE}`}
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
           role="img"
           aria-label={`${label}: ${score ?? "–"}`}
         >
-          <circle cx={GAUGE_CENTER} cy={GAUGE_CENTER} r={GAUGE_RADIUS} fill={`${color}1f`} />
+          <circle cx={center} cy={center} r={radius} fill={`${color}1f`} />
 
           {/* Whole-score ring */}
           <g style={{ opacity: showSplit && splittable ? 0 : 1, transition: "opacity 150ms ease-in-out" }}>
             <path
-              d={gaugeArc(GAUGE_RADIUS, 0, 360)}
+              d={gaugeArc(center, radius, 0, 360)}
               fill="none"
               stroke={`${color}40`}
-              strokeWidth={GAUGE_STROKE}
+              strokeWidth={stroke}
             />
             {score != null && score > 0 && (
               <path
-                d={gaugeArc(GAUGE_RADIUS, 0, (score / 100) * 360)}
+                d={gaugeArc(center, radius, 0, (score / 100) * 360)}
                 fill="none"
                 stroke={color}
-                strokeWidth={GAUGE_STROKE}
+                strokeWidth={stroke}
                 strokeLinecap="round"
               />
             )}
@@ -851,18 +875,18 @@ function ScoreGauge({
               {segments.map((seg) => (
                 <Fragment key={seg.id}>
                   <path
-                    d={gaugeArc(GAUGE_RADIUS, seg.from, seg.to)}
+                    d={gaugeArc(center, radius, seg.from, seg.to)}
                     fill="none"
                     stroke={seg.color}
-                    strokeWidth={GAUGE_STROKE}
+                    strokeWidth={stroke}
                     opacity={0.25}
                   />
                   {seg.filledTo > seg.from && (
                     <path
-                      d={gaugeArc(GAUGE_RADIUS, seg.from, seg.filledTo)}
+                      d={gaugeArc(center, radius, seg.from, seg.filledTo)}
                       fill="none"
                       stroke={seg.color}
-                      strokeWidth={GAUGE_STROKE}
+                      strokeWidth={stroke}
                       strokeLinecap="round"
                     />
                   )}
@@ -888,7 +912,7 @@ function ScoreGauge({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "34px",
+            fontSize: `${numberFontSize}px`,
             fontWeight: 500,
             color,
             pointerEvents: "none",
@@ -897,7 +921,274 @@ function ScoreGauge({
           {score != null ? score : "–"}
         </span>
       </div>
-      <Text as="span" variant="headingMd">{label}</Text>
+      {showLabel && <Text as="span" variant="headingMd">{label}</Text>}
+    </BlockStack>
+  );
+}
+
+/** Strip ring geometry — pagespeed.web.dev's small category gauges (§3.3). */
+const STRIP_GAUGE_SIZE = 48;
+const STRIP_GAUGE_RADIUS = 20;
+const STRIP_GAUGE_STROKE = 4;
+
+/**
+ * The category overview above the tab list: one small ring per Lighthouse
+ * category, doubling as tab navigation. No hover split — the weight story only
+ * exists for the performance score, and the big gauge in the tab tells it.
+ */
+function ScoreStrip({
+  categories,
+  selected,
+  onSelect,
+  scoreAriaLabel,
+  noScoreAriaLabel,
+}: {
+  categories: { key: string; label: string; score: number | null }[];
+  selected: number;
+  onSelect: (index: number) => void;
+  /** `strip.scoreAriaLabel` — placeholders {category} {score}. */
+  scoreAriaLabel: string;
+  /** `strip.noScore` — placeholder {category}. */
+  noScoreAriaLabel: string;
+}) {
+  return (
+    <InlineStack gap="800" align="center" blockAlign="start">
+      {categories.map((cat, index) => {
+        const active = index === selected;
+        return (
+          <button
+            key={cat.key}
+            type="button"
+            onClick={() => onSelect(index)}
+            aria-selected={active}
+            aria-label={
+              cat.score != null
+                ? scoreAriaLabel
+                    .replace("{category}", cat.label)
+                    .replace("{score}", String(cat.score))
+                : noScoreAriaLabel.replace("{category}", cat.label)
+            }
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              font: "inherit",
+              color: "inherit",
+            }}
+          >
+            <BlockStack gap="150" inlineAlign="center">
+              <ScoreGauge
+                score={cat.score}
+                label={cat.label}
+                size={STRIP_GAUGE_SIZE}
+                radius={STRIP_GAUGE_RADIUS}
+                stroke={STRIP_GAUGE_STROKE}
+                numberFontSize={15}
+                showLabel={false}
+                neutralWhenNull
+              />
+              <Text as="span" variant="bodySm" fontWeight={active ? "semibold" : "regular"}>
+                {cat.label}
+              </Text>
+            </BlockStack>
+          </button>
+        );
+      })}
+    </InlineStack>
+  );
+}
+
+/** Synthetic accordion id for the collapsed manual-audits block per quality tab. */
+const MANUAL_FINDING_ID = "manual";
+
+/**
+ * One accessibility / best-practices finding — the same accordion row pattern
+ * as the performance findings, so both tabs read as one tool. `image-alt`
+ * items that were matched to a product image render the (not yet wired,
+ * phase 5) alt-text button.
+ */
+function QualityIssueRow({
+  issue,
+  open,
+  onToggle,
+  domId,
+  itemsTruncatedLabel,
+  generateAltTextLabel,
+}: {
+  issue: QualityIssue;
+  open: boolean;
+  onToggle: () => void;
+  domId: string;
+  itemsTruncatedLabel: string;
+  generateAltTextLabel: string;
+}) {
+  return (
+    <div style={FINDING_ROW_STYLE}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={domId}
+        style={FINDING_HEADER_STYLE}
+      >
+        <span style={FINDING_TITLE_STYLE}>
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <ToneMarker tone={issue.score == null ? undefined : metricTone(issue.score)} />
+            <Text as="span" variant="bodyMd" fontWeight="medium">{issue.title}</Text>
+          </InlineStack>
+        </span>
+        <DisclosureGlyph open={open} />
+      </button>
+      <Collapsible open={open} id={domId} transition={false}>
+        <div style={{ padding: "0 12px 16px" }}>
+          <BlockStack gap="300">
+            {issue.description && (
+              <Text as="p" variant="bodySm" tone="subdued">{issue.description}</Text>
+            )}
+            {issue.items.length > 0 && (
+              <BlockStack gap="300">
+                {issue.items.map((item, i) => (
+                  <BlockStack key={i} gap="050">
+                    {item.selector && <span style={CODE_TEXT_STYLE}>{item.selector}</span>}
+                    {item.snippet && (
+                      <span
+                        style={{
+                          ...CODE_TEXT_STYLE,
+                          color: "var(--p-color-text-secondary, #6d7175)",
+                        }}
+                      >
+                        {item.snippet}
+                      </span>
+                    )}
+                    {/* Phase 5 wires this to the alt-text action; until then it
+                        only announces that a fix exists. Items without a
+                        matched url get no button at all. */}
+                    {issue.id === "image-alt" && item.url && (
+                      <InlineStack>
+                        <Button size="slim" disabled>{generateAltTextLabel}</Button>
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+                ))}
+                {issue.itemTotal > issue.items.length && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {itemsTruncatedLabel
+                      .replace("{shown}", String(issue.items.length))
+                      .replace("{total}", String(issue.itemTotal))}
+                  </Text>
+                )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+/**
+ * Finding list of one quality category (a11y / best practices): automated
+ * findings as accordion rows, then the manual audits collapsed under their own
+ * header — they are unchecked check-points, not found errors, and mixing them
+ * into the list would misread as failures.
+ */
+function QualityFindings({
+  issues,
+  manualIssues,
+  total,
+  keyPrefix,
+  openFindings,
+  onToggle,
+  labels,
+}: {
+  /** Automated (non-manual) findings, already filtered. */
+  issues: QualityIssue[];
+  manualIssues: QualityIssue[];
+  /** Category finding count before the server-side cap, manual excluded. */
+  total: number;
+  /** Namespaces accordion ids so a11y and best-practices rows never collide. */
+  keyPrefix: string;
+  openFindings: Set<string>;
+  onToggle: (id: string) => void;
+  labels: {
+    noIssues: string;
+    manualTitle: string;
+    manualHint: string;
+    itemsTruncated: string;
+    generateAltText: string;
+  };
+}) {
+  const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
+  const manualOpen = openFindings.has(manualKey);
+  return (
+    <BlockStack gap="300">
+      {issues.length === 0 ? (
+        <Text as="p" variant="bodySm" tone="subdued">{labels.noIssues}</Text>
+      ) : (
+        <div>
+          {issues.map((issue) => {
+            const rowKey = `${keyPrefix}-${issue.id}`;
+            return (
+              <QualityIssueRow
+                key={issue.id}
+                issue={issue}
+                open={openFindings.has(rowKey)}
+                onToggle={() => onToggle(rowKey)}
+                domId={`finding-${rowKey}`}
+                itemsTruncatedLabel={labels.itemsTruncated}
+                generateAltTextLabel={labels.generateAltText}
+              />
+            );
+          })}
+          {/* Server cap (max 15 findings) — disclose it instead of letting a
+              truncated list read as the complete picture. */}
+          {total > issues.length && (
+            <div style={{ paddingTop: "12px" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {labels.itemsTruncated
+                  .replace("{shown}", String(issues.length))
+                  .replace("{total}", String(total))}
+              </Text>
+            </div>
+          )}
+        </div>
+      )}
+
+      {manualIssues.length > 0 && (
+        <div style={FINDING_ROW_STYLE}>
+          <button
+            type="button"
+            onClick={() => onToggle(manualKey)}
+            aria-expanded={manualOpen}
+            aria-controls={`finding-${manualKey}`}
+            style={FINDING_HEADER_STYLE}
+          >
+            <span style={FINDING_TITLE_STYLE}>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <ToneMarker />
+                <Text as="span" variant="bodyMd" fontWeight="medium">{labels.manualTitle}</Text>
+              </InlineStack>
+            </span>
+            <DisclosureGlyph open={manualOpen} />
+          </button>
+          <Collapsible open={manualOpen} id={`finding-${manualKey}`} transition={false}>
+            <div style={{ padding: "0 12px 16px" }}>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">{labels.manualHint}</Text>
+                {manualIssues.map((m) => (
+                  <BlockStack key={m.id} gap="050">
+                    <Text as="span" variant="bodySm" fontWeight="medium">{m.title}</Text>
+                    {m.description && (
+                      <Text as="span" variant="bodySm" tone="subdued">{m.description}</Text>
+                    )}
+                  </BlockStack>
+                ))}
+              </BlockStack>
+            </div>
+          </Collapsible>
+        </div>
+      )}
     </BlockStack>
   );
 }
@@ -1192,6 +1483,51 @@ export default function SeoPerformance() {
   // Audits stored before `previewScreenshot` existed only have `screenshot`.
   const previewScreenshot = result?.previewScreenshot ?? result?.screenshot ?? null;
 
+  // §3.8: the tab choice survives a new test run on purpose — whoever re-tests
+  // while on "Accessibility" wants the new accessibility result, not the speed
+  // tab again.
+  const [selectedTab, setSelectedTab] = useState(0);
+
+  // Runs stored before the quality categories existed carry no `quality` —
+  // tabs 2/3 then show an explicit empty state instead of a bare blank (§3.8).
+  const quality = result?.quality;
+  const a11yAutomated = useMemo(
+    () => (quality?.accessibility ?? []).filter((i) => !i.manual),
+    [quality],
+  );
+  const a11yManual = useMemo(
+    () => (quality?.accessibility ?? []).filter((i) => i.manual),
+    [quality],
+  );
+  const bpAutomated = useMemo(
+    () => (quality?.bestPractices ?? []).filter((i) => !i.manual),
+    [quality],
+  );
+  const bpManual = useMemo(
+    () => (quality?.bestPractices ?? []).filter((i) => i.manual),
+    [quality],
+  );
+
+  // Tab labels double as the strip captions (§3.3) — same keys, same words.
+  const tabDescriptors = [
+    { id: "perf-tab-performance", content: p.tabs.performance, panelID: "perf-panel-performance" },
+    { id: "perf-tab-accessibility", content: p.tabs.accessibility, panelID: "perf-panel-accessibility" },
+    { id: "perf-tab-bestPractices", content: p.tabs.bestPractices, panelID: "perf-panel-bestPractices" },
+  ];
+
+  const stripCategories = [
+    { key: "performance", label: p.tabs.performance, score: result?.performanceScore ?? null },
+    { key: "accessibility", label: p.tabs.accessibility, score: quality?.a11yScore ?? null },
+    { key: "bestPractices", label: p.tabs.bestPractices, score: quality?.bestPracticesScore ?? null },
+  ];
+
+  const qualityFindingLabels = {
+    manualTitle: p.a11y.manualTitle,
+    manualHint: p.a11y.manualHint,
+    itemsTruncated: p.a11y.itemsTruncated,
+    generateAltText: p.a11y.generateAltText,
+  };
+
   return (
     <SeoSectionLayout sectionId="performance">
       <BlockStack gap="400">
@@ -1296,40 +1632,73 @@ export default function SeoPerformance() {
         {errorMessage && <Banner tone="critical">{errorMessage}</Banner>}
 
         {result && (
-          <BlockStack gap="400">
-            {isHistorical && (
-              <Banner
-                tone="info"
-                title={p.viewingHistoryTitle
-                  .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
-                onDismiss={closeHistoryView}
-              >
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">
-                    {p.viewingHistoryBody
+          <Card>
+            <BlockStack gap="400">
+              {/* §3.2 — everything that applies to all tabs sits above the tab
+                  list; the historical note is a one-liner, not a banner. */}
+              {isHistorical && (
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {p.viewingHistoryHint
+                      .replace("{date}", new Date(result.fetchedAt).toLocaleString())
                       .replace("{url}", displayPath(result.url))
                       .replace("{strategy}", strategyLabel(result.strategy))}
                   </Text>
-                  <InlineStack>
-                    <Button onClick={closeHistoryView}>{p.viewingHistoryBack}</Button>
-                  </InlineStack>
-                </BlockStack>
-              </Banner>
-            )}
-            {result.stale && !isHistorical && (
-              <Banner tone="warning">
-                {result.staleReason === "dailyLimit"
-                  ? p.staleDailyLimitNotice.replace("{limit}", String(dailyLimit))
-                  : p.staleQuotaNotice}
-              </Banner>
-            )}
+                  <Button variant="plain" onClick={closeHistoryView}>{p.viewingHistoryBack}</Button>
+                </InlineStack>
+              )}
+              {result.stale && !isHistorical && (
+                <Banner tone="warning">
+                  {result.staleReason === "dailyLimit"
+                    ? p.staleDailyLimitNotice.replace("{limit}", String(dailyLimit))
+                    : p.staleQuotaNotice}
+                </Banner>
+              )}
+              {/* Lighthouse could not analyse the page at all — that empties
+                  every category, not just speed, so the notice sits above the
+                  tabs. PSI still answers HTTP 200 in that case, so without it
+                  the run renders as an empty result with a "–" score. */}
+              {result.runtimeError && (
+                <Banner tone="critical" title={p.runtimeErrorTitle}>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{p.runtimeErrorBody}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {p.runtimeErrorDetail.replace("{message}", result.runtimeError)}
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              )}
+              {/* Caveats about the run itself — they apply to every tab. */}
+              {result.runWarnings && result.runWarnings.length > 0 && (
+                <Banner tone="warning" title={p.runWarningsTitle}>
+                  <BlockStack gap="100">
+                    {result.runWarnings.map((w, i) => (
+                      <Text key={i} as="p" variant="bodySm">{w}</Text>
+                    ))}
+                  </BlockStack>
+                </Banner>
+              )}
+
+              {/* §3.3 — every category score at a glance, doubling as tab
+                  navigation; the tabs below stay the detail level. */}
+              <ScoreStrip
+                categories={stripCategories}
+                selected={selectedTab}
+                onSelect={setSelectedTab}
+                scoreAriaLabel={p.strip.scoreAriaLabel}
+                noScoreAriaLabel={p.strip.noScore}
+              />
+
+              <Tabs tabs={tabDescriptors} selected={selectedTab} onSelect={setSelectedTab}>
+                {selectedTab === 0 && (
+                <BlockStack gap="500">
             {/* Real-user (CrUX) field data — leads the result the way PSI does,
                 full width, one threshold bar per metric. */}
             {result.fieldData && (
-              <Card padding="600">
+              <>
                 <BlockStack gap="500">
                   <InlineStack gap="300" blockAlign="center" wrap>
-                    <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
+                    <Text as="h4" variant="headingSm" tone="subdued">{p.fieldDataTitle}</Text>
                     {/* CrUX's aggregate verdict — the "passed / did not pass
                         the Core Web Vitals assessment" line PSI leads with. */}
                     {result.fieldData.overallCategory && (
@@ -1358,11 +1727,12 @@ export default function SeoPerformance() {
                     <Text as="p" variant="bodySm" tone="subdued">{p.fieldOriginFallback}</Text>
                   )}
                 </BlockStack>
-              </Card>
+                <Divider />
+              </>
             )}
 
-            {/* Lab result (this run) — gauge + the measured metrics. */}
-            <Card padding="600">
+            {/* Lab result (this run) — gauge + the measured metrics. Former
+                own Card, now a section of the tab (§3.4). */}
               <BlockStack gap="500">
                 {/* Two halves: score left, captured page right, each centred in
                     its own half with a hairline between them. */}
@@ -1464,32 +1834,9 @@ export default function SeoPerformance() {
                   })}
                 </div>
               </BlockStack>
-            </Card>
 
-            {/* Lighthouse could not analyse the page at all — PSI still answers
-                HTTP 200, so without this the run would render as an empty
-                result with a "–" score and no explanation. */}
-            {result.runtimeError && (
-              <Banner tone="critical" title={p.runtimeErrorTitle}>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">{p.runtimeErrorBody}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {p.runtimeErrorDetail.replace("{message}", result.runtimeError)}
-                  </Text>
-                </BlockStack>
-              </Banner>
-            )}
-
-            {result.runWarnings && result.runWarnings.length > 0 && (
-              <Banner tone="warning" title={p.runWarningsTitle}>
-                <BlockStack gap="100">
-                  {result.runWarnings.map((w, i) => (
-                    <Text key={i} as="p" variant="bodySm">{w}</Text>
-                  ))}
-                </BlockStack>
-              </Banner>
-            )}
-
+            {/* No element screenshot — concerns only the element crops in this
+                tab, so the banner stays inside it (§3.2). */}
             {!annotatable && (
               <Banner
                 tone="info"
@@ -1521,11 +1868,13 @@ export default function SeoPerformance() {
               </Banner>
             )}
 
+            <Divider />
+
             {/* Findings — full width, one accordion row per Lighthouse
-                opportunity/diagnostic, with its own details table. */}
-            <Card>
+                opportunity/diagnostic, with its own details table. Former own
+                Card, now the last section of the speed tab (§3.4). */}
               <BlockStack gap="300">
-                <Text as="h3" variant="headingMd">{p.findingsTitle}</Text>
+                <Text as="h4" variant="headingSm" tone="subdued">{p.findingsTitle}</Text>
 
                 {result.opportunities.length === 0 &&
                 result.annotations.length === 0 &&
@@ -1699,8 +2048,65 @@ export default function SeoPerformance() {
                   </div>
                 )}
               </BlockStack>
-            </Card>
-          </BlockStack>
+                </BlockStack>
+                )}
+
+                {/* §3.5 — accessibility tab. No big gauge of its own: the
+                    score is already in the strip, and unlike performance there
+                    is no metric weighting a hover split could explain. */}
+                {selectedTab === 1 && (
+                  <BlockStack gap="400">
+                    {!quality ? (
+                      // Run stored before the quality categories existed (§3.8).
+                      <Text as="p" variant="bodyMd" tone="subdued">{p.qualityUnavailable}</Text>
+                    ) : (
+                      <>
+                        {/* §1.3 — honesty note, deliberately not dismissible:
+                            automated testing finds only part of the real
+                            barriers, so a green score is no legal certainty. */}
+                        <Banner tone="info">
+                          <Text as="p" variant="bodyMd">{p.a11y.disclaimer}</Text>
+                        </Banner>
+                        <QualityFindings
+                          issues={a11yAutomated}
+                          manualIssues={a11yManual}
+                          total={quality.accessibilityTotal}
+                          keyPrefix="a11y"
+                          openFindings={openFindings}
+                          onToggle={toggleFinding}
+                          labels={{ ...qualityFindingLabels, noIssues: p.a11y.noIssues }}
+                        />
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+
+                {/* §3.6 — best practices: extra information that feeds no
+                    aggregate score and partly lies outside the merchant's
+                    influence; the intro line says exactly that. */}
+                {selectedTab === 2 && (
+                  <BlockStack gap="400">
+                    {!quality ? (
+                      <Text as="p" variant="bodyMd" tone="subdued">{p.qualityUnavailable}</Text>
+                    ) : (
+                      <>
+                        <Text as="p" variant="bodyMd" tone="subdued">{p.bestPractices.intro}</Text>
+                        <QualityFindings
+                          issues={bpAutomated}
+                          manualIssues={bpManual}
+                          total={quality.bestPracticesTotal}
+                          keyPrefix="bp"
+                          openFindings={openFindings}
+                          onToggle={toggleFinding}
+                          labels={{ ...qualityFindingLabels, noIssues: p.bestPractices.noIssues }}
+                        />
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+              </Tabs>
+            </BlockStack>
+          </Card>
         )}
 
         {/* Real-user Web Vitals (RUM) */}
@@ -1830,6 +2236,7 @@ export default function SeoPerformance() {
                     { title: p.historyColUrl },
                     { title: p.historyColStrategy },
                     { title: p.historyColScore },
+                    { title: p.historyColA11y },
                     { title: p.historyColDate },
                   ]}
                 >
@@ -1860,6 +2267,15 @@ export default function SeoPerformance() {
                             // bands (70/40) would color the very same run differently
                             // on one page.
                             <Badge tone={lighthouseTone(entry.performanceScore)}>{String(entry.performanceScore)}</Badge>
+                          ) : (
+                            <Text as="span" tone="subdued">–</Text>
+                          )}
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          {/* Null on rows stored before the quality categories
+                              existed — shown as "–", never glossed to 0. */}
+                          {entry.a11yScore != null ? (
+                            <Badge tone={lighthouseTone(entry.a11yScore)}>{String(entry.a11yScore)}</Badge>
                           ) : (
                             <Text as="span" tone="subdued">–</Text>
                           )}
