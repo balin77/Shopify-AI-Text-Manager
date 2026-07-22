@@ -3,9 +3,11 @@
  *
  * Runs a Google PageSpeed Insights audit for a merchant-picked storefront page
  * (homepage / product / collection / page, or a custom path/URL) on mobile or
- * desktop, and renders the Lighthouse performance score, Core Web Vitals,
- * a screenshot with problem-element overlays, findings, real-user CrUX data,
- * and a history of past runs.
+ * desktop and renders it the way PSI itself does: real-user (CrUX) data with a
+ * threshold bar per metric on top, then the lab result (score gauge, page
+ * screenshot, measured metrics), then the findings as an accordion whose rows
+ * carry Lighthouse's own details table — including element thumbnails cropped
+ * out of the full-page screenshot — and finally the history of past runs.
  *
  * The heavy lifting (PSI fetch, Prisma cache, screenshot annotation mapping)
  * lives in services/seo/pagespeed.service.ts — this route only orchestrates
@@ -15,7 +17,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -29,7 +31,10 @@ import {
   Banner,
   IndexTable,
   Divider,
+  Collapsible,
+  Icon,
 } from "@shopify/polaris";
+import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -51,6 +56,10 @@ import type {
   PageSpeedStrategy,
   PageSpeedAuditResult,
   PageSpeedMetricId,
+  PageSpeedCell,
+  PageSpeedRect,
+  PageSpeedScreenshot,
+  PageSpeedTable,
   CruxCategory,
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
@@ -71,6 +80,15 @@ async function getShopPlan(db: any, shop: string): Promise<Plan> {
     select: { subscriptionPlan: true },
   });
   return (settings?.subscriptionPlan || "free") as Plan;
+}
+
+/** UI language, forwarded to PSI so Lighthouse answers in the merchant's language. */
+async function getShopLanguage(db: any, shop: string): Promise<string | undefined> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { appLanguage: true },
+  });
+  return settings?.appLanguage || undefined;
 }
 
 async function getShopHost(admin: any, fallbackShop: string): Promise<string> {
@@ -194,8 +212,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
 
   try {
-    const plan = await getShopPlan(db, shop);
-    const result = await runPageSpeedAudit({ db, shop, url, strategy, force, plan });
+    const [plan, locale] = await Promise.all([getShopPlan(db, shop), getShopLanguage(db, shop)]);
+    const result = await runPageSpeedAudit({ db, shop, url, strategy, force, plan, locale });
     return json<ActionResult>({ ok: true, result });
   } catch (err: any) {
     // Both budget failures degrade the same way: serve a stored audit of any
@@ -218,30 +236,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
 };
 
-/**
- * Fixed palette shared by the screenshot overlay and the findings list, so box
- * N and finding N always match. Must hold at least as many entries as a run can
- * produce annotations (LCP + MAX_CLS_ANNOTATIONS + MAX_IMAGE_ANNOTATIONS = 11+),
- * otherwise two different findings share a colour and the mapping breaks.
- */
-const ANNOTATION_COLORS = [
-  "#e51c23",
-  "#ff9800",
-  "#9c27b0",
-  "#2196f3",
-  "#009688",
-  "#795548",
-  "#607d8b",
-  "#4caf50",
-  "#c2185b",
-  "#3f51b5",
-  "#827717",
-  "#00838f",
-];
-
-function annotationColor(index: number): string {
-  return ANNOTATION_COLORS[index % ANNOTATION_COLORS.length];
-}
+/** Same help content as the lab metrics — CrUX rows reuse it, plus INP/TTFB. */
+const FIELD_HELP_KEYS: Record<string, string> = {
+  lcp: "perfLcp",
+  inp: "perfInp",
+  cls: "perfCls",
+  fcp: "perfFcp",
+  ttfb: "perfTtfb",
+};
 
 const METRIC_HELP_KEYS: Record<PageSpeedMetricId, string> = {
   lcp: "perfLcp",
@@ -309,10 +311,13 @@ function FieldMetricBar({
   metricKey,
   percentile,
   distributions,
+  format,
 }: {
   metricKey: string;
   percentile: number;
   distributions?: { min: number; max?: number; proportion: number }[];
+  /** Same formatter as the metric's headline value, for the threshold labels. */
+  format: (value: number) => string;
 }) {
   const thresholds = FIELD_THRESHOLDS[metricKey];
   const buckets =
@@ -347,34 +352,66 @@ function FieldMetricBar({
     markerPct = cumulative * 100;
   }
 
+  // Where the color changes — the merchant needs the number behind the break to
+  // know when a value starts counting as worse. Only shown for buckets that
+  // actually carry a boundary (the open-ended poor bucket has none).
+  const boundaries: { pct: number; value: number }[] = [];
+  let boundaryCumulative = 0;
+  for (let i = 0; i < buckets.length - 1; i++) {
+    boundaryCumulative += buckets[i].proportion / total;
+    const value = buckets[i].max ?? buckets[i + 1].min;
+    if (typeof value === "number") boundaries.push({ pct: boundaryCumulative * 100, value });
+  }
+
   return (
-    <div style={{ position: "relative", padding: "6px 0 10px" }}>
-      <div style={{ display: "flex", gap: "2px", height: "4px" }}>
-        {buckets.map((b, i) => (
-          <div
-            key={i}
+    <div style={{ maxWidth: "260px" }}>
+      <div style={{ position: "relative", padding: "6px 0 0" }}>
+        <div style={{ display: "flex", gap: "2px", height: "4px" }}>
+          {buckets.map((b, i) => (
+            <div
+              key={i}
+              style={{
+                width: `${(b.proportion / total) * 100}%`,
+                background: PERF_COLOR[tones[i]],
+                borderRadius: "2px",
+              }}
+            />
+          ))}
+        </div>
+        <span
+          style={{
+            position: "absolute",
+            left: `${Math.min(99, Math.max(1, markerPct))}%`,
+            top: "2px",
+            width: "10px",
+            height: "10px",
+            marginLeft: "-5px",
+            borderRadius: "50%",
+            border: "2px solid var(--p-color-text-secondary, #6d7175)",
+            background: "var(--p-color-bg-surface, #fff)",
+            boxSizing: "border-box",
+          }}
+        />
+      </div>
+      <div style={{ position: "relative", height: "16px", marginTop: "4px" }}>
+        {boundaries.map((b) => (
+          <span
+            key={b.pct}
             style={{
-              width: `${(b.proportion / total) * 100}%`,
-              background: PERF_COLOR[tones[i]],
-              borderRadius: "2px",
+              position: "absolute",
+              // Clamped so a boundary at the very edge doesn't clip its label.
+              left: `${Math.min(88, Math.max(12, b.pct))}%`,
+              transform: "translateX(-50%)",
+              whiteSpace: "nowrap",
+              fontSize: "11px",
+              lineHeight: "16px",
+              color: "var(--p-color-text-secondary, #6d7175)",
             }}
-          />
+          >
+            {format(b.value)}
+          </span>
         ))}
       </div>
-      <span
-        style={{
-          position: "absolute",
-          left: `${Math.min(99, Math.max(1, markerPct))}%`,
-          top: "2px",
-          width: "10px",
-          height: "10px",
-          marginLeft: "-5px",
-          borderRadius: "50%",
-          border: "2px solid var(--p-color-text-secondary, #6d7175)",
-          background: "var(--p-color-bg-surface, #fff)",
-          boxSizing: "border-box",
-        }}
-      />
     </div>
   );
 }
@@ -422,12 +459,226 @@ const SCORE_LEGEND: { range: string; tone: PerfTone }[] = [
   { range: "90–100", tone: "success" },
 ];
 
-/** Shared responsive grid for the field-data and lab-metric tiles. */
+/**
+ * Shared responsive grid for the field-data and lab-metric tiles. The generous
+ * column gap (plus the 260px cap on the bars themselves) keeps neighbouring
+ * bars from reading as one continuous strip.
+ */
 const FIELD_GRID_STYLE: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
-  gap: "16px 32px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
+  gap: "20px 56px",
 };
+
+/** Synthetic accordion id for the flagged-elements row (not a Lighthouse audit id). */
+const ELEMENTS_FINDING_ID = "__elements__";
+
+const FINDING_ROW_STYLE: CSSProperties = {
+  borderTop: "1px solid var(--p-color-border-secondary, #e1e3e5)",
+};
+
+const FINDING_HEADER_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+  width: "100%",
+  padding: "12px",
+  background: "none",
+  border: "none",
+  textAlign: "left",
+  cursor: "pointer",
+  // <button> would otherwise fall back to the UA font, not Polaris's.
+  font: "inherit",
+  color: "inherit",
+};
+
+const CODE_TEXT_STYLE: CSSProperties = {
+  fontFamily: "var(--p-font-family-mono, monospace)",
+  fontSize: "12px",
+  wordBreak: "break-word",
+};
+
+/** Sub-second durations read better as ms — PSI shows "480 ms", not "0,5 s". */
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms).toLocaleString()} ms` : formatMs(ms);
+}
+
+/** Path + query of a URL, tail-truncated, with the host returned separately. */
+function splitUrl(raw: string): { path: string; host?: string } {
+  try {
+    const parsed = new URL(raw);
+    const path = `${parsed.pathname}${parsed.search}`;
+    return { path: path.length > 48 ? `…${path.slice(-48)}` : path, host: parsed.host };
+  } catch {
+    return { path: raw.length > 48 ? `…${raw.slice(-48)}` : raw };
+  }
+}
+
+/**
+ * Crop of one element out of the full-page screenshot — the same trick PSI uses
+ * for its element thumbnails: scale the whole screenshot as a background and
+ * offset it so the element's rect lands in the box. Renders nothing when
+ * Lighthouse gave us no full-page screenshot (then there are no usable rects).
+ */
+function ElementThumb({
+  screenshot,
+  rect,
+  size = 56,
+}: {
+  screenshot: PageSpeedScreenshot | null;
+  rect?: PageSpeedRect;
+  size?: number;
+}) {
+  if (!screenshot || !rect || !screenshot.width || !screenshot.height) return null;
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  // Never upscale past 2x — a 10px element blown up to 56px is unreadable mush.
+  const scale = Math.min(size / rect.width, size / rect.height, 2);
+  const offsetX = (size - rect.width * scale) / 2 - rect.left * scale;
+  const offsetY = (size - rect.height * scale) / 2 - rect.top * scale;
+
+  return (
+    <div
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        flexShrink: 0,
+        backgroundImage: `url(${screenshot.data})`,
+        backgroundSize: `${screenshot.width * scale}px ${screenshot.height * scale}px`,
+        backgroundPosition: `${offsetX}px ${offsetY}px`,
+        backgroundRepeat: "no-repeat",
+        backgroundColor: "var(--p-color-bg-surface-secondary, #f6f6f7)",
+        border: "1px solid var(--p-color-border, #e1e3e5)",
+        borderRadius: "4px",
+      }}
+    />
+  );
+}
+
+function FindingCellValue({
+  cell,
+  screenshot,
+}: {
+  cell: PageSpeedCell | null;
+  screenshot: PageSpeedScreenshot | null;
+}) {
+  if (!cell) return null;
+  switch (cell.type) {
+    case "node": {
+      const node = cell.node;
+      if (!node) return null;
+      return (
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          <ElementThumb screenshot={screenshot} rect={node.rect} />
+          <span style={CODE_TEXT_STYLE}>{node.label}</span>
+        </InlineStack>
+      );
+    }
+    case "url": {
+      const { path, host } = splitUrl(cell.text ?? "");
+      return (
+        <span title={cell.text} style={{ wordBreak: "break-word" }}>
+          {path}
+          {host && (
+            <span style={{ color: "var(--p-color-text-secondary, #6d7175)" }}>{` (${host})`}</span>
+          )}
+        </span>
+      );
+    }
+    case "code":
+      return <span style={CODE_TEXT_STYLE}>{cell.text}</span>;
+    case "bytes":
+      return <>{formatBytes(cell.value ?? 0)}</>;
+    case "ms":
+      return <>{formatDuration(cell.value ?? 0)}</>;
+    case "numeric":
+      return <>{(cell.value ?? 0).toLocaleString()}</>;
+    default:
+      return <span style={{ wordBreak: "break-word" }}>{cell.text}</span>;
+  }
+}
+
+const NUMERIC_CELL_TYPES = new Set(["bytes", "ms", "numeric"]);
+
+/** The Lighthouse details table of one finding (URLs, sizes, durations, elements). */
+function FindingTable({
+  table,
+  screenshot,
+  truncatedLabel,
+}: {
+  table: PageSpeedTable;
+  screenshot: PageSpeedScreenshot | null;
+  truncatedLabel: string;
+}) {
+  const hiddenRows = Math.max(0, table.rowTotal - table.rows.length);
+  const cellStyle = (type: string): CSSProperties => ({
+    padding: "6px 8px",
+    textAlign: NUMERIC_CELL_TYPES.has(type) ? "right" : "left",
+    verticalAlign: "middle",
+    borderTop: "1px solid var(--p-color-border-secondary, #e1e3e5)",
+  });
+
+  return (
+    <BlockStack gap="200">
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+          <thead>
+            <tr>
+              {table.columns.map((col, i) => (
+                <th
+                  key={i}
+                  style={{
+                    ...cellStyle(col.type),
+                    borderTop: "none",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, ri) => (
+              <Fragment key={ri}>
+                <tr>
+                  {row.cells.map((cell, ci) => (
+                    <td key={ci} style={cellStyle(table.columns[ci]?.type ?? "text")}>
+                      <FindingCellValue cell={cell} screenshot={screenshot} />
+                    </td>
+                  ))}
+                </tr>
+                {row.subRows?.map((sub, si) => (
+                  <tr key={`${ri}-${si}`}>
+                    {sub.cells.map((cell, ci) => (
+                      <td
+                        key={ci}
+                        style={{
+                          ...cellStyle(table.columns[ci]?.type ?? "text"),
+                          paddingLeft: ci === 0 ? "28px" : undefined,
+                          color: "var(--p-color-text-secondary, #6d7175)",
+                        }}
+                      >
+                        <FindingCellValue cell={cell} screenshot={screenshot} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {hiddenRows > 0 && (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {truncatedLabel.replace("{count}", String(hiddenRows))}
+        </Text>
+      )}
+    </BlockStack>
+  );
+}
 
 /** Circular Lighthouse-style score gauge. */
 function ScoreGauge({ score, label }: { score: number | null; label: string }) {
@@ -618,12 +869,6 @@ export default function SeoPerformance() {
     return path === "/" ? p.homepageOption : path;
   };
 
-  const annotationIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    result?.annotations.forEach((a, i) => map.set(a.id, i));
-    return map;
-  }, [result]);
-
   const annotatable = !!result?.screenshot?.fullPage;
   const visibleHistory = history.slice(0, HISTORY_VISIBLE_LIMIT);
 
@@ -668,11 +913,13 @@ export default function SeoPerformance() {
         <InlineStack gap="150" blockAlign="center" wrap={false}>
           <ToneMarker tone={tone} label={p.fieldCategory[metric.category]} />
           <Text as="span" variant="bodyMd">{row.label}</Text>
+          <HelpTooltip helpKey={FIELD_HELP_KEYS[row.key]} position="below" />
         </InlineStack>
         <div
           style={{
             fontSize: "22px",
             lineHeight: "28px",
+            maxWidth: "260px",
             textAlign: "center",
             color: PERF_COLOR[tone],
           }}
@@ -683,6 +930,7 @@ export default function SeoPerformance() {
           metricKey={row.key}
           percentile={metric.percentile}
           distributions={metric.distributions}
+          format={row.format}
         />
       </BlockStack>
     );
@@ -695,17 +943,23 @@ export default function SeoPerformance() {
     setShowNoHighlightReason(false);
   }, [result]);
 
-  // Natural pixel width of the loaded screenshot — used to cap the rendered
-  // <img> so PSI's low-res JPEGs (especially the viewport-only fallback where
-  // `result.screenshot.width` is 0) aren't stretched beyond native size.
-  const [screenshotNaturalWidth, setScreenshotNaturalWidth] = useState<number | null>(null);
+  // Which findings are expanded. Reset per result, with the first (biggest
+  // saving — the list is sorted) open so the section isn't a wall of headers.
+  const [openFindings, setOpenFindings] = useState<Set<string>>(new Set());
   useEffect(() => {
-    setScreenshotNaturalWidth(null);
-  }, [result?.screenshot?.data]);
-  const screenshotMaxWidth =
-    result?.screenshot?.width && result.screenshot.width > 0
-      ? result.screenshot.width
-      : screenshotNaturalWidth ?? undefined;
+    setOpenFindings(new Set(result?.opportunities.slice(0, 1).map((o) => o.id) ?? []));
+  }, [result]);
+  const toggleFinding = (id: string) =>
+    setOpenFindings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Element thumbnails can only be cropped from the full-page screenshot — the
+  // viewport fallback has no matching coordinate space (see pagespeed.types.ts).
+  const cropSource = result?.screenshot?.fullPage ? result.screenshot : null;
 
   return (
     <SeoSectionLayout sectionId="performance">
@@ -849,9 +1103,10 @@ export default function SeoPerformance() {
             {/* Lab result (this run) — gauge + the measured metrics. */}
             <Card>
               <BlockStack gap="400">
-                <InlineStack gap="500" blockAlign="center" wrap>
-                  <ScoreGauge score={result.performanceScore} label={p.scoreTitle} />
-                  <BlockStack gap="200">
+                <InlineStack gap="500" blockAlign="center" align="space-between" wrap>
+                  <InlineStack gap="500" blockAlign="center" wrap>
+                    <ScoreGauge score={result.performanceScore} label={p.scoreTitle} />
+                    <BlockStack gap="200">
                     <Text as="p" variant="bodySm" tone="subdued">
                       {p.testedLabel
                         .replace("{url}", displayPath(result.url))
@@ -871,7 +1126,25 @@ export default function SeoPerformance() {
                         </InlineStack>
                       ))}
                     </InlineStack>
-                  </BlockStack>
+                    </BlockStack>
+                  </InlineStack>
+
+                  {/* The captured page, right of the gauge like PSI. Element
+                      boxes are drawn per finding below, not here. */}
+                  {result.screenshot && (
+                    <div
+                      style={{
+                        width: "min(100%, 240px)",
+                        maxHeight: "260px",
+                        overflow: "hidden",
+                        border: "1px solid var(--p-color-border, #e1e3e5)",
+                        borderRadius: "8px",
+                        alignSelf: "start",
+                      }}
+                    >
+                      <img src={result.screenshot.data} alt="" style={{ width: "100%", display: "block" }} />
+                    </div>
+                  )}
                 </InlineStack>
 
                 <Divider />
@@ -961,170 +1234,137 @@ export default function SeoPerformance() {
               </Banner>
             )}
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: result.screenshot
-                  ? "repeat(auto-fit, minmax(min(100%, 420px), 1fr))"
-                  : "1fr",
-                gap: "16px",
-                alignItems: "start",
-              }}
-            >
-              {result.screenshot && (
-                <Card>
-                  <div style={{ maxHeight: "70vh", overflowY: "auto" }}>
-                    <div
-                      style={{
-                        position: "relative",
-                        maxWidth: screenshotMaxWidth ? `${screenshotMaxWidth}px` : undefined,
-                      }}
-                    >
-                      <img
-                        src={result.screenshot.data}
-                        alt=""
-                        onLoad={(e) => {
-                          const nw = (e.currentTarget as HTMLImageElement).naturalWidth;
-                          if (nw > 0) setScreenshotNaturalWidth(nw);
-                        }}
-                        style={{ width: "100%", display: "block" }}
-                      />
-                      {annotatable &&
-                        result.annotations.map((a, i) => (
-                          <div
-                            key={a.id}
-                            style={{
-                              position: "absolute",
-                              left: `${(a.rect.left / result.screenshot!.width) * 100}%`,
-                              top: `${(a.rect.top / result.screenshot!.height) * 100}%`,
-                              width: `${(a.rect.width / result.screenshot!.width) * 100}%`,
-                              height: `${(a.rect.height / result.screenshot!.height) * 100}%`,
-                              border: `2px solid ${annotationColor(i)}`,
-                              boxSizing: "border-box",
-                              pointerEvents: "none",
-                            }}
-                          >
-                            <span
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                transform: "translateY(-100%)",
-                                background: annotationColor(i),
-                                color: "#fff",
-                                fontSize: "10px",
-                                lineHeight: "14px",
-                                padding: "0 4px",
-                              }}
-                            >
-                              {i + 1}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                </Card>
-              )}
+            {/* Findings — full width, one accordion row per Lighthouse
+                opportunity/diagnostic, with its own details table. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h3" variant="headingMd">{p.findingsTitle}</Text>
 
-              <BlockStack gap="400">
-                {/* Findings */}
-                <Card>
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingMd">{p.findingsTitle}</Text>
-                    {result.annotations.length === 0 ? (
-                      <Text as="p" variant="bodySm" tone="subdued">{p.noHighlightNote}</Text>
-                    ) : (
-                      <BlockStack gap="150">
-                        {result.annotations.map((a, i) => (
-                          <InlineStack key={a.id} gap="200" blockAlign="start" wrap={false}>
-                            <span
-                              style={{
-                                display: "inline-block",
-                                width: "12px",
-                                height: "12px",
-                                marginTop: "4px",
-                                borderRadius: "2px",
-                                background: annotationColor(i),
-                                flexShrink: 0,
-                              }}
-                            />
-                            <BlockStack gap="050">
-                              <Text as="span" variant="bodyMd">
-                                {`${i + 1}. ${p.annotationKinds[a.kind] || a.kind} — ${a.label}`}
-                              </Text>
-                              {a.detail && (
-                                <Text as="span" variant="bodySm" tone="subdued">{a.detail}</Text>
+                {result.opportunities.length === 0 && result.annotations.length === 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">{p.noHighlightNote}</Text>
+                ) : (
+                  <div>
+                    {result.opportunities.map((o) => {
+                      const open = openFindings.has(o.id);
+                      const savings = [
+                        o.savingsMs != null ? formatMs(o.savingsMs) : null,
+                        o.savingsBytes != null ? formatBytes(o.savingsBytes) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" / ");
+                      return (
+                        <div key={o.id} style={FINDING_ROW_STYLE}>
+                          <button
+                            type="button"
+                            onClick={() => toggleFinding(o.id)}
+                            aria-expanded={open}
+                            aria-controls={`finding-${o.id}`}
+                            style={FINDING_HEADER_STYLE}
+                          >
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                              <ToneMarker tone={o.score == null ? undefined : metricTone(o.score)} />
+                              <Text as="span" variant="bodyMd" fontWeight="medium">{o.title}</Text>
+                              {savings && (
+                                <span style={{ color: PERF_COLOR.critical, fontSize: "13px" }}>
+                                  {`— ${p.savingsLabel}: ${savings}`}
+                                </span>
+                              )}
+                            </InlineStack>
+                            <Icon source={open ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
+                          </button>
+                          <Collapsible open={open} id={`finding-${o.id}`} transition={false}>
+                            <div style={{ padding: "0 12px 16px" }}>
+                              <BlockStack gap="300">
+                                {o.description && (
+                                  <Text as="p" variant="bodySm" tone="subdued">{o.description}</Text>
+                                )}
+                                {(o.metricLabels?.length || o.informative || o.displayValue) && (
+                                  <InlineStack gap="150" wrap>
+                                    {o.displayValue && <Badge>{o.displayValue}</Badge>}
+                                    {o.metricLabels?.map((label) => (
+                                      <Badge key={label} tone="info">{label}</Badge>
+                                    ))}
+                                    {o.informative && <Badge>{p.informativeBadge}</Badge>}
+                                  </InlineStack>
+                                )}
+                                {o.table && (
+                                  <FindingTable
+                                    table={o.table}
+                                    screenshot={cropSource}
+                                    truncatedLabel={p.tableRowsTruncated}
+                                  />
+                                )}
+                              </BlockStack>
+                            </div>
+                          </Collapsible>
+                        </div>
+                      );
+                    })}
+
+                    {/* Elements Lighthouse flagged directly (LCP element, layout
+                        shifts, oversized images) — shown with a crop of the
+                        full-page screenshot when one is available. */}
+                    {result.annotations.length > 0 && (
+                      <div style={FINDING_ROW_STYLE}>
+                        <button
+                          type="button"
+                          onClick={() => toggleFinding(ELEMENTS_FINDING_ID)}
+                          aria-expanded={openFindings.has(ELEMENTS_FINDING_ID)}
+                          aria-controls={`finding-${ELEMENTS_FINDING_ID}`}
+                          style={FINDING_HEADER_STYLE}
+                        >
+                          <InlineStack gap="200" blockAlign="center" wrap={false}>
+                            <ToneMarker />
+                            <Text as="span" variant="bodyMd" fontWeight="medium">{p.elementsTitle}</Text>
+                          </InlineStack>
+                          <Icon
+                            source={openFindings.has(ELEMENTS_FINDING_ID) ? ChevronUpIcon : ChevronDownIcon}
+                            tone="subdued"
+                          />
+                        </button>
+                        <Collapsible
+                          open={openFindings.has(ELEMENTS_FINDING_ID)}
+                          id={`finding-${ELEMENTS_FINDING_ID}`}
+                          transition={false}
+                        >
+                          <div style={{ padding: "0 12px 16px" }}>
+                            <BlockStack gap="200">
+                              {result.annotations.map((a) => (
+                                <InlineStack key={a.id} gap="300" blockAlign="center" wrap={false}>
+                                  <ElementThumb screenshot={cropSource} rect={a.rect} />
+                                  <BlockStack gap="050">
+                                    <Text as="span" variant="bodySm" fontWeight="medium">
+                                      {p.annotationKinds[a.kind] || a.kind}
+                                    </Text>
+                                    <span style={CODE_TEXT_STYLE}>{a.label}</span>
+                                    {a.detail && (
+                                      <Text as="span" variant="bodySm" tone="subdued">{a.detail}</Text>
+                                    )}
+                                  </BlockStack>
+                                </InlineStack>
+                              ))}
+                              {hiddenAnnotations > 0 && (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {p.annotationsTruncated.replace("{count}", String(hiddenAnnotations))}
+                                </Text>
                               )}
                             </BlockStack>
-                          </InlineStack>
-                        ))}
-                        {hiddenAnnotations > 0 && (
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {p.annotationsTruncated.replace("{count}", String(hiddenAnnotations))}
-                          </Text>
-                        )}
-                      </BlockStack>
+                          </div>
+                        </Collapsible>
+                      </div>
                     )}
 
-                    {result.opportunities.length > 0 && (
-                      <BlockStack gap="200">
-                        <Text as="h4" variant="headingSm">{p.opportunitiesTitle}</Text>
-                        {result.opportunities.map((o) => (
-                          <BlockStack key={o.id} gap="100">
-                            <Text as="span" variant="bodyMd" fontWeight="semibold">{o.title}</Text>
-                            {o.description && (
-                              <Text as="p" variant="bodySm" tone="subdued">{o.description}</Text>
-                            )}
-                            {(o.savingsMs != null || o.savingsBytes != null) && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {p.savingsLabel}:{" "}
-                                {[
-                                  o.savingsMs != null ? formatMs(o.savingsMs) : null,
-                                  o.savingsBytes != null ? formatBytes(o.savingsBytes) : null,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" / ")}
-                              </Text>
-                            )}
-                            {o.annotationIds.length > 0 && (
-                              <InlineStack gap="100" wrap>
-                                {o.annotationIds.map((id) => {
-                                  const idx = annotationIndexById.get(id);
-                                  if (idx == null) return null;
-                                  return (
-                                    <span
-                                      key={id}
-                                      style={{
-                                        display: "inline-block",
-                                        minWidth: "18px",
-                                        textAlign: "center",
-                                        borderRadius: "9px",
-                                        padding: "0 6px",
-                                        fontSize: "11px",
-                                        color: "#fff",
-                                        background: annotationColor(idx),
-                                      }}
-                                    >
-                                      {idx + 1}
-                                    </span>
-                                  );
-                                })}
-                              </InlineStack>
-                            )}
-                          </BlockStack>
-                        ))}
-                        {hiddenOpportunities > 0 && (
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {p.opportunitiesTruncated.replace("{count}", String(hiddenOpportunities))}
-                          </Text>
-                        )}
-                      </BlockStack>
+                    {hiddenOpportunities > 0 && (
+                      <div style={{ paddingTop: "12px" }}>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {p.opportunitiesTruncated.replace("{count}", String(hiddenOpportunities))}
+                        </Text>
+                      </div>
                     )}
-                  </BlockStack>
-                </Card>
-
+                  </div>
+                )}
               </BlockStack>
-            </div>
+            </Card>
           </BlockStack>
         )}
 

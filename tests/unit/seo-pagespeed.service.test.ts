@@ -59,6 +59,50 @@ describe("parsePageSpeedResponse", () => {
     });
   });
 
+  it("reads the full-page screenshot from the modern top-level lighthouseResult.fullPageScreenshot", () => {
+    // Lighthouse >= 10 (what PSI runs today) moved it out of `audits`.
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.fullPageScreenshot = raw.lighthouseResult.audits["full-page-screenshot"].details;
+    delete raw.lighthouseResult.audits["full-page-screenshot"];
+
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.screenshot?.fullPage).toBe(true);
+    // Nodes map came along, so rects still resolve — that's what the element
+    // thumbnails in the findings list are cropped from.
+    expect(r.annotations.find((a) => a.kind === "lcp")?.rect).toEqual({
+      left: 20,
+      top: 100,
+      width: 680,
+      height: 400,
+    });
+  });
+
+  it("normalizes an opportunity details table incl. node rects, sub-items and metric labels", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+
+    const images = r.opportunities.find((o) => o.id === "modern-image-formats");
+    expect(images?.displayValue).toBe("Potential savings of 125 KiB");
+    expect(images?.metricLabels).toEqual(["LCP", "FCP"]);
+    expect(images?.table?.columns.map((c) => c.type)).toEqual(["node", "url", "bytes", "bytes"]);
+    const cells = images?.table?.rows[0].cells;
+    expect(cells?.[0]?.node?.rect).toEqual({ left: 40, top: 1200, width: 400, height: 200 });
+    expect(cells?.[1]).toEqual({ type: "url", text: "https://example.com/product.png" });
+    expect(cells?.[2]).toEqual({ type: "bytes", value: 200_000 });
+
+    const blocking = r.opportunities.find((o) => o.id === "render-blocking-resources");
+    expect(blocking?.table?.rows[0].subRows?.[0].cells[0]).toEqual({
+      type: "url",
+      text: "https://example.com/assets/base.css",
+    });
+  });
+
+  it("leaves the table off findings whose details carry no headings", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    delete raw.lighthouseResult.audits["modern-image-formats"].details.headings;
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.opportunities.find((o) => o.id === "modern-image-formats")?.table).toBeUndefined();
+  });
+
   it("resolves annotation rects via the nodes map by lhId, and skips zero-size rects", () => {
     const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
 

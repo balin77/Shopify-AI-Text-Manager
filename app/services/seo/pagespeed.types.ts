@@ -43,6 +43,50 @@ export interface PageSpeedAnnotation {
   detail?: string;
 }
 
+/**
+ * Cell kinds we render from a Lighthouse `details` table. Lighthouse's own
+ * `valueType` vocabulary is larger; anything we can't render (thumbnails,
+ * link objects, …) is dropped in the parser rather than guessed at.
+ */
+export type PageSpeedCellType = "text" | "url" | "code" | "bytes" | "ms" | "numeric" | "node";
+
+/** A DOM element a table row points at — carries the rect for a screenshot crop. */
+export interface PageSpeedNodeRef {
+  /** Snippet / nodeLabel, truncated. */
+  label: string;
+  selector?: string;
+  /**
+   * Rect in full-page-screenshot pixel space. Present only when Lighthouse
+   * delivered the full-page screenshot's nodes map — that's what makes the
+   * element thumbnails in the findings list possible.
+   */
+  rect?: PageSpeedRect;
+}
+
+export interface PageSpeedCell {
+  type: PageSpeedCellType;
+  /** Display text for text/url/code cells. */
+  text?: string;
+  /** Raw number for bytes/ms/numeric cells — formatted locale-aware in the UI. */
+  value?: number;
+  node?: PageSpeedNodeRef;
+}
+
+export interface PageSpeedTableRow {
+  /** Aligned 1:1 with `PageSpeedTable.columns`; null = no value in that column. */
+  cells: (PageSpeedCell | null)[];
+  /** Lighthouse `subItems`, rendered indented under the row. */
+  subRows?: PageSpeedTableRow[];
+}
+
+/** Normalized Lighthouse `details` table shown inside an expanded finding. */
+export interface PageSpeedTable {
+  columns: { label: string; type: PageSpeedCellType }[];
+  rows: PageSpeedTableRow[];
+  /** Rows before the cap, so the UI can disclose the truncation. */
+  rowTotal: number;
+}
+
 /** One Lighthouse opportunity/diagnostic worth showing to the merchant. */
 export interface PageSpeedOpportunity {
   /** Lighthouse audit id, e.g. "render-blocking-resources". */
@@ -60,6 +104,16 @@ export interface PageSpeedOpportunity {
   savingsBytes?: number;
   /** Annotations (screenshot boxes) belonging to this finding; may be empty. */
   annotationIds: string[];
+  /** Lighthouse `displayValue`, e.g. "Potential savings of 150 ms". */
+  displayValue?: string;
+  /** Lighthouse 0..1 audit score; null for informative audits. Drives the row's tone marker. */
+  score?: number | null;
+  /** `scoreDisplayMode === "informative"` — Lighthouse reports it but does not score it. */
+  informative?: boolean;
+  /** Metrics the savings are attributed to (`metricSavings` keys), e.g. ["LCP", "FCP"]. */
+  metricLabels?: string[];
+  /** The audit's `details` table, normalized for rendering. */
+  table?: PageSpeedTable;
 }
 
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";

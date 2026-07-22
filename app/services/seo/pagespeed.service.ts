@@ -26,6 +26,10 @@ import { getDailyPageSpeedRunsLimit } from "../../utils/planUtils";
 import type {
   PageSpeedAnnotation,
   PageSpeedAuditResult,
+  PageSpeedCell,
+  PageSpeedCellType,
+  PageSpeedTable,
+  PageSpeedTableRow,
   PageSpeedFieldData,
   PageSpeedFieldMetric,
   PageSpeedHistoryEntry,
@@ -116,10 +120,16 @@ export interface RunPageSpeedAuditOptions {
   force?: boolean; // true = bypass cache and re-run
   /** Drives the daily run budget. Resolved from AISettings.subscriptionPlan by the caller. */
   plan: Plan;
+  /**
+   * UI language (AISettings.appLanguage). Passed to PSI as `locale` so audit
+   * titles, descriptions and table headings — all of which we render verbatim —
+   * come back in the merchant's language instead of English.
+   */
+  locale?: string;
 }
 
 export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise<PageSpeedAuditResult> {
-  const { db, shop, url, strategy, force, plan } = opts;
+  const { db, shop, url, strategy, force, plan, locale } = opts;
 
   if (!force) {
     const cached = await db.seoPageSpeedAudit.findFirst({
@@ -145,7 +155,7 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
   }
 
   const fetchedAt = new Date().toISOString();
-  const raw = await fetchPageSpeedInsights(url, strategy);
+  const raw = await fetchPageSpeedInsights(url, strategy, locale);
   const result = parsePageSpeedResponse(raw, url, strategy, fetchedAt);
 
   await db.seoPageSpeedAudit.create({
@@ -163,11 +173,16 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
   return result;
 }
 
-async function fetchPageSpeedInsights(url: string, strategy: PageSpeedStrategy): Promise<unknown> {
+async function fetchPageSpeedInsights(
+  url: string,
+  strategy: PageSpeedStrategy,
+  locale?: string,
+): Promise<unknown> {
   const apiUrl = new URL(PSI_ENDPOINT);
   apiUrl.searchParams.set("url", url);
   apiUrl.searchParams.set("strategy", strategy);
   apiUrl.searchParams.append("category", "performance");
+  if (locale) apiUrl.searchParams.set("locale", locale);
   if (process.env.PAGESPEED_API_KEY) {
     apiUrl.searchParams.set("key", process.env.PAGESPEED_API_KEY);
   }
@@ -310,6 +325,11 @@ const MAX_LABEL_LENGTH = 80;
 const MAX_CLS_ANNOTATIONS = 5;
 const MAX_IMAGE_ANNOTATIONS = 5;
 const MAX_OPPORTUNITIES = 8;
+/** Caps on the per-finding detail table — it is persisted with the audit. */
+const MAX_TABLE_ROWS = 8;
+const MAX_SUB_ROWS = 3;
+const MAX_TABLE_COLUMNS = 4;
+const MAX_CELL_LENGTH = 160;
 
 /** Parse a raw PSI v5 response into the compact result. Never throws. */
 export function parsePageSpeedResponse(
@@ -348,7 +368,7 @@ function parsePageSpeedResponseInner(
 
   const performanceScore = extractPerformanceScore(categories);
   const metrics = extractMetrics(audits);
-  const { screenshot, nodesMap } = extractScreenshot(audits);
+  const { screenshot, nodesMap } = extractScreenshot(audits, lighthouseResult);
 
   const imageAnnotationsByAuditId: Record<string, string[]> = {};
   const { annotations, total: annotationTotal } = nodesMap
@@ -358,6 +378,7 @@ function parsePageSpeedResponseInner(
   const { opportunities, total: opportunityTotal } = extractOpportunities(
     audits,
     imageAnnotationsByAuditId,
+    nodesMap,
   );
   const fieldData = extractFieldData(r);
 
@@ -481,11 +502,19 @@ function safeSpan(end: number | undefined, start: number | undefined): number | 
   return typeof end === "number" && typeof start === "number" ? end - start : undefined;
 }
 
-function extractScreenshot(audits: Record<string, any>): {
+function extractScreenshot(
+  audits: Record<string, any>,
+  lighthouseResult: any,
+): {
   screenshot: PageSpeedScreenshot | null;
   nodesMap: Record<string, RawNodeRect> | null;
 } {
-  const fullPageDetails = audits["full-page-screenshot"]?.details;
+  // Lighthouse >= 10 (what PSI runs today) carries the full-page screenshot and
+  // its nodes map as a top-level LHR property; only older versions exposed it as
+  // the hidden `full-page-screenshot` audit. Reading the audit alone meant we
+  // never found a screenshot on current runs — no rects, no element thumbnails,
+  // and the "Google couldn't create an element screenshot" banner on every run.
+  const fullPageDetails = lighthouseResult?.fullPageScreenshot ?? audits["full-page-screenshot"]?.details;
   const shot = fullPageDetails?.screenshot;
   if (shot?.data) {
     return {
@@ -641,12 +670,139 @@ function metricSavingsMs(audit: any): number | undefined {
 }
 
 /**
+ * Lighthouse `valueType` → the cell kinds we can actually render. Anything not
+ * listed (thumbnail, link objects, …) makes its column drop out entirely rather
+ * than render as a guessed-at string.
+ */
+const CELL_TYPE_BY_VALUE_TYPE: Record<string, PageSpeedCellType> = {
+  url: "url",
+  text: "text",
+  code: "code",
+  "source-location": "text",
+  bytes: "bytes",
+  ms: "ms",
+  timespanMs: "ms",
+  numeric: "numeric",
+  node: "node",
+};
+
+/** Heading shape differs across Lighthouse versions (key/valueType vs itemKey/itemType). */
+function headingParts(h: any): { key: string; valueType: string; label: string; subKey?: string; subValueType?: string } | null {
+  const key = typeof h?.key === "string" ? h.key : typeof h?.itemKey === "string" ? h.itemKey : "";
+  const valueType =
+    typeof h?.valueType === "string" ? h.valueType : typeof h?.itemType === "string" ? h.itemType : "";
+  if (!key || !valueType) return null;
+  const rawLabel = h?.label ?? h?.text;
+  return {
+    key,
+    valueType,
+    label: typeof rawLabel === "string" ? rawLabel : key,
+    subKey: typeof h?.subItemsHeading?.key === "string" ? h.subItemsHeading.key : undefined,
+    subValueType:
+      typeof h?.subItemsHeading?.valueType === "string" ? h.subItemsHeading.valueType : undefined,
+  };
+}
+
+function toCell(value: any, type: PageSpeedCellType, nodesMap: Record<string, RawNodeRect> | null): PageSpeedCell | null {
+  if (value == null) return null;
+
+  if (type === "node") {
+    const label = nodeLabel(value);
+    if (!label) return null;
+    const rect = nodesMap ? resolveNodeRect(value, nodesMap) : null;
+    const selector = typeof value?.selector === "string" ? value.selector : undefined;
+    return { type, node: { label, ...(selector ? { selector } : {}), ...(isPositiveRect(rect) ? { rect } : {}) } };
+  }
+
+  if (type === "bytes" || type === "ms" || type === "numeric") {
+    const num = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(num) ? { type, value: num } : null;
+  }
+
+  // `source-location` is an object; everything else arrives as a plain string.
+  if (typeof value === "object") {
+    const url = typeof value.url === "string" ? value.url : "";
+    if (!url) return null;
+    const line = typeof value.line === "number" ? `:${value.line}` : "";
+    const column = typeof value.column === "number" ? `:${value.column}` : "";
+    return { type: "text", text: truncate(`${url}${line}${column}`) };
+  }
+
+  const text = String(value).trim();
+  return text ? { type, text: truncate(text) } : null;
+}
+
+function truncate(s: string): string {
+  return s.length > MAX_CELL_LENGTH ? `${s.slice(0, MAX_CELL_LENGTH)}…` : s;
+}
+
+/**
+ * Normalize a Lighthouse `details` table/opportunity into the flat contract the
+ * UI renders. Driven by `headings` rather than per-audit special cases, so a
+ * new Lighthouse diagnostic shows its data without a code change here.
+ */
+function extractTable(details: any, nodesMap: Record<string, RawNodeRect> | null): PageSpeedTable | undefined {
+  const type = details?.type;
+  if (type !== "table" && type !== "opportunity") return undefined;
+  const rawHeadings = Array.isArray(details.headings) ? details.headings : [];
+  const rawItems = Array.isArray(details.items) ? details.items : [];
+  if (rawHeadings.length === 0 || rawItems.length === 0) return undefined;
+
+  const headings = rawHeadings
+    .map(headingParts)
+    .filter((h: any): h is NonNullable<ReturnType<typeof headingParts>> => !!h)
+    .filter((h: any) => !!CELL_TYPE_BY_VALUE_TYPE[h.valueType])
+    .slice(0, MAX_TABLE_COLUMNS);
+  if (headings.length === 0) return undefined;
+
+  const buildRow = (item: any, keyOf: (h: any) => string | undefined, typeOf: (h: any) => string): PageSpeedTableRow | null => {
+    const cells = headings.map((h: any) => {
+      const key = keyOf(h);
+      if (!key) return null;
+      const cellType = CELL_TYPE_BY_VALUE_TYPE[typeOf(h)];
+      if (!cellType) return null;
+      return toCell(item?.[key], cellType, nodesMap);
+    });
+    return cells.some(Boolean) ? { cells } : null;
+  };
+
+  const rows: PageSpeedTableRow[] = [];
+  for (const item of rawItems.slice(0, MAX_TABLE_ROWS)) {
+    const row = buildRow(item, (h) => h.key, (h) => h.valueType);
+    if (!row) continue;
+    const subItems = Array.isArray(item?.subItems?.items) ? item.subItems.items : [];
+    const subRows = subItems
+      .slice(0, MAX_SUB_ROWS)
+      .map((sub: any) => buildRow(sub, (h) => h.subKey, (h) => h.subValueType ?? h.valueType))
+      .filter((r: PageSpeedTableRow | null): r is PageSpeedTableRow => !!r);
+    if (subRows.length > 0) row.subRows = subRows;
+    rows.push(row);
+  }
+  if (rows.length === 0) return undefined;
+
+  return {
+    columns: headings.map((h: any) => ({ label: h.label, type: CELL_TYPE_BY_VALUE_TYPE[h.valueType] })),
+    rows,
+    rowTotal: rawItems.length,
+  };
+}
+
+/** Metrics Lighthouse attributes this audit's savings to, e.g. ["LCP", "FCP"]. */
+function metricLabels(audit: any): string[] | undefined {
+  const savings = audit?.metricSavings;
+  if (!savings || typeof savings !== "object") return undefined;
+  const labels = Object.keys(savings).filter((k) => typeof savings[k] === "number");
+  return labels.length > 0 ? labels : undefined;
+}
+
+/**
  * Returns the top `MAX_OPPORTUNITIES` findings plus `total` = how many were
  * found overall, so the UI can disclose the truncation.
  */
 function extractOpportunities(
   audits: Record<string, any>,
   imageAnnotationsByAuditId: Record<string, string[]>,
+  nodesMap: Record<string, RawNodeRect> | null,
 ): { opportunities: PageSpeedOpportunity[]; total: number } {
   const opportunities: PageSpeedOpportunity[] = [];
 
@@ -666,6 +822,10 @@ function extractOpportunities(
 
     const description = typeof (audit as any)?.description === "string" ? (audit as any).description : undefined;
 
+    const displayValue = typeof (audit as any)?.displayValue === "string" ? (audit as any).displayValue : undefined;
+    const labels = metricLabels(audit);
+    const table = extractTable(details, nodesMap);
+
     opportunities.push({
       id: auditId,
       title: typeof (audit as any)?.title === "string" ? (audit as any).title : auditId,
@@ -676,6 +836,11 @@ function extractOpportunities(
           : metricSavingsMs(audit),
       savingsBytes: typeof details?.overallSavingsBytes === "number" ? details.overallSavingsBytes : undefined,
       annotationIds: imageAnnotationsByAuditId[auditId] ?? [],
+      ...(displayValue ? { displayValue } : {}),
+      score,
+      ...((audit as any)?.scoreDisplayMode === "informative" ? { informative: true } : {}),
+      ...(labels ? { metricLabels: labels } : {}),
+      ...(table ? { table } : {}),
     });
   }
 

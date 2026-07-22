@@ -91,13 +91,22 @@ export const mockPsiResponse = {
         title: "Serve images in next-gen formats",
         description: "Learn more at [web.dev](https://web.dev/uses-webp-images/).",
         score: 0.3,
+        displayValue: "Potential savings of 125 KiB",
+        metricSavings: { LCP: 450, FCP: 120 },
         details: {
           type: "opportunity",
           overallSavingsMs: 450,
           overallSavingsBytes: 128_000,
+          headings: [
+            { key: "node", valueType: "node", label: "" },
+            { key: "url", valueType: "url", label: "URL" },
+            { key: "totalBytes", valueType: "bytes", label: "Transfer size" },
+            { key: "wastedBytes", valueType: "bytes", label: "Potential savings" },
+          ],
           items: [
             {
               url: "https://example.com/product.png",
+              totalBytes: 200_000,
               wastedBytes: 128_000,
               node: { lhId: "1-3", snippet: "<img src=\"product.png\">" },
             },
@@ -112,7 +121,19 @@ export const mockPsiResponse = {
         details: {
           type: "opportunity",
           overallSavingsMs: 300,
-          items: [{ url: "https://example.com/style.css" }],
+          headings: [
+            { key: "url", valueType: "url", label: "URL", subItemsHeading: { key: "url", valueType: "url" } },
+            { key: "totalBytes", valueType: "bytes", label: "Transfer size" },
+            { key: "wastedMs", valueType: "timespanMs", label: "Duration" },
+          ],
+          items: [
+            {
+              url: "https://example.com/style.css",
+              totalBytes: 23_000,
+              wastedMs: 480,
+              subItems: { type: "subitems", items: [{ url: "https://example.com/assets/base.css" }] },
+            },
+          ],
         },
       },
       "uses-optimized-images": {
