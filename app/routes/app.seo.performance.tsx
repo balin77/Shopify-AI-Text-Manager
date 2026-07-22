@@ -15,7 +15,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -28,12 +28,12 @@ import {
   Select,
   Banner,
   IndexTable,
+  Divider,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { HelpTooltip } from "../components/HelpTooltip";
-import { scoreTone } from "../utils/seo-score";
 import { getFormString } from "../utils/form-data.utils";
 import {
   isAllowedAuditUrl,
@@ -264,6 +264,216 @@ const FIELD_CATEGORY_TONE: Record<CruxCategory, "success" | "warning" | "critica
   SLOW: "critical",
 };
 
+type PerfTone = "success" | "warning" | "critical";
+
+/** Lighthouse's own palette — reused so our bars/gauge read like PSI's. */
+const PERF_COLOR: Record<PerfTone, string> = {
+  success: "#0cce6b",
+  warning: "#ffa400",
+  critical: "#ff4e42",
+};
+
+/** Lighthouse score bands (90 / 50), not the 70/40 SEO-score bands. */
+function lighthouseTone(score: number): PerfTone {
+  if (score >= 90) return "success";
+  if (score >= 50) return "warning";
+  return "critical";
+}
+
+/**
+ * Core Web Vitals thresholds per field metric, in the metric's own reported unit
+ * (ms; CLS as value*100 per CrUX convention). Used for the fallback bar bands
+ * and for placing the marker inside its bucket.
+ */
+const FIELD_THRESHOLDS: Record<string, { good: number; poor: number }> = {
+  lcp: { good: 2500, poor: 4000 },
+  inp: { good: 200, poor: 500 },
+  cls: { good: 10, poor: 25 },
+  fcp: { good: 1800, poor: 3000 },
+  ttfb: { good: 800, poor: 1800 },
+};
+
+/** Fallback segment widths when a stored audit carries no CrUX histogram. */
+const FALLBACK_PROPORTIONS = [0.62, 0.19, 0.19];
+
+/**
+ * PSI-style threshold bar: three tone-colored segments whose widths are the
+ * real-user distribution (falling back to fixed bands for audits stored before
+ * distributions were captured), plus a marker at the p75 value.
+ *
+ * Marker position = cumulative width of preceding buckets + the value's
+ * fraction within its own bucket, so it always lands inside the segment whose
+ * color matches the metric's category.
+ */
+function FieldMetricBar({
+  metricKey,
+  percentile,
+  distributions,
+}: {
+  metricKey: string;
+  percentile: number;
+  distributions?: { min: number; max?: number; proportion: number }[];
+}) {
+  const thresholds = FIELD_THRESHOLDS[metricKey];
+  const buckets =
+    distributions && distributions.length === 3
+      ? distributions
+      : thresholds
+        ? [
+            { min: 0, max: thresholds.good, proportion: FALLBACK_PROPORTIONS[0] },
+            { min: thresholds.good, max: thresholds.poor, proportion: FALLBACK_PROPORTIONS[1] },
+            { min: thresholds.poor, proportion: FALLBACK_PROPORTIONS[2] },
+          ]
+        : null;
+  if (!buckets) return null;
+
+  const tones: PerfTone[] = ["success", "warning", "critical"];
+  const total = buckets.reduce((sum, b) => sum + b.proportion, 0) || 1;
+
+  let markerPct = 0;
+  let cumulative = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    const b = buckets[i];
+    const width = b.proportion / total;
+    // Open-ended poor bucket: span it to [min, 2*min] so a runaway value still
+    // lands on the bar instead of running off the end.
+    const span = b.max != null ? b.max - b.min : Math.max(b.min, 1);
+    if (b.max == null || percentile < b.max) {
+      const within = span > 0 ? Math.min(1, Math.max(0, (percentile - b.min) / span)) : 0;
+      markerPct = (cumulative + within * width) * 100;
+      break;
+    }
+    cumulative += width;
+    markerPct = cumulative * 100;
+  }
+
+  return (
+    <div style={{ position: "relative", padding: "6px 0 10px" }}>
+      <div style={{ display: "flex", gap: "2px", height: "4px" }}>
+        {buckets.map((b, i) => (
+          <div
+            key={i}
+            style={{
+              width: `${(b.proportion / total) * 100}%`,
+              background: PERF_COLOR[tones[i]],
+              borderRadius: "2px",
+            }}
+          />
+        ))}
+      </div>
+      <span
+        style={{
+          position: "absolute",
+          left: `${Math.min(99, Math.max(1, markerPct))}%`,
+          top: "2px",
+          width: "10px",
+          height: "10px",
+          marginLeft: "-5px",
+          borderRadius: "50%",
+          border: "2px solid var(--p-color-text-secondary, #6d7175)",
+          background: "var(--p-color-bg-surface, #fff)",
+          boxSizing: "border-box",
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Tone marker in front of a metric name. Shape carries the same information as
+ * the color (circle = good, square = needs improvement, triangle = poor), the
+ * way PSI does it, so the verdict survives for color-blind merchants.
+ */
+function ToneMarker({ tone, label }: { tone?: PerfTone; label?: string }) {
+  const color = tone ? PERF_COLOR[tone] : "var(--p-color-border, #c9cccf)";
+  const base: CSSProperties = { display: "inline-block", flexShrink: 0, width: "10px", height: "10px" };
+  if (tone === "critical") {
+    return (
+      <span
+        title={label}
+        aria-label={label}
+        style={{
+          ...base,
+          height: 0,
+          borderLeft: "5px solid transparent",
+          borderRight: "5px solid transparent",
+          borderBottom: `9px solid ${color}`,
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{
+        ...base,
+        background: color,
+        borderRadius: tone === "success" ? "50%" : "2px",
+      }}
+    />
+  );
+}
+
+/** Score bands shown as a legend under the gauge — pure numerals, no i18n needed. */
+const SCORE_LEGEND: { range: string; tone: PerfTone }[] = [
+  { range: "0–49", tone: "critical" },
+  { range: "50–89", tone: "warning" },
+  { range: "90–100", tone: "success" },
+];
+
+/** Shared responsive grid for the field-data and lab-metric tiles. */
+const FIELD_GRID_STYLE: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+  gap: "16px 32px",
+};
+
+/** Circular Lighthouse-style score gauge. */
+function ScoreGauge({ score, label }: { score: number | null; label: string }) {
+  const tone: PerfTone = score == null ? "warning" : lighthouseTone(score);
+  const color = PERF_COLOR[tone];
+  const radius = 52;
+  const circumference = 2 * Math.PI * radius;
+  const filled = score != null ? (score / 100) * circumference : 0;
+
+  return (
+    <BlockStack gap="150" inlineAlign="center">
+      <div style={{ position: "relative", width: "128px", height: "128px" }}>
+        <svg width="128" height="128" viewBox="0 0 128 128" role="img" aria-label={`${label}: ${score ?? "–"}`}>
+          <circle cx="64" cy="64" r={radius} fill={`${color}1f`} stroke={`${color}40`} strokeWidth="8" />
+          <circle
+            cx="64"
+            cy="64"
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeDasharray={`${filled} ${circumference - filled}`}
+            transform="rotate(-90 64 64)"
+          />
+        </svg>
+        <span
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "34px",
+            fontWeight: 500,
+            color,
+          }}
+        >
+          {score != null ? score : "–"}
+        </span>
+      </div>
+      <Text as="span" variant="headingMd">{label}</Text>
+    </BlockStack>
+  );
+}
+
 function formatMs(ms: number): string {
   return `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
 }
@@ -425,19 +635,58 @@ export default function SeoPerformance() {
 
   // Real-user (CrUX) rows, in PSI's own order. CLS is reported as value*100 per
   // CrUX convention, everything else is milliseconds.
+  // `group` splits them the way PSI does: the three Core Web Vitals first, the
+  // supporting metrics under their own heading.
   const fieldRows = useMemo(() => {
     const fd = result?.fieldData;
     if (!fd) return [];
     return (
       [
-        { key: "lcp", label: p.fieldLcpLabel, metric: fd.lcp, format: formatMs },
-        { key: "inp", label: p.fieldInpLabel, metric: fd.inp, format: formatMs },
-        { key: "cls", label: p.fieldClsLabel, metric: fd.cls, format: (v: number) => (v / 100).toFixed(2) },
-        { key: "fcp", label: p.fieldFcpLabel, metric: fd.fcp, format: formatMs },
-        { key: "ttfb", label: p.fieldTtfbLabel, metric: fd.ttfb, format: formatMs },
+        { key: "lcp", group: "core", label: p.fieldMetricNames.lcp, metric: fd.lcp, format: formatMs },
+        { key: "inp", group: "core", label: p.fieldMetricNames.inp, metric: fd.inp, format: formatMs },
+        {
+          key: "cls",
+          group: "core",
+          label: p.fieldMetricNames.cls,
+          metric: fd.cls,
+          format: (v: number) => (v / 100).toFixed(2),
+        },
+        { key: "fcp", group: "other", label: p.fieldMetricNames.fcp, metric: fd.fcp, format: formatMs },
+        { key: "ttfb", group: "other", label: p.fieldMetricNames.ttfb, metric: fd.ttfb, format: formatMs },
       ] as const
     ).filter((row) => !!row.metric);
-  }, [result, p.fieldLcpLabel, p.fieldInpLabel, p.fieldClsLabel, p.fieldFcpLabel, p.fieldTtfbLabel]);
+  }, [result, p.fieldMetricNames]);
+
+  const coreFieldRows = fieldRows.filter((row) => row.group === "core");
+  const otherFieldRows = fieldRows.filter((row) => row.group === "other");
+
+  const renderFieldMetric = (row: (typeof fieldRows)[number]) => {
+    const metric = row.metric!;
+    const tone = FIELD_CATEGORY_TONE[metric.category];
+    return (
+      <BlockStack key={row.key} gap="100">
+        <InlineStack gap="150" blockAlign="center" wrap={false}>
+          <ToneMarker tone={tone} label={p.fieldCategory[metric.category]} />
+          <Text as="span" variant="bodyMd">{row.label}</Text>
+        </InlineStack>
+        <div
+          style={{
+            fontSize: "22px",
+            lineHeight: "28px",
+            textAlign: "center",
+            color: PERF_COLOR[tone],
+          }}
+        >
+          {row.format(metric.percentile)}
+        </div>
+        <FieldMetricBar
+          metricKey={row.key}
+          percentile={metric.percentile}
+          distributions={metric.distributions}
+        />
+      </BlockStack>
+    );
+  };
 
   // Toggle for the "Learn more" panel under the no-highlight banner. Reset
   // whenever the underlying result changes so it doesn't leak between runs.
@@ -559,28 +808,101 @@ export default function SeoPerformance() {
                   : p.staleQuotaNotice}
               </Banner>
             )}
-            {/* Score header */}
-            <Card>
-              <BlockStack gap="200">
-                <InlineStack gap="300" blockAlign="center">
-                  <Text as="span" variant="heading2xl">
-                    {result.performanceScore != null ? String(result.performanceScore) : "–"}
-                  </Text>
-                  {result.performanceScore != null && (
-                    <Badge tone={scoreTone(result.performanceScore) as any}>{p.scoreTitle}</Badge>
+            {/* Real-user (CrUX) field data — leads the result the way PSI does,
+                full width, one threshold bar per metric. */}
+            {result.fieldData && (
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack gap="300" blockAlign="center" wrap>
+                    <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
+                    {/* CrUX's aggregate verdict — the "passed / did not pass
+                        the Core Web Vitals assessment" line PSI leads with. */}
+                    {result.fieldData.overallCategory && (
+                      <InlineStack gap="150" blockAlign="center">
+                        <Text as="span" variant="bodyMd">{p.fieldOverallLabel}:</Text>
+                        <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.overallCategory]}>
+                          {result.fieldData.overallCategory === "FAST"
+                            ? p.fieldOverallPass
+                            : p.fieldOverallFail}
+                        </Badge>
+                      </InlineStack>
+                    )}
+                  </InlineStack>
+
+                  <div style={FIELD_GRID_STYLE}>{coreFieldRows.map(renderFieldMetric)}</div>
+
+                  {otherFieldRows.length > 0 && (
+                    <BlockStack gap="300">
+                      <Divider />
+                      <Text as="h4" variant="headingSm" tone="subdued">{p.fieldOtherTitle}</Text>
+                      <div style={FIELD_GRID_STYLE}>{otherFieldRows.map(renderFieldMetric)}</div>
+                    </BlockStack>
                   )}
+
+                  {result.fieldData.originFallback && (
+                    <Text as="p" variant="bodySm" tone="subdued">{p.fieldOriginFallback}</Text>
+                  )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Lab result (this run) — gauge + the measured metrics. */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack gap="500" blockAlign="center" wrap>
+                  <ScoreGauge score={result.performanceScore} label={p.scoreTitle} />
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {p.testedLabel
+                        .replace("{url}", displayPath(result.url))
+                        .replace("{strategy}", strategyLabel(result.strategy))
+                        .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                    </Text>
+                    {result.finalUrl && (
+                      <Text as="p" variant="bodySm" tone="caution">
+                        {p.redirectNotice.replace("{url}", result.finalUrl)}
+                      </Text>
+                    )}
+                    <InlineStack gap="300" wrap>
+                      {SCORE_LEGEND.map((entry) => (
+                        <InlineStack key={entry.range} gap="100" blockAlign="center">
+                          <ToneMarker tone={entry.tone} />
+                          <Text as="span" variant="bodySm" tone="subdued">{entry.range}</Text>
+                        </InlineStack>
+                      ))}
+                    </InlineStack>
+                  </BlockStack>
                 </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {p.testedLabel
-                    .replace("{url}", displayPath(result.url))
-                    .replace("{strategy}", strategyLabel(result.strategy))
-                    .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
-                </Text>
-                {result.finalUrl && (
-                  <Text as="p" variant="bodySm" tone="caution">
-                    {p.redirectNotice.replace("{url}", result.finalUrl)}
-                  </Text>
-                )}
+
+                <Divider />
+
+                <Text as="h4" variant="headingSm" tone="subdued">{p.metricsTitle}</Text>
+                <div style={FIELD_GRID_STYLE}>
+                  {result.metrics.map((m) => {
+                    const helpKey = METRIC_HELP_KEYS[m.id as PageSpeedMetricId];
+                    const tone = metricTone(m.score);
+                    return (
+                      <BlockStack key={m.id} gap="100">
+                        <InlineStack gap="150" blockAlign="center" wrap={false}>
+                          <ToneMarker tone={tone} />
+                          <Text as="span" variant="bodyMd">
+                            {p.metricNames[m.id as PageSpeedMetricId] || m.id}
+                          </Text>
+                          {helpKey && <HelpTooltip helpKey={helpKey} position="below" />}
+                        </InlineStack>
+                        <div
+                          style={{
+                            fontSize: "22px",
+                            lineHeight: "28px",
+                            color: tone ? PERF_COLOR[tone] : undefined,
+                          }}
+                        >
+                          {m.displayValue}
+                        </div>
+                      </BlockStack>
+                    );
+                  })}
+                </div>
               </BlockStack>
             </Card>
 
@@ -705,27 +1027,6 @@ export default function SeoPerformance() {
               )}
 
               <BlockStack gap="400">
-                {/* Metrics */}
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingMd">{p.metricsTitle}</Text>
-                    {result.metrics.map((m) => {
-                      const helpKey = METRIC_HELP_KEYS[m.id as PageSpeedMetricId];
-                      return (
-                        <InlineStack key={m.id} align="space-between" blockAlign="center">
-                          <InlineStack gap="100" blockAlign="center" wrap={false}>
-                            <Text as="span" variant="bodyMd">
-                              {p.metricNames[m.id as PageSpeedMetricId] || m.id}
-                            </Text>
-                            {helpKey && <HelpTooltip helpKey={helpKey} position="below" />}
-                          </InlineStack>
-                          <Badge tone={metricTone(m.score)}>{m.displayValue}</Badge>
-                        </InlineStack>
-                      );
-                    })}
-                  </BlockStack>
-                </Card>
-
                 {/* Findings */}
                 <Card>
                   <BlockStack gap="300">
@@ -822,42 +1123,6 @@ export default function SeoPerformance() {
                   </BlockStack>
                 </Card>
 
-                {/* Real-user field data */}
-                {result.fieldData && (
-                  <Card>
-                    <BlockStack gap="200">
-                      <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
-                      {/* CrUX's aggregate verdict — the "passed / did not pass
-                          the Core Web Vitals assessment" line PSI leads with. */}
-                      {result.fieldData.overallCategory && (
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">{p.fieldOverallLabel}</Text>
-                          <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.overallCategory]}>
-                            {result.fieldData.overallCategory === "FAST"
-                              ? p.fieldOverallPass
-                              : p.fieldOverallFail}
-                          </Badge>
-                        </InlineStack>
-                      )}
-                      {fieldRows.map((row) => (
-                        <InlineStack key={row.key} align="space-between" blockAlign="center">
-                          <Text as="span" variant="bodyMd">{row.label}</Text>
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {row.format(row.metric!.percentile)}
-                            </Text>
-                            <Badge tone={FIELD_CATEGORY_TONE[row.metric!.category]}>
-                              {p.fieldCategory[row.metric!.category]}
-                            </Badge>
-                          </InlineStack>
-                        </InlineStack>
-                      ))}
-                      {result.fieldData.originFallback && (
-                        <Text as="p" variant="bodySm" tone="subdued">{p.fieldOriginFallback}</Text>
-                      )}
-                    </BlockStack>
-                  </Card>
-                )}
               </BlockStack>
             </div>
           </BlockStack>
@@ -1016,7 +1281,10 @@ export default function SeoPerformance() {
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           {entry.performanceScore != null ? (
-                            <Badge tone={scoreTone(entry.performanceScore) as any}>{String(entry.performanceScore)}</Badge>
+                            // Lighthouse bands, same as the gauge above — the SEO-score
+                            // bands (70/40) would color the very same run differently
+                            // on one page.
+                            <Badge tone={lighthouseTone(entry.performanceScore)}>{String(entry.performanceScore)}</Badge>
                           ) : (
                             <Text as="span" tone="subdued">–</Text>
                           )}

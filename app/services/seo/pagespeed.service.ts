@@ -690,9 +690,23 @@ function extractOpportunities(
 }
 
 function toFieldMetric(m: any): PageSpeedFieldMetric | undefined {
-  return m && typeof m.percentile === "number" && typeof m.category === "string"
-    ? { percentile: m.percentile, category: m.category }
+  if (!m || typeof m.percentile !== "number" || typeof m.category !== "string") return undefined;
+  // CrUX's histogram (good / needs-improvement / poor shares) drives the
+  // segmented bar in the UI. `max` is absent on the open-ended poor bucket.
+  const distributions = Array.isArray(m.distributions)
+    ? m.distributions
+        .filter((d: any) => typeof d?.min === "number" && typeof d?.proportion === "number")
+        .map((d: any) => ({
+          min: d.min,
+          ...(typeof d.max === "number" ? { max: d.max } : {}),
+          proportion: d.proportion,
+        }))
     : undefined;
+  return {
+    percentile: m.percentile,
+    category: m.category,
+    ...(distributions && distributions.length > 0 ? { distributions } : {}),
+  };
 }
 
 function extractFieldData(r: any): PageSpeedFieldData | null {

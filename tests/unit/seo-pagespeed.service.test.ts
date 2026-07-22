@@ -132,6 +132,24 @@ describe("parsePageSpeedResponse", () => {
     });
   });
 
+  it("carries the CrUX histogram through as distributions (bar segments in the UI)", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.loadingExperience.metrics.LARGEST_CONTENTFUL_PAINT_MS.distributions = [
+      { min: 0, max: 2500, proportion: 0.7 },
+      { min: 2500, max: 4000, proportion: 0.2 },
+      { min: 4000, proportion: 0.1 },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.fieldData?.lcp?.distributions).toEqual([
+      { min: 0, max: 2500, proportion: 0.7 },
+      { min: 2500, max: 4000, proportion: 0.2 },
+      { min: 4000, proportion: 0.1 },
+    ]);
+    // Metrics without a histogram must not grow an empty array — the UI keys
+    // its fallback bands off `distributions` being absent.
+    expect(r.fieldData?.cls?.distributions).toBeUndefined();
+  });
+
   it("returns null field data when neither loadingExperience source has metrics", () => {
     const raw = structuredClone(mockPsiResponse) as any;
     delete raw.loadingExperience;

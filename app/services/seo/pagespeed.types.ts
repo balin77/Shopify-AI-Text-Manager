@@ -64,10 +64,25 @@ export interface PageSpeedOpportunity {
 
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";
 
+/** One CrUX histogram bucket (good / needs-improvement / poor). */
+export interface PageSpeedFieldBucket {
+  min: number;
+  /** Absent on the open-ended "poor" bucket. */
+  max?: number;
+  /** Share of real users in this bucket, 0..1. */
+  proportion: number;
+}
+
 export interface PageSpeedFieldMetric {
   /** 75th-percentile value (ms; CLS is value*100 per CrUX convention). */
   percentile: number;
   category: CruxCategory;
+  /**
+   * CrUX's three-bucket user distribution, used to draw PSI's segmented bar.
+   * Optional because audits stored before this field existed have no buckets —
+   * the UI falls back to fixed threshold bands then.
+   */
+  distributions?: PageSpeedFieldBucket[];
 }
 
 /** Real-user (CrUX) data; null when Google has no field data for the URL. */
