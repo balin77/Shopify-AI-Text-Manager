@@ -1012,6 +1012,7 @@ export default function SeoPerformance() {
   // re-counts and is authoritative. Good enough to disable the button and show
   // the merchant where they stand before they click.
   const budgetExhausted = runsToday >= dailyLimit;
+  const runsLeft = Math.max(0, dailyLimit - runsToday);
 
   const openHistoryEntry = (entry: (typeof history)[number]) => {
     // Mirror the row's URL + strategy into the controls so "Re-test" naturally
@@ -1244,17 +1245,29 @@ export default function SeoPerformance() {
               >
                 {p.testButton}
               </Button>
+              {/* Right where the decision is made: what a click costs and what
+                  is left. `runsToday` comes from the loader, which Remix
+                  revalidates after each run. */}
+              <div style={{ paddingBottom: "6px" }}>
+                <Badge tone={budgetExhausted ? "critical" : runsLeft <= 1 ? "attention" : undefined}>
+                  {p.budgetBadge
+                    .replace("{remaining}", String(runsLeft))
+                    .replace("{limit}", String(dailyLimit))}
+                </Badge>
+              </div>
             </InlineStack>
             {running && (
               <Text as="p" variant="bodySm" tone="subdued">
                 {p.runningHint}
               </Text>
             )}
-            <Text as="p" variant="bodySm" tone={budgetExhausted ? "caution" : "subdued"}>
-              {(budgetExhausted ? p.budgetExhausted : p.budgetRemaining)
-                .replace("{used}", String(runsToday))
-                .replace("{limit}", String(dailyLimit))}
-            </Text>
+            {budgetExhausted && (
+              <Text as="p" variant="bodySm" tone="caution">
+                {p.budgetExhausted
+                  .replace("{used}", String(runsToday))
+                  .replace("{limit}", String(dailyLimit))}
+              </Text>
+            )}
           </BlockStack>
         </Card>
 

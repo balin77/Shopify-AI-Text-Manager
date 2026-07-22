@@ -1544,7 +1544,7 @@ export const es: Translation = {
         quotaExceeded: "Se ha agotado la cuota diaria de Google PageSpeed Insights. Inténtalo de nuevo más tarde — para cuotas mayores puedes configurar una clave de API propia (PAGESPEED_API_KEY).",
         dailyLimitReached: "Has alcanzado tu límite diario de {limit} pruebas. Mañana vuelves a tenerlas todas disponibles.",
       },
-      budgetRemaining: "{used} de {limit} pruebas usadas hoy.",
+      budgetBadge: "Quedan {remaining} de {limit} pruebas hoy",
       budgetExhausted: "Límite diario alcanzado ({used}/{limit}). Se restablece mañana — las pruebas ya realizadas siguen disponibles.",
       staleQuotaNotice: "Mostrando un resultado en caché — no se pudo hacer una prueba nueva porque la cuota diaria de Google PageSpeed Insights está agotada.",
       staleDailyLimitNotice: "Mostrando un resultado en caché — has alcanzado tu límite diario de {limit} pruebas. Mañana podrás hacer una prueba nueva.",

@@ -1542,7 +1542,7 @@ export const de = {
         quotaExceeded: "Googles PageSpeed-Insights-Tageskontingent ist erschöpft. Bitte später erneut versuchen — für höhere Kontingente kann ein eigener Google PageSpeed API-Key hinterlegt werden (PAGESPEED_API_KEY).",
         dailyLimitReached: "Du hast dein Tageslimit von {limit} Tests erreicht. Morgen stehen wieder alle Tests zur Verfügung.",
       },
-      budgetRemaining: "{used} von {limit} Tests heute verbraucht.",
+      budgetBadge: "Noch {remaining} von {limit} Tests heute",
       budgetExhausted: "Tageslimit erreicht ({used}/{limit}). Morgen geht es weiter — bereits durchgeführte Tests bleiben abrufbar.",
       staleQuotaNotice: "Zwischengespeichertes Ergebnis — ein frischer Test war nicht möglich, weil Googles PageSpeed-Insights-Tageskontingent erschöpft ist.",
       staleDailyLimitNotice: "Zwischengespeichertes Ergebnis — dein Tageslimit von {limit} Tests ist erreicht. Morgen ist wieder ein frischer Test möglich.",

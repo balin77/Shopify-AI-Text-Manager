@@ -1545,7 +1545,7 @@ export const en: Translation = {
         quotaExceeded: "Google's PageSpeed Insights daily quota is exhausted. Please try again later — for higher quotas, a dedicated Google PageSpeed API key can be configured (PAGESPEED_API_KEY).",
         dailyLimitReached: "You've reached your daily limit of {limit} tests. Your full allowance is back tomorrow.",
       },
-      budgetRemaining: "{used} of {limit} tests used today.",
+      budgetBadge: "{remaining} of {limit} tests left today",
       budgetExhausted: "Daily limit reached ({used}/{limit}). It resets tomorrow — tests you already ran stay available.",
       staleQuotaNotice: "Showing a cached result — a fresh test wasn't possible because Google's PageSpeed Insights daily quota is exhausted.",
       staleDailyLimitNotice: "Showing a cached result — you've reached your daily limit of {limit} tests. A fresh test is possible again tomorrow.",
