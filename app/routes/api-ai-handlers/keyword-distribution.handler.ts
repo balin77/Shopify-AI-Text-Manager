@@ -127,9 +127,10 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<Response> {
   const maxSecondaries = Number.isInteger(rawMaxSecondaries)
     ? Math.min(Math.max(rawMaxSecondaries, 0), MAX_KEYWORDS_PER_ITEM - 1)
     : 3;
-  // Optional product facet filters (plan §5.4 modal) — Product only.
+  // Optional product facet filter (plan §5.4 modal) — Product only.
+  // productType only: the cached Product model has NO vendor column, so the
+  // plan's vendor facet is not implementable from the cache.
   const filterProductType = getFormString(formData, "filterProductType");
-  const filterVendor = getFormString(formData, "filterVendor");
 
   if (!groupId || !RESOURCE_TYPES.includes(targetType)) {
     return json({ success: false, error: "Invalid distribution parameters." }, { status: 400 });
@@ -150,7 +151,6 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<Response> {
 
   const items = await loadTargetItems(db, session.shop, targetType, {
     productType: filterProductType,
-    vendor: filterVendor,
   });
   if (items.length === 0) {
     return json({ success: false, error: "No target items found for this distribution." }, { status: 400 });
@@ -347,7 +347,7 @@ async function loadTargetItems(
   db: PrismaClient,
   shop: string,
   targetType: KeywordResourceType,
-  filters: { productType?: string; vendor?: string },
+  filters: { productType?: string },
 ): Promise<DistributionItem[]> {
   switch (targetType) {
     case "Product": {
@@ -355,7 +355,6 @@ async function loadTargetItems(
         where: {
           shop,
           ...(filters.productType ? { productType: filters.productType } : {}),
-          ...(filters.vendor ? { vendor: filters.vendor } : {}),
         },
         select: { id: true, title: true, seoTitle: true, descriptionHtml: true },
         orderBy: { title: "asc" },

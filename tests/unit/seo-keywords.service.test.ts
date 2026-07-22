@@ -443,6 +443,42 @@ describe("persistence helpers (keyword + assignment)", () => {
     expect(tx.seoKeywordAssignment.delete).not.toHaveBeenCalled();
   });
 
+  it("findPrimaryElsewhere queries for a DIFFERENT item of the SAME type with the normalized keyword", async () => {
+    const { findPrimaryElsewhere } = await import("~/services/seo/keywords.service");
+    const findFirst = vi.fn(async (_args: any): Promise<any> => ({ resourceId: "p2" }));
+    const db = { seoKeywordAssignment: { findFirst } } as any;
+    const result = await findPrimaryElsewhere(db, SHOP, {
+      keyword: "  Blue   SHOES ",
+      resourceType: "Product",
+      excludeResourceId: P1,
+    });
+    expect(result).toEqual({ resourceId: "p2" });
+    const arg = findFirst.mock.calls[0][0];
+    expect(arg.where).toMatchObject({
+      shop: SHOP,
+      role: "primary",
+      resourceType: "Product",
+      resourceId: { not: P1 },
+      keyword: { keyword: "blue shoes", locale: "" },
+    });
+  });
+
+  it("setGroupPriority refuses foreign groups and invalid priorities", async () => {
+    const { setGroupPriority } = await import("~/services/seo/keywords.service");
+    const updateMany = vi.fn(async (_args: any) => ({ count: 3 }));
+    const findFirst = vi.fn(async (_args: any): Promise<any> => null);
+    const db = { seoKeywordGroup: { findFirst }, seoKeyword: { updateMany } } as any;
+    // Unknown/foreign group → 0, no write.
+    expect(await setGroupPriority(db, SHOP, "foreign", 1)).toBe(0);
+    expect(updateMany).not.toHaveBeenCalled();
+    // Invalid priority → 0 without even the ownership lookup write.
+    expect(await setGroupPriority(db, SHOP, "g1", 7)).toBe(0);
+    // Owned group → shop-scoped updateMany via the membership relation.
+    findFirst.mockResolvedValueOnce({ id: "g1" });
+    expect(await setGroupPriority(db, SHOP, "g1", 1)).toBe(3);
+    expect(updateMany.mock.calls[0][0].where).toEqual({ shop: SHOP, groups: { some: { groupId: "g1" } } });
+  });
+
   it("listAssignments flattens the keyword join into rows (incl. locale + role)", async () => {
     const rows = [
       {

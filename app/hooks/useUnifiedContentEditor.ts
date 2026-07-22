@@ -1007,7 +1007,19 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           [fieldType]: generatedContent,
         }));
       }
+      // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2): the server retried
+      // once and the output STILL over-uses a tracked keyword — surface it so
+      // the merchant reviews before accepting the suggestion.
+      if ((fetcher.data as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
+        showInfoBox(
+          (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
+            "The generated text still over-uses a tracked keyword — review it before accepting.",
+          "warning",
+          t.common?.warning || "Warning",
+        );
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.data]);
 
   // Ref to track pending translation AFTER save completes (for Accept & Translate flow)

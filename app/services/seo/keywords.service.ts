@@ -7,7 +7,10 @@
  * external keyword API. The CRUD helpers persist one keyword per item/locale.
  */
 
-import { Prisma, type PrismaClient } from "@prisma/client";
+// TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (SeoSidebar
+// uses analyzeOnPage), so a value import of @prisma/client would drag the
+// Prisma runtime into the browser bundle and break the vite build.
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
 
 export type KeywordResourceType = "Product" | "Collection" | "Article" | "Page";
@@ -278,11 +281,15 @@ async function serializableWithRetry<T>(
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await db.$transaction(fn, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // String literal instead of Prisma.TransactionIsolationLevel.* — the
+        // enum would need a VALUE import of @prisma/client (see header note).
+        isolationLevel: "Serializable" as Prisma.TransactionIsolationLevel,
       });
     } catch (err) {
       lastError = err;
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034") continue;
+      // Duck-typed instead of `instanceof Prisma.PrismaClientKnownRequestError`
+      // for the same client-bundle reason.
+      if ((err as { code?: string } | null)?.code === "P2034") continue;
       throw err;
     }
   }
@@ -647,7 +654,32 @@ export async function createGroup(
   } catch (err) {
     // Parallel create of the same name races past the pre-check — the unique
     // constraint answers P2002, which is just "duplicateName", not a 500.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+    // (Duck-typed — no @prisma/client value import in this client-safe module.)
+    if ((err as { code?: string } | null)?.code === "P2002") {
+      return { ok: false, reason: "duplicateName" };
+    }
+    throw err;
+  }
+}
+
+/** Rename a group (plan §5.1) — same duplicate-name semantics as create. */
+export async function renameGroup(
+  db: PrismaClient,
+  shop: string,
+  groupId: string,
+  name: string,
+): Promise<CreateGroupResult> {
+  const trimmed = name.trim();
+  const group = await db.seoKeywordGroup.findFirst({
+    where: { id: groupId, shop },
+    select: { id: true },
+  });
+  if (!group) return { ok: false, reason: "duplicateName" }; // unknown id → no-op error
+  try {
+    await db.seoKeywordGroup.update({ where: { id: group.id }, data: { name: trimmed } });
+    return { ok: true, id: group.id };
+  } catch (err) {
+    if ((err as { code?: string } | null)?.code === "P2002") {
       return { ok: false, reason: "duplicateName" };
     }
     throw err;
@@ -852,6 +884,54 @@ export async function setKeywordPriority(
 ): Promise<void> {
   if (priority !== 1 && priority !== 2 && priority !== 3) return;
   await db.seoKeyword.updateMany({ where: { id: keywordId, shop }, data: { priority } });
+}
+
+/** Bulk action (plan §5.1 group detail): set the priority of EVERY keyword in
+ *  a group in one statement. Returns the number of updated keywords. */
+export async function setGroupPriority(
+  db: PrismaClient,
+  shop: string,
+  groupId: string,
+  priority: number,
+): Promise<number> {
+  if (priority !== 1 && priority !== 2 && priority !== 3) return 0;
+  const group = await db.seoKeywordGroup.findFirst({
+    where: { id: groupId, shop },
+    select: { id: true },
+  });
+  if (!group) return 0;
+  const updated = await db.seoKeyword.updateMany({
+    where: { shop, groups: { some: { groupId } } },
+    data: { priority },
+  });
+  return updated.count;
+}
+
+/**
+ * Cross-item cannibalization pre-check for MANUAL primary creation (plan
+ * §7.1): is this (keyword, locale) already someone else's primary on another
+ * item of the same resource type? Returns that item's id, or null. The
+ * writer paths use it to drive a confirm dialog — automated paths (adopt,
+ * distribution) skip it by design.
+ */
+export async function findPrimaryElsewhere(
+  db: PrismaClient,
+  shop: string,
+  input: { keyword: string; locale?: string; resourceType: KeywordResourceType; excludeResourceId: string },
+): Promise<{ resourceId: string } | null> {
+  const keyword = normalizeKeyword(input.keyword);
+  if (!keyword) return null;
+  const assignment = await db.seoKeywordAssignment.findFirst({
+    where: {
+      shop,
+      role: "primary",
+      resourceType: input.resourceType,
+      resourceId: { not: input.excludeResourceId },
+      keyword: { keyword, locale: input.locale ?? "" },
+    },
+    select: { resourceId: true },
+  });
+  return assignment;
 }
 
 // ── Locale-aware analysis input ─────────────────────────────────────────────

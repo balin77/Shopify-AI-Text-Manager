@@ -40,7 +40,10 @@ import {
   removeAssignment,
   listGroups,
   createGroup,
+  renameGroup,
   deleteGroup,
+  setGroupPriority,
+  findPrimaryElsewhere,
   findCannibalizationConflicts,
   getGroupKeywords,
   addKeywordsToGroup,
@@ -58,7 +61,9 @@ import {
   type GroupKeywordRow,
 } from "../services/seo/keywords.service";
 import { parseKeywordsCsv } from "../services/seo/keywords-csv";
-import { estimateDistributionCost } from "../services/seo/keyword-distribution.service";
+// Client-safe shared module — NOT keyword-distribution.service, which pulls
+// the prompt sanitizer → logger.server into the browser bundle.
+import { estimateDistributionCost } from "../services/seo/keyword-distribution.shared";
 import type { DistributionSuggestResult } from "./api-ai-handlers/keyword-distribution.handler";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
@@ -333,6 +338,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     db.page.count({ where: { shop } }),
   ]);
 
+  // Product facets for the distribution modal's optional target filter
+  // (plan §5.4 — Product only; the handler filters server-side). Note: the
+  // cached Product model has NO vendor column, so the plan's vendor facet is
+  // not implementable from the cache — productType only.
+  const productTypeRows = await db.product.findMany({
+    where: { shop, productType: { not: "" } },
+    select: { productType: true },
+    distinct: ["productType"],
+    orderBy: { productType: "asc" },
+    take: 100,
+  });
+  const productTypes = productTypeRows
+    .map((r) => r.productType)
+    .filter((p): p is string => !!p);
+
   return json({
     keywords,
     pickers,
@@ -341,6 +361,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     primaryLocaleCode: String(primaryLocale?.locale || "en"),
     conflicts,
     unclassifiedCount,
+    productTypes,
     isPro,
     groups,
     groupDetail,
@@ -364,7 +385,30 @@ type ActionResult =
   | { ok: false; error: "invalid" | "tooMany" | "duplicateName" | "csvEmpty" | "csvTooMany"; existingKeyword?: never }
   // A different keyword already holds the primary role for this (item, locale)
   // — the UI confirms the swap and re-submits with demoteExisting=true.
-  | { ok: false; error: "primaryExists"; existingKeyword: string };
+  | { ok: false; error: "primaryExists"; existingKeyword: string }
+  // Cross-item cannibalization pre-check (plan §7.1): this keyword is already
+  // primary on ANOTHER item of the same type — the UI confirms and re-submits
+  // with acceptCannibalization=true.
+  | { ok: false; error: "cannibalization"; existingItemTitle: string };
+
+/** Item-title lookup for the cannibalization confirm message. */
+async function lookupItemTitle(
+  db: any,
+  shop: string,
+  resourceType: KeywordResourceType,
+  id: string,
+): Promise<string> {
+  const model =
+    resourceType === "Product"
+      ? db.product
+      : resourceType === "Collection"
+        ? db.collection
+        : resourceType === "Article"
+          ? db.article
+          : db.page;
+  const row = await model.findFirst({ where: { shop, id }, select: { title: true } });
+  return row?.title || id;
+}
 
 /** CSV import cap per request (plan §5.3) — anything bigger must be split. */
 const MAX_CSV_ROWS = 2000;
@@ -404,6 +448,23 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       }
       locale = localeInput;
     }
+    // Cross-item cannibalization guard (plan §7.1): warn BEFORE creating a
+    // primary that already exists as primary on another item of the same
+    // type. Bypassed after the merchant confirmed (acceptCannibalization).
+    const acceptCannibalization = getFormString(form, "acceptCannibalization") === "true";
+    if (role === "primary" && !acceptCannibalization) {
+      const elsewhere = await findPrimaryElsewhere(db, session.shop, {
+        keyword,
+        locale,
+        resourceType,
+        excludeResourceId: resourceId,
+      });
+      if (elsewhere) {
+        const existingItemTitle = await lookupItemTitle(db, session.shop, resourceType, elsewhere.resourceId);
+        return json<ActionResult>({ ok: false, error: "cannibalization", existingItemTitle }, { status: 409 });
+      }
+    }
+
     const result = await assignKeyword(db, session.shop, {
       resourceType,
       resourceId,
@@ -456,6 +517,27 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const result = await createGroup(db, session.shop, name, getFormString(form, "description"));
     if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
     return json<ActionResult>({ ok: true, kind: "groupCreated" });
+  }
+
+  if (actionType === "renameGroup") {
+    const groupId = getFormString(form, "groupId");
+    const name = getFormString(form, "name").trim();
+    if (!groupId || !name || name.length > 100) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const result = await renameGroup(db, session.shop, groupId, name);
+    if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
+    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
+  }
+
+  if (actionType === "setGroupPriority") {
+    const groupId = getFormString(form, "groupId");
+    const priority = Number(getFormString(form, "priority"));
+    if (!groupId || ![1, 2, 3].includes(priority)) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    await setGroupPriority(db, session.shop, groupId, priority);
+    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
   if (actionType === "deleteGroup") {
@@ -618,7 +700,35 @@ export default function SeoKeywords() {
           confirmLabel: k.primarySwapConfirm || "Replace",
         });
         if (ok) {
+          lastSubmitRef.current = { ...payload, demoteExisting: "true" };
           saveFetcher.submit({ ...payload, demoteExisting: "true" }, { method: "post" });
+        }
+      })();
+      return;
+    }
+    // Cross-item cannibalization warning (plan §7.1): the keyword is already
+    // primary on another item of the same type — confirm before creating a
+    // competing primary.
+    if (!data.ok && data.error === "cannibalization" && "existingItemTitle" in data && lastSubmitRef.current) {
+      const payload = lastSubmitRef.current;
+      lastSubmitRef.current = null;
+      const existingTitle = data.existingItemTitle;
+      void (async () => {
+        const ok = await confirm({
+          title: k.cannibalizationConfirmTitle || "Keyword already primary elsewhere",
+          message: (
+            k.cannibalizationConfirmBody ||
+            `"{keyword}" is already the primary keyword of "{item}". Two items competing for the same keyword cannibalize each other in Google. Track it here as primary anyway?`
+          )
+            .replace("{keyword}", payload.keyword)
+            .replace("{item}", existingTitle),
+          confirmLabel: k.cannibalizationConfirm || "Track anyway",
+        });
+        if (ok) {
+          // Keep the payload stashed — the SAME submit may next hit the
+          // same-item primaryExists confirm above.
+          lastSubmitRef.current = { ...payload, acceptCannibalization: "true" };
+          saveFetcher.submit({ ...payload, acceptCannibalization: "true" }, { method: "post" });
         }
       })();
     }
@@ -676,6 +786,13 @@ export default function SeoKeywords() {
   const [showDistModal, setShowDistModal] = useState(false);
   const [distTargetType, setDistTargetType] = useState<KeywordResourceType>("Product");
   const [distMaxSecondaries, setDistMaxSecondaries] = useState("3");
+  // Optional Product facet filter (plan §5.4 modal) — "" = no filter.
+  // (productType only — the cached Product model has no vendor column.)
+  const [distFilterProductType, setDistFilterProductType] = useState("");
+  // Group rename + bulk priority (plan §5.1).
+  const [renameValue, setRenameValue] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [bulkPriority, setBulkPriority] = useState("2");
   // Per-suggestion decision for the preview table; keyed by keyword.
   const [decisions, setDecisions] = useState<Record<string, "accept" | "secondaryOnly" | "reject">>({});
   const [demoteExisting, setDemoteExisting] = useState(false);
@@ -739,6 +856,9 @@ export default function SeoKeywords() {
         groupId: data.groupDetail.id,
         targetType: distTargetType,
         maxSecondaries: distMaxSecondaries,
+        ...(distTargetType === "Product" && distFilterProductType
+          ? { filterProductType: distFilterProductType }
+          : {}),
       },
       { method: "post", action: "/api/ai" },
     );
@@ -1384,9 +1504,51 @@ export default function SeoKeywords() {
           <Card>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h3" variant="headingMd">
-                  {data.groupDetail.name}
-                </Text>
+                {isRenaming ? (
+                  <InlineStack gap="200" blockAlign="end" wrap={false}>
+                    <TextField
+                      label={k.groupRenameLabel || "New name"}
+                      labelHidden
+                      autoComplete="off"
+                      value={renameValue}
+                      onChange={setRenameValue}
+                    />
+                    <Button
+                      size="slim"
+                      loading={groupFetcher.state !== "idle"}
+                      disabled={!renameValue.trim()}
+                      onClick={() => {
+                        if (!data.groupDetail) return;
+                        groupFetcher.submit(
+                          { actionType: "renameGroup", groupId: data.groupDetail.id, name: renameValue },
+                          { method: "post" },
+                        );
+                        setIsRenaming(false);
+                      }}
+                    >
+                      {k.groupRenameSave || "Save"}
+                    </Button>
+                    <Button size="slim" variant="plain" onClick={() => setIsRenaming(false)}>
+                      {k.distModalCancel || "Cancel"}
+                    </Button>
+                  </InlineStack>
+                ) : (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {data.groupDetail.name}
+                    </Text>
+                    <Button
+                      size="micro"
+                      variant="plain"
+                      onClick={() => {
+                        setRenameValue(data.groupDetail?.name ?? "");
+                        setIsRenaming(true);
+                      }}
+                    >
+                      {k.groupRename || "Rename"}
+                    </Button>
+                  </InlineStack>
+                )}
                 <InlineStack gap="200">
                   <Button
                     variant="primary"
@@ -1522,6 +1684,41 @@ export default function SeoKeywords() {
                     </IndexTable.Row>
                   ))}
                 </IndexTable>
+              )}
+
+              {/* Bulk priority (plan §5.1 group bulk actions) */}
+              {data.groupDetail.keywords.length > 1 && (
+                <InlineStack gap="200" blockAlign="end" wrap>
+                  <div style={{ minWidth: "150px" }}>
+                    <Select
+                      label={k.bulkPriorityLabel || "Set priority for ALL"}
+                      options={priorityOptions}
+                      value={bulkPriority}
+                      onChange={setBulkPriority}
+                    />
+                  </div>
+                  <Button
+                    loading={groupFetcher.state !== "idle"}
+                    onClick={async () => {
+                      if (!data.groupDetail) return;
+                      const ok = await confirm({
+                        title: k.bulkPriorityConfirmTitle || "Set priority for all keywords?",
+                        message: (
+                          k.bulkPriorityConfirmBody ||
+                          "This sets the priority of all {count} keywords in this group."
+                        ).replace("{count}", String(data.groupDetail.keywords.length)),
+                        confirmLabel: k.bulkPriorityApply || "Apply to all",
+                      });
+                      if (!ok) return;
+                      groupFetcher.submit(
+                        { actionType: "setGroupPriority", groupId: data.groupDetail.id, priority: bulkPriority },
+                        { method: "post" },
+                      );
+                    }}
+                  >
+                    {k.bulkPriorityApply || "Apply to all"}
+                  </Button>
+                </InlineStack>
               )}
 
               {/* Add single keyword to group */}
@@ -1761,6 +1958,23 @@ export default function SeoKeywords() {
               value={distMaxSecondaries}
               onChange={setDistMaxSecondaries}
             />
+            {distTargetType === "Product" && data.productTypes.length > 0 && (
+              <Select
+                label={k.distModalFilterType || "Filter: product type"}
+                options={[
+                  { label: k.distModalFilterAll || "All", value: "" },
+                  ...data.productTypes.map((p) => ({ label: p, value: p })),
+                ]}
+                value={distFilterProductType}
+                onChange={setDistFilterProductType}
+              />
+            )}
+            {distTargetType === "Product" && distFilterProductType && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {k.distModalFilterHint ||
+                  "The cost estimate below assumes ALL items of this type — with a filter the actual cost is lower."}
+              </Text>
+            )}
             {distCost && (
               <Text as="p" variant="bodySm" tone={distCost.batches > 30 ? "caution" : "subdued"}>
                 {(k.distCostPreview || "~{batches} AI call(s), estimated ~${usd}.")

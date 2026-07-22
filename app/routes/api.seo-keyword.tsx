@@ -20,6 +20,7 @@ import {
   getItemKeywords,
   promoteAssignment,
   removeAssignment,
+  findPrimaryElsewhere,
   MAX_KEYWORD_LENGTH,
   type KeywordResourceType,
   type KeywordRole,
@@ -54,7 +55,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult =
   | { ok: true; keywords: SidebarKeyword[] }
-  | { ok: false; error: "invalid" | "tooMany" | "primaryExists" };
+  | { ok: false; error: "invalid" | "tooMany" | "primaryExists" }
+  // Cross-item cannibalization pre-check (plan §7.1) — the sidebar shows a
+  // warning with an "add anyway" retry (acceptCannibalization=true).
+  | { ok: false; error: "cannibalization"; existingItemTitle: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { session } = await authenticate.admin(request);
@@ -78,6 +82,35 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       (role !== "primary" && role !== "secondary")
     ) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    // Cross-item cannibalization guard (plan §7.1), bypassed after the
+    // merchant confirmed via "add anyway".
+    const acceptCannibalization = getFormString(form, "acceptCannibalization") === "true";
+    if (role === "primary" && !acceptCannibalization) {
+      const elsewhere = await findPrimaryElsewhere(db, shop, {
+        keyword,
+        locale: "",
+        resourceType,
+        excludeResourceId: resourceId,
+      });
+      if (elsewhere) {
+        const model =
+          resourceType === "Product"
+            ? db.product
+            : resourceType === "Collection"
+              ? db.collection
+              : resourceType === "Article"
+                ? db.article
+                : db.page;
+        const item = await (model as any).findFirst({
+          where: { shop, id: elsewhere.resourceId },
+          select: { title: true },
+        });
+        return json<ActionResult>(
+          { ok: false, error: "cannibalization", existingItemTitle: item?.title || elsewhere.resourceId },
+          { status: 409 },
+        );
+      }
     }
     const result = await assignKeyword(db, shop, {
       resourceType,

@@ -129,7 +129,13 @@ export function SeoSidebar({
     ok: boolean;
     keywords?: SidebarKeywordEntry[];
     error?: string;
+    existingItemTitle?: string;
   }>();
+  // Cross-item cannibalization warning (plan §7.1): the server refused a
+  // primary add because the keyword is primary on another item — stash the
+  // rejected payload so "add anyway" can re-submit with the bypass flag.
+  const [cannibalizationWarning, setCannibalizationWarning] = useState<string | null>(null);
+  const pendingAddRef = useRef<{ keyword: string; role: KeywordRole } | null>(null);
   // The resourceId a mutation was submitted FOR — a late response must not
   // overwrite the list after the merchant already switched to another item
   // (the response carries no row identity of its own).
@@ -161,22 +167,45 @@ export function SeoSidebar({
   // Guarded against late responses for a previously selected item (the
   // merchant may have switched while the request was in flight).
   useEffect(() => {
-    if (keywordOpFetcher.state === "idle" && keywordOpFetcher.data?.ok && keywordOpFetcher.data.keywords) {
-      if (keywordOpTargetRef.current !== resourceId) return;
+    if (keywordOpFetcher.state !== "idle" || !keywordOpFetcher.data) return;
+    if (keywordOpTargetRef.current !== resourceId) return;
+    if (keywordOpFetcher.data.ok && keywordOpFetcher.data.keywords) {
       setKeywords(keywordOpFetcher.data.keywords);
       setKeywordInput("");
+      setCannibalizationWarning(null);
+      pendingAddRef.current = null;
+      return;
+    }
+    if (!keywordOpFetcher.data.ok && keywordOpFetcher.data.error === "cannibalization") {
+      setCannibalizationWarning(keywordOpFetcher.data.existingItemTitle ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keywordOpFetcher.state, keywordOpFetcher.data]);
 
-  const handleAddKeyword = () => {
-    if (!resourceId || !resourceType || !keywordInput.trim()) return;
+  const handleAddKeyword = (acceptCannibalization = false) => {
+    if (!resourceId || !resourceType) return;
+    // "Add anyway" re-submits the REJECTED payload; a fresh add uses the input.
+    const keyword = acceptCannibalization ? pendingAddRef.current?.keyword : keywordInput.trim();
+    if (!keyword) return;
     // First keyword becomes the primary; everything after joins as secondary
     // (promote later via the row's "make primary" action).
-    const role = keywords.some((k) => k.role === "primary") ? "secondary" : "primary";
+    const role = acceptCannibalization
+      ? (pendingAddRef.current?.role ?? "primary")
+      : keywords.some((k) => k.role === "primary")
+        ? "secondary"
+        : "primary";
+    pendingAddRef.current = { keyword, role };
+    setCannibalizationWarning(null);
     keywordOpTargetRef.current = resourceId;
     keywordOpFetcher.submit(
-      { op: "add", resourceId, resourceType, keyword: keywordInput, role },
+      {
+        op: "add",
+        resourceId,
+        resourceType,
+        keyword,
+        role,
+        ...(acceptCannibalization ? { acceptCannibalization: "true" } : {}),
+      },
       { method: "post", action: "/api/seo-keyword" },
     );
   };
@@ -618,7 +647,7 @@ export function SeoSidebar({
                     </div>
                     <Button
                       size="slim"
-                      onClick={handleAddKeyword}
+                      onClick={() => handleAddKeyword()}
                       disabled={!keywordInput.trim()}
                       loading={keywordOpFetcher.state !== "idle"}
                     >
@@ -634,15 +663,39 @@ export function SeoSidebar({
                   </Text>
                 )}
 
-                {keywordOpFetcher.data && !keywordOpFetcher.data.ok && (
-                  <Text as="p" variant="bodySm" tone="critical">
-                    {keywordOpFetcher.data.error === "tooMany"
-                      ? (t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
-                          "{max}",
-                          String(MAX_KEYWORDS_PER_ITEM),
-                        )
-                      : t.seo?.keywordOpError || "Could not update keywords. Please reload and try again."}
-                  </Text>
+                {cannibalizationWarning !== null ? (
+                  <BlockStack gap="150">
+                    <Text as="p" variant="bodySm" tone="caution">
+                      {(t.seo?.keywordCannibalizationWarning ||
+                        'This keyword is already the primary keyword of "{item}" — two items competing for it cannibalize each other in Google.')
+                        .replace("{item}", cannibalizationWarning)}
+                    </Text>
+                    <InlineStack gap="200">
+                      <Button
+                        size="slim"
+                        loading={keywordOpFetcher.state !== "idle"}
+                        onClick={() => handleAddKeyword(true)}
+                      >
+                        {t.seo?.keywordCannibalizationAddAnyway || "Add anyway"}
+                      </Button>
+                      <Button size="slim" variant="plain" onClick={() => setCannibalizationWarning(null)}>
+                        {t.seo?.keywordCannibalizationCancel || "Cancel"}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                ) : (
+                  keywordOpFetcher.data &&
+                  !keywordOpFetcher.data.ok &&
+                  keywordOpFetcher.data.error !== "cannibalization" && (
+                    <Text as="p" variant="bodySm" tone="critical">
+                      {keywordOpFetcher.data.error === "tooMany"
+                        ? (t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
+                            "{max}",
+                            String(MAX_KEYWORDS_PER_ITEM),
+                          )
+                        : t.seo?.keywordOpError || "Could not update keywords. Please reload and try again."}
+                    </Text>
+                  )
                 )}
 
                 {aggregateStuffing && (
