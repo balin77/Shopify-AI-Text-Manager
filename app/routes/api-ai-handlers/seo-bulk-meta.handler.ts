@@ -31,7 +31,9 @@ import {
   MAX_BULK_TASK_ITEMS,
   type BulkDiffEntry,
   type BulkRowType,
+  type ColumnDescriptor,
 } from "~/services/bulk-editor/columns.shared";
+import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -60,7 +62,11 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
   if (!Array.isArray(rawDiff) || rawDiff.length === 0) {
     return json({ success: false, error: "No changes to save." }, { status: 400 });
   }
-  if (!rawDiff.every((e) => isValidBulkDiffEntry(e, allowedTypes))) {
+  // Server-built column universe (Plan §4.1): the mf.-column allowlist is
+  // checked against the shop's ENABLED metafield definitions here — never
+  // against whatever column ids the client claims exist.
+  const columnsByType = await buildServerColumnsByType(db, session.shop, plan);
+  if (!rawDiff.every((e) => isValidBulkDiffEntry(e, allowedTypes, columnsByType))) {
     return json({ success: false, error: "Invalid diff payload." }, { status: 400 });
   }
   const diff = rawDiff as BulkDiffEntry[];
@@ -110,7 +116,7 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
   // Fire-and-forget: survives navigation, same pattern as runSeoBulkFix /
   // runBulkAltTextGeneration. Progress/results persist to Task after every
   // row (heartbeat), so a crash only loses the in-flight row.
-  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin, diff }).catch((err: unknown) => {
+  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin, diff, columnsByType }).catch((err: unknown) => {
     logger.error("[API-AI] Bulk-editor save crashed", {
       context: "AI",
       taskId: task.id,
@@ -128,13 +134,14 @@ interface RunArgs {
   shop: string;
   admin: AdminApiContext;
   diff: BulkDiffEntry[];
+  columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
 }
 
 async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, admin, diff } = args;
+  const { db, shop, admin, diff, columnsByType } = args;
 
   try {
-    const result = await applyBulkDiff({ db, shop, admin }, diff, async (processed, total) => {
+    const result = await applyBulkDiff({ db, shop, admin, columnsByType }, diff, async (processed, total) => {
       const progressPercent = Math.round((processed / total) * 100);
       await db.task
         .update({ where: { id: taskId }, data: { progress: progressPercent, processed } })
@@ -147,10 +154,13 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
         });
     });
 
-    const finalStatus = result.saved === 0 && result.failures.length > 0 ? "failed" : "completed";
+    // Failures are per CELL since Phase 2 (Plan §4.4) — summarize per ROW so
+    // the count lines up with `total`/`processed`.
+    const failedRowCount = new Set(result.failures.map((f) => f.rowId)).size;
+    const finalStatus = result.saved === 0 && failedRowCount > 0 ? "failed" : "completed";
     const failureSummary =
-      result.failures.length > 0
-        ? `${result.failures.length} of ${result.saved + result.failures.length} row(s) failed`
+      failedRowCount > 0
+        ? `${failedRowCount} of ${result.saved + failedRowCount} row(s) failed`
         : null;
 
     await db.task.update({
