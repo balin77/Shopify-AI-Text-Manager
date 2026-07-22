@@ -12,6 +12,7 @@ import { authenticate } from "../shopify.server";
 import {
   gatherSuggestions,
   checkSuggestionsRateLimit,
+  markSuggestionsAvailability,
   SuggestionsRateLimitedError,
   type SuggestionGroups,
 } from "../services/seo/keyword-suggestions.service";
@@ -45,9 +46,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
   try {
     const groups = await gatherSuggestions(seed, hl, { expandAlphabet });
+    // Real outcome feeds the availability cache (integrated §6.1 spike).
+    markSuggestionsAvailability("ok");
     return json<ActionResult>({ ok: true, groups });
   } catch (err) {
     if (err instanceof SuggestionsRateLimitedError) {
+      markSuggestionsAvailability("blocked");
       return json<ActionResult>({ ok: false, error: "blocked" }, { status: 429 });
     }
     throw err;

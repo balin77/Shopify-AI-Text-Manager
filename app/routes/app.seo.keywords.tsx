@@ -61,6 +61,8 @@ import {
   type GroupKeywordRow,
 } from "../services/seo/keywords.service";
 import { parseKeywordsCsv } from "../services/seo/keywords-csv";
+// Loader-only import (server module) — tree-shaken from the client bundle.
+import { getSuggestionsAvailability } from "../services/seo/keyword-suggestions.service";
 // Client-safe shared module — NOT keyword-distribution.service, which pulls
 // the prompt sanitizer → logger.server into the browser bundle.
 import { estimateDistributionCost } from "../services/seo/keyword-distribution.shared";
@@ -359,6 +361,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     localeOptions,
     // Research panel: hl codes to offer (primary first, then secondaries).
     primaryLocaleCode: String(primaryLocale?.locale || "en"),
+    // Integrated §6.1 spike: cached suggestqueries reachability verdict.
+    // Never blocks — a stale verdict triggers a BACKGROUND probe whose
+    // result lands in the server logs and in the next load.
+    researchAvailability: getSuggestionsAvailability(),
     conflicts,
     unclassifiedCount,
     productTypes,
@@ -1425,6 +1431,20 @@ export default function SeoKeywords() {
               {k.researchIntro ||
                 "Get free long-tail suggestions from Google Autocomplete for a seed keyword, then import them into a group."}
             </Text>
+            {/* Integrated §6.1 spike verdict: the server probes reachability
+                in the background; a blocked egress IP disables the panel. */}
+            {data.researchAvailability.status === "blocked" && (
+              <Banner tone="warning">
+                {k.researchBlocked ||
+                  "Google is currently not answering suggestion requests from this server. Try again later."}
+                {data.researchAvailability.checkedAt
+                  ? ` ${(k.researchCheckedAt || "Last checked: {time}").replace(
+                      "{time}",
+                      new Date(data.researchAvailability.checkedAt).toLocaleString(),
+                    )}`
+                  : ""}
+              </Banner>
+            )}
             <InlineStack gap="200" blockAlign="end" wrap>
               <div style={{ flex: "1 1 220px", maxWidth: "340px" }}>
                 <TextField
@@ -1440,7 +1460,7 @@ export default function SeoKeywords() {
               </div>
               <Button
                 loading={suggestFetcher.state !== "idle"}
-                disabled={!seedInput.trim()}
+                disabled={!seedInput.trim() || data.researchAvailability.status === "blocked"}
                 onClick={() => runResearch(false)}
               >
                 {k.researchButton || "Get suggestions"}

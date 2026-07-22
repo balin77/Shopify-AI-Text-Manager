@@ -4,6 +4,9 @@ import {
   gatherSuggestions,
   checkSuggestionsRateLimit,
   resetSuggestionsRateLimit,
+  getSuggestionsAvailability,
+  markSuggestionsAvailability,
+  resetSuggestionsAvailability,
   SuggestionsRateLimitedError,
 } from "~/services/seo/keyword-suggestions.service";
 
@@ -75,6 +78,58 @@ describe("gatherSuggestions", () => {
     vi.stubGlobal("fetch", fetchMock);
     await gatherSuggestions("vase", "en", { expandAlphabet: true, delayMs: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(1 + 6 + 26);
+  });
+});
+
+describe("availability probe (integrated §6.1 spike)", () => {
+  beforeEach(() => resetSuggestionsAvailability());
+
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("starts unknown, probes in the background and flips to ok on a healthy response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => resp(true, 200, ["test", ["test a", "test b"]])));
+    const first = getSuggestionsAvailability();
+    expect(first.status).toBe("unknown"); // never blocks the caller
+    await flush();
+    expect(getSuggestionsAvailability().status).toBe("ok");
+  });
+
+  it("flips to blocked when the probe hits a 429", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => resp(false, 429, {})));
+    getSuggestionsAvailability();
+    await flush();
+    expect(getSuggestionsAvailability().status).toBe("blocked");
+  });
+
+  it("stays unknown on a soft failure (empty/malformed body)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => resp(true, 200, { not: "an array" })));
+    getSuggestionsAvailability();
+    await flush();
+    const verdict = getSuggestionsAvailability();
+    expect(verdict.status).toBe("unknown");
+    expect(verdict.checkedAt).not.toBeNull(); // probed, just inconclusive
+  });
+
+  it("does NOT re-probe while a fresh verdict is cached", async () => {
+    const fetchMock = vi.fn(async () => resp(true, 200, ["test", ["test a"]]));
+    vi.stubGlobal("fetch", fetchMock);
+    getSuggestionsAvailability();
+    await flush();
+    getSuggestionsAvailability();
+    getSuggestionsAvailability();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("markSuggestionsAvailability feeds the cache from real research outcomes", async () => {
+    const fetchMock = vi.fn(async () => resp(true, 200, ["test", ["test a"]]));
+    vi.stubGlobal("fetch", fetchMock);
+    markSuggestionsAvailability("blocked");
+    expect(getSuggestionsAvailability().status).toBe("blocked");
+    markSuggestionsAvailability("ok");
+    expect(getSuggestionsAvailability().status).toBe("ok");
+    await flush();
+    expect(fetchMock).not.toHaveBeenCalled(); // fresh verdicts → no probe call
   });
 });
 

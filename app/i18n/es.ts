@@ -1754,6 +1754,7 @@ export const es: Translation = {
       researchAlphabet: "Expansión alfabética",
       researchRateLimited: "Espera un momento — máximo 3 búsquedas por minuto.",
       researchBlocked: "Google no responde actualmente a las solicitudes de sugerencias desde este servidor. Inténtalo más tarde.",
+      researchCheckedAt: "Última comprobación: {time}",
       researchNoResults: "No se encontraron sugerencias para esta semilla.",
       researchImportGroup: "Importar en grupo",
       researchImportGroupNone: "Elegir grupo…",

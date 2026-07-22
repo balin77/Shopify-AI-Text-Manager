@@ -125,6 +125,100 @@ export async function gatherSuggestions(
   return { direct, questions, alphabet };
 }
 
+// ── Availability probe (integrated §6.1 spike) ─────────────────────────────
+//
+// Instead of a manual Railway spike, the app probes the endpoint itself: the
+// keywords-tab loader calls getSuggestionsAvailability(), which — when the
+// cached verdict is stale — kicks off ONE background test call and logs the
+// result ("[KeywordSuggestions] availability probe …") so the Railway deploy
+// logs answer the spike question automatically. Real research runs feed the
+// same cache (markSuggestionsAvailability from the API route), so a healthy
+// endpoint costs at most one probe call per TTL per instance. This is a
+// reachability check, NOT keyword prefetching — the plan's "explicit merchant
+// action only" rule for actual research stays intact.
+
+export type SuggestionsAvailabilityStatus = "ok" | "blocked" | "unknown";
+export interface SuggestionsAvailability {
+  status: SuggestionsAvailabilityStatus;
+  checkedAt: string | null; // ISO, null = never probed
+}
+
+const PROBE_TTL_OK_MS = 12 * 60 * 60 * 1000; // healthy: re-probe twice a day
+const PROBE_TTL_BLOCKED_MS = 15 * 60 * 1000; // blocked: allow recovery checks
+const PROBE_TTL_UNKNOWN_MS = 5 * 60 * 1000; // network glitch: retry soon
+
+let availability: { status: SuggestionsAvailabilityStatus; checkedAt: number | null } = {
+  status: "unknown",
+  checkedAt: null,
+};
+let probeInFlight = false;
+
+/** Feed the cache from REAL outcomes (API route) — a successful research run
+ *  proves "ok", a 429/403 proves "blocked", no probe call needed. */
+export function markSuggestionsAvailability(status: "ok" | "blocked"): void {
+  availability = { status, checkedAt: Date.now() };
+}
+
+async function probeSuggestions(): Promise<void> {
+  try {
+    // "test" always has suggestions when the endpoint is healthy; an empty
+    // array here means a soft failure (5xx/malformed) → stay "unknown"
+    // rather than claiming either verdict.
+    const suggestions = await fetchAutocomplete("test", "en");
+    if (suggestions.length > 0) {
+      availability = { status: "ok", checkedAt: Date.now() };
+      logger.info("[KeywordSuggestions] availability probe: ok — suggestqueries reachable from this network", {
+        context: "SEO",
+      });
+    } else {
+      availability = { status: "unknown", checkedAt: Date.now() };
+      logger.warn("[KeywordSuggestions] availability probe: inconclusive (soft failure)", { context: "SEO" });
+    }
+  } catch (err) {
+    if (err instanceof SuggestionsRateLimitedError) {
+      availability = { status: "blocked", checkedAt: Date.now() };
+      logger.warn(
+        "[KeywordSuggestions] availability probe: BLOCKED (429/403) — Google throttles this egress IP; the research panel will show its unavailable notice",
+        { context: "SEO" },
+      );
+    } else {
+      availability = { status: "unknown", checkedAt: Date.now() };
+      logger.warn("[KeywordSuggestions] availability probe failed", { context: "SEO", error: String(err) });
+    }
+  }
+}
+
+/**
+ * Current verdict, refreshing in the BACKGROUND when stale — never blocks the
+ * caller (the keywords-tab loader). The first call after a deploy returns
+ * "unknown" and triggers the probe; the next load shows the real verdict.
+ */
+export function getSuggestionsAvailability(now = Date.now()): SuggestionsAvailability {
+  const ttl =
+    availability.status === "ok"
+      ? PROBE_TTL_OK_MS
+      : availability.status === "blocked"
+        ? PROBE_TTL_BLOCKED_MS
+        : PROBE_TTL_UNKNOWN_MS;
+  const stale = availability.checkedAt === null || now - availability.checkedAt > ttl;
+  if (stale && !probeInFlight) {
+    probeInFlight = true;
+    void probeSuggestions().finally(() => {
+      probeInFlight = false;
+    });
+  }
+  return {
+    status: availability.status,
+    checkedAt: availability.checkedAt ? new Date(availability.checkedAt).toISOString() : null,
+  };
+}
+
+/** Test hook. */
+export function resetSuggestionsAvailability(): void {
+  availability = { status: "unknown", checkedAt: null };
+  probeInFlight = false;
+}
+
 // ── Per-shop rate limiting (plan §6.2: max 3 seeds/min) ────────────────────
 
 const RATE_WINDOW_MS = 60_000;

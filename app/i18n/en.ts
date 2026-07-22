@@ -1755,6 +1755,7 @@ export const en: Translation = {
       researchAlphabet: "Alphabet expansion",
       researchRateLimited: "Please wait a moment — at most 3 searches per minute.",
       researchBlocked: "Google is currently not answering suggestion requests from this server. Try again later.",
+      researchCheckedAt: "Last checked: {time}",
       researchNoResults: "No suggestions found for this seed.",
       researchImportGroup: "Import into group",
       researchImportGroupNone: "Choose a group…",

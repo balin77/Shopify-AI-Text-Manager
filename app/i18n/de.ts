@@ -1752,6 +1752,7 @@ export const de = {
       researchAlphabet: "Alphabet-Erweiterung",
       researchRateLimited: "Bitte kurz warten — maximal 3 Recherchen pro Minute.",
       researchBlocked: "Google beantwortet Vorschlags-Anfragen von diesem Server gerade nicht. Später erneut versuchen.",
+      researchCheckedAt: "Zuletzt geprüft: {time}",
       researchNoResults: "Keine Vorschläge für dieses Seed gefunden.",
       researchImportGroup: "In Gruppe importieren",
       researchImportGroupNone: "Gruppe wählen…",
