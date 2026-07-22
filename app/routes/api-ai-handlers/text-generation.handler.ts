@@ -217,6 +217,21 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   if (sanitizedSecondaryKeywords.length) {
     prompt += `\n- If it fits naturally, you may also mention: ${sanitizedSecondaryKeywords.map((s) => `"${s}"`).join(", ")}. Only use those that flow with the sentence; skip any that would sound forced or repetitive. Never use more than one per sentence.`;
   }
+  // Search-intent context (PLAN_KEYWORDS_EXPANSION.md §7.2): when the primary
+  // keyword has been classified, tell the model what the searcher is after —
+  // a small but measurable quality lift, especially for meta descriptions.
+  {
+    const primaryIntent = trackedKeywordRows.find((r) => r.role === "primary")?.intent;
+    const INTENT_HINTS: Record<string, string> = {
+      informational: "the searcher wants to learn — lead with the answer/benefit, not the sale",
+      commercial: "the searcher is comparing options — emphasize differentiators and proof",
+      transactional: "the searcher is ready to buy — emphasize purchase, benefit, availability",
+      navigational: "the searcher looks for a specific brand/page — be precise and recognizable",
+    };
+    if (primaryIntent && INTENT_HINTS[primaryIntent]) {
+      prompt += `\n- Search intent of the target keyword: ${primaryIntent} — ${INTENT_HINTS[primaryIntent]}.`;
+    }
+  }
 
   if (genField?.type === "slug") {
     prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;

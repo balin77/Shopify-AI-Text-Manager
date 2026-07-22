@@ -1122,6 +1122,7 @@ export const de = {
       seoAudit: "SEO-Audit-Scan",
       seoBulkMeta: "SEO-Massen-Meta-Speichern",
       distributeKeywords: "Keyword-Verteilung",
+      keywordIntent: "Keyword-Intent-Klassifizierung",
     },
     status: {
       pending: "Wartend",
@@ -1738,6 +1739,20 @@ export const de = {
       researchImportGroup: "In Gruppe importieren",
       researchImportGroupNone: "Gruppe wählen…",
       researchImportButton: "{count} ausgewählte importieren",
+      conflictsTitle: "Keyword-Konflikte",
+      conflictsIntro: "Dasselbe Primary-Keyword auf mehreren Inhalten desselben Typs lässt sie bei Google gegeneinander konkurrieren (Kannibalisierung).",
+      conflictItem: "„{keyword}“ ist Primary auf {count} {type}-Inhalten: {items}",
+      intents: {
+        informational: "informational",
+        commercial: "commercial",
+        transactional: "transactional",
+        navigational: "navigational",
+      } as Record<string, string>,
+      intentFilterLabel: "Intent",
+      intentFilterAll: "Alle Intents",
+      intentFilterNone: "Nicht klassifiziert",
+      classifyButton: "Intent klassifizieren ({count} offen)",
+      classifyDone: "{count} Keyword(s) klassifiziert, {remaining} verbleibend.",
     },
     searchConsolePage: {
       helpTitle: "Was bringt dir die Search-Console-Verbindung?",

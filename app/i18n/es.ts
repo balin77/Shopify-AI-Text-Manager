@@ -1124,6 +1124,7 @@ export const es: Translation = {
       seoAudit: "Análisis SEO",
       seoBulkMeta: "Guardado masivo de meta SEO",
       distributeKeywords: "Distribución de palabras clave",
+      keywordIntent: "Clasificación de intención de palabras clave",
     },
     status: {
       pending: "Pendiente",
@@ -1740,6 +1741,20 @@ export const es: Translation = {
       researchImportGroup: "Importar en grupo",
       researchImportGroupNone: "Elegir grupo…",
       researchImportButton: "Importar {count} seleccionadas",
+      conflictsTitle: "Conflictos de palabras clave",
+      conflictsIntro: "La misma palabra clave principal en varios elementos del mismo tipo hace que compitan entre sí en Google (canibalización).",
+      conflictItem: "«{keyword}» es principal en {count} elementos de tipo {type}: {items}",
+      intents: {
+        informational: "informational",
+        commercial: "commercial",
+        transactional: "transactional",
+        navigational: "navigational",
+      } as Record<string, string>,
+      intentFilterLabel: "Intención",
+      intentFilterAll: "Todas las intenciones",
+      intentFilterNone: "Sin clasificar",
+      classifyButton: "Clasificar intención ({count} pendientes)",
+      classifyDone: "{count} palabra(s) clave clasificada(s), {remaining} restante(s).",
     },
     searchConsolePage: {
       helpTitle: "¿Qué te da conectar Search Console?",

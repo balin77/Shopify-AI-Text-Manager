@@ -159,6 +159,7 @@ ${itemBlocks}
 RULES:
 - For each keyword, choose the single best-matching item from THIS batch as "primaryItemId", or null if none of these items genuinely fits.
 - Assign each keyword to AT MOST ONE primary item in this batch (no cannibalization: two items must never share the same primary keyword).
+- Match search intent to item type where an intent is given: transactional/commercial keywords fit products and collections; informational keywords fit blog articles and guide pages.
 - Optionally list up to ${rules.maxSecondariesPerItem} additional loosely-matching items per keyword as "secondaryItemIds" (may be empty).
 - Never invent item ids — only use ids shown above.
 - "confidence" is your 0..1 estimate that the primary assignment is right; be conservative.

@@ -509,6 +509,49 @@ export async function removeAssignment(
   });
 }
 
+// ── Cannibalization (PLAN_KEYWORDS_EXPANSION.md §7.1) ───────────────────────
+
+export interface CannibalizationConflict {
+  keywordId: string;
+  keyword: string;
+  locale: string;
+  resourceType: string;
+  /** The items competing for the same primary keyword (≥ 2). */
+  resourceIds: string[];
+}
+
+/**
+ * Two items of the SAME resource type sharing the same primary keyword
+ * cannibalize each other. Product ≠ Collection is deliberately NOT a conflict
+ * (a category page ranking for "vases" and a product for "green ceramic vase"
+ * is healthy) — hence the (keywordId, resourceType) grouping. Pure over the
+ * already-loaded assignment list; the keywords-tab loader feeds it.
+ */
+export function findCannibalizationConflicts(
+  rows: KeywordAssignmentRow[],
+): CannibalizationConflict[] {
+  const groups = new Map<string, KeywordAssignmentRow[]>();
+  for (const row of rows) {
+    if (row.role !== "primary") continue;
+    const key = `${row.keywordId}::${row.resourceType}`;
+    const bucket = groups.get(key) ?? [];
+    bucket.push(row);
+    groups.set(key, bucket);
+  }
+  const conflicts: CannibalizationConflict[] = [];
+  for (const bucket of groups.values()) {
+    if (bucket.length < 2) continue;
+    conflicts.push({
+      keywordId: bucket[0].keywordId,
+      keyword: bucket[0].keyword,
+      locale: bucket[0].locale,
+      resourceType: bucket[0].resourceType,
+      resourceIds: bucket.map((b) => b.resourceId),
+    });
+  }
+  return conflicts.sort((a, b) => a.keyword.localeCompare(b.keyword));
+}
+
 // ── Groups (PLAN_KEYWORDS_EXPANSION.md §5.1–§5.3) ───────────────────────────
 
 export interface KeywordGroupRow {

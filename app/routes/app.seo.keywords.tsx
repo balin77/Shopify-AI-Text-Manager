@@ -41,6 +41,7 @@ import {
   listGroups,
   createGroup,
   deleteGroup,
+  findCannibalizationConflicts,
   getGroupKeywords,
   addKeywordsToGroup,
   removeKeywordFromGroup,
@@ -211,6 +212,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       localeDisplay: row.locale || primaryLocale?.locale || "",
       itemTitle: c?.title ?? "",
       itemMissing: !c,
+      intent: row.intent, // threaded for the intent badge + filter (§7.2)
       // Only the primary carries the 0-100 on-page score — it is
       // presence-weighted and would dilute or double-count across several
       // keywords. Secondaries keep presence/density (factual per keyword).
@@ -230,6 +232,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       a.role.localeCompare(b.role) ||
       a.keyword.localeCompare(b.keyword),
   );
+
+  // Cannibalization conflicts (§7.1): same keyword primary on ≥2 items of the
+  // same type. Pure over the loaded assignment list; item titles resolved
+  // from the content map already built above.
+  const conflicts = findCannibalizationConflicts(rows).map((c) => ({
+    keyword: c.keyword,
+    locale: c.locale,
+    resourceType: c.resourceType,
+    itemTitles: c.resourceIds.map((id) => content.get(id)?.title || id),
+  }));
+
+  // Intent classification backlog (§7.2) — drives the classify button label.
+  const unclassifiedCount = await db.seoKeyword.count({ where: { shop, intent: null } });
 
   // Lightweight per-type pickers for the add form (capped).
   const [products, collections, articles, pages] = await Promise.all([
@@ -324,6 +339,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     localeOptions,
     // Research panel: hl codes to offer (primary first, then secondaries).
     primaryLocaleCode: String(primaryLocale?.locale || "en"),
+    conflicts,
+    unclassifiedCount,
     isPro,
     groups,
     groupDetail,
@@ -807,6 +824,25 @@ export default function SeoKeywords() {
     return Array.from(codes).map((c) => ({ label: c, value: c }));
   }, [data.primaryLocaleCode, localeOptions]);
 
+  // ── Intent classification + filter (plan §7.2) ──
+  const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
+  const [intentFilter, setIntentFilter] = useState("all");
+  const filteredKeywords = useMemo(() => {
+    if (intentFilter === "all") return keywords;
+    if (intentFilter === "none") return keywords.filter((r) => !r.intent);
+    return keywords.filter((r) => r.intent === intentFilter);
+  }, [keywords, intentFilter]);
+
+  useEffect(() => {
+    if (intentFetcher.state === "idle" && intentFetcher.data?.success) {
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intentFetcher.state, intentFetcher.data]);
+
+  const intentLabel = (intent: string | null | undefined): string | null =>
+    intent ? (k.intents as Record<string, string> | undefined)?.[intent] ?? intent : null;
+
   const renderSuggestionGroup = (title: string, list: string[]) =>
     list.length === 0 ? null : (
       <BlockStack gap="150" key={title}>
@@ -861,6 +897,32 @@ export default function SeoKeywords() {
             <Text as="p" variant="bodyMd">{k.helpBody2}</Text>
           </BlockStack>
         </Banner>
+
+        {/* Cannibalization conflicts (plan §7.1) */}
+        {data.conflicts.length > 0 && (
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingMd">
+                {k.conflictsTitle || "Keyword conflicts"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {k.conflictsIntro ||
+                  "The same primary keyword on several items of the same type makes them compete against each other in Google."}
+              </Text>
+              {data.conflicts.map((c) => (
+                <Banner key={`${c.keyword}:${c.resourceType}:${c.locale}`} tone="warning">
+                  <Text as="p" variant="bodyMd">
+                    {(k.conflictItem || '"{keyword}" is primary on {count} {type} items: {items}')
+                      .replace("{keyword}", c.keyword)
+                      .replace("{count}", String(c.itemTitles.length))
+                      .replace("{type}", k.types[c.resourceType as KeywordResourceType] || c.resourceType)
+                      .replace("{items}", c.itemTitles.join(", "))}
+                  </Text>
+                </Banner>
+              ))}
+            </BlockStack>
+          </Card>
+        )}
 
         {/* Add keyword */}
         <Card>
@@ -964,19 +1026,61 @@ export default function SeoKeywords() {
         {/* Tracked keywords */}
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {k.listTitle}
-            </Text>
+            <InlineStack align="space-between" blockAlign="end" wrap>
+              <Text as="h3" variant="headingMd">
+                {k.listTitle}
+              </Text>
+              <InlineStack gap="200" blockAlign="end" wrap>
+                <div style={{ minWidth: "170px" }}>
+                  <Select
+                    label={k.intentFilterLabel || "Intent"}
+                    options={[
+                      { label: k.intentFilterAll || "All intents", value: "all" },
+                      { label: k.intentFilterNone || "Unclassified", value: "none" },
+                      ...(["informational", "commercial", "transactional", "navigational"] as const).map((i) => ({
+                        label: intentLabel(i) ?? i,
+                        value: i,
+                      })),
+                    ]}
+                    value={intentFilter}
+                    onChange={setIntentFilter}
+                  />
+                </div>
+                {data.isPro && data.unclassifiedCount > 0 && (
+                  <Button
+                    loading={intentFetcher.state !== "idle"}
+                    onClick={() =>
+                      intentFetcher.submit(
+                        { action: "classifyKeywordIntents", contentType: "products" },
+                        { method: "post", action: "/api/ai" },
+                      )
+                    }
+                  >
+                    {(k.classifyButton || "Classify intent ({count} open)").replace(
+                      "{count}",
+                      String(data.unclassifiedCount),
+                    )}
+                  </Button>
+                )}
+              </InlineStack>
+            </InlineStack>
+            {intentFetcher.state === "idle" && intentFetcher.data?.success && (
+              <Banner tone="success">
+                {(k.classifyDone || "{count} keyword(s) classified, {remaining} remaining.")
+                  .replace("{count}", String(intentFetcher.data.classified ?? 0))
+                  .replace("{remaining}", String(intentFetcher.data.remaining ?? 0))}
+              </Banner>
+            )}
             {rowFetcher.data && !rowFetcher.data.ok && <Banner tone="critical">{k.errorGeneric}</Banner>}
 
-            {keywords.length === 0 ? (
+            {filteredKeywords.length === 0 ? (
               <Text as="p" tone="subdued">
                 {k.noKeywords}
               </Text>
             ) : (
               <BlockStack gap="200">
                 <IndexTable
-                  itemCount={keywords.length}
+                  itemCount={filteredKeywords.length}
                   selectable={false}
                   headings={[
                     { title: k.colItem },
@@ -991,7 +1095,7 @@ export default function SeoKeywords() {
                     { title: "" },
                   ]}
                 >
-                  {keywords.map((row, index) => (
+                  {filteredKeywords.map((row, index) => (
                     <IndexTable.Row id={row.id} key={row.id} position={index}>
                       <IndexTable.Cell>
                         <div style={{ maxWidth: "240px" }}>
@@ -1005,7 +1109,10 @@ export default function SeoKeywords() {
                         </div>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
-                        <Text as="span" variant="bodyMd">{row.keyword}</Text>
+                        <InlineStack gap="100" blockAlign="center" wrap={false}>
+                          <Text as="span" variant="bodyMd">{row.keyword}</Text>
+                          {row.intent && <Badge>{intentLabel(row.intent) ?? row.intent}</Badge>}
+                        </InlineStack>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge tone={row.role === "primary" ? "info" : undefined}>
@@ -1343,9 +1450,12 @@ export default function SeoKeywords() {
                   {data.groupDetail.keywords.map((gk, index) => (
                     <IndexTable.Row id={gk.keywordId} key={gk.keywordId} position={index}>
                       <IndexTable.Cell>
-                        <Text as="span" variant="bodyMd">
-                          {gk.keyword}
-                        </Text>
+                        <InlineStack gap="100" blockAlign="center" wrap={false}>
+                          <Text as="span" variant="bodyMd">
+                            {gk.keyword}
+                          </Text>
+                          {gk.intent && <Badge>{intentLabel(gk.intent) ?? gk.intent}</Badge>}
+                        </InlineStack>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge>{gk.locale || localeOptions[0]?.name || "–"}</Badge>

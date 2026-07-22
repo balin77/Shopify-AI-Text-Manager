@@ -1125,6 +1125,7 @@ export const en: Translation = {
       seoAudit: "SEO audit scan",
       seoBulkMeta: "SEO bulk meta save",
       distributeKeywords: "Keyword distribution",
+      keywordIntent: "Keyword intent classification",
     },
     status: {
       pending: "Pending",
@@ -1741,6 +1742,20 @@ export const en: Translation = {
       researchImportGroup: "Import into group",
       researchImportGroupNone: "Choose a group…",
       researchImportButton: "Import {count} selected",
+      conflictsTitle: "Keyword conflicts",
+      conflictsIntro: "The same primary keyword on several items of the same type makes them compete against each other in Google (cannibalization).",
+      conflictItem: "\"{keyword}\" is primary on {count} {type} items: {items}",
+      intents: {
+        informational: "informational",
+        commercial: "commercial",
+        transactional: "transactional",
+        navigational: "navigational",
+      } as Record<string, string>,
+      intentFilterLabel: "Intent",
+      intentFilterAll: "All intents",
+      intentFilterNone: "Unclassified",
+      classifyButton: "Classify intent ({count} open)",
+      classifyDone: "{count} keyword(s) classified, {remaining} remaining.",
     },
     searchConsolePage: {
       helpTitle: "What does connecting Search Console get you?",
