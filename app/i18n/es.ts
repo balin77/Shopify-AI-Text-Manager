@@ -1783,8 +1783,8 @@ export const es: Translation = {
       bulkPriorityConfirmBody: "Esto establece la prioridad de las {count} palabras clave de este grupo.",
       bulkPriorityApply: "Aplicar a todas",
       distModalFilterType: "Filtro: tipo de producto",
-      distModalFilterVendor: "Filtro: proveedor",
       distModalFilterAll: "Todos",
+      distModalFilterCapped: "Solo se muestran los primeros 100 tipos de producto.",
       distModalFilterHint: "La estimación de costes de abajo asume TODOS los elementos de este tipo — con un filtro el coste real es menor.",
     },
     searchConsolePage: {

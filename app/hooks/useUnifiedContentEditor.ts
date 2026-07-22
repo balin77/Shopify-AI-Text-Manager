@@ -1007,9 +1007,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           [fieldType]: generatedContent,
         }));
       }
-      // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2): the server retried
-      // once and the output STILL over-uses a tracked keyword — surface it so
-      // the merchant reviews before accepting the suggestion.
+      // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). NOTE: the PRIMARY
+      // generate path is the raw-fetch submitAIAction flow — its warning
+      // lives in useFieldHandlers' onSuccess. This fetcher branch only fires
+      // for the unified-content action path, which doesn't set the flag
+      // today; kept so the warning appears automatically if it ever does.
       if ((fetcher.data as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||

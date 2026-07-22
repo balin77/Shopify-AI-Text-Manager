@@ -1781,8 +1781,8 @@ export const de = {
       bulkPriorityConfirmBody: "Setzt die Priorität aller {count} Keywords dieser Gruppe.",
       bulkPriorityApply: "Auf alle anwenden",
       distModalFilterType: "Filter: Produkt-Typ",
-      distModalFilterVendor: "Filter: Anbieter",
       distModalFilterAll: "Alle",
+      distModalFilterCapped: "Es werden nur die ersten 100 Produkt-Typen angeboten.",
       distModalFilterHint: "Die Kostenschätzung unten geht von ALLEN Inhalten dieses Typs aus — mit Filter fallen die tatsächlichen Kosten niedriger aus.",
     },
     searchConsolePage: {

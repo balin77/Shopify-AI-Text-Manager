@@ -424,6 +424,19 @@ const handleGenerateAI = (fieldKey: string) => {
         ...prev,
         [fieldKey]: result.generatedContent as string,
       }));
+      // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2): the server retried
+      // once and the output STILL over-uses a tracked keyword — warn so the
+      // merchant reviews the suggestion before accepting it. This raw-fetch
+      // callback is the REAL generate path (submitAIAction), not the legacy
+      // fetcher branch in useUnifiedContentEditor.
+      if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
+        showInfoBox(
+          (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
+            "The generated text still over-uses a tracked keyword — review it before accepting.",
+          "warning",
+          t.common?.warning || "Warning"
+        );
+      }
     }
   );
 };

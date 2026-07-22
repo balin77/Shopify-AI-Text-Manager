@@ -145,6 +145,10 @@ export function SeoSidebar({
   // eagerly (not gated on showKeywordSection) means the badges below are
   // ready the moment the merchant expands the section.
   useEffect(() => {
+    // Item switch invalidates any pending cannibalization prompt — "add
+    // anyway" must never fire the stashed payload against the NEW item.
+    setCannibalizationWarning(null);
+    pendingAddRef.current = null;
     if (!resourceId || !resourceType) {
       setKeywords([]);
       setKeywordInput("");

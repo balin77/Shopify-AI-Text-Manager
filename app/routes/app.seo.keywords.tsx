@@ -526,7 +526,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
     const result = await renameGroup(db, session.shop, groupId, name);
-    if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
+    if (!result.ok) {
+      // notFound (deleted in another tab / foreign id) is a generic error,
+      // NOT a misleading duplicate-name message (review L1).
+      if (result.reason === "notFound") {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
+    }
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
@@ -1368,6 +1375,7 @@ export default function SeoKeywords() {
                   placeholder={k.groupNamePlaceholder || "e.g. Vases 2026"}
                   value={newGroupName}
                   onChange={setNewGroupName}
+                  maxLength={100}
                 />
               </div>
               <Button
@@ -1383,6 +1391,9 @@ export default function SeoKeywords() {
             </InlineStack>
             {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "duplicateName" && (
               <Banner tone="warning">{k.groupDuplicateName || "A group with this name already exists."}</Banner>
+            )}
+            {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "invalid" && (
+              <Banner tone="critical">{k.errorGeneric}</Banner>
             )}
             {data.groups.length === 0 ? (
               <Text as="p" tone="subdued">
@@ -1512,6 +1523,7 @@ export default function SeoKeywords() {
                       autoComplete="off"
                       value={renameValue}
                       onChange={setRenameValue}
+                      maxLength={100}
                     />
                     <Button
                       size="slim"
@@ -1967,6 +1979,11 @@ export default function SeoKeywords() {
                 ]}
                 value={distFilterProductType}
                 onChange={setDistFilterProductType}
+                helpText={
+                  data.productTypes.length >= 100
+                    ? k.distModalFilterCapped || "Only the first 100 product types are listed."
+                    : undefined
+                }
               />
             )}
             {distTargetType === "Product" && distFilterProductType && (

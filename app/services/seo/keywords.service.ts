@@ -662,19 +662,20 @@ export async function createGroup(
   }
 }
 
-/** Rename a group (plan §5.1) — same duplicate-name semantics as create. */
+/** Rename a group (plan §5.1) — same duplicate-name semantics as create;
+ *  an unknown/foreign id reports `notFound` (e.g. deleted in another tab). */
 export async function renameGroup(
   db: PrismaClient,
   shop: string,
   groupId: string,
   name: string,
-): Promise<CreateGroupResult> {
+): Promise<{ ok: true; id: string } | { ok: false; reason: "duplicateName" | "notFound" }> {
   const trimmed = name.trim();
   const group = await db.seoKeywordGroup.findFirst({
     where: { id: groupId, shop },
     select: { id: true },
   });
-  if (!group) return { ok: false, reason: "duplicateName" }; // unknown id → no-op error
+  if (!group) return { ok: false, reason: "notFound" };
   try {
     await db.seoKeywordGroup.update({ where: { id: group.id }, data: { name: trimmed } });
     return { ok: true, id: group.id };
