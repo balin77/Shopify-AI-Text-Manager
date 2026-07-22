@@ -128,6 +128,44 @@ export interface PageSpeedPassedAudit {
   displayValue?: string;
 }
 
+/**
+ * One accessibility / best-practices finding (or manual check) from the
+ * Lighthouse quality categories. Mirrors the spirit of PageSpeedOpportunity
+ * but stays deliberately smaller: no savings, no annotation links, and a flat
+ * element list instead of the normalized details table.
+ */
+export interface QualityIssue {
+  /** Lighthouse audit id, e.g. "color-contrast". */
+  id: string;
+  title: string;
+  /** Markdown links stripped (stripMarkdownLinks reused). */
+  description?: string;
+  /** 0 = failed, 1 = passed, null = not scorable. NEVER smooth null to 0. */
+  score: number | null;
+  /** Affected elements, capped. */
+  items: Array<{ selector?: string; snippet?: string; url?: string }>;
+  /** Number of affected elements BEFORE the cap. */
+  itemTotal: number;
+  /** scoreDisplayMode "manual" — not automatically checked by Lighthouse. */
+  manual: boolean;
+}
+
+/**
+ * Accessibility + best-practices outcome of a run. Absent on audits stored
+ * before the quality categories were requested — the UI shows an explicit
+ * "re-run the test" empty state then (accessibility plan §3.8).
+ */
+export interface QualityResult {
+  a11yScore: number | null;
+  bestPracticesScore: number | null;
+  /** Findings (failing) AND manual audits (manual: true). */
+  accessibility: QualityIssue[];
+  bestPractices: QualityIssue[];
+  /** Findings before the cap (manual audits not counted). */
+  accessibilityTotal: number;
+  bestPracticesTotal: number;
+}
+
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";
 
 /** One CrUX histogram bucket (good / needs-improvement / poor). */
@@ -235,6 +273,12 @@ export interface PageSpeedAuditResult {
    * is false. Empty string when the fallback fired but no reason was reported.
    */
   screenshotUnavailableReason?: string;
+  /**
+   * Accessibility + best-practices categories of the same run. Optional so
+   * audits stored before these categories were requested stay type-conformant
+   * (they trigger the legacy empty state instead).
+   */
+  quality?: QualityResult;
 }
 
 /** Lightweight history row (no heavy result JSON) for the trend list. */
@@ -243,5 +287,7 @@ export interface PageSpeedHistoryEntry {
   url: string;
   strategy: PageSpeedStrategy;
   performanceScore: number | null;
+  /** Lighthouse accessibility score 0-100; null on rows stored before the quality columns existed. */
+  a11yScore: number | null;
   createdAt: string;
 }
