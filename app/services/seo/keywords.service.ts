@@ -7,7 +7,7 @@
  * external keyword API. The CRUD helpers persist one keyword per item/locale.
  */
 
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
 
 export type KeywordResourceType = "Product" | "Collection" | "Article" | "Page";
@@ -263,6 +263,32 @@ export type AssignKeywordResult =
 
 const assignmentInclude = { keyword: true } as const;
 
+/**
+ * Run an interactive transaction at SERIALIZABLE isolation, retrying on
+ * serialization conflicts (P2034). The check+swap invariants below are only
+ * race-proof at this level: two parallel writers setting DIFFERENT keywords
+ * as primary on the same item share no row lock at READ COMMITTED — both
+ * would read "no primary yet" and both would insert one.
+ */
+async function serializableWithRetry<T>(
+  db: PrismaClient,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await db.$transaction(fn, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (err) {
+      lastError = err;
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2034") continue;
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 function toRow(a: {
   id: string;
   resourceType: string;
@@ -319,6 +345,14 @@ export async function assignKeyword(
     role: KeywordRole;
     demoteExisting?: boolean;
     /**
+     * Guard for automated paths (distribution apply, review M3): when the
+     * keyword is ALREADY the item's primary, a secondary-role write must not
+     * silently demote it — with this flag the existing primary role wins and
+     * the call still succeeds. Manual UI paths omit it (an explicit merchant
+     * choice to re-add as secondary IS a role change).
+     */
+    keepExistingPrimary?: boolean;
+    /**
      * Optional GSC metrics to stamp onto the assignment immediately — the
      * GSC adopt flow (PLAN_KEYWORDS_EXPANSION.md §4.2) already holds the
      * row's values, so the merchant sees them without waiting for the next
@@ -336,7 +370,7 @@ export async function assignKeyword(
   const keyword = normalizeKeyword(input.keyword);
   const locale = input.locale ?? "";
 
-  return db.$transaction(async (tx) => {
+  return serializableWithRetry(db, async (tx) => {
     const keywordRow = await tx.seoKeyword.upsert({
       where: { shop_keyword_locale: { shop, keyword, locale } },
       create: { shop, keyword, locale },
@@ -383,6 +417,12 @@ export async function assignKeyword(
           gscUpdatedAt: input.gsc.updatedAt,
         }
       : {};
+    // keepExistingPrimary: a secondary write onto a row that IS the primary
+    // keeps the primary role (no silent downgrade).
+    const effectiveRole =
+      input.role === "secondary" && input.keepExistingPrimary && self?.role === "primary"
+        ? "primary"
+        : input.role;
     await tx.seoKeywordAssignment.upsert({
       where: {
         shop_keywordId_resourceId: {
@@ -396,10 +436,10 @@ export async function assignKeyword(
         keywordId: keywordRow.id,
         resourceType: input.resourceType,
         resourceId: input.resourceId,
-        role: input.role,
+        role: effectiveRole,
         ...gscData,
       },
-      update: { role: input.role, resourceType: input.resourceType, ...gscData },
+      update: { role: effectiveRole, resourceType: input.resourceType, ...gscData },
     });
 
     return { ok: true } as const;
@@ -449,7 +489,7 @@ export async function promoteAssignment(
   shop: string,
   assignmentId: string,
 ): Promise<void> {
-  await db.$transaction(async (tx) => {
+  await serializableWithRetry(db, async (tx) => {
     const assignment = await tx.seoKeywordAssignment.findFirst({
       where: { id: assignmentId, shop },
       include: assignmentInclude,
@@ -599,10 +639,19 @@ export async function createGroup(
     select: { id: true },
   });
   if (existing) return { ok: false, reason: "duplicateName" };
-  const created = await db.seoKeywordGroup.create({
-    data: { shop, name: trimmed, description: description?.trim() || null },
-  });
-  return { ok: true, id: created.id };
+  try {
+    const created = await db.seoKeywordGroup.create({
+      data: { shop, name: trimmed, description: description?.trim() || null },
+    });
+    return { ok: true, id: created.id };
+  } catch (err) {
+    // Parallel create of the same name races past the pre-check — the unique
+    // constraint answers P2002, which is just "duplicateName", not a 500.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return { ok: false, reason: "duplicateName" };
+    }
+    throw err;
+  }
 }
 
 /** Delete a group — memberships cascade, keywords survive (plan §5.1: delete
@@ -612,14 +661,18 @@ export async function deleteGroup(db: PrismaClient, shop: string, groupId: strin
   await db.$transaction(async (tx) => {
     const group = await tx.seoKeywordGroup.findFirst({ where: { id: groupId, shop }, select: { id: true } });
     if (!group) return;
+    // Defensively shop-scoped (review H1): should a foreign-shop membership
+    // ever exist in this group, the orphan cleanup must not touch the other
+    // tenant's keywords.
     const memberKeywordIds = (
-      await tx.seoKeywordGroupMembership.findMany({ where: { groupId }, select: { keywordId: true } })
+      await tx.seoKeywordGroupMembership.findMany({ where: { groupId, shop }, select: { keywordId: true } })
     ).map((m) => m.keywordId);
     await tx.seoKeywordGroup.delete({ where: { id: groupId } }); // cascades memberships
     if (memberKeywordIds.length) {
       await tx.seoKeyword.deleteMany({
         where: {
           id: { in: memberKeywordIds },
+          shop,
           assignments: { none: {} },
           groups: { none: {} },
         },
@@ -664,8 +717,14 @@ export interface GroupImportEntry {
  * Upsert keywords (by (shop, keyword, locale)) and put them into a group —
  * the CSV importer's write path, also used for single manual adds. Explicit
  * priority/intent from the file win over an existing keyword's values;
- * omitted ones leave the existing row untouched. Returns how many keywords
- * were newly added to the group vs. already members.
+ * omitted ones (undefined priority / null intent) leave the existing row
+ * untouched. Returns how many keywords were newly added to the group vs.
+ * already members.
+ *
+ * Batched (review L13): a 2000-row import used to be ~6000 sequential
+ * queries inside a synchronous Remix action — now it's a handful of
+ * findMany/createMany calls plus one updateMany per distinct explicit
+ * (priority, intent) combination (≤ 15).
  */
 export async function addKeywordsToGroup(
   db: PrismaClient,
@@ -673,40 +732,91 @@ export async function addKeywordsToGroup(
   groupId: string,
   entries: GroupImportEntry[],
 ): Promise<{ added: number; alreadyInGroup: number }> {
-  let added = 0;
-  let alreadyInGroup = 0;
+  // Normalize + dedupe within the request by (keyword, locale) — later
+  // duplicates win so an explicit priority late in the file still applies.
+  const byKey = new Map<string, { keyword: string; locale: string; priority?: number; intent?: string | null }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
     if (!keyword) continue;
     const locale = entry.locale ?? "";
-    const keywordRow = await db.seoKeyword.upsert({
-      where: { shop_keyword_locale: { shop, keyword, locale } },
-      create: {
-        shop,
-        keyword,
-        locale,
-        priority: entry.priority ?? 2,
-        intent: entry.intent ?? null,
-      },
-      update: {
-        ...(entry.priority != null ? { priority: entry.priority } : {}),
-        ...(entry.intent != null ? { intent: entry.intent } : {}),
-      },
-    });
-    const existing = await db.seoKeywordGroupMembership.findUnique({
-      where: { groupId_keywordId: { groupId, keywordId: keywordRow.id } },
-      select: { id: true },
-    });
-    if (existing) {
-      alreadyInGroup += 1;
-    } else {
-      await db.seoKeywordGroupMembership.create({
-        data: { shop, groupId, keywordId: keywordRow.id },
-      });
-      added += 1;
-    }
+    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority, intent: entry.intent });
   }
-  return { added, alreadyInGroup };
+  if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };
+  const normalized = Array.from(byKey.values());
+  const texts = Array.from(new Set(normalized.map((e) => e.keyword)));
+
+  const keyOf = (k: { keyword: string; locale: string }) => `${k.keyword} ${k.locale}`;
+  const loadIds = async (): Promise<Map<string, string>> => {
+    const rows = await db.seoKeyword.findMany({
+      where: { shop, keyword: { in: texts } },
+      select: { id: true, keyword: true, locale: true },
+    });
+    return new Map(rows.map((r) => [keyOf(r), r.id]));
+  };
+
+  const existingIds = await loadIds();
+
+  // 1. Create the missing keywords in one shot.
+  const toCreate = normalized.filter((e) => !existingIds.has(keyOf(e)));
+  if (toCreate.length) {
+    await db.seoKeyword.createMany({
+      data: toCreate.map((e) => ({
+        shop,
+        keyword: e.keyword,
+        locale: e.locale,
+        priority: e.priority ?? 2,
+        intent: e.intent ?? null,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  // 2. Explicit priority/intent overrides for PRE-EXISTING rows, grouped by
+  //    value combination so 2000 explicit rows become ≤ 15 updateMany calls.
+  const overrideGroups = new Map<string, { priority?: number; intent?: string; ids: string[] }>();
+  for (const e of normalized) {
+    const id = existingIds.get(keyOf(e));
+    if (!id) continue; // freshly created above — values already right
+    const hasPriority = e.priority != null;
+    const hasIntent = e.intent != null;
+    if (!hasPriority && !hasIntent) continue;
+    const comboKey = `${hasPriority ? e.priority : "-"}::${hasIntent ? e.intent : "-"}`;
+    const group = overrideGroups.get(comboKey) ?? {
+      ...(hasPriority ? { priority: e.priority } : {}),
+      ...(hasIntent ? { intent: e.intent as string } : {}),
+      ids: [],
+    };
+    group.ids.push(id);
+    overrideGroups.set(comboKey, group);
+  }
+  for (const group of overrideGroups.values()) {
+    await db.seoKeyword.updateMany({
+      where: { id: { in: group.ids }, shop },
+      data: {
+        ...(group.priority != null ? { priority: group.priority } : {}),
+        ...(group.intent != null ? { intent: group.intent } : {}),
+      },
+    });
+  }
+
+  // 3. Memberships: diff against the existing set, insert the rest in one go.
+  const allIds = await loadIds();
+  const memberIds = normalized
+    .map((e) => allIds.get(keyOf(e)))
+    .filter((id): id is string => typeof id === "string");
+  const existingMemberships = await db.seoKeywordGroupMembership.findMany({
+    where: { groupId, keywordId: { in: memberIds } },
+    select: { keywordId: true },
+  });
+  const have = new Set(existingMemberships.map((m) => m.keywordId));
+  const toAdd = memberIds.filter((id) => !have.has(id));
+  if (toAdd.length) {
+    await db.seoKeywordGroupMembership.createMany({
+      data: toAdd.map((keywordId) => ({ shop, groupId, keywordId })),
+      skipDuplicates: true,
+    });
+  }
+  return { added: toAdd.length, alreadyInGroup: memberIds.length - toAdd.length };
 }
 
 /** Remove one keyword from a group (orphan cleanup like removeAssignment). */

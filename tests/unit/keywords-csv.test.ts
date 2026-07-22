@@ -12,7 +12,9 @@ describe("parseKeywordsCsv", () => {
     expect(errors).toEqual([]);
     expect(rows).toEqual([
       { keyword: "green vase", priority: 1, intent: "transactional", locale: "fr", csvRow: 2 },
-      { keyword: "blue vase", priority: 2, intent: null, locale: "", csvRow: 3 },
+      // No explicit priority in the file → undefined (must NOT reset an
+      // existing keyword's priority to the default on re-import).
+      { keyword: "blue vase", priority: undefined, intent: null, locale: "", csvRow: 3 },
     ]);
   });
 

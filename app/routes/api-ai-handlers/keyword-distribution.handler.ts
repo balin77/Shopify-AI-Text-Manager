@@ -27,6 +27,8 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { isValidShopifyGID } from "~/utils/validation";
 import { meetsPlan } from "~/utils/planUtils";
+import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
+import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 import type { Plan } from "~/config/plans";
 import type { AISettings, PrismaClient } from "@prisma/client";
 import {
@@ -231,7 +233,18 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
   const { db, settings, shop, group, targetType, maxSecondaries, keywords, items, batches } = args;
 
   const aiService = createAIService(settings, shop, taskId);
-  const validKeywords = new Set(keywords.map((k) => k.keyword));
+  // The prompt sanitizes keyword text (buildDistributionPrompt) — the model
+  // echoes the SANITIZED form, so validation must match against it and map
+  // back to the raw stored text afterwards (review L8). For normal keywords
+  // sanitized === raw and this is a no-op.
+  const sanitizedToRaw = new Map<string, string>();
+  for (const k of keywords) {
+    sanitizedToRaw.set(
+      sanitizePromptInput(k.keyword, { fieldType: "general" }).trim().toLowerCase(),
+      k.keyword,
+    );
+  }
+  const validKeywords = new Set(sanitizedToRaw.keys());
   const validItemIds = new Set(items.map((it) => it.id));
 
   const perBatchResults: DistributionSuggestion[][] = [];
@@ -245,7 +258,10 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
       try {
         const prompt = buildDistributionPrompt(keywords, batches[i], { maxSecondariesPerItem: maxSecondaries });
         const raw = await aiService["askAI"](prompt);
-        const parsed = parseDistributionResponse(raw, validKeywords, validItemIds);
+        const parsed = parseDistributionResponse(raw, validKeywords, validItemIds).map((s) => ({
+          ...s,
+          keyword: sanitizedToRaw.get(s.keyword) ?? s.keyword,
+        }));
         if (parsed.length === 0) {
           failedBatches += 1;
           logger.warn("[API-AI] Keyword distribution: batch response unparseable", {
@@ -407,6 +423,7 @@ function isValidApplyRow(row: unknown): row is ApplyRow {
   return (
     typeof r.keyword === "string" &&
     r.keyword.trim().length > 0 &&
+    r.keyword.trim().length <= 120 && // MAX_KEYWORD_LENGTH (review L9)
     typeof r.locale === "string" &&
     (r.primaryItemId === null || (typeof r.primaryItemId === "string" && isValidShopifyGID(r.primaryItemId))) &&
     Array.isArray(r.secondaryItemIds) &&
@@ -416,7 +433,7 @@ function isValidApplyRow(row: unknown): row is ApplyRow {
 }
 
 async function handleApplyStage(ctx: AIActionContext): Promise<Response> {
-  const { session, db, formData } = ctx;
+  const { session, admin, db, formData } = ctx;
 
   const targetType = getFormString(formData, "targetType") as KeywordResourceType;
   const suggestTaskId = getFormString(formData, "suggestTaskId");
@@ -432,6 +449,21 @@ async function handleApplyStage(ctx: AIActionContext): Promise<Response> {
     return json({ success: false, error: "Invalid apply payload." }, { status: 400 });
   }
   const rows = rawRows as ApplyRow[];
+
+  // Locale integrity (review L9): every non-empty locale must be a published
+  // secondary shop locale — the same rule the manual add form enforces.
+  const requestedLocales = new Set(rows.map((r) => r.locale).filter((l) => l !== ""));
+  if (requestedLocales.size > 0) {
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    const published = new Set<string>(
+      shopLocales.filter((l: any) => !l.primary && l.published).map((l: any) => String(l.locale)),
+    );
+    for (const locale of requestedLocales) {
+      if (!published.has(locale)) {
+        return json({ success: false, error: "Invalid apply payload." }, { status: 400 });
+      }
+    }
+  }
 
   const task = await db.task.create({
     data: {
@@ -511,6 +543,7 @@ async function runApplyStage(taskId: string, args: ApplyRunArgs): Promise<void> 
             keyword: row.keyword,
             locale: row.locale,
             role: "secondary",
+            keepExistingPrimary: true,
           });
           if (second.ok) demotedToSecondary += 1;
           else skipped += 1;
@@ -526,6 +559,9 @@ async function runApplyStage(taskId: string, args: ApplyRunArgs): Promise<void> 
           keyword: row.keyword,
           locale: row.locale,
           role: "secondary",
+          // Review M3: an automated secondary write must never silently
+          // demote a deliberately-set primary on that item.
+          keepExistingPrimary: true,
         });
         if (res.ok) applied += 1;
         else skipped += 1;

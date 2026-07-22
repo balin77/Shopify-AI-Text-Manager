@@ -154,6 +154,11 @@ describe("mergeBatchResults", () => {
     expect(merged[0].primaryItemId).toBe("p1");
   });
 
+  it("caps secondaries already on the FIRST insert (single-batch run)", () => {
+    const merged = mergeBatchResults([[s("green vase", "p1", 0.7, ["s1", "s2", "s3", "s4", "s5"])]], 3);
+    expect(merged[0].secondaryItemIds).toEqual(["s1", "s2", "s3"]);
+  });
+
   it("caps merged secondaries and dedupes them", () => {
     const merged = mergeBatchResults(
       [

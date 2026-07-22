@@ -321,15 +321,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Period-over-period comparison: the 28 days immediately before the
     // window above. Best-effort — any failure here just leaves
     // deltas/lostQueries empty; the table renders exactly as before.
+    // SAME (query,page) dimensions + SAME aggregation as the current period
+    // (review M5): comparing our impression-weighted positions against GSC's
+    // query-dimension positions would fabricate position deltas for every
+    // query that ranks on more than one page.
     try {
       const prevRange = previousDateRange(new Date());
-      const previousRows = await querySearchAnalytics(accessToken, propertyUrl, {
+      const previousPageRows = await querySearchAnalytics(accessToken, propertyUrl, {
         startDate: prevRange.startDate,
         endDate: prevRange.endDate,
-        dimensions: ["query"],
-        rowLimit: 1000,
+        dimensions: ["query", "page"],
+        rowLimit: 5000,
         filters: analyticsFilters,
       });
+      const previousRows = aggregateQueryPageRows(previousPageRows).queries;
       base.deltas = Object.fromEntries(computeQueryDeltas(base.topQueries, previousRows));
       base.lostQueries = findLostQueries(currentRows, previousRows);
     } catch {

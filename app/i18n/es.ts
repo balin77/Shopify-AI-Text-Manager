@@ -1695,6 +1695,7 @@ export const es: Translation = {
       csvImport: "Importar CSV",
       csvResult: "{added} importadas, {existing} ya estaban en el grupo.",
       csvTooMany: "Una importación está limitada a {max} filas.",
+      csvErrorRow: "Fila {row}: «{keyword}» — {error}",
       csvErrors: {
         tooLong: "Palabra clave demasiado larga",
         badPriority: "Prioridad no válida (permitido: 1, 2, 3)",
@@ -1723,7 +1724,7 @@ export const es: Translation = {
       distModalStart: "Iniciar distribución",
       distModalCancel: "Cancelar",
       distModalTarget: "Tipo de destino",
-      distModalMaxSecondaries: "Máx. secundarias por elemento",
+      distModalMaxSecondaries: "Máx. elementos secundarios por palabra clave",
       distCostPreview: "~{batches} llamada(s) de IA, estimado ~{usd} $.",
       distModalHint: "Nada se asigna automáticamente — revisas cada sugerencia antes de aplicarla.",
       researchTitle: "Investigación de palabras clave",

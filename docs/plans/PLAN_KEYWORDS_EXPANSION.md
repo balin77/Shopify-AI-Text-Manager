@@ -299,7 +299,7 @@ Neuer Aktions-Endpunkt `actionType=importCsv` (auf der Gruppen-Detail-Seite):
 - Ziel-Resourcetyp (Product / Collection / Article / Page) — default Product.
 - Optional: Filter auf einen bestimmten Produkt-Type oder Vendor oder Collection (nutzt vorhandene Product-Facetten).
 - Regeln:
-  - Max Secondaries pro Item (default 3).
+  - Max Secondary-**Items pro Keyword** (default 3). (Umsetzungs-Klarstellung: Die Regel begrenzt, auf wie viele Items ein Keyword als Secondary vorgeschlagen wird — nicht, wie viele Secondary-Keywords ein Item trägt; Letzteres deckelt der harte 5er-Cap pro Item.)
   - Nur Items ohne bereits vorhandenes Primary in diesem Locale überschreiben? (default: **nein — leer lassen**, damit neue Primaries nicht bestehende überschreiben).
   - Locale (default: Locale der Keywords, meist primary).
 

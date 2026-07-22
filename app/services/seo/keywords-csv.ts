@@ -15,7 +15,10 @@ import { normalizeKeyword, MAX_KEYWORD_LENGTH } from "./keywords.service";
 
 export interface KeywordCsvRow {
   keyword: string; // normalized (lowercased, single-spaced)
-  priority: number; // 1/2/3, default 2
+  /** 1/2/3 when the file explicitly sets one; undefined otherwise. The
+   *  distinction matters downstream: an explicit value overrides an existing
+   *  keyword's priority, an absent one must NOT reset it to the default. */
+  priority?: number;
   intent: string | null;
   locale: string; // "" = primary
   /** 1-based row number in the source CSV, for error reporting. */
@@ -91,7 +94,7 @@ export function parseKeywordsCsv(
       continue;
     }
 
-    let priority = 2;
+    let priority: number | undefined;
     if (priorityIdx >= 0) {
       const p = (raw[priorityIdx] ?? "").trim();
       if (p) {

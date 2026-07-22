@@ -252,7 +252,9 @@ export function mergeBatchResults(
       if (!existing) {
         byKeyword.set(s.keyword, {
           ...s,
-          secondaryItemIds: [...s.secondaryItemIds],
+          // Cap applies on the FIRST insert too (review M4) — a single-batch
+          // run must not ship an over-long secondary list into the preview.
+          secondaryItemIds: s.secondaryItemIds.slice(0, maxSecondaries),
         });
         continue;
       }

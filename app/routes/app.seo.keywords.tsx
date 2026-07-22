@@ -478,6 +478,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (!groupId || !keyword || keyword.length > MAX_KEYWORD_LENGTH) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
+    // Ownership check (review H1): a client-supplied groupId must never write
+    // into another shop's group — same guard as importCsv below.
+    const targetGroup = await db.seoKeywordGroup.findFirst({
+      where: { id: groupId, shop: session.shop },
+      select: { id: true },
+    });
+    if (!targetGroup) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
     let locale = "";
     if (localeInput) {
       const shopLocales = await getCachedShopLocales(admin, session.shop);
@@ -696,6 +705,7 @@ export default function SeoKeywords() {
       seeded[s.keyword] = s.primaryItemId && s.confidence >= 0.6 ? "accept" : "reject";
     }
     setDecisions(seeded);
+    setDemoteExisting(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewKey]);
 
@@ -739,7 +749,14 @@ export default function SeoKeywords() {
     if (!preview || !data.groupDetail) return;
     const localeByKeyword = new Map(data.groupDetail.keywords.map((k) => [k.keyword, k.locale]));
     const rows = preview.suggestions
-      .filter((s) => decisions[s.keyword] && decisions[s.keyword] !== "reject" && s.primaryItemId)
+      // A null-primary row with secondaries is still applyable — the apply
+      // stage handles primaryItemId: null and only writes the secondaries.
+      .filter(
+        (s) =>
+          decisions[s.keyword] &&
+          decisions[s.keyword] !== "reject" &&
+          (s.primaryItemId || s.secondaryItemIds.length > 0),
+      )
       .map((s) => ({
         keyword: s.keyword,
         locale: localeByKeyword.get(s.keyword) ?? "",
@@ -1584,7 +1601,10 @@ export default function SeoKeywords() {
                       </Text>
                       {groupFetcher.data.csvErrors.map((e) => (
                         <Text key={`${e.row}:${e.keyword}`} as="p" variant="bodySm">
-                          {`Zeile ${e.row}: "${e.keyword}" — ${k.csvErrors?.[e.error] ?? e.error}`}
+                          {(k.csvErrorRow || 'Row {row}: "{keyword}" — {error}')
+                            .replace("{row}", String(e.row))
+                            .replace("{keyword}", e.keyword)
+                            .replace("{error}", k.csvErrors?.[e.error] ?? e.error)}
                         </Text>
                       ))}
                     </BlockStack>
@@ -1645,7 +1665,7 @@ export default function SeoKeywords() {
                               <Select
                                 label={k.distColDecision || "Decision"}
                                 labelHidden
-                                disabled={!s.primaryItemId}
+                                disabled={!s.primaryItemId && s.secondaryItemIds.length === 0}
                                 options={[
                                   { label: k.distDecisionAccept || "Accept", value: "accept" },
                                   { label: k.distDecisionSecondary || "As secondary only", value: "secondaryOnly" },

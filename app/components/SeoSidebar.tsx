@@ -1,5 +1,5 @@
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "@remix-run/react";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
@@ -130,6 +130,10 @@ export function SeoSidebar({
     keywords?: SidebarKeywordEntry[];
     error?: string;
   }>();
+  // The resourceId a mutation was submitted FOR — a late response must not
+  // overwrite the list after the merchant already switched to another item
+  // (the response carries no row identity of its own).
+  const keywordOpTargetRef = useRef<string | null>(null);
 
   // Reload the tracked keywords whenever the selected item changes. Fetching
   // eagerly (not gated on showKeywordSection) means the badges below are
@@ -154,8 +158,11 @@ export function SeoSidebar({
   }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
 
   // Every mutation answers with the fresh list — no follow-up load needed.
+  // Guarded against late responses for a previously selected item (the
+  // merchant may have switched while the request was in flight).
   useEffect(() => {
     if (keywordOpFetcher.state === "idle" && keywordOpFetcher.data?.ok && keywordOpFetcher.data.keywords) {
+      if (keywordOpTargetRef.current !== resourceId) return;
       setKeywords(keywordOpFetcher.data.keywords);
       setKeywordInput("");
     }
@@ -167,6 +174,7 @@ export function SeoSidebar({
     // First keyword becomes the primary; everything after joins as secondary
     // (promote later via the row's "make primary" action).
     const role = keywords.some((k) => k.role === "primary") ? "secondary" : "primary";
+    keywordOpTargetRef.current = resourceId;
     keywordOpFetcher.submit(
       { op: "add", resourceId, resourceType, keyword: keywordInput, role },
       { method: "post", action: "/api/seo-keyword" },
@@ -175,6 +183,7 @@ export function SeoSidebar({
 
   const handleRemoveKeyword = (id: string) => {
     if (!resourceId) return;
+    keywordOpTargetRef.current = resourceId;
     keywordOpFetcher.submit(
       { op: "remove", id, resourceId },
       { method: "post", action: "/api/seo-keyword" },
@@ -183,6 +192,7 @@ export function SeoSidebar({
 
   const handleMakePrimary = (id: string) => {
     if (!resourceId) return;
+    keywordOpTargetRef.current = resourceId;
     keywordOpFetcher.submit(
       { op: "makePrimary", id, resourceId },
       { method: "post", action: "/api/seo-keyword" },

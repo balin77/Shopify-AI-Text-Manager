@@ -1696,6 +1696,7 @@ export const en: Translation = {
       csvImport: "Import CSV",
       csvResult: "{added} imported, {existing} already in the group.",
       csvTooMany: "A single import is limited to {max} rows.",
+      csvErrorRow: "Row {row}: \"{keyword}\" — {error}",
       csvErrors: {
         tooLong: "Keyword too long",
         badPriority: "Invalid priority (allowed: 1, 2, 3)",
@@ -1724,7 +1725,7 @@ export const en: Translation = {
       distModalStart: "Start distribution",
       distModalCancel: "Cancel",
       distModalTarget: "Target type",
-      distModalMaxSecondaries: "Max secondaries per item",
+      distModalMaxSecondaries: "Max secondary items per keyword",
       distCostPreview: "~{batches} AI call(s), estimated ~${usd}.",
       distModalHint: "Nothing is assigned automatically — you review every suggestion before it is applied.",
       researchTitle: "Keyword research",

@@ -22,6 +22,7 @@ import {
   parseIntentResponse,
   INTENT_BATCH_SIZE,
 } from "~/services/seo/keyword-intent.service";
+import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 
 export async function handleClassifyKeywordIntents(ctx: AIActionContext): Promise<Response> {
   const { session, db, settings } = ctx;
@@ -63,10 +64,20 @@ export async function handleClassifyKeywordIntents(ctx: AIActionContext): Promis
   try {
     const aiService = createAIService(settings, session.shop, task.id);
     const raw = await aiService["askAI"](buildIntentPrompt(distinct));
-    const intents = parseIntentResponse(raw, new Set(distinct));
+    // The prompt sanitizes keyword text — the model echoes the SANITIZED
+    // form, so validate against it and map back to the raw stored text
+    // (review L8; otherwise a sanitizer-hit keyword blocks its batch slot
+    // forever). For normal keywords sanitized === raw.
+    const sanitizedToRaw = new Map<string, string>();
+    for (const kw of distinct) {
+      sanitizedToRaw.set(sanitizePromptInput(kw, { fieldType: "general" }).trim().toLowerCase(), kw);
+    }
+    const intents = parseIntentResponse(raw, new Set(sanitizedToRaw.keys()));
 
     let classified = 0;
-    for (const [keyword, intent] of intents) {
+    for (const [sanitizedKeyword, intent] of intents) {
+      const keyword = sanitizedToRaw.get(sanitizedKeyword);
+      if (!keyword) continue;
       const updated = await db.seoKeyword.updateMany({
         where: { shop: session.shop, keyword, intent: null },
         data: { intent },

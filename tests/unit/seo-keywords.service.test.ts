@@ -309,6 +309,40 @@ describe("persistence helpers (keyword + assignment)", () => {
     expect(asgArg.create).not.toHaveProperty("gscPosition");
   });
 
+  it("assignKeyword with keepExistingPrimary never downgrades an existing primary to secondary", async () => {
+    const { db, tx } = makeDb({
+      siblings: [
+        { id: "a1", keywordId: "kw1", role: "primary", keyword: { id: "kw1", keyword: "blue shoes", locale: "" } },
+      ],
+    });
+    const result = await assignKeyword(db, SHOP, {
+      resourceType: "Product",
+      resourceId: P1,
+      keyword: "blue shoes",
+      role: "secondary",
+      keepExistingPrimary: true,
+    });
+    expect(result).toEqual({ ok: true });
+    const asgArg = tx.seoKeywordAssignment.upsert.mock.calls[0][0];
+    expect(asgArg.update.role).toBe("primary"); // role preserved, no silent demote
+  });
+
+  it("assignKeyword WITHOUT keepExistingPrimary applies an explicit secondary role change", async () => {
+    const { db, tx } = makeDb({
+      siblings: [
+        { id: "a1", keywordId: "kw1", role: "primary", keyword: { id: "kw1", keyword: "blue shoes", locale: "" } },
+      ],
+    });
+    await assignKeyword(db, SHOP, {
+      resourceType: "Product",
+      resourceId: P1,
+      keyword: "blue shoes",
+      role: "secondary",
+    });
+    const asgArg = tx.seoKeywordAssignment.upsert.mock.calls[0][0];
+    expect(asgArg.update.role).toBe("secondary");
+  });
+
   it("assignKeyword refuses a second primary without demoteExisting (no write)", async () => {
     const { db, tx } = makeDb({
       siblings: [

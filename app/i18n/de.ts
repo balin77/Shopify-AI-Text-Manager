@@ -1693,6 +1693,7 @@ export const de = {
       csvImport: "CSV importieren",
       csvResult: "{added} importiert, {existing} bereits in der Gruppe.",
       csvTooMany: "Ein einzelner Import ist auf {max} Zeilen begrenzt.",
+      csvErrorRow: "Zeile {row}: „{keyword}“ — {error}",
       csvErrors: {
         tooLong: "Keyword zu lang",
         badPriority: "Ungültige Priorität (erlaubt: 1, 2, 3)",
@@ -1721,7 +1722,7 @@ export const de = {
       distModalStart: "Verteilung starten",
       distModalCancel: "Abbrechen",
       distModalTarget: "Ziel-Typ",
-      distModalMaxSecondaries: "Max. Secondaries pro Inhalt",
+      distModalMaxSecondaries: "Max. Secondary-Items pro Keyword",
       distCostPreview: "~{batches} KI-Aufruf(e), geschätzt ~{usd} $.",
       distModalHint: "Es wird nichts automatisch zugewiesen — du prüfst jeden Vorschlag, bevor er angewendet wird.",
       researchTitle: "Keyword-Recherche",
