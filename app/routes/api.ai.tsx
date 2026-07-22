@@ -45,6 +45,7 @@ import {
 import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
 import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
+import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
 // Actions that never call an AI provider — they only read/write the DB
@@ -139,6 +140,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleSeoAudit(ctx);
       case "seoBulkMeta":
         return handleSeoBulkMeta(ctx);
+      case "distributeKeywords":
+        return handleDistributeKeywords(ctx);
       case "generateTemplateTitles":
         return handleGenerateTemplateTitles(ctx);
       default:

@@ -509,6 +509,198 @@ export async function removeAssignment(
   });
 }
 
+// ── Groups (PLAN_KEYWORDS_EXPANSION.md §5.1–§5.3) ───────────────────────────
+
+export interface KeywordGroupRow {
+  id: string;
+  name: string;
+  description: string | null;
+  keywordCount: number;
+}
+
+export interface GroupKeywordRow {
+  keywordId: string;
+  keyword: string;
+  locale: string;
+  priority: number;
+  intent: string | null;
+  /** How many items this keyword is currently assigned to (any role). */
+  assignmentCount: number;
+}
+
+export async function listGroups(db: PrismaClient, shop: string): Promise<KeywordGroupRow[]> {
+  const groups = await db.seoKeywordGroup.findMany({
+    where: { shop },
+    orderBy: { name: "asc" },
+    include: { _count: { select: { memberships: true } } },
+  });
+  return groups.map((g) => ({
+    id: g.id,
+    name: g.name,
+    description: g.description,
+    keywordCount: g._count.memberships,
+  }));
+}
+
+export type CreateGroupResult = { ok: true; id: string } | { ok: false; reason: "duplicateName" };
+
+export async function createGroup(
+  db: PrismaClient,
+  shop: string,
+  name: string,
+  description?: string,
+): Promise<CreateGroupResult> {
+  const trimmed = name.trim();
+  const existing = await db.seoKeywordGroup.findUnique({
+    where: { shop_name: { shop, name: trimmed } },
+    select: { id: true },
+  });
+  if (existing) return { ok: false, reason: "duplicateName" };
+  const created = await db.seoKeywordGroup.create({
+    data: { shop, name: trimmed, description: description?.trim() || null },
+  });
+  return { ok: true, id: created.id };
+}
+
+/** Delete a group — memberships cascade, keywords survive (plan §5.1: delete
+ *  cascades memberships, not keywords). Fully orphaned keywords (no
+ *  assignments, no other groups) are cleaned up so nothing invisible stays. */
+export async function deleteGroup(db: PrismaClient, shop: string, groupId: string): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const group = await tx.seoKeywordGroup.findFirst({ where: { id: groupId, shop }, select: { id: true } });
+    if (!group) return;
+    const memberKeywordIds = (
+      await tx.seoKeywordGroupMembership.findMany({ where: { groupId }, select: { keywordId: true } })
+    ).map((m) => m.keywordId);
+    await tx.seoKeywordGroup.delete({ where: { id: groupId } }); // cascades memberships
+    if (memberKeywordIds.length) {
+      await tx.seoKeyword.deleteMany({
+        where: {
+          id: { in: memberKeywordIds },
+          assignments: { none: {} },
+          groups: { none: {} },
+        },
+      });
+    }
+  });
+}
+
+export async function getGroupKeywords(
+  db: PrismaClient,
+  shop: string,
+  groupId: string,
+): Promise<GroupKeywordRow[]> {
+  const memberships = await db.seoKeywordGroupMembership.findMany({
+    where: { groupId, shop },
+    include: {
+      keyword: {
+        include: { _count: { select: { assignments: true } } },
+      },
+    },
+  });
+  return memberships
+    .map((m) => ({
+      keywordId: m.keyword.id,
+      keyword: m.keyword.keyword,
+      locale: m.keyword.locale,
+      priority: m.keyword.priority,
+      intent: m.keyword.intent,
+      assignmentCount: m.keyword._count.assignments,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
+}
+
+export interface GroupImportEntry {
+  keyword: string;
+  locale?: string;
+  priority?: number;
+  intent?: string | null;
+}
+
+/**
+ * Upsert keywords (by (shop, keyword, locale)) and put them into a group —
+ * the CSV importer's write path, also used for single manual adds. Explicit
+ * priority/intent from the file win over an existing keyword's values;
+ * omitted ones leave the existing row untouched. Returns how many keywords
+ * were newly added to the group vs. already members.
+ */
+export async function addKeywordsToGroup(
+  db: PrismaClient,
+  shop: string,
+  groupId: string,
+  entries: GroupImportEntry[],
+): Promise<{ added: number; alreadyInGroup: number }> {
+  let added = 0;
+  let alreadyInGroup = 0;
+  for (const entry of entries) {
+    const keyword = normalizeKeyword(entry.keyword);
+    if (!keyword) continue;
+    const locale = entry.locale ?? "";
+    const keywordRow = await db.seoKeyword.upsert({
+      where: { shop_keyword_locale: { shop, keyword, locale } },
+      create: {
+        shop,
+        keyword,
+        locale,
+        priority: entry.priority ?? 2,
+        intent: entry.intent ?? null,
+      },
+      update: {
+        ...(entry.priority != null ? { priority: entry.priority } : {}),
+        ...(entry.intent != null ? { intent: entry.intent } : {}),
+      },
+    });
+    const existing = await db.seoKeywordGroupMembership.findUnique({
+      where: { groupId_keywordId: { groupId, keywordId: keywordRow.id } },
+      select: { id: true },
+    });
+    if (existing) {
+      alreadyInGroup += 1;
+    } else {
+      await db.seoKeywordGroupMembership.create({
+        data: { shop, groupId, keywordId: keywordRow.id },
+      });
+      added += 1;
+    }
+  }
+  return { added, alreadyInGroup };
+}
+
+/** Remove one keyword from a group (orphan cleanup like removeAssignment). */
+export async function removeKeywordFromGroup(
+  db: PrismaClient,
+  shop: string,
+  groupId: string,
+  keywordId: string,
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const membership = await tx.seoKeywordGroupMembership.findFirst({
+      where: { groupId, keywordId, shop },
+      select: { id: true },
+    });
+    if (!membership) return;
+    await tx.seoKeywordGroupMembership.delete({ where: { id: membership.id } });
+    const [assignments, memberships] = await Promise.all([
+      tx.seoKeywordAssignment.count({ where: { keywordId } }),
+      tx.seoKeywordGroupMembership.count({ where: { keywordId } }),
+    ]);
+    if (assignments === 0 && memberships === 0) {
+      await tx.seoKeyword.delete({ where: { id: keywordId } });
+    }
+  });
+}
+
+/** Inline priority edit (keywords table + group detail, plan §5.2). */
+export async function setKeywordPriority(
+  db: PrismaClient,
+  shop: string,
+  keywordId: string,
+  priority: number,
+): Promise<void> {
+  if (priority !== 1 && priority !== 2 && priority !== 3) return;
+  await db.seoKeyword.updateMany({ where: { id: keywordId, shop }, data: { priority } });
+}
+
 // ── Locale-aware analysis input ─────────────────────────────────────────────
 
 /** A flat ContentTranslation row, as selected by the keywords loader's batched

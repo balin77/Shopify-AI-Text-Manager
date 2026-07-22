@@ -54,6 +54,11 @@ const LONG_RUNNING_TASK_TYPES = [
   // up to 500 sequential Shopify saves + DB updates, same shape as seoBulkFix
   // minus the AI call, so it needs the same generous stuck-task threshold.
   'seoBulkMeta',
+  // AI keyword distribution (PLAN_KEYWORDS_EXPANSION.md §5.4,
+  // keyword-distribution.handler.ts) — dozens of sequential LLM batch calls
+  // (suggest stage) or hundreds of DB upserts (apply stage), same shape as
+  // seoBulkFix, so it needs the same generous stuck-task threshold.
+  'distributeKeywords',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

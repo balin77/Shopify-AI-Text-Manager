@@ -8,7 +8,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
@@ -22,6 +22,9 @@ import {
   Banner,
   IndexTable,
   Autocomplete,
+  Modal,
+  Checkbox,
+  ProgressBar,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -35,14 +38,29 @@ import {
   assignKeyword,
   promoteAssignment,
   removeAssignment,
+  listGroups,
+  createGroup,
+  deleteGroup,
+  getGroupKeywords,
+  addKeywordsToGroup,
+  removeKeywordFromGroup,
+  setKeywordPriority,
   MAX_KEYWORD_LENGTH,
+  MAX_KEYWORDS_PER_ITEM,
   buildTranslatedContentInput,
   TRANSLATED_CONTENT_KEYS,
   type KeywordResourceType,
   type KeywordRole,
   type DensityBand,
   type TranslationRow,
+  type KeywordGroupRow,
+  type GroupKeywordRow,
 } from "../services/seo/keywords.service";
+import { parseKeywordsCsv } from "../services/seo/keywords-csv";
+import { estimateDistributionCost } from "../services/seo/keyword-distribution.service";
+import type { DistributionSuggestResult } from "./api-ai-handlers/keyword-distribution.handler";
+import { meetsPlan } from "../utils/planUtils";
+import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getFormString } from "../utils/form-data.utils";
 
@@ -181,11 +199,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
     return {
       id: row.id,
+      keywordId: row.keywordId,
       resourceType: row.resourceType,
       resourceId: row.resourceId,
       keyword: row.keyword,
       locale: row.locale,
       role: row.role,
+      priority: row.priority,
       // Display code for the Locale column badge: primary rows are stored as
       // "" so they show the shop's actual primary locale code, not a blank badge.
       localeDisplay: row.locale || primaryLocale?.locale || "",
@@ -233,15 +253,102 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ...secondaryLocales.map((l: any) => ({ locale: String(l.locale), name: String(l.name), primary: false })),
   ];
 
-  return json({ keywords, pickers, localeOptions });
+  // ── Groups + AI distribution (PLAN_KEYWORDS_EXPANSION.md §5) ──
+
+  // Plan flag for the distribution button (the handler gates server-side
+  // again; this only decides whether the button renders as available).
+  const settingsRow = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const isPro = meetsPlan((settingsRow?.subscriptionPlan || "free") as Plan, "pro");
+
+  const groups = await listGroups(db, shop);
+  const url = new URL(request.url);
+  const selectedGroupId = url.searchParams.get("group") || "";
+  let groupDetail:
+    | { id: string; name: string; description: string | null; keywords: GroupKeywordRow[] }
+    | null = null;
+  if (selectedGroupId) {
+    const g = groups.find((grp) => grp.id === selectedGroupId);
+    if (g) {
+      groupDetail = {
+        id: g.id,
+        name: g.name,
+        description: g.description,
+        keywords: await getGroupKeywords(db, shop, g.id),
+      };
+    }
+  }
+
+  // Distribution state: a running task (either stage) blocks new runs and
+  // drives the progress banner; otherwise the latest completed suggest task
+  // for the selected group (not yet applied) feeds the preview table.
+  const runningDistribution = await db.task.findFirst({
+    where: { shop, type: "distributeKeywords", status: "running" },
+    select: { id: true, fieldType: true, progress: true },
+  });
+  let distributionPreview: DistributionSuggestResult | null = null;
+  let suggestTaskId: string | null = null;
+  if (groupDetail && !runningDistribution) {
+    const latest = await db.task.findFirst({
+      where: { shop, type: "distributeKeywords", fieldType: "suggest", status: "completed" },
+      orderBy: { completedAt: "desc" },
+      select: { id: true, result: true },
+    });
+    if (latest?.result) {
+      try {
+        const parsed = JSON.parse(latest.result) as DistributionSuggestResult;
+        if (parsed.groupId === groupDetail.id && !parsed.appliedAt && parsed.suggestions.length > 0) {
+          distributionPreview = parsed;
+          suggestTaskId = latest.id;
+        }
+      } catch {
+        // Malformed result blob — no preview.
+      }
+    }
+  }
+
+  // Item counts per type: the distribution modal's cost preview needs the
+  // target-set size before anything runs.
+  const [productCount, collectionCount, articleCount, pageCount] = await Promise.all([
+    db.product.count({ where: { shop } }),
+    db.collection.count({ where: { shop } }),
+    db.article.count({ where: { shop } }),
+    db.page.count({ where: { shop } }),
+  ]);
+
+  return json({
+    keywords,
+    pickers,
+    localeOptions,
+    isPro,
+    groups,
+    groupDetail,
+    runningDistribution,
+    distributionPreview,
+    suggestTaskId,
+    itemCounts: {
+      Product: productCount,
+      Collection: collectionCount,
+      Article: articleCount,
+      Page: pageCount,
+    } as Record<KeywordResourceType, number>,
+  });
 };
 
+type CsvErrorRow = { row: number; keyword: string; error: string };
+
 type ActionResult =
-  | { ok: true; kind: "saved" | "deleted" | "promoted" }
-  | { ok: false; error: "invalid" | "tooMany"; existingKeyword?: never }
+  | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
+  | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  | { ok: false; error: "invalid" | "tooMany" | "duplicateName" | "csvEmpty" | "csvTooMany"; existingKeyword?: never }
   // A different keyword already holds the primary role for this (item, locale)
   // — the UI confirms the swap and re-submits with demoteExisting=true.
   | { ok: false; error: "primaryExists"; existingKeyword: string };
+
+/** CSV import cap per request (plan §5.3) — anything bigger must be split. */
+const MAX_CSV_ROWS = 2000;
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
@@ -310,6 +417,104 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "promoted" });
   }
 
+  // ── Priority (plan §5.2) ──
+  if (actionType === "setPriority") {
+    const keywordId = getFormString(form, "keywordId");
+    const priority = Number(getFormString(form, "priority"));
+    if (!keywordId || ![1, 2, 3].includes(priority)) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    await setKeywordPriority(db, session.shop, keywordId, priority);
+    return json<ActionResult>({ ok: true, kind: "prioritySet" });
+  }
+
+  // ── Groups (plan §5.1) ──
+  if (actionType === "createGroup") {
+    const name = getFormString(form, "name").trim();
+    if (!name || name.length > 100) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const result = await createGroup(db, session.shop, name, getFormString(form, "description"));
+    if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
+    return json<ActionResult>({ ok: true, kind: "groupCreated" });
+  }
+
+  if (actionType === "deleteGroup") {
+    const groupId = getFormString(form, "groupId");
+    if (groupId) await deleteGroup(db, session.shop, groupId);
+    return json<ActionResult>({ ok: true, kind: "groupDeleted" });
+  }
+
+  if (actionType === "removeFromGroup") {
+    const groupId = getFormString(form, "groupId");
+    const keywordId = getFormString(form, "keywordId");
+    if (groupId && keywordId) await removeKeywordFromGroup(db, session.shop, groupId, keywordId);
+    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
+  }
+
+  if (actionType === "addToGroup") {
+    const groupId = getFormString(form, "groupId");
+    const keyword = getFormString(form, "keyword").trim();
+    const localeInput = getFormString(form, "locale");
+    if (!groupId || !keyword || keyword.length > MAX_KEYWORD_LENGTH) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    let locale = "";
+    if (localeInput) {
+      const shopLocales = await getCachedShopLocales(admin, session.shop);
+      const isPublishedSecondary = shopLocales.some(
+        (l: any) => !l.primary && l.published && l.locale === localeInput,
+      );
+      if (!isPublishedSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      locale = localeInput;
+    }
+    await addKeywordsToGroup(db, session.shop, groupId, [{ keyword, locale }]);
+    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
+  }
+
+  // ── CSV import (plan §5.3): keyword[,priority][,intent][,locale] ──
+  if (actionType === "importCsv") {
+    const groupId = getFormString(form, "groupId");
+    const csv = getFormString(form, "csv");
+    if (!groupId || !csv.trim()) {
+      return json<ActionResult>({ ok: false, error: "csvEmpty" }, { status: 400 });
+    }
+    const group = await db.seoKeywordGroup.findFirst({
+      where: { id: groupId, shop: session.shop },
+      select: { id: true },
+    });
+    if (!group) return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    const validLocales = new Set<string>(
+      shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => String(l.locale).toLowerCase()),
+    );
+    const parsed = parseKeywordsCsv(csv, validLocales);
+    if (parsed.rows.length === 0 && parsed.errors.length === 0) {
+      return json<ActionResult>({ ok: false, error: "csvEmpty" }, { status: 400 });
+    }
+    if (parsed.rows.length > MAX_CSV_ROWS) {
+      return json<ActionResult>({ ok: false, error: "csvTooMany" }, { status: 400 });
+    }
+    const { added, alreadyInGroup } = await addKeywordsToGroup(
+      db,
+      session.shop,
+      groupId,
+      parsed.rows.map((r) => ({ keyword: r.keyword, locale: r.locale, priority: r.priority, intent: r.intent })),
+    );
+    return json<ActionResult>({
+      ok: true,
+      kind: "csvImported",
+      added,
+      alreadyInGroup,
+      csvErrors: parsed.errors.slice(0, 20), // cap the error list the UI shows
+    });
+  }
+
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
 
@@ -329,7 +534,8 @@ const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
 };
 
 export default function SeoKeywords() {
-  const { keywords, pickers, localeOptions } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
+  const { keywords, pickers, localeOptions } = data;
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -427,6 +633,126 @@ export default function SeoKeywords() {
     setPendingRowId(row.id);
     rowFetcher.submit({ actionType: "makePrimary", id: row.id }, { method: "post" });
   };
+
+  // ── Groups + distribution state (plan §5) ──
+  const [searchParams, setSearchParams] = useSearchParams();
+  const revalidator = useRevalidator();
+  const groupFetcher = useFetcher<ActionResult>();
+  const priorityFetcher = useFetcher<ActionResult>();
+  const distFetcher = useFetcher<{ success: boolean; taskId?: string; error?: string; code?: string }>();
+
+  const [newGroupName, setNewGroupName] = useState("");
+  const [groupKeywordInput, setGroupKeywordInput] = useState("");
+  const [groupKeywordLocale, setGroupKeywordLocale] = useState("");
+  const [csvText, setCsvText] = useState("");
+  const [showDistModal, setShowDistModal] = useState(false);
+  const [distTargetType, setDistTargetType] = useState<KeywordResourceType>("Product");
+  const [distMaxSecondaries, setDistMaxSecondaries] = useState("3");
+  // Per-suggestion decision for the preview table; keyed by keyword.
+  const [decisions, setDecisions] = useState<Record<string, "accept" | "secondaryOnly" | "reject">>({});
+  const [demoteExisting, setDemoteExisting] = useState(false);
+
+  const selectGroup = (groupId: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (groupId) next.set("group", groupId);
+        else next.delete("group");
+        return next;
+      },
+      { preventScrollReset: true },
+    );
+  };
+
+  // Reset the local form state when the group changes; seed the preview
+  // decisions (default: accept at confidence ≥ 0.6, plan §5.4 step 4).
+  const previewKey = data.suggestTaskId ?? "";
+  useEffect(() => {
+    if (!data.distributionPreview) {
+      setDecisions({});
+      return;
+    }
+    const seeded: Record<string, "accept" | "secondaryOnly" | "reject"> = {};
+    for (const s of data.distributionPreview.suggestions) {
+      seeded[s.keyword] = s.primaryItemId && s.confidence >= 0.6 ? "accept" : "reject";
+    }
+    setDecisions(seeded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewKey]);
+
+  // While a distribution task runs, poll the loader so the banner progresses
+  // and the preview appears without a manual reload.
+  const runningDistId = data.runningDistribution?.id ?? null;
+  useEffect(() => {
+    if (!runningDistId) return;
+    const t = setInterval(() => revalidator.revalidate(), 4000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningDistId]);
+
+  // A successful suggest/apply start also needs polling to kick in — the
+  // loader only knows about the task after the next revalidate.
+  useEffect(() => {
+    if (distFetcher.state === "idle" && distFetcher.data?.success) {
+      setShowDistModal(false);
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [distFetcher.state, distFetcher.data]);
+
+  const startDistribution = () => {
+    if (!data.groupDetail) return;
+    distFetcher.submit(
+      {
+        action: "distributeKeywords",
+        contentType: "products",
+        stage: "suggest",
+        groupId: data.groupDetail.id,
+        targetType: distTargetType,
+        maxSecondaries: distMaxSecondaries,
+      },
+      { method: "post", action: "/api/ai" },
+    );
+  };
+
+  const applyDistribution = () => {
+    const preview = data.distributionPreview;
+    if (!preview || !data.groupDetail) return;
+    const localeByKeyword = new Map(data.groupDetail.keywords.map((k) => [k.keyword, k.locale]));
+    const rows = preview.suggestions
+      .filter((s) => decisions[s.keyword] && decisions[s.keyword] !== "reject" && s.primaryItemId)
+      .map((s) => ({
+        keyword: s.keyword,
+        locale: localeByKeyword.get(s.keyword) ?? "",
+        primaryItemId: s.primaryItemId,
+        secondaryItemIds: s.secondaryItemIds,
+        decision: decisions[s.keyword],
+      }));
+    if (rows.length === 0) return;
+    distFetcher.submit(
+      {
+        action: "distributeKeywords",
+        contentType: "products",
+        stage: "apply",
+        targetType: preview.targetType,
+        suggestTaskId: data.suggestTaskId ?? "",
+        demoteExisting: demoteExisting ? "true" : "false",
+        rows: JSON.stringify(rows),
+      },
+      { method: "post", action: "/api/ai" },
+    );
+  };
+
+  const distCost = useMemo(() => {
+    if (!data.groupDetail) return null;
+    return estimateDistributionCost(data.groupDetail.keywords.length, data.itemCounts[distTargetType] ?? 0);
+  }, [data.groupDetail, data.itemCounts, distTargetType]);
+
+  const priorityOptions = [
+    { label: k.priority?.high || "1 — high", value: "1" },
+    { label: k.priority?.medium || "2 — medium", value: "2" },
+    { label: k.priority?.low || "3 — low", value: "3" },
+  ];
 
   const items = pickers[type] ?? [];
   // Full option list for the current type (Autocomplete filters this client-side
@@ -590,6 +916,7 @@ export default function SeoKeywords() {
                     { title: k.colKeyword },
                     { title: k.colRole || "Role" },
                     { title: k.colLocale },
+                    { title: k.colPriority || "Priority" },
                     { title: k.colScore },
                     { title: k.colDensity },
                     { title: k.colPresence },
@@ -622,6 +949,23 @@ export default function SeoKeywords() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         <Badge>{row.localeDisplay || "–"}</Badge>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <div style={{ minWidth: "110px" }}>
+                          <Select
+                            label={k.colPriority || "Priority"}
+                            labelHidden
+                            options={priorityOptions}
+                            value={String(row.priority)}
+                            disabled={priorityFetcher.state !== "idle"}
+                            onChange={(v) =>
+                              priorityFetcher.submit(
+                                { actionType: "setPriority", keywordId: row.keywordId, priority: v },
+                                { method: "post" },
+                              )
+                            }
+                          />
+                        </div>
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         {row.score == null ? (
@@ -694,7 +1038,451 @@ export default function SeoKeywords() {
             )}
           </BlockStack>
         </Card>
+
+        {/* ── Keyword groups (plan §5.1) ── */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">
+              {k.groupsTitle || "Keyword groups"}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {k.groupsIntro ||
+                "Groups are management containers: import keyword lists, then distribute them onto items with AI."}
+            </Text>
+            <InlineStack gap="200" blockAlign="end" wrap>
+              <div style={{ flex: "1 1 240px", maxWidth: "360px" }}>
+                <TextField
+                  label={k.groupNameLabel || "New group"}
+                  autoComplete="off"
+                  placeholder={k.groupNamePlaceholder || "e.g. Vases 2026"}
+                  value={newGroupName}
+                  onChange={setNewGroupName}
+                />
+              </div>
+              <Button
+                loading={groupFetcher.state !== "idle"}
+                disabled={!newGroupName.trim()}
+                onClick={() => {
+                  groupFetcher.submit({ actionType: "createGroup", name: newGroupName }, { method: "post" });
+                  setNewGroupName("");
+                }}
+              >
+                {k.groupCreate || "Create group"}
+              </Button>
+            </InlineStack>
+            {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "duplicateName" && (
+              <Banner tone="warning">{k.groupDuplicateName || "A group with this name already exists."}</Banner>
+            )}
+            {data.groups.length === 0 ? (
+              <Text as="p" tone="subdued">
+                {k.noGroups || "No groups yet."}
+              </Text>
+            ) : (
+              <InlineStack gap="200" wrap>
+                {data.groups.map((g) => (
+                  <Button
+                    key={g.id}
+                    pressed={data.groupDetail?.id === g.id}
+                    onClick={() => selectGroup(data.groupDetail?.id === g.id ? null : g.id)}
+                  >
+                    {`${g.name} (${g.keywordCount})`}
+                  </Button>
+                ))}
+              </InlineStack>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── Group detail: keywords, CSV import, AI distribution ── */}
+        {data.groupDetail && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingMd">
+                  {data.groupDetail.name}
+                </Text>
+                <InlineStack gap="200">
+                  <Button
+                    variant="primary"
+                    disabled={!data.isPro || !!data.runningDistribution || data.groupDetail.keywords.length === 0}
+                    onClick={() => setShowDistModal(true)}
+                  >
+                    {k.distributeButton || "Distribute onto items"}
+                  </Button>
+                  <Button
+                    tone="critical"
+                    variant="plain"
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: k.groupDeleteConfirmTitle || "Delete this group?",
+                        message:
+                          k.groupDeleteConfirmBody ||
+                          "Keywords stay tracked; only the group and its memberships are removed.",
+                        confirmLabel: k.delete,
+                        destructive: true,
+                      });
+                      if (!ok || !data.groupDetail) return;
+                      selectGroup(null);
+                      groupFetcher.submit(
+                        { actionType: "deleteGroup", groupId: data.groupDetail.id },
+                        { method: "post" },
+                      );
+                    }}
+                  >
+                    {k.groupDelete || "Delete group"}
+                  </Button>
+                </InlineStack>
+              </InlineStack>
+              {!data.isPro && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {k.distributeProHint || "AI distribution requires the Pro plan."}
+                </Text>
+              )}
+
+              {/* Running distribution progress */}
+              {data.runningDistribution && (
+                <Banner tone="info">
+                  <BlockStack gap="150">
+                    <Text as="p" variant="bodyMd">
+                      {(data.runningDistribution.fieldType === "apply"
+                        ? k.distApplyRunning || "Applying accepted assignments… ({progress}%)"
+                        : k.distSuggestRunning || "AI distribution is running… ({progress}%)"
+                      ).replace("{progress}", String(data.runningDistribution.progress ?? 0))}
+                    </Text>
+                    <ProgressBar progress={data.runningDistribution.progress ?? 0} size="small" />
+                  </BlockStack>
+                </Banner>
+              )}
+              {distFetcher.data && !distFetcher.data.success && (
+                <Banner tone="critical">
+                  {distFetcher.data.code === "ALREADY_RUNNING"
+                    ? k.distAlreadyRunning || "A distribution is already running — check the Tasks tab."
+                    : distFetcher.data.error || k.errorGeneric}
+                </Banner>
+              )}
+
+              {/* Group keywords */}
+              {data.groupDetail.keywords.length === 0 ? (
+                <Text as="p" tone="subdued">
+                  {k.groupNoKeywords || "No keywords in this group yet — add one below or import a CSV."}
+                </Text>
+              ) : (
+                <IndexTable
+                  itemCount={data.groupDetail.keywords.length}
+                  selectable={false}
+                  headings={[
+                    { title: k.colKeyword },
+                    { title: k.colLocale },
+                    { title: k.colPriority || "Priority" },
+                    { title: k.colAssignments || "Assignments" },
+                    { title: "" },
+                  ]}
+                >
+                  {data.groupDetail.keywords.map((gk, index) => (
+                    <IndexTable.Row id={gk.keywordId} key={gk.keywordId} position={index}>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodyMd">
+                          {gk.keyword}
+                        </Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Badge>{gk.locale || localeOptions[0]?.name || "–"}</Badge>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <div style={{ minWidth: "110px" }}>
+                          <Select
+                            label={k.colPriority || "Priority"}
+                            labelHidden
+                            options={priorityOptions}
+                            value={String(gk.priority)}
+                            disabled={priorityFetcher.state !== "idle"}
+                            onChange={(v) =>
+                              priorityFetcher.submit(
+                                { actionType: "setPriority", keywordId: gk.keywordId, priority: v },
+                                { method: "post" },
+                              )
+                            }
+                          />
+                        </div>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Text as="span" variant="bodySm">
+                          {gk.assignmentCount}
+                        </Text>
+                      </IndexTable.Cell>
+                      <IndexTable.Cell>
+                        <Button
+                          variant="plain"
+                          tone="critical"
+                          disabled={groupFetcher.state !== "idle"}
+                          onClick={() =>
+                            data.groupDetail &&
+                            groupFetcher.submit(
+                              {
+                                actionType: "removeFromGroup",
+                                groupId: data.groupDetail.id,
+                                keywordId: gk.keywordId,
+                              },
+                              { method: "post" },
+                            )
+                          }
+                        >
+                          {k.groupRemoveKeyword || "Remove"}
+                        </Button>
+                      </IndexTable.Cell>
+                    </IndexTable.Row>
+                  ))}
+                </IndexTable>
+              )}
+
+              {/* Add single keyword to group */}
+              <InlineStack gap="200" blockAlign="end" wrap>
+                <div style={{ flex: "1 1 200px", maxWidth: "320px" }}>
+                  <TextField
+                    label={k.groupAddKeywordLabel || "Add keyword"}
+                    autoComplete="off"
+                    placeholder={k.keywordPlaceholder}
+                    value={groupKeywordInput}
+                    onChange={setGroupKeywordInput}
+                  />
+                </div>
+                <div style={{ minWidth: "150px" }}>
+                  <Select
+                    label={k.localeLabel}
+                    options={localeSelectOptions}
+                    value={groupKeywordLocale}
+                    onChange={setGroupKeywordLocale}
+                  />
+                </div>
+                <Button
+                  loading={groupFetcher.state !== "idle"}
+                  disabled={!groupKeywordInput.trim()}
+                  onClick={() => {
+                    if (!data.groupDetail) return;
+                    groupFetcher.submit(
+                      {
+                        actionType: "addToGroup",
+                        groupId: data.groupDetail.id,
+                        keyword: groupKeywordInput,
+                        locale: groupKeywordLocale,
+                      },
+                      { method: "post" },
+                    );
+                    setGroupKeywordInput("");
+                  }}
+                >
+                  {k.groupAddKeyword || "Add"}
+                </Button>
+              </InlineStack>
+
+              {/* CSV import (plan §5.3) */}
+              <BlockStack gap="150">
+                <TextField
+                  label={k.csvLabel || "CSV import (keyword[, priority][, intent][, locale])"}
+                  autoComplete="off"
+                  multiline={4}
+                  placeholder={k.csvPlaceholder || "keyword,priority\ngreen ceramic vase,1\nhandmade vase,2"}
+                  value={csvText}
+                  onChange={setCsvText}
+                  helpText={(k.csvHint || "Up to {max} rows per import.").replace("{max}", "2000")}
+                />
+                <InlineStack gap="200">
+                  <Button
+                    loading={groupFetcher.state !== "idle"}
+                    disabled={!csvText.trim()}
+                    onClick={() => {
+                      if (!data.groupDetail) return;
+                      groupFetcher.submit(
+                        { actionType: "importCsv", groupId: data.groupDetail.id, csv: csvText },
+                        { method: "post" },
+                      );
+                      setCsvText("");
+                    }}
+                  >
+                    {k.csvImport || "Import CSV"}
+                  </Button>
+                </InlineStack>
+                {groupFetcher.data?.ok && groupFetcher.data.kind === "csvImported" && (
+                  <Banner tone={groupFetcher.data.csvErrors.length ? "warning" : "success"}>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodyMd">
+                        {(k.csvResult || "{added} imported, {existing} already in the group.")
+                          .replace("{added}", String(groupFetcher.data.added))
+                          .replace("{existing}", String(groupFetcher.data.alreadyInGroup))}
+                      </Text>
+                      {groupFetcher.data.csvErrors.map((e) => (
+                        <Text key={`${e.row}:${e.keyword}`} as="p" variant="bodySm">
+                          {`Zeile ${e.row}: "${e.keyword}" — ${k.csvErrors?.[e.error] ?? e.error}`}
+                        </Text>
+                      ))}
+                    </BlockStack>
+                  </Banner>
+                )}
+                {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "csvTooMany" && (
+                  <Banner tone="critical">
+                    {(k.csvTooMany || "A single import is limited to {max} rows.").replace("{max}", "2000")}
+                  </Banner>
+                )}
+              </BlockStack>
+
+              {/* Distribution preview (plan §5.4 step 4 — never auto-applied) */}
+              {data.distributionPreview && (
+                <BlockStack gap="200">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h4" variant="headingSm">
+                      {k.distPreviewTitle || "Distribution suggestions"}
+                    </Text>
+                    <Button
+                      variant="plain"
+                      onClick={() => {
+                        const next: Record<string, "accept" | "secondaryOnly" | "reject"> = {};
+                        for (const s of data.distributionPreview?.suggestions ?? []) {
+                          next[s.keyword] = s.primaryItemId ? "accept" : "reject";
+                        }
+                        setDecisions(next);
+                      }}
+                    >
+                      {k.distAcceptAll || "Accept all"}
+                    </Button>
+                  </InlineStack>
+                  {data.distributionPreview.failedBatches > 0 && (
+                    <Banner tone="warning">
+                      {(k.distFailedBatches ||
+                        "{failed} of {total} AI calls failed — their items received no suggestions.")
+                        .replace("{failed}", String(data.distributionPreview.failedBatches))
+                        .replace("{total}", String(data.distributionPreview.batches))}
+                    </Banner>
+                  )}
+                  <IndexTable
+                    itemCount={data.distributionPreview.suggestions.length}
+                    selectable={false}
+                    headings={[
+                      { title: k.distColDecision || "Decision" },
+                      { title: k.colKeyword },
+                      { title: k.distColPrimary || "Primary suggestion" },
+                      { title: k.distColSecondaries || "Secondaries" },
+                      { title: k.distColConfidence || "Confidence" },
+                    ]}
+                  >
+                    {data.distributionPreview.suggestions.map((s, index) => {
+                      const titles = data.distributionPreview?.itemTitles ?? {};
+                      return (
+                        <IndexTable.Row id={s.keyword} key={s.keyword} position={index}>
+                          <IndexTable.Cell>
+                            <div style={{ minWidth: "140px" }}>
+                              <Select
+                                label={k.distColDecision || "Decision"}
+                                labelHidden
+                                disabled={!s.primaryItemId}
+                                options={[
+                                  { label: k.distDecisionAccept || "Accept", value: "accept" },
+                                  { label: k.distDecisionSecondary || "As secondary only", value: "secondaryOnly" },
+                                  { label: k.distDecisionReject || "Reject", value: "reject" },
+                                ]}
+                                value={decisions[s.keyword] ?? "reject"}
+                                onChange={(v) =>
+                                  setDecisions((prev) => ({
+                                    ...prev,
+                                    [s.keyword]: v as "accept" | "secondaryOnly" | "reject",
+                                  }))
+                                }
+                              />
+                            </div>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Text as="span" variant="bodyMd">
+                              {s.keyword}
+                            </Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Text as="span" variant="bodySm" tone={s.primaryItemId ? undefined : "subdued"}>
+                              {s.primaryItemId
+                                ? titles[s.primaryItemId] || s.primaryItemId
+                                : k.distNoMatch || "no match"}
+                            </Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {s.secondaryItemIds.map((id) => titles[id] || id).join(", ") || "–"}
+                            </Text>
+                          </IndexTable.Cell>
+                          <IndexTable.Cell>
+                            <Badge tone={s.confidence >= 0.6 ? "success" : undefined}>
+                              {`${Math.round(s.confidence * 100)}%`}
+                            </Badge>
+                          </IndexTable.Cell>
+                        </IndexTable.Row>
+                      );
+                    })}
+                  </IndexTable>
+                  <InlineStack gap="300" blockAlign="center" wrap>
+                    <Checkbox
+                      label={k.distDemoteExisting || "Replace existing primary keywords (demote them to secondary)"}
+                      checked={demoteExisting}
+                      onChange={setDemoteExisting}
+                    />
+                    <Button
+                      variant="primary"
+                      loading={distFetcher.state !== "idle"}
+                      disabled={
+                        !!data.runningDistribution ||
+                        !Object.values(decisions).some((d) => d !== "reject")
+                      }
+                      onClick={applyDistribution}
+                    >
+                      {k.distApply || "Apply accepted"}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+        )}
       </BlockStack>
+
+      {/* Distribution modal (plan §5.4): target + rules + cost preview */}
+      <Modal
+        open={showDistModal}
+        onClose={() => setShowDistModal(false)}
+        title={k.distModalTitle || "Distribute keywords onto items"}
+        primaryAction={{
+          content: k.distModalStart || "Start distribution",
+          loading: distFetcher.state !== "idle",
+          onAction: startDistribution,
+        }}
+        secondaryActions={[{ content: k.distModalCancel || "Cancel", onAction: () => setShowDistModal(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Select
+              label={k.distModalTarget || "Target type"}
+              options={RESOURCE_TYPES.map((rt) => ({
+                label: `${k.types[rt]} (${data.itemCounts[rt] ?? 0})`,
+                value: rt,
+              }))}
+              value={distTargetType}
+              onChange={(v) => setDistTargetType(v as KeywordResourceType)}
+            />
+            <Select
+              label={k.distModalMaxSecondaries || "Max secondaries per item"}
+              options={["0", "1", "2", "3", "4"].map((v) => ({ label: v, value: v }))}
+              value={distMaxSecondaries}
+              onChange={setDistMaxSecondaries}
+            />
+            {distCost && (
+              <Text as="p" variant="bodySm" tone={distCost.batches > 30 ? "caution" : "subdued"}>
+                {(k.distCostPreview || "~{batches} AI call(s), estimated ~${usd}.")
+                  .replace("{batches}", String(distCost.batches))
+                  .replace("{usd}", distCost.usd.toFixed(2))}
+              </Text>
+            )}
+            <Text as="p" variant="bodySm" tone="subdued">
+              {k.distModalHint ||
+                "Nothing is assigned automatically — you review every suggestion before it is applied."}
+            </Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </SeoSectionLayout>
   );
 }

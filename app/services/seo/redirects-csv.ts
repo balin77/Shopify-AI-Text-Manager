@@ -137,7 +137,8 @@ function classifyMetaCell(value: string, kind: ColumnKind): string | null {
   return null;
 }
 
-function normHeader(s: string): string {
+/** Exported for reuse by keywords-csv.ts (same header-alias normalization). */
+export function normHeader(s: string): string {
   return s.trim().toLowerCase().replace(/[\s_\-]+/g, "");
 }
 
@@ -147,7 +148,7 @@ function normHeader(s: string): string {
  * occurrences outside of quoted regions (approximate — a full state-machine
  * pass isn't worth it for header detection).
  */
-function detectDelimiter(firstLine: string): string {
+export function detectDelimiter(firstLine: string): string {
   let inQuotes = false;
   const counts: Record<string, number> = { ",": 0, ";": 0, "\t": 0 };
   for (let i = 0; i < firstLine.length; i++) {
@@ -174,7 +175,7 @@ function detectDelimiter(firstLine: string): string {
  * index matches the line number the user sees in Excel (which matters for
  * error reporting on partially-broken imports).
  */
-function parseCsvGrid(text: string, delimiter: string): string[][] {
+export function parseCsvGrid(text: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
