@@ -41,7 +41,10 @@ import {
   listPageSpeedHistory,
   findLatestPageSpeedAudit,
   findPageSpeedAuditById,
+  countPageSpeedRunsToday,
   PageSpeedQuotaExceededError,
+  PageSpeedDailyLimitError,
+  PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
 } from "../services/seo/pagespeed.service";
 import type {
   PageSpeedStrategy,
@@ -83,7 +86,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const domain = await getShopHost(admin, shop);
 
-  const [products, collections, pages, history, rum] = await Promise.all([
+  const [products, collections, pages, history, rum, runsToday] = await Promise.all([
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },
@@ -106,6 +109,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
     listPageSpeedHistory({ db, shop, limit: HISTORY_LOAD_LIMIT }),
     getWebVitalsSummary({ db, shop }),
+    // Informational only — the action re-counts and is the source of truth.
+    // This just lets the button render disabled after a reload instead of
+    // inviting a click the server would reject.
+    countPageSpeedRunsToday(db, shop),
   ]);
 
   // Theme-editor deep link for enabling the RUM app embed — house pattern from
@@ -116,7 +123,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/web-vitals`
     : `https://${shop}/admin/themes/current/editor?context=apps`;
 
-  return json({ domain, products, collections, pages, history, rum, rumEmbedUrl });
+  return json({
+    domain,
+    products,
+    collections,
+    pages,
+    history,
+    rum,
+    rumEmbedUrl,
+    runsToday,
+    dailyLimit: PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
+  });
 };
 
 type ActionResult =
@@ -169,12 +186,18 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const result = await runPageSpeedAudit({ db, shop, url, strategy, force });
     return json<ActionResult>({ ok: true, result });
   } catch (err: any) {
-    // Google's daily/per-minute PSI quota is exhausted. Try to serve a stored
-    // audit (any age) so the merchant sees something rather than a hard error.
-    if (err instanceof PageSpeedQuotaExceededError) {
+    // Both budget failures degrade the same way: serve a stored audit of any
+    // age so the merchant sees something rather than a hard error. Only the
+    // wording differs — Google's quota is not our daily budget, and blaming
+    // Google for our own limit would be wrong.
+    if (err instanceof PageSpeedQuotaExceededError || err instanceof PageSpeedDailyLimitError) {
+      const staleReason = err instanceof PageSpeedDailyLimitError ? "dailyLimit" : "quota";
       const stale = await findLatestPageSpeedAudit(db, shop, url, strategy);
-      if (stale) return json<ActionResult>({ ok: true, result: stale });
-      return json<ActionResult>({ ok: false, error: "quotaExceeded" }, { status: 429 });
+      if (stale) return json<ActionResult>({ ok: true, result: { ...stale, staleReason } });
+      return json<ActionResult>(
+        { ok: false, error: staleReason === "dailyLimit" ? "dailyLimitReached" : "quotaExceeded" },
+        { status: 429 },
+      );
     }
     return json<ActionResult>(
       { ok: false, error: "auditFailed", detail: String(err?.message || err) },
@@ -257,7 +280,8 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { products, collections, pages, history, rum, rumEmbedUrl } = useLoaderData<typeof loader>();
+  const { products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit } =
+    useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
 
@@ -326,8 +350,15 @@ export default function SeoPerformance() {
         ? p.errors.invalidUrl
         : data.error === "quotaExceeded"
           ? p.errors.quotaExceeded
-          : `${p.errors.auditFailed}${data.detail ? `: ${data.detail}` : ""}`
+          : data.error === "dailyLimitReached"
+            ? p.errors.dailyLimitReached.replace("{limit}", String(dailyLimit))
+            : `${p.errors.auditFailed}${data.detail ? `: ${data.detail}` : ""}`
       : null;
+
+  // Loader snapshot, so it does not tick down within a session — the action
+  // re-counts and is authoritative. Good enough to disable the button and show
+  // the merchant where they stand before they click.
+  const budgetExhausted = runsToday >= dailyLimit;
 
   const openHistoryEntry = (entry: (typeof history)[number]) => {
     // Mirror the row's URL + strategy into the controls so "Re-test" naturally
@@ -459,11 +490,16 @@ export default function SeoPerformance() {
                   </Button>
                 </ButtonGroup>
               </div>
-              <Button variant="primary" loading={running} disabled={!effectiveUrl} onClick={() => submitAudit(false)}>
+              <Button
+                variant="primary"
+                loading={running}
+                disabled={!effectiveUrl || budgetExhausted}
+                onClick={() => submitAudit(false)}
+              >
                 {p.testButton}
               </Button>
               {result && (
-                <Button loading={running} onClick={() => submitAudit(true)}>
+                <Button loading={running} disabled={budgetExhausted} onClick={() => submitAudit(true)}>
                   {p.retestButton}
                 </Button>
               )}
@@ -473,6 +509,11 @@ export default function SeoPerformance() {
                 {p.runningHint}
               </Text>
             )}
+            <Text as="p" variant="bodySm" tone={budgetExhausted ? "caution" : "subdued"}>
+              {(budgetExhausted ? p.budgetExhausted : p.budgetRemaining)
+                .replace("{used}", String(runsToday))
+                .replace("{limit}", String(dailyLimit))}
+            </Text>
           </BlockStack>
         </Card>
 
@@ -499,7 +540,13 @@ export default function SeoPerformance() {
                 </BlockStack>
               </Banner>
             )}
-            {result.stale && !isHistorical && <Banner tone="warning">{p.staleQuotaNotice}</Banner>}
+            {result.stale && !isHistorical && (
+              <Banner tone="warning">
+                {result.staleReason === "dailyLimit"
+                  ? p.staleDailyLimitNotice.replace("{limit}", String(dailyLimit))
+                  : p.staleQuotaNotice}
+              </Banner>
+            )}
             {/* Score header */}
             <Card>
               <BlockStack gap="200">

@@ -37,6 +37,23 @@ import type {
 
 export const PAGESPEED_CACHE_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * Per-shop budget of real PSI runs per UTC day.
+ *
+ * Google's PageSpeed Insights quota is billed against OUR `PAGESPEED_API_KEY`
+ * and is shared across every shop — unlike AI tokens, which are merchant-funded
+ * (BYO key) and therefore left uncapped. This is consumption, not entitlement:
+ * it is deliberately NOT a plan gate, mirroring the `monthlyImageOperations`
+ * reasoning in config/plans.ts. A plan gate would only decide *who* may exhaust
+ * the shared quota, not *how much* any one shop can take.
+ *
+ * Sized against the realistic worst case: a merchant sweeping 5 templates on
+ * both strategies costs 10 runs, so 25 leaves room for two full sweeps plus
+ * iteration. Cached hits (see PAGESPEED_CACHE_TTL_MS) do NOT count — only runs
+ * that actually reach Google.
+ */
+export const PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY = 25;
+
 /** History rows are pruned to this many per (shop, url, strategy) on every write. */
 const HISTORY_KEEP_PER_TARGET = 10;
 
@@ -53,6 +70,41 @@ export class PageSpeedQuotaExceededError extends Error {
     super(message);
     this.name = "PageSpeedQuotaExceededError";
   }
+}
+
+/**
+ * Thrown when the shop has used up `PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY`. Kept
+ * distinct from `PageSpeedQuotaExceededError` so the UI can say "your daily
+ * budget" rather than blaming Google for a limit that is ours.
+ */
+export class PageSpeedDailyLimitError extends Error {
+  constructor(
+    readonly runsToday: number,
+    readonly limit: number,
+  ) {
+    super(`PageSpeed daily limit reached: ${runsToday}/${limit}`);
+    this.name = "PageSpeedDailyLimitError";
+  }
+}
+
+/** Midnight UTC of the day `now` falls in. UTC so the boundary never moves with shop timezone. */
+function startOfUtcDay(now: Date = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+/**
+ * Real PSI runs this shop made today.
+ *
+ * A `SeoPageSpeedAudit` row is written only after a run that actually reached
+ * Google (cache hits return early, before the insert), so counting rows IS the
+ * usage counter — no separate counter model needed. When the accessibility
+ * scan lands it writes its own audit rows and must be added to this count, so
+ * both features draw on one shared daily budget.
+ */
+export async function countPageSpeedRunsToday(db: any, shop: string): Promise<number> {
+  return db.seoPageSpeedAudit.count({
+    where: { shop, createdAt: { gte: startOfUtcDay() } },
+  });
 }
 
 /**
@@ -94,6 +146,14 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
         return cached.result as PageSpeedAuditResult;
       }
     }
+  }
+
+  // Budget check sits AFTER the cache lookup on purpose: serving a cached
+  // result costs no Google quota, so re-opening a recent audit must stay free.
+  // Only runs that reach Google are budgeted.
+  const runsToday = await countPageSpeedRunsToday(db, shop);
+  if (runsToday >= PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY) {
+    throw new PageSpeedDailyLimitError(runsToday, PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY);
   }
 
   const fetchedAt = new Date().toISOString();

@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { isAllowedAuditUrl, parsePageSpeedResponse } from "~/services/seo/pagespeed.service";
+import { describe, it, expect, vi } from "vitest";
+import {
+  isAllowedAuditUrl,
+  parsePageSpeedResponse,
+  runPageSpeedAudit,
+  countPageSpeedRunsToday,
+  PageSpeedDailyLimitError,
+  PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY,
+} from "~/services/seo/pagespeed.service";
 import { mockPsiResponse } from "../mocks/pagespeed-psi-response.mock";
 
 /**
@@ -294,5 +301,83 @@ describe("isAllowedAuditUrl", () => {
   it("rejects an invalid URL", () => {
     expect(isAllowedAuditUrl("not-a-url", allowed)).toBe(false);
     expect(isAllowedAuditUrl("", allowed)).toBe(false);
+  });
+});
+
+/**
+ * Per-shop daily budget on real PSI runs. `SeoPageSpeedAudit` rows double as
+ * the usage counter (a row is written only after a run that reached Google),
+ * so these tests drive a stubbed Prisma delegate rather than a counter model.
+ */
+describe("daily run budget", () => {
+  const RESULT_ROW = { createdAt: new Date(), result: { url: "https://example.com/", cached: true } };
+
+  function makeDb(overrides: Record<string, any> = {}) {
+    return {
+      seoPageSpeedAudit: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockResolvedValue({}),
+        deleteMany: vi.fn().mockResolvedValue({}),
+        count: vi.fn().mockResolvedValue(0),
+        ...overrides,
+      },
+    };
+  }
+
+  it("counts only rows created since midnight UTC", async () => {
+    const count = vi.fn().mockResolvedValue(3);
+    const db = makeDb({ count });
+    await expect(countPageSpeedRunsToday(db, "s.myshopify.com")).resolves.toBe(3);
+
+    const where = count.mock.calls[0][0].where;
+    expect(where.shop).toBe("s.myshopify.com");
+    const since: Date = where.createdAt.gte;
+    expect(since.getUTCHours()).toBe(0);
+    expect(since.getUTCMinutes()).toBe(0);
+    expect(since.getUTCSeconds()).toBe(0);
+    expect(since.getUTCMilliseconds()).toBe(0);
+  });
+
+  it("throws PageSpeedDailyLimitError once the budget is used up", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const db = makeDb({ count: vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY) });
+
+    await expect(
+      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true }),
+    ).rejects.toBeInstanceOf(PageSpeedDailyLimitError);
+
+    // The budget must be refused BEFORE any request reaches Google, otherwise
+    // it would not protect the quota it exists to protect.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("serves a fresh cache hit without consuming budget", async () => {
+    // Cache hits cost no Google quota, so they must not be counted or refused.
+    const count = vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY);
+    const db = makeDb({ count, findFirst: vi.fn().mockResolvedValue(RESULT_ROW) });
+
+    const r = await runPageSpeedAudit({
+      db,
+      shop: "s.myshopify.com",
+      url: "https://example.com/",
+      strategy: "mobile",
+    });
+
+    expect((r as any).cached).toBe(true);
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it("still refuses when the cached row is too old to serve", async () => {
+    const stale = { createdAt: new Date(Date.now() - 60 * 60 * 1000), result: {} }; // 1h > 30min TTL
+    const db = makeDb({
+      count: vi.fn().mockResolvedValue(PAGESPEED_MAX_RUNS_PER_SHOP_PER_DAY),
+      findFirst: vi.fn().mockResolvedValue(stale),
+    });
+
+    await expect(
+      runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile" }),
+    ).rejects.toBeInstanceOf(PageSpeedDailyLimitError);
   });
 });

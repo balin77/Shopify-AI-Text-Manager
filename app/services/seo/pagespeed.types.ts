@@ -131,6 +131,13 @@ export interface PageSpeedAuditResult {
   /** True when this result is a stored older audit served because a fresh PSI run couldn't be made (e.g. Google's daily quota was exhausted). */
   stale?: boolean;
   /**
+   * Why `stale` was set — `"quota"` = Google refused the run (429),
+   * `"dailyLimit"` = our own per-shop daily budget is used up. Set when the
+   * stored audit is served, never persisted, because the reason belongs to the
+   * failed attempt and not to the stored run.
+   */
+  staleReason?: "quota" | "dailyLimit";
+  /**
    * Reason Lighthouse could not produce the annotatable full-page screenshot,
    * lifted from the raw PSI response (audit `errorMessage`, `runtimeError`,
    * or first relevant `runWarnings` entry). Only set when `screenshot?.fullPage`
