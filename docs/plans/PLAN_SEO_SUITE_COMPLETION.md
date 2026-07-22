@@ -1,7 +1,7 @@
 # SEO-Suite-Vervollständigung — Plan (Phasen 1–5)
 
 **Status:** Entwurf / ausgearbeitet, Umsetzung nicht begonnen
-**Baut auf:** vorhandene SEO-Oberfläche (Dashboard, Bulk-Meta, GSC, Structured Data, Redirects, Hreflang, IndexNow, AEO, Performance) unter [app/routes/app.seo*.tsx](../../app/routes/) + [PLAN_KEYWORDS_EXPANSION.md](./PLAN_KEYWORDS_EXPANSION.md). Section-Contract: [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — **jede Phase erfüllt alle acht Vertragspunkte**, das wird hier nicht pro Phase wiederholt.
+**Baut auf:** vorhandene SEO-Oberfläche (Dashboard, Bulk-Meta, GSC, Structured Data, Redirects, Hreflang, IndexNow, AEO, Performance) unter [app/routes/app.seo*.tsx](../../app/routes/) + dem ausgelieferten Keyword-System ([KEYWORDS_CONTRACT.md](../architecture/KEYWORDS_CONTRACT.md)). Section-Contract: [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — **jede Phase erfüllt alle acht Vertragspunkte**, das wird hier nicht pro Phase wiederholt.
 **Ziel dieses Plans:** die Lücken schließen, die ContentPilot vom „SEO-Werkzeug für Content" zur echten SEO-Suite heben — ohne Backlink-/Kompetitor-Datenmoats anzugehen.
 
 ---
@@ -20,7 +20,7 @@ Damit wir keine Doppelarbeit planen — Bestandsaufnahme der SEO-Oberfläche:
 - **AEO / robots.txt AI-Crawler-Audit / llms.txt:** [app.seo.aeo.tsx](../../app/routes/app.seo.aeo.tsx) + [aeo.service.ts](../../app/services/seo/aeo.service.ts). Enthält einen funktionierenden robots.txt-Parser (`parseRobots`, aktuell **modulintern**, `auditRobotsTxt` ist exportiert) — Phase 1 extrahiert ihn wiederverwendbar.
 - **IndexNow:** [app.seo.index-now.tsx](../../app/routes/app.seo.index-now.tsx) — Config + URL-Queue (`SeoIndexNowConfig` / `SeoIndexNowQueue`), Submission direkt aus dem Service, kein eigener Task-Typ.
 - **Core Web Vitals / Performance:** [app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx) (PageSpeed + Web-Vitals-Samples).
-- **Keywords:** Das Datenmodell aus [PLAN_KEYWORDS_EXPANSION.md](./PLAN_KEYWORDS_EXPANSION.md) (`SeoKeyword` / `SeoKeywordAssignment` / `SeoKeywordGroup` / `SeoKeywordGroupMembership` / `SeoKeywordSnapshot`) ist bereits im Schema — Multi-Keyword pro Item mit `primary`/`secondary`-Rollen und GSC-Enrichment pro Assignment steht zur Verfügung (Phase-2-Anker für Internal Links).
+- **Keywords:** Das Datenmodell aus [KEYWORDS_CONTRACT.md](../architecture/KEYWORDS_CONTRACT.md) (`SeoKeyword` / `SeoKeywordAssignment` / `SeoKeywordGroup` / `SeoKeywordGroupMembership` / `SeoKeywordSnapshot`) ist ausgeliefert — Multi-Keyword pro Item mit `primary`/`secondary`-Rollen und GSC-Enrichment pro Assignment steht zur Verfügung (Phase-2-Anker für Internal Links).
 
 **Vorhandene Task-Typen** in `LONG_RUNNING_TASK_TYPES` ([task-recovery.service.js:34](../../task-recovery.service.js#L34)): `seoBulkFix`, `seoAudit`, `seoBulkMeta` (+ Nicht-SEO-Typen). Dieser Plan fügt drei hinzu: `seoCrawl`, `seoInternalLinks`, `seoJsonLdAudit`.
 
@@ -467,7 +467,7 @@ Noch offen:
 
 ## 12. Notiz zur Positionierung
 
-Nach diesem Plan ist der Satz in [PLAN_KEYWORDS_EXPANSION.md §10](./PLAN_KEYWORDS_EXPANSION.md#10-nicht-ziele-explizit) zu präzisieren:
+Nach diesem Plan ist der Satz in [KEYWORDS_CONTRACT.md §10](../architecture/KEYWORDS_CONTRACT.md#10-nicht-ziele-weiterhin-gültig) zu präzisieren:
 
 - Alt: *„Kein Ahrefs-Klon. Wer Backlink-Analyse braucht, nutzt Ahrefs — ContentPilot ist ein Content-Werkzeug, kein SEO-Suite-Ersatz."*
 - Neu: *„Kein Backlink- oder Kompetitor-SERP-Tool. Wer die Off-Site-Datenmoat-Analysen von Ahrefs/Semrush braucht, greift zu denen. Für On-Site-SEO (Audit, Crawl, Internal Linking, Schema, Sitemap, Freshness) deckt ContentPilot den vollen Umfang ab."*

@@ -119,4 +119,4 @@ Diese Reihenfolge deckt in jeder Phase einen benutzbaren Zwischenstand ab und ve
 
 ## Wo dieser Vertrag heute Anwendung findet
 
-Die produktive SEO-Oberfläche unter [app/routes/app.seo*.tsx](../../app/routes/) wurde nach diesem Vertrag gebaut. Neue Pläne, die weitere SEO-Features hinzufügen, bauen darauf auf — z. B. [PLAN_KEYWORDS_EXPANSION.md](../plans/PLAN_KEYWORDS_EXPANSION.md) und [PLAN_SEO_SUITE_COMPLETION.md](../plans/PLAN_SEO_SUITE_COMPLETION.md).
+Die produktive SEO-Oberfläche unter [app/routes/app.seo*.tsx](../../app/routes/) wurde nach diesem Vertrag gebaut. Neue Pläne, die weitere SEO-Features hinzufügen, bauen darauf auf — z. B. der ausgelieferte Keyword-Ausbau ([KEYWORDS_CONTRACT.md](./KEYWORDS_CONTRACT.md)) und [PLAN_SEO_SUITE_COMPLETION.md](../plans/PLAN_SEO_SUITE_COMPLETION.md).

@@ -40,6 +40,7 @@ die Doku korrigieren.
 | [AI_BATCH_TRANSLATION.md](architecture/AI_BATCH_TRANSLATION.md) | Batch-Übersetzung über die AI-Provider |
 | [THEME_RICHTEXT_HANDLING.md](architecture/THEME_RICHTEXT_HANDLING.md) | Richtext-Konvention für Theme-Settings (Autofix, Save-Error-Coverage) |
 | [SEO_SECTION_CONTRACT.md](architecture/SEO_SECTION_CONTRACT.md) | Vertrag für alle SEO-Sections (Descriptor, Findings, Tasks, GDPR) |
+| [KEYWORDS_CONTRACT.md](architecture/KEYWORDS_CONTRACT.md) | Keyword-System (Assignments, AI-Verteilung, Recherche, Kannibalisierung) |
 | [PLAN_SYSTEM.md](architecture/PLAN_SYSTEM.md) | Subscription-Pläne, Gates, Limits |
 | [BILLING_SYSTEM.md](architecture/BILLING_SYSTEM.md) | Shopify-Billing-Integration (Subscription-Flow, Webhooks) |
 | [GDPR_COMPLIANCE.md](architecture/GDPR_COMPLIANCE.md) | Compliance-Webhooks, `redactShopData` |
@@ -88,7 +89,6 @@ die Doku korrigieren.
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [PLAN_KEYWORDS_EXPANSION.md](plans/PLAN_KEYWORDS_EXPANSION.md) | Keyword-Ausbau (in Arbeit) |
 | [PLAN_SEO_SUITE_COMPLETION.md](plans/PLAN_SEO_SUITE_COMPLETION.md) | Fertigstellung der SEO-Suite |
 
 ---
