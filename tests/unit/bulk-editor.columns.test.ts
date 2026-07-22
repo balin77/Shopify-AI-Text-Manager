@@ -7,9 +7,20 @@ import {
   parseSortParam,
   serializeSortParam,
   isValidBulkDiffEntry,
+  buildColumnsForType,
+  resolveCellValue,
+  formatListMetafieldValue,
+  parseListMetafieldInput,
+  metafieldColumnId,
+  optionColumnId,
+  richTextPreview,
   BULK_COLUMNS_BY_TYPE,
   BULK_ROW_TYPES,
+  IMG_ALT_COLUMN_ID,
   type BulkRow,
+  type BulkRowType,
+  type ColumnDescriptor,
+  type ProductColumnCaps,
 } from "~/services/bulk-editor/columns.shared";
 
 /**
@@ -302,6 +313,8 @@ describe("edit keys", () => {
 
 describe("isValidBulkDiffEntry", () => {
   const allowed = BULK_ROW_TYPES;
+  // Static column universe — what a shop without enabled metafields gets.
+  const staticColumns = BULK_COLUMNS_BY_TYPE;
   const base = {
     rowId: "gid://shopify/Product/1",
     rowType: "product",
@@ -312,24 +325,83 @@ describe("isValidBulkDiffEntry", () => {
   };
 
   it("accepts a well-formed primary-locale entry", () => {
-    expect(isValidBulkDiffEntry(base, allowed)).toBe(true);
+    expect(isValidBulkDiffEntry(base, allowed, staticColumns)).toBe(true);
   });
 
   it("rejects malformed GIDs, unknown types and disallowed columns", () => {
-    expect(isValidBulkDiffEntry({ ...base, rowId: "not-a-gid" }, allowed)).toBe(false);
-    expect(isValidBulkDiffEntry({ ...base, rowType: "variant" }, allowed)).toBe(false);
-    expect(isValidBulkDiffEntry({ ...base, columnId: "field.productType", rowType: "page" }, allowed)).toBe(false);
-    expect(isValidBulkDiffEntry({ ...base, columnId: "image" }, allowed)).toBe(false);
+    expect(isValidBulkDiffEntry({ ...base, rowId: "not-a-gid" }, allowed, staticColumns)).toBe(false);
+    expect(isValidBulkDiffEntry({ ...base, rowType: "variant" }, allowed, staticColumns)).toBe(false);
+    expect(
+      isValidBulkDiffEntry({ ...base, columnId: "field.productType", rowType: "page" }, allowed, staticColumns),
+    ).toBe(false);
+    expect(isValidBulkDiffEntry({ ...base, columnId: "image" }, allowed, staticColumns)).toBe(false);
   });
 
   it("rejects row types outside the plan's allowlist (§3.4 gate)", () => {
     const basicTypes = allowed.filter((t) => t !== "article");
-    expect(isValidBulkDiffEntry({ ...base, rowType: "article", columnId: "field.title" }, basicTypes)).toBe(false);
+    expect(
+      isValidBulkDiffEntry({ ...base, rowType: "article", columnId: "field.title" }, basicTypes, staticColumns),
+    ).toBe(false);
   });
 
   it("rejects foreign-locale/market entries until the translation write path exists (Phase 4)", () => {
-    expect(isValidBulkDiffEntry({ ...base, locale: "fr" }, allowed)).toBe(false);
-    expect(isValidBulkDiffEntry({ ...base, marketId: "gid://shopify/Market/3" }, allowed)).toBe(false);
+    expect(isValidBulkDiffEntry({ ...base, locale: "fr" }, allowed, staticColumns)).toBe(false);
+    expect(isValidBulkDiffEntry({ ...base, marketId: "gid://shopify/Market/3" }, allowed, staticColumns)).toBe(false);
+  });
+
+  // ── Phase 2: the mf.-column allowlist is the SERVER-built universe ───────
+
+  const fullCaps: ProductColumnCaps = { metafields: true, options: true, imageAlt: true };
+  const enabledColumns: Record<BulkRowType, ColumnDescriptor[]> = {
+    product: buildColumnsForType(
+      "product",
+      [{ namespace: "custom", key: "material", type: "single_line_text_field" }],
+      fullCaps,
+    ),
+    collection: buildColumnsForType("collection", [], fullCaps),
+    article: buildColumnsForType("article", [], fullCaps),
+    page: buildColumnsForType("page", [], fullCaps),
+  };
+
+  it("accepts an ENABLED metafield column and rejects a non-enabled one", () => {
+    expect(
+      isValidBulkDiffEntry({ ...base, columnId: metafieldColumnId("custom", "material") }, allowed, enabledColumns),
+    ).toBe(true);
+    // Not in the server-built universe — a client claiming an arbitrary
+    // mf. column is rejected, not trusted.
+    expect(
+      isValidBulkDiffEntry({ ...base, columnId: metafieldColumnId("custom", "secret") }, allowed, enabledColumns),
+    ).toBe(false);
+    // Same enabled column but the plan/caps offer no metafield columns.
+    expect(
+      isValidBulkDiffEntry({ ...base, columnId: metafieldColumnId("custom", "material") }, allowed, staticColumns),
+    ).toBe(false);
+  });
+
+  it("rejects a rich_text metafield column (never editable)", () => {
+    const withRichText: Record<BulkRowType, ColumnDescriptor[]> = {
+      ...enabledColumns,
+      product: buildColumnsForType(
+        "product",
+        [{ namespace: "custom", key: "story", type: "rich_text_field" }],
+        fullCaps,
+      ),
+    };
+    expect(
+      isValidBulkDiffEntry({ ...base, columnId: metafieldColumnId("custom", "story") }, allowed, withRichText),
+    ).toBe(false);
+  });
+
+  it("accepts option and img.alt columns on product rows only", () => {
+    expect(isValidBulkDiffEntry({ ...base, columnId: optionColumnId(1, "name") }, allowed, enabledColumns)).toBe(true);
+    expect(isValidBulkDiffEntry({ ...base, columnId: IMG_ALT_COLUMN_ID }, allowed, enabledColumns)).toBe(true);
+    expect(
+      isValidBulkDiffEntry(
+        { ...base, rowId: "gid://shopify/Page/1", rowType: "page", columnId: optionColumnId(1, "name") },
+        allowed,
+        enabledColumns,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -356,5 +428,251 @@ describe("parseSortParam", () => {
   it("round-trips through serializeSortParam", () => {
     const sort = parseSortParam("product", "field.handle.desc")!;
     expect(parseSortParam("product", serializeSortParam(sort))).toEqual(sort);
+  });
+});
+
+// ─── Phase 2 (Plan §4/§12): dynamic product columns ────────────────────────
+
+const fullCaps: ProductColumnCaps = { metafields: true, options: true, imageAlt: true };
+const phase2Columns = buildColumnsForType(
+  "product",
+  [
+    { namespace: "custom", key: "material", type: "single_line_text_field" },
+    { namespace: "custom", key: "care", type: "multi_line_text_field" },
+    { namespace: "custom", key: "tags", type: "list.single_line_text_field" },
+    { namespace: "custom", key: "story", type: "rich_text_field" },
+  ],
+  fullCaps,
+);
+const columnById = new Map(phase2Columns.map((c) => [c.id, c] as const));
+const col = (id: string): ColumnDescriptor => {
+  const found = columnById.get(id);
+  if (!found) throw new Error(`missing column ${id}`);
+  return found;
+};
+
+const productRow: BulkRow = {
+  id: "gid://shopify/Product/10",
+  type: "product",
+  title: "Linen Shirt",
+  seoTitle: "",
+  seoDescription: "",
+  handle: "linen-shirt",
+  status: "ACTIVE",
+  metafields: {
+    [metafieldColumnId("custom", "material")]: {
+      id: "gid://shopify/Metafield/1",
+      value: "Linen",
+      type: "single_line_text_field",
+    },
+    [metafieldColumnId("custom", "tags")]: {
+      id: "gid://shopify/Metafield/2",
+      value: JSON.stringify(["Red", "Blue", "Green"]),
+      type: "list.single_line_text_field",
+    },
+    [metafieldColumnId("custom", "story")]: {
+      id: "gid://shopify/Metafield/3",
+      value: JSON.stringify({
+        type: "root",
+        children: [{ type: "paragraph", children: [{ type: "text", value: "Once upon a time" }] }],
+      }),
+      type: "rich_text_field",
+    },
+  },
+  options: [
+    {
+      id: "gid://shopify/ProductOption/1",
+      position: 1,
+      name: "Size",
+      values: [
+        { id: "gid://shopify/ProductOptionValue/1", name: "S" },
+        { id: "gid://shopify/ProductOptionValue/2", name: "M" },
+      ],
+      hasValueIds: true,
+      linked: false,
+    },
+    {
+      id: "gid://shopify/ProductOption/2",
+      position: 2,
+      name: "Color",
+      values: [{ id: "", name: "Red" }],
+      hasValueIds: false,
+      linked: true,
+    },
+  ],
+  mainImage: { mediaId: "gid://shopify/MediaImage/5", alt: "A linen shirt" },
+};
+
+describe("resolveCellValue (Plan §12 column resolution)", () => {
+  it("resolves a metafield column WITHOUT a ProductMetafield row to an empty, editable cell", () => {
+    const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "care")));
+    expect(resolved).toEqual({ value: "", editable: true });
+  });
+
+  it("resolves a single-line metafield to its raw value", () => {
+    const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "material")));
+    expect(resolved).toEqual({ value: "Linen", editable: true });
+  });
+
+  it("renders a list metafield |-separated", () => {
+    const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "tags")));
+    expect(resolved).toEqual({ value: "Red | Blue | Green", editable: true });
+  });
+
+  it("makes rich_text metafields read-only with a plain-text preview", () => {
+    const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "story")));
+    expect(resolved.editable).toBe(false);
+    expect(resolved.readOnlyReason).toBe("richText");
+    expect(resolved.value).toBe("Once upon a time");
+  });
+
+  it("makes a LINKED option fully read-only — the name too (Plan §14 no. 5)", () => {
+    const name = resolveCellValue(productRow, col(optionColumnId(2, "name")));
+    expect(name.editable).toBe(false);
+    expect(name.readOnlyReason).toBe("linkedOption");
+    expect(name.value).toBe("Color");
+    const values = resolveCellValue(productRow, col(optionColumnId(2, "values")));
+    expect(values.editable).toBe(false);
+    expect(values.readOnlyReason).toBe("linkedOption");
+  });
+
+  it("resolves an unlinked option to editable name and |-joined values", () => {
+    expect(resolveCellValue(productRow, col(optionColumnId(1, "name")))).toEqual({
+      value: "Size",
+      editable: true,
+    });
+    expect(resolveCellValue(productRow, col(optionColumnId(1, "values")))).toEqual({
+      value: "S | M",
+      editable: true,
+    });
+  });
+
+  it("marks a missing option position read-only", () => {
+    const resolved = resolveCellValue(productRow, col(optionColumnId(3, "name")));
+    expect(resolved.editable).toBe(false);
+    expect(resolved.readOnlyReason).toBe("missingOption");
+  });
+
+  it("marks legacy option values (no GIDs) read-only, name stays editable", () => {
+    const legacyRow: BulkRow = {
+      ...productRow,
+      options: [
+        {
+          id: "gid://shopify/ProductOption/9",
+          position: 1,
+          name: "Material",
+          values: [{ id: "", name: "Wool" }],
+          hasValueIds: false,
+          linked: false,
+        },
+      ],
+    };
+    expect(resolveCellValue(legacyRow, col(optionColumnId(1, "name"))).editable).toBe(true);
+    const values = resolveCellValue(legacyRow, col(optionColumnId(1, "values")));
+    expect(values.editable).toBe(false);
+    expect(values.readOnlyReason).toBe("legacyOptionValues");
+  });
+
+  it("resolves img.alt: editable with mediaId, read-only without, read-only without image", () => {
+    expect(resolveCellValue(productRow, col(IMG_ALT_COLUMN_ID))).toEqual({
+      value: "A linen shirt",
+      editable: true,
+    });
+    const noMedia = resolveCellValue(
+      { ...productRow, mainImage: { mediaId: null, alt: "x" } },
+      col(IMG_ALT_COLUMN_ID),
+    );
+    expect(noMedia.editable).toBe(false);
+    expect(noMedia.readOnlyReason).toBe("missingMediaId");
+    const noImage = resolveCellValue({ ...productRow, mainImage: undefined }, col(IMG_ALT_COLUMN_ID));
+    expect(noImage.editable).toBe(false);
+    expect(noImage.readOnlyReason).toBe("missingImage");
+  });
+});
+
+describe("list-metafield parsing (Plan §12 round-trip)", () => {
+  it("round-trips JSON array → display → JSON array", () => {
+    const stored = JSON.stringify(["Red", "Blue", "Green"]);
+    const display = formatListMetafieldValue(stored);
+    expect(display).toBe("Red | Blue | Green");
+    const parsed = parseListMetafieldInput(display);
+    expect(parsed).toEqual({ ok: true, values: ["Red", "Blue", "Green"] });
+    if (parsed.ok) expect(JSON.stringify(parsed.values)).toBe(stored);
+  });
+
+  it("trims around the separators", () => {
+    expect(parseListMetafieldInput("Red|Blue |  Green")).toEqual({
+      ok: true,
+      values: ["Red", "Blue", "Green"],
+    });
+  });
+
+  it("rejects empty values ('no value may be empty', §4.1)", () => {
+    expect(parseListMetafieldInput("Red | | Green")).toEqual({ ok: false, error: "emptyValue" });
+    expect(parseListMetafieldInput("Red |")).toEqual({ ok: false, error: "emptyValue" });
+  });
+
+  it("shows non-JSON cache values verbatim instead of crashing", () => {
+    expect(formatListMetafieldValue("not-json")).toBe("not-json");
+    expect(formatListMetafieldValue("")).toBe("");
+  });
+});
+
+describe("richTextPreview", () => {
+  it("extracts nested text values", () => {
+    const doc = JSON.stringify({
+      type: "root",
+      children: [
+        { type: "paragraph", children: [{ type: "text", value: "Hello" }, { type: "text", value: "world" }] },
+      ],
+    });
+    expect(richTextPreview(doc)).toBe("Hello world");
+  });
+
+  it("falls back to the raw string for non-JSON", () => {
+    expect(richTextPreview("<p>legacy</p>")).toBe("<p>legacy</p>");
+  });
+});
+
+describe("computeDiff with dynamic product columns", () => {
+  const key10 = (columnId: string) => makeEditKey(productRow.id, "", "", columnId);
+
+  it("typing into an EMPTY metafield cell is a diff (create-on-save, §4.1)", () => {
+    const edits = { [key10(metafieldColumnId("custom", "care"))]: "Cold wash" };
+    expect(computeDiff([productRow], phase2Columns, edits)).toEqual([
+      {
+        rowId: productRow.id,
+        rowType: "product",
+        locale: "",
+        marketId: "",
+        columnId: metafieldColumnId("custom", "care"),
+        value: "Cold wash",
+      },
+    ]);
+  });
+
+  it("compares a list metafield against its DISPLAY form", () => {
+    const unchanged = { [key10(metafieldColumnId("custom", "tags"))]: "Red | Blue | Green" };
+    expect(computeDiff([productRow], phase2Columns, unchanged)).toEqual([]);
+    const changed = { [key10(metafieldColumnId("custom", "tags"))]: "Red | Blue" };
+    expect(computeDiff([productRow], phase2Columns, changed)).toHaveLength(1);
+  });
+
+  it("drops edits on per-row read-only cells (linked option, rich text)", () => {
+    const edits = {
+      [key10(optionColumnId(2, "name"))]: "New name",
+      [key10(metafieldColumnId("custom", "story"))]: "plain text",
+    };
+    expect(computeDiff([productRow], phase2Columns, edits)).toEqual([]);
+  });
+
+  it("diffs option and img.alt cells against their resolved baselines", () => {
+    const edits = {
+      [key10(optionColumnId(1, "values"))]: "S | M", // unchanged
+      [key10(optionColumnId(1, "name"))]: "Größe",
+      [key10(IMG_ALT_COLUMN_ID)]: "A crisp linen shirt",
+    };
+    const diff = computeDiff([productRow], phase2Columns, edits);
+    expect(diff.map((d) => d.columnId).sort()).toEqual([IMG_ALT_COLUMN_ID, optionColumnId(1, "name")]);
   });
 });

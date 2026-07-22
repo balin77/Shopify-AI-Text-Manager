@@ -127,7 +127,7 @@ export const loader = createContentLoader({
     // (decided design point 1). Run the one-time lazy backfill first so
     // existing shops keep their already-translatable metafields, then load the
     // enabled set used to filter below.
-    const { backfillEnabledMetafieldDefinitionsIfNeeded, getEnabledMetafieldKeySet, metafieldEnableKey } =
+    const { backfillEnabledMetafieldDefinitionsIfNeeded, getEnabledMetafieldKeySet, isEditableProductMetafield } =
       await import("../services/metafield-enablement.server");
     await backfillEnabledMetafieldDefinitionsIfNeeded(ctx.admin as never, ctx.db as never, ctx.session.shop);
     const enabledMetafieldKeys = await getEnabledMetafieldKeySet(ctx.db, ctx.session.shop);
@@ -209,8 +209,10 @@ export const loader = createContentLoader({
         return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetaobjectType: opt.linkedMetafieldKey || undefined };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
-        ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)
-        && enabledMetafieldKeys.has(metafieldEnableKey(mf.namespace, mf.key))
+        // Shared predicate — the bulk editor's metafield columns use the SAME
+        // filter (isEditableProductMetafield), so both surfaces show the same
+        // fields (Plan §4.1).
+        isEditableProductMetafield(mf, enabledMetafieldKeys)
       ).map((mf: any) => ({
         id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
       })) || [],

@@ -41,15 +41,22 @@ export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
 
 export type ColumnKind = "field" | "metafield" | "option" | "variant" | "image" | "readonly";
 
+/** Column-picker group (Plan §2): Basis · SEO · Metafelder · Bilder · Optionen. */
+export type ColumnGroup = "base" | "seo" | "metafields" | "images" | "options";
+
+export const COLUMN_GROUP_ORDER: ColumnGroup[] = ["base", "seo", "metafields", "images", "options"];
+
 export interface ColumnDescriptor {
   /** Stable, collision-free id. No ":" — GIDs contain their own colons.
-   * Shapes: "field.title" | "mf.<namespace>.<key>" | "var.price" | "img.alt"
-   * | "image" | "blogTitle". */
+   * Shapes: "field.title" | "mf.<namespace>.<key>" | "opt.<position>.<name|values>"
+   * | "img.alt" | "var.price" | "image" | "blogTitle". */
   id: string;
   kind: ColumnKind;
-  /** i18n key under t.bulkEditor.columns — OR (for metafield columns, Phase 2)
-   * the merchant-defined display name, rendered verbatim. */
+  /** i18n key under t.bulkEditor.columns — OR (for metafield columns) the
+   * shop-defined "namespace.key" name, rendered verbatim (never translated). */
   label: string;
+  /** Column-picker group (§2). */
+  group: ColumnGroup;
   editable: boolean;
   /** Whether the column is editable in a foreign locale (locale !== ""). */
   translatable: boolean;
@@ -58,6 +65,21 @@ export interface ColumnDescriptor {
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
+  /** kind "metafield": the Shopify metafield type (drives cell rendering AND
+   * is sent verbatim in metafieldsSet — §14 no. 4: type is mandatory when the
+   * set creates a metafield without a definition). */
+  metafieldType?: string;
+  /** kind "metafield": namespace/key carried explicitly — parsing them back
+   * out of the column id would rely on "no dots in namespaces", which Shopify
+   * does not guarantee forever. */
+  metafieldNamespace?: string;
+  metafieldKey?: string;
+  /** kind "option": which option slot (1-based Shopify position) this column
+   * addresses. Position, not GID — the column must be the same across all
+   * products ("Option 1", "Option 2"), while the cell is product-bound. */
+  optionPosition?: number;
+  /** kind "option": whether the column edits the option's name or its values. */
+  optionField?: "name" | "values";
 }
 
 /** For kind "field": the flat row property (and Prisma column) behind the
@@ -70,6 +92,7 @@ const IMAGE_COLUMN: ColumnDescriptor = {
   id: "image",
   kind: "image",
   label: "image",
+  group: "base",
   editable: false,
   translatable: false,
   inputType: "text",
@@ -80,6 +103,7 @@ const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   id: "blogTitle",
   kind: "readonly",
   label: "blogTitle",
+  group: "base",
   editable: false,
   translatable: false,
   inputType: "text",
@@ -93,12 +117,14 @@ function fieldColumn(
     inputType: ColumnDescriptor["inputType"];
     minWidth: number;
     sortKey?: string;
+    group?: ColumnGroup;
   },
 ): ColumnDescriptor {
   return {
     id: `field.${name}`,
     kind: "field",
     label: name,
+    group: opts.group ?? "base",
     editable: true,
     translatable: opts.translatable,
     inputType: opts.inputType,
@@ -116,8 +142,8 @@ const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true
 const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 180, sortKey: "productType" });
 const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
 const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 180, sortKey: "handle" });
-const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200 });
-const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280 });
+const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
+const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
 const COL_BODY = fieldColumn("body", { translatable: true, inputType: "textarea", minWidth: 280 });
 const COL_SUMMARY = fieldColumn("summary", { translatable: true, inputType: "textarea", minWidth: 240 });
 
@@ -163,6 +189,189 @@ export function isColumnEditableForType(type: BulkRowType, columnId: string): bo
   return !!col && col.editable;
 }
 
+// ─── Dynamic product columns (Phase 2 — Plan §4) ───────────────────────────
+
+/** Shopify metafield types the grid can EDIT inline. rich_text_field is a
+ * column too, but always read-only ("open in editor") — its JSON in a grid
+ * cell would recreate the normalization divergence from the theme-richtext
+ * path (Plan §4.1). Mirror of TRANSLATABLE_METAFIELD_TYPES
+ * (metafield-enablement.server.ts), duplicated here because this module must
+ * stay client-safe. A drift would surface immediately: the server builds the
+ * column specs, this list only drives per-type rendering. */
+export const METAFIELD_TYPE_SINGLE_LINE = "single_line_text_field";
+export const METAFIELD_TYPE_MULTI_LINE = "multi_line_text_field";
+export const METAFIELD_TYPE_RICH_TEXT = "rich_text_field";
+export const METAFIELD_TYPE_LIST_SINGLE_LINE = "list.single_line_text_field";
+
+/** A shop-specific metafield column, produced server-side from the enabled
+ * definitions ∩ translatable types (columns.server.ts) and shipped to the
+ * client as plain data — the client builds descriptors from it. */
+export interface MetafieldColumnSpec {
+  namespace: string;
+  key: string;
+  type: string;
+}
+
+export function metafieldColumnId(namespace: string, key: string): string {
+  return `mf.${namespace}.${key}`;
+}
+
+export function buildMetafieldColumn(spec: MetafieldColumnSpec): ColumnDescriptor {
+  const richText = spec.type === METAFIELD_TYPE_RICH_TEXT;
+  return {
+    id: metafieldColumnId(spec.namespace, spec.key),
+    kind: "metafield",
+    // Shop-defined name, rendered verbatim — same "namespace.key" label the
+    // single-item editor shows (MetafieldsField.tsx). Never translated.
+    label: `${spec.namespace}.${spec.key}`,
+    group: "metafields",
+    editable: !richText,
+    translatable: !richText,
+    inputType: spec.type === METAFIELD_TYPE_SINGLE_LINE ? "text" : "textarea",
+    minWidth: 200,
+    metafieldType: spec.type,
+    metafieldNamespace: spec.namespace,
+    metafieldKey: spec.key,
+  };
+}
+
+/** Shopify's product option limit — three positions, so three fixed column
+ * pairs ("Option 1 … Option 3"). Products with fewer options render the
+ * spare cells read-only/empty. */
+export const MAX_OPTION_POSITIONS = 3;
+
+export function optionColumnId(position: number, field: "name" | "values"): string {
+  return `opt.${position}.${field}`;
+}
+
+export function buildOptionColumns(): ColumnDescriptor[] {
+  const columns: ColumnDescriptor[] = [];
+  for (let position = 1; position <= MAX_OPTION_POSITIONS; position++) {
+    for (const field of ["name", "values"] as const) {
+      columns.push({
+        id: optionColumnId(position, field),
+        kind: "option",
+        label: field, // heading is built from t.bulkEditor.columns.optionName/-Values + position
+        group: "options",
+        editable: true,
+        translatable: false, // option translations stay in the single editor (sub-resource path)
+        inputType: field === "values" ? "textarea" : "text",
+        minWidth: field === "values" ? 220 : 160,
+        optionPosition: position,
+        optionField: field,
+      });
+    }
+  }
+  return columns;
+}
+
+/** Alt-text of the MAIN product image (lowest position). All other images
+ * stay in the image manager (Plan §4.3). */
+export const IMG_ALT_COLUMN_ID = "img.alt";
+
+export function buildImgAltColumn(): ColumnDescriptor {
+  return {
+    id: IMG_ALT_COLUMN_ID,
+    kind: "image",
+    label: "imgAlt",
+    group: "images",
+    editable: true,
+    // Alt-text translations ride on the MediaImage resource, not the product —
+    // Phase 4 decides how to surface them; until then the column is
+    // primary-only.
+    translatable: false,
+    inputType: "text",
+    minWidth: 200,
+  };
+}
+
+/** Which dynamic product columns the shop's plan may see/edit (Plan §10.7):
+ * metafields/options/alt-texts are Basic+ because their cache is
+ * (PLAN_CONFIG[plan].cacheEnabled.productMetafields/productOptions/
+ * productImages). The server builds this from the plan; the client receives
+ * it via the loader. */
+export interface ProductColumnCaps {
+  metafields: boolean;
+  options: boolean;
+  imageAlt: boolean;
+}
+
+/**
+ * The full column universe for a type: the static per-type columns plus (for
+ * products) the shop's enabled metafield columns, the option column pairs and
+ * the main-image alt-text column. Pure and client-safe — the server builds
+ * the same list (columns.server.ts) for validation, the client builds it from
+ * loader data for rendering.
+ */
+export function buildColumnsForType(
+  type: BulkRowType,
+  metafieldSpecs: MetafieldColumnSpec[],
+  caps: ProductColumnCaps,
+): ColumnDescriptor[] {
+  const columns = [...BULK_COLUMNS_BY_TYPE[type]];
+  if (type !== "product") return columns;
+  if (caps.metafields) columns.push(...metafieldSpecs.map(buildMetafieldColumn));
+  if (caps.imageAlt) columns.push(buildImgAltColumn());
+  if (caps.options) columns.push(...buildOptionColumns());
+  return columns;
+}
+
+// ─── List-metafield cell format (Plan §4.1) ────────────────────────────────
+
+/**
+ * Display separator for list.single_line_text_field cells and option values:
+ * `Rot | Blau | Grün`. NOTE: "|" is also the edit-map KEY separator — that is
+ * fine, the list lives in the map's VALUE, never in the key. Keep it that
+ * way.
+ */
+export const LIST_DISPLAY_SEPARATOR = " | ";
+
+/** JSON array string → `A | B | C` display value. Non-JSON input is shown
+ * verbatim (defensive against malformed cache rows). */
+export function formatListMetafieldValue(raw: string): string {
+  if (!raw) return "";
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return arr.map((v) => String(v)).join(LIST_DISPLAY_SEPARATOR);
+  } catch {
+    // fall through — show the raw value
+  }
+  return raw;
+}
+
+/** `A | B | C` display value → string array for metafieldsSet. Every entry
+ * must be non-empty after trimming (Plan §4.1 validation); an entirely empty
+ * cell never reaches this parser — it is the metafieldsDelete path. */
+export function parseListMetafieldInput(
+  display: string,
+): { ok: true; values: string[] } | { ok: false; error: "emptyValue" } {
+  const values = display.split("|").map((v) => v.trim());
+  if (values.some((v) => v === "")) return { ok: false, error: "emptyValue" };
+  return { ok: true, values };
+}
+
+/** Plain-text preview of Shopify's rich-text JSON for the read-only
+ * rich_text_field cell. Falls back to the raw string when it isn't the
+ * expected JSON shape. */
+export function richTextPreview(raw: string): string {
+  if (!raw) return "";
+  try {
+    const doc: unknown = JSON.parse(raw);
+    const parts: string[] = [];
+    const walk = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      const n = node as { value?: unknown; children?: unknown };
+      if (typeof n.value === "string") parts.push(n.value);
+      if (Array.isArray(n.children)) n.children.forEach(walk);
+    };
+    walk(doc);
+    const text = parts.join(" ").replace(/\s+/g, " ").trim();
+    return text || raw;
+  } catch {
+    return raw;
+  }
+}
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 /** Selectable page sizes (Plan §3.3). Anything above 250 stays locked — the
@@ -185,6 +394,33 @@ export const MAX_BULK_TASK_ITEMS = 500;
 
 // ─── Rows ──────────────────────────────────────────────────────────────────
 
+/** One product-option slot on a row (Phase 2, product rows only). */
+export interface BulkRowOption {
+  /** ProductOption GID. */
+  id: string;
+  /** 1-based Shopify position — matches ColumnDescriptor.optionPosition. */
+  position: number;
+  name: string;
+  /** Parsed values — both storage formats ([{id,name}] and legacy ["string"])
+   * normalize to this shape; legacy entries carry id "". */
+  values: { id: string; name: string }[];
+  /** False when any value lacks a GID (legacy format) — the values cell is
+   * then read-only: productOptionUpdate needs value ids. */
+  hasValueIds: boolean;
+  /** Metaobject-linked option (linkedMetafieldKey set): the ENTIRE option —
+   * name AND values — is read-only in the grid (Plan §14 no. 5). */
+  linked: boolean;
+}
+
+/** One enabled metafield value on a row, keyed by column id in
+ * BulkRow.metafields. */
+export interface BulkRowMetafield {
+  /** Metafield GID. */
+  id: string;
+  value: string;
+  type: string;
+}
+
 export interface BulkRow {
   id: string;
   type: BulkRowType;
@@ -202,6 +438,17 @@ export interface BulkRow {
   imageUrl?: string;
   imageAlt?: string;
   blogTitle?: string;
+  /** Enabled metafield values keyed by column id ("mf.<ns>.<key>"). A missing
+   * entry means the product has no such metafield yet — empty cell, and the
+   * save CREATES it (Plan §4.1). */
+  metafields?: Record<string, BulkRowMetafield>;
+  /** Product options ordered by position (synthetic Title/Default Title
+   * option already filtered out). */
+  options?: BulkRowOption[];
+  /** Main product image (lowest position). mediaId null ⇒ the img.alt cell is
+   * read-only with a "resync" hint (Plan §4.3 — productUpdateMedia needs the
+   * MediaImage GID). Absent ⇒ product has no image. */
+  mainImage?: { mediaId: string | null; alt: string };
   /** Foreign-language cell values, keyed `${locale}|${marketId}|${columnId}`.
    * Phase 4 (languages/markets) fills this from ContentTranslation; in Phase 1
    * the UI only edits the primary locale, but the diff pipeline already
@@ -210,11 +457,100 @@ export interface BulkRow {
 }
 
 /** The row's primary-locale value for a field column ("" for non-field
- * columns, which are never editable). */
+ * columns — use resolveCellValue for the full per-cell resolution). */
 export function primaryValueForColumn(row: BulkRow, column: ColumnDescriptor): string {
   if (column.kind !== "field") return "";
   const value = (row as unknown as Record<string, unknown>)[fieldNameOfColumn(column)];
   return typeof value === "string" ? value : "";
+}
+
+// ─── Per-cell resolution (Phase 2 — editability varies per ROW now) ────────
+
+/** Why a cell renders read-only — drives the localized tooltip. */
+export type CellReadOnlyReason =
+  | "column" // the whole column is read-only (blogTitle, image, …)
+  | "richText" // rich_text_field metafield — "open in editor" (Plan §4.1)
+  | "linkedOption" // metaobject-linked option — fully read-only (Plan §14 no. 5)
+  | "missingOption" // product has no option at this position
+  | "legacyOptionValues" // values without GIDs — can't be mapped for update
+  | "missingImage" // product has no image at all
+  | "missingMediaId"; // image row lacks the MediaImage GID — resync needed
+
+export interface ResolvedCell {
+  /** Baseline display value of the cell (primary locale). */
+  value: string;
+  editable: boolean;
+  readOnlyReason?: CellReadOnlyReason;
+}
+
+function joinOptionValues(option: BulkRowOption): string {
+  return option.values.map((v) => v.name).join(LIST_DISPLAY_SEPARATOR);
+}
+
+/**
+ * Resolves a row × column to its baseline value and per-row editability.
+ * Column-level editability (rich_text metafields, readonly kinds) and
+ * row-level constraints (linked options, missing mediaId, missing option
+ * position) both land here, so the grid, computeDiff and the tests share ONE
+ * truth about what a cell shows and whether typing into it counts.
+ */
+export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
+  switch (column.kind) {
+    case "field":
+      return { value: primaryValueForColumn(row, column), editable: column.editable };
+    case "metafield": {
+      const mf = row.metafields?.[column.id];
+      const raw = mf?.value ?? "";
+      if (column.metafieldType === METAFIELD_TYPE_RICH_TEXT) {
+        return { value: richTextPreview(raw), editable: false, readOnlyReason: "richText" };
+      }
+      if (column.metafieldType === METAFIELD_TYPE_LIST_SINGLE_LINE) {
+        return { value: formatListMetafieldValue(raw), editable: true };
+      }
+      return { value: raw, editable: true };
+    }
+    case "option": {
+      const option = row.options?.find((o) => o.position === column.optionPosition);
+      if (!option) return { value: "", editable: false, readOnlyReason: "missingOption" };
+      const value = column.optionField === "name" ? option.name : joinOptionValues(option);
+      // Linked options: the WHOLE option is read-only, including the name —
+      // Plan §14 no. 5 (overrides the §4.2 text). Renaming stays in the
+      // single-item editor.
+      if (option.linked) return { value, editable: false, readOnlyReason: "linkedOption" };
+      if (column.optionField === "values" && !option.hasValueIds) {
+        return { value, editable: false, readOnlyReason: "legacyOptionValues" };
+      }
+      return { value, editable: true };
+    }
+    case "image": {
+      if (column.id === IMG_ALT_COLUMN_ID) {
+        if (!row.mainImage) return { value: "", editable: false, readOnlyReason: "missingImage" };
+        if (!row.mainImage.mediaId) {
+          return { value: row.mainImage.alt, editable: false, readOnlyReason: "missingMediaId" };
+        }
+        return { value: row.mainImage.alt, editable: true };
+      }
+      return { value: "", editable: false, readOnlyReason: "column" };
+    }
+    case "readonly":
+      return {
+        value: column.id === "blogTitle" ? row.blogTitle ?? "" : "",
+        editable: false,
+        readOnlyReason: "column",
+      };
+    default:
+      return { value: "", editable: false, readOnlyReason: "column" };
+  }
+}
+
+/** Per-type membership for a (possibly dynamic) column: dynamic product
+ * columns (metafields, options, img.alt) belong to product rows only; static
+ * columns fall back to the per-type allowlist. */
+export function columnAllowedForType(type: BulkRowType, column: ColumnDescriptor): boolean {
+  if (column.kind === "metafield" || column.kind === "option" || column.id === IMG_ALT_COLUMN_ID) {
+    return type === "product";
+  }
+  return !!getColumnForType(type, column.id);
 }
 
 // ─── Edit-map keys: `${rowId}|${locale}|${marketId}|${columnId}` ───────────
@@ -264,6 +600,11 @@ export interface BulkDiffEntry {
 export interface BulkFailure {
   rowId: string;
   rowType: BulkRowType;
+  /** The failed CELL (Plan §4.4 partial-failure semantics): the UI marks the
+   * cell red and keeps its edit for retry. Absent = row-level failure (whole
+   * row's mutation failed, e.g. a single-mutation page/collection row) — the
+   * UI then falls back to marking the row's dirty cells. */
+  columnId?: string;
   message: string;
 }
 
@@ -315,12 +656,19 @@ export function computeDiff(
 
     const column = columnById.get(columnId);
     if (!column || !column.editable) continue;
-    if (!isColumnEditableForType(row.type, columnId)) continue;
+    if (!columnAllowedForType(row.type, column)) continue;
     if (locale !== "" && !column.translatable) continue;
+
+    // Per-ROW editability (Phase 2): a linked option, a legacy values format
+    // or a missing mediaId make an otherwise-editable column read-only for
+    // this row — edits that sneak into the map are dropped, same as
+    // column-level read-only.
+    const resolved = resolveCellValue(row, column);
+    if (locale === "" && !resolved.editable) continue;
 
     const baseline =
       locale === "" && marketId === ""
-        ? primaryValueForColumn(row, column)
+        ? resolved.value
         : row.foreignValues?.[`${locale}|${marketId}|${columnId}`] ?? "";
 
     const original = baseline.trim();
@@ -373,25 +721,37 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  * Diff-entry validation shared by the route action AND the /api/ai handler —
  * the handler is reachable directly via POST, so both entrances enforce the
  * exact same rules (Plan §0.2 no. 4): GID shape, plan-allowed row type,
- * per-type column allowlist, and (Phase 1) primary-language-only segments.
+ * per-type column allowlist, and (until Phase 4) primary-language-only
+ * segments.
+ *
+ * `columnsByType` MUST be the SERVER-built column universe
+ * (buildServerColumnsByType, columns.server.ts) — that is what makes the
+ * mf.-column allowlist a server-side check against the shop's enabled
+ * definitions instead of trusting whatever column ids the client sends.
  */
-export function isValidBulkDiffEntry(e: unknown, allowedTypes: BulkRowType[]): e is BulkDiffEntry {
+export function isValidBulkDiffEntry(
+  e: unknown,
+  allowedTypes: BulkRowType[],
+  columnsByType: Record<BulkRowType, ColumnDescriptor[]>,
+): e is BulkDiffEntry {
   if (!e || typeof e !== "object") return false;
   const entry = e as Record<string, unknown>;
-  return (
-    typeof entry.rowId === "string" &&
-    isValidShopifyGID(entry.rowId) &&
-    typeof entry.rowType === "string" &&
-    (allowedTypes as string[]).includes(entry.rowType) &&
-    typeof entry.columnId === "string" &&
-    isColumnEditableForType(entry.rowType as BulkRowType, entry.columnId) &&
-    // Phase 1 writes the primary language only — the locale/market segments
-    // ride along in the key format (Phase 4 fills them), but a non-empty
-    // segment has no server write path yet and is rejected, not dropped.
-    entry.locale === "" &&
-    entry.marketId === "" &&
-    typeof entry.value === "string"
-  );
+  if (
+    typeof entry.rowId !== "string" ||
+    !isValidShopifyGID(entry.rowId) ||
+    typeof entry.rowType !== "string" ||
+    !(allowedTypes as string[]).includes(entry.rowType) ||
+    typeof entry.columnId !== "string" ||
+    typeof entry.value !== "string"
+  ) {
+    return false;
+  }
+  const column = columnsByType[entry.rowType as BulkRowType]?.find((c) => c.id === entry.columnId);
+  if (!column || !column.editable) return false;
+  // Until Phase 4 the server writes the primary language only — the
+  // locale/market segments ride along in the key format, but a non-empty
+  // segment has no server write path yet and is rejected, not dropped.
+  return entry.locale === "" && entry.marketId === "";
 }
 
 // ─── Server-side filter/sort vocabulary (client-safe: types + validation) ──
