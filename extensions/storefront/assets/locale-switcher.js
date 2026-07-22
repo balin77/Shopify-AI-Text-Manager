@@ -73,19 +73,48 @@ class CpLocaleSwitcher extends HTMLElement {
       this._renderAllMounts();
     }
 
+    // Upgrade IMMEDIATELY — never wait for the flag sprite. _ensureSprite() is
+    // a network fetch, and awaiting it here delayed the native-<select> →
+    // listbox swap by a visible fraction of a second: the widget rendered at
+    // the <select>'s width (sized by its LONGEST option), then jumped to the
+    // button's width (sized by the SELECTED option) once the sprite landed.
+    // Flag boxes are fixed-size in CSS, so painting the real flags in
+    // afterwards cannot move anything — see _repaintFlags.
+    this._upgradeAll(selects);
+
     if (this._showFlag) {
-      this._ensureSprite().then(() => this._upgradeAll(selects)).catch((err) => {
-        this._warn('sprite fetch failed; flags disabled', err);
-        this._showFlag = false;
-        this._upgradeAll(selects);
-      });
-    } else {
-      this._upgradeAll(selects);
+      this._ensureSprite()
+        .then(() => this._repaintFlags())
+        .catch((err) => {
+          this._warn('sprite fetch failed; falling back to ISO badges', err);
+          // Do NOT clear _showFlag here: that collapses the flag box
+          // (--off is display:none) and reintroduces the very layout shift
+          // this path exists to avoid. Mark the sprite as resolved-but-absent
+          // so _renderFlag draws its ISO badge in the same-sized box instead.
+          this._spriteFailed = true;
+          this._repaintFlags();
+        });
     }
+  }
+
+  /* The sprite arrives after the UI is already on screen. Swap every reserved,
+     still-empty flag box for its real flag (or ISO badge). Same box size, so
+     this is a repaint, not a reflow. */
+  _repaintFlags() {
+    this.querySelectorAll('.cp-locale-field__flag--pending').forEach((wrap) => {
+      if (!wrap._cpOpt) return;
+      wrap.replaceWith(this._renderFlag(wrap._cpOpt, wrap._cpKind));
+    });
   }
 
   _upgradeAll(selects) {
     this.classList.add('cp-locale-switcher--js');
+    // Reveal the widget. Until now it was hidden by --js-pending (set by the
+    // inline snippet in locale-switcher.liquid during parse), so the pre-
+    // upgrade native-<select> UI was never painted and the merchant sees the
+    // switcher exactly once, already at its final size and — on phones —
+    // already merged into the single dropdown.
+    this.classList.remove('cp-locale-switcher--js-pending');
     selects.forEach((sel) => this._upgrade(sel));
     // After every field is upgraded, set up the super-narrow merge if the
     // merchant enabled it AND both language and country forms exist. Run
@@ -263,6 +292,10 @@ class CpLocaleSwitcher extends HTMLElement {
     const wrap = document.createElement('span');
     wrap.className = 'cp-locale-field__flag';
     wrap.setAttribute('aria-hidden', 'true');
+    // Remembered so _repaintFlags can re-render this exact box once the sprite
+    // has landed, without threading the option list back through the DOM.
+    wrap._cpOpt = opt;
+    wrap._cpKind = kind;
     const showFlag = kind === 'country'
       ? (this._countryDisplay === 'flag_and_name' || this._countryDisplay === 'flag_only')
       : this._showFlag;
@@ -288,8 +321,16 @@ class CpLocaleSwitcher extends HTMLElement {
       wrap.appendChild(svg);
       return wrap;
     }
-    // No flag available — render a small ISO badge so the row never looks
-    // half-broken.
+    // Sprite still in flight — leave the box EMPTY rather than drawing the ISO
+    // badge. The box is already sized by CSS, so _repaintFlags can drop the
+    // real flag in later without moving anything, and the merchant does not
+    // see an ISO badge flip to a flag for a frame.
+    if (this._spriteUrl && !this._spriteFailed && !document.getElementById('cp-locale-flag-sprite')) {
+      wrap.classList.add('cp-locale-field__flag--pending');
+      return wrap;
+    }
+    // Sprite resolved but has no matching flag — render a small ISO badge so
+    // the row never looks half-broken.
     wrap.classList.add('cp-locale-field__flag--placeholder');
     wrap.textContent = (opt.iso || '').slice(0, 2);
     return wrap;

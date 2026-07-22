@@ -65,6 +65,12 @@
 -%}
 
 {%- if show_lang_block or show_country_block -%}
+{%- comment -%}
+  The stylesheet is emitted BEFORE the element on purpose: a <link> that only
+  appears after the markup lets the browser paint the switcher unstyled first.
+  The --js-pending guard below depends on its rule already being in effect.
+{%- endcomment -%}
+{{ 'locale-switcher.css' | asset_url | stylesheet_tag }}
 <cp-locale-switcher
   id="cp-locale-switcher-{{ block.id }}"
   class="cp-locale-switcher cp-locale-switcher--{{ style }} cp-locale-switcher--layout-{{ selectors_layout }}{% if inherit_theme %} cp-locale-switcher--inherit{% endif %}{% if compact_on_narrow %} cp-locale-switcher--auto-compact{% endif %}{% if merge_on_supernarrow %} cp-locale-switcher--mergeable{% endif %}"
@@ -304,7 +310,36 @@
   </div>
 </cp-locale-switcher>
 
-{{ 'locale-switcher.css' | asset_url | stylesheet_tag }}
+{%- comment -%}
+  Layout-shift guard. This snippet is SYNCHRONOUS and sits directly after the
+  element, so it runs during parse — before the first paint. It marks the
+  switcher as "JS is coming", which hides it until locale-switcher.js has built
+  the final custom listbox (_upgradeAll drops the class).
+
+  Why: the server can only render the no-JS UI — native <select>s, which the
+  browser sizes by their LONGEST option, plus both selectors side by side. The
+  controller then replaces them with trigger buttons sized by the SELECTED
+  option, and on phones merges the two into one. Painting that intermediate
+  state and correcting it a moment later is exactly the layout shift we saw.
+
+  It must be inline rather than part of the deferred controller: a deferred
+  script cannot run before the first paint, which is the whole point.
+
+  The timeout is a safety net — if the controller fails to load or throws, the
+  no-JS <select> UI is revealed instead of leaving an invisible switcher.
+  Genuine no-JS visitors never run this snippet, so they get the native UI
+  immediately, unchanged.
+{%- endcomment -%}
+<script>
+  (function () {
+    var el = document.getElementById('cp-locale-switcher-{{ block.id }}');
+    if (!el) return;
+    el.classList.add('cp-locale-switcher--js-pending');
+    setTimeout(function () {
+      el.classList.remove('cp-locale-switcher--js-pending');
+    }, 3000);
+  })();
+</script>
 <script src="{{ 'locale-switcher.js' | asset_url }}" defer></script>
 {%- endif -%}
 
