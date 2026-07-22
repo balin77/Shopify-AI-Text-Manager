@@ -32,9 +32,7 @@ import {
   IndexTable,
   Divider,
   Collapsible,
-  Icon,
 } from "@shopify/polaris";
-import { ChevronDownIcon, ChevronUpIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -55,6 +53,7 @@ import type { Plan } from "../config/plans";
 import type {
   PageSpeedStrategy,
   PageSpeedAuditResult,
+  PageSpeedMetric,
   PageSpeedMetricId,
   PageSpeedCell,
   PageSpeedRect,
@@ -523,6 +522,20 @@ const FINDING_HEADER_STYLE: CSSProperties = {
   color: "inherit",
 };
 
+/**
+ * Disclosure glyph for the findings accordion — the same ▼/▶ pair the SEO
+ * overview uses for its expandable problem rows, so both read as one control.
+ */
+function DisclosureGlyph({ open }: { open: boolean }) {
+  return (
+    <Text as="span" tone="subdued" variant="bodySm">
+      <span aria-hidden="true">{open ? "▼" : "▶"}</span>
+    </Text>
+  );
+}
+
+const FINDING_TITLE_STYLE: CSSProperties = { flex: "1 1 auto", minWidth: 0 };
+
 const CODE_TEXT_STYLE: CSSProperties = {
   fontFamily: "var(--p-font-family-mono, monospace)",
   fontSize: "12px",
@@ -710,30 +723,154 @@ function FindingTable({
   );
 }
 
-/** Circular Lighthouse-style score gauge. */
-function ScoreGauge({ score, label }: { score: number | null; label: string }) {
+/**
+ * Lighthouse's performance-score weights (unchanged across LH 10-13), in the
+ * order PSI arranges them clockwise from 12 o'clock. They drive the arc lengths
+ * of the split ring, so the picture matches how the score is actually computed.
+ */
+const SCORE_WEIGHTS: { id: PageSpeedMetricId; weight: number }[] = [
+  { id: "fcp", weight: 0.1 },
+  { id: "lcp", weight: 0.25 },
+  { id: "tbt", weight: 0.3 },
+  { id: "cls", weight: 0.25 },
+  { id: "si", weight: 0.1 },
+];
+
+const GAUGE_SIZE = 190;
+const GAUGE_CENTER = GAUGE_SIZE / 2;
+const GAUGE_RADIUS = 58;
+const GAUGE_STROKE = 8;
+/** Degrees of empty space between two metric arcs. */
+const GAUGE_ARC_GAP = 5;
+
+/** Point on the gauge circle; 0° is 12 o'clock, growing clockwise. */
+function gaugePoint(radius: number, degrees: number): [number, number] {
+  const rad = ((degrees - 90) * Math.PI) / 180;
+  return [GAUGE_CENTER + radius * Math.cos(rad), GAUGE_CENTER + radius * Math.sin(rad)];
+}
+
+function gaugeArc(radius: number, startDeg: number, endDeg: number): string {
+  // A full circle can't be expressed as one arc — nudge it just short of 360.
+  const end = endDeg - startDeg >= 360 ? startDeg + 359.99 : endDeg;
+  const [x1, y1] = gaugePoint(radius, startDeg);
+  const [x2, y2] = gaugePoint(radius, end);
+  const largeArc = end - startDeg > 180 ? 1 : 0;
+  return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
+}
+
+/**
+ * Lighthouse-style score gauge. Hovering splits the ring into one arc per
+ * metric — arc length = that metric's weight in the score, fill = its own
+ * score — which is how PSI explains where a score comes from.
+ */
+function ScoreGauge({
+  score,
+  label,
+  metrics,
+}: {
+  score: number | null;
+  label: string;
+  metrics: PageSpeedMetric[];
+}) {
+  const [showSplit, setShowSplit] = useState(false);
   const tone: PerfTone = score == null ? "warning" : lighthouseTone(score);
   const color = PERF_COLOR[tone];
-  const radius = 52;
-  const circumference = 2 * Math.PI * radius;
-  const filled = score != null ? (score / 100) * circumference : 0;
+
+  const metricById = new Map(metrics.map((m) => [m.id, m]));
+  const available = SCORE_WEIGHTS.filter((w) => metricById.has(w.id));
+  const weightTotal = available.reduce((sum, w) => sum + w.weight, 0);
+  const splittable = available.length > 0 && weightTotal > 0;
+
+  let cursor = 0;
+  const segments = available.map((w) => {
+    const start = cursor;
+    const span = (w.weight / weightTotal) * 360;
+    cursor += span;
+    const metric = metricById.get(w.id)!;
+    const metricScore = metric.score ?? 0;
+    const segTone = metricTone(metric.score);
+    const [labelX, labelY] = gaugePoint(GAUGE_RADIUS + 20, start + span / 2);
+    return {
+      id: w.id,
+      color: segTone ? PERF_COLOR[segTone] : "var(--p-color-border, #c9cccf)",
+      from: start + GAUGE_ARC_GAP / 2,
+      to: start + span - GAUGE_ARC_GAP / 2,
+      filledTo: start + GAUGE_ARC_GAP / 2 + Math.max(0, span - GAUGE_ARC_GAP) * metricScore,
+      labelX,
+      labelY,
+    };
+  });
 
   return (
     <BlockStack gap="150" inlineAlign="center">
-      <div style={{ position: "relative", width: "128px", height: "128px" }}>
-        <svg width="128" height="128" viewBox="0 0 128 128" role="img" aria-label={`${label}: ${score ?? "–"}`}>
-          <circle cx="64" cy="64" r={radius} fill={`${color}1f`} stroke={`${color}40`} strokeWidth="8" />
-          <circle
-            cx="64"
-            cy="64"
-            r={radius}
-            fill="none"
-            stroke={color}
-            strokeWidth="8"
-            strokeLinecap="round"
-            strokeDasharray={`${filled} ${circumference - filled}`}
-            transform="rotate(-90 64 64)"
-          />
+      <div
+        style={{ position: "relative", width: `${GAUGE_SIZE}px`, height: `${GAUGE_SIZE}px` }}
+        onMouseEnter={() => setShowSplit(true)}
+        onMouseLeave={() => setShowSplit(false)}
+      >
+        <svg
+          width={GAUGE_SIZE}
+          height={GAUGE_SIZE}
+          viewBox={`0 0 ${GAUGE_SIZE} ${GAUGE_SIZE}`}
+          role="img"
+          aria-label={`${label}: ${score ?? "–"}`}
+        >
+          <circle cx={GAUGE_CENTER} cy={GAUGE_CENTER} r={GAUGE_RADIUS} fill={`${color}1f`} />
+
+          {/* Whole-score ring */}
+          <g style={{ opacity: showSplit && splittable ? 0 : 1, transition: "opacity 150ms ease-in-out" }}>
+            <path
+              d={gaugeArc(GAUGE_RADIUS, 0, 360)}
+              fill="none"
+              stroke={`${color}40`}
+              strokeWidth={GAUGE_STROKE}
+            />
+            {score != null && score > 0 && (
+              <path
+                d={gaugeArc(GAUGE_RADIUS, 0, (score / 100) * 360)}
+                fill="none"
+                stroke={color}
+                strokeWidth={GAUGE_STROKE}
+                strokeLinecap="round"
+              />
+            )}
+          </g>
+
+          {/* Per-metric ring, revealed on hover */}
+          {splittable && (
+            <g style={{ opacity: showSplit ? 1 : 0, transition: "opacity 150ms ease-in-out" }}>
+              {segments.map((seg) => (
+                <Fragment key={seg.id}>
+                  <path
+                    d={gaugeArc(GAUGE_RADIUS, seg.from, seg.to)}
+                    fill="none"
+                    stroke={seg.color}
+                    strokeWidth={GAUGE_STROKE}
+                    opacity={0.25}
+                  />
+                  {seg.filledTo > seg.from && (
+                    <path
+                      d={gaugeArc(GAUGE_RADIUS, seg.from, seg.filledTo)}
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth={GAUGE_STROKE}
+                      strokeLinecap="round"
+                    />
+                  )}
+                  <text
+                    x={seg.labelX}
+                    y={seg.labelY}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize="11"
+                    fill="var(--p-color-text, #202223)"
+                  >
+                    {seg.id.toUpperCase()}
+                  </text>
+                </Fragment>
+              ))}
+            </g>
+          )}
         </svg>
         <span
           style={{
@@ -745,6 +882,7 @@ function ScoreGauge({ score, label }: { score: number | null; label: string }) {
             fontSize: "34px",
             fontWeight: 500,
             color,
+            pointerEvents: "none",
           }}
         >
           {score != null ? score : "–"}
@@ -1101,8 +1239,8 @@ export default function SeoPerformance() {
             {/* Real-user (CrUX) field data — leads the result the way PSI does,
                 full width, one threshold bar per metric. */}
             {result.fieldData && (
-              <Card>
-                <BlockStack gap="400">
+              <Card padding="600">
+                <BlockStack gap="500">
                   <InlineStack gap="300" blockAlign="center" wrap>
                     <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
                     {/* CrUX's aggregate verdict — the "passed / did not pass
@@ -1122,7 +1260,7 @@ export default function SeoPerformance() {
                   <div style={FIELD_GRID_STYLE}>{coreFieldRows.map(renderFieldMetric)}</div>
 
                   {otherFieldRows.length > 0 && (
-                    <BlockStack gap="300">
+                    <BlockStack gap="400">
                       <Divider />
                       <Text as="h4" variant="headingSm" tone="subdued">{p.fieldOtherTitle}</Text>
                       <div style={FIELD_GRID_STYLE}>{otherFieldRows.map(renderFieldMetric)}</div>
@@ -1137,38 +1275,63 @@ export default function SeoPerformance() {
             )}
 
             {/* Lab result (this run) — gauge + the measured metrics. */}
-            <Card>
-              <BlockStack gap="400">
-                <InlineStack gap="500" blockAlign="center" align="space-between" wrap>
-                  <InlineStack gap="500" blockAlign="center" wrap>
-                    <ScoreGauge score={result.performanceScore} label={p.scoreTitle} />
-                    <BlockStack gap="200">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {p.testedLabel
-                        .replace("{url}", displayPath(result.url))
-                        .replace("{strategy}", strategyLabel(result.strategy))
-                        .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
-                    </Text>
-                    {result.finalUrl && (
-                      <Text as="p" variant="bodySm" tone="caution">
-                        {p.redirectNotice.replace("{url}", result.finalUrl)}
-                      </Text>
-                    )}
-                    <InlineStack gap="300" wrap>
-                      {SCORE_LEGEND.map((entry) => (
-                        <InlineStack key={entry.range} gap="100" blockAlign="center">
-                          <ToneMarker tone={entry.tone} />
-                          <Text as="span" variant="bodySm" tone="subdued">{entry.range}</Text>
+            <Card padding="600">
+              <BlockStack gap="500">
+                {/* Two halves: score left, captured page right, each centred in
+                    its own half with a hairline between them. */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: previewScreenshot ? "minmax(0, 1fr) auto minmax(0, 1fr)" : "1fr",
+                    alignItems: "center",
+                    justifyItems: "center",
+                    gap: "24px",
+                  }}
+                >
+                  <BlockStack gap="300" inlineAlign="center">
+                    <ScoreGauge
+                      score={result.performanceScore}
+                      label={p.scoreTitle}
+                      metrics={result.metrics}
+                    />
+                    <div style={{ textAlign: "center", maxWidth: "340px" }}>
+                      <BlockStack gap="200" inlineAlign="center">
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {p.testedLabel
+                            .replace("{url}", displayPath(result.url))
+                            .replace("{strategy}", strategyLabel(result.strategy))
+                            .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                        </Text>
+                        {result.finalUrl && (
+                          <Text as="p" variant="bodySm" tone="caution">
+                            {p.redirectNotice.replace("{url}", result.finalUrl)}
+                          </Text>
+                        )}
+                        <InlineStack gap="300" wrap align="center">
+                          {SCORE_LEGEND.map((entry) => (
+                            <InlineStack key={entry.range} gap="100" blockAlign="center">
+                              <ToneMarker tone={entry.tone} />
+                              <Text as="span" variant="bodySm" tone="subdued">{entry.range}</Text>
+                            </InlineStack>
+                          ))}
                         </InlineStack>
-                      ))}
-                    </InlineStack>
-                    </BlockStack>
-                  </InlineStack>
+                      </BlockStack>
+                    </div>
+                  </BlockStack>
 
-                  {/* The captured page, right of the gauge like PSI. Prefer the
-                      viewport shot — `screenshot` is the full-page capture and
-                      would only show a top slice here. Element crops are drawn
-                      per finding below, not here. */}
+                  {previewScreenshot && (
+                    <div
+                      style={{
+                        width: "1px",
+                        alignSelf: "stretch",
+                        background: "var(--p-color-border-secondary, #e1e3e5)",
+                      }}
+                    />
+                  )}
+
+                  {/* Prefer the viewport shot — `screenshot` is the full-page
+                      capture and would only show a top slice here. Element crops
+                      are drawn per finding below, not here. */}
                   {previewScreenshot && (
                     <div
                       style={{
@@ -1177,13 +1340,12 @@ export default function SeoPerformance() {
                         overflow: "hidden",
                         border: "1px solid var(--p-color-border, #e1e3e5)",
                         borderRadius: "8px",
-                        alignSelf: "start",
                       }}
                     >
                       <img src={previewScreenshot.data} alt="" style={{ width: "100%", display: "block" }} />
                     </div>
                   )}
-                </InlineStack>
+                </div>
 
                 <Divider />
 
@@ -1299,16 +1461,18 @@ export default function SeoPerformance() {
                             aria-controls={`finding-${o.id}`}
                             style={FINDING_HEADER_STYLE}
                           >
-                            <InlineStack gap="200" blockAlign="center" wrap={false}>
-                              <ToneMarker tone={o.score == null ? undefined : metricTone(o.score)} />
-                              <Text as="span" variant="bodyMd" fontWeight="medium">{o.title}</Text>
-                              {savings && (
-                                <span style={{ color: PERF_COLOR.critical, fontSize: "13px" }}>
-                                  {`— ${p.savingsLabel}: ${savings}`}
-                                </span>
-                              )}
-                            </InlineStack>
-                            <Icon source={open ? ChevronUpIcon : ChevronDownIcon} tone="subdued" />
+                            <span style={FINDING_TITLE_STYLE}>
+                              <InlineStack gap="200" blockAlign="center" wrap>
+                                <ToneMarker tone={o.score == null ? undefined : metricTone(o.score)} />
+                                <Text as="span" variant="bodyMd" fontWeight="medium">{o.title}</Text>
+                                {savings && (
+                                  <span style={{ color: PERF_COLOR.critical, fontSize: "13px" }}>
+                                    {`— ${p.savingsLabel}: ${savings}`}
+                                  </span>
+                                )}
+                              </InlineStack>
+                            </span>
+                            <DisclosureGlyph open={open} />
                           </button>
                           <Collapsible open={open} id={`finding-${o.id}`} transition={false}>
                             <div style={{ padding: "0 12px 16px" }}>
@@ -1351,14 +1515,13 @@ export default function SeoPerformance() {
                           aria-controls={`finding-${ELEMENTS_FINDING_ID}`}
                           style={FINDING_HEADER_STYLE}
                         >
-                          <InlineStack gap="200" blockAlign="center" wrap={false}>
-                            <ToneMarker />
-                            <Text as="span" variant="bodyMd" fontWeight="medium">{p.elementsTitle}</Text>
-                          </InlineStack>
-                          <Icon
-                            source={openFindings.has(ELEMENTS_FINDING_ID) ? ChevronUpIcon : ChevronDownIcon}
-                            tone="subdued"
-                          />
+                          <span style={FINDING_TITLE_STYLE}>
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                              <ToneMarker />
+                              <Text as="span" variant="bodyMd" fontWeight="medium">{p.elementsTitle}</Text>
+                            </InlineStack>
+                          </span>
+                          <DisclosureGlyph open={openFindings.has(ELEMENTS_FINDING_ID)} />
                         </button>
                         <Collapsible
                           open={openFindings.has(ELEMENTS_FINDING_ID)}
