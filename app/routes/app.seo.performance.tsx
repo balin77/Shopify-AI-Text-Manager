@@ -188,6 +188,12 @@ type GenerateAltTextResult =
  * hand-crafted request forcing an oversized matching run.
  */
 const MAX_ALT_MATCH_URLS = 20;
+/**
+ * Cap on ProductImage rows scanned per `matchAltImages` call. Keeps a huge
+ * catalog from turning the match into an unbounded query — images beyond the
+ * cap are reported as unmatched rather than scanned.
+ */
+const MAX_ALT_MATCH_IMAGES = 20_000;
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
@@ -231,6 +237,9 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
     // R4-DI7 pattern (see alt-text.action.ts): always scope by the owning
     // product's shop — an unscoped query could match another tenant's images.
+    // `take` bounds memory and latency on very large catalogs; images beyond
+    // the cap simply stay unmatched, which the UI already explains
+    // (altTextUnmatched) — a degraded match beats an unbounded scan.
     const images = await db.productImage.findMany({
       where: { product: { shop } },
       select: {
@@ -240,6 +249,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
         mediaId: true,
         product: { select: { title: true } },
       },
+      take: MAX_ALT_MATCH_IMAGES,
     });
 
     const matches = buildAltImageMatches(
@@ -270,20 +280,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     // row's URL and product title — not the client-sent ones — for the AI call.
     const image = await db.productImage.findFirst({
       where: { mediaId, product: { shop } },
-      select: { url: true, product: { select: { title: true } } },
+      select: { url: true, productId: true, product: { select: { title: true } } },
     });
     if (!image) {
       return json<GenerateAltTextResult>({ ok: false, error: "unknownImage" }, { status: 400 });
     }
 
-    const [{ AIService, toValidProvider }, { tryDecryptApiKey }, { sanitizePromptInput }, { getFullErrorMessage }, { logger }] =
-      await Promise.all([
-        import("../../src/services/ai.service"),
-        import("../utils/encryption.server"),
-        import("../utils/prompt-sanitizer"),
-        import("../utils/error-handler"),
-        import("../utils/logger.server"),
-      ]);
+    const [
+      { AIService, toValidProvider },
+      { tryDecryptApiKey },
+      { getFullErrorMessage },
+      { buildProductAltTextPrompt, saveImageAltTextPrimary },
+      { getTaskExpirationDate },
+    ] = await Promise.all([
+      import("../../src/services/ai.service"),
+      import("../utils/encryption.server"),
+      import("../utils/error-handler"),
+      import("../actions/content/alt-text.action"),
+      import("../config/constants"),
+    ]);
 
     const [aiSettings, aiInstructions] = await Promise.all([
       db.aISettings.findUnique({ where: { shop } }),
@@ -307,65 +322,68 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     // `mainLanguage` from its clients.
     const mainLanguage = aiSettings?.appLanguage || "en";
 
-    // Prompt build mirrors handleGenerateAltText (alt-text.action.ts).
-    const sanitizedTitle = sanitizePromptInput(image.product?.title || "", { fieldType: "title" });
-    let prompt = `Create an optimized alt text for a product image.
-Product: ${sanitizedTitle}
-Image URL: ${image.url}`;
-    if (aiInstructions?.productAltTextFormat) {
-      prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
-    }
-    if (aiInstructions?.productAltTextInstructions) {
-      prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
-    }
-    prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
+    // Shared prompt build + primary save (alt-text.action.ts) — the bridge
+    // must not fork its own copy of the alt-text path (CLAUDE.md: no parallel
+    // handlers). The task row mirrors handleGenerateAltText so the run shows
+    // up in the activity view like every other generation.
+    const { prompt, sanitizedTitle } = buildProductAltTextPrompt({
+      productTitle: image.product?.title || "",
+      imageUrl: image.url,
+      aiInstructions,
+      language: mainLanguage,
+    });
+
+    const task = await db.task.create({
+      data: {
+        shop,
+        type: "aiGeneration",
+        status: "pending",
+        resourceType: "Product",
+        resourceId: image.productId,
+        resourceTitle: image.product?.title || "",
+        fieldType: "altText",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    const failTask = (error: string) =>
+      db.task
+        .update({ where: { id: task.id }, data: { status: "failed", completedAt: new Date(), error } })
+        .catch(() => {});
 
     let altText: string;
     try {
-      const aiService = new AIService(provider, serviceConfig, shop);
+      const aiService = new AIService(provider, serviceConfig, shop, task.id);
       altText = (await aiService.generateImageAltText(image.url, sanitizedTitle, prompt)).trim();
     } catch (err: unknown) {
-      return json<GenerateAltTextResult>({ ok: false, error: getFullErrorMessage(err) }, { status: 500 });
+      const message = getFullErrorMessage(err);
+      await failTask(message);
+      return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
     }
     if (!altText) {
+      await failTask("AI returned an empty alt text");
       return json<GenerateAltTextResult>({ ok: false, error: "AI returned an empty alt text" }, { status: 500 });
     }
 
-    // Primary-locale save — exactly the primary branch of handleSaveImageAltText:
-    // fileUpdate with userErrors check, then the shop-scoped DB cache write.
-    try {
-      const r = await admin.graphql(
-        `#graphql
-          mutation fileUpdate($files: [FileUpdateInput!]!) {
-            fileUpdate(files: $files) { userErrors { field message } }
-          }`,
-        { variables: { files: [{ id: mediaId, alt: altText }] } },
-      );
-      const d = (await r.json()) as any;
-      const userErrors: Array<{ message: string }> = d.data?.fileUpdate?.userErrors ?? [];
-      if (userErrors.length > 0) {
-        return json<GenerateAltTextResult>(
-          { ok: false, error: userErrors.map((e) => e.message).join("; ") },
-          { status: 500 },
-        );
-      }
-    } catch (err: unknown) {
-      logger.error("[seo.performance] generateAltText fileUpdate error", { error: String(err) });
-      return json<GenerateAltTextResult>({ ok: false, error: "Shopify API error" }, { status: 500 });
+    const saveResult = await saveImageAltTextPrimary({ admin, db, shop, mediaId, altText });
+    if (!saveResult.saved) {
+      const message = saveResult.userErrors.join("; ") || "Shopify API error";
+      await failTask(message);
+      return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
     }
 
-    await db.productImage
-      .updateMany({
-        where: { mediaId, product: { shop } },
-        data: { altText, altTextModifiedAt: new Date() },
+    await db.task
+      .update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ altText }),
+        },
       })
-      .catch((e: unknown) => {
-        // Best-effort cache write (Shopify is source of truth) — log instead
-        // of fully swallowing, so a real failure is observable.
-        logger.warn("[seo.performance] generateAltText DB cache update failed", {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      });
+      .catch(() => {});
 
     return json<GenerateAltTextResult>({ ok: true, altText });
   }
@@ -1136,7 +1154,10 @@ function ScoreStrip({
             key={cat.key}
             type="button"
             onClick={() => onSelect(index)}
-            aria-selected={active}
+            // aria-pressed, not aria-selected: the latter is only valid on
+            // tab/option/gridcell/row roles, and the real tablist lives in the
+            // Polaris <Tabs> below — a second one here would double-announce.
+            aria-pressed={active}
             aria-label={
               cat.score != null
                 ? scoreAriaLabel
@@ -1257,6 +1278,12 @@ function QualityIssueRow({
                         {item.snippet}
                       </span>
                     )}
+                    {/* URL-only rows (e.g. errors-in-console sources) would
+                        otherwise render blank — show the url whenever there is
+                        no snippet already carrying it. */}
+                    {item.url && !item.snippet && (
+                      <span style={CODE_TEXT_STYLE}>{item.url}</span>
+                    )}
                     {/* Alt-text bridge (plan §7): matched → live button;
                         matching not loaded yet → disabled button; loaded but
                         unmatched (theme asset, ambiguous stem, no mediaId) →
@@ -1352,6 +1379,7 @@ function QualityFindings({
     manualTitle: string;
     manualHint: string;
     itemsTruncated: string;
+    findingsTruncated: string;
     generateAltText: string;
   };
   /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
@@ -1385,7 +1413,7 @@ function QualityFindings({
           {total > issues.length && (
             <div style={{ paddingTop: "12px" }}>
               <Text as="p" variant="bodySm" tone="subdued">
-                {labels.itemsTruncated
+                {labels.findingsTruncated
                   .replace("{shown}", String(issues.length))
                   .replace("{total}", String(total))}
               </Text>
@@ -1767,15 +1795,22 @@ export default function SeoPerformance() {
   // stay disabled meanwhile — never a live button before the match is known).
   const [altMatches, setAltMatches] = useState<Record<string, AltImageMatch | null> | null>(null);
   // url → generated alt text / error. Success replaces the row's button, so a
-  // fixed image is not offered again for this result.
+  // fixed image is not offered again. Deliberately NOT reset on result
+  // switches: an alt text saved to Shopify stays saved no matter which run
+  // (live or historical) is currently displayed — clearing this would offer
+  // the button again for an image that was just fixed.
   const [altGenResults, setAltGenResults] = useState<Record<string, { altText?: string; error?: string }>>({});
   const [altGenPendingUrl, setAltGenPendingUrl] = useState<string | null>(null);
 
-  // A new result (fresh run or history load) voids all bridge state and — when
-  // it carries image-alt findings — kicks off one matching round-trip.
+  // Stable identity of the displayed run. Keying the match effect on the
+  // result OBJECT would refire when "back to current test" swaps the same
+  // live result back in (new render, same run) and needlessly rematch.
+  const resultKey = result ? `${result.url}|${result.strategy}|${result.fetchedAt}` : null;
+
+  // A different run (fresh test or history load) voids the match map and —
+  // when it carries image-alt findings — kicks off one matching round-trip.
   useEffect(() => {
     setAltMatches(null);
-    setAltGenResults({});
     setAltGenPendingUrl(null);
     if (altImageUrls.length > 0) {
       altMatchFetcher.submit(
@@ -1783,10 +1818,10 @@ export default function SeoPerformance() {
         { method: "post" },
       );
     }
-    // Matching belongs to the result switch — not to fetcher identity churn,
+    // Matching belongs to the run switch — not to fetcher identity churn,
     // and altImageUrls is derived from the same result.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
+  }, [resultKey]);
 
   useEffect(() => {
     if (altMatchFetcher.state === "idle" && altMatchFetcher.data?.ok) {
@@ -1840,6 +1875,7 @@ export default function SeoPerformance() {
     manualTitle: p.a11y.manualTitle,
     manualHint: p.a11y.manualHint,
     itemsTruncated: p.a11y.itemsTruncated,
+    findingsTruncated: p.a11y.findingsTruncated,
     generateAltText: p.a11y.generateAltText,
   };
 

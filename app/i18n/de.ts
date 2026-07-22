@@ -1595,6 +1595,7 @@ export const de = {
         altTextError: "Alt-Text konnte nicht generiert werden: {error}",
         altTextUnmatched: "Dieses Bild konnte keinem Produktbild zugeordnet werden (z. B. ein Theme-Asset) und ist deshalb hier nicht direkt behebbar.",
         itemsTruncated: "{shown} von {total} betroffenen Elementen angezeigt.",
+        findingsTruncated: "{shown} von {total} Befunden angezeigt.",
       },
       bestPractices: {
         intro: "Zusatzinformationen — diese Kategorie fließt in keine Bewertung ein und liegt teils außerhalb deines Einflusses. Punkte wie HTTPS oder Konsolenfehler liegen häufig bei Shopify, deinem Theme oder Dritt-Apps.",

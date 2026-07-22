@@ -1597,6 +1597,7 @@ export const es: Translation = {
         altTextError: "No se pudo generar el texto alternativo: {error}",
         altTextUnmatched: "Esta imagen no se pudo asociar a ninguna imagen de producto (p. ej. un recurso del tema), por lo que no se puede corregir directamente desde aquí.",
         itemsTruncated: "Se muestran {shown} de {total} elementos afectados.",
+        findingsTruncated: "Se muestran {shown} de {total} hallazgos.",
       },
       bestPractices: {
         intro: "Información adicional — esta categoría no influye en ninguna puntuación y en parte queda fuera de tu control. Puntos como HTTPS o los errores de consola suelen depender de Shopify, de tu tema o de apps de terceros.",

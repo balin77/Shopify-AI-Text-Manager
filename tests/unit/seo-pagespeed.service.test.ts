@@ -523,12 +523,42 @@ describe("parsePageSpeedResponse", () => {
     }));
 
     const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
-    expect(r.quality?.accessibility).toHaveLength(15);
+    // 15 capped findings + the mock's manual audit: manual checks have their
+    // own cap and must never be squeezed out by a page with many findings.
+    expect(r.quality?.accessibility).toHaveLength(16);
+    expect(r.quality?.accessibility.filter((i) => !i.manual)).toHaveLength(15);
+    expect(r.quality?.accessibility.some((i) => i.id === "focus-traps")).toBe(true);
     // 2 failing from the base mock + 20 synthetic; manual audits not counted.
     expect(r.quality?.accessibilityTotal).toBe(22);
     const imageAlt = r.quality?.accessibility.find((i) => i.id === "image-alt");
     expect(imageAlt?.items).toHaveLength(5);
     expect(imageAlt?.itemTotal).toBe(8);
+  });
+
+  it("prefers src over data-src in lazy-load snippets and drops blank element rows", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["image-alt"].details.items = [
+      {
+        node: {
+          selector: "img.lazy",
+          snippet: '<img class="lazy" data-src="https://cdn.shopify.com/s/files/1/1/products/real.jpg" src="https://cdn.shopify.com/s/files/1/1/products/placeholder.gif">',
+        },
+      },
+    ];
+    // errors-in-console style rows: description only, nothing renderable.
+    raw.lighthouseResult.audits["errors-in-console"].details.items = [
+      { description: "TypeError: x is undefined" },
+      { url: "https://example.com/app.js", description: "ReferenceError" },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const lazy = r.quality?.accessibility.find((i) => i.id === "image-alt")?.items[0];
+    expect(lazy?.url).toBe("https://cdn.shopify.com/s/files/1/1/products/placeholder.gif");
+    const consoleIssue = r.quality?.bestPractices.find((i) => i.id === "errors-in-console");
+    // The description-only row is dropped; the url-carrying row survives and
+    // the total counts renderable rows only.
+    expect(consoleIssue?.items).toHaveLength(1);
+    expect(consoleIssue?.items[0].url).toBe("https://example.com/app.js");
+    expect(consoleIssue?.itemTotal).toBe(1);
   });
 
   it("leaves quality undefined when neither quality category is in the response (legacy runs)", () => {

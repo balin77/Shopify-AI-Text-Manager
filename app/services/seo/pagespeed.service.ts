@@ -554,9 +554,13 @@ function qualityIssueRank(issue: QualityIssue): number {
 
 /**
  * Walk a category's `auditRefs`, keep the failing audits (plus the manual
- * checks, flagged `manual: true`), cap the list to MAX_QUALITY_ISSUES.
- * `total` counts the failing findings BEFORE the cap and does NOT include
- * manual audits — they are not failures.
+ * checks, flagged `manual: true`). `total` counts the failing findings BEFORE
+ * the cap and does NOT include manual audits — they are not failures.
+ *
+ * Findings and manual checks are capped SEPARATELY (MAX_QUALITY_ISSUES each):
+ * Lighthouse's accessibility category always carries ~10 manual audits, so a
+ * shared cap would silently swallow the manual-checks block (plan §3.5) as
+ * soon as a page has a handful of real findings.
  *
  * "Failing" mirrors extractOpportunities: a numeric score < 0.9, or an
  * informative audit (score null) that actually reported affected items.
@@ -605,17 +609,25 @@ function extractQualityIssues(
 
   // Stable sort: refs order is preserved within each rank.
   issues.sort((a, b) => qualityIssueRank(a) - qualityIssueRank(b));
-  return { issues: issues.slice(0, MAX_QUALITY_ISSUES), total };
+  const findings = issues.filter((i) => !i.manual).slice(0, MAX_QUALITY_ISSUES);
+  const manual = issues.filter((i) => i.manual).slice(0, MAX_QUALITY_ISSUES);
+  return { issues: [...findings, ...manual], total };
 }
 
-/** Affected elements of a quality audit, capped; `itemTotal` = count before the cap. */
+/**
+ * Affected elements of a quality audit, capped; `itemTotal` = renderable
+ * entries before the cap. Entries that end up with no selector, snippet AND
+ * url (e.g. errors-in-console rows, which only carry a description) are
+ * dropped — they would render as blank lines, and counting them would make
+ * the truncation note claim elements the UI never had.
+ */
 function extractQualityIssueItems(details: any): {
   items: QualityIssue["items"];
   itemTotal: number;
 } {
   const rawItems = Array.isArray(details?.items) ? details.items : [];
-  const items: QualityIssue["items"] = [];
-  for (const item of rawItems.slice(0, MAX_QUALITY_ISSUE_ITEMS)) {
+  const entries: QualityIssue["items"] = [];
+  for (const item of rawItems) {
     const entry: QualityIssue["items"][number] = {};
     const selector = item?.node?.selector;
     if (typeof selector === "string" && selector) entry.selector = truncate(selector);
@@ -626,14 +638,18 @@ function extractQualityIssueItems(details: any): {
     const url =
       typeof item?.url === "string" && item.url ? item.url : extractSrcFromSnippet(rawSnippet);
     if (url) entry.url = url;
-    items.push(entry);
+    if (entry.selector || entry.snippet || entry.url) entries.push(entry);
   }
-  return { items, itemTotal: rawItems.length };
+  return { items: entries.slice(0, MAX_QUALITY_ISSUE_ITEMS), itemTotal: entries.length };
 }
 
-/** Pull the src attribute out of an element snippet like `<img src="…">`. */
+/**
+ * Pull the src attribute out of an element snippet like `<img src="…">`.
+ * The lookbehind keeps `data-src="…"` (lazy-load placeholders) from matching —
+ * `\b` would match right after the hyphen and hand back the wrong URL.
+ */
 function extractSrcFromSnippet(snippet: string): string | undefined {
-  const m = snippet.match(/\bsrc=["']([^"']+)["']/i);
+  const m = snippet.match(/(?<![-\w])src=["']([^"']+)["']/i);
   return m ? m[1] : undefined;
 }
 

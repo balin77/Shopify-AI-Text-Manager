@@ -1598,6 +1598,7 @@ export const en: Translation = {
         altTextError: "The alt text could not be generated: {error}",
         altTextUnmatched: "This image could not be matched to any product image (e.g. a theme asset), so it can't be fixed directly from here.",
         itemsTruncated: "Showing {shown} of {total} affected elements.",
+        findingsTruncated: "Showing {shown} of {total} findings.",
       },
       bestPractices: {
         intro: "Additional information — this category does not feed into any score and is partly outside your control. Items like HTTPS or console errors often originate from Shopify, your theme, or third-party apps.",
