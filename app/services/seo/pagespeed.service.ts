@@ -240,8 +240,20 @@ const METRIC_AUDIT_IDS: Record<PageSpeedMetricId, string> = {
   si: "speed-index",
 };
 
-/** Diagnostics worth surfacing as opportunities even when not `type: "opportunity"`. */
-const EXTRA_DIAGNOSTIC_AUDIT_IDS = ["render-blocking-resources", "unused-javascript", "unused-css-rules"];
+/**
+ * Diagnostics worth surfacing as opportunities even when not
+ * `type: "opportunity"` and without `metricSavings`. All of these carry a
+ * numeric `score`, so they only surface when actually failing — informative
+ * (score: null) audits are deliberately not listed here, as they would show up
+ * on every single run.
+ */
+const EXTRA_DIAGNOSTIC_AUDIT_IDS = [
+  "render-blocking-resources",
+  "unused-javascript",
+  "unused-css-rules",
+  "total-byte-weight",
+  "dom-size",
+];
 
 /** Image-savings audits scanned for `image` annotations + opportunity linking. */
 const IMAGE_OPPORTUNITY_AUDIT_IDS = ["modern-image-formats", "uses-responsive-images", "uses-optimized-images"];
@@ -291,11 +303,14 @@ function parsePageSpeedResponseInner(
   const { screenshot, nodesMap } = extractScreenshot(audits);
 
   const imageAnnotationsByAuditId: Record<string, string[]> = {};
-  const annotations = nodesMap
+  const { annotations, total: annotationTotal } = nodesMap
     ? extractAnnotations(audits, nodesMap, imageAnnotationsByAuditId)
-    : [];
+    : { annotations: [], total: 0 };
 
-  const opportunities = extractOpportunities(audits, imageAnnotationsByAuditId);
+  const { opportunities, total: opportunityTotal } = extractOpportunities(
+    audits,
+    imageAnnotationsByAuditId,
+  );
   const fieldData = extractFieldData(r);
 
   const base: PageSpeedAuditResult = {
@@ -308,11 +323,48 @@ function parsePageSpeedResponseInner(
     annotations,
     opportunities,
     fieldData,
+    annotationTotal,
+    opportunityTotal,
   };
   if (screenshot && !screenshot.fullPage) {
     base.screenshotUnavailableReason = extractScreenshotUnavailableReason(lighthouseResult, audits);
   }
+
+  const finalUrl = lighthouseResult.finalDisplayedUrl ?? lighthouseResult.finalUrl;
+  if (typeof finalUrl === "string" && finalUrl && !sameUrl(finalUrl, url)) {
+    base.finalUrl = finalUrl;
+  }
+
+  const runtimeError = extractRuntimeError(lighthouseResult);
+  if (runtimeError) base.runtimeError = runtimeError;
+
+  const runWarnings = Array.isArray(lighthouseResult.runWarnings)
+    ? lighthouseResult.runWarnings.filter((w: unknown): w is string => typeof w === "string" && !!w.trim())
+    : [];
+  if (runWarnings.length > 0) base.runWarnings = runWarnings;
+
   return base;
+}
+
+/** Compare two URLs ignoring a trailing slash, so `/x` vs `/x/` is not reported as a redirect. */
+function sameUrl(a: string, b: string): boolean {
+  const norm = (u: string) => u.replace(/\/+$/, "");
+  return norm(a) === norm(b);
+}
+
+/**
+ * Lighthouse's fatal error for the run, if any. PSI answers HTTP 200 even when
+ * the page could not be analysed (failed navigation, no first paint, timeout),
+ * so this is the only signal distinguishing "score 0-ish" from "never ran".
+ * `NO_ERROR` is Lighthouse's explicit all-clear code and is ignored.
+ */
+function extractRuntimeError(lighthouseResult: any): string | null {
+  const err = lighthouseResult?.runtimeError;
+  if (!err) return null;
+  if (typeof err.code === "string" && err.code === "NO_ERROR") return null;
+  const message = typeof err.message === "string" ? err.message.trim() : "";
+  if (message) return message;
+  return typeof err.code === "string" && err.code ? err.code : null;
 }
 
 /**
@@ -446,18 +498,25 @@ function extractLcpNodes(details: any): any[] {
   return nodes;
 }
 
+/**
+ * Build the screenshot overlay boxes. Returns `total` = how many annotatable
+ * elements Lighthouse reported *before* the per-kind caps, so the UI can tell
+ * the merchant that the list is truncated rather than silently showing five.
+ */
 function extractAnnotations(
   audits: Record<string, any>,
   nodesMap: Record<string, RawNodeRect>,
   imageAnnotationsByAuditId: Record<string, string[]>,
-): PageSpeedAnnotation[] {
+): { annotations: PageSpeedAnnotation[]; total: number } {
   const annotations: PageSpeedAnnotation[] = [];
+  let total = 0;
 
   // lcp
   const lcpNodes = extractLcpNodes(audits["largest-contentful-paint-element"]?.details);
   lcpNodes.forEach((node, i) => {
     const rect = resolveNodeRect(node, nodesMap);
     if (!isPositiveRect(rect)) return;
+    total += 1;
     annotations.push({ id: `lcp-${i}`, kind: "lcp", label: nodeLabel(node), rect });
   });
 
@@ -466,10 +525,11 @@ function extractAnnotations(
   const clsItems = Array.isArray(clsAudit?.details?.items) ? clsAudit.details.items : [];
   let clsCount = 0;
   for (const item of clsItems) {
-    if (clsCount >= MAX_CLS_ANNOTATIONS) break;
     const node = item?.node;
     const rect = resolveNodeRect(node, nodesMap);
     if (!isPositiveRect(rect)) continue;
+    total += 1;
+    if (clsCount >= MAX_CLS_ANNOTATIONS) continue;
     const score = typeof item?.score === "number" ? item.score : undefined;
     annotations.push({
       id: `cls-${clsCount}`,
@@ -484,13 +544,13 @@ function extractAnnotations(
   // images
   let imgCount = 0;
   for (const auditId of IMAGE_OPPORTUNITY_AUDIT_IDS) {
-    if (imgCount >= MAX_IMAGE_ANNOTATIONS) break;
     const items = Array.isArray(audits[auditId]?.details?.items) ? audits[auditId].details.items : [];
     for (const item of items) {
-      if (imgCount >= MAX_IMAGE_ANNOTATIONS) break;
       const node = item?.node;
       const rect = resolveNodeRect(node, nodesMap);
       if (!isPositiveRect(rect)) continue;
+      total += 1;
+      if (imgCount >= MAX_IMAGE_ANNOTATIONS) continue;
       const wastedBytes = typeof item?.wastedBytes === "number" ? item.wastedBytes : undefined;
       const id = `img-${imgCount}`;
       annotations.push({
@@ -505,7 +565,7 @@ function extractAnnotations(
     }
   }
 
-  return annotations;
+  return { annotations, total };
 }
 
 /** Strip markdown links (`[text](url)` -> `text`) from Lighthouse audit descriptions. */
@@ -513,10 +573,33 @@ function stripMarkdownLinks(text: string): string {
   return text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 }
 
+/**
+ * Largest per-metric saving Lighthouse attributes to an audit, in ms. Only the
+ * time-based entries are considered — `metricSavings.CLS` is an unitless layout
+ * shift delta and would be meaningless formatted as a duration.
+ */
+const TIME_METRIC_SAVINGS_KEYS = ["LCP", "FCP", "TBT", "INP", "SI"];
+
+function metricSavingsMs(audit: any): number | undefined {
+  const savings = audit?.metricSavings;
+  if (!savings || typeof savings !== "object") return undefined;
+  let max: number | undefined;
+  for (const key of TIME_METRIC_SAVINGS_KEYS) {
+    const value = savings[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) continue;
+    if (max === undefined || value > max) max = value;
+  }
+  return max;
+}
+
+/**
+ * Returns the top `MAX_OPPORTUNITIES` findings plus `total` = how many were
+ * found overall, so the UI can disclose the truncation.
+ */
 function extractOpportunities(
   audits: Record<string, any>,
   imageAnnotationsByAuditId: Record<string, string[]>,
-): PageSpeedOpportunity[] {
+): { opportunities: PageSpeedOpportunity[]; total: number } {
   const opportunities: PageSpeedOpportunity[] = [];
 
   for (const [auditId, audit] of Object.entries(audits)) {
@@ -539,7 +622,10 @@ function extractOpportunities(
       id: auditId,
       title: typeof (audit as any)?.title === "string" ? (audit as any).title : auditId,
       description: description ? stripMarkdownLinks(description) : undefined,
-      savingsMs: typeof details?.overallSavingsMs === "number" ? details.overallSavingsMs : undefined,
+      savingsMs:
+        typeof details?.overallSavingsMs === "number"
+          ? details.overallSavingsMs
+          : metricSavingsMs(audit),
       savingsBytes: typeof details?.overallSavingsBytes === "number" ? details.overallSavingsBytes : undefined,
       annotationIds: imageAnnotationsByAuditId[auditId] ?? [],
     });
@@ -552,7 +638,7 @@ function extractOpportunities(
     return b.savingsMs - a.savingsMs;
   });
 
-  return opportunities.slice(0, MAX_OPPORTUNITIES);
+  return { opportunities: opportunities.slice(0, MAX_OPPORTUNITIES), total: opportunities.length };
 }
 
 function toFieldMetric(m: any): PageSpeedFieldMetric | undefined {
@@ -581,7 +667,16 @@ function extractFieldData(r: any): PageSpeedFieldData | null {
   const lcp = toFieldMetric(metrics.LARGEST_CONTENTFUL_PAINT_MS);
   const cls = toFieldMetric(metrics.CUMULATIVE_LAYOUT_SHIFT_SCORE);
   const inp = toFieldMetric(metrics.INTERACTION_TO_NEXT_PAINT);
-  if (!lcp && !cls && !inp) return null;
+  const fcp = toFieldMetric(metrics.FIRST_CONTENTFUL_PAINT_MS);
+  // CrUX has shipped TTFB under both the experimental and the stable key.
+  const ttfb = toFieldMetric(
+    metrics.EXPERIMENTAL_TIME_TO_FIRST_BYTE ?? metrics.TIME_TO_FIRST_BYTE,
+  );
+  if (!lcp && !cls && !inp && !fcp && !ttfb) return null;
 
-  return { lcp, cls, inp, originFallback };
+  const rawOverall = source?.overall_category;
+  const overallCategory =
+    rawOverall === "FAST" || rawOverall === "AVERAGE" || rawOverall === "SLOW" ? rawOverall : undefined;
+
+  return { lcp, cls, inp, fcp, ttfb, overallCategory, originFallback };
 }

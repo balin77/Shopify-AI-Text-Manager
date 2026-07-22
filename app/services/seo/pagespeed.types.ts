@@ -49,6 +49,13 @@ export interface PageSpeedOpportunity {
   id: string;
   title: string;
   description?: string;
+  /**
+   * Estimated savings in ms. Opportunity-type audits carry this in
+   * `details.overallSavingsMs`; table-type diagnostics (e.g.
+   * `server-response-time`) only carry per-metric `metricSavings`, from which
+   * the largest entry is used instead — otherwise those findings would render
+   * with no impact figure at all.
+   */
   savingsMs?: number;
   savingsBytes?: number;
   /** Annotations (screenshot boxes) belonging to this finding; may be empty. */
@@ -68,6 +75,15 @@ export interface PageSpeedFieldData {
   lcp?: PageSpeedFieldMetric;
   cls?: PageSpeedFieldMetric;
   inp?: PageSpeedFieldMetric;
+  fcp?: PageSpeedFieldMetric;
+  /** Time to first byte (CrUX `EXPERIMENTAL_TIME_TO_FIRST_BYTE`). */
+  ttfb?: PageSpeedFieldMetric;
+  /**
+   * CrUX's aggregate verdict (`loadingExperience.overall_category`) — the
+   * "passed / did not pass the Core Web Vitals assessment" line PSI shows
+   * above the field metrics.
+   */
+  overallCategory?: CruxCategory;
   /** True when metrics are origin-wide (URL itself had too little traffic). */
   originFallback: boolean;
 }
@@ -93,6 +109,25 @@ export interface PageSpeedAuditResult {
   annotations: PageSpeedAnnotation[];
   opportunities: PageSpeedOpportunity[];
   fieldData: PageSpeedFieldData | null;
+  /**
+   * URL Lighthouse actually measured (`finalDisplayedUrl`), set only when it
+   * differs from the requested `url` — i.e. the page redirected. Without it the
+   * UI would report a score for a page the merchant did not ask about.
+   */
+  finalUrl?: string;
+  /**
+   * `lighthouseResult.runtimeError.message` when Lighthouse could not analyse
+   * the page at all (failed navigation, no FCP, timeout). PSI still answers
+   * HTTP 200 in that case, so without this the run renders as an empty result
+   * with a "–" score and no explanation.
+   */
+  runtimeError?: string;
+  /** `lighthouseResult.runWarnings` — caveats about the run itself. */
+  runWarnings?: string[];
+  /** Findings before the `MAX_OPPORTUNITIES` cap, so the UI can say how many are hidden. */
+  opportunityTotal?: number;
+  /** Annotations before the per-kind caps, likewise. */
+  annotationTotal?: number;
   /** True when this result is a stored older audit served because a fresh PSI run couldn't be made (e.g. Google's daily quota was exhausted). */
   stale?: boolean;
   /**

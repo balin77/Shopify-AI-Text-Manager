@@ -162,7 +162,108 @@ describe("parsePageSpeedResponse", () => {
       annotations: [],
       opportunities: [],
       fieldData: null,
+      annotationTotal: 0,
+      opportunityTotal: 0,
     });
+  });
+
+  // ── Fields PSI reports that the UI would otherwise drop ────────────────────
+
+  it("falls back to metricSavings for table-type diagnostics without overallSavingsMs", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["server-response-time"] = {
+      id: "server-response-time",
+      title: "Reduce initial server response time",
+      score: 0.2,
+      // Table-type diagnostic: savings live in metricSavings, not in details.
+      metricSavings: { FCP: 620, LCP: 840, CLS: 0.01 },
+      details: { type: "table", items: [{ url: "https://example.com/" }] },
+    };
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const found = r.opportunities.find((o) => o.id === "server-response-time");
+    // Largest time-based entry wins; the unitless CLS delta must not be used.
+    expect(found?.savingsMs).toBe(840);
+  });
+
+  it("prefers details.overallSavingsMs over metricSavings when both are present", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["render-blocking-resources"].metricSavings = { LCP: 9999 };
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.opportunities.find((o) => o.id === "render-blocking-resources")?.savingsMs).toBe(300);
+  });
+
+  it("reports totals so the UI can disclose the opportunity/annotation caps", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    expect(r.opportunityTotal).toBe(r.opportunities.length);
+    expect(r.annotationTotal).toBe(r.annotations.length);
+  });
+
+  it("counts capped image annotations in annotationTotal but not in the list", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    const nodes = raw.lighthouseResult.audits["full-page-screenshot"].details.nodes;
+    const items = [];
+    for (let i = 0; i < 8; i += 1) {
+      nodes[`img-${i}`] = { top: i * 100, bottom: i * 100 + 50, left: 0, right: 50, width: 50, height: 50 };
+      items.push({ url: `https://example.com/${i}.png`, wastedBytes: 1000, node: { lhId: `img-${i}` } });
+    }
+    raw.lighthouseResult.audits["modern-image-formats"].details.items = items;
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    // 1 LCP + 1 CLS + 5 of 8 images shown; all 8 images counted.
+    expect(r.annotations.filter((a) => a.kind === "image")).toHaveLength(5);
+    expect(r.annotationTotal).toBe(10);
+  });
+
+  it("surfaces a Lighthouse runtimeError but ignores the NO_ERROR all-clear", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.runtimeError = { code: "NO_ERROR" };
+    expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").runtimeError).toBeUndefined();
+
+    raw.lighthouseResult.runtimeError = {
+      code: "ERRORED_DOCUMENT_REQUEST",
+      message: "Lighthouse was unable to reliably load the page you requested.",
+    };
+    expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").runtimeError).toBe(
+      "Lighthouse was unable to reliably load the page you requested.",
+    );
+  });
+
+  it("keeps runWarnings", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.runWarnings = ["The page may not be loading as expected.", "", 42];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.runWarnings).toEqual(["The page may not be loading as expected."]);
+  });
+
+  it("reports finalUrl only when the page actually redirected", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+
+    // Same URL, and a bare trailing-slash difference, are not redirects.
+    raw.lighthouseResult.finalDisplayedUrl = "https://example.com/";
+    expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").finalUrl).toBeUndefined();
+    expect(parsePageSpeedResponse(raw, "https://example.com", "mobile", "now").finalUrl).toBeUndefined();
+
+    raw.lighthouseResult.finalDisplayedUrl = "https://example.com/password";
+    expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").finalUrl).toBe(
+      "https://example.com/password",
+    );
+  });
+
+  it("extracts CrUX FCP, TTFB and the overall Core Web Vitals verdict", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.loadingExperience.overall_category = "SLOW";
+    raw.loadingExperience.metrics.FIRST_CONTENTFUL_PAINT_MS = { percentile: 1800, category: "AVERAGE" };
+    raw.loadingExperience.metrics.EXPERIMENTAL_TIME_TO_FIRST_BYTE = { percentile: 900, category: "SLOW" };
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.fieldData?.fcp).toEqual({ percentile: 1800, category: "AVERAGE" });
+    expect(r.fieldData?.ttfb).toEqual({ percentile: 900, category: "SLOW" });
+    expect(r.fieldData?.overallCategory).toBe("SLOW");
+  });
+
+  it("ignores an unknown overall_category value", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.loadingExperience.overall_category = "NONE";
+    expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").fieldData?.overallCategory)
+      .toBeUndefined();
   });
 });
 

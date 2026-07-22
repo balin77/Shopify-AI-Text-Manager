@@ -183,7 +183,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
 };
 
-/** Fixed 8-color palette shared by the screenshot overlay and the findings list, so box N and finding N always match. */
+/**
+ * Fixed palette shared by the screenshot overlay and the findings list, so box
+ * N and finding N always match. Must hold at least as many entries as a run can
+ * produce annotations (LCP + MAX_CLS_ANNOTATIONS + MAX_IMAGE_ANNOTATIONS = 11+),
+ * otherwise two different findings share a colour and the mapping breaks.
+ */
 const ANNOTATION_COLORS = [
   "#e51c23",
   "#ff9800",
@@ -193,6 +198,10 @@ const ANNOTATION_COLORS = [
   "#795548",
   "#607d8b",
   "#4caf50",
+  "#c2185b",
+  "#3f51b5",
+  "#827717",
+  "#00838f",
 ];
 
 function annotationColor(index: number): string {
@@ -365,6 +374,28 @@ export default function SeoPerformance() {
   const annotatable = !!result?.screenshot?.fullPage;
   const visibleHistory = history.slice(0, HISTORY_VISIBLE_LIMIT);
 
+  // Both lists are capped server-side; disclose how much was left out instead
+  // of letting a truncated list read as the complete picture. `?? 0` covers
+  // audits stored before these totals existed.
+  const hiddenAnnotations = Math.max(0, (result?.annotationTotal ?? 0) - (result?.annotations.length ?? 0));
+  const hiddenOpportunities = Math.max(0, (result?.opportunityTotal ?? 0) - (result?.opportunities.length ?? 0));
+
+  // Real-user (CrUX) rows, in PSI's own order. CLS is reported as value*100 per
+  // CrUX convention, everything else is milliseconds.
+  const fieldRows = useMemo(() => {
+    const fd = result?.fieldData;
+    if (!fd) return [];
+    return (
+      [
+        { key: "lcp", label: p.fieldLcpLabel, metric: fd.lcp, format: formatMs },
+        { key: "inp", label: p.fieldInpLabel, metric: fd.inp, format: formatMs },
+        { key: "cls", label: p.fieldClsLabel, metric: fd.cls, format: (v: number) => (v / 100).toFixed(2) },
+        { key: "fcp", label: p.fieldFcpLabel, metric: fd.fcp, format: formatMs },
+        { key: "ttfb", label: p.fieldTtfbLabel, metric: fd.ttfb, format: formatMs },
+      ] as const
+    ).filter((row) => !!row.metric);
+  }, [result, p.fieldLcpLabel, p.fieldInpLabel, p.fieldClsLabel, p.fieldFcpLabel, p.fieldTtfbLabel]);
+
   // Toggle for the "Learn more" panel under the no-highlight banner. Reset
   // whenever the underlying result changes so it doesn't leak between runs.
   const [showNoHighlightReason, setShowNoHighlightReason] = useState(false);
@@ -486,8 +517,37 @@ export default function SeoPerformance() {
                     .replace("{strategy}", strategyLabel(result.strategy))
                     .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
                 </Text>
+                {result.finalUrl && (
+                  <Text as="p" variant="bodySm" tone="caution">
+                    {p.redirectNotice.replace("{url}", result.finalUrl)}
+                  </Text>
+                )}
               </BlockStack>
             </Card>
+
+            {/* Lighthouse could not analyse the page at all — PSI still answers
+                HTTP 200, so without this the run would render as an empty
+                result with a "–" score and no explanation. */}
+            {result.runtimeError && (
+              <Banner tone="critical" title={p.runtimeErrorTitle}>
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">{p.runtimeErrorBody}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {p.runtimeErrorDetail.replace("{message}", result.runtimeError)}
+                  </Text>
+                </BlockStack>
+              </Banner>
+            )}
+
+            {result.runWarnings && result.runWarnings.length > 0 && (
+              <Banner tone="warning" title={p.runWarningsTitle}>
+                <BlockStack gap="100">
+                  {result.runWarnings.map((w, i) => (
+                    <Text key={i} as="p" variant="bodySm">{w}</Text>
+                  ))}
+                </BlockStack>
+              </Banner>
+            )}
 
             {!annotatable && (
               <Banner
@@ -638,6 +698,11 @@ export default function SeoPerformance() {
                             </BlockStack>
                           </InlineStack>
                         ))}
+                        {hiddenAnnotations > 0 && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {p.annotationsTruncated.replace("{count}", String(hiddenAnnotations))}
+                          </Text>
+                        )}
                       </BlockStack>
                     )}
 
@@ -647,6 +712,9 @@ export default function SeoPerformance() {
                         {result.opportunities.map((o) => (
                           <BlockStack key={o.id} gap="100">
                             <Text as="span" variant="bodyMd" fontWeight="semibold">{o.title}</Text>
+                            {o.description && (
+                              <Text as="p" variant="bodySm" tone="subdued">{o.description}</Text>
+                            )}
                             {(o.savingsMs != null || o.savingsBytes != null) && (
                               <Text as="span" variant="bodySm" tone="subdued">
                                 {p.savingsLabel}:{" "}
@@ -685,6 +753,11 @@ export default function SeoPerformance() {
                             )}
                           </BlockStack>
                         ))}
+                        {hiddenOpportunities > 0 && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {p.opportunitiesTruncated.replace("{count}", String(hiddenOpportunities))}
+                          </Text>
+                        )}
                       </BlockStack>
                     )}
                   </BlockStack>
@@ -695,45 +768,31 @@ export default function SeoPerformance() {
                   <Card>
                     <BlockStack gap="200">
                       <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
-                      {result.fieldData.lcp && (
+                      {/* CrUX's aggregate verdict — the "passed / did not pass
+                          the Core Web Vitals assessment" line PSI leads with. */}
+                      {result.fieldData.overallCategory && (
                         <InlineStack align="space-between" blockAlign="center">
-                          <Text as="span" variant="bodyMd">{p.fieldLcpLabel}</Text>
+                          <Text as="span" variant="bodyMd" fontWeight="semibold">{p.fieldOverallLabel}</Text>
+                          <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.overallCategory]}>
+                            {result.fieldData.overallCategory === "FAST"
+                              ? p.fieldOverallPass
+                              : p.fieldOverallFail}
+                          </Badge>
+                        </InlineStack>
+                      )}
+                      {fieldRows.map((row) => (
+                        <InlineStack key={row.key} align="space-between" blockAlign="center">
+                          <Text as="span" variant="bodyMd">{row.label}</Text>
                           <InlineStack gap="200" blockAlign="center">
                             <Text as="span" variant="bodySm" tone="subdued">
-                              {formatMs(result.fieldData.lcp.percentile)}
+                              {row.format(row.metric!.percentile)}
                             </Text>
-                            <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.lcp.category]}>
-                              {p.fieldCategory[result.fieldData.lcp.category]}
+                            <Badge tone={FIELD_CATEGORY_TONE[row.metric!.category]}>
+                              {p.fieldCategory[row.metric!.category]}
                             </Badge>
                           </InlineStack>
                         </InlineStack>
-                      )}
-                      {result.fieldData.cls && (
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Text as="span" variant="bodyMd">{p.fieldClsLabel}</Text>
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {(result.fieldData.cls.percentile / 100).toFixed(2)}
-                            </Text>
-                            <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.cls.category]}>
-                              {p.fieldCategory[result.fieldData.cls.category]}
-                            </Badge>
-                          </InlineStack>
-                        </InlineStack>
-                      )}
-                      {result.fieldData.inp && (
-                        <InlineStack align="space-between" blockAlign="center">
-                          <Text as="span" variant="bodyMd">{p.fieldInpLabel}</Text>
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {formatMs(result.fieldData.inp.percentile)}
-                            </Text>
-                            <Badge tone={FIELD_CATEGORY_TONE[result.fieldData.inp.category]}>
-                              {p.fieldCategory[result.fieldData.inp.category]}
-                            </Badge>
-                          </InlineStack>
-                        </InlineStack>
-                      )}
+                      ))}
                       {result.fieldData.originFallback && (
                         <Text as="p" variant="bodySm" tone="subdued">{p.fieldOriginFallback}</Text>
                       )}
