@@ -1591,6 +1591,8 @@ export const de = {
         manualTitle: "Manuelle Prüfpunkte",
         manualHint: "Diese Punkte prüft Google nicht automatisch — sie sind keine gefundenen Fehler, sondern musst du selbst kontrollieren.",
         generateAltText: "Alt-Text generieren",
+        altTextSuccess: "Alt-Text gespeichert: \"{altText}\"",
+        altTextError: "Alt-Text konnte nicht generiert werden: {error}",
         altTextUnmatched: "Dieses Bild konnte keinem Produktbild zugeordnet werden (z. B. ein Theme-Asset) und ist deshalb hier nicht direkt behebbar.",
         itemsTruncated: "{shown} von {total} betroffenen Elementen angezeigt.",
       },

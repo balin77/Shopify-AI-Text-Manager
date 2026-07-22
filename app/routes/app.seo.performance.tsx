@@ -66,6 +66,7 @@ import type {
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
+import { buildAltImageMatches, type AltImageMatch } from "../services/seo/alt-image-matches";
 
 const SHOP_HOST_QUERY = `#graphql
   query seoPerformanceShopHost {
@@ -171,6 +172,23 @@ type ActionResult =
   | { ok: true; result: PageSpeedAuditResult }
   | { ok: false; error: string; detail?: string };
 
+/** Response of the `matchAltImages` intent (alt-text bridge, plan §7). */
+type MatchAltImagesResult =
+  | { ok: true; matches: Record<string, AltImageMatch | null> }
+  | { ok: false; error: string };
+
+/** Response of the `generateAltText` intent (alt-text bridge, plan §7). */
+type GenerateAltTextResult =
+  | { ok: true; altText: string }
+  | { ok: false; error: string };
+
+/**
+ * Server-side cap on URLs per `matchAltImages` request. Lighthouse findings
+ * are already capped far below this — the cap only defends against a
+ * hand-crafted request forcing an oversized matching run.
+ */
+const MAX_ALT_MATCH_URLS = 20;
+
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -192,6 +210,164 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       return json<ActionResult>({ ok: false, error: "notFound" }, { status: 404 });
     }
     return json<ActionResult>({ ok: true, result: stored });
+  }
+
+  // Alt-text bridge, step 1 (plan §7): map the image URLs of the current
+  // result's `image-alt` findings to shop-scoped ProductImage rows so the UI
+  // knows which findings get a working "generate alt text" button.
+  if (intent === "matchAltImages") {
+    let urls: unknown;
+    try {
+      urls = JSON.parse(getFormString(form, "imageUrls") || "[]");
+    } catch {
+      return json<MatchAltImagesResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    if (!Array.isArray(urls)) {
+      return json<MatchAltImagesResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const imageUrls = urls
+      .filter((u): u is string => typeof u === "string")
+      .slice(0, MAX_ALT_MATCH_URLS);
+
+    // R4-DI7 pattern (see alt-text.action.ts): always scope by the owning
+    // product's shop — an unscoped query could match another tenant's images.
+    const images = await db.productImage.findMany({
+      where: { product: { shop } },
+      select: {
+        id: true,
+        productId: true,
+        url: true,
+        mediaId: true,
+        product: { select: { title: true } },
+      },
+    });
+
+    const matches = buildAltImageMatches(
+      imageUrls,
+      images.map((img: { id: string; productId: string; url: string; mediaId: string | null; product: { title: string | null } | null }) => ({
+        id: img.id,
+        productId: img.productId,
+        url: img.url,
+        mediaId: img.mediaId,
+        productTitle: img.product?.title ?? "",
+      })),
+    );
+    return json<MatchAltImagesResult>({ ok: true, matches });
+  }
+
+  // Alt-text bridge, step 2 (plan §7): generate an alt text for one matched
+  // image via the merchant's configured AI provider and save it for the
+  // primary locale — same prompt build as handleGenerateAltText and same save
+  // path as handleSaveImageAltText's primary branch (alt-text.action.ts).
+  if (intent === "generateAltText") {
+    const mediaId = getFormString(form, "mediaId");
+    if (!mediaId) {
+      return json<GenerateAltTextResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+
+    // The client must not be able to smuggle in a foreign GID: only accept a
+    // mediaId that a shop-scoped ProductImage row knows (R4-DI7), and use that
+    // row's URL and product title — not the client-sent ones — for the AI call.
+    const image = await db.productImage.findFirst({
+      where: { mediaId, product: { shop } },
+      select: { url: true, product: { select: { title: true } } },
+    });
+    if (!image) {
+      return json<GenerateAltTextResult>({ ok: false, error: "unknownImage" }, { status: 400 });
+    }
+
+    const [{ AIService, toValidProvider }, { tryDecryptApiKey }, { sanitizePromptInput }, { getFullErrorMessage }, { logger }] =
+      await Promise.all([
+        import("../../src/services/ai.service"),
+        import("../utils/encryption.server"),
+        import("../utils/prompt-sanitizer"),
+        import("../utils/error-handler"),
+        import("../utils/logger.server"),
+      ]);
+
+    const [aiSettings, aiInstructions] = await Promise.all([
+      db.aISettings.findUnique({ where: { shop } }),
+      db.aIInstructions.findUnique({ where: { shop } }),
+    ]);
+
+    // Same provider/serviceConfig assembly as handleUnifiedContentActions
+    // (unified-content.actions.ts) — the merchant's configured AI setup.
+    const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
+    const serviceConfig = {
+      huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
+      geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
+      claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
+      openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
+      grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
+      deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
+      selectedModel: aiSettings?.selectedModel || undefined,
+    };
+    // Same language source the PSI call already uses (AISettings.appLanguage,
+    // see getShopLanguage) — what handleGenerateAltText receives as
+    // `mainLanguage` from its clients.
+    const mainLanguage = aiSettings?.appLanguage || "en";
+
+    // Prompt build mirrors handleGenerateAltText (alt-text.action.ts).
+    const sanitizedTitle = sanitizePromptInput(image.product?.title || "", { fieldType: "title" });
+    let prompt = `Create an optimized alt text for a product image.
+Product: ${sanitizedTitle}
+Image URL: ${image.url}`;
+    if (aiInstructions?.productAltTextFormat) {
+      prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
+    }
+    if (aiInstructions?.productAltTextInstructions) {
+      prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
+    }
+    prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
+
+    let altText: string;
+    try {
+      const aiService = new AIService(provider, serviceConfig, shop);
+      altText = (await aiService.generateImageAltText(image.url, sanitizedTitle, prompt)).trim();
+    } catch (err: unknown) {
+      return json<GenerateAltTextResult>({ ok: false, error: getFullErrorMessage(err) }, { status: 500 });
+    }
+    if (!altText) {
+      return json<GenerateAltTextResult>({ ok: false, error: "AI returned an empty alt text" }, { status: 500 });
+    }
+
+    // Primary-locale save — exactly the primary branch of handleSaveImageAltText:
+    // fileUpdate with userErrors check, then the shop-scoped DB cache write.
+    try {
+      const r = await admin.graphql(
+        `#graphql
+          mutation fileUpdate($files: [FileUpdateInput!]!) {
+            fileUpdate(files: $files) { userErrors { field message } }
+          }`,
+        { variables: { files: [{ id: mediaId, alt: altText }] } },
+      );
+      const d = (await r.json()) as any;
+      const userErrors: Array<{ message: string }> = d.data?.fileUpdate?.userErrors ?? [];
+      if (userErrors.length > 0) {
+        return json<GenerateAltTextResult>(
+          { ok: false, error: userErrors.map((e) => e.message).join("; ") },
+          { status: 500 },
+        );
+      }
+    } catch (err: unknown) {
+      logger.error("[seo.performance] generateAltText fileUpdate error", { error: String(err) });
+      return json<GenerateAltTextResult>({ ok: false, error: "Shopify API error" }, { status: 500 });
+    }
+
+    await db.productImage
+      .updateMany({
+        where: { mediaId, product: { shop } },
+        data: { altText, altTextModifiedAt: new Date() },
+      })
+      .catch((e: unknown) => {
+        // Best-effort cache write (Shopify is source of truth) — log instead
+        // of fully swallowing, so a real failure is observable.
+        logger.warn("[seo.performance] generateAltText DB cache update failed", {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
+
+    return json<GenerateAltTextResult>({ ok: true, altText });
   }
 
   if (intent !== "runAudit") {
@@ -1003,10 +1179,28 @@ function ScoreStrip({
 const MANUAL_FINDING_ID = "manual";
 
 /**
+ * Alt-text bridge state + callbacks (plan §7), owned by the page component so
+ * it survives tab switches, and handed down into the `image-alt` finding rows.
+ */
+interface AltTextBridgeState {
+  /** url → match map from the `matchAltImages` intent; null while not loaded. */
+  matches: Record<string, AltImageMatch | null> | null;
+  /** url → outcome of a finished `generateAltText` call. */
+  results: Record<string, { altText?: string; error?: string }>;
+  /** URL whose generate call is currently in flight (spinner on that button). */
+  pendingUrl: string | null;
+  /** A generate call is running — every other generate button disables meanwhile. */
+  busy: boolean;
+  onGenerate: (url: string) => void;
+  labels: { unmatched: string; success: string; error: string };
+}
+
+/**
  * One accessibility / best-practices finding — the same accordion row pattern
  * as the performance findings, so both tabs read as one tool. `image-alt`
- * items that were matched to a product image render the (not yet wired,
- * phase 5) alt-text button.
+ * items that were matched to a product image render a working "generate alt
+ * text" button (plan §7); unmatched ones get an explanation instead of a dead
+ * button.
  */
 function QualityIssueRow({
   issue,
@@ -1015,6 +1209,7 @@ function QualityIssueRow({
   domId,
   itemsTruncatedLabel,
   generateAltTextLabel,
+  altBridge,
 }: {
   issue: QualityIssue;
   open: boolean;
@@ -1022,6 +1217,7 @@ function QualityIssueRow({
   domId: string;
   itemsTruncatedLabel: string;
   generateAltTextLabel: string;
+  altBridge?: AltTextBridgeState;
 }) {
   return (
     <div style={FINDING_ROW_STYLE}>
@@ -1061,14 +1257,53 @@ function QualityIssueRow({
                         {item.snippet}
                       </span>
                     )}
-                    {/* Phase 5 wires this to the alt-text action; until then it
-                        only announces that a fix exists. Items without a
-                        matched url get no button at all. */}
-                    {issue.id === "image-alt" && item.url && (
-                      <InlineStack>
-                        <Button size="slim" disabled>{generateAltTextLabel}</Button>
-                      </InlineStack>
-                    )}
+                    {/* Alt-text bridge (plan §7): matched → live button;
+                        matching not loaded yet → disabled button; loaded but
+                        unmatched (theme asset, ambiguous stem, no mediaId) →
+                        explanation instead of a dead button. A generated alt
+                        text replaces the button with its success line. */}
+                    {issue.id === "image-alt" && item.url && (() => {
+                      const url = item.url;
+                      const outcome = altBridge?.results[url];
+                      if (outcome?.altText != null) {
+                        return (
+                          <InlineStack gap="150" blockAlign="center" wrap>
+                            <Badge tone="success">✓</Badge>
+                            <Text as="span" variant="bodySm">
+                              {altBridge!.labels.success.replace("{altText}", outcome.altText)}
+                            </Text>
+                          </InlineStack>
+                        );
+                      }
+                      const matchesLoaded = altBridge?.matches != null;
+                      const match = matchesLoaded ? altBridge!.matches![url] : undefined;
+                      if (matchesLoaded && !match) {
+                        return (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {altBridge!.labels.unmatched}
+                          </Text>
+                        );
+                      }
+                      return (
+                        <BlockStack gap="100">
+                          <InlineStack>
+                            <Button
+                              size="slim"
+                              disabled={!match || altBridge?.busy}
+                              loading={altBridge?.pendingUrl === url}
+                              onClick={() => altBridge?.onGenerate(url)}
+                            >
+                              {generateAltTextLabel}
+                            </Button>
+                          </InlineStack>
+                          {outcome?.error && (
+                            <Text as="span" variant="bodySm" tone="critical">
+                              {altBridge!.labels.error.replace("{error}", outcome.error)}
+                            </Text>
+                          )}
+                        </BlockStack>
+                      );
+                    })()}
                   </BlockStack>
                 ))}
                 {issue.itemTotal > issue.items.length && (
@@ -1101,6 +1336,7 @@ function QualityFindings({
   openFindings,
   onToggle,
   labels,
+  altBridge,
 }: {
   /** Automated (non-manual) findings, already filtered. */
   issues: QualityIssue[];
@@ -1118,6 +1354,8 @@ function QualityFindings({
     itemsTruncated: string;
     generateAltText: string;
   };
+  /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
+  altBridge?: AltTextBridgeState;
 }) {
   const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
   const manualOpen = openFindings.has(manualKey);
@@ -1138,6 +1376,7 @@ function QualityFindings({
                 domId={`finding-${rowKey}`}
                 itemsTruncatedLabel={labels.itemsTruncated}
                 generateAltTextLabel={labels.generateAltText}
+                altBridge={altBridge}
               />
             );
           })}
@@ -1508,6 +1747,82 @@ export default function SeoPerformance() {
     [quality],
   );
 
+  // ── Alt-text bridge (plan §7) ─────────────────────────────────────────────
+  // Image URLs of the current result's `image-alt` findings, deduplicated —
+  // the payload of the `matchAltImages` intent.
+  const altImageUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const issue of quality?.accessibility ?? []) {
+      if (issue.id !== "image-alt") continue;
+      for (const item of issue.items) {
+        if (item.url && !urls.includes(item.url)) urls.push(item.url);
+      }
+    }
+    return urls;
+  }, [quality]);
+
+  const altMatchFetcher = useFetcher<MatchAltImagesResult>();
+  const altGenFetcher = useFetcher<GenerateAltTextResult>();
+  // url → match; null until the matchAltImages round-trip finished (buttons
+  // stay disabled meanwhile — never a live button before the match is known).
+  const [altMatches, setAltMatches] = useState<Record<string, AltImageMatch | null> | null>(null);
+  // url → generated alt text / error. Success replaces the row's button, so a
+  // fixed image is not offered again for this result.
+  const [altGenResults, setAltGenResults] = useState<Record<string, { altText?: string; error?: string }>>({});
+  const [altGenPendingUrl, setAltGenPendingUrl] = useState<string | null>(null);
+
+  // A new result (fresh run or history load) voids all bridge state and — when
+  // it carries image-alt findings — kicks off one matching round-trip.
+  useEffect(() => {
+    setAltMatches(null);
+    setAltGenResults({});
+    setAltGenPendingUrl(null);
+    if (altImageUrls.length > 0) {
+      altMatchFetcher.submit(
+        { intent: "matchAltImages", imageUrls: JSON.stringify(altImageUrls) },
+        { method: "post" },
+      );
+    }
+    // Matching belongs to the result switch — not to fetcher identity churn,
+    // and altImageUrls is derived from the same result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  useEffect(() => {
+    if (altMatchFetcher.state === "idle" && altMatchFetcher.data?.ok) {
+      setAltMatches(altMatchFetcher.data.matches);
+    }
+  }, [altMatchFetcher.state, altMatchFetcher.data]);
+
+  const generateAltTextFor = (url: string) => {
+    const match = altMatches?.[url];
+    if (!match || altGenFetcher.state !== "idle") return;
+    setAltGenPendingUrl(url);
+    altGenFetcher.submit(
+      {
+        intent: "generateAltText",
+        mediaId: match.mediaId,
+        imageUrl: url,
+        productTitle: match.productTitle,
+      },
+      { method: "post" },
+    );
+  };
+
+  useEffect(() => {
+    // Same guard pattern as the history fetcher above: only record a result
+    // while a submission is actually pending, so stale fetcher data from an
+    // earlier click can't be re-applied.
+    if (altGenPendingUrl && altGenFetcher.state === "idle" && altGenFetcher.data) {
+      const data = altGenFetcher.data;
+      setAltGenResults((prev) => ({
+        ...prev,
+        [altGenPendingUrl]: data.ok ? { altText: data.altText } : { error: data.error },
+      }));
+      setAltGenPendingUrl(null);
+    }
+  }, [altGenFetcher.state, altGenFetcher.data, altGenPendingUrl]);
+
   // Tab labels double as the strip captions (§3.3) — same keys, same words.
   const tabDescriptors = [
     { id: "perf-tab-performance", content: p.tabs.performance, panelID: "perf-panel-performance" },
@@ -1526,6 +1841,20 @@ export default function SeoPerformance() {
     manualHint: p.a11y.manualHint,
     itemsTruncated: p.a11y.itemsTruncated,
     generateAltText: p.a11y.generateAltText,
+  };
+
+  // Handed only to the accessibility tab — image-alt is an a11y-only audit.
+  const altTextBridge: AltTextBridgeState = {
+    matches: altMatches,
+    results: altGenResults,
+    pendingUrl: altGenPendingUrl,
+    busy: altGenFetcher.state !== "idle",
+    onGenerate: generateAltTextFor,
+    labels: {
+      unmatched: p.a11y.altTextUnmatched,
+      success: p.a11y.altTextSuccess,
+      error: p.a11y.altTextError,
+    },
   };
 
   return (
@@ -2075,6 +2404,7 @@ export default function SeoPerformance() {
                           openFindings={openFindings}
                           onToggle={toggleFinding}
                           labels={{ ...qualityFindingLabels, noIssues: p.a11y.noIssues }}
+                          altBridge={altTextBridge}
                         />
                       </>
                     )}

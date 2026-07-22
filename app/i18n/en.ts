@@ -1594,6 +1594,8 @@ export const en: Translation = {
         manualTitle: "Manual checks",
         manualHint: "Google does not check these automatically — they are not detected errors, but points you need to verify yourself.",
         generateAltText: "Generate alt text",
+        altTextSuccess: "Alt text saved: \"{altText}\"",
+        altTextError: "The alt text could not be generated: {error}",
         altTextUnmatched: "This image could not be matched to any product image (e.g. a theme asset), so it can't be fixed directly from here.",
         itemsTruncated: "Showing {shown} of {total} affected elements.",
       },

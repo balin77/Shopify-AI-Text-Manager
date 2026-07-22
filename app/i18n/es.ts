@@ -1593,6 +1593,8 @@ export const es: Translation = {
         manualTitle: "Comprobaciones manuales",
         manualHint: "Google no comprueba estos puntos automáticamente: no son errores detectados, sino aspectos que debes verificar tú mismo.",
         generateAltText: "Generar texto alternativo",
+        altTextSuccess: "Texto alternativo guardado: \"{altText}\"",
+        altTextError: "No se pudo generar el texto alternativo: {error}",
         altTextUnmatched: "Esta imagen no se pudo asociar a ninguna imagen de producto (p. ej. un recurso del tema), por lo que no se puede corregir directamente desde aquí.",
         itemsTruncated: "Se muestran {shown} de {total} elementos afectados.",
       },
