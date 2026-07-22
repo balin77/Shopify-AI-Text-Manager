@@ -647,7 +647,23 @@ Begründung für den Tausch von 3 und 4: Phase 4 (Sprachen) nutzt das Fundament 
 
 ---
 
-## 14. Was dieser Plan ausdrücklich nicht anfasst
+## 14. API-Verifikation gegen shopify.dev (2026-07-22) — verbindliche Korrekturen
+
+Die API-Annahmen der §§4–7 wurden gegen die offiziellen Shopify-Docs (Admin GraphQL, latest/2025-10+) verifiziert. Ergebnis: Kernannahmen bestätigt, sieben Präzisierungen sind **bei der Umsetzung verbindlich**:
+
+1. **`userErrors.field` ist ein Array von Pfadsegmenten** (`["variants","2","price"]`), kein Dot-String. Die Zell-Auflösung in §5.4 arbeitet auf dem Array (bzw. `field.join('.')`), nicht auf einem erwarteten String.
+2. **Kein Varianten-Limit pro `productVariantsBulkUpdate`-Aufruf dokumentiert.** Faktische Grenzen: Varianten-Limit pro Produkt und dynamische Query-Cost. Kein künstliches 250er-Chunking einbauen; THROTTLED-Handling des Gateways genügt.
+3. **Alt-Text: bewusst bei `productUpdateMedia` bleiben.** Die Mutation ist deprecated (Nachfolger `fileUpdate`), existiert aber in latest und ist der bestehende Schreibpfad der App. `fileUpdate` braucht den Scope `write_files` → Re-Consent aller Merchants → verstößt gegen §11. Wechsel auf `fileUpdate` erst, wenn ohnehin ein Scope-Ereignis ansteht; bis dahin Kommentar an der Schreibstelle.
+4. **Metafeld-Löschen ausschließlich über `metafieldsDelete`** mit `MetafieldIdentifierInput` (`ownerId`+`namespace`+`key`) — das ältere `metafieldDelete` (per GID) wurde mit 2025-01 entfernt. `metafieldsSet` mit `""` wird von Shopify abgelehnt („Value can't be blank"). `type` beim `metafieldsSet` immer mitsenden (nullable, aber Pflicht bei Neuanlage ohne Definition).
+5. **Metaobjekt-verknüpfte Optionen (`linkedMetafield`): auch der Options-Name wird im Grid nicht editiert** (abweichend von §4.2). Wertnamen kommen dort aus Metaobjects (`linkedMetafieldValue`), und `productOptionUpdate` kennt eigene Fehlercodes für Linked-Konflikte. Die Zelle rendert vollständig read-only mit Tooltip; Umbenennen bleibt Sache des Einzeleditors.
+6. **`TranslatableResourceType`-Enum heißt `PAGE`, `ARTICLE`, `BLOG`, `COLLECTION`** (nicht `ONLINE_STORE_*` — mit 2024-10 entfernt). Der App-Code ist bereits konsistent; neue Aufrufe verwenden die neuen Namen. Keys: PAGE/COLLECTION `title|body_html|handle|meta_title|meta_description`, ARTICLE zusätzlich `summary_html`, BLOG ohne body. `meta_title`/`meta_description` haben nur dann einen Digest, wenn das SEO-Feld primär überschrieben wurde — fehlender Digest ist dort ein erwartbarer Zustand und läuft in die Regel aus §6.3.
+7. **`translationsRegister`-Echo: `market` ist ein Objekt.** Die Selektion muss `translations { key locale value market { id } }` anfordern; ein flaches `marketId` gibt es in der Antwort nicht. Die Markt-Zuordnung führt weiterhin die App (§6.1).
+
+Außerdem bestätigt: `metafieldsSet` max. 25 pro Aufruf mit Upsert-Semantik (atomar); `shopPolicyUpdate(shopPolicy: {type, body})` ohne `title`-Feld, Scope `write_legal_policies` (in [shopify.app.prod.toml](../../shopify.app.prod.toml#L9) bereits vergeben — verifiziert); `blogUpdate` ohne natives SEO-Feld (SEO über `global.title_tag`/`description_tag`-Metafelder); `translationsRemove` mit `marketIds`; `compareAtPrice: null` leert, `price` ist nicht nullbar; Scope für `productVariantsBulkUpdate` ist `write_products`.
+
+---
+
+## 15. Was dieser Plan ausdrücklich nicht anfasst
 
 - Das AI-Bulk-Fix im SEO-Dashboard („Fix with AI") — es bleibt, wo es ist, und wird nicht in den Bulk-Editor gefaltet. Beide teilen sich künftig die Digest- und Echo-Helfer, sonst nichts.
 - Den Einzeleditor. Er bleibt die Oberfläche für alles Geführte (Rich-Text, Bilder, Optionsstruktur, Metaobjekt-Definitionen). Der Bulk-Editor ist die Ergänzung, nicht der Ersatz — jede Zeile behält deshalb ihren „Im Editor öffnen"-Sprung.
