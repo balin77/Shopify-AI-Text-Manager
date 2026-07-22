@@ -322,6 +322,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     keywords,
     pickers,
     localeOptions,
+    // Research panel: hl codes to offer (primary first, then secondaries).
+    primaryLocaleCode: String(primaryLocale?.locale || "en"),
     isPro,
     groups,
     groupDetail,
@@ -754,6 +756,71 @@ export default function SeoKeywords() {
     { label: k.priority?.low || "3 — low", value: "3" },
   ];
 
+  // ── Keyword research panel (plan §6) ──
+  const suggestFetcher = useFetcher<{
+    ok: boolean;
+    groups?: { direct: string[]; questions: string[]; alphabet: string[] };
+    error?: "invalid" | "rateLimited" | "blocked";
+  }>();
+  const [seedInput, setSeedInput] = useState("");
+  const [seedHl, setSeedHl] = useState(data.primaryLocaleCode);
+  const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
+  const [importGroupId, setImportGroupId] = useState("");
+
+  const runResearch = (expandAlphabet: boolean) => {
+    if (!seedInput.trim()) return;
+    setSelectedSuggestions(new Set());
+    suggestFetcher.submit(
+      { seed: seedInput, hl: seedHl, expandAlphabet: expandAlphabet ? "true" : "false" },
+      { method: "post", action: "/api/keyword-suggestions" },
+    );
+  };
+
+  const toggleSuggestion = (s: string) => {
+    setSelectedSuggestions((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  };
+
+  const importSelectedSuggestions = () => {
+    if (!importGroupId || selectedSuggestions.size === 0) return;
+    // Reuse the CSV import path — the research locale becomes the keyword
+    // locale when it matches a published secondary; primary otherwise.
+    const isSecondary = localeOptions.some((l) => !l.primary && l.locale.toLowerCase() === seedHl.toLowerCase());
+    const csv =
+      "keyword,locale\n" +
+      Array.from(selectedSuggestions)
+        .map((s) => `"${s.replace(/"/g, '""')}",${isSecondary ? seedHl.toLowerCase() : ""}`)
+        .join("\n");
+    groupFetcher.submit({ actionType: "importCsv", groupId: importGroupId, csv }, { method: "post" });
+    setSelectedSuggestions(new Set());
+  };
+
+  const hlOptions = useMemo(() => {
+    const codes = new Set<string>([data.primaryLocaleCode.toLowerCase()]);
+    for (const l of localeOptions) {
+      if (!l.primary && l.locale) codes.add(l.locale.toLowerCase());
+    }
+    return Array.from(codes).map((c) => ({ label: c, value: c }));
+  }, [data.primaryLocaleCode, localeOptions]);
+
+  const renderSuggestionGroup = (title: string, list: string[]) =>
+    list.length === 0 ? null : (
+      <BlockStack gap="150" key={title}>
+        <Text as="h4" variant="headingSm">
+          {title}
+        </Text>
+        <InlineStack gap="200" wrap>
+          {list.map((s) => (
+            <Checkbox key={s} label={s} checked={selectedSuggestions.has(s)} onChange={() => toggleSuggestion(s)} />
+          ))}
+        </InlineStack>
+      </BlockStack>
+    );
+
   const items = pickers[type] ?? [];
   // Full option list for the current type (Autocomplete filters this client-side
   // as the merchant types — no "select an item" placeholder entry needed since
@@ -1089,6 +1156,101 @@ export default function SeoKeywords() {
                   </Button>
                 ))}
               </InlineStack>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── Keyword research (plan §6) — free autocomplete suggestions ── */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">
+              {k.researchTitle || "Keyword research"}
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {k.researchIntro ||
+                "Get free long-tail suggestions from Google Autocomplete for a seed keyword, then import them into a group."}
+            </Text>
+            <InlineStack gap="200" blockAlign="end" wrap>
+              <div style={{ flex: "1 1 220px", maxWidth: "340px" }}>
+                <TextField
+                  label={k.researchSeedLabel || "Seed keyword"}
+                  autoComplete="off"
+                  placeholder={k.keywordPlaceholder}
+                  value={seedInput}
+                  onChange={setSeedInput}
+                />
+              </div>
+              <div style={{ minWidth: "110px" }}>
+                <Select label={k.researchLangLabel || "Language"} options={hlOptions} value={seedHl} onChange={setSeedHl} />
+              </div>
+              <Button
+                loading={suggestFetcher.state !== "idle"}
+                disabled={!seedInput.trim()}
+                onClick={() => runResearch(false)}
+              >
+                {k.researchButton || "Get suggestions"}
+              </Button>
+              {suggestFetcher.data?.ok && (
+                <Button variant="plain" loading={suggestFetcher.state !== "idle"} onClick={() => runResearch(true)}>
+                  {k.researchMore || "Load alphabet expansion (a–z)"}
+                </Button>
+              )}
+            </InlineStack>
+
+            {suggestFetcher.state === "idle" && suggestFetcher.data && !suggestFetcher.data.ok && (
+              <Banner tone={suggestFetcher.data.error === "invalid" ? "critical" : "warning"}>
+                {suggestFetcher.data.error === "rateLimited"
+                  ? k.researchRateLimited || "Please wait a moment — at most 3 searches per minute."
+                  : suggestFetcher.data.error === "blocked"
+                    ? k.researchBlocked ||
+                      "Google is currently not answering suggestion requests from this server. Try again later."
+                    : k.errorGeneric}
+              </Banner>
+            )}
+
+            {suggestFetcher.state === "idle" && suggestFetcher.data?.ok && suggestFetcher.data.groups && (
+              <BlockStack gap="300">
+                {suggestFetcher.data.groups.direct.length === 0 &&
+                suggestFetcher.data.groups.questions.length === 0 &&
+                suggestFetcher.data.groups.alphabet.length === 0 ? (
+                  <Text as="p" tone="subdued">
+                    {k.researchNoResults || "No suggestions found for this seed."}
+                  </Text>
+                ) : (
+                  <>
+                    {renderSuggestionGroup(k.researchDirect || "Direct suggestions", suggestFetcher.data.groups.direct)}
+                    {renderSuggestionGroup(k.researchQuestions || "Questions", suggestFetcher.data.groups.questions)}
+                    {renderSuggestionGroup(
+                      k.researchAlphabet || "Alphabet expansion",
+                      suggestFetcher.data.groups.alphabet,
+                    )}
+                    <InlineStack gap="200" blockAlign="end" wrap>
+                      <div style={{ minWidth: "220px" }}>
+                        <Select
+                          label={k.researchImportGroup || "Import into group"}
+                          options={[
+                            { label: k.researchImportGroupNone || "Choose a group…", value: "" },
+                            ...data.groups.map((g) => ({ label: g.name, value: g.id })),
+                          ]}
+                          value={importGroupId}
+                          onChange={setImportGroupId}
+                        />
+                      </div>
+                      <Button
+                        variant="primary"
+                        loading={groupFetcher.state !== "idle"}
+                        disabled={!importGroupId || selectedSuggestions.size === 0}
+                        onClick={importSelectedSuggestions}
+                      >
+                        {(k.researchImportButton || "Import {count} selected").replace(
+                          "{count}",
+                          String(selectedSuggestions.size),
+                        )}
+                      </Button>
+                    </InlineStack>
+                  </>
+                )}
+              </BlockStack>
             )}
           </BlockStack>
         </Card>
