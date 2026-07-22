@@ -1,6 +1,6 @@
 # Keyword-Feature Ausbau — Vollständiger Plan (Phasen 1–5)
 
-**Status:** Entwurf / umsetzungsbereit
+**Status:** Umgesetzt (Phasen 1–5, Commits `8abb48a`→`develop`, 2026-07-21/22). Offen: Railway-Spike für Phase 4 (§6.1 — vor dem Bewerben des Recherche-Panels validieren), UI-Banner für `keywordStuffingWarning` (§3.2), Migration noch nicht auf Railway angewendet (§2.1: Snapshot vorher Pflicht).
 **Baut auf:** vorhandener Keywords-Tab ([app.seo.keywords.tsx](app/routes/app.seo.keywords.tsx)) + Search-Console-Integration ([app.seo.search-console.tsx](app/routes/app.seo.search-console.tsx)) — beide bereits produktiv.
 **Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan **erfüllt denselben Vertrag**, führt keine neue Section ein (Keywords-Tab bleibt Container, GSC-Tab bleibt separater Verbindungs-Tab).
 
