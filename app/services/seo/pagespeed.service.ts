@@ -40,6 +40,8 @@ import type {
   PageSpeedRect,
   PageSpeedScreenshot,
   PageSpeedStrategy,
+  QualityIssue,
+  QualityResult,
 } from "./pagespeed.types";
 
 /**
@@ -97,9 +99,7 @@ function startOfUtcDay(now: Date = new Date()): Date {
  *
  * A `SeoPageSpeedAudit` row is written only after a run that actually reached
  * Google (cache hits return early, before the insert), so counting rows IS the
- * usage counter — no separate counter model needed. When the accessibility
- * scan lands it writes its own audit rows and must be added to this count, so
- * both features draw on one shared daily budget.
+ * usage counter — no separate counter model needed.
  */
 export async function countPageSpeedRunsToday(db: any, shop: string): Promise<number> {
   return db.seoPageSpeedAudit.count({
@@ -175,6 +175,8 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
       url,
       strategy,
       score: result.performanceScore,
+      a11yScore: result.quality?.a11yScore ?? null,
+      bestPracticesScore: result.quality?.bestPracticesScore ?? null,
       result: result as any,
     },
   });
@@ -188,11 +190,15 @@ async function fetchPageSpeedInsights(
   url: string,
   strategy: PageSpeedStrategy,
   locale?: string,
+  // `seo` is deliberately NOT requested (accessibility plan §11.4): ContentPilot
+  // has its own, deeper SEO scoring, and a second SEO number with a different
+  // band would only undercut it.
+  categories: string[] = ["performance", "accessibility", "best-practices"],
 ): Promise<unknown> {
   const apiUrl = new URL(PSI_ENDPOINT);
   apiUrl.searchParams.set("url", url);
   apiUrl.searchParams.set("strategy", strategy);
-  apiUrl.searchParams.append("category", "performance");
+  for (const c of categories) apiUrl.searchParams.append("category", c);
   if (locale) apiUrl.searchParams.set("locale", locale);
   if (process.env.PAGESPEED_API_KEY) {
     apiUrl.searchParams.set("key", process.env.PAGESPEED_API_KEY);
@@ -293,13 +299,14 @@ export async function listPageSpeedHistory(opts: ListPageSpeedHistoryOptions): P
     where: { shop },
     orderBy: { createdAt: "desc" },
     take: limit,
-    select: { id: true, url: true, strategy: true, score: true, createdAt: true },
+    select: { id: true, url: true, strategy: true, score: true, a11yScore: true, createdAt: true },
   });
   return rows.map((r: any) => ({
     id: r.id,
     url: r.url,
     strategy: r.strategy,
     performanceScore: typeof r.score === "number" ? r.score : null,
+    a11yScore: typeof r.a11yScore === "number" ? r.a11yScore : null,
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
   }));
 }
@@ -348,6 +355,13 @@ const MAX_TABLE_ROWS = 8;
 const MAX_SUB_ROWS = 3;
 const MAX_TABLE_COLUMNS = 4;
 const MAX_CELL_LENGTH = 160;
+/**
+ * Caps on the quality (accessibility / best-practices) findings, persisted in
+ * the result JSON next to the Base64 screenshots — size matters (accessibility
+ * plan §4). Totals before the cap are stored so the UI can disclose it.
+ */
+const MAX_QUALITY_ISSUES = 15;
+const MAX_QUALITY_ISSUE_ITEMS = 5;
 
 /** Parse a raw PSI v5 response into the compact result. Never throws. */
 export function parsePageSpeedResponse(
@@ -398,8 +412,9 @@ function parsePageSpeedResponseInner(
     imageAnnotationsByAuditId,
     nodesMap,
   );
-  const passedAudits = extractPassedAudits(audits);
+  const passedAudits = extractPassedAudits(audits, categories);
   const fieldData = extractFieldData(r);
+  const quality = extractQuality(lighthouseResult, audits);
 
   const base: PageSpeedAuditResult = {
     url,
@@ -425,6 +440,7 @@ function parsePageSpeedResponseInner(
 
   if (preview) base.previewScreenshot = preview;
   if (passedAudits.length > 0) base.passedAudits = passedAudits;
+  if (quality) base.quality = quality;
 
   const runtimeError = extractRuntimeError(lighthouseResult);
   if (runtimeError) base.runtimeError = runtimeError;
@@ -486,8 +502,155 @@ function extractScreenshotUnavailableReason(
 }
 
 function extractPerformanceScore(categories: any): number | null {
-  const score = categories?.performance?.score;
+  return extractCategoryScore(categories?.performance);
+}
+
+/** Lighthouse 0..1 category score → 0-100, null when the category could not be scored. */
+function extractCategoryScore(category: any): number | null {
+  const score = category?.score;
   return typeof score === "number" ? Math.round(score * 100) : null;
+}
+
+// ── Quality (accessibility / best-practices) ────────────────────────────────
+
+/**
+ * Parse the accessibility and best-practices categories of the same run into
+ * the `QualityResult` contract. Returns undefined when NEITHER category is in
+ * the response — that keeps `quality` absent on responses fetched before the
+ * categories were requested (legacy empty state, accessibility plan §3.8).
+ * Defensive like the rest of the parser: must never throw.
+ */
+function extractQuality(lighthouseResult: any, audits: Record<string, any>): QualityResult | undefined {
+  try {
+    const categories: any = lighthouseResult?.categories ?? {};
+    const a11yCategory = categories?.accessibility;
+    const bpCategory = categories?.["best-practices"];
+    if (!a11yCategory && !bpCategory) return undefined;
+
+    const a11y = extractQualityIssues(a11yCategory, audits);
+    const bp = extractQualityIssues(bpCategory, audits);
+    return {
+      a11yScore: extractCategoryScore(a11yCategory),
+      bestPracticesScore: extractCategoryScore(bpCategory),
+      accessibility: a11y.issues,
+      bestPractices: bp.issues,
+      accessibilityTotal: a11y.total,
+      bestPracticesTotal: bp.total,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Sort rank within a category: failing scored audits first, then informative
+ * (score null) findings, manual checks always last — they are not findings.
+ */
+function qualityIssueRank(issue: QualityIssue): number {
+  if (issue.manual) return 2;
+  if (issue.score === null) return 1;
+  return 0;
+}
+
+/**
+ * Walk a category's `auditRefs`, keep the failing audits (plus the manual
+ * checks, flagged `manual: true`). `total` counts the failing findings BEFORE
+ * the cap and does NOT include manual audits — they are not failures.
+ *
+ * Findings and manual checks are capped SEPARATELY (MAX_QUALITY_ISSUES each):
+ * Lighthouse's accessibility category always carries ~10 manual audits, so a
+ * shared cap would silently swallow the manual-checks block (plan §3.5) as
+ * soon as a page has a handful of real findings.
+ *
+ * "Failing" mirrors extractOpportunities: a numeric score < 0.9, or an
+ * informative audit (score null) that actually reported affected items.
+ * Passed and notApplicable audits are dropped entirely.
+ */
+function extractQualityIssues(
+  category: any,
+  audits: Record<string, any>,
+): { issues: QualityIssue[]; total: number } {
+  const refs = Array.isArray(category?.auditRefs) ? category.auditRefs : [];
+  const issues: QualityIssue[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+
+  for (const ref of refs) {
+    const id = typeof ref?.id === "string" ? ref.id : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const audit: any = audits[id];
+    if (!audit || typeof audit !== "object") continue;
+
+    const mode = typeof audit.scoreDisplayMode === "string" ? audit.scoreDisplayMode : "";
+    if (mode === "notApplicable") continue;
+
+    const score = typeof audit.score === "number" ? audit.score : null;
+    const manual = mode === "manual";
+    if (!manual) {
+      const hasItems = Array.isArray(audit.details?.items) && audit.details.items.length > 0;
+      const failing = score === null ? mode === "informative" && hasItems : score < 0.9;
+      if (!failing) continue;
+      total += 1;
+    }
+
+    const { items, itemTotal } = extractQualityIssueItems(audit.details);
+    const description = typeof audit.description === "string" ? audit.description : undefined;
+    issues.push({
+      id,
+      title: typeof audit.title === "string" ? audit.title : id,
+      ...(description ? { description: stripMarkdownLinks(description) } : {}),
+      score,
+      items,
+      itemTotal,
+      manual,
+    });
+  }
+
+  // Stable sort: refs order is preserved within each rank.
+  issues.sort((a, b) => qualityIssueRank(a) - qualityIssueRank(b));
+  const findings = issues.filter((i) => !i.manual).slice(0, MAX_QUALITY_ISSUES);
+  const manual = issues.filter((i) => i.manual).slice(0, MAX_QUALITY_ISSUES);
+  return { issues: [...findings, ...manual], total };
+}
+
+/**
+ * Affected elements of a quality audit, capped; `itemTotal` = renderable
+ * entries before the cap. Entries that end up with no selector, snippet AND
+ * url (e.g. errors-in-console rows, which only carry a description) are
+ * dropped — they would render as blank lines, and counting them would make
+ * the truncation note claim elements the UI never had.
+ */
+function extractQualityIssueItems(details: any): {
+  items: QualityIssue["items"];
+  itemTotal: number;
+} {
+  const rawItems = Array.isArray(details?.items) ? details.items : [];
+  const entries: QualityIssue["items"] = [];
+  for (const item of rawItems) {
+    const entry: QualityIssue["items"][number] = {};
+    const selector = item?.node?.selector;
+    if (typeof selector === "string" && selector) entry.selector = truncate(selector);
+    const rawSnippet = typeof item?.node?.snippet === "string" ? item.node.snippet : "";
+    if (rawSnippet) entry.snippet = truncate(rawSnippet);
+    // `url` feeds the image-alt → ProductImage match (accessibility plan §7):
+    // prefer the item's own url, else pull src="…" from the UNtruncated snippet.
+    const url =
+      typeof item?.url === "string" && item.url ? item.url : extractSrcFromSnippet(rawSnippet);
+    if (url) entry.url = url;
+    if (entry.selector || entry.snippet || entry.url) entries.push(entry);
+  }
+  return { items: entries.slice(0, MAX_QUALITY_ISSUE_ITEMS), itemTotal: entries.length };
+}
+
+/**
+ * Pull the src attribute out of an element snippet like `<img src="…">`.
+ * The lookbehind keeps `data-src="…"` (lazy-load placeholders) from matching —
+ * `\b` would match right after the hyphen and hand back the wrong URL.
+ */
+function extractSrcFromSnippet(snippet: string): string | undefined {
+  const m = snippet.match(/(?<![-\w])src=["']([^"']+)["']/i);
+  return m ? m[1] : undefined;
 }
 
 function extractMetrics(audits: Record<string, any>): PageSpeedMetric[] {
@@ -904,11 +1067,24 @@ const NON_CHECK_AUDIT_IDS = new Set([
  * Audits this page already passes. `notApplicable`/`manual`/`informative` are
  * excluded: Lighthouse did not actually verify anything there, so listing them
  * as passed would overstate the result.
+ *
+ * Scoped to the performance category's `auditRefs` when present: since the
+ * request began asking for accessibility + best-practices too, `audits` holds
+ * every category's checks, and the quality tabs list their own audits — passed
+ * a11y/bp checks leaking into the speed tab's "passed" list would double-count
+ * them. Responses without refs (stored single-category runs) keep the old
+ * behavior, where every audit was a performance audit anyway.
  */
-function extractPassedAudits(audits: Record<string, any>): PageSpeedPassedAudit[] {
+function extractPassedAudits(audits: Record<string, any>, categories?: any): PageSpeedPassedAudit[] {
+  const refs = categories?.performance?.auditRefs;
+  const performanceIds: Set<string> | null = Array.isArray(refs)
+    ? new Set(refs.map((ref: any) => ref?.id).filter((id: any): id is string => typeof id === "string"))
+    : null;
+
   const passed: PageSpeedPassedAudit[] = [];
   for (const [auditId, audit] of Object.entries(audits)) {
     if (NON_CHECK_AUDIT_IDS.has(auditId)) continue;
+    if (performanceIds && !performanceIds.has(auditId)) continue;
     const mode = (audit as any)?.scoreDisplayMode;
     if (mode === "notApplicable" || mode === "manual" || mode === "informative") continue;
     const score = (audit as any)?.score;

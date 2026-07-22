@@ -3,6 +3,7 @@ import {
   isAllowedAuditUrl,
   parsePageSpeedResponse,
   runPageSpeedAudit,
+  listPageSpeedHistory,
   countPageSpeedRunsToday,
   PageSpeedDailyLimitError,
 } from "~/services/seo/pagespeed.service";
@@ -123,6 +124,29 @@ describe("parsePageSpeedResponse", () => {
     // The metric audits are their own section, not checks.
     expect(ids).not.toContain("largest-contentful-paint");
     expect(r.passedAudits?.find((a) => a.id === "uses-text-compression")?.displayValue).toBe("0 resources");
+  });
+
+  it("scopes passed audits to the performance category when auditRefs are present", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["uses-text-compression"] = {
+      id: "uses-text-compression",
+      title: "Enable text compression",
+      score: 1,
+    };
+    // With three requested categories, `audits` also carries passed a11y/bp
+    // checks (aria-allowed-attr and deprecations pass in the mock). Once the
+    // performance category names its own audits, only those may count as the
+    // speed tab's passed checks — the quality tabs own the rest.
+    raw.lighthouseResult.categories.performance.auditRefs = [
+      { id: "uses-text-compression" },
+      { id: "uses-optimized-images" },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const ids = r.passedAudits?.map((a) => a.id) ?? [];
+    expect(ids).toContain("uses-text-compression");
+    expect(ids).toContain("uses-optimized-images");
+    expect(ids).not.toContain("aria-allowed-attr");
+    expect(ids).not.toContain("deprecations");
   });
 
   it("no longer truncates the findings list", () => {
@@ -408,6 +432,166 @@ describe("parsePageSpeedResponse", () => {
     expect(parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now").fieldData?.overallCategory)
       .toBeUndefined();
   });
+
+  // ── quality (accessibility / best-practices categories) ────────────────────
+
+  it("extracts the a11y and best-practices category scores, rounded to 0-100", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    expect(r.quality?.a11yScore).toBe(82);
+    expect(r.quality?.bestPracticesScore).toBe(93);
+  });
+
+  it("keeps failing and manual audits, drops passed and notApplicable, manual last", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    const a11y = r.quality?.accessibility ?? [];
+    expect(a11y.map((i) => i.id)).toEqual(["image-alt", "color-contrast", "focus-traps"]);
+    expect(a11y.map((i) => i.manual)).toEqual([false, false, true]);
+    // Manual checks are not findings — the total counts failing audits only.
+    expect(r.quality?.accessibilityTotal).toBe(2);
+    // Passed / notApplicable never surface, in either list.
+    const allIds = [...a11y, ...(r.quality?.bestPractices ?? [])].map((i) => i.id);
+    expect(allIds).not.toContain("aria-allowed-attr");
+    expect(allIds).not.toContain("video-caption");
+    expect(allIds).not.toContain("deprecations");
+  });
+
+  it("includes informative audits only when they carry items, and never smooths null scores to 0", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    const bp = r.quality?.bestPractices ?? [];
+    // Failing scored audit first, informative (score null) after it.
+    expect(bp.map((i) => i.id)).toEqual(["errors-in-console", "js-libraries"]);
+    expect(bp.find((i) => i.id === "js-libraries")?.score).toBeNull();
+    expect(r.quality?.bestPracticesTotal).toBe(2);
+
+    // Same informative audit without items → not a finding.
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["js-libraries"].details.items = [];
+    const r2 = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r2.quality?.bestPractices.map((i) => i.id)).toEqual(["errors-in-console"]);
+    expect(r2.quality?.bestPracticesTotal).toBe(1);
+  });
+
+  it("extracts selector/snippet per affected element and strips markdown links from descriptions", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    const imageAlt = r.quality?.accessibility.find((i) => i.id === "image-alt");
+    expect(imageAlt?.description).toBe(
+      "Informative elements should aim for short, descriptive alternate text. Learn more.",
+    );
+    expect(imageAlt?.items[0].selector).toBe("img.product-hero");
+    expect(imageAlt?.items[0].snippet).toContain("product-hero");
+    expect(imageAlt?.itemTotal).toBe(2);
+  });
+
+  it("resolves the item url from item.url, falling back to src=… in the snippet (image-alt bridge)", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    const items = r.quality?.accessibility.find((i) => i.id === "image-alt")?.items ?? [];
+    // First item has no url of its own → src pulled from the snippet.
+    expect(items[0].url).toBe(
+      "https://cdn.shopify.com/s/files/1/0001/2345/products/hero_1024x1024.jpg?v=1699999999",
+    );
+    // Second item carries a direct url, which wins over the snippet.
+    expect(items[1].url).toBe("https://cdn.shopify.com/s/files/1/0001/2345/products/badge_600x.png");
+  });
+
+  it("truncates long snippets to the cell cap", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    const longSnippet = `<img class="${"x".repeat(300)}">`;
+    raw.lighthouseResult.audits["color-contrast"].details.items = [
+      { node: { selector: "p", snippet: longSnippet } },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const snippet = r.quality?.accessibility.find((i) => i.id === "color-contrast")?.items[0].snippet ?? "";
+    expect(snippet.length).toBe(161); // 160 chars + ellipsis
+    expect(snippet.endsWith("…")).toBe(true);
+  });
+
+  it("caps issues at 15 per category and items at 5 per issue, keeping the pre-cap totals", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    for (let i = 0; i < 20; i += 1) {
+      const id = `synthetic-a11y-${i}`;
+      raw.lighthouseResult.categories.accessibility.auditRefs.push({ id });
+      raw.lighthouseResult.audits[id] = {
+        id,
+        title: `Synthetic ${i}`,
+        score: 0,
+        scoreDisplayMode: "binary",
+        details: { type: "table", items: [] },
+      };
+    }
+    raw.lighthouseResult.audits["image-alt"].details.items = Array.from({ length: 8 }, (_, i) => ({
+      node: { selector: `img.n${i}`, snippet: `<img class="n${i}">` },
+    }));
+
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    // 15 capped findings + the mock's manual audit: manual checks have their
+    // own cap and must never be squeezed out by a page with many findings.
+    expect(r.quality?.accessibility).toHaveLength(16);
+    expect(r.quality?.accessibility.filter((i) => !i.manual)).toHaveLength(15);
+    expect(r.quality?.accessibility.some((i) => i.id === "focus-traps")).toBe(true);
+    // 2 failing from the base mock + 20 synthetic; manual audits not counted.
+    expect(r.quality?.accessibilityTotal).toBe(22);
+    const imageAlt = r.quality?.accessibility.find((i) => i.id === "image-alt");
+    expect(imageAlt?.items).toHaveLength(5);
+    expect(imageAlt?.itemTotal).toBe(8);
+  });
+
+  it("prefers src over data-src in lazy-load snippets and drops blank element rows", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["image-alt"].details.items = [
+      {
+        node: {
+          selector: "img.lazy",
+          snippet: '<img class="lazy" data-src="https://cdn.shopify.com/s/files/1/1/products/real.jpg" src="https://cdn.shopify.com/s/files/1/1/products/placeholder.gif">',
+        },
+      },
+    ];
+    // errors-in-console style rows: description only, nothing renderable.
+    raw.lighthouseResult.audits["errors-in-console"].details.items = [
+      { description: "TypeError: x is undefined" },
+      { url: "https://example.com/app.js", description: "ReferenceError" },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const lazy = r.quality?.accessibility.find((i) => i.id === "image-alt")?.items[0];
+    expect(lazy?.url).toBe("https://cdn.shopify.com/s/files/1/1/products/placeholder.gif");
+    const consoleIssue = r.quality?.bestPractices.find((i) => i.id === "errors-in-console");
+    // The description-only row is dropped; the url-carrying row survives and
+    // the total counts renderable rows only.
+    expect(consoleIssue?.items).toHaveLength(1);
+    expect(consoleIssue?.items[0].url).toBe("https://example.com/app.js");
+    expect(consoleIssue?.itemTotal).toBe(1);
+  });
+
+  it("leaves quality undefined when neither quality category is in the response (legacy runs)", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    delete raw.lighthouseResult.categories.accessibility;
+    delete raw.lighthouseResult.categories["best-practices"];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.quality).toBeUndefined();
+    // Performance parsing is unaffected.
+    expect(r.performanceScore).toBe(67);
+    expect(r.metrics).toHaveLength(5);
+    expect(r.opportunities.length).toBeGreaterThan(0);
+  });
+
+  it("keeps quality when only one category is present, with a null score for the other", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    delete raw.lighthouseResult.categories["best-practices"];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.quality?.a11yScore).toBe(82);
+    expect(r.quality?.bestPracticesScore).toBeNull();
+    expect(r.quality?.bestPractices).toEqual([]);
+    expect(r.quality?.bestPracticesTotal).toBe(0);
+  });
+
+  it("does not throw on garbage quality shapes", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.categories.accessibility = { score: "nope", auditRefs: "garbage" };
+    raw.lighthouseResult.categories["best-practices"] = { auditRefs: [{ id: 42 }, null, { id: "js-libraries" }] };
+    expect(() => parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now")).not.toThrow();
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.quality?.a11yScore).toBeNull();
+    expect(r.quality?.accessibility).toEqual([]);
+  });
 });
 
 describe("isAllowedAuditUrl", () => {
@@ -531,5 +715,58 @@ describe("daily run budget", () => {
     await expect(
       runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", plan: "free" }),
     ).rejects.toBeInstanceOf(PageSpeedDailyLimitError);
+  });
+
+  it("denormalizes a11y/best-practices scores into their own columns on create", async () => {
+    const create = vi.fn().mockResolvedValue({});
+    const db = makeDb({ create });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => structuredClone(mockPsiResponse),
+    } as any);
+
+    await runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true, plan: "free" });
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.score).toBe(67);
+    expect(data.a11yScore).toBe(82);
+    expect(data.bestPracticesScore).toBe(93);
+    fetchSpy.mockRestore();
+  });
+
+  it("writes null quality columns when the response has no quality categories", async () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    delete raw.lighthouseResult.categories.accessibility;
+    delete raw.lighthouseResult.categories["best-practices"];
+    const create = vi.fn().mockResolvedValue({});
+    const db = makeDb({ create });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => raw,
+    } as any);
+
+    await runPageSpeedAudit({ db, shop: "s.myshopify.com", url: "https://example.com/", strategy: "mobile", force: true, plan: "free" });
+
+    const data = create.mock.calls[0][0].data;
+    expect(data.a11yScore).toBeNull();
+    expect(data.bestPracticesScore).toBeNull();
+    fetchSpy.mockRestore();
+  });
+});
+
+describe("listPageSpeedHistory", () => {
+  it("selects and returns a11yScore, null for rows stored before the column existed", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { id: "new", url: "u", strategy: "mobile", score: 67, a11yScore: 82, createdAt: new Date("2026-07-22T10:00:00Z") },
+      { id: "old", url: "u", strategy: "mobile", score: 51, a11yScore: null, createdAt: "2026-07-21T10:00:00Z" },
+    ]);
+    const db = { seoPageSpeedAudit: { findMany } };
+
+    const entries = await listPageSpeedHistory({ db, shop: "s.myshopify.com" });
+
+    // The column must be selected — otherwise Prisma never returns it.
+    expect(findMany.mock.calls[0][0].select.a11yScore).toBe(true);
+    expect(entries[0]).toMatchObject({ id: "new", performanceScore: 67, a11yScore: 82 });
+    expect(entries[1]).toMatchObject({ id: "old", performanceScore: 51, a11yScore: null });
   });
 });

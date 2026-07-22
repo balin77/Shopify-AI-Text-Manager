@@ -3,13 +3,32 @@
  * pagespeed.service.test.ts to exercise parsePageSpeedResponse without any
  * network access. Shapes mirror the real PSI v5 API (lighthouseResult.audits
  * keyed by audit id, full-page-screenshot nodes map, loadingExperience CrUX
- * data) but only carry the fields the parser reads.
+ * data, accessibility/best-practices categories with auditRefs) but only
+ * carry the fields the parser reads.
  */
 
 export const mockPsiResponse = {
   lighthouseResult: {
     categories: {
       performance: { score: 0.67 },
+      accessibility: {
+        score: 0.82,
+        auditRefs: [
+          { id: "image-alt" },
+          { id: "color-contrast" },
+          { id: "focus-traps" }, // manual — listed, flagged, not counted
+          { id: "aria-allowed-attr" }, // passed — must NOT surface
+          { id: "video-caption" }, // notApplicable — must NOT surface
+        ],
+      },
+      "best-practices": {
+        score: 0.93,
+        auditRefs: [
+          { id: "errors-in-console" },
+          { id: "js-libraries" }, // informative with items — surfaces
+          { id: "deprecations" }, // passed — must NOT surface
+        ],
+      },
     },
     audits: {
       "largest-contentful-paint": {
@@ -141,6 +160,87 @@ export const mockPsiResponse = {
         title: "Efficiently encode images",
         score: 1,
         details: { type: "opportunity", items: [] },
+      },
+      // ── accessibility / best-practices audits (quality categories) ──
+      "image-alt": {
+        id: "image-alt",
+        title: "Image elements do not have [alt] attributes",
+        description:
+          "Informative elements should aim for short, descriptive alternate text. [Learn more](https://web.dev/image-alt/).",
+        score: 0,
+        scoreDisplayMode: "binary",
+        details: {
+          type: "table",
+          items: [
+            {
+              node: {
+                selector: "img.product-hero",
+                snippet:
+                  '<img class="product-hero" src="https://cdn.shopify.com/s/files/1/0001/2345/products/hero_1024x1024.jpg?v=1699999999">',
+              },
+            },
+            {
+              url: "https://cdn.shopify.com/s/files/1/0001/2345/products/badge_600x.png",
+              node: { selector: "img.badge", snippet: '<img class="badge">' },
+            },
+          ],
+        },
+      },
+      "color-contrast": {
+        id: "color-contrast",
+        title: "Background and foreground colors do not have a sufficient contrast ratio.",
+        description: "Low-contrast text is difficult to read. [Learn more](https://web.dev/color-contrast/).",
+        score: 0,
+        scoreDisplayMode: "binary",
+        details: {
+          type: "table",
+          items: [{ node: { selector: "p.subdued", snippet: '<p class="subdued">Fine print</p>' } }],
+        },
+      },
+      "focus-traps": {
+        id: "focus-traps",
+        title: "User focus is not accidentally trapped in a region",
+        description: "A user can tab into and out of any control. [Learn more](https://web.dev/focus-traps/).",
+        score: null,
+        scoreDisplayMode: "manual",
+      },
+      "aria-allowed-attr": {
+        id: "aria-allowed-attr",
+        title: "[aria-*] attributes match their roles",
+        score: 1,
+        scoreDisplayMode: "binary",
+        details: { type: "table", items: [] },
+      },
+      "video-caption": {
+        id: "video-caption",
+        title: "<video> elements contain a <track> element with [kind=\"captions\"]",
+        score: null,
+        scoreDisplayMode: "notApplicable",
+      },
+      "errors-in-console": {
+        id: "errors-in-console",
+        title: "Browser errors were logged to the console",
+        description: "Errors logged to the console indicate unresolved problems.",
+        score: 0,
+        scoreDisplayMode: "binary",
+        details: {
+          type: "table",
+          items: [{ description: "Failed to load resource", url: "https://example.com/missing.js" }],
+        },
+      },
+      "js-libraries": {
+        id: "js-libraries",
+        title: "Detected JavaScript libraries",
+        score: null,
+        scoreDisplayMode: "informative",
+        details: { type: "table", items: [{ name: "jQuery", version: "3.7.1" }] },
+      },
+      deprecations: {
+        id: "deprecations",
+        title: "Avoids deprecated APIs",
+        score: 1,
+        scoreDisplayMode: "binary",
+        details: { type: "table", items: [] },
       },
     },
   },

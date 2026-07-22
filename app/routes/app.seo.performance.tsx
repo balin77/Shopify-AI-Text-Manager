@@ -33,6 +33,7 @@ import {
   Divider,
   Collapsible,
   Modal,
+  Tabs,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -61,9 +62,11 @@ import type {
   PageSpeedScreenshot,
   PageSpeedTable,
   CruxCategory,
+  QualityIssue,
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
+import { buildAltImageMatches, type AltImageMatch } from "../services/seo/alt-image-matches";
 
 const SHOP_HOST_QUERY = `#graphql
   query seoPerformanceShopHost {
@@ -169,6 +172,29 @@ type ActionResult =
   | { ok: true; result: PageSpeedAuditResult }
   | { ok: false; error: string; detail?: string };
 
+/** Response of the `matchAltImages` intent (alt-text bridge, plan §7). */
+type MatchAltImagesResult =
+  | { ok: true; matches: Record<string, AltImageMatch | null> }
+  | { ok: false; error: string };
+
+/** Response of the `generateAltText` intent (alt-text bridge, plan §7). */
+type GenerateAltTextResult =
+  | { ok: true; altText: string }
+  | { ok: false; error: string };
+
+/**
+ * Server-side cap on URLs per `matchAltImages` request. Lighthouse findings
+ * are already capped far below this — the cap only defends against a
+ * hand-crafted request forcing an oversized matching run.
+ */
+const MAX_ALT_MATCH_URLS = 20;
+/**
+ * Cap on ProductImage rows scanned per `matchAltImages` call. Keeps a huge
+ * catalog from turning the match into an unbounded query — images beyond the
+ * cap are reported as unmatched rather than scanned.
+ */
+const MAX_ALT_MATCH_IMAGES = 20_000;
+
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -190,6 +216,176 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       return json<ActionResult>({ ok: false, error: "notFound" }, { status: 404 });
     }
     return json<ActionResult>({ ok: true, result: stored });
+  }
+
+  // Alt-text bridge, step 1 (plan §7): map the image URLs of the current
+  // result's `image-alt` findings to shop-scoped ProductImage rows so the UI
+  // knows which findings get a working "generate alt text" button.
+  if (intent === "matchAltImages") {
+    let urls: unknown;
+    try {
+      urls = JSON.parse(getFormString(form, "imageUrls") || "[]");
+    } catch {
+      return json<MatchAltImagesResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    if (!Array.isArray(urls)) {
+      return json<MatchAltImagesResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const imageUrls = urls
+      .filter((u): u is string => typeof u === "string")
+      .slice(0, MAX_ALT_MATCH_URLS);
+
+    // R4-DI7 pattern (see alt-text.action.ts): always scope by the owning
+    // product's shop — an unscoped query could match another tenant's images.
+    // `take` bounds memory and latency on very large catalogs; images beyond
+    // the cap simply stay unmatched, which the UI already explains
+    // (altTextUnmatched) — a degraded match beats an unbounded scan.
+    const images = await db.productImage.findMany({
+      where: { product: { shop } },
+      select: {
+        id: true,
+        productId: true,
+        url: true,
+        mediaId: true,
+        product: { select: { title: true } },
+      },
+      take: MAX_ALT_MATCH_IMAGES,
+    });
+
+    const matches = buildAltImageMatches(
+      imageUrls,
+      images.map((img: { id: string; productId: string; url: string; mediaId: string | null; product: { title: string | null } | null }) => ({
+        id: img.id,
+        productId: img.productId,
+        url: img.url,
+        mediaId: img.mediaId,
+        productTitle: img.product?.title ?? "",
+      })),
+    );
+    return json<MatchAltImagesResult>({ ok: true, matches });
+  }
+
+  // Alt-text bridge, step 2 (plan §7): generate an alt text for one matched
+  // image via the merchant's configured AI provider and save it for the
+  // primary locale — same prompt build as handleGenerateAltText and same save
+  // path as handleSaveImageAltText's primary branch (alt-text.action.ts).
+  if (intent === "generateAltText") {
+    const mediaId = getFormString(form, "mediaId");
+    if (!mediaId) {
+      return json<GenerateAltTextResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+
+    // The client must not be able to smuggle in a foreign GID: only accept a
+    // mediaId that a shop-scoped ProductImage row knows (R4-DI7), and use that
+    // row's URL and product title — not the client-sent ones — for the AI call.
+    const image = await db.productImage.findFirst({
+      where: { mediaId, product: { shop } },
+      select: { url: true, productId: true, product: { select: { title: true } } },
+    });
+    if (!image) {
+      return json<GenerateAltTextResult>({ ok: false, error: "unknownImage" }, { status: 400 });
+    }
+
+    const [
+      { AIService, toValidProvider },
+      { tryDecryptApiKey },
+      { getFullErrorMessage },
+      { buildProductAltTextPrompt, saveImageAltTextPrimary },
+      { getTaskExpirationDate },
+    ] = await Promise.all([
+      import("../../src/services/ai.service"),
+      import("../utils/encryption.server"),
+      import("../utils/error-handler"),
+      import("../actions/content/alt-text.action"),
+      import("../config/constants"),
+    ]);
+
+    const [aiSettings, aiInstructions] = await Promise.all([
+      db.aISettings.findUnique({ where: { shop } }),
+      db.aIInstructions.findUnique({ where: { shop } }),
+    ]);
+
+    // Same provider/serviceConfig assembly as handleUnifiedContentActions
+    // (unified-content.actions.ts) — the merchant's configured AI setup.
+    const provider = toValidProvider(aiSettings?.preferredProvider || "claude");
+    const serviceConfig = {
+      huggingfaceApiKey: tryDecryptApiKey(aiSettings?.huggingfaceApiKey, "huggingface") || undefined,
+      geminiApiKey: tryDecryptApiKey(aiSettings?.geminiApiKey, "gemini") || undefined,
+      claudeApiKey: tryDecryptApiKey(aiSettings?.claudeApiKey, "claude") || undefined,
+      openaiApiKey: tryDecryptApiKey(aiSettings?.openaiApiKey, "openai") || undefined,
+      grokApiKey: tryDecryptApiKey(aiSettings?.grokApiKey, "grok") || undefined,
+      deepseekApiKey: tryDecryptApiKey(aiSettings?.deepseekApiKey, "deepseek") || undefined,
+      selectedModel: aiSettings?.selectedModel || undefined,
+    };
+    // Same language source the PSI call already uses (AISettings.appLanguage,
+    // see getShopLanguage) — what handleGenerateAltText receives as
+    // `mainLanguage` from its clients.
+    const mainLanguage = aiSettings?.appLanguage || "en";
+
+    // Shared prompt build + primary save (alt-text.action.ts) — the bridge
+    // must not fork its own copy of the alt-text path (CLAUDE.md: no parallel
+    // handlers). The task row mirrors handleGenerateAltText so the run shows
+    // up in the activity view like every other generation.
+    const { prompt, sanitizedTitle } = buildProductAltTextPrompt({
+      productTitle: image.product?.title || "",
+      imageUrl: image.url,
+      aiInstructions,
+      language: mainLanguage,
+    });
+
+    const task = await db.task.create({
+      data: {
+        shop,
+        type: "aiGeneration",
+        status: "pending",
+        resourceType: "Product",
+        resourceId: image.productId,
+        resourceTitle: image.product?.title || "",
+        fieldType: "altText",
+        progress: 0,
+        expiresAt: getTaskExpirationDate(),
+      },
+    });
+
+    const failTask = (error: string) =>
+      db.task
+        .update({ where: { id: task.id }, data: { status: "failed", completedAt: new Date(), error } })
+        .catch(() => {});
+
+    let altText: string;
+    try {
+      const aiService = new AIService(provider, serviceConfig, shop, task.id);
+      altText = (await aiService.generateImageAltText(image.url, sanitizedTitle, prompt)).trim();
+    } catch (err: unknown) {
+      const message = getFullErrorMessage(err);
+      await failTask(message);
+      return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
+    }
+    if (!altText) {
+      await failTask("AI returned an empty alt text");
+      return json<GenerateAltTextResult>({ ok: false, error: "AI returned an empty alt text" }, { status: 500 });
+    }
+
+    const saveResult = await saveImageAltTextPrimary({ admin, db, shop, mediaId, altText });
+    if (!saveResult.saved) {
+      const message = saveResult.userErrors.join("; ") || "Shopify API error";
+      await failTask(message);
+      return json<GenerateAltTextResult>({ ok: false, error: message }, { status: 500 });
+    }
+
+    await db.task
+      .update({
+        where: { id: task.id },
+        data: {
+          status: "completed",
+          progress: 100,
+          completedAt: new Date(),
+          result: JSON.stringify({ altText }),
+        },
+      })
+      .catch(() => {});
+
+    return json<GenerateAltTextResult>({ ok: true, altText });
   }
 
   if (intent !== "runAudit") {
@@ -745,24 +941,24 @@ const SCORE_WEIGHTS: { id: PageSpeedMetricId; weight: number }[] = [
   { id: "si", weight: 0.1 },
 ];
 
+/** Defaults = the big lab gauge; the score strip passes smaller values (§3.3). */
 const GAUGE_SIZE = 190;
-const GAUGE_CENTER = GAUGE_SIZE / 2;
 const GAUGE_RADIUS = 58;
 const GAUGE_STROKE = 8;
 /** Degrees of empty space between two metric arcs. */
 const GAUGE_ARC_GAP = 5;
 
 /** Point on the gauge circle; 0° is 12 o'clock, growing clockwise. */
-function gaugePoint(radius: number, degrees: number): [number, number] {
+function gaugePoint(center: number, radius: number, degrees: number): [number, number] {
   const rad = ((degrees - 90) * Math.PI) / 180;
-  return [GAUGE_CENTER + radius * Math.cos(rad), GAUGE_CENTER + radius * Math.sin(rad)];
+  return [center + radius * Math.cos(rad), center + radius * Math.sin(rad)];
 }
 
-function gaugeArc(radius: number, startDeg: number, endDeg: number): string {
+function gaugeArc(center: number, radius: number, startDeg: number, endDeg: number): string {
   // A full circle can't be expressed as one arc — nudge it just short of 360.
   const end = endDeg - startDeg >= 360 ? startDeg + 359.99 : endDeg;
-  const [x1, y1] = gaugePoint(radius, startDeg);
-  const [x2, y2] = gaugePoint(radius, end);
+  const [x1, y1] = gaugePoint(center, radius, startDeg);
+  const [x2, y2] = gaugePoint(center, radius, end);
   const largeArc = end - startDeg > 180 ? 1 : 0;
   return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
 }
@@ -770,20 +966,42 @@ function gaugeArc(radius: number, startDeg: number, endDeg: number): string {
 /**
  * Lighthouse-style score gauge. Hovering splits the ring into one arc per
  * metric — arc length = that metric's weight in the score, fill = its own
- * score — which is how PSI explains where a score comes from.
+ * score — which is how PSI explains where a score comes from. The split only
+ * exists when `metrics` are passed; the small strip rings pass none.
+ *
+ * Size defaults are the big lab gauge; the score strip shrinks it via props.
  */
 function ScoreGauge({
   score,
   label,
-  metrics,
+  metrics = [],
+  size = GAUGE_SIZE,
+  radius = GAUGE_RADIUS,
+  stroke = GAUGE_STROKE,
+  numberFontSize = 34,
+  showLabel = true,
+  neutralWhenNull = false,
 }: {
   score: number | null;
   label: string;
-  metrics: PageSpeedMetric[];
+  metrics?: PageSpeedMetric[];
+  size?: number;
+  radius?: number;
+  stroke?: number;
+  numberFontSize?: number;
+  /** The strip rings carry their own caption outside the button (§3.3). */
+  showLabel?: boolean;
+  /**
+   * Missing score → neutral grey ring instead of the warning tone. The strip
+   * needs it ("no value" is not "50–89"); the big gauge keeps today's look.
+   */
+  neutralWhenNull?: boolean;
 }) {
+  const center = size / 2;
   const [showSplit, setShowSplit] = useState(false);
-  const tone: PerfTone = score == null ? "warning" : lighthouseTone(score);
-  const color = PERF_COLOR[tone];
+  const tone: PerfTone | null = score == null ? (neutralWhenNull ? null : "warning") : lighthouseTone(score);
+  // Literal hex (not a CSS var) — the ring fill below appends an alpha suffix.
+  const color = tone ? PERF_COLOR[tone] : "#8c9196";
 
   const metricById = new Map(metrics.map((m) => [m.id, m]));
   const available = SCORE_WEIGHTS.filter((w) => metricById.has(w.id));
@@ -798,7 +1016,7 @@ function ScoreGauge({
     const metric = metricById.get(w.id)!;
     const metricScore = metric.score ?? 0;
     const segTone = metricTone(metric.score);
-    const [labelX, labelY] = gaugePoint(GAUGE_RADIUS + 20, start + span / 2);
+    const [labelX, labelY] = gaugePoint(center, radius + 20, start + span / 2);
     return {
       id: w.id,
       color: segTone ? PERF_COLOR[segTone] : "var(--p-color-border, #c9cccf)",
@@ -813,33 +1031,33 @@ function ScoreGauge({
   return (
     <BlockStack gap="150" inlineAlign="center">
       <div
-        style={{ position: "relative", width: `${GAUGE_SIZE}px`, height: `${GAUGE_SIZE}px` }}
+        style={{ position: "relative", width: `${size}px`, height: `${size}px` }}
         onMouseEnter={() => setShowSplit(true)}
         onMouseLeave={() => setShowSplit(false)}
       >
         <svg
-          width={GAUGE_SIZE}
-          height={GAUGE_SIZE}
-          viewBox={`0 0 ${GAUGE_SIZE} ${GAUGE_SIZE}`}
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
           role="img"
           aria-label={`${label}: ${score ?? "–"}`}
         >
-          <circle cx={GAUGE_CENTER} cy={GAUGE_CENTER} r={GAUGE_RADIUS} fill={`${color}1f`} />
+          <circle cx={center} cy={center} r={radius} fill={`${color}1f`} />
 
           {/* Whole-score ring */}
           <g style={{ opacity: showSplit && splittable ? 0 : 1, transition: "opacity 150ms ease-in-out" }}>
             <path
-              d={gaugeArc(GAUGE_RADIUS, 0, 360)}
+              d={gaugeArc(center, radius, 0, 360)}
               fill="none"
               stroke={`${color}40`}
-              strokeWidth={GAUGE_STROKE}
+              strokeWidth={stroke}
             />
             {score != null && score > 0 && (
               <path
-                d={gaugeArc(GAUGE_RADIUS, 0, (score / 100) * 360)}
+                d={gaugeArc(center, radius, 0, (score / 100) * 360)}
                 fill="none"
                 stroke={color}
-                strokeWidth={GAUGE_STROKE}
+                strokeWidth={stroke}
                 strokeLinecap="round"
               />
             )}
@@ -851,18 +1069,18 @@ function ScoreGauge({
               {segments.map((seg) => (
                 <Fragment key={seg.id}>
                   <path
-                    d={gaugeArc(GAUGE_RADIUS, seg.from, seg.to)}
+                    d={gaugeArc(center, radius, seg.from, seg.to)}
                     fill="none"
                     stroke={seg.color}
-                    strokeWidth={GAUGE_STROKE}
+                    strokeWidth={stroke}
                     opacity={0.25}
                   />
                   {seg.filledTo > seg.from && (
                     <path
-                      d={gaugeArc(GAUGE_RADIUS, seg.from, seg.filledTo)}
+                      d={gaugeArc(center, radius, seg.from, seg.filledTo)}
                       fill="none"
                       stroke={seg.color}
-                      strokeWidth={GAUGE_STROKE}
+                      strokeWidth={stroke}
                       strokeLinecap="round"
                     />
                   )}
@@ -888,7 +1106,7 @@ function ScoreGauge({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "34px",
+            fontSize: `${numberFontSize}px`,
             fontWeight: 500,
             color,
             pointerEvents: "none",
@@ -897,7 +1115,347 @@ function ScoreGauge({
           {score != null ? score : "–"}
         </span>
       </div>
-      <Text as="span" variant="headingMd">{label}</Text>
+      {showLabel && <Text as="span" variant="headingMd">{label}</Text>}
+    </BlockStack>
+  );
+}
+
+/** Strip ring geometry — pagespeed.web.dev's small category gauges (§3.3). */
+const STRIP_GAUGE_SIZE = 48;
+const STRIP_GAUGE_RADIUS = 20;
+const STRIP_GAUGE_STROKE = 4;
+
+/**
+ * The category overview above the tab list: one small ring per Lighthouse
+ * category, doubling as tab navigation. No hover split — the weight story only
+ * exists for the performance score, and the big gauge in the tab tells it.
+ */
+function ScoreStrip({
+  categories,
+  selected,
+  onSelect,
+  scoreAriaLabel,
+  noScoreAriaLabel,
+}: {
+  categories: { key: string; label: string; score: number | null }[];
+  selected: number;
+  onSelect: (index: number) => void;
+  /** `strip.scoreAriaLabel` — placeholders {category} {score}. */
+  scoreAriaLabel: string;
+  /** `strip.noScore` — placeholder {category}. */
+  noScoreAriaLabel: string;
+}) {
+  return (
+    <InlineStack gap="800" align="center" blockAlign="start">
+      {categories.map((cat, index) => {
+        const active = index === selected;
+        return (
+          <button
+            key={cat.key}
+            type="button"
+            onClick={() => onSelect(index)}
+            // aria-pressed, not aria-selected: the latter is only valid on
+            // tab/option/gridcell/row roles, and the real tablist lives in the
+            // Polaris <Tabs> below — a second one here would double-announce.
+            aria-pressed={active}
+            aria-label={
+              cat.score != null
+                ? scoreAriaLabel
+                    .replace("{category}", cat.label)
+                    .replace("{score}", String(cat.score))
+                : noScoreAriaLabel.replace("{category}", cat.label)
+            }
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              font: "inherit",
+              color: "inherit",
+            }}
+          >
+            <BlockStack gap="150" inlineAlign="center">
+              <ScoreGauge
+                score={cat.score}
+                label={cat.label}
+                size={STRIP_GAUGE_SIZE}
+                radius={STRIP_GAUGE_RADIUS}
+                stroke={STRIP_GAUGE_STROKE}
+                numberFontSize={15}
+                showLabel={false}
+                neutralWhenNull
+              />
+              <Text as="span" variant="bodySm" fontWeight={active ? "semibold" : "regular"}>
+                {cat.label}
+              </Text>
+            </BlockStack>
+          </button>
+        );
+      })}
+    </InlineStack>
+  );
+}
+
+/** Synthetic accordion id for the collapsed manual-audits block per quality tab. */
+const MANUAL_FINDING_ID = "manual";
+
+/**
+ * Alt-text bridge state + callbacks (plan §7), owned by the page component so
+ * it survives tab switches, and handed down into the `image-alt` finding rows.
+ */
+interface AltTextBridgeState {
+  /** url → match map from the `matchAltImages` intent; null while not loaded. */
+  matches: Record<string, AltImageMatch | null> | null;
+  /** url → outcome of a finished `generateAltText` call. */
+  results: Record<string, { altText?: string; error?: string }>;
+  /** URL whose generate call is currently in flight (spinner on that button). */
+  pendingUrl: string | null;
+  /** A generate call is running — every other generate button disables meanwhile. */
+  busy: boolean;
+  onGenerate: (url: string) => void;
+  labels: { unmatched: string; success: string; error: string };
+}
+
+/**
+ * One accessibility / best-practices finding — the same accordion row pattern
+ * as the performance findings, so both tabs read as one tool. `image-alt`
+ * items that were matched to a product image render a working "generate alt
+ * text" button (plan §7); unmatched ones get an explanation instead of a dead
+ * button.
+ */
+function QualityIssueRow({
+  issue,
+  open,
+  onToggle,
+  domId,
+  itemsTruncatedLabel,
+  generateAltTextLabel,
+  altBridge,
+}: {
+  issue: QualityIssue;
+  open: boolean;
+  onToggle: () => void;
+  domId: string;
+  itemsTruncatedLabel: string;
+  generateAltTextLabel: string;
+  altBridge?: AltTextBridgeState;
+}) {
+  return (
+    <div style={FINDING_ROW_STYLE}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={domId}
+        style={FINDING_HEADER_STYLE}
+      >
+        <span style={FINDING_TITLE_STYLE}>
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <ToneMarker tone={issue.score == null ? undefined : metricTone(issue.score)} />
+            <Text as="span" variant="bodyMd" fontWeight="medium">{issue.title}</Text>
+          </InlineStack>
+        </span>
+        <DisclosureGlyph open={open} />
+      </button>
+      <Collapsible open={open} id={domId} transition={false}>
+        <div style={{ padding: "0 12px 16px" }}>
+          <BlockStack gap="300">
+            {issue.description && (
+              <Text as="p" variant="bodySm" tone="subdued">{issue.description}</Text>
+            )}
+            {issue.items.length > 0 && (
+              <BlockStack gap="300">
+                {issue.items.map((item, i) => (
+                  <BlockStack key={i} gap="050">
+                    {item.selector && <span style={CODE_TEXT_STYLE}>{item.selector}</span>}
+                    {item.snippet && (
+                      <span
+                        style={{
+                          ...CODE_TEXT_STYLE,
+                          color: "var(--p-color-text-secondary, #6d7175)",
+                        }}
+                      >
+                        {item.snippet}
+                      </span>
+                    )}
+                    {/* URL-only rows (e.g. errors-in-console sources) would
+                        otherwise render blank — show the url whenever there is
+                        no snippet already carrying it. */}
+                    {item.url && !item.snippet && (
+                      <span style={CODE_TEXT_STYLE}>{item.url}</span>
+                    )}
+                    {/* Alt-text bridge (plan §7): matched → live button;
+                        matching not loaded yet → disabled button; loaded but
+                        unmatched (theme asset, ambiguous stem, no mediaId) →
+                        explanation instead of a dead button. A generated alt
+                        text replaces the button with its success line. */}
+                    {issue.id === "image-alt" && item.url && (() => {
+                      const url = item.url;
+                      const outcome = altBridge?.results[url];
+                      if (outcome?.altText != null) {
+                        return (
+                          <InlineStack gap="150" blockAlign="center" wrap>
+                            <Badge tone="success">✓</Badge>
+                            <Text as="span" variant="bodySm">
+                              {altBridge!.labels.success.replace("{altText}", outcome.altText)}
+                            </Text>
+                          </InlineStack>
+                        );
+                      }
+                      const matchesLoaded = altBridge?.matches != null;
+                      const match = matchesLoaded ? altBridge!.matches![url] : undefined;
+                      if (matchesLoaded && !match) {
+                        return (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {altBridge!.labels.unmatched}
+                          </Text>
+                        );
+                      }
+                      return (
+                        <BlockStack gap="100">
+                          <InlineStack>
+                            <Button
+                              size="slim"
+                              disabled={!match || altBridge?.busy}
+                              loading={altBridge?.pendingUrl === url}
+                              onClick={() => altBridge?.onGenerate(url)}
+                            >
+                              {generateAltTextLabel}
+                            </Button>
+                          </InlineStack>
+                          {outcome?.error && (
+                            <Text as="span" variant="bodySm" tone="critical">
+                              {altBridge!.labels.error.replace("{error}", outcome.error)}
+                            </Text>
+                          )}
+                        </BlockStack>
+                      );
+                    })()}
+                  </BlockStack>
+                ))}
+                {issue.itemTotal > issue.items.length && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {itemsTruncatedLabel
+                      .replace("{shown}", String(issue.items.length))
+                      .replace("{total}", String(issue.itemTotal))}
+                  </Text>
+                )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+/**
+ * Finding list of one quality category (a11y / best practices): automated
+ * findings as accordion rows, then the manual audits collapsed under their own
+ * header — they are unchecked check-points, not found errors, and mixing them
+ * into the list would misread as failures.
+ */
+function QualityFindings({
+  issues,
+  manualIssues,
+  total,
+  keyPrefix,
+  openFindings,
+  onToggle,
+  labels,
+  altBridge,
+}: {
+  /** Automated (non-manual) findings, already filtered. */
+  issues: QualityIssue[];
+  manualIssues: QualityIssue[];
+  /** Category finding count before the server-side cap, manual excluded. */
+  total: number;
+  /** Namespaces accordion ids so a11y and best-practices rows never collide. */
+  keyPrefix: string;
+  openFindings: Set<string>;
+  onToggle: (id: string) => void;
+  labels: {
+    noIssues: string;
+    manualTitle: string;
+    manualHint: string;
+    itemsTruncated: string;
+    findingsTruncated: string;
+    generateAltText: string;
+  };
+  /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
+  altBridge?: AltTextBridgeState;
+}) {
+  const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
+  const manualOpen = openFindings.has(manualKey);
+  return (
+    <BlockStack gap="300">
+      {issues.length === 0 ? (
+        <Text as="p" variant="bodySm" tone="subdued">{labels.noIssues}</Text>
+      ) : (
+        <div>
+          {issues.map((issue) => {
+            const rowKey = `${keyPrefix}-${issue.id}`;
+            return (
+              <QualityIssueRow
+                key={issue.id}
+                issue={issue}
+                open={openFindings.has(rowKey)}
+                onToggle={() => onToggle(rowKey)}
+                domId={`finding-${rowKey}`}
+                itemsTruncatedLabel={labels.itemsTruncated}
+                generateAltTextLabel={labels.generateAltText}
+                altBridge={altBridge}
+              />
+            );
+          })}
+          {/* Server cap (max 15 findings) — disclose it instead of letting a
+              truncated list read as the complete picture. */}
+          {total > issues.length && (
+            <div style={{ paddingTop: "12px" }}>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {labels.findingsTruncated
+                  .replace("{shown}", String(issues.length))
+                  .replace("{total}", String(total))}
+              </Text>
+            </div>
+          )}
+        </div>
+      )}
+
+      {manualIssues.length > 0 && (
+        <div style={FINDING_ROW_STYLE}>
+          <button
+            type="button"
+            onClick={() => onToggle(manualKey)}
+            aria-expanded={manualOpen}
+            aria-controls={`finding-${manualKey}`}
+            style={FINDING_HEADER_STYLE}
+          >
+            <span style={FINDING_TITLE_STYLE}>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <ToneMarker />
+                <Text as="span" variant="bodyMd" fontWeight="medium">{labels.manualTitle}</Text>
+              </InlineStack>
+            </span>
+            <DisclosureGlyph open={manualOpen} />
+          </button>
+          <Collapsible open={manualOpen} id={`finding-${manualKey}`} transition={false}>
+            <div style={{ padding: "0 12px 16px" }}>
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">{labels.manualHint}</Text>
+                {manualIssues.map((m) => (
+                  <BlockStack key={m.id} gap="050">
+                    <Text as="span" variant="bodySm" fontWeight="medium">{m.title}</Text>
+                    {m.description && (
+                      <Text as="span" variant="bodySm" tone="subdued">{m.description}</Text>
+                    )}
+                  </BlockStack>
+                ))}
+              </BlockStack>
+            </div>
+          </Collapsible>
+        </div>
+      )}
     </BlockStack>
   );
 }
@@ -1193,6 +1751,149 @@ export default function SeoPerformance() {
   // Audits stored before `previewScreenshot` existed only have `screenshot`.
   const previewScreenshot = result?.previewScreenshot ?? result?.screenshot ?? null;
 
+  // §3.8: the tab choice survives a new test run on purpose — whoever re-tests
+  // while on "Accessibility" wants the new accessibility result, not the speed
+  // tab again.
+  const [selectedTab, setSelectedTab] = useState(0);
+
+  // Runs stored before the quality categories existed carry no `quality` —
+  // tabs 2/3 then show an explicit empty state instead of a bare blank (§3.8).
+  const quality = result?.quality;
+  const a11yAutomated = useMemo(
+    () => (quality?.accessibility ?? []).filter((i) => !i.manual),
+    [quality],
+  );
+  const a11yManual = useMemo(
+    () => (quality?.accessibility ?? []).filter((i) => i.manual),
+    [quality],
+  );
+  const bpAutomated = useMemo(
+    () => (quality?.bestPractices ?? []).filter((i) => !i.manual),
+    [quality],
+  );
+  const bpManual = useMemo(
+    () => (quality?.bestPractices ?? []).filter((i) => i.manual),
+    [quality],
+  );
+
+  // ── Alt-text bridge (plan §7) ─────────────────────────────────────────────
+  // Image URLs of the current result's `image-alt` findings, deduplicated —
+  // the payload of the `matchAltImages` intent.
+  const altImageUrls = useMemo(() => {
+    const urls: string[] = [];
+    for (const issue of quality?.accessibility ?? []) {
+      if (issue.id !== "image-alt") continue;
+      for (const item of issue.items) {
+        if (item.url && !urls.includes(item.url)) urls.push(item.url);
+      }
+    }
+    return urls;
+  }, [quality]);
+
+  const altMatchFetcher = useFetcher<MatchAltImagesResult>();
+  const altGenFetcher = useFetcher<GenerateAltTextResult>();
+  // url → match; null until the matchAltImages round-trip finished (buttons
+  // stay disabled meanwhile — never a live button before the match is known).
+  const [altMatches, setAltMatches] = useState<Record<string, AltImageMatch | null> | null>(null);
+  // url → generated alt text / error. Success replaces the row's button, so a
+  // fixed image is not offered again. Deliberately NOT reset on result
+  // switches: an alt text saved to Shopify stays saved no matter which run
+  // (live or historical) is currently displayed — clearing this would offer
+  // the button again for an image that was just fixed.
+  const [altGenResults, setAltGenResults] = useState<Record<string, { altText?: string; error?: string }>>({});
+  const [altGenPendingUrl, setAltGenPendingUrl] = useState<string | null>(null);
+
+  // Stable identity of the displayed run. Keying the match effect on the
+  // result OBJECT would refire when "back to current test" swaps the same
+  // live result back in (new render, same run) and needlessly rematch.
+  const resultKey = result ? `${result.url}|${result.strategy}|${result.fetchedAt}` : null;
+
+  // A different run (fresh test or history load) voids the match map and —
+  // when it carries image-alt findings — kicks off one matching round-trip.
+  useEffect(() => {
+    setAltMatches(null);
+    setAltGenPendingUrl(null);
+    if (altImageUrls.length > 0) {
+      altMatchFetcher.submit(
+        { intent: "matchAltImages", imageUrls: JSON.stringify(altImageUrls) },
+        { method: "post" },
+      );
+    }
+    // Matching belongs to the run switch — not to fetcher identity churn,
+    // and altImageUrls is derived from the same result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultKey]);
+
+  useEffect(() => {
+    if (altMatchFetcher.state === "idle" && altMatchFetcher.data?.ok) {
+      setAltMatches(altMatchFetcher.data.matches);
+    }
+  }, [altMatchFetcher.state, altMatchFetcher.data]);
+
+  const generateAltTextFor = (url: string) => {
+    const match = altMatches?.[url];
+    if (!match || altGenFetcher.state !== "idle") return;
+    setAltGenPendingUrl(url);
+    altGenFetcher.submit(
+      {
+        intent: "generateAltText",
+        mediaId: match.mediaId,
+        imageUrl: url,
+        productTitle: match.productTitle,
+      },
+      { method: "post" },
+    );
+  };
+
+  useEffect(() => {
+    // Same guard pattern as the history fetcher above: only record a result
+    // while a submission is actually pending, so stale fetcher data from an
+    // earlier click can't be re-applied.
+    if (altGenPendingUrl && altGenFetcher.state === "idle" && altGenFetcher.data) {
+      const data = altGenFetcher.data;
+      setAltGenResults((prev) => ({
+        ...prev,
+        [altGenPendingUrl]: data.ok ? { altText: data.altText } : { error: data.error },
+      }));
+      setAltGenPendingUrl(null);
+    }
+  }, [altGenFetcher.state, altGenFetcher.data, altGenPendingUrl]);
+
+  // Tab labels double as the strip captions (§3.3) — same keys, same words.
+  const tabDescriptors = [
+    { id: "perf-tab-performance", content: p.tabs.performance, panelID: "perf-panel-performance" },
+    { id: "perf-tab-accessibility", content: p.tabs.accessibility, panelID: "perf-panel-accessibility" },
+    { id: "perf-tab-bestPractices", content: p.tabs.bestPractices, panelID: "perf-panel-bestPractices" },
+  ];
+
+  const stripCategories = [
+    { key: "performance", label: p.tabs.performance, score: result?.performanceScore ?? null },
+    { key: "accessibility", label: p.tabs.accessibility, score: quality?.a11yScore ?? null },
+    { key: "bestPractices", label: p.tabs.bestPractices, score: quality?.bestPracticesScore ?? null },
+  ];
+
+  const qualityFindingLabels = {
+    manualTitle: p.a11y.manualTitle,
+    manualHint: p.a11y.manualHint,
+    itemsTruncated: p.a11y.itemsTruncated,
+    findingsTruncated: p.a11y.findingsTruncated,
+    generateAltText: p.a11y.generateAltText,
+  };
+
+  // Handed only to the accessibility tab — image-alt is an a11y-only audit.
+  const altTextBridge: AltTextBridgeState = {
+    matches: altMatches,
+    results: altGenResults,
+    pendingUrl: altGenPendingUrl,
+    busy: altGenFetcher.state !== "idle",
+    onGenerate: generateAltTextFor,
+    labels: {
+      unmatched: p.a11y.altTextUnmatched,
+      success: p.a11y.altTextSuccess,
+      error: p.a11y.altTextError,
+    },
+  };
+
   return (
     <SeoSectionLayout sectionId="performance">
       <BlockStack gap="400">
@@ -1309,40 +2010,73 @@ export default function SeoPerformance() {
         {errorMessage && <Banner tone="critical">{errorMessage}</Banner>}
 
         {result && (
-          <BlockStack gap="400">
-            {isHistorical && (
-              <Banner
-                tone="info"
-                title={p.viewingHistoryTitle
-                  .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
-                onDismiss={closeHistoryView}
-              >
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">
-                    {p.viewingHistoryBody
+          <Card>
+            <BlockStack gap="400">
+              {/* §3.2 — everything that applies to all tabs sits above the tab
+                  list; the historical note is a one-liner, not a banner. */}
+              {isHistorical && (
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {p.viewingHistoryHint
+                      .replace("{date}", new Date(result.fetchedAt).toLocaleString())
                       .replace("{url}", displayPath(result.url))
                       .replace("{strategy}", strategyLabel(result.strategy))}
                   </Text>
-                  <InlineStack>
-                    <Button onClick={closeHistoryView}>{p.viewingHistoryBack}</Button>
-                  </InlineStack>
-                </BlockStack>
-              </Banner>
-            )}
-            {result.stale && !isHistorical && (
-              <Banner tone="warning">
-                {result.staleReason === "dailyLimit"
-                  ? p.staleDailyLimitNotice.replace("{limit}", String(dailyLimit))
-                  : p.staleQuotaNotice}
-              </Banner>
-            )}
+                  <Button variant="plain" onClick={closeHistoryView}>{p.viewingHistoryBack}</Button>
+                </InlineStack>
+              )}
+              {result.stale && !isHistorical && (
+                <Banner tone="warning">
+                  {result.staleReason === "dailyLimit"
+                    ? p.staleDailyLimitNotice.replace("{limit}", String(dailyLimit))
+                    : p.staleQuotaNotice}
+                </Banner>
+              )}
+              {/* Lighthouse could not analyse the page at all — that empties
+                  every category, not just speed, so the notice sits above the
+                  tabs. PSI still answers HTTP 200 in that case, so without it
+                  the run renders as an empty result with a "–" score. */}
+              {result.runtimeError && (
+                <Banner tone="critical" title={p.runtimeErrorTitle}>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{p.runtimeErrorBody}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {p.runtimeErrorDetail.replace("{message}", result.runtimeError)}
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              )}
+              {/* Caveats about the run itself — they apply to every tab. */}
+              {result.runWarnings && result.runWarnings.length > 0 && (
+                <Banner tone="warning" title={p.runWarningsTitle}>
+                  <BlockStack gap="100">
+                    {result.runWarnings.map((w, i) => (
+                      <Text key={i} as="p" variant="bodySm">{w}</Text>
+                    ))}
+                  </BlockStack>
+                </Banner>
+              )}
+
+              {/* §3.3 — every category score at a glance, doubling as tab
+                  navigation; the tabs below stay the detail level. */}
+              <ScoreStrip
+                categories={stripCategories}
+                selected={selectedTab}
+                onSelect={setSelectedTab}
+                scoreAriaLabel={p.strip.scoreAriaLabel}
+                noScoreAriaLabel={p.strip.noScore}
+              />
+
+              <Tabs tabs={tabDescriptors} selected={selectedTab} onSelect={setSelectedTab}>
+                {selectedTab === 0 && (
+                <BlockStack gap="500">
             {/* Real-user (CrUX) field data — leads the result the way PSI does,
                 full width, one threshold bar per metric. */}
             {result.fieldData && (
-              <Card padding="600">
+              <>
                 <BlockStack gap="500">
                   <InlineStack gap="300" blockAlign="center" wrap>
-                    <Text as="h3" variant="headingMd">{p.fieldDataTitle}</Text>
+                    <Text as="h4" variant="headingSm" tone="subdued">{p.fieldDataTitle}</Text>
                     {/* CrUX's aggregate verdict — the "passed / did not pass
                         the Core Web Vitals assessment" line PSI leads with. */}
                     {result.fieldData.overallCategory && (
@@ -1371,11 +2105,12 @@ export default function SeoPerformance() {
                     <Text as="p" variant="bodySm" tone="subdued">{p.fieldOriginFallback}</Text>
                   )}
                 </BlockStack>
-              </Card>
+                <Divider />
+              </>
             )}
 
-            {/* Lab result (this run) — gauge + the measured metrics. */}
-            <Card padding="600">
+            {/* Lab result (this run) — gauge + the measured metrics. Former
+                own Card, now a section of the tab (§3.4). */}
               <BlockStack gap="500">
                 {/* Two halves: score left, captured page right, each centred in
                     its own half with a hairline between them. */}
@@ -1477,32 +2212,9 @@ export default function SeoPerformance() {
                   })}
                 </div>
               </BlockStack>
-            </Card>
 
-            {/* Lighthouse could not analyse the page at all — PSI still answers
-                HTTP 200, so without this the run would render as an empty
-                result with a "–" score and no explanation. */}
-            {result.runtimeError && (
-              <Banner tone="critical" title={p.runtimeErrorTitle}>
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">{p.runtimeErrorBody}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {p.runtimeErrorDetail.replace("{message}", result.runtimeError)}
-                  </Text>
-                </BlockStack>
-              </Banner>
-            )}
-
-            {result.runWarnings && result.runWarnings.length > 0 && (
-              <Banner tone="warning" title={p.runWarningsTitle}>
-                <BlockStack gap="100">
-                  {result.runWarnings.map((w, i) => (
-                    <Text key={i} as="p" variant="bodySm">{w}</Text>
-                  ))}
-                </BlockStack>
-              </Banner>
-            )}
-
+            {/* No element screenshot — concerns only the element crops in this
+                tab, so the banner stays inside it (§3.2). */}
             {!annotatable && (
               <Banner
                 tone="info"
@@ -1534,11 +2246,13 @@ export default function SeoPerformance() {
               </Banner>
             )}
 
+            <Divider />
+
             {/* Findings — full width, one accordion row per Lighthouse
-                opportunity/diagnostic, with its own details table. */}
-            <Card>
+                opportunity/diagnostic, with its own details table. Former own
+                Card, now the last section of the speed tab (§3.4). */}
               <BlockStack gap="300">
-                <Text as="h3" variant="headingMd">{p.findingsTitle}</Text>
+                <Text as="h4" variant="headingSm" tone="subdued">{p.findingsTitle}</Text>
 
                 {result.opportunities.length === 0 &&
                 result.annotations.length === 0 &&
@@ -1712,8 +2426,66 @@ export default function SeoPerformance() {
                   </div>
                 )}
               </BlockStack>
-            </Card>
-          </BlockStack>
+                </BlockStack>
+                )}
+
+                {/* §3.5 — accessibility tab. No big gauge of its own: the
+                    score is already in the strip, and unlike performance there
+                    is no metric weighting a hover split could explain. */}
+                {selectedTab === 1 && (
+                  <BlockStack gap="400">
+                    {!quality ? (
+                      // Run stored before the quality categories existed (§3.8).
+                      <Text as="p" variant="bodyMd" tone="subdued">{p.qualityUnavailable}</Text>
+                    ) : (
+                      <>
+                        {/* §1.3 — honesty note, deliberately not dismissible:
+                            automated testing finds only part of the real
+                            barriers, so a green score is no legal certainty. */}
+                        <Banner tone="info">
+                          <Text as="p" variant="bodyMd">{p.a11y.disclaimer}</Text>
+                        </Banner>
+                        <QualityFindings
+                          issues={a11yAutomated}
+                          manualIssues={a11yManual}
+                          total={quality.accessibilityTotal}
+                          keyPrefix="a11y"
+                          openFindings={openFindings}
+                          onToggle={toggleFinding}
+                          labels={{ ...qualityFindingLabels, noIssues: p.a11y.noIssues }}
+                          altBridge={altTextBridge}
+                        />
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+
+                {/* §3.6 — best practices: extra information that feeds no
+                    aggregate score and partly lies outside the merchant's
+                    influence; the intro line says exactly that. */}
+                {selectedTab === 2 && (
+                  <BlockStack gap="400">
+                    {!quality ? (
+                      <Text as="p" variant="bodyMd" tone="subdued">{p.qualityUnavailable}</Text>
+                    ) : (
+                      <>
+                        <Text as="p" variant="bodyMd" tone="subdued">{p.bestPractices.intro}</Text>
+                        <QualityFindings
+                          issues={bpAutomated}
+                          manualIssues={bpManual}
+                          total={quality.bestPracticesTotal}
+                          keyPrefix="bp"
+                          openFindings={openFindings}
+                          onToggle={toggleFinding}
+                          labels={{ ...qualityFindingLabels, noIssues: p.bestPractices.noIssues }}
+                        />
+                      </>
+                    )}
+                  </BlockStack>
+                )}
+              </Tabs>
+            </BlockStack>
+          </Card>
         )}
 
         {/* Real-user Web Vitals (RUM) */}
@@ -1843,6 +2615,7 @@ export default function SeoPerformance() {
                     { title: p.historyColUrl },
                     { title: p.historyColStrategy },
                     { title: p.historyColScore },
+                    { title: p.historyColA11y },
                     { title: p.historyColDate },
                   ]}
                 >
@@ -1873,6 +2646,15 @@ export default function SeoPerformance() {
                             // bands (70/40) would color the very same run differently
                             // on one page.
                             <Badge tone={lighthouseTone(entry.performanceScore)}>{String(entry.performanceScore)}</Badge>
+                          ) : (
+                            <Text as="span" tone="subdued">–</Text>
+                          )}
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          {/* Null on rows stored before the quality categories
+                              existed — shown as "–", never glossed to 0. */}
+                          {entry.a11yScore != null ? (
+                            <Badge tone={lighthouseTone(entry.a11yScore)}>{String(entry.a11yScore)}</Badge>
                           ) : (
                             <Text as="span" tone="subdued">–</Text>
                           )}

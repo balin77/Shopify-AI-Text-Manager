@@ -1,6 +1,6 @@
 # Barrierefreiheit & Website-Qualität — Plan
 
-**Status:** Entwurf, nicht begonnen (2026-07-22, überarbeitet 2026-07-22).
+**Status:** Umgesetzt (2026-07-22) — Phasen 1–6 implementiert. Offen bleiben die Punkte, die eine echte PSI-Antwort bzw. einen echten Shop brauchen: der §11.3-Spike (Alt-Text-Trefferquote an echten Daten; §7 ist defensiv gebaut und zeigt „nicht zuordenbar" statt eines toten Buttons), die §5.1-Laufzeitmessung gegen `PSI_TIMEOUT_MS` und der §3.3-Blick, ob `agentic-browsing` ungefragt in `categories` auftaucht.
 **Baut auf:** der bestehenden Ladezeit-Section ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts)) und dem Alt-Text-Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)).
 **Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan führt **keine** neue Section ein, sondern erweitert eine bestehende. Die Contract-Punkte zu Descriptor, `analyze()` und Dashboard-Findings entfallen damit (§11.1).
 
