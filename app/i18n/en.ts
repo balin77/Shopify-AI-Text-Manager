@@ -1968,6 +1968,11 @@ export const en: Translation = {
       handle: "Handle",
       seoTitle: "SEO title",
       seoDescription: "Meta description",
+      // Dynamic metafield columns show the Shopify name (namespace.key)
+      // untranslated — only the app's own columns carry i18n labels.
+      imgAlt: "Alt text (main image)",
+      optionName: "Option {position}: name",
+      optionValues: "Option {position}: values",
     },
     statusOptions: {
       active: "Active",
@@ -1981,6 +1986,23 @@ export const en: Translation = {
       done: "Done",
       reset: "Reset",
       limitHint: "At most {max} columns at once — hide another column first to select more.",
+      searchPlaceholder: "Search columns…",
+      noMatches: "No columns found.",
+      groups: {
+        base: "Basics",
+        seo: "SEO",
+        metafields: "Metafields",
+        images: "Images",
+        options: "Options",
+      },
+    },
+    readOnlyReasons: {
+      richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
+      linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
+      missingOption: "This product has no option at this position.",
+      legacyOptionValues: "The option values have no Shopify ids yet — resync this product first.",
+      missingImage: "This product has no image.",
+      missingMediaId: "This image is missing its Shopify media id — resync this product first.",
     },
     searchLabel: "Search",
     searchPlaceholder: "Search by title or handle…",

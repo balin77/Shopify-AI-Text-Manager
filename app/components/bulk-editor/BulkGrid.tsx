@@ -22,11 +22,13 @@
 
 import { Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
-import type {
-  BulkRow,
-  BulkRowType,
-  BulkSort,
-  ColumnDescriptor,
+import {
+  resolveCellValue,
+  type BulkRow,
+  type BulkRowType,
+  type BulkSort,
+  type CellReadOnlyReason,
+  type ColumnDescriptor,
 } from "../../services/bulk-editor/columns.shared";
 import { BulkCell, type BulkCellStatusOptions } from "./BulkCell";
 
@@ -43,9 +45,12 @@ interface BulkGridProps {
   valueFor: (row: BulkRow, column: ColumnDescriptor) => string;
   isDirty: (row: BulkRow, column: ColumnDescriptor) => boolean;
   setEdit: (row: BulkRow, column: ColumnDescriptor, value: string) => void;
-  /** rowId → failure message of the last save; marks the row's edited cells
-   * as invalid (aria-invalid + aria-describedby). */
-  failuresByRowId: ReadonlyMap<string, string>;
+  /** `${rowId}|${columnId}` → failure message of the last save — marks
+   * exactly that CELL invalid (Plan §4.4 cell-granular failures). */
+  failuresByCell: ReadonlyMap<string, string>;
+  /** rowId → failure message for row-level failures (single-mutation types,
+   * no columnId) — falls back to marking the row's edited cells. */
+  rowLevelFailures: ReadonlyMap<string, string>;
   sort: BulkSort | null;
   onSortToggle: (column: ColumnDescriptor) => void;
   openInEditorLabel: string;
@@ -53,7 +58,8 @@ interface BulkGridProps {
   columnHeading: (column: ColumnDescriptor) => string;
   statusOptions: BulkCellStatusOptions;
   handleWarning: string;
-  readOnlyTooltip: string;
+  /** Localized read-only explanations per reason (Plan §4.1–§4.3). */
+  readOnlyTooltips: Record<CellReadOnlyReason, string>;
   sortButtonLabel: string;
   /** Visually-hidden table label — the localized content-type name. */
   caption: string;
@@ -66,7 +72,8 @@ export function BulkGrid({
   valueFor,
   isDirty,
   setEdit,
-  failuresByRowId,
+  failuresByCell,
+  rowLevelFailures,
   sort,
   onSortToggle,
   openInEditorLabel,
@@ -74,7 +81,7 @@ export function BulkGrid({
   columnHeading,
   statusOptions,
   handleWarning,
-  readOnlyTooltip,
+  readOnlyTooltips,
   sortButtonLabel,
   caption,
 }: BulkGridProps) {
@@ -341,7 +348,7 @@ export function BulkGrid({
           })}
         </div>
         {rows.map((row, rowIndex) => {
-          const failure = failuresByRowId.get(row.id);
+          const rowFailure = rowLevelFailures.get(row.id);
           return (
             <div key={row.id} role="row" className="cp-bulk-row">
               <div role="cell" className={`cp-bulk-cell${stickyClass(0)}`}>
@@ -349,20 +356,33 @@ export function BulkGrid({
               </div>
               {displayColumns.map((col, i) => {
                 const dirty = isDirty(row, col);
+                // Cell-granular failures (Plan §4.4): a failure with a
+                // columnId marks exactly this cell; a row-level failure
+                // (single-mutation types) falls back to the row's EDITED
+                // cells (they are what the failed save tried to write).
+                const cellFailure = failuresByCell.get(`${row.id}|${col.id}`);
+                const error = cellFailure ?? (rowFailure && dirty ? rowFailure : undefined);
+                // Editability varies per ROW now (linked options, missing
+                // mediaId, rich-text metafields) — resolve it per cell.
+                const resolved = resolveCellValue(row, col);
                 return (
                   <div key={col.id} role="cell" className={`cp-bulk-cell${stickyClass(i + 1)}`}>
                     <BulkCell
-                      row={row}
                       column={col}
                       value={valueFor(row, col)}
+                      readOnly={!resolved.editable}
+                      readOnlyTooltip={
+                        resolved.readOnlyReason
+                          ? readOnlyTooltips[resolved.readOnlyReason]
+                          : readOnlyTooltips.column
+                      }
+                      showOpenInEditor={resolved.readOnlyReason === "richText"}
+                      openInEditorLabel={openInEditorLabel}
+                      onOpenInEditor={() => onOpenInEditor(row)}
                       isDirty={dirty}
-                      // Failures are per row in Phase 1 — mark the row's
-                      // EDITED cells invalid (they are what the failed save
-                      // tried to write), not every cell of the row.
-                      error={failure && dirty ? failure : undefined}
-                      errorId={failure && dirty ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
+                      error={error}
+                      errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
                       statusOptions={statusOptions}
-                      readOnlyTooltip={readOnlyTooltip}
                       onChange={(v) => setEdit(row, col, v)}
                     />
                   </div>

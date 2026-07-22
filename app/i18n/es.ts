@@ -1967,6 +1967,11 @@ export const es: Translation = {
       handle: "Handle",
       seoTitle: "Título SEO",
       seoDescription: "Meta descripción",
+      // Las columnas de metacampos dinámicos muestran el nombre de Shopify
+      // (namespace.key) sin traducir — solo las columnas propias llevan i18n.
+      imgAlt: "Texto alternativo (imagen principal)",
+      optionName: "Opción {position}: nombre",
+      optionValues: "Opción {position}: valores",
     },
     statusOptions: {
       active: "Activo",
@@ -1980,6 +1985,23 @@ export const es: Translation = {
       done: "Listo",
       reset: "Restablecer",
       limitHint: "Máximo {max} columnas a la vez — oculta otra columna primero para seleccionar más.",
+      searchPlaceholder: "Buscar columnas…",
+      noMatches: "No se encontraron columnas.",
+      groups: {
+        base: "Básicos",
+        seo: "SEO",
+        metafields: "Metacampos",
+        images: "Imágenes",
+        options: "Opciones",
+      },
+    },
+    readOnlyReasons: {
+      richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
+      linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
+      missingOption: "Este producto no tiene una opción en esta posición.",
+      legacyOptionValues: "Los valores de la opción aún no tienen IDs de Shopify — resincroniza este producto primero.",
+      missingImage: "Este producto no tiene imagen.",
+      missingMediaId: "A esta imagen le falta el ID de medios de Shopify — resincroniza este producto primero.",
     },
     searchLabel: "Buscar",
     searchPlaceholder: "Buscar por título o handle…",

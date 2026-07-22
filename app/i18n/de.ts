@@ -1965,6 +1965,11 @@ export const de = {
       handle: "Handle",
       seoTitle: "SEO-Titel",
       seoDescription: "Meta-Description",
+      // Dynamische Metafeld-Spalten zeigen den Shopify-Namen (namespace.key)
+      // unübersetzt — nur die App-eigenen Spalten haben i18n-Labels.
+      imgAlt: "Alt-Text (Hauptbild)",
+      optionName: "Option {position}: Name",
+      optionValues: "Option {position}: Werte",
     },
     statusOptions: {
       active: "Aktiv",
@@ -1978,6 +1983,23 @@ export const de = {
       done: "Fertig",
       reset: "Zurücksetzen",
       limitHint: "Maximal {max} Spalten gleichzeitig — blende erst eine andere Spalte aus, um weitere auszuwählen.",
+      searchPlaceholder: "Spalten durchsuchen…",
+      noMatches: "Keine Spalten gefunden.",
+      groups: {
+        base: "Basis",
+        seo: "SEO",
+        metafields: "Metafelder",
+        images: "Bilder",
+        options: "Optionen",
+      },
+    },
+    readOnlyReasons: {
+      richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
+      linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
+      missingOption: "Dieses Produkt hat an dieser Position keine Option.",
+      legacyOptionValues: "Die Optionswerte haben noch keine Shopify-IDs — Produkt zuerst neu synchronisieren.",
+      missingImage: "Dieses Produkt hat kein Bild.",
+      missingMediaId: "Für dieses Bild fehlt die Shopify-Media-ID — Produkt zuerst neu synchronisieren.",
     },
     searchLabel: "Suche",
     searchPlaceholder: "Nach Titel oder Handle suchen…",

@@ -10,8 +10,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Select, Text, Tooltip } from "@shopify/polaris";
-import type { BulkRow, ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
+import { Button, InlineStack, Select, Text, Tooltip } from "@shopify/polaris";
+import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
 
 export interface BulkCellStatusOptions {
   active: string;
@@ -20,39 +20,57 @@ export interface BulkCellStatusOptions {
 }
 
 interface BulkCellProps {
-  row: BulkRow;
   column: ColumnDescriptor;
   value: string;
   isDirty: boolean;
-  /** Per-row failure message from the last save — marks the cell invalid. */
+  /** Per-CELL editability (Plan §4.4): read-only can be column-wide
+   * (blogTitle, rich-text metafields) or row-specific (linked option,
+   * missing mediaId, missing option position). The grid resolves it via
+   * resolveCellValue and passes the verdict + localized tooltip. */
+  readOnly: boolean;
+  readOnlyTooltip: string;
+  /** rich_text_field cells render an "open in editor" jump (Plan §4.1). */
+  showOpenInEditor?: boolean;
+  openInEditorLabel?: string;
+  onOpenInEditor?: () => void;
+  /** Cell failure message from the last save — marks the cell invalid. */
   error?: string;
   /** Unique id for the visually-hidden error message (aria-describedby). */
   errorId?: string;
   statusOptions: BulkCellStatusOptions;
-  readOnlyTooltip: string;
   onChange: (value: string) => void;
 }
 
 export function BulkCell({
-  row,
   column,
   value,
   isDirty,
+  readOnly,
+  readOnlyTooltip,
+  showOpenInEditor,
+  openInEditorLabel,
+  onOpenInEditor,
   error,
   errorId,
   statusOptions,
-  readOnlyTooltip,
   onChange,
 }: BulkCellProps) {
-  // Read-only columns (blogTitle today; non-translatable columns in a foreign
-  // locale from Phase 4 on): grey text + tooltip explaining why.
-  if (!column.editable) {
-    const display = column.id === "blogTitle" ? row.blogTitle ?? "" : value;
+  // Read-only cells (blogTitle, rich-text metafields, linked options, …):
+  // grey text + tooltip explaining why; rich-text cells additionally offer
+  // the "open in editor" jump.
+  if (readOnly) {
     return (
       <Tooltip content={readOnlyTooltip}>
-        <Text as="span" variant="bodySm" tone="subdued">
-          {display}
-        </Text>
+        <InlineStack gap="100" blockAlign="center" wrap={false}>
+          <Text as="span" variant="bodySm" tone="subdued" truncate>
+            {value}
+          </Text>
+          {showOpenInEditor && onOpenInEditor && (
+            <Button variant="plain" size="micro" onClick={onOpenInEditor}>
+              {openInEditorLabel ?? ""}
+            </Button>
+          )}
+        </InlineStack>
       </Tooltip>
     );
   }

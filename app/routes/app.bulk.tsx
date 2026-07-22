@@ -39,11 +39,11 @@ import {
   parseEditKey,
   parseSortParam,
   serializeSortParam,
-  primaryValueForColumn,
+  resolveCellValue,
+  buildColumnsForType,
   isValidBulkDiffEntry,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
-  BULK_COLUMNS_BY_TYPE,
   BULK_FILTER_IDS,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
@@ -56,11 +56,19 @@ import {
   type BulkDiffEntry,
   type BulkFailure,
   type ColumnDescriptor,
+  type MetafieldColumnSpec,
+  type ProductColumnCaps,
 } from "../services/bulk-editor/columns.shared";
+import { debugLog } from "../utils/debug";
 // Server-only I/O — referenced exclusively from loader/action, which Remix
 // strips from the client build.
 import { loadBulkRows } from "../services/bulk-editor/load.server";
 import { applyBulkDiff } from "../services/bulk-editor/apply.server";
+import {
+  buildServerColumnsByType,
+  loadProductMetafieldColumnSpecs,
+  productColumnCapsForPlan,
+} from "../services/bulk-editor/columns.server";
 import { BulkGrid } from "../components/bulk-editor/BulkGrid";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
@@ -96,7 +104,14 @@ interface LoaderData {
   locale: string;
   marketId: string;
   translationFilterApproximate: boolean;
+  /** Shop-specific metafield columns (Plan §4.1) — plain specs; the client
+   * builds the descriptors via buildColumnsForType. */
+  metafieldColumns: MetafieldColumnSpec[];
+  /** Plan-gated dynamic product column capabilities (Plan §10.7). */
+  productCaps: ProductColumnCaps;
 }
+
+const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -119,6 +134,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       locale: "",
       marketId: "",
       translationFilterApproximate: false,
+      metafieldColumns: [],
+      productCaps: NO_PRODUCT_CAPS,
     });
   }
 
@@ -142,6 +159,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const marketId = url.searchParams.get("market") || "";
   const sort = parseSortParam(type, url.searchParams.get("sort"));
 
+  // Dynamic product columns (Phase 2): the metafield column source is the
+  // enabled-definitions ∩ translatable-types set — the same filter the
+  // product editor uses (Plan §4.1) — gated on the plan's cache caps (§10.7).
+  const productCaps = productColumnCapsForPlan(plan);
+  const metafieldColumns =
+    type === "product" && productCaps.metafields
+      ? await loadProductMetafieldColumnSpecs(db, shop)
+      : [];
+
   const { rows, total, translationFilterApproximate } = await loadBulkRows(db, shop, {
     type,
     locale,
@@ -151,6 +177,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     sort,
     skip: (page - 1) * pageSize,
     take: pageSize,
+    productCells: { metafieldSpecs: metafieldColumns, caps: productCaps },
   });
 
   return json<LoaderData>({
@@ -167,6 +194,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     locale,
     marketId,
     translationFilterApproximate,
+    metafieldColumns,
+    productCaps,
   });
 };
 
@@ -195,9 +224,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
   // Never trust the client diff blindly, even on the synchronous path — same
   // GID + column allowlist + plan-type checks as the task path
-  // (seo-bulk-meta.handler.ts).
+  // (seo-bulk-meta.handler.ts). The column universe is built SERVER-side, so
+  // mf.-columns are checked against the shop's enabled definitions, not
+  // against client claims (Plan §4.1).
   const allowedTypes = allowedTypesForPlan(plan);
-  if (!diff.every((e) => isValidBulkDiffEntry(e, allowedTypes))) {
+  const columnsByType = await buildServerColumnsByType(db, shop, plan);
+  if (!diff.every((e) => isValidBulkDiffEntry(e, allowedTypes, columnsByType))) {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
   }
   // Defensive only — the client routes >MAX_SYNC_SAVE dirty cells to /api/ai
@@ -206,7 +238,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: false, error: "tooLarge" }, { status: 400 });
   }
 
-  const result = await applyBulkDiff({ db, shop, admin }, diff);
+  const result = await applyBulkDiff({ db, shop, admin, columnsByType }, diff);
   return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
 };
 
@@ -263,12 +295,12 @@ function readColumnStore(key: string): Partial<Record<BulkRowType, string[]>> | 
  * Restore the merchant's saved column selection for a type (new key first,
  * then the pre-rework key with name migration), or fall back to the default
  * set. Stale columns (from an older release that offered a field we've since
- * removed) are filtered out silently; the visible set is capped at
- * MAX_VISIBLE_COLUMNS.
+ * removed — or a metafield definition disabled in the meantime) are filtered
+ * out silently; the visible set is capped at MAX_VISIBLE_COLUMNS.
  */
-function loadColumnPrefs(type: BulkRowType): string[] {
+function loadColumnPrefs(type: BulkRowType, allColumns: ColumnDescriptor[]): string[] {
   if (typeof window === "undefined") return DEFAULT_COLUMNS[type];
-  const allowed = new Set(BULK_COLUMNS_BY_TYPE[type].map((c) => c.id));
+  const allowed = new Set(allColumns.map((c) => c.id));
   const sanitize = (cols: string[]): string[] | null => {
     const filtered = cols.filter((c) => allowed.has(c)).slice(0, MAX_VISIBLE_COLUMNS);
     return filtered.length > 0 ? filtered : null;
@@ -318,14 +350,30 @@ export default function BulkEditor() {
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
 
+  // Full column universe for the current type: static per-type columns plus
+  // (for products) the shop's enabled metafield columns, the option column
+  // pairs and the main-image alt-text column (Phase 2). The specs come from
+  // the loader; the descriptors are built client-side with the same pure
+  // builder the server uses for validation.
+  const allColumns = useMemo(
+    () => buildColumnsForType(type, data.metafieldColumns, data.productCaps),
+    [type, data.metafieldColumns, data.productCaps],
+  );
+
   // Column visibility — merchant-picked, persisted per type. Rehydrated
   // whenever `type` changes so switching Products↔Pages restores each
   // type's saved layout (not a shared one that would leak fields).
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() => loadColumnPrefs(type));
+  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() =>
+    loadColumnPrefs(type, allColumns),
+  );
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
-    setVisibleColumnIds(loadColumnPrefs(type));
+    setVisibleColumnIds(loadColumnPrefs(type, allColumns));
+    // Re-run on type switches only — allColumns identity churns on every
+    // revalidation but its CONTENT for a given type is stable, and the
+    // rendered set is re-sanitized against it in activeColumns anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
   // A navigation to a different page/type/filter set starts from a clean
@@ -341,7 +389,6 @@ export default function BulkEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, page, pageSize, search, data.sort, filters.join(",")]);
 
-  const allColumns = BULK_COLUMNS_BY_TYPE[type];
   const dirty = useMemo(() => computeDiff(rows as BulkRow[], allColumns, edits), [rows, allColumns, edits]);
   const dirtyRowIds = useMemo(() => new Set(dirty.map((d) => d.rowId)), [dirty]);
 
@@ -350,14 +397,23 @@ export default function BulkEditor() {
   useEffect(() => {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
     if (saveFetcher.data.ok) {
-      // Keep only the edits of rows that failed — their typed values stay in
-      // the form for retry (Plan §0.2 no. 5); everything saved is dropped.
-      const failedIds = new Set(saveFetcher.data.failures.map((f) => f.rowId));
+      // Keep only the edits of CELLS that failed — their typed values stay in
+      // the form for retry (Plan §0.2 no. 5, refined to cell granularity in
+      // §4.4); everything saved is dropped. Row-level failures (no columnId —
+      // single-mutation types) keep the whole row's edits.
+      const failures = saveFetcher.data.failures;
+      const failedCells = new Set(
+        failures.filter((f) => f.columnId).map((f) => `${f.rowId}|${f.columnId}`),
+      );
+      const failedRows = new Set(failures.filter((f) => !f.columnId).map((f) => f.rowId));
       setEdits((prev) => {
         const next: Record<string, string> = {};
         for (const [key, value] of Object.entries(prev)) {
           const parsed = parseEditKey(key);
-          if (parsed && failedIds.has(parsed.rowId)) next[key] = value;
+          if (!parsed) continue;
+          if (failedRows.has(parsed.rowId) || failedCells.has(`${parsed.rowId}|${parsed.columnId}`)) {
+            next[key] = value;
+          }
         }
         return next;
       });
@@ -395,7 +451,7 @@ export default function BulkEditor() {
   const valueFor = (row: BulkRow, column: ColumnDescriptor): string => {
     const editKey = editKeyFor(row, column);
     if (editKey in edits) return edits[editKey];
-    return primaryValueForColumn(row, column);
+    return resolveCellValue(row, column).value;
   };
   const isDirtyCell = (row: BulkRow, column: ColumnDescriptor): boolean =>
     editKeyFor(row, column) in edits;
@@ -429,6 +485,12 @@ export default function BulkEditor() {
 
   const handleSave = () => {
     if (dirty.length === 0 || saving) return;
+    // §10.5: summary only — never cell values.
+    debugLog.bulkDiff("saving", {
+      cells: dirty.length,
+      rows: new Set(dirty.map((d) => d.rowId)).size,
+      path: dirty.length > MAX_SYNC_SAVE ? "task" : "sync",
+    });
     if (dirty.length > MAX_SYNC_SAVE) {
       // `contentType` is currently ignored by seo-bulk-meta.handler.ts (it
       // drives off each diff entry's own `rowType`), but sending the actual
@@ -473,6 +535,20 @@ export default function BulkEditor() {
     saveColumnPrefs(type, def);
   };
 
+  /** Column heading resolution: static columns via t.bulkEditor.columns.*,
+   * metafield columns verbatim (shop-defined "namespace.key" — never
+   * translated, §10.4), option columns via the {position} templates, img.alt
+   * via its own key. */
+  const columnHeading = (col: ColumnDescriptor): string => {
+    if (col.kind === "metafield") return col.label;
+    if (col.kind === "option") {
+      const template = col.optionField === "name" ? b.columns.optionName : b.columns.optionValues;
+      return template.replace("{position}", String(col.optionPosition ?? 0));
+    }
+    if (col.id === "img.alt") return b.columns.imgAlt;
+    return (b.columns as unknown as Record<string, string>)[col.label] ?? col.label;
+  };
+
   const typeOptions = allowedTypes.map((rt) => ({ label: b.types[rt], value: rt }));
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -494,20 +570,45 @@ export default function BulkEditor() {
     [visibleColumnIds, allColumns],
   );
 
-  const failuresByRowId = useMemo(
-    () => new Map(lastFailures.map((f) => [f.rowId, f.message] as const)),
+  // Cell-granular failures (Plan §4.4): failures with a columnId mark exactly
+  // that cell; row-level failures (single-mutation types) fall back to the
+  // row's dirty cells.
+  const { failuresByCell, rowLevelFailures } = useMemo(() => {
+    const byCell = new Map<string, string>();
+    const rowLevel = new Map<string, string>();
+    for (const f of lastFailures) {
+      if (f.columnId) byCell.set(`${f.rowId}|${f.columnId}`, f.message);
+      else rowLevel.set(f.rowId, f.message);
+    }
+    return { failuresByCell: byCell, rowLevelFailures: rowLevel };
+  }, [lastFailures]);
+
+  const failedRowCount = useMemo(
+    () => new Set(lastFailures.map((f) => f.rowId)).size,
     [lastFailures],
   );
+
+  // Banner list: several failed cells of one row often share one root cause —
+  // dedupe by (row, message) so the banner stays readable.
+  const bannerFailures = useMemo(() => {
+    const seen = new Set<string>();
+    return lastFailures.filter((f) => {
+      const key = `${f.rowId}|${f.message}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [lastFailures]);
 
   const visibleRows = onlyChanged ? (rows as BulkRow[]).filter((r) => dirtyRowIds.has(r.id)) : (rows as BulkRow[]);
 
   // aria-live status for screen readers: announce save results (§2 ARIA).
   const liveMessage =
     lastSavedCount !== null
-      ? lastFailures.length > 0
+      ? failedRowCount > 0
         ? b.saveSuccessWithFailures
             .replace("{saved}", String(lastSavedCount))
-            .replace("{failed}", String(lastFailures.length))
+            .replace("{failed}", String(failedRowCount))
         : b.saveSuccess.replace("{count}", String(lastSavedCount))
       : "";
 
@@ -552,19 +653,19 @@ export default function BulkEditor() {
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
                 {lastSavedCount !== null && (
-                  <Banner tone={lastFailures.length > 0 ? "warning" : "success"}>
-                    {lastFailures.length > 0
+                  <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
+                    {failedRowCount > 0
                       ? b.saveSuccessWithFailures
                           .replace("{saved}", String(lastSavedCount))
-                          .replace("{failed}", String(lastFailures.length))
+                          .replace("{failed}", String(failedRowCount))
                       : b.saveSuccess.replace("{count}", String(lastSavedCount))}
                   </Banner>
                 )}
-                {lastFailures.length > 0 && (
+                {bannerFailures.length > 0 && (
                   <Banner tone="critical" title={b.saveFailuresTitle}>
                     <BlockStack gap="100">
-                      {lastFailures.map((f) => (
-                        <Text as="p" variant="bodySm" key={`${f.rowType}:${f.rowId}`}>
+                      {bannerFailures.map((f) => (
+                        <Text as="p" variant="bodySm" key={`${f.rowType}:${f.rowId}:${f.columnId ?? ""}`}>
                           {f.rowId}: {f.message}
                         </Text>
                       ))}
@@ -614,7 +715,8 @@ export default function BulkEditor() {
                       valueFor={valueFor}
                       isDirty={isDirtyCell}
                       setEdit={setEdit}
-                      failuresByRowId={failuresByRowId}
+                      failuresByCell={failuresByCell}
+                      rowLevelFailures={rowLevelFailures}
                       sort={sort}
                       onSortToggle={handleSortToggle}
                       openInEditorLabel={b.openInEditor}
@@ -623,10 +725,18 @@ export default function BulkEditor() {
                           searchParams: new URLSearchParams({ select: row.id }),
                         })
                       }
-                      columnHeading={(col) => (b.columns as Record<string, string>)[col.label] ?? col.label}
+                      columnHeading={columnHeading}
                       statusOptions={b.statusOptions}
                       handleWarning={b.handleWarning}
-                      readOnlyTooltip={b.readOnlyTooltip}
+                      readOnlyTooltips={{
+                        column: b.readOnlyTooltip,
+                        richText: b.readOnlyReasons.richText,
+                        linkedOption: b.readOnlyReasons.linkedOption,
+                        missingOption: b.readOnlyReasons.missingOption,
+                        legacyOptionValues: b.readOnlyReasons.legacyOptionValues,
+                        missingImage: b.readOnlyReasons.missingImage,
+                        missingMediaId: b.readOnlyReasons.missingMediaId,
+                      }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}
                     />
@@ -673,13 +783,16 @@ export default function BulkEditor() {
               visibleColumnIds={visibleColumnIds}
               onToggle={toggleColumn}
               onReset={resetColumns}
-              columnLabel={(col) => (b.columns as Record<string, string>)[col.label] ?? col.label}
+              columnLabel={columnHeading}
               strings={{
                 title: b.columnPicker.title,
                 intro: b.columnPicker.intro,
                 done: b.columnPicker.done,
                 reset: b.columnPicker.reset,
                 limitHint: b.columnPicker.limitHint,
+                searchPlaceholder: b.columnPicker.searchPlaceholder,
+                noMatches: b.columnPicker.noMatches,
+                groups: b.columnPicker.groups,
               }}
             />
           </BlockStack>
