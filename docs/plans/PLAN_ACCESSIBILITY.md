@@ -1,52 +1,80 @@
 # Barrierefreiheit & Website-Qualität — Plan
 
-**Status:** Entwurf, nicht begonnen (2026-07-22).
-**Baut auf:** der bestehenden PSI-Anbindung ([pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts)) und dem Alt-Text-Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)).
-**Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan führt **eine** neue Section ein und erfüllt die Punkte 1–8.
+**Status:** Entwurf, nicht begonnen (2026-07-22, überarbeitet 2026-07-22).
+**Baut auf:** der bestehenden Ladezeit-Section ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts)) und dem Alt-Text-Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)).
+**Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan führt **keine** neue Section ein, sondern erweitert eine bestehende. Die Contract-Punkte zu Descriptor, `analyze()` und Dashboard-Findings entfallen damit (§11.1).
+
+> **Kursänderung gegenüber der ersten Fassung (2026-07-22).** Die erste Fassung sah eine eigene Section `quality` unter `/app/seo/quality` mit eigenem Prisma-Modell, eigenem Hintergrund-Task und eigenem Voll-Scan über mehrere Templates vor. Verworfen: Barrierefreiheit und Best Practices kommen aus **demselben PSI-Aufruf** wie die Ladezeit, also aus demselben Testlauf, demselben Cache-Eintrag und derselben History-Zeile. Zwei Seiten, die dieselbe Antwort zweimal holen, sind teurer und für den Merchant verwirrender als eine Seite mit Tabs. Was dadurch ersatzlos entfällt, steht in §9 — damit es niemand versehentlich doch baut.
 
 ---
 
 ## 0. Ist-Zustand
 
-**PSI-Anbindung** ([pagespeed.service.ts:122](../../app/services/seo/pagespeed.service.ts#L122)):
+**PSI-Anbindung** ([pagespeed.service.ts:184](../../app/services/seo/pagespeed.service.ts#L184)):
 
 ```ts
 apiUrl.searchParams.append("category", "performance");
 ```
 
-Genau eine Kategorie. Der Rest der Datei (Fetch mit 60s-Timeout, 429-Behandlung über `PageSpeedQuotaExceededError`, 30-Minuten-Cache, History-Prune auf 10 Zeilen pro `(shop, url, strategy)`) ist **kategorie-agnostisch** und direkt wiederverwendbar. Nur `parsePageSpeedResponse` ist performance-spezifisch.
+Genau eine Kategorie. Der Rest der Datei (Fetch mit 60s-Timeout, 429-Behandlung über `PageSpeedQuotaExceededError`, Tageslimit über `PageSpeedDailyLimitError`, 30-Minuten-Cache, History-Prune auf 10 Zeilen pro `(shop, url, strategy)`) ist **kategorie-agnostisch** und wird unverändert mitbenutzt. Nur `parsePageSpeedResponse` ist performance-spezifisch.
+
+Der `locale`-Parameter wird bereits mitgeschickt ([pagespeed.service.ts:185](../../app/services/seo/pagespeed.service.ts#L185), gespeist aus `AISettings.appLanguage`). Lighthouse-Audit-Titel und -Beschreibungen kommen also **schon heute** in der Sprache des Merchants zurück — das gilt für die neuen Kategorien genauso, ohne Zusatzarbeit (§8).
+
+**Speicher:** eine Tabelle, `SeoPageSpeedAudit` ([schema.prisma:1208](../../prisma/schema.prisma#L1208)) — `score` denormalisiert für die History-Liste, alles Übrige im `result`-JSON. Bereits in `redactShopData` abgedeckt ([gdpr.service.ts:479](../../app/services/gdpr.service.ts#L479)).
 
 **Alt-Texte:** `ProductImage` hält `url`, `altText` und `mediaId` ([schema.prisma:399-409](../../prisma/schema.prisma#L399-L409)). Damit ist eine Rückabbildung von einer CDN-URL im Lighthouse-Befund auf eine editierbare Zeile möglich — die Grundlage für §7.
 
-**Dashboard:** [app.seo._index.tsx:109](../../app/routes/app.seo._index.tsx#L109) wird ausschließlich von `analyzeStore` gespeist; keine Section trägt Findings bei, und den in Contract §2 beschriebenen Typ `SeoFinding` gibt es im Code nicht. Ausgeführt in §11.1 — der Contract ist an dieser Stelle veraltet.
+**Heutiger Seitenaufbau** ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx)), von oben nach unten:
+
+| # | Element | Zeile |
+|---|---|---|
+| 1 | Banner „Was misst dieser Test?" | [1141](../../app/routes/app.seo.performance.tsx#L1141) |
+| 2 | Card **„Seite testen"** (Picker, Gerät, Buttons, Budget-Stand) | [1149](../../app/routes/app.seo.performance.tsx#L1149) |
+| 3 | Fehler-Banner | [1209](../../app/routes/app.seo.performance.tsx#L1209) |
+| 4 | Banner „Historischer Test vom {date}" | [1213](../../app/routes/app.seo.performance.tsx#L1213) |
+| 5 | Banner „Zwischengespeichertes Ergebnis" (stale) | [1232](../../app/routes/app.seo.performance.tsx#L1232) |
+| 6 | Card „Echte Nutzerdaten (Google CrUX)" | [1241](../../app/routes/app.seo.performance.tsx#L1241) |
+| 7 | Card Laborergebnis (Gauge, Screenshot, Core Web Vitals) | [1278](../../app/routes/app.seo.performance.tsx#L1278) |
+| 8 | Banner Runtime-Error / Run-Warnings / kein Element-Screenshot | [1385](../../app/routes/app.seo.performance.tsx#L1385) |
+| 9 | Card „Befunde" | [1439](../../app/routes/app.seo.performance.tsx#L1439) |
+| 10 | Card **„Echte Besucherdaten"** (RUM aus dem eigenen App-Embed) | [1573](../../app/routes/app.seo.performance.tsx#L1573) |
+| 11 | Card „Bisherige Tests" (History) | [1684](../../app/routes/app.seo.performance.tsx#L1684) |
+
+**#4 bis #9 sind der Bereich, der in §3 in eine einzige Tab-Card wandert.** #1–#3, #10 und #11 bleiben, wo sie sind — sie gelten für alle Tabs.
 
 ---
 
 ## 1. Zielbild und die drei Grundsatz-Entscheidungen
 
-### 1.1 Neue SEO-Section, kein neuer Top-Level-Tab
+### 1.1 Keine neue Section — die Ladezeit-Section wächst und wird umbenannt
 
-**Entscheidung: Section `quality` unter dem SEO-Tab.**
+**Entscheidung: kein Descriptor-Eintrag, keine neue Route.** Der Inhalt kommt in [app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), aufgeteilt auf Tabs innerhalb einer Ergebnis-Card (§3).
 
-Ein neuer Top-Level-Tab müsste eigene Navigation, eigenes Layout, eigenes Gating und eigene Test-Muster mitbringen. Eine SEO-Section kostet dagegen **einen Array-Eintrag** in [seo-sections.ts](../../app/config/seo-sections.ts) und erbt Sub-Nav, `SeoSectionLayout`, Plan-Gate und `HelpTooltip` (Contract §1/§4).
+Begründung: Ein PSI-Aufruf liefert alle drei Kategorien in **einer** Antwort (§6). Eine zweite Section müsste denselben Testlauf ein zweites Mal anstoßen, ein zweites Mal cachen, ein zweites Mal historisieren — und der Merchant müsste dieselbe Seite zweimal testen, um beide Bilder zu sehen. Mit Tabs ist ein Test = ein Ergebnis = drei Blickwinkel darauf.
 
-Der Einwand „Barrierefreiheit ist kein SEO" stimmt konzeptionell — aber der SEO-Tab beherbergt bereits Redirects, IndexNow und AEO. Er ist faktisch der „Technische Website-Qualität"-Tab. Wenn die Section später eigenständig trägt, lässt sie sich mit dem Descriptor-Muster in einem Schritt nach oben ziehen.
+**Was stabil bleibt:** `id: "performance"`, `path: "/app/seo/performance"`, `icon: "🚀"`, `labelKey: "performance"` in [seo-sections.ts:60-66](../../app/config/seo-sections.ts#L60-L66). Die Id steuert `getActiveSeoSection`, `SeoSectionLayout sectionId="performance"` und Deep Links — sie umzubenennen bringt nichts und bricht Lesezeichen und Tests.
 
-**Label: „Qualität & Barrierefreiheit"** — bewusst breiter als „Accessibility", damit Best Practices unter dasselbe Dach passt, ohne dass es wie ein Fremdkörper wirkt.
+**Was sich ändert: nur der angezeigte String** `t.seo.sections.performance` in de/en/es.
+
+**Vorschlag: „Ladezeit & Qualität"** (en: „Speed & quality", es: „Velocidad y calidad"). Das bekannte Wort bleibt vorn, damit die Sub-Nav für bestehende Merchants nicht über Nacht fremd wirkt, und „Qualität" ist weit genug für Barrierefreiheit **und** Best Practices. Alternative, falls kürzer gewünscht: „Seitenqualität" — dann verliert der Merchant aber den Begriff, unter dem er die Seite kennt.
+
+Auch der Einleitungs-Banner (#1, `helpTitle`/`helpBody1`/`helpBody2`) muss mitwachsen: er beschreibt heute ausschließlich den Ladezeit-Test.
 
 ### 1.2 Best Practices ja — aber ohne Score-Beitrag
 
 Best Practices kommt **im selben PSI-Response** mit, kostet also weder einen zusätzlichen Request noch Kontingent. Es als Goodie mitzunehmen ist richtig.
 
-Was **nicht** passieren darf: dass es in den Score einfließt. Die Kategorie prüft überwiegend Dinge, die weder Merchant noch ContentPilot beeinflussen können (HTTPS und HSTS liegen bei Shopify, Konsolenfehler und CSP beim Theme bzw. bei Fremd-Apps). Ein Score, der wegen einer Fremd-App sinkt und den man nicht heben kann, ist ein Support-Ticket-Generator.
+Was **nicht** passieren darf: dass es in eine Gesamtbewertung einfließt. Die Kategorie prüft überwiegend Dinge, die weder Merchant noch ContentPilot beeinflussen können (HTTPS und HSTS liegen bei Shopify, Konsolenfehler und CSP beim Theme bzw. bei Fremd-Apps). Ein Score, der wegen einer Fremd-App sinkt und den man nicht heben kann, ist ein Support-Ticket-Generator.
 
-**Umsetzung:** eigene, standardmäßig eingeklappte Karte, als „Zusatzinformationen" beschriftet, `points: undefined` bei allen Findings.
+**Umsetzung:** eigener Tab, als „Zusatzinformationen" eingeleitet, keine Aufnahme in die History-Spalten, keine Score-Badge in der Tab-Beschriftung. Im Score-Strip (§3.3) steht die Zahl gleichberechtigt neben den anderen — „kein Score-Beitrag" heißt „geht in keine Aggregation ein", nicht „wird versteckt".
 
 ### 1.3 Barrierefreiheit muss ehrlich beschriftet sein
 
 Lighthouse' Accessibility-Score basiert auf axe-core und erkennt nur einen Teil der realen Probleme — Google selbst nennt automatisiertes Testing ausdrücklich unvollständig. Ein 100er-Score bedeutet **nicht** „barrierefrei".
 
-Das gehört als fester Hinweistext über die Karte, nicht in einen Tooltip. Ein Shopify-Merchant, der wegen des European Accessibility Act (seit Juni 2025 verbindlich für E-Commerce in der EU) hier landet, darf aus einer grünen Zahl keine Rechtssicherheit ableiten. Das ist kein Nice-to-have im Text, sondern Haftungsvermeidung.
+Das gehört als fester Hinweistext in den Barrierefreiheits-Tab, nicht in einen Tooltip. Ein Shopify-Merchant, der wegen des European Accessibility Act (seit Juni 2025 verbindlich für E-Commerce in der EU) hier landet, darf aus einer grünen Zahl keine Rechtssicherheit ableiten. Das ist kein Nice-to-have im Text, sondern Haftungsvermeidung.
+
+Der Hinweis steht **im Tab**, nicht über der ganzen Seite — sonst liest ihn jeder, der nur die Ladezeit prüfen wollte, als Warnung zu seinem Ladezeit-Ergebnis.
 
 ---
 
@@ -64,126 +92,237 @@ Dazu kämen bei der GitHub-Variante noch: ein zweiter OAuth-Provider, dessen Tok
 
 ---
 
-## 3. Datenmodell
+## 3. Der Seitenaufbau — das Kernstück dieser Fassung
 
-Ein neues shop-scoped Modell:
+### 3.1 Zielzustand
 
-```prisma
-model SeoQualityAudit {
-  id        String   @id @default(cuid())
-  shop      String
-  url       String
-  strategy  String   // "mobile" | "desktop"
+```
+┌ Banner „Was misst dieser Test?" ────────────────────────┐   bleibt (Text erweitern, §1.1)
+└─────────────────────────────────────────────────────────┘
+┌ Card „Seite testen" ────────────────────────────────────┐   bleibt unverändert
+│  Seite · eigener Pfad · Gerät · [Jetzt testen] [Erneut] │   EIN Scan speist ALLE Tabs
+│  „3 von 20 Tests heute verbraucht."                     │
+└─────────────────────────────────────────────────────────┘
+  Fehler-Banner (nur bei Fehler)                              bleibt
 
-  a11yScore          Int?    // 0-100, null wenn Lighthouse nicht scoren konnte
-  bestPracticesScore Int?
-  result             Json    // QualityAuditResult (siehe §4.2)
-
-  createdAt DateTime @default(now())
-
-  @@index([shop, url, strategy, createdAt])
-}
+┌ Card (neu, ohne Titel) ─────────────────────────────────┐
+│  ⓘ Historischer Test vom 21.07. · /products/x · Mobil   │   ← kleiner Hinweis, KEINE Card
+│    [Zurück zum aktuellen Test]                          │
+│  ⓘ Zwischengespeichertes Ergebnis …                     │   ← nur bei stale
+│  ⚠ Google konnte diese Seite nicht analysieren          │   ← runtimeError/runWarnings, global
+│                                                          │
+│    ◍ 76        ◍ 97          ◍ 73        ◍ 100          │   ← Score-Strip, §3.3
+│   Ladezeit  Barrierefrei-  Best Prac-     SEO           │      wie auf pagespeed.web.dev
+│             heit           tices                        │
+│ ─────────────────────────────────────────────────────── │
+│ │ Ladezeit │ Barrierefreiheit │ Best Practices │        │   ← Polaris <Tabs>
+│ ─────────────────────────────────────────────────────── │
+│                                                          │
+│   (Inhalt des gewählten Tabs, §3.4–§3.6)                │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+┌ Card „Echte Besucherdaten" (RUM) ───────────────────────┐   bleibt unverändert
+└─────────────────────────────────────────────────────────┘
+┌ Card „Bisherige Tests" ─────────────────────────────────┐   bleibt, + 1 Spalte (§3.7)
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Pflicht (Contract §6):** `deleteMany({ where: { shop } })` in `redactShopData` ([gdpr.service.ts](../../app/services/gdpr.service.ts)) **und** Eintrag im Coverage-Kommentarblock darüber. Der Drift-Guard-Test parst `schema.prisma` und wird sonst rot — das ist kein optionaler Schritt.
+Die Tab-Card wird — wie heute der Ergebnisblock — **nur gerendert, wenn ein Ergebnis vorliegt** (`result != null`). Drei leere Tabs vor dem ersten Test wären reines Rauschen.
 
-Prune analog zum bestehenden Muster auf 10 Zeilen pro `(shop, url, strategy)`.
+### 3.2 Hinweise oberhalb der Tabs
+
+Alles, was für **alle** Tabs gilt, steht über der Tab-Leiste — sonst müsste es dreimal gerendert werden oder verschwände, sobald der Merchant den Tab wechselt.
+
+| Hinweis | heute | künftig |
+|---|---|---|
+| Historischer Test | `<Banner tone="info" title=… onDismiss>` mit Fließtext + Button | **eine Zeile** `bodySm`/`subdued` mit Datum, Pfad und Gerät + `Button variant="plain"` „Zurück zum aktuellen Test" |
+| Zwischengespeichert (stale) | Banner `warning` | bleibt Banner (ist eine echte Einschränkung des Ergebnisses) |
+| `runtimeError` | Banner `critical` | bleibt Banner, wandert **über** die Tabs — wenn Lighthouse die Seite gar nicht laden konnte, sind alle drei Kategorien leer, nicht nur die Ladezeit |
+| `runWarnings` | Banner `warning` | bleibt Banner, über die Tabs (gilt für den ganzen Lauf) |
+| kein Element-Screenshot (`!annotatable`) | Banner `info` | bleibt Banner, aber **im Ladezeit-Tab** — betrifft nur die Screenshot-Ausschnitte dort |
+
+Für den Historisch-Hinweis werden `viewingHistoryTitle` und `viewingHistoryBody` durch **einen** Schlüssel ersetzt (`viewingHistoryHint`, Platzhalter `{date}` `{url}` `{strategy}`); `viewingHistoryBack` bleibt. Die alten beiden Schlüssel in allen drei Sprachdateien entfernen — sonst bleiben sie als toter Ballast liegen.
+
+### 3.3 Der Score-Strip — die Kategorie-Übersicht wie auf pagespeed.web.dev
+
+PSI stellt seiner Auswertung eine Reihe kleiner Ring-Scores voran (Leistung · Barrierefreiheit · Best Practices · SEO). **Das übernehmen wir**: eine Zeile kleiner Gauges direkt unter den Hinweisen und direkt über der Tab-Leiste.
+
+Sie leistet genau das, was die Tabs allein nicht können: Der Merchant sieht **alle** Kategorien auf einen Blick, ohne durchzuklicken — sonst wüsste er nicht, dass es sich lohnt, den Barrierefreiheits-Tab überhaupt zu öffnen. Die Tabs bleiben die Detailebene, der Strip ist die Zusammenfassung.
+
+**Umsetzung:**
+
+- **Bauteil:** derselbe `ScoreGauge` wie heute, mit einem kleineren Größen-Parameter (Ring ~48px statt 190px, Zahl im Ring, Beschriftung darunter) und **ohne** die Hover-Split-Mechanik — die erklärt Metrik-Gewichte und ergibt nur bei der Performance-Kategorie Sinn. `GAUGE_SIZE`/`GAUGE_RADIUS`/`GAUGE_STROKE` sind heute Modul-Konstanten ([app.seo.performance.tsx:739-744](../../app/routes/app.seo.performance.tsx#L739-L744)) und müssen dafür zu Props werden.
+- **Farbbänder:** unverändert `lighthouseTone` (90 / 50), also dieselbe Ampel wie die große Gauge. Kein zweites Bandschema auf einer Seite.
+- **Kein Wert:** Kategorie fehlt im Response oder Lighthouse konnte nicht scoren → grauer Ring mit „–", nicht 0 und nicht ausgeblendet. Ein fehlender Ring in der Reihe liest sich als „ist alles in Ordnung".
+- **Klick schaltet den Tab um.** Der Strip ist damit auch die Navigation, genau wie die Sprungmarken auf pagespeed.web.dev. Der Gauge des aktiven Tabs wird hervorgehoben (Beschriftung `fontWeight="semibold"`), damit Strip und Tab-Leiste nicht widersprüchlich wirken.
+- **Beschriftungen** kommen aus denselben i18n-Schlüsseln wie die Tab-Namen (§8) — zwei Wörter für dieselbe Sache auf 100px Abstand wären ein Fehler.
+- **Barrierefreiheit des Strips selbst:** Die Gauges sind Buttons mit `aria-label` „{Kategorie}: {Score} von 100" und `aria-selected`-Kopplung an die Tabs. Eine Barrierefreiheits-Auswertung, die selbst nur per Maus bedienbar ist, wäre schwer zu verteidigen.
+
+**Der SEO-Ring — bewusst nur Zahl, kein Tab.** §12 schließt die Lighthouse-SEO-Kategorie inhaltlich aus, weil ihre Befunde sich fast vollständig mit unseren eigenen SEO-Sections überschneiden. Der **Score** dagegen kostet nichts und fehlt im Strip sofort auffällig, wenn PSI ihn zeigt und wir nicht. Deshalb:
+
+- Der SEO-Ring wird angezeigt, hat aber **keinen Tab** und **keine Befundliste**.
+- Ein Klick darauf öffnet keinen Tab, sondern zeigt einen kurzen Hinweis mit Link auf die eigenen SEO-Werkzeuge (Overview / Meta-Daten).
+- Die Beschriftung muss ihn von unserem eigenen SEO-Score abgrenzen — Vorschlag „SEO (Google-Technik)" mit `HelpTooltip`. **Ungelöste Spannung, siehe §11.5:** Unser Dashboard-Score und Lighthouse' SEO-Score messen Verschiedenes und werden verschiedene Zahlen zeigen.
+
+**„Agentisches Browsing"** (der fünfte Eintrag im PSI-Screenshot, ein Bestanden-Zähler „3/3", kein Score) ist neu und in der dokumentierten `category`-Aufzählung der PSI-API v5 nicht gesichert. **In Phase 1 prüfen**, ob die API sie liefert; wenn ja, als vierte/fünfte Kachel im selben Muster ergänzen (Zähler statt Ring), wenn nein, ersatzlos weglassen. Nicht raten — die Kachel steht oder fällt mit dem Response.
+
+### 3.4 Tab 1 „Ladezeit" — der heutige Inhalt, unverändert in der Sache
+
+Reihenfolge innerhalb des Tabs, identisch zu heute:
+
+1. Echte Nutzerdaten (Google CrUX) — Gesamtbewertung, Core-Web-Vitals-Kacheln mit Schwellenwert-Balken, „Andere wichtige Messwerte", Origin-Fallback-Hinweis
+2. Laborergebnis — Split-Gauge, Screenshot-Vorschau, „Getestet: …", Score-Legende, Core Web Vitals
+3. Banner „kein Element-Screenshot"
+4. Befunde (Akkordeon mit Lighthouse-Detailtabellen und Element-Thumbnails)
+
+**Der eine echte Umbau: Card-in-Card auflösen.** CrUX ([1241](../../app/routes/app.seo.performance.tsx#L1241)), Labor ([1278](../../app/routes/app.seo.performance.tsx#L1278)) und Befunde ([1439](../../app/routes/app.seo.performance.tsx#L1439)) sind heute je eine eigene `<Card>`. Innerhalb der Tab-Card werden daraus Abschnitte in einem `BlockStack` mit `<Divider>` dazwischen und einer `headingSm`/`subdued`-Überschrift je Abschnitt — verschachtelte Polaris-Cards sind kein Muster, das die App sonst verwendet.
+
+Zu beachten beim Umbau:
+- Das `padding="600"` der beiden Ergebnis-Cards entfällt; die äußere Card bringt ihr eigenes Padding mit. Die Kachel-Grids (`FIELD_GRID_STYLE`) und die 260px-Deckelung der Balken bleiben unangetastet — sie hängen an der Spaltenbreite, nicht am Card-Padding.
+- Der Trenn-Hairline zwischen Gauge und Screenshot im Laborblock bleibt (das ist ein `<div>`, keine Card-Grenze).
+- Der Befunde-Block rendert seine Zeilen bereits mit eigenem `borderTop` — im Tab sieht das unverändert aus.
+
+### 3.5 Tab 2 „Barrierefreiheit"
+
+1. **Hinweistext** aus §1.3, nicht ausblendbar, ganz oben im Tab.
+2. **Kein eigener großer Gauge** — der Score steht bereits im Strip (§3.3), zwei Ringe mit derselben Zahl im Abstand von 60px wären Doppelung. Die Ladezeit behält ihren großen Gauge nur deshalb, weil dessen Hover-Split die Gewichtung erklärt; für Accessibility gibt es nichts Vergleichbares zu erklären.
+3. **Befundliste** — dasselbe Akkordeon-Bauteil wie bei den Ladezeit-Befunden, damit beide Tabs als ein Werkzeug lesbar bleiben. Pro Befund: Titel, Beschreibung, betroffene Elemente (Selektor + gekapptes Snippet, mit Offenlegung der Kappung), bei `image-alt` zusätzlich der Aktions-Button aus §7.
+4. **Manuelle Prüfpunkte** — Lighthouse' `scoreDisplayMode: "manual"`-Audits, eingeklappt und klar als „von Google nicht automatisch geprüft" beschriftet. Sie in die normale Befundliste zu mischen wäre irreführend: sie sind keine gefundenen Fehler.
+
+### 3.6 Tab 3 „Best Practices"
+
+Einleitungssatz „Zusatzinformationen — fließt in keine Bewertung ein und liegt teils außerhalb deines Einflusses" (§1.2), darunter dieselbe Befundliste. Kein Gauge im Tab; der Score steht im Strip.
+
+Zur Klarstellung gegenüber §1.2: „kein Score-Beitrag" heißt, dass Best Practices in **keine aggregierte Bewertung** eingeht — nicht, dass die Zahl versteckt wird. Im Strip steht sie gleichberechtigt neben den anderen, so wie PSI es tut; der Einleitungssatz im Tab ordnet sie ein.
+
+### 3.7 History („Bisherige Tests")
+
+Bleibt die eigene Card unten und bleibt die gemeinsame Historie: **eine** Zeile pro Testlauf, weil ein Lauf alle drei Kategorien enthält. Ergänzt wird eine Spalte „Barrierefreiheit" neben „Score". Best Practices bekommt **keine** Spalte — dieselbe Begründung wie §1.2, und die Tabelle hat bei vier Spalten schon genug zu tragen.
+
+Ein Klick auf eine Zeile lädt wie heute den gespeicherten Lauf in den Ergebnisblock — jetzt also samt Barrierefreiheits- und Best-Practices-Tab.
+
+### 3.8 Zustand und Altbestand
+
+- **Tab-Auswahl** ist lokaler State. Sie wird bei einem neuen Testlauf **nicht** zurückgesetzt: wer auf „Barrierefreiheit" steht und erneut testet, will das neue Barrierefreiheits-Ergebnis sehen, nicht wieder die Ladezeit.
+- **Alte gespeicherte Läufe** (vor dieser Änderung, und der 30-Minuten-Cache über den Deploy hinweg) haben keine Qualitätsdaten im `result`-JSON. Die Tabs 2 und 3 zeigen dann einen expliziten Leerzustand: „Dieser Testlauf wurde vor der Qualitätsprüfung gespeichert — starte einen neuen Test." Ein leerer Tab ohne Erklärung liest sich als Fehler.
 
 ---
 
-## 4. Service
+## 4. Datenmodell
 
-### 4.1 Refactoring von `pagespeed.service.ts`
+**Kein neues Modell.** `SeoPageSpeedAudit` bekommt zwei nullable Spalten, nach demselben Muster wie das bestehende `score` („denormalized for history lists"):
 
-`fetchPageSpeedInsights` bekommt einen Kategorien-Parameter:
+```prisma
+model SeoPageSpeedAudit {
+  id                 String   @id @default(cuid())
+  shop               String
+  url                String
+  strategy           String // "mobile" | "desktop"
+  score              Int?   // Lighthouse performance score 0-100
+  a11yScore          Int?   // Lighthouse accessibility score 0-100 (neu)
+  bestPracticesScore Int?   // Lighthouse best-practices score 0-100 (neu)
+  result             Json   // PageSpeedAuditResult
+  createdAt          DateTime @default(now())
+
+  @@index([shop, url, strategy, createdAt])
+  @@index([shop, createdAt])
+}
+```
+
+Die Befunde selbst wandern in das bestehende `result`-JSON (§5.2) — sie werden nur zusammen mit dem Lauf gelesen, eine eigene Tabelle brächte nichts.
+
+**Der SEO-Score bekommt bewusst keine Spalte.** Spalten gibt es nur für Werte, die eine Listenansicht ohne das JSON braucht — das ist die History-Tabelle, und die zeigt Performance und Barrierefreiheit (§3.7). Der SEO-Score lebt im `result`-JSON und wird nur im Score-Strip des geöffneten Laufs gelesen.
+
+**Migration** ist rein additiv und nullable, also ohne Backfill und ohne Downtime. Alte Zeilen behalten `null` und lösen den Leerzustand aus §3.8 aus.
+
+**GDPR:** `SeoPageSpeedAudit` wird bereits in `redactShopData` gelöscht ([gdpr.service.ts:479](../../app/services/gdpr.service.ts#L479)). Da **kein neues Modell** entsteht, bleibt der Schema-Coverage-Drift-Guard grün und der Coverage-Kommentarblock unverändert. Das ist einer der handfesten Gewinne gegenüber der ersten Fassung.
+
+**Prune** bleibt wie er ist: 10 Zeilen pro `(shop, url, strategy)`.
+
+**Größenrisiko:** Das `result`-JSON enthält bereits Base64-Screenshots. Die Qualitäts-Befunde kommen obendrauf, deshalb gelten Kappungen analog zu den bestehenden `MAX_*`-Konstanten in [pagespeed.service.ts:324-332](../../app/services/seo/pagespeed.service.ts#L324-L332) — Vorschlag: max. 15 Befunde je Kategorie, max. 5 betroffene Elemente je Befund, Snippet auf `MAX_CELL_LENGTH` gekappt. Die Gesamtzahl **vor** der Kappung wird mitgespeichert und in der UI offengelegt.
+
+---
+
+## 5. Service
+
+### 5.1 `fetchPageSpeedInsights` bekommt Kategorien
 
 ```ts
 async function fetchPageSpeedInsights(
   url: string,
   strategy: PageSpeedStrategy,
-  categories: string[] = ["performance"],
+  locale?: string,
+  categories: string[] = ["performance", "accessibility", "best-practices", "seo"],
 ): Promise<unknown>
 ```
 
-Alles andere in der Datei — Timeout, 429/`PageSpeedQuotaExceededError`, Cache-Lookup, Prune — bleibt unverändert und wird geteilt. **Kein zweiter PSI-Client.**
+`seo` ist dabei, weil der Score-Strip (§3.3) den SEO-Ring zeigt. Die **Befunde** dieser Kategorie werden verworfen, nur der Score wird übernommen — inhaltliche Begründung in §12.
 
-### 4.2 Neuer Service `app/services/seo/quality.service.ts`
+Alles andere in der Datei — Timeout, 429/`PageSpeedQuotaExceededError`, Tageslimit, Cache-Lookup, Prune — bleibt unverändert und wird geteilt. **Kein zweiter PSI-Client, kein zweiter Aufrufpfad.**
 
-Parser-Vertrag in `quality.types.ts`:
+**Zu messen in Phase 1:** `PSI_TIMEOUT_MS` steht auf 60s ([pagespeed.service.ts:50](../../app/services/seo/pagespeed.service.ts#L50)). Drei Kategorien bedeuten mehr Audits und eine spürbar größere Antwort; wenn Läufe an die Grenze stoßen, muss der Wert hoch (und der `runningHint`-Text von „15–30 Sekunden" mit ihm). Das ist die einzige Stelle, an der die Zusammenlegung etwas kosten kann — sie gehört gemessen, nicht geschätzt.
+
+### 5.2 Parser: eine Erweiterung, kein zweiter Vertrag
+
+`parsePageSpeedResponse` liefert weiterhin **ein** `PageSpeedAuditResult`. Es bekommt ein optionales Feld:
 
 ```ts
 export interface QualityIssue {
   id: string;              // Lighthouse-Audit-ID, z.B. "color-contrast"
   title: string;
-  description?: string;    // Markdown-Links gestrippt (Helper aus pagespeed.service.ts teilen)
-  category: "accessibility" | "best-practices";
+  description?: string;    // Markdown-Links gestrippt (stripMarkdownLinks wiederverwenden)
+  /** Lighthouse-Score des Audits: 0 = durchgefallen, 1 = bestanden, null = nicht bewertbar. */
+  score: number | null;
   /** Betroffene Elemente: Selektor + Snippet, gekappt. */
   items: Array<{ selector?: string; snippet?: string; url?: string }>;
-  /** Lighthouse `scoreDisplayMode: "manual"` — nicht automatisch geprüft. */
+  itemTotal: number;       // vor der Kappung
+  /** `scoreDisplayMode: "manual"` — von Lighthouse nicht automatisch geprüft. */
   manual: boolean;
 }
 
-export interface QualityAuditResult {
-  url: string;
-  strategy: PageSpeedStrategy;
-  fetchedAt: string;
+export interface QualityResult {
   a11yScore: number | null;
   bestPracticesScore: number | null;
-  issues: QualityIssue[];
-  itemTotal: number;       // vor der Kappung, damit die UI die Kürzung offenlegt
-  runtimeError?: string;
-  stale?: boolean;
+  /** Nur für den Score-Strip (§3.3) — die SEO-Befunde werden bewusst verworfen (§12). */
+  seoScore: number | null;
+  accessibility: QualityIssue[];
+  bestPractices: QualityIssue[];
+  accessibilityTotal: number;   // vor der Kappung
+  bestPracticesTotal: number;
+  /** PSI-Kategorie „Agentic browsing", falls die API sie liefert — sonst undefined (§3.3). */
+  agentic?: { passed: number; total: number };
 }
+
+// in PageSpeedAuditResult:
+//   quality?: QualityResult;   // fehlt bei Läufen vor dieser Änderung → §3.8
 ```
 
-Der Parser ist wie `parsePageSpeedResponse` **defensiv und wirft nie** — dieselbe Begründung wie dort (PSI-Formen variieren, Sektionen fehlen). Die Lehren aus dem Performance-Report werden direkt übernommen: `description` wird gerendert, `runtimeError` durchgereicht, Kappungen offengelegt.
+Optional, nicht pflicht — genau deshalb bleiben alte gespeicherte Läufe typkonform lesbar.
 
-### 4.3 `analyze()` nach Contract §3
+Der Parser ist wie `parsePageSpeedResponseInner` **defensiv und wirft nie**: fehlt die Kategorie im Response, bleibt `quality` undefined und die Ladezeit-Auswertung läuft unbeirrt weiter. Die Lehren aus dem Performance-Report werden übernommen — `description` wird gerendert statt verworfen, Kappungen werden offengelegt, `null` bleibt `null` und wird nicht zu 0 geglättet.
 
-```ts
-export async function analyzeQuality(shop: string, deps): Promise<QualityAuditResult[]>
-```
+`runPageSpeedAudit` schreibt zusätzlich `a11yScore` und `bestPracticesScore` in die neuen Spalten; `listPageSpeedHistory` gibt sie mit aus.
 
-DB-Cache-first: liest die gespeicherten `SeoQualityAudit`-Zeilen, **löst keinen PSI-Lauf aus**. Ein Scan wird ausschließlich explizit über den Task gestartet (§6.2). Ohne Daten gibt `analyze()` ein leeres Array zurück und die Section zeigt den Leerzustand — nie ein impliziter Netzwerk-Sweep beim Seitenaufruf.
+### 5.3 Kein `analyze()`, kein Dashboard-Beitrag
 
-**Kein `SeoFinding[]`** — siehe §11.1: der Typ existiert im Code nicht, und keine Section speist das Dashboard. Der Rückgabetyp ist das, was die Route rendert.
+Der Contract (§3) verlangt ein `analyze()` je Section. Diese Section hat keins und braucht keins: sie hat einen eigenen Loader und eine eigene Action, und die Ladezeit-Section hatte auch bisher keins. Siehe §11.1.
 
 ---
 
-## 5. Kontingent — die eigentliche Rahmenbedingung
+## 6. Kontingent
 
 PSI zählt **Requests, nicht Kategorien**. Ein Aufruf mit drei Kategorien kostet exakt so viel wie einer mit einer.
 
-Daraus folgt die zentrale Design-Entscheidung: **Ein Scan-Lauf fragt `performance`, `accessibility` und `best-practices` gemeinsam ab und beliefert beide Features aus einer Antwort.** Der Quality-Scan aktualisiert also nebenbei die Performance-Zeile für dieselbe URL, ohne ein einziges zusätzliches Kontingent.
+Daraus folgt die zentrale Eigenschaft dieser Fassung: **Der Merchant startet genau einen Test wie bisher und bekommt drei Auswertungen.** Die Qualitätsdaten sind, gemessen am Tagesbudget, umsonst.
 
-Der Preis: die Antwort wird deutlich größer und der Lighthouse-Lauf etwas länger. Beides tragbar, weil in einen kompakten eigenen Vertrag geparst wird — die Rohantwort wird nie gespeichert.
+Damit ändert sich am Budget **nichts**:
 
-**Kontingent-Rechnung:** 5 Templates (Startseite, Produkt, Kollektion, Seite, Warenkorb) × 2 Strategien = **10 Requests pro Voll-Scan**. Das ist gegen das Tagesbudget des Shops zu rechnen (§11.2) — auf Free passt ein Voll-Scan **nicht**, dort muss der Umfang aus dem Plan abgeleitet werden.
+- `countPageSpeedRunsToday` zählt weiter `SeoPageSpeedAudit`-Zeilen — es gibt keine zweite Tabelle, die mitgezählt werden müsste. Der Kommentar im Code, der eine künftige zweite Tabelle ankündigt, wird ersatzlos gestrichen.
+- Die Staffelung bleibt: Free 5 · Basic 20 · Pro 40 · Max 80 Läufe pro UTC-Tag (`PlanLimits.dailyPageSpeedRuns`, [plans.ts](../../app/config/plans.ts)).
+- Die Budget-Anzeige über dem Test-Button bleibt unverändert.
+- Der 429-Pfad und der Tageslimit-Pfad bleiben unverändert und decken die neuen Kategorien automatisch mit ab.
 
-**Konsequenz:** Zusätzlich vor dem Scan-Button prüfen, ob `PAGESPEED_API_KEY` gesetzt ist. Fehlt er, den Scan auf Mobil beschränken und den bestehenden `staleQuotaNotice`-Mechanismus greifen lassen. Der 429-Pfad ist bereits gebaut und muss nur wiederverwendet werden.
-
----
-
-## 6. UI
-
-### 6.1 Descriptor
-
-```ts
-{ id: "quality", path: "/app/seo/quality", icon: "♿", labelKey: "quality", kind: "audit" }
-```
-
-### 6.2 Route `app/routes/app.seo.quality.tsx`
-
-Aufbau in `SeoSectionLayout` (Contract §4):
-
-1. **Hinweis-Banner** — der Ehrlichkeits-Text aus §1.3. Nicht dismissbar.
-2. **Scan-Steuerung** — Template-Auswahl (Mehrfach) + Strategie, ein Button „Scan starten". Der Scan ist ein **Task** (§9), kein synchroner Request. Darunter der Budget-Stand („x von y Tests heute verbraucht", §11.2) — dasselbe Muster wie auf der Ladezeit-Seite, damit der Merchant die Grenze **vor** dem Klick sieht statt als Wand danach. Reicht das Restbudget für die gewählte Template-Menge nicht, wird der Button gesperrt, bevor der Task startet — ein Scan, der auf halber Strecke am Limit abbricht, hinterlässt einen halb gefüllten Bericht.
-3. **Score-Karten** je gescanntem Template: Accessibility-Score prominent, Best-Practices-Score daneben und kleiner.
-4. **Befundliste Barrierefreiheit** — je Issue Titel, Beschreibung, betroffene Elemente (Selektor/Snippet gekappt, mit Offenlegung der Kappung), und wo möglich der Aktions-Button aus §7.
-5. **Karte „Zusatzinformationen"** — Best Practices, eingeklappt, ohne Score-Beitrag.
-6. **Verlauf** — analog zur Performance-History.
-
-Navigation ausschließlich über `useAppNavigation()` (Contract §4) — rohes `navigate()` verliert `host`/`shop`/`embedded`.
+Die Kollision, die die erste Fassung auf dem Free-Plan hatte (ein Voll-Scan über 5 Templates × 2 Strategien = 10 Läufe gegen ein Budget von 5), **entfällt** — es gibt keinen Voll-Scan mehr.
 
 ---
 
@@ -196,7 +335,7 @@ Ein reiner Report ist wenig wert, weil ContentPilot Kontrast-, ARIA- und Fokus-P
 **Ablauf:**
 1. Lighthouse meldet unter `image-alt` betroffene Elemente inklusive Bild-URL.
 2. Die URL wird gegen `ProductImage.url` ([schema.prisma:404](../../prisma/schema.prisma#L404)) gematcht.
-3. Bei Treffer trägt das Finding `resourceType: "product"` und `resourceId` — der Contract sieht genau dafür `resourceId` vor (§2), und die Section rendert einen „Alt-Text generieren"-Button, der in den bestehenden Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)) führt.
+3. Bei Treffer rendert die Befundzeile im Barrierefreiheits-Tab einen „Alt-Text generieren"-Button, der in den bestehenden Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)) führt.
 
 **Wichtiger Vorbehalt, der beim Bauen zu prüfen ist:** Shopify liefert CDN-URLs mit Transformations-Suffixen (`_1024x1024`, `?v=…`). Ein naiver Vergleich schlägt fehl. Der Match muss auf dem normalisierten Dateinamen-Stamm laufen, und er wird nicht immer gelingen — Bilder aus Theme-Assets oder Metafeldern haben gar keine `ProductImage`-Zeile. Die UI muss den Fall „gefunden, aber nicht zuordenbar" sauber zeigen, statt einen toten Button zu rendern.
 
@@ -208,25 +347,39 @@ Erwartete Trefferquote ist unbekannt. Das ist der erste Spike (§11.3), bevor de
 
 Reihenfolge zwingend `de.ts` → `en.ts` → `es.ts` (`de.ts` definiert den `Translation`-Typ; Contract §5).
 
-- `t.seo.sections.quality.*` — Label, Titel, Hinweistexte
-- `t.seo.findings.a11y*` / `bp*` — Finding-Codes
-- `t.tasks.taskType.qualityScan` — Aufgaben-Tab (rendert generisch, braucht nur das Label)
+**Neu bzw. geändert:**
 
-Lighthouse-Audit-Titel und -Beschreibungen kommen **auf Englisch** von Google. Sie zu übersetzen hieße, ~50 Audit-Texte zu pflegen, die sich mit jeder Lighthouse-Version ändern. Empfehlung: Googles Texte unverändert übernehmen (wie jetzt schon bei den Performance-Opportunities) und stattdessen die **Rahmen**-Texte übersetzen. PSI unterstützt einen `locale`-Parameter — den bei Gelegenheit mitzugeben ist der billigere Weg zu lokalisierten Audit-Texten als eigene Übersetzungen.
+- `t.seo.sections.performance` — der Section-Name (§1.1). Nur der String, nicht der Schlüssel.
+- `t.seo.performancePage.helpTitle` / `helpBody1` / `helpBody2` — erweitern, damit sie nicht länger nur den Ladezeit-Test beschreiben.
+- `t.seo.performancePage.tabs.{performance,accessibility,bestPractices}` — Tab-Beschriftungen.
+- `t.seo.performancePage.viewingHistoryHint` — ersetzt `viewingHistoryTitle` + `viewingHistoryBody` (§3.2); beide alten Schlüssel in allen drei Dateien löschen.
+- `t.seo.performancePage.a11y.*` — Ehrlichkeits-Hinweis (§1.3), Score-Titel, Leerzustand, Titel des Manuell-Blocks, Alt-Text-Button, Text für „nicht zuordenbar".
+- `t.seo.performancePage.bestPractices.*` — Einleitung, Leerzustand.
+- `t.seo.performancePage.qualityUnavailable` — Leerzustand für Altbestand-Läufe (§3.8).
+- `t.seo.performancePage.historyColA11y` — die neue History-Spalte (§3.7).
+- Falls Tooltips gewünscht: neue Hilfetexte im selben Hilfe-Register wie `perfLcp` (liegt ebenfalls in den i18n-Dateien).
+
+**Nicht zu übersetzen:** Lighthouse-Audit-Titel und -Beschreibungen. Sie kommen bereits lokalisiert von Google, weil `locale` seit dem Ladezeit-Ausbau mitgeschickt wird ([pagespeed.service.ts:185](../../app/services/seo/pagespeed.service.ts#L185)). Eigene Übersetzungen für ~50 Audit-Texte, die sich mit jeder Lighthouse-Version ändern, wären reine Pflegelast.
 
 ---
 
-## 9. Task, Recovery, Telemetrie
+## 9. Was aus der ersten Fassung ersatzlos entfällt
 
-**Task** (Contract §8): Ein Voll-Scan sind bis zu 10 PSI-Läufe à 15–30s, also mehrere Minuten. Zwingend Hintergrund-Task nach dem Pflichtmuster: `Task`-Row mit `status:"running"` und `expiresAt`, detached `void runQualityScan(...)`, nach **jeder** URL `progress` schreiben (das ist gleichzeitig der Heartbeat).
+Ausdrücklich hier festgehalten, damit es niemand aus dem alten Text wiederbelebt:
 
-**Recovery-Pflicht:** `qualityScan` in `LONG_RUNNING_TASK_TYPES` ([task-recovery.service.js:34](../../task-recovery.service.js#L34)) eintragen — sonst wird der Task nach 10 statt 45 Minuten als hängend abgeräumt, und ein normaler Scan wird mitten im Lauf gekillt.
+| Entfällt | Grund |
+|---|---|
+| Section-Descriptor `quality`, Route `/app/seo/quality` | §1.1 — die Ladezeit-Section trägt es mit |
+| Prisma-Modell `SeoQualityAudit` + `redactShopData`-Eintrag + Coverage-Kommentar | §4 — zwei Spalten an einer bestehenden Tabelle statt eines neuen Modells |
+| Hintergrund-**Task** `qualityScan` (Task-Row, `expiresAt`, detached Runner, Progress-Heartbeat) | Ein Lauf ist ein synchroner Request über die bestehende Fetcher-Action; es gibt keinen Mehr-URL-Scan mehr |
+| Eintrag in `LONG_RUNNING_TASK_TYPES` ([task-recovery.service.js](../../task-recovery.service.js)) | kein Task |
+| Single-flight-Sperre pro Shop | kein Task; der Test-Button ist bereits über `fetcher.state` und das Tagesbudget gesperrt |
+| Template-Mehrfachauswahl + Voll-Scan über 5 Templates × 2 Strategien | Der bestehende Einzelseiten-Picker bleibt die Steuerung |
+| Plan-abhängige Ableitung des Scan-Umfangs (Free-Kollision) | §6 — ohne Voll-Scan gibt es keine Kollision |
+| Eigenes `analyze()` nach Contract §3 | §5.3 |
+| `t.tasks.taskType.qualityScan` | kein Task |
 
-**Single-flight pro Shop:** vor dem `create` auf einen laufenden Scan prüfen; zweiter Aufruf zeigt Banner mit Link zum Aufgaben-Tab. Ohne das kann ein ungeduldiger Merchant das Tageskontingent in Minuten verbrennen.
-
-**Kein `AIQueueService`** — der Scan macht keine KI-Arbeit. Erst der Alt-Text-Fix aus §7 läuft über die Queue, und der ist bereits gebaut.
-
-**Telemetrie:** Logger-Namespace `seo:quality` (Contract §7).
+Was **bleibt**: der Logger-Namespace. Die neuen Parser-Zweige loggen unter dem bestehenden Namespace der Ladezeit-Section, nicht unter einem eigenen — es ist dieselbe Section.
 
 ---
 
@@ -235,14 +388,16 @@ Lighthouse-Audit-Titel und -Beschreibungen kommen **auf Englisch** von Google. S
 | Phase | Inhalt | Ergebnis |
 |---|---|---|
 | **0** | Spike §11.3: Alt-Text-Match-Trefferquote an echten Daten messen | Go/No-Go für §7 |
-| **1** | `fetchPageSpeedInsights` um Kategorien erweitern; `quality.service.ts` + Parser + Tests | Parser grün, noch keine UI |
-| **2** | Prisma-Modell + Migration + `redactShopData` + Coverage-Kommentar | GDPR-Guard grün |
-| **3** | Descriptor + Route + Score-Karten + Befundliste + i18n | Section benutzbar (nur Anzeige) |
-| **4** | Scan als Task + Recovery-Eintrag + Single-flight | Voll-Scan möglich |
+| **1** | `fetchPageSpeedInsights` um Kategorien erweitern; Parser + `QualityResult`-Typen + Tests; Laufzeit gegen `PSI_TIMEOUT_MS` messen | Parser grün, Daten kommen an, noch keine UI |
+| **2** | Prisma: `a11yScore` + `bestPracticesScore` + Migration; Schreiben in `runPageSpeedAudit`; `listPageSpeedHistory` erweitern | Werte landen in der DB und in der History-Abfrage |
+| **3** | **Reines UI-Refactoring:** Tab-Card einziehen, Ladezeit-Tab = heutiger Inhalt (Card-in-Card auflösen), Historisch-Banner → Hinweiszeile, globale Banner über die Tabs | Seite sieht aufgeräumter aus, inhaltlich unverändert — gut isoliert prüfbar |
+| **4** | Tab „Barrierefreiheit": Score, Ehrlichkeits-Hinweis, Befundliste, manuelle Prüfpunkte, Leerzustand für Altbestand; Section-Umbenennung; i18n de→en→es | Der neue Nutzen ist sichtbar |
 | **5** | Alt-Text-Brückenschlag (§7) | Der Befund wird behebbar |
-| **6** | Best-Practices-Karte (eingeklappt, ohne Score) | Das Goodie |
+| **6** | Tab „Best Practices" (ohne Score-Beitrag) + History-Spalte „Barrierefreiheit" | Das Goodie |
 
-Nach jeder Phase ist ein benutzbarer Zwischenstand erreicht — das ist die vom Contract empfohlene Reihenfolge (Descriptor → analyze → Shell → Aktionen → GDPR/Tests), angepasst daran, dass Phase 0 eine Produktentscheidung absichert.
+Phase 3 bewusst **vor** den neuen Inhalten: Der Umbau der bestehenden Seite ist der Teil mit dem größten Regressionsrisiko (Card-in-Card, Grid-Breiten, Bannerplatzierung). Ihn allein zu deployen heißt, ihn allein prüfen zu können — steckte er mit dem neuen Tab zusammen im selben Schritt, wäre bei einem Layout-Fehler nicht klar, welche Hälfte ihn verursacht hat.
+
+Nach jeder Phase ist ein benutzbarer Zwischenstand erreicht.
 
 ---
 
@@ -250,37 +405,39 @@ Nach jeder Phase ist ein benutzbarer Zwischenstand erreicht — das ist die vom 
 
 ### 11.1 Keine Dashboard-Aggregation — **entschieden 2026-07-22**
 
-**Befund:** `SeoFinding` existiert im Code **nicht** (null Vorkommen). Contract §2 beschreibt einen nie gebauten Mechanismus. Das Dashboard wird ausschließlich von `analyzeStore` ([audit.service.ts:330](../../app/services/seo/audit.service.ts#L330)) über einen Snapshot gespeist, und **keine** der neun bestehenden Sections trägt etwas bei — jede lebt auf ihrer eigenen Route.
+**Befund:** `SeoFinding` existiert im Code **nicht** (null Vorkommen). Contract §2 beschreibt einen nie gebauten Mechanismus. Das Dashboard wird ausschließlich von `analyzeStore` ([audit.service.ts:330](../../app/services/seo/audit.service.ts#L330)) über einen Snapshot gespeist, und **keine** der bestehenden Sections trägt etwas bei — jede lebt auf ihrer eigenen Route.
 
-**Entscheidung:** Die Section bindet sich **nicht** ans Dashboard an, exakt wie alle bestehenden. Kein Sonderfall, keine neue Infrastruktur.
+**Entscheidung:** Kein Dashboard-Beitrag, exakt wie bei allen bestehenden Sections. Kein Sonderfall, keine neue Infrastruktur.
 
-Verworfen wurde außerdem, Barrierefreiheit als `AuditType` in `analyzeStore` zu führen: das ist item-zentriert über den Katalog, Barrierefreiheits-Befunde sind template-zentriert. Ein Kontrastproblem gehört keinem Produkt.
-
-**Folge:** Der frühere §11.4 (Score-Beitrag deckeln) entfällt ersatzlos — es gibt keinen Gesamt-Score, in den etwas einfließen könnte.
+Verworfen wurde außerdem, Barrierefreiheit als `AuditType` in `analyzeStore` zu führen: das ist item-zentriert über den Katalog, Barrierefreiheits-Befunde sind seiten-zentriert. Ein Kontrastproblem gehört keinem Produkt.
 
 **Separat zu erledigen:** Contract §2 korrigieren. Er beschreibt derzeit einen Mechanismus, den es nicht gibt, und führt jeden Leser in dieselbe Fehlannahme.
 
-### 11.2 Kein Plan-Gate, sondern ein Tageslimit — **entschieden 2026-07-22, für Ladezeit bereits umgesetzt**
+### 11.2 Kein Plan-Gate, sondern ein Tageslimit — **entschieden 2026-07-22, bereits umgesetzt**
 
-**Begründung:** PSI wird gegen **unseren** `PAGESPEED_API_KEY` abgerechnet, ist also eine von der App bezahlte, über alle Shops geteilte Ressource — anders als AI-Tokens (BYO, deshalb ungedeckelt). Das ist Verbrauch, nicht Berechtigung. Dasselbe Muster wie `monthlyImageOperations` in [plans.ts](../../app/config/plans.ts), das dort ausdrücklich als „usage data, NOT entitlement data" geführt wird. Ein Gate würde nur entscheiden, *wer* das geteilte Kontingent leeren darf, nicht *wie viel* ein einzelner Shop nimmt.
+**Begründung:** PSI wird gegen **unseren** `PAGESPEED_API_KEY` abgerechnet, ist also eine von der App bezahlte, über alle Shops geteilte Ressource — anders als AI-Tokens (BYO, deshalb ungedeckelt). Das ist Verbrauch, nicht Berechtigung. Dasselbe Muster wie `monthlyImageOperations` in [plans.ts](../../app/config/plans.ts), das dort ausdrücklich als „usage data, NOT entitlement data" geführt wird.
 
-**Umsetzung (bereits gebaut für die Ladezeit-Seite):** `PlanLimits.dailyPageSpeedRuns` in [plans.ts](../../app/config/plans.ts), gelesen über `getDailyPageSpeedRunsLimit`, durchgesetzt in [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts) via `countPageSpeedRunsToday`. Kein Zählmodell nötig — eine `SeoPageSpeedAudit`-Zeile entsteht nur nach einem Lauf, der Google tatsächlich erreicht hat, also **ist** der Zeilen-Count der Verbrauchszähler. Die Prüfung sitzt bewusst **nach** dem Cache-Lookup: ein zwischengespeichertes Ergebnis kostet kein Kontingent und darf nichts verbrauchen.
+**Umsetzung (steht):** `PlanLimits.dailyPageSpeedRuns`, gelesen über `getDailyPageSpeedRunsLimit`, durchgesetzt in [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts) via `countPageSpeedRunsToday`. Eine `SeoPageSpeedAudit`-Zeile entsteht nur nach einem Lauf, der Google tatsächlich erreicht hat — der Zeilen-Count **ist** der Verbrauchszähler. Die Prüfung sitzt bewusst **nach** dem Cache-Lookup: ein zwischengespeichertes Ergebnis kostet kein Kontingent.
 
-**Staffelung:** Free 5 · Basic 20 · Pro 40 · Max 80 Läufe pro UTC-Tag. Gestaffelter Verbrauch, kein Zugangs-Gate — dieselbe Unterscheidung, die `monthlyImageOperations` bereits trifft.
+**Staffelung:** Free 5 · Basic 20 · Pro 40 · Max 80 Läufe pro UTC-Tag.
 
-**Für diesen Plan:** Der Quality-Scan zählt auf **dasselbe** Tagesbudget ein — beide Features ziehen aus derselben Google-Quote. `countPageSpeedRunsToday` muss dafür die `SeoQualityAudit`-Zeilen mitzählen (Kommentar steht bereits im Code).
+**Für diesen Plan:** keine Änderung nötig (§6). Der Kommentar im Code, der eine künftige zweite Tabelle zum Mitzählen ankündigt, wird gestrichen.
 
-**Achtung — Kollision auf Free:** Ein Voll-Scan über 5 Templates × 2 Strategien kostet 10 Läufe und passt damit **nicht** in das Free-Budget von 5. Der Scan-Umfang muss deshalb aus dem Plan abgeleitet werden, nicht fest verdrahtet: die Template-Auswahl folgt ohnehin `PLAN_CONFIG[plan].contentTypes` (Free hat keine Pages/Articles, also Startseite + Produkt + Kollektion = 3 Templates), und auf knappem Budget wird auf Mobil beschränkt — 3 Läufe, passt. Ohne diese Ableitung wäre der Scan-Button auf Free dauerhaft gesperrt und läse sich als kaputt statt als begrenzt. Gehört in Phase 4.
-
-**Plan-Gates insgesamt** werden separat neu überdacht; dieser Plan setzt deshalb **kein** `planGate` im Descriptor (§6.1).
+**Plan-Gates insgesamt** werden separat neu überdacht; die Section bleibt ungegatet.
 
 ### 11.3 Alt-Text-Match — Spike vor Phase 1 (offen)
+
 An einem echten Shop messen, welcher Anteil der `image-alt`-Befunde sich auf eine `ProductImage`-Zeile abbilden lässt (§7). Unter grob einem Drittel Trefferquote ist §7 kein tragender Nutzen und die Phasen 5/6 sind neu zu bewerten.
+
+### 11.4 Name der Section (offen, klein)
+
+„Ladezeit & Qualität" ist der Vorschlag (§1.1). Entscheidung fällt spätestens in Phase 4, weil dort die i18n-Strings ohnehin angefasst werden. Am Code ändert die Wahl nichts — es ist ein String in drei Dateien.
 
 ---
 
 ## 12. Bewusst nicht in diesem Plan
 
-- **Lighthouse-Kategorie SEO.** Überschneidet sich fast vollständig mit [bulk-meta](../../app/routes/app.seo.bulk-meta.tsx), [hreflang](../../app/routes/app.seo.hreflang.tsx), [redirects](../../app/routes/app.seo.redirects.tsx) und dem eigenen Score in [seo-score.ts](../../app/utils/seo-score.ts). Ein zweiter, anders gewichteter SEO-Score neben dem eigenen verwirrt mehr, als er hilft. Der `structured-data`-Audit dort ist zudem ein reiner Handprüfungs-Hinweis ohne Validierung.
+- **Lighthouse-Kategorie SEO.** Überschneidet sich fast vollständig mit [bulk-meta](../../app/routes/app.seo.bulk-meta.tsx), [hreflang](../../app/routes/app.seo.hreflang.tsx), [redirects](../../app/routes/app.seo.redirects.tsx) und dem eigenen Score in [seo-score.ts](../../app/utils/seo-score.ts). Ein zweiter, anders gewichteter SEO-Score neben dem eigenen verwirrt mehr, als er hilft. Der `structured-data`-Audit dort ist zudem ein reiner Handprüfungs-Hinweis ohne Validierung. (Technisch käme er inzwischen gratis im selben Request mit — der Grund gegen ihn ist inhaltlich, nicht budgetär.)
 - **GitHub-Anbindung und KI-Analyse von Theme-Dateien.** Siehe §2 — Scope-Bewilligung und Werkzeug-Konkurrenz, nicht zurückgestellt sondern verworfen.
 - **Eigene axe-core-Ausführung** (statt PSI). Würde einen Headless-Browser auf Railway bedeuten — eine ganz andere Betriebsklasse als ein HTTP-Call.
+- **Mehr-Seiten-Scan** (mehrere Templates in einem Rutsch). Fiel mit dem Task weg (§9). Falls er später gewünscht wird, ist er ein eigenes Vorhaben mit eigener Budget-Rechnung — und er würde dann Ladezeit **und** Qualität gemeinsam betreffen, nicht nur die neuen Tabs.

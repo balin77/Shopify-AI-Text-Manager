@@ -36,12 +36,22 @@ import type {
   PageSpeedMetric,
   PageSpeedMetricId,
   PageSpeedOpportunity,
+  PageSpeedPassedAudit,
   PageSpeedRect,
   PageSpeedScreenshot,
   PageSpeedStrategy,
 } from "./pagespeed.types";
 
-export const PAGESPEED_CACHE_TTL_MS = 30 * 60 * 1000;
+/**
+ * How long a stored audit may still answer a plain (non-forced) run.
+ *
+ * This is a double-click guard, not a cache: the UI has a single "test" button
+ * that the merchant expects to measure now, so the window is short. It cannot be
+ * dropped entirely — the lookup happens BEFORE the daily budget check, so
+ * without it two clicks in a row would cost two of the plan's runs (5/day on
+ * free).
+ */
+export const PAGESPEED_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** History rows are pruned to this many per (shop, url, strategy) on every write. */
 const HISTORY_KEEP_PER_TARGET = 10;
@@ -324,7 +334,14 @@ const IMAGE_OPPORTUNITY_AUDIT_IDS = ["modern-image-formats", "uses-responsive-im
 const MAX_LABEL_LENGTH = 80;
 const MAX_CLS_ANNOTATIONS = 5;
 const MAX_IMAGE_ANNOTATIONS = 5;
-const MAX_OPPORTUNITIES = 8;
+/**
+ * Safety net only. Findings are no longer truncated for display — the accordion
+ * keeps them collapsed, so an extra finding costs one header row — but a
+ * malformed response should not be able to blow up the stored JSON.
+ */
+const MAX_OPPORTUNITIES = 60;
+/** Passed audits are title-only, so a generous cap costs almost nothing. */
+const MAX_PASSED_AUDITS = 60;
 /** Caps on the per-finding detail table — it is persisted with the audit. */
 const MAX_TABLE_ROWS = 8;
 const MAX_SUB_ROWS = 3;
@@ -380,6 +397,7 @@ function parsePageSpeedResponseInner(
     imageAnnotationsByAuditId,
     nodesMap,
   );
+  const passedAudits = extractPassedAudits(audits);
   const fieldData = extractFieldData(r);
 
   const base: PageSpeedAuditResult = {
@@ -405,6 +423,7 @@ function parsePageSpeedResponseInner(
   }
 
   if (preview) base.previewScreenshot = preview;
+  if (passedAudits.length > 0) base.passedAudits = passedAudits;
 
   const runtimeError = extractRuntimeError(lighthouseResult);
   if (runtimeError) base.runtimeError = runtimeError;
@@ -812,8 +831,9 @@ function metricLabels(audit: any): string[] | undefined {
 }
 
 /**
- * Returns the top `MAX_OPPORTUNITIES` findings plus `total` = how many were
- * found overall, so the UI can disclose the truncation.
+ * Returns the failing findings plus `total` = how many were found overall.
+ * `total` still exists because audits stored while the display cap was 8 carry
+ * a larger total than their own list, and the UI discloses that gap.
  */
 function extractOpportunities(
   audits: Record<string, any>,
@@ -868,6 +888,40 @@ function extractOpportunities(
   });
 
   return { opportunities: opportunities.slice(0, MAX_OPPORTUNITIES), total: opportunities.length };
+}
+
+/** Audit ids that are never a "check" — they are the metrics and the screenshots. */
+const NON_CHECK_AUDIT_IDS = new Set([
+  ...Object.values(METRIC_AUDIT_IDS),
+  "full-page-screenshot",
+  "final-screenshot",
+  "screenshot-thumbnails",
+  "metrics",
+]);
+
+/**
+ * Audits this page already passes. `notApplicable`/`manual`/`informative` are
+ * excluded: Lighthouse did not actually verify anything there, so listing them
+ * as passed would overstate the result.
+ */
+function extractPassedAudits(audits: Record<string, any>): PageSpeedPassedAudit[] {
+  const passed: PageSpeedPassedAudit[] = [];
+  for (const [auditId, audit] of Object.entries(audits)) {
+    if (NON_CHECK_AUDIT_IDS.has(auditId)) continue;
+    const mode = (audit as any)?.scoreDisplayMode;
+    if (mode === "notApplicable" || mode === "manual" || mode === "informative") continue;
+    const score = (audit as any)?.score;
+    if (typeof score !== "number" || score < 0.9) continue;
+
+    const displayValue = typeof (audit as any)?.displayValue === "string" ? (audit as any).displayValue : undefined;
+    passed.push({
+      id: auditId,
+      title: typeof (audit as any)?.title === "string" ? (audit as any).title : auditId,
+      ...(displayValue ? { displayValue } : {}),
+    });
+  }
+  passed.sort((a, b) => a.title.localeCompare(b.title));
+  return passed.slice(0, MAX_PASSED_AUDITS);
 }
 
 function toFieldMetric(m: any): PageSpeedFieldMetric | undefined {

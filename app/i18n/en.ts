@@ -1532,7 +1532,6 @@ export const en: Translation = {
       strategyMobile: "Mobile",
       strategyDesktop: "Desktop",
       testButton: "Test now",
-      retestButton: "Re-test (ignore cache)",
       runningHint: "This can take about 15–30 seconds…",
       errors: {
         invalidUrl: "That URL doesn't belong to your store and can't be tested.",
@@ -1572,6 +1571,7 @@ export const en: Translation = {
       tableRowsTruncated: "{count} more rows are not shown.",
       informativeBadge: "Not scored",
       elementsTitle: "Flagged elements",
+      passedTitle: "Passed checks ({count})",
       fieldDataTitle: "Real user data (Google CrUX)",
       fieldMetricNames: {
         lcp: "Largest Contentful Paint (LCP)",

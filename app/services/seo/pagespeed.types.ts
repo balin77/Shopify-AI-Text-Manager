@@ -116,6 +116,18 @@ export interface PageSpeedOpportunity {
   table?: PageSpeedTable;
 }
 
+/**
+ * A Lighthouse audit this page already passes. Kept title-only (no details
+ * table): there are typically 20-30 of them and they exist to confirm what is
+ * fine, not to be worked through.
+ */
+export interface PageSpeedPassedAudit {
+  id: string;
+  title: string;
+  /** Lighthouse `displayValue`, e.g. "0 Ressourcen" — often absent. */
+  displayValue?: string;
+}
+
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";
 
 /** One CrUX histogram bucket (good / needs-improvement / poor). */
@@ -185,6 +197,8 @@ export interface PageSpeedAuditResult {
   previewScreenshot?: PageSpeedScreenshot;
   annotations: PageSpeedAnnotation[];
   opportunities: PageSpeedOpportunity[];
+  /** Audits that passed — shown as their own "passed checks" group. */
+  passedAudits?: PageSpeedPassedAudit[];
   fieldData: PageSpeedFieldData | null;
   /**
    * URL Lighthouse actually measured (`finalDisplayedUrl`), set only when it

@@ -1529,7 +1529,6 @@ export const de = {
       strategyMobile: "Mobil",
       strategyDesktop: "Desktop",
       testButton: "Jetzt testen",
-      retestButton: "Erneut testen (Cache ignorieren)",
       runningHint: "Das dauert etwa 15–30 Sekunden…",
       errors: {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",
@@ -1569,6 +1568,7 @@ export const de = {
       tableRowsTruncated: "{count} weitere Zeilen werden nicht angezeigt.",
       informativeBadge: "Nicht bewertet",
       elementsTitle: "Markierte Elemente",
+      passedTitle: "Bestandene Prüfungen ({count})",
       fieldDataTitle: "Echte Nutzerdaten (Google CrUX)",
       fieldMetricNames: {
         lcp: "Largest Contentful Paint (LCP)",

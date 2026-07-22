@@ -1531,7 +1531,6 @@ export const es: Translation = {
       strategyMobile: "Móvil",
       strategyDesktop: "Escritorio",
       testButton: "Probar ahora",
-      retestButton: "Repetir prueba (ignorar caché)",
       runningHint: "Esto puede tardar entre 15 y 30 segundos…",
       errors: {
         invalidUrl: "Esa URL no pertenece a tu tienda y no se puede probar.",
@@ -1571,6 +1570,7 @@ export const es: Translation = {
       tableRowsTruncated: "No se muestran {count} filas más.",
       informativeBadge: "Sin puntuación",
       elementsTitle: "Elementos marcados",
+      passedTitle: "Comprobaciones superadas ({count})",
       fieldDataTitle: "Datos reales de usuarios (Google CrUX)",
       fieldMetricNames: {
         lcp: "Largest Contentful Paint (LCP)",

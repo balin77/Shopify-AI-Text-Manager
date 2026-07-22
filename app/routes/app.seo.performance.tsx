@@ -499,8 +499,9 @@ const FIELD_GRID_STYLE: CSSProperties = {
   gap: "20px 56px",
 };
 
-/** Synthetic accordion id for the flagged-elements row (not a Lighthouse audit id). */
+/** Synthetic accordion ids for the two grouped rows (not Lighthouse audit ids). */
 const ELEMENTS_FINDING_ID = "__elements__";
+const PASSED_FINDING_ID = "__passed__";
 
 const FINDING_ROW_STYLE: CSSProperties = {
   borderTop: "1px solid var(--p-color-border-secondary, #e1e3e5)",
@@ -1187,11 +1188,6 @@ export default function SeoPerformance() {
               >
                 {p.testButton}
               </Button>
-              {result && (
-                <Button loading={running} disabled={budgetExhausted} onClick={() => submitAudit(true)}>
-                  {p.retestButton}
-                </Button>
-              )}
             </InlineStack>
             {running && (
               <Text as="p" variant="bodySm" tone="subdued">
@@ -1440,7 +1436,9 @@ export default function SeoPerformance() {
               <BlockStack gap="300">
                 <Text as="h3" variant="headingMd">{p.findingsTitle}</Text>
 
-                {result.opportunities.length === 0 && result.annotations.length === 0 ? (
+                {result.opportunities.length === 0 &&
+                result.annotations.length === 0 &&
+                (result.passedAudits?.length ?? 0) === 0 ? (
                   <Text as="p" variant="bodySm" tone="subdued">{p.noHighlightNote}</Text>
                 ) : (
                   <div>
@@ -1555,6 +1553,51 @@ export default function SeoPerformance() {
                       </div>
                     )}
 
+                    {/* What the page already gets right. Title-only — this
+                        group exists to confirm, not to be worked through. */}
+                    {(result.passedAudits?.length ?? 0) > 0 && (
+                      <div style={FINDING_ROW_STYLE}>
+                        <button
+                          type="button"
+                          onClick={() => toggleFinding(PASSED_FINDING_ID)}
+                          aria-expanded={openFindings.has(PASSED_FINDING_ID)}
+                          aria-controls={`finding-${PASSED_FINDING_ID}`}
+                          style={FINDING_HEADER_STYLE}
+                        >
+                          <span style={FINDING_TITLE_STYLE}>
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                              <ToneMarker tone="success" />
+                              <Text as="span" variant="bodyMd" fontWeight="medium">
+                                {p.passedTitle.replace("{count}", String(result.passedAudits!.length))}
+                              </Text>
+                            </InlineStack>
+                          </span>
+                          <DisclosureGlyph open={openFindings.has(PASSED_FINDING_ID)} />
+                        </button>
+                        <Collapsible
+                          open={openFindings.has(PASSED_FINDING_ID)}
+                          id={`finding-${PASSED_FINDING_ID}`}
+                          transition={false}
+                        >
+                          <div style={{ padding: "0 12px 16px" }}>
+                            <BlockStack gap="150">
+                              {result.passedAudits!.map((a) => (
+                                <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
+                                  <ToneMarker tone="success" />
+                                  <Text as="span" variant="bodySm">{a.title}</Text>
+                                  {a.displayValue && (
+                                    <Text as="span" variant="bodySm" tone="subdued">{a.displayValue}</Text>
+                                  )}
+                                </InlineStack>
+                              ))}
+                            </BlockStack>
+                          </div>
+                        </Collapsible>
+                      </div>
+                    )}
+
+                    {/* Only audits stored while the display cap was 8 can still
+                        be short — new runs keep every finding. */}
                     {hiddenOpportunities > 0 && (
                       <div style={{ paddingTop: "12px" }}>
                         <Text as="p" variant="bodySm" tone="subdued">

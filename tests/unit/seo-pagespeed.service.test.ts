@@ -96,6 +96,50 @@ describe("parsePageSpeedResponse", () => {
     });
   });
 
+  it("collects passed audits, excluding metrics, screenshots and unverified modes", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["uses-text-compression"] = {
+      id: "uses-text-compression",
+      title: "Enable text compression",
+      score: 1,
+      displayValue: "0 resources",
+    };
+    raw.lighthouseResult.audits["no-document-write"] = { id: "no-document-write", title: "Avoids document.write()", score: 1 };
+    // Verified nothing → must not be sold as "passed".
+    raw.lighthouseResult.audits["viewport"] = {
+      id: "viewport",
+      title: "Has a viewport meta tag",
+      score: 1,
+      scoreDisplayMode: "notApplicable",
+    };
+
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const ids = r.passedAudits?.map((a) => a.id) ?? [];
+    expect(ids).toContain("uses-text-compression");
+    expect(ids).toContain("no-document-write");
+    expect(ids).not.toContain("viewport");
+    // uses-optimized-images scores 1 but is a real check — it belongs here.
+    expect(ids).toContain("uses-optimized-images");
+    // The metric audits are their own section, not checks.
+    expect(ids).not.toContain("largest-contentful-paint");
+    expect(r.passedAudits?.find((a) => a.id === "uses-text-compression")?.displayValue).toBe("0 resources");
+  });
+
+  it("no longer truncates the findings list", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    for (let i = 0; i < 12; i++) {
+      raw.lighthouseResult.audits[`synthetic-${i}`] = {
+        id: `synthetic-${i}`,
+        title: `Synthetic ${i}`,
+        score: 0.2,
+        details: { type: "opportunity", overallSavingsMs: 10 + i, items: [{ url: "https://example.com/x" }] },
+      };
+    }
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.opportunities.length).toBe(r.opportunityTotal);
+    expect(r.opportunities.length).toBeGreaterThan(8);
+  });
+
   it("leaves the table off findings whose details carry no headings", () => {
     const raw = structuredClone(mockPsiResponse) as any;
     delete raw.lighthouseResult.audits["modern-image-formats"].details.headings;
@@ -141,10 +185,10 @@ describe("parsePageSpeedResponse", () => {
     expect(opp?.description).toBe("Learn more at web.dev.");
   });
 
-  it("caps opportunities at 8 and sorts by savingsMs desc (undefined last), excludes passing audits", () => {
+  it("sorts opportunities by savingsMs desc (undefined last) and excludes passing audits", () => {
     const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
-    expect(r.opportunities.length).toBeLessThanOrEqual(8);
-    // "uses-optimized-images" has score 1 (passing) → excluded.
+    // "uses-optimized-images" has score 1 (passing) → excluded here, and listed
+    // under passedAudits instead.
     expect(r.opportunities.some((o) => o.id === "uses-optimized-images")).toBe(false);
     const ms = r.opportunities.map((o) => o.savingsMs);
     const defined = ms.filter((m): m is number => m !== undefined);
@@ -478,7 +522,7 @@ describe("daily run budget", () => {
   });
 
   it("still refuses when the cached row is too old to serve", async () => {
-    const stale = { createdAt: new Date(Date.now() - 60 * 60 * 1000), result: {} }; // 1h > 30min TTL
+    const stale = { createdAt: new Date(Date.now() - 60 * 60 * 1000), result: {} }; // 1h, well past the reuse window
     const db = makeDb({
       count: vi.fn().mockResolvedValue(FREE_LIMIT),
       findFirst: vi.fn().mockResolvedValue(stale),
