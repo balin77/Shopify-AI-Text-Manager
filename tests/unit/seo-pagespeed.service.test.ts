@@ -211,6 +211,36 @@ describe("parsePageSpeedResponse", () => {
     const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
     expect(r.screenshot).toEqual({ data: "data:image/jpeg;base64,BBBB", width: 0, height: 0, fullPage: false });
     expect(r.annotations).toEqual([]);
+    // It already IS `screenshot` — duplicating it as the preview would double
+    // the stored payload for nothing.
+    expect(r.previewScreenshot).toBeUndefined();
+  });
+
+  it("keeps the viewport shot as previewScreenshot alongside the full-page one", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    raw.lighthouseResult.audits["final-screenshot"] = {
+      id: "final-screenshot",
+      details: { data: "data:image/jpeg;base64,BBBB" },
+    };
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    expect(r.screenshot?.fullPage).toBe(true);
+    expect(r.previewScreenshot).toEqual({
+      data: "data:image/jpeg;base64,BBBB",
+      width: 0,
+      height: 0,
+      fullPage: false,
+    });
+  });
+
+  it("does not count unrenderable items as hidden table rows", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    // Two extra items whose only keys are unknown to the headings → nothing to
+    // render. Reporting them as "2 more rows" would promise data we never had.
+    raw.lighthouseResult.audits["render-blocking-resources"].details.items.push({ somethingElse: 1 }, {});
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const table = r.opportunities.find((o) => o.id === "render-blocking-resources")?.table;
+    expect(table?.rows).toHaveLength(1);
+    expect(table?.rowTotal).toBe(1);
   });
 
   it("degrades gracefully on garbage/empty input — no throw, all nulls/empty arrays", () => {

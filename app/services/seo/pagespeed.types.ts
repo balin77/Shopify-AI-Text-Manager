@@ -175,6 +175,14 @@ export interface PageSpeedAuditResult {
   performanceScore: number | null;
   metrics: PageSpeedMetric[];
   screenshot: PageSpeedScreenshot | null;
+  /**
+   * Lighthouse's viewport `final-screenshot` — what the page looked like above
+   * the fold. Shown as the preview next to the score gauge, because `screenshot`
+   * is the full-page capture (needed for element crops) and would only show a
+   * top slice there. Absent when Lighthouse produced no viewport shot, or when
+   * `screenshot` already IS the viewport fallback.
+   */
+  previewScreenshot?: PageSpeedScreenshot;
   annotations: PageSpeedAnnotation[];
   opportunities: PageSpeedOpportunity[];
   fieldData: PageSpeedFieldData | null;

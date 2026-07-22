@@ -368,7 +368,7 @@ function parsePageSpeedResponseInner(
 
   const performanceScore = extractPerformanceScore(categories);
   const metrics = extractMetrics(audits);
-  const { screenshot, nodesMap } = extractScreenshot(audits, lighthouseResult);
+  const { screenshot, preview, nodesMap } = extractScreenshot(audits, lighthouseResult);
 
   const imageAnnotationsByAuditId: Record<string, string[]> = {};
   const { annotations, total: annotationTotal } = nodesMap
@@ -403,6 +403,8 @@ function parsePageSpeedResponseInner(
   if (typeof finalUrl === "string" && finalUrl && !sameUrl(finalUrl, url)) {
     base.finalUrl = finalUrl;
   }
+
+  if (preview) base.previewScreenshot = preview;
 
   const runtimeError = extractRuntimeError(lighthouseResult);
   if (runtimeError) base.runtimeError = runtimeError;
@@ -507,6 +509,8 @@ function extractScreenshot(
   lighthouseResult: any,
 ): {
   screenshot: PageSpeedScreenshot | null;
+  /** Viewport shot, kept alongside the full-page one for the UI preview. */
+  preview: PageSpeedScreenshot | null;
   nodesMap: Record<string, RawNodeRect> | null;
 } {
   // Lighthouse >= 10 (what PSI runs today) carries the full-page screenshot and
@@ -516,6 +520,15 @@ function extractScreenshot(
   // and the "Google couldn't create an element screenshot" banner on every run.
   const fullPageDetails = lighthouseResult?.fullPageScreenshot ?? audits["full-page-screenshot"]?.details;
   const shot = fullPageDetails?.screenshot;
+
+  // Viewport-only shot. Its coordinate space does not match the nodes map, so it
+  // never carries annotations — but it is the better preview image.
+  const finalData = audits["final-screenshot"]?.details?.data;
+  const preview: PageSpeedScreenshot | null =
+    typeof finalData === "string" && finalData
+      ? { data: finalData, width: 0, height: 0, fullPage: false }
+      : null;
+
   if (shot?.data) {
     return {
       screenshot: {
@@ -524,20 +537,17 @@ function extractScreenshot(
         height: typeof shot.height === "number" ? shot.height : 0,
         fullPage: true,
       },
+      preview,
       nodesMap:
         fullPageDetails?.nodes && typeof fullPageDetails.nodes === "object" ? fullPageDetails.nodes : null,
     };
   }
 
-  // Fallback: viewport-only final screenshot. Its coordinate space does not
-  // match a nodes map (there isn't one), so annotations would misalign —
-  // deliberately produce none (see pagespeed.types.ts header comment).
-  const finalData = audits["final-screenshot"]?.details?.data;
-  if (typeof finalData === "string" && finalData) {
-    return { screenshot: { data: finalData, width: 0, height: 0, fullPage: false }, nodesMap: null };
-  }
+  // No full-page capture: the viewport shot has to serve as both, and there are
+  // no rects to annotate with (see pagespeed.types.ts header comment).
+  if (preview) return { screenshot: preview, preview: null, nodesMap: null };
 
-  return { screenshot: null, nodesMap: null };
+  return { screenshot: null, preview: null, nodesMap: null };
 }
 
 function resolveNodeRect(node: any, nodesMap: Record<string, RawNodeRect>): PageSpeedRect | null {
@@ -767,9 +777,15 @@ function extractTable(details: any, nodesMap: Record<string, RawNodeRect> | null
   };
 
   const rows: PageSpeedTableRow[] = [];
+  // Items we looked at but could not render anything for. They are not "hidden
+  // rows" — counting them would make the UI claim data it never had.
+  let unrenderable = 0;
   for (const item of rawItems.slice(0, MAX_TABLE_ROWS)) {
     const row = buildRow(item, (h) => h.key, (h) => h.valueType);
-    if (!row) continue;
+    if (!row) {
+      unrenderable += 1;
+      continue;
+    }
     const subItems = Array.isArray(item?.subItems?.items) ? item.subItems.items : [];
     const subRows = subItems
       .slice(0, MAX_SUB_ROWS)
@@ -783,7 +799,7 @@ function extractTable(details: any, nodesMap: Record<string, RawNodeRect> | null
   return {
     columns: headings.map((h: any) => ({ label: h.label, type: CELL_TYPE_BY_VALUE_TYPE[h.valueType] })),
     rows,
-    rowTotal: rawItems.length,
+    rowTotal: rawItems.length - unrenderable,
   };
 }
 

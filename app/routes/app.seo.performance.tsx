@@ -295,8 +295,12 @@ const FIELD_THRESHOLDS: Record<string, { good: number; poor: number }> = {
   ttfb: { good: 800, poor: 1800 },
 };
 
-/** Fallback segment widths when a stored audit carries no CrUX histogram. */
-const FALLBACK_PROPORTIONS = [0.62, 0.19, 0.19];
+/**
+ * Band widths used when a stored audit carries no CrUX histogram. These are NOT
+ * a user distribution — nobody measured them — so the bar is dimmed and
+ * explains itself on hover when they are in play.
+ */
+const FALLBACK_PROPORTIONS = [0.5, 0.25, 0.25];
 
 /**
  * PSI-style threshold bar: three tone-colored segments whose widths are the
@@ -312,17 +316,21 @@ function FieldMetricBar({
   percentile,
   distributions,
   format,
+  fallbackHint,
 }: {
   metricKey: string;
   percentile: number;
   distributions?: { min: number; max?: number; proportion: number }[];
   /** Same formatter as the metric's headline value, for the threshold labels. */
   format: (value: number) => string;
+  /** Shown on hover when the segment widths are bands, not measured shares. */
+  fallbackHint: string;
 }) {
   const thresholds = FIELD_THRESHOLDS[metricKey];
+  const measured = !!(distributions && distributions.length === 3);
   const buckets =
-    distributions && distributions.length === 3
-      ? distributions
+    measured
+      ? distributions!
       : thresholds
         ? [
             { min: 0, max: thresholds.good, proportion: FALLBACK_PROPORTIONS[0] },
@@ -363,10 +371,22 @@ function FieldMetricBar({
     if (typeof value === "number") boundaries.push({ pct: boundaryCumulative * 100, value });
   }
 
+  // On a healthy metric both breaks sit far right (e.g. 95% and 98%), so the two
+  // labels would print on top of each other. Moving one sideways would put it
+  // under the wrong colour, so the second one drops to a second line instead and
+  // both stay above the break they belong to.
+  const MIN_LABEL_GAP = 22;
+  const labelPositions = boundaries.map((b) => ({ pct: Math.min(97, Math.max(3, b.pct)), text: format(b.value) }));
+  const stacked =
+    labelPositions.length === 2 && labelPositions[1].pct - labelPositions[0].pct < MIN_LABEL_GAP;
+
   return (
     <div style={{ maxWidth: "260px" }}>
       <div style={{ position: "relative", padding: "6px 0 0" }}>
-        <div style={{ display: "flex", gap: "2px", height: "4px" }}>
+        <div
+          style={{ display: "flex", gap: "2px", height: "4px", opacity: measured ? 1 : 0.4 }}
+          title={measured ? undefined : fallbackHint}
+        >
           {buckets.map((b, i) => (
             <div
               key={i}
@@ -393,22 +413,29 @@ function FieldMetricBar({
           }}
         />
       </div>
-      <div style={{ position: "relative", height: "16px", marginTop: "4px" }}>
-        {boundaries.map((b) => (
+      <div style={{ position: "relative", height: stacked ? "32px" : "16px", marginTop: "4px" }}>
+        {labelPositions.map((label, i) => (
           <span
-            key={b.pct}
+            key={i}
             style={{
               position: "absolute",
-              // Clamped so a boundary at the very edge doesn't clip its label.
-              left: `${Math.min(88, Math.max(12, b.pct))}%`,
-              transform: "translateX(-50%)",
+              left: `${label.pct}%`,
+              top: stacked && i === 1 ? "16px" : 0,
+              // Anchored at the edges instead of centred, so a boundary at 96%
+              // keeps its label on the bar.
+              transform:
+                label.pct <= 6
+                  ? "translateX(0)"
+                  : label.pct >= 94
+                    ? "translateX(-100%)"
+                    : "translateX(-50%)",
               whiteSpace: "nowrap",
               fontSize: "11px",
               lineHeight: "16px",
               color: "var(--p-color-text-secondary, #6d7175)",
             }}
           >
-            {format(b.value)}
+            {label.text}
           </span>
         ))}
       </div>
@@ -431,6 +458,9 @@ function ToneMarker({ tone, label }: { tone?: PerfTone; label?: string }) {
         aria-label={label}
         style={{
           ...base,
+          // A CSS triangle needs a zero-size content box — keeping base's 10px
+          // width would paint a 20px-wide trapezoid next to the 10px markers.
+          width: 0,
           height: 0,
           borderLeft: "5px solid transparent",
           borderRight: "5px solid transparent",
@@ -656,7 +686,7 @@ function FindingTable({
                       <td
                         key={ci}
                         style={{
-                          ...cellStyle(table.columns[ci]?.type ?? "text"),
+                          ...cellStyle(cell?.type ?? table.columns[ci]?.type ?? "text"),
                           paddingLeft: ci === 0 ? "28px" : undefined,
                           color: "var(--p-color-text-secondary, #6d7175)",
                         }}
@@ -772,10 +802,13 @@ export default function SeoPerformance() {
   const [viewedHistoryResult, setViewedHistoryResult] = useState<PageSpeedAuditResult | null>(null);
 
   useEffect(() => {
-    if (historyFetcher.state === "idle" && historyFetcher.data && historyFetcher.data.ok) {
+    // `viewedHistoryId` is cleared when a fresh audit starts — without this
+    // guard an in-flight history load would resolve afterwards and put the old
+    // audit back on screen, hiding the run the merchant just triggered.
+    if (viewedHistoryId && historyFetcher.state === "idle" && historyFetcher.data && historyFetcher.data.ok) {
       setViewedHistoryResult(historyFetcher.data.result);
     }
-  }, [historyFetcher.state, historyFetcher.data]);
+  }, [historyFetcher.state, historyFetcher.data, viewedHistoryId]);
 
   // Running a fresh audit closes any opened history view.
   useEffect(() => {
@@ -887,8 +920,8 @@ export default function SeoPerformance() {
     if (!fd) return [];
     return (
       [
-        { key: "lcp", group: "core", label: p.fieldMetricNames.lcp, metric: fd.lcp, format: formatMs },
-        { key: "inp", group: "core", label: p.fieldMetricNames.inp, metric: fd.inp, format: formatMs },
+        { key: "lcp", group: "core", label: p.fieldMetricNames.lcp, metric: fd.lcp, format: formatDuration },
+        { key: "inp", group: "core", label: p.fieldMetricNames.inp, metric: fd.inp, format: formatDuration },
         {
           key: "cls",
           group: "core",
@@ -896,8 +929,8 @@ export default function SeoPerformance() {
           metric: fd.cls,
           format: (v: number) => (v / 100).toFixed(2),
         },
-        { key: "fcp", group: "other", label: p.fieldMetricNames.fcp, metric: fd.fcp, format: formatMs },
-        { key: "ttfb", group: "other", label: p.fieldMetricNames.ttfb, metric: fd.ttfb, format: formatMs },
+        { key: "fcp", group: "other", label: p.fieldMetricNames.fcp, metric: fd.fcp, format: formatDuration },
+        { key: "ttfb", group: "other", label: p.fieldMetricNames.ttfb, metric: fd.ttfb, format: formatDuration },
       ] as const
     ).filter((row) => !!row.metric);
   }, [result, p.fieldMetricNames]);
@@ -931,6 +964,7 @@ export default function SeoPerformance() {
           percentile={metric.percentile}
           distributions={metric.distributions}
           format={row.format}
+          fallbackHint={p.fieldBarNoDistribution}
         />
       </BlockStack>
     );
@@ -960,6 +994,8 @@ export default function SeoPerformance() {
   // Element thumbnails can only be cropped from the full-page screenshot — the
   // viewport fallback has no matching coordinate space (see pagespeed.types.ts).
   const cropSource = result?.screenshot?.fullPage ? result.screenshot : null;
+  // Audits stored before `previewScreenshot` existed only have `screenshot`.
+  const previewScreenshot = result?.previewScreenshot ?? result?.screenshot ?? null;
 
   return (
     <SeoSectionLayout sectionId="performance">
@@ -1129,20 +1165,22 @@ export default function SeoPerformance() {
                     </BlockStack>
                   </InlineStack>
 
-                  {/* The captured page, right of the gauge like PSI. Element
-                      boxes are drawn per finding below, not here. */}
-                  {result.screenshot && (
+                  {/* The captured page, right of the gauge like PSI. Prefer the
+                      viewport shot — `screenshot` is the full-page capture and
+                      would only show a top slice here. Element crops are drawn
+                      per finding below, not here. */}
+                  {previewScreenshot && (
                     <div
                       style={{
                         width: "min(100%, 240px)",
-                        maxHeight: "260px",
+                        maxHeight: "320px",
                         overflow: "hidden",
                         border: "1px solid var(--p-color-border, #e1e3e5)",
                         borderRadius: "8px",
                         alignSelf: "start",
                       }}
                     >
-                      <img src={result.screenshot.data} alt="" style={{ width: "100%", display: "block" }} />
+                      <img src={previewScreenshot.data} alt="" style={{ width: "100%", display: "block" }} />
                     </div>
                   )}
                 </InlineStack>
@@ -1247,7 +1285,7 @@ export default function SeoPerformance() {
                     {result.opportunities.map((o) => {
                       const open = openFindings.has(o.id);
                       const savings = [
-                        o.savingsMs != null ? formatMs(o.savingsMs) : null,
+                        o.savingsMs != null ? formatDuration(o.savingsMs) : null,
                         o.savingsBytes != null ? formatBytes(o.savingsBytes) : null,
                       ]
                         .filter(Boolean)
