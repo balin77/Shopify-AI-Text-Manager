@@ -29,7 +29,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
-import { PLAN_CONFIG, type Plan } from "../config/plans";
+import { type Plan } from "../config/plans";
 // Pure/client-safe pieces from the shared module — the component uses them,
 // so they must not drag server-only code into the client bundle (see the
 // module-head comment in columns.shared.ts).
@@ -46,7 +46,6 @@ import {
   parseMoney,
   formatMoneyForDisplay,
   applyPriceAction,
-  BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   BULK_FILTER_IDS,
   BULK_PAGE_SIZES,
@@ -64,6 +63,7 @@ import {
   type BulkFailure,
   type ColumnDescriptor,
   type MetafieldColumnSpec,
+  type MetaobjectColumnSpec,
   type PriceAction,
   type ProductColumnCaps,
 } from "../services/bulk-editor/columns.shared";
@@ -89,7 +89,9 @@ import { loadBulkRows, getShopCurrencyCode } from "../services/bulk-editor/load.
 import { applyBulkDiff } from "../services/bulk-editor/apply.server";
 import { findInvalidLocaleOrMarket } from "../services/bulk-editor/translations.server";
 import {
+  allowedRowTypesForPlan,
   buildServerColumnsByType,
+  loadMetaobjectColumnSpecs,
   loadProductMetafieldColumnSpecs,
   productColumnCapsForPlan,
 } from "../services/bulk-editor/columns.server";
@@ -116,14 +118,6 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
   return (settings?.subscriptionPlan || "free") as Plan;
 }
 
-/** Row types the shop's plan may edit here: the supported types intersected
- * with PLAN_CONFIG[plan].contentTypes (Plan §3.4 — fixes the §0.4
- * inconsistency where Basic shops were offered articles). */
-function allowedTypesForPlan(plan: Plan): BulkRowType[] {
-  const contentTypes = PLAN_CONFIG[plan].contentTypes as string[];
-  return BULK_ROW_TYPES.filter((t) => contentTypes.includes(BULK_ROW_TYPE_TO_CONTENT_TYPE[t]));
-}
-
 interface LoaderData {
   gated: boolean;
   allowedTypes: BulkRowType[];
@@ -142,6 +136,17 @@ interface LoaderData {
   /** Shop-specific metafield columns (Plan §4.1) — plain specs; the client
    * builds the descriptors via buildColumnsForType. */
   metafieldColumns: MetafieldColumnSpec[];
+  /** Shop-specific metaobject field columns across ALL definitions (Phase 5,
+   * Plan §7) — the client narrows rendering to the selected moType. */
+  metaobjectColumns: MetaobjectColumnSpec[];
+  /** The shop's MetaobjectDefinition types for the toolbar's type filter. */
+  metaobjectTypes: { type: string; name: string }[];
+  /** Selected metaobject definition type. Metaobjects are only
+   * schema-homogeneous per type (Plan §7), so a selection is effectively
+   * mandatory — the loader defaults to the FIRST definition (alphabetical)
+   * instead of showing the union of every schema. "" only when the shop has
+   * no definitions at all. */
+  moType: string;
   /** Plan-gated dynamic product column capabilities (Plan §10.7). */
   productCaps: ProductColumnCaps;
   /** PUBLISHED shop locales, primary first (Phase 4 language selector). */
@@ -182,6 +187,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       marketId: "",
       translationFilterApproximate: false,
       metafieldColumns: [],
+      metaobjectColumns: [],
+      metaobjectTypes: [],
+      moType: "",
       productCaps: NO_PRODUCT_CAPS,
       locales: [],
       markets: [],
@@ -191,7 +199,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     });
   }
 
-  const allowedTypes = allowedTypesForPlan(plan);
+  const allowedTypes = allowedRowTypesForPlan(plan);
   const url = new URL(request.url);
   const rawType = url.searchParams.get("type") || "product";
   const type: BulkRowType = (allowedTypes as string[]).includes(rawType)
@@ -243,6 +251,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ? await loadProductMetafieldColumnSpecs(db, shop)
       : [];
 
+  // Metaobject view (Phase 5): definition types for the toolbar filter plus
+  // the field-column specs (union over all definitions — display narrows to
+  // the selected type client-side). Selection defaults to the FIRST
+  // definition; metaobjects are only schema-homogeneous per type (Plan §7).
+  let metaobjectTypes: { type: string; name: string }[] = [];
+  let metaobjectColumns: MetaobjectColumnSpec[] = [];
+  let moType = "";
+  if (type === "metaobject") {
+    const definitions = await db.metaobjectDefinition.findMany({
+      where: { shop },
+      select: { type: true, name: true },
+      orderBy: { type: "asc" },
+    });
+    metaobjectTypes = definitions.map((d) => ({ type: d.type, name: d.name || d.type }));
+    metaobjectColumns = await loadMetaobjectColumnSpecs(db, shop);
+    const rawMoType = url.searchParams.get("moType") || "";
+    moType = metaobjectTypes.some((t) => t.type === rawMoType)
+      ? rawMoType
+      : metaobjectTypes[0]?.type ?? "";
+  }
+
   const [{ rows, total, translationFilterApproximate }, currencyCode] = await Promise.all([
     loadBulkRows(db, shop, {
       type,
@@ -254,6 +283,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       skip: (page - 1) * pageSize,
       take: pageSize,
       productCells: { metafieldSpecs: metafieldColumns, caps: productCaps },
+      // Blog rows are live-fetched (Phase 5, Plan §7) — the loader needs the
+      // admin client; other types ignore it.
+      admin,
+      moType,
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -275,6 +308,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     marketId,
     translationFilterApproximate,
     metafieldColumns,
+    metaobjectColumns,
+    metaobjectTypes,
+    moType,
     productCaps,
     locales,
     markets,
@@ -312,7 +348,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   // (seo-bulk-meta.handler.ts). The column universe is built SERVER-side, so
   // mf.-columns are checked against the shop's enabled definitions, not
   // against client claims (Plan §4.1).
-  const allowedTypes = allowedTypesForPlan(plan);
+  const allowedTypes = allowedRowTypesForPlan(plan);
   const columnsByType = await buildServerColumnsByType(db, shop, plan);
   if (!diff.every((e) => isValidBulkDiffEntry(e, allowedTypes, columnsByType))) {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
@@ -343,6 +379,9 @@ const TYPE_EDITOR_PATH: Record<BulkRowType, string> = {
   collection: "/app/collections",
   article: "/app/blog",
   page: "/app/pages",
+  blog: "/app/blog",
+  policy: "/app/policies",
+  metaobject: "/app/metaobjects",
 };
 
 interface BulkFetcherResult {
@@ -387,6 +426,11 @@ const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
   article: ["image", "field.title", "field.summary", "field.handle", "field.seoTitle", "field.seoDescription"],
   page: ["field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
+  blog: ["field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
+  policy: ["policyTitle", "field.body"],
+  // Metaobject defaults are computed per selected definition type (context
+  // columns + the type's field columns) — see defaultColumnsFor() below.
+  metaobject: ["moDisplayName", "moHandle"],
 };
 
 /** Maps a legacy stored column name ("title", "image", "blogTitle") to the
@@ -412,8 +456,12 @@ function readColumnStore(key: string): Partial<Record<BulkRowType, string[]>> | 
  * removed — or a metafield definition disabled in the meantime) are filtered
  * out silently; the visible set is capped at MAX_VISIBLE_COLUMNS.
  */
-function loadColumnPrefs(type: BulkRowType, allColumns: ColumnDescriptor[]): string[] {
-  if (typeof window === "undefined") return DEFAULT_COLUMNS[type];
+function loadColumnPrefs(
+  type: BulkRowType,
+  allColumns: ColumnDescriptor[],
+  defaults: string[] = DEFAULT_COLUMNS[type],
+): string[] {
+  if (typeof window === "undefined") return defaults;
   const allowed = new Set(allColumns.map((c) => c.id));
   const sanitize = (cols: string[]): string[] | null => {
     const filtered = cols.filter((c) => allowed.has(c)).slice(0, MAX_VISIBLE_COLUMNS);
@@ -430,7 +478,7 @@ function loadColumnPrefs(type: BulkRowType, allColumns: ColumnDescriptor[]): str
     const cols = sanitize(legacy.map(migrateLegacyColumnName));
     if (cols) return cols;
   }
-  return DEFAULT_COLUMNS[type];
+  return defaults;
 }
 
 function saveColumnPrefs(type: BulkRowType, cols: string[]) {
@@ -526,29 +574,55 @@ export default function BulkEditor() {
 
   // Full column universe for the current type: static per-type columns plus
   // (for products) the shop's enabled metafield columns, the option column
-  // pairs and the main-image alt-text column (Phase 2). The specs come from
-  // the loader; the descriptors are built client-side with the same pure
-  // builder the server uses for validation.
+  // pairs and the main-image alt-text column (Phase 2), and (for
+  // metaobjects) every definition's field columns (Phase 5). The specs come
+  // from the loader; the descriptors are built client-side with the same
+  // pure builder the server uses for validation.
   const allColumns = useMemo(
-    () => buildColumnsForType(type, data.metafieldColumns, data.productCaps),
-    [type, data.metafieldColumns, data.productCaps],
+    () => buildColumnsForType(type, data.metafieldColumns, data.productCaps, data.metaobjectColumns),
+    [type, data.metafieldColumns, data.productCaps, data.metaobjectColumns],
   );
+
+  // The columns the CURRENT VIEW may show: for metaobjects, field columns of
+  // other definition types are cut (the toolbar's type filter keeps the grid
+  // schema-homogeneous, Plan §7) — the full union stays in `allColumns` for
+  // the diff pipeline.
+  const typeScopedColumns = useMemo(
+    () =>
+      type === "metaobject"
+        ? allColumns.filter((c) => c.kind !== "mofield" || c.moType === data.moType)
+        : allColumns,
+    [type, allColumns, data.moType],
+  );
+
+  /** Default visible set: static per type, except metaobjects — their
+   * defaults are the context columns plus the SELECTED definition's field
+   * columns (each type has a different schema, so a static list can't work). */
+  const defaultColumnsFor = (): string[] =>
+    type === "metaobject"
+      ? typeScopedColumns.map((c) => c.id).slice(0, MAX_VISIBLE_COLUMNS)
+      : DEFAULT_COLUMNS[type];
 
   // Column visibility — merchant-picked, persisted per type. Rehydrated
   // whenever `type` changes so switching Products↔Pages restores each
   // type's saved layout (not a shared one that would leak fields).
+  // Metaobject views skip localStorage: prefs stored under one moType would
+  // degrade every other type to its two context columns — the per-type
+  // default recomputes on each switch instead (documented Phase-5 decision).
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() =>
-    loadColumnPrefs(type, allColumns),
+    type === "metaobject" ? defaultColumnsFor() : loadColumnPrefs(type, allColumns),
   );
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
-    setVisibleColumnIds(loadColumnPrefs(type, allColumns));
-    // Re-run on type switches only — allColumns identity churns on every
-    // revalidation but its CONTENT for a given type is stable, and the
+    setVisibleColumnIds(
+      type === "metaobject" ? defaultColumnsFor() : loadColumnPrefs(type, allColumns),
+    );
+    // Re-run on type/moType switches only — allColumns identity churns on
+    // every revalidation but its CONTENT for a given type is stable, and the
     // rendered set is re-sanitized against it in activeColumns anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
+  }, [type, data.moType]);
 
   // A navigation to a different page/type/filter set starts from a clean
   // slate — stale edits from a different page would silently target the
@@ -573,7 +647,7 @@ export default function BulkEditor() {
     pasteInverseRef.current = null;
     setPasteBanner(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, page, pageSize, search, data.sort, filters.join(",")]);
+  }, [type, page, pageSize, search, data.sort, filters.join(","), data.moType]);
 
   // Rows with the ACCUMULATED foreign baselines merged in: the loader only
   // ships the current locale/market's translations; baselines of previously
@@ -752,7 +826,11 @@ export default function BulkEditor() {
   };
 
   const handleTypeChange = (value: string) =>
-    navigateGrid({ type: value, page: "1", sort: "", f: filters.join(",") });
+    navigateGrid({ type: value, page: "1", sort: "", f: filters.join(","), moType: "" });
+  /** Metaobject definition-type filter (Phase 5) — resets the page like any
+   * other filter; edits are cleared by the reset effect (they would target
+   * columns the new schema doesn't render). */
+  const handleMoTypeChange = (value: string) => navigateGrid({ moType: value, page: "1" });
   // Language/market switches deliberately do NOT reset the page — the edits
   // (and the merchant's position) survive the switch (Plan §6.4). Selecting
   // the primary language clears the market (primary is always global).
@@ -941,6 +1019,9 @@ export default function BulkEditor() {
       f: filters.join(","),
       sort: data.sort ?? "",
       columns: visibleColumnIds.join(","),
+      // Metaobject views export the selected definition type only (§8.1
+      // "current view"); empty for every other type.
+      moType: data.moType,
       // The APP language picks the delimiter (§8.1: ; for de/es, , for en).
       lang: uiLocale,
     });
@@ -1192,15 +1273,18 @@ export default function BulkEditor() {
       // end after re-checking it, which feels wrong to merchants used to a
       // stable layout.
       const ordered = allColumns.map((c) => c.id).filter((id) => next.includes(id));
-      saveColumnPrefs(type, ordered);
+      // Metaobject prefs are per-session only (see the visibleColumnIds
+      // comment above) — persisting one type's field set would break every
+      // other definition type.
+      if (type !== "metaobject") saveColumnPrefs(type, ordered);
       return ordered;
     });
   };
 
   const resetColumns = () => {
-    const def = DEFAULT_COLUMNS[type];
+    const def = defaultColumnsFor();
     setVisibleColumnIds(def);
-    saveColumnPrefs(type, def);
+    if (type !== "metaobject") saveColumnPrefs(type, def);
   };
 
   /** Column heading resolution: static columns via t.bulkEditor.columns.*,
@@ -1208,7 +1292,9 @@ export default function BulkEditor() {
    * translated, §10.4), option columns via the {position} templates, img.alt
    * via its own key. */
   const columnHeading = (col: ColumnDescriptor): string => {
-    if (col.kind === "metafield") return col.label;
+    // Metafield and metaobject-field columns show the shop-defined name
+    // verbatim — never translated (§10.4).
+    if (col.kind === "metafield" || col.kind === "mofield") return col.label;
     if (col.kind === "option") {
       const template = col.optionField === "name" ? b.columns.optionName : b.columns.optionValues;
       return template.replace("{position}", String(col.optionPosition ?? 0));
@@ -1239,9 +1325,11 @@ export default function BulkEditor() {
   const activeColumns = useMemo(
     () =>
       visibleColumnIds
-        .map((id) => allColumns.find((c) => c.id === id))
+        // typeScopedColumns, not allColumns: a metaobject view must never
+        // render another definition type's field columns (Phase 5).
+        .map((id) => typeScopedColumns.find((c) => c.id === id))
         .filter((c): c is ColumnDescriptor => !!c),
-    [visibleColumnIds, allColumns],
+    [visibleColumnIds, typeScopedColumns],
   );
 
   /** The columns the grid actually renders cells for (its own image-column
@@ -1454,6 +1542,16 @@ export default function BulkEditor() {
                     <div style={{ maxWidth: "220px", flex: "0 0 220px" }}>
                       <Select label={b.typeLabel} options={typeOptions} value={type} onChange={handleTypeChange} />
                     </div>
+                    {type === "metaobject" && data.metaobjectTypes.length > 0 && (
+                      <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
+                        <Select
+                          label={b.metaobjectTypeLabel}
+                          options={data.metaobjectTypes.map((t) => ({ label: t.name, value: t.type }))}
+                          value={data.moType}
+                          onChange={handleMoTypeChange}
+                        />
+                      </div>
+                    )}
                     {localeOptions.length > 1 && (
                       <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
                         <Select
@@ -1534,13 +1632,24 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  variantFilters={type === "variant"}
+                  filterSet={
+                    type === "variant"
+                      ? "variant"
+                      : type === "policy" || type === "metaobject"
+                        ? "translationOnly"
+                        : "content"
+                  }
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
                   onOnlyChangedChange={setOnlyChanged}
                   strings={{
-                    searchPlaceholder: type === "variant" ? b.searchPlaceholderVariant : b.searchPlaceholder,
+                    searchPlaceholder:
+                      type === "variant"
+                        ? b.searchPlaceholderVariant
+                        : type === "policy"
+                          ? b.searchPlaceholderPolicy
+                          : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
                     filterMissingSeoTitle: b.filters.missingSeoTitle,
@@ -1597,6 +1706,7 @@ export default function BulkEditor() {
                         legacyOptionValues: b.readOnlyReasons.legacyOptionValues,
                         missingImage: b.readOnlyReasons.missingImage,
                         missingMediaId: b.readOnlyReasons.missingMediaId,
+                        wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
                       }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}
@@ -1700,7 +1810,7 @@ export default function BulkEditor() {
             <ColumnPickerModal
               open={pickerOpen}
               onClose={() => setPickerOpen(false)}
-              allColumns={allColumns}
+              allColumns={typeScopedColumns}
               visibleColumnIds={visibleColumnIds}
               onToggle={toggleColumn}
               onReset={resetColumns}

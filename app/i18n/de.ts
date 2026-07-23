@@ -1954,6 +1954,9 @@ export const de = {
       collection: "Kollektionen",
       article: "Blog-Artikel",
       page: "Seiten",
+      blog: "Blogs",
+      policy: "Richtlinien",
+      metaobject: "Metaobjekte",
     },
     columns: {
       image: "Bild",
@@ -1981,6 +1984,12 @@ export const de = {
       compareAtPrice: "Vergleichspreis",
       barcode: "Barcode",
       position: "Position",
+      // Phase 5: Richtlinien (Titel bei Shopify nicht änderbar) und
+      // Metaobjekte (dynamische Feld-Spalten zeigen den Shopify-Feldnamen
+      // unübersetzt — nur die Kontextspalten haben i18n-Labels).
+      policyTitle: "Richtlinie",
+      moDisplayName: "Eintrag",
+      moHandle: "Handle",
     },
     statusOptions: {
       active: "Aktiv",
@@ -2011,10 +2020,13 @@ export const de = {
       legacyOptionValues: "Die Optionswerte haben noch keine Shopify-IDs — Produkt zuerst neu synchronisieren.",
       missingImage: "Dieses Produkt hat kein Bild.",
       missingMediaId: "Für dieses Bild fehlt die Shopify-Media-ID — Produkt zuerst neu synchronisieren.",
+      wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
     },
+    metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
     searchPlaceholder: "Nach Titel oder Handle suchen…",
     searchPlaceholderVariant: "Nach Produkt, Variante oder SKU suchen…",
+    searchPlaceholderPolicy: "Nach Titel suchen…",
     filtersLabel: "Filter",
     filters: {
       missingSeoTitle: "SEO-Titel fehlt",

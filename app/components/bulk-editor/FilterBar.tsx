@@ -21,9 +21,10 @@ interface FilterBarProps {
   /** The missingTranslation filter needs a concrete locale — hidden until the
    * locale selector lands (Phase 4) unless the URL already carries one. */
   showTranslationFilter: boolean;
-  /** Variant rows (Phase 3, Plan §5.3) swap the SEO/translation filters for
-   * the price/SKU data filters. */
-  variantFilters: boolean;
+  /** Which filter vocabulary the type speaks (Phase 3/5): "content" = SEO +
+   * translation filters; "variant" = the price/SKU data filters;
+   * "translationOnly" = policy/metaobject rows, which have no SEO columns. */
+  filterSet: "content" | "variant" | "translationOnly";
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   onlyChanged: boolean;
@@ -49,7 +50,7 @@ export function FilterBar({
   filters,
   onFiltersChange,
   showTranslationFilter,
-  variantFilters,
+  filterSet,
   pageSize,
   onPageSizeChange,
   onlyChanged,
@@ -71,22 +72,29 @@ export function FilterBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  const filterChoices = variantFilters
-    ? [
-        { label: strings.filterMissingSku, value: "missingSku" },
-        { label: strings.filterMissingPrice, value: "missingPrice" },
-        { label: strings.filterCompareAtNotAbovePrice, value: "compareAtNotAbovePrice" },
-      ]
-    : [
-        { label: strings.filterMissingSeoTitle, value: "missingSeoTitle" },
-        { label: strings.filterMissingSeoDescription, value: "missingSeoDescription" },
-        ...(showTranslationFilter
-          ? [{ label: strings.filterMissingTranslation, value: "missingTranslation" }]
-          : []),
-      ];
+  const translationChoice = showTranslationFilter
+    ? [{ label: strings.filterMissingTranslation, value: "missingTranslation" }]
+    : [];
+  const filterChoices =
+    filterSet === "variant"
+      ? [
+          { label: strings.filterMissingSku, value: "missingSku" },
+          { label: strings.filterMissingPrice, value: "missingPrice" },
+          { label: strings.filterCompareAtNotAbovePrice, value: "compareAtNotAbovePrice" },
+        ]
+      : filterSet === "translationOnly"
+        ? translationChoice
+        : [
+            { label: strings.filterMissingSeoTitle, value: "missingSeoTitle" },
+            { label: strings.filterMissingSeoDescription, value: "missingSeoDescription" },
+            ...translationChoice,
+          ];
 
   const filterButtonLabel =
     filters.length > 0 ? `${strings.filtersLabel} (${filters.length})` : strings.filtersLabel;
+  // Policy/metaobject rows in the primary language have no applicable filters
+  // at all — hide the empty popover button instead of showing a dead control.
+  const showFilterButton = filterChoices.length > 0;
 
   return (
     <InlineStack gap="200" blockAlign="end" wrap>
@@ -102,26 +110,28 @@ export function FilterBar({
           autoComplete="off"
         />
       </div>
-      <Popover
-        active={popoverActive}
-        onClose={() => setPopoverActive(false)}
-        activator={
-          <Button disclosure pressed={filters.length > 0} onClick={() => setPopoverActive((v) => !v)}>
-            {filterButtonLabel}
-          </Button>
-        }
-      >
-        <div style={{ padding: "12px 16px" }}>
-          <ChoiceList
-            allowMultiple
-            title={strings.filtersLabel}
-            titleHidden
-            choices={filterChoices}
-            selected={filters}
-            onChange={(selected) => onFiltersChange(selected as BulkFilterId[])}
-          />
-        </div>
-      </Popover>
+      {showFilterButton && (
+        <Popover
+          active={popoverActive}
+          onClose={() => setPopoverActive(false)}
+          activator={
+            <Button disclosure pressed={filters.length > 0} onClick={() => setPopoverActive((v) => !v)}>
+              {filterButtonLabel}
+            </Button>
+          }
+        >
+          <div style={{ padding: "12px 16px" }}>
+            <ChoiceList
+              allowMultiple
+              title={strings.filtersLabel}
+              titleHidden
+              choices={filterChoices}
+              selected={filters}
+              onChange={(selected) => onFiltersChange(selected as BulkFilterId[])}
+            />
+          </div>
+        </Popover>
+      )}
       <div style={{ width: "110px" }}>
         <Select
           label={strings.pageSizeLabel}

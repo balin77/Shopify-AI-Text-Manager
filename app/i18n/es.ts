@@ -1956,6 +1956,9 @@ export const es: Translation = {
       collection: "Colecciones",
       article: "Artículos del blog",
       page: "Páginas",
+      blog: "Blogs",
+      policy: "Políticas",
+      metaobject: "Metaobjetos",
     },
     columns: {
       image: "Imagen",
@@ -1983,6 +1986,12 @@ export const es: Translation = {
       compareAtPrice: "Precio de comparación",
       barcode: "Código de barras",
       position: "Posición",
+      // Fase 5: políticas (el título no es editable en Shopify) y
+      // metaobjetos (las columnas dinámicas muestran el nombre del campo de
+      // Shopify sin traducir — solo las columnas de contexto llevan i18n).
+      policyTitle: "Política",
+      moDisplayName: "Entrada",
+      moHandle: "Handle",
     },
     statusOptions: {
       active: "Activo",
@@ -2013,10 +2022,13 @@ export const es: Translation = {
       legacyOptionValues: "Los valores de la opción aún no tienen IDs de Shopify — resincroniza este producto primero.",
       missingImage: "Este producto no tiene imagen.",
       missingMediaId: "A esta imagen le falta el ID de medios de Shopify — resincroniza este producto primero.",
+      wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
     },
+    metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",
     searchPlaceholder: "Buscar por título o handle…",
     searchPlaceholderVariant: "Buscar por producto, variante o SKU…",
+    searchPlaceholderPolicy: "Buscar por título…",
     filtersLabel: "Filtros",
     filters: {
       missingSeoTitle: "Falta el título SEO",

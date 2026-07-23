@@ -1957,6 +1957,9 @@ export const en: Translation = {
       collection: "Collections",
       article: "Blog articles",
       page: "Pages",
+      blog: "Blogs",
+      policy: "Policies",
+      metaobject: "Metaobjects",
     },
     columns: {
       image: "Image",
@@ -1984,6 +1987,12 @@ export const en: Translation = {
       compareAtPrice: "Compare-at price",
       barcode: "Barcode",
       position: "Position",
+      // Phase 5: policies (title not editable on Shopify) and metaobjects
+      // (dynamic field columns show the Shopify field name untranslated —
+      // only the context columns carry i18n labels).
+      policyTitle: "Policy",
+      moDisplayName: "Entry",
+      moHandle: "Handle",
     },
     statusOptions: {
       active: "Active",
@@ -2014,10 +2023,13 @@ export const en: Translation = {
       legacyOptionValues: "The option values have no Shopify ids yet — resync this product first.",
       missingImage: "This product has no image.",
       missingMediaId: "This image is missing its Shopify media id — resync this product first.",
+      wrongMetaobjectType: "This column belongs to another metaobject type.",
     },
+    metaobjectTypeLabel: "Metaobject type",
     searchLabel: "Search",
     searchPlaceholder: "Search by title or handle…",
     searchPlaceholderVariant: "Search by product, variant or SKU…",
+    searchPlaceholderPolicy: "Search by title…",
     filtersLabel: "Filters",
     filters: {
       missingSeoTitle: "Missing SEO title",
