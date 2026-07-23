@@ -453,10 +453,12 @@ Aktion über der Tabelle: **Spalte + Zielsprache wählen → alle leeren Zellen 
 
 `translateAllContent`, `translateMetaobjectEntries`, `saveImageAltTextTranslation` und sämtliche `api-ai-handlers`-Schreiber setzen `marketId: ""` **hart**. Solange das so ist, kann „Fehlende übersetzen" nur global arbeiten. **Entscheidung:** Phase 4 liefert markt-**bewusstes manuelles** Übersetzen und global-only AI-Übersetzen; das Durchreichen von `marketId` in die AI-Pfade ist ein eigener, klar abgegrenzter Schritt (Phase 4b) — und er berührt Code, den alle anderen Oberflächen mitbenutzen, gehört also nicht in dieselbe Auslieferung.
 
-**4b-Folgearbeiten** (gesammelt, damit der Schnitt sichtbar bleibt):
+**4b-Folgearbeiten** — ✅ **erledigt** (Commit „finish Phase 4b …"):
 
-1. `marketId` in die AI-Pfade durchreichen (siehe oben) — markt-bewusstes „Fehlende übersetzen".
-2. **Bulk-Primär-Saves invalidieren keine veralteten Fremdübersetzungen** (Review-Finding 8): Der Einzeleditor löscht beim Ändern eines Primärwerts die dadurch stale gewordenen Übersetzungen über `updateContent` (Shopify + lokal); die Bulk-Persistenz (`apply.server.ts`, `persistProductBaseFields` & Co.) tut das bewusst noch nicht — die Invalidierung berührt die geteilte Übersetzungs-Plumbing aller Oberflächen und gehört deshalb in denselben klar abgegrenzten 4b-Schritt. Bis dahin gilt: Nach einem Bulk-Primär-Save können Fremdübersetzungen der geänderten Felder veraltet weiterbestehen (identisches Verhalten wie ein Direkt-Edit im Shopify-Admin).
+1. ✅ `marketId` in den „Fehlende übersetzen"-AI-Pfad durchgereicht — markt-bewusst: Client sendet den Markt nur, wenn die Modal-Zielsprache = die Sprache, für die der Markt gewählt wurde; Handler validiert via `findInvalidLocaleOrMarket`, liest die leere Zelle im aktuellen (locale, market)-Layer, `pushSuggestion` schreibt mit `marketId`. Der verifizierte Schreibpfad (`registerAndVerify`/`persistTranslationRow`) war schon markt-fähig.
+2. ✅ **Bulk-Primär-Saves invalidieren jetzt veraltete Fremdübersetzungen** (Review-Finding 8): `invalidateStaleForeignTranslations` in `apply.server.ts` entfernt beim Ändern eines primären übersetzbaren Feldes dessen Fremdübersetzungen auf Shopify **und** lokal — wie der Einzeleditor, aber über den **echo-verifizierten** `removeAndVerifyAcrossLocales` (kein stiller `translationsRemove`-No-Op). Nur globale Zeilen (`marketId ""`); Markt-Overrides überleben. In allen drei Primär-Pfaden verdrahtet (Produkt-Basis, Single-Mutation-Typen, Metaobjekt). Best-effort: ein Fehler loggt und behält die stale Zeilen, statt die Zelle rot zu machen. `foreignLocales` reichen die Aufrufer rein (kein Extra-Fetch in `applyBulkDiff`).
+
+**Feldfarben** (Parität mit „Inhalt", zusätzlich zu 4b): Gelb (`#fff4e5`) wenn die gewählte Sprache keinen Feldwert hat; Blau (`#e0f2fe`, nur Primär-Ansicht) wenn der Primärwert existiert, aber eine Fremdsprache die Übersetzung fehlt. Loader flaggt Blau pro Zeile (`untranslatedColumnIds`) aus `ContentTranslation`; Gelb wird client-seitig aus dem Zellwert berechnet (Live-Update beim Tippen). Klasse am Zell-Wrapper, damit Dirty/Error-Zustände Vorrang behalten.
 
 ### 6.7 Abnahme Phase 4
 
