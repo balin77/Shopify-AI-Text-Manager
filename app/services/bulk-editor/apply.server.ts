@@ -48,9 +48,14 @@ import {
 import {
   groupDiffByRow,
   parseListMetafieldInput,
+  parseMoney,
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   METAFIELDS_SET_CHUNK,
   IMG_ALT_COLUMN_ID,
+  VAR_SKU_COLUMN_ID,
+  VAR_PRICE_COLUMN_ID,
+  VAR_COMPARE_AT_COLUMN_ID,
+  VAR_BARCODE_COLUMN_ID,
   type BulkRowType,
   type BulkDiffEntry,
   type BulkDiffRowGroup,
@@ -58,6 +63,7 @@ import {
   type BulkFailure,
   type ColumnDescriptor,
 } from "./columns.shared";
+import { moneyToDecimalString } from "../product-variant-sync.server";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -1008,6 +1014,257 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   return failures;
 }
 
+// ─── Variant rows: ONE productVariantsBulkUpdate per PRODUCT (Plan §5.4) ───
+
+/** Deliberately NO variant chunking per call (Plan §14 no. 2): Shopify
+ * documents no per-call variant limit; the real bounds are the per-product
+ * variant limit and dynamic query cost, and the gateway's THROTTLED retry
+ * covers the latter. `inventoryQuantity` is NEVER part of the input (§11). */
+const PRODUCT_VARIANTS_BULK_UPDATE = `#graphql
+  mutation bulkEditorVariantUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants {
+        id
+        sku
+        price
+        compareAtPrice
+        barcode
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+interface VariantBulkInput {
+  id: string;
+  price?: string;
+  compareAtPrice?: string | null;
+  barcode?: string | null;
+  inventoryItem?: { sku: string };
+}
+
+interface PreparedVariantInput {
+  group: BulkDiffRowGroup;
+  input: VariantBulkInput;
+  /** columnIds actually carried by `input` — failure attribution set. */
+  columnIds: string[];
+}
+
+/** Maps the tail of a userErrors field path to the grid column
+ * ("price" → var.price, "inventoryItem"/"sku" → var.sku). */
+function variantColumnForErrorField(tail: string): string | null {
+  switch (tail) {
+    case "price":
+      return VAR_PRICE_COLUMN_ID;
+    case "compareAtPrice":
+      return VAR_COMPARE_AT_COLUMN_ID;
+    case "barcode":
+      return VAR_BARCODE_COLUMN_ID;
+    case "sku":
+    case "inventoryItem":
+      return VAR_SKU_COLUMN_ID;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Builds the ProductVariantsBulkInput for one variant row group, reporting
+ * invalid money cells as failures (they are dropped from the input, the rest
+ * of the variant still saves — same per-cell semantics as the product base
+ * fields). Money rules (Plan §5.5/§14): price is NOT nullable — clearing it
+ * is a cell error; compareAtPrice cleared ⇒ explicit null.
+ */
+function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariantInput | null; failures: BulkFailure[] } {
+  const failures: BulkFailure[] = [];
+  const input: VariantBulkInput = { id: group.rowId };
+  const columnIds: string[] = [];
+
+  for (const [columnId, value] of Object.entries(group.cells)) {
+    switch (columnId) {
+      case VAR_PRICE_COLUMN_ID: {
+        const parsed = parseMoney(value);
+        if (!parsed.ok) {
+          failures.push(
+            failureOf(
+              group,
+              parsed.error === "negative" ? "The price cannot be negative." : `"${value}" is not a valid amount.`,
+              columnId,
+            ),
+          );
+          break;
+        }
+        if (parsed.value === null) {
+          // §14: price is not nullable at Shopify — clearing is not a valid
+          // operation and must surface as a cell error, never a silent skip.
+          failures.push(failureOf(group, "The price cannot be empty — Shopify requires a price on every variant.", columnId));
+          break;
+        }
+        input.price = parsed.value;
+        columnIds.push(columnId);
+        break;
+      }
+      case VAR_COMPARE_AT_COLUMN_ID: {
+        const parsed = parseMoney(value);
+        if (!parsed.ok) {
+          failures.push(
+            failureOf(
+              group,
+              parsed.error === "negative"
+                ? "The compare-at price cannot be negative."
+                : `"${value}" is not a valid amount.`,
+              columnId,
+            ),
+          );
+          break;
+        }
+        // Cleared cell ⇒ explicit null (clears the compare-at price, §14).
+        input.compareAtPrice = parsed.value;
+        columnIds.push(columnId);
+        break;
+      }
+      case VAR_SKU_COLUMN_ID:
+        // SKU lives on the InventoryItem, not the variant — same path as
+        // api.update-variant-match-key.tsx. "" clears the SKU (valid).
+        input.inventoryItem = { sku: value };
+        columnIds.push(columnId);
+        break;
+      case VAR_BARCODE_COLUMN_ID:
+        input.barcode = value === "" ? null : value;
+        columnIds.push(columnId);
+        break;
+      default:
+        // Validation rejected unknown columns already — reaching this is a
+        // programming error, surfaced per cell.
+        failures.push(failureOf(group, `Column "${columnId}" is not editable on ${group.rowType}.`, columnId));
+    }
+  }
+
+  if (columnIds.length === 0) return { prepared: null, failures };
+  return { prepared: { group, input, columnIds }, failures };
+}
+
+/**
+ * Persists the variant row groups of ONE product with ONE
+ * productVariantsBulkUpdate (Plan §5.4). userErrors carry a field PATH ARRAY
+ * (["variants","2","price"], §14 no. 1) — the index resolves the variant, the
+ * tail the column, so the failure lands on exactly that cell. Echo semantics:
+ * only values Shopify returns in `productVariants` are mirrored into the DB
+ * (userErrors: [] alone is not success — CLAUDE.md invariant).
+ */
+async function persistVariantProductGroup(
+  productId: string,
+  groups: BulkDiffRowGroup[],
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const { db, gateway } = deps;
+  const failures: BulkFailure[] = [];
+  const sent: PreparedVariantInput[] = [];
+
+  for (const group of groups) {
+    const { prepared, failures: buildFailures } = buildVariantInput(group);
+    failures.push(...buildFailures);
+    if (prepared) sent.push(prepared);
+  }
+  if (sent.length === 0) return failures;
+
+  const failEverySentCell = (message: string) => {
+    for (const { group, columnIds } of sent) {
+      for (const columnId of columnIds) failures.push(failureOf(group, message, columnId));
+    }
+  };
+
+  try {
+    const response = await gateway.graphql(PRODUCT_VARIANTS_BULK_UPDATE, {
+      variables: { productId, variants: sent.map((s) => s.input) },
+    });
+    const data = (await response.json()) as {
+      data?: {
+        productVariantsBulkUpdate?: {
+          productVariants?:
+            | { id: string; sku?: string | null; price?: string | null; compareAtPrice?: string | null; barcode?: string | null }[]
+            | null;
+          userErrors?: { field?: string[] | string | null; message: string }[];
+        };
+      };
+      errors?: { message: string }[];
+    };
+    // collectErrors pattern (api.update-variant-match-key.tsx): merge
+    // top-level GraphQL errors with the mutation's userErrors.
+    if (data.errors && data.errors.length > 0) {
+      failEverySentCell(data.errors[0].message);
+      return failures;
+    }
+    const payload = data.data?.productVariantsBulkUpdate;
+    const userErrors = payload?.userErrors ?? [];
+
+    if (userErrors.length > 0) {
+      // §14 no. 1: `field` is an ARRAY of path segments
+      // (["variants","2","price"]); tolerate the dot-joined string form too.
+      // Resolve variants[i] → row group and the field tail → columnId.
+      const messageByCell = new Map<string, string>(); // `${rowId}|${columnId}` → message
+      for (const err of userErrors) {
+        const path = Array.isArray(err.field)
+          ? err.field
+          : typeof err.field === "string"
+            ? err.field.split(".")
+            : [];
+        const index = path.map((p) => parseInt(p, 10)).find((n) => Number.isInteger(n) && n >= 0);
+        const tail = path.length > 0 ? path[path.length - 1] : "";
+        const columnId = variantColumnForErrorField(tail);
+        if (index !== undefined && index < sent.length && columnId) {
+          messageByCell.set(`${sent[index].group.rowId}|${columnId}`, err.message);
+        }
+      }
+      // The mutation applies atomically (no partial updates requested): cells
+      // named in an error get the specific message, every other sent cell the
+      // atomicity explanation. Nothing is mirrored.
+      for (const { group, columnIds } of sent) {
+        for (const columnId of columnIds) {
+          const specific = messageByCell.get(`${group.rowId}|${columnId}`);
+          failures.push(
+            failureOf(
+              group,
+              specific ??
+                (messageByCell.size > 0
+                  ? "Not saved — another variant of the same product failed (Shopify applies the call atomically)."
+                  : userErrors[0].message),
+              columnId,
+            ),
+          );
+        }
+      }
+      return failures;
+    }
+
+    // Echo check + DB mirror: only the values Shopify RETURNED go into the
+    // cache (Plan §5.4 "nur zurückgemeldete Werte spiegeln").
+    const echoed = payload?.productVariants ?? [];
+    for (const { group, input, columnIds } of sent) {
+      const echo = echoed?.find((v) => v.id === group.rowId);
+      if (!echo) {
+        for (const columnId of columnIds) {
+          failures.push(failureOf(group, "Shopify did not confirm the variant update.", columnId));
+        }
+        continue;
+      }
+      const mirror: Record<string, unknown> = {};
+      if (input.price !== undefined) mirror.price = moneyToDecimalString(echo.price ?? null);
+      if (input.compareAtPrice !== undefined) {
+        mirror.compareAtPrice = echo.compareAtPrice == null ? null : moneyToDecimalString(echo.compareAtPrice);
+      }
+      if (input.inventoryItem !== undefined) mirror.sku = echo.sku ?? null;
+      if (input.barcode !== undefined) mirror.barcode = echo.barcode ?? null;
+      await db.productVariant.updateMany({ where: { shopifyGid: group.rowId }, data: mirror });
+    }
+  } catch (err: unknown) {
+    failEverySentCell(err instanceof Error ? err.message : String(err));
+  }
+  return failures;
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<BulkFailure[]> {
@@ -1092,19 +1349,75 @@ export async function applyBulkDiff(
   const failures: BulkFailure[] = [];
   let saved = 0;
 
-  for (let i = 0; i < groups.length; i++) {
-    const group = groups[i];
-    let rowFailures: BulkFailure[];
-    try {
-      rowFailures = await persistRow(group, deps);
-    } catch (err: unknown) {
-      // Defensive: persistRow reports expected failures itself — this only
-      // catches the unexpected (DB down, …) so the batch still continues.
-      rowFailures = [failureOf(group, err instanceof Error ? err.message : String(err))];
+  // Persist units (Plan §5.4 groupDiffByMutationTarget): primary variant row
+  // groups of the SAME product collapse into ONE productVariantsBulkUpdate;
+  // everything else stays one unit per row group. The row→product mapping is
+  // resolved SERVER-side from the cache (never trusted from the client), and
+  // it doubles as the tenancy check — a variant that doesn't belong to this
+  // shop simply doesn't resolve.
+  type PersistUnit =
+    | { kind: "single"; groups: [BulkDiffRowGroup] }
+    | { kind: "variantProduct"; productId: string; groups: BulkDiffRowGroup[] }
+    | { kind: "unresolvedVariant"; groups: [BulkDiffRowGroup] };
+
+  const units: PersistUnit[] = [];
+  const variantPrimaryGroups = groups.filter((g) => g.rowType === "variant" && g.locale === "");
+  for (const group of groups) {
+    if (group.rowType === "variant" && group.locale === "") continue; // collected below
+    units.push({ kind: "single", groups: [group] });
+  }
+  if (variantPrimaryGroups.length > 0) {
+    const owned = await db.productVariant.findMany({
+      where: { shopifyGid: { in: variantPrimaryGroups.map((g) => g.rowId) }, product: { shop } },
+      select: { shopifyGid: true, productId: true },
+    });
+    const productIdByGid = new Map(owned.map((v) => [v.shopifyGid, v.productId] as const));
+    const byProduct = new Map<string, BulkDiffRowGroup[]>();
+    for (const group of variantPrimaryGroups) {
+      const productId = productIdByGid.get(group.rowId);
+      if (!productId) {
+        units.push({ kind: "unresolvedVariant", groups: [group] });
+        continue;
+      }
+      const list = byProduct.get(productId) ?? [];
+      list.push(group);
+      byProduct.set(productId, list);
     }
-    if (rowFailures.length === 0) saved++;
-    failures.push(...rowFailures);
-    if (onProgress) await onProgress(i + 1, groups.length);
+    for (const [productId, productGroups] of byProduct) {
+      units.push({ kind: "variantProduct", productId, groups: productGroups });
+    }
+  }
+
+  let processedGroups = 0;
+  for (const unit of units) {
+    let unitFailures: BulkFailure[];
+    try {
+      if (unit.kind === "variantProduct") {
+        unitFailures = await persistVariantProductGroup(unit.productId, unit.groups, deps);
+      } else if (unit.kind === "unresolvedVariant") {
+        unitFailures = [
+          failureOf(
+            unit.groups[0],
+            "This variant is not in the local cache — reload/resync the product first.",
+          ),
+        ];
+      } else {
+        unitFailures = await persistRow(unit.groups[0], deps);
+      }
+    } catch (err: unknown) {
+      // Defensive: the persist functions report expected failures themselves —
+      // this only catches the unexpected (DB down, …) so the batch continues.
+      const message = err instanceof Error ? err.message : String(err);
+      unitFailures = unit.groups.map((g) => failureOf(g, message));
+    }
+    // saved counts ROW GROUPS without any attributed failure — unchanged
+    // semantics for single-row units, per-variant granularity for units.
+    for (const group of unit.groups) {
+      if (!unitFailures.some((f) => f.rowId === group.rowId)) saved++;
+    }
+    failures.push(...unitFailures);
+    processedGroups += unit.groups.length;
+    if (onProgress) await onProgress(processedGroups, groups.length);
   }
 
   // §10.5: summaries only — never cell values.

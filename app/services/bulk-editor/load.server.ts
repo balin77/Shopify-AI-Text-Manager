@@ -63,10 +63,45 @@ const TRANSLATION_NOT_IN_CAP = 10_000;
 
 const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   product: "Product",
+  variant: "ProductVariant", // unused in practice — variant columns are never translatable
   collection: "Collection",
   article: "Article",
   page: "Page",
 };
+
+// ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
+
+/** Shop → currencyCode memo. The currency is shop-wide and effectively never
+ * changes (changing it is a support-gated Shopify operation), so a plain
+ * process-lifetime cache is enough — one query per shop per boot. */
+const currencyCodeCache = new Map<string, string>();
+
+/** Shop-wide currency code ("EUR", "USD") shown as a suffix on the money
+ * column headers. Degrades to "" on any error — the grid then shows the
+ * plain header. */
+export async function getShopCurrencyCode(
+  admin: { graphql: (query: string, opts?: Record<string, unknown>) => Promise<Response> },
+  shop: string,
+): Promise<string> {
+  const cached = currencyCodeCache.get(shop);
+  if (cached !== undefined) return cached;
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query bulkEditorShopCurrency {
+          shop {
+            currencyCode
+          }
+        }`,
+    );
+    const data = (await response.json()) as { data?: { shop?: { currencyCode?: string | null } } };
+    const code = data.data?.shop?.currencyCode ?? "";
+    if (code) currencyCodeCache.set(shop, code);
+    return code;
+  } catch {
+    return "";
+  }
+}
 
 interface BuiltWhere {
   /** AND-composed conditions, spread into the per-type where. */
@@ -276,6 +311,11 @@ async function loadBulkRowsInner(
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
   const { type, skip, take } = opts;
+  // Variant rows join a different table shape (product context, price/sku
+  // filters, nested sort) — they bypass the content-type where builder.
+  if (type === "variant") {
+    return loadVariantRows(db, shop, opts);
+  }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
   const orderBy = buildOrderBy(type, opts.sort);
 
@@ -459,4 +499,122 @@ async function loadBulkRowsInner(
       };
     }
   }
+}
+
+// ─── Variant rows (Phase 3 — Plan §5.3) ────────────────────────────────────
+
+/** Decimal → normalized grid string ("1299.90"; "" = unset). The reverse
+ * (Money string → Decimal) lives in product-variant-sync.server.ts — this is
+ * pure read-side formatting of the already-normalized column. */
+function decimalToGridValue(value: { toFixed(digits: number): string } | null): string {
+  return value === null ? "" : value.toFixed(2);
+}
+
+/**
+ * One page of variant rows: one row = one variant, with the product joined
+ * for the read-only context columns (image, title) and the search. Search
+ * matches variant title, SKU AND product title (Plan §5.3); the price/SKU
+ * filters and all sorts are DB-side.
+ */
+async function loadVariantRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<LoadBulkRowsResult> {
+  const { skip, take } = opts;
+  const and: Prisma.ProductVariantWhereInput[] = [];
+
+  const search = opts.search.trim();
+  if (search) {
+    and.push({
+      OR: [
+        { title: { contains: search, mode: "insensitive" } },
+        { sku: { contains: search, mode: "insensitive" } },
+        { product: { title: { contains: search, mode: "insensitive" } } },
+      ],
+    });
+  }
+  if (opts.filters.includes("missingSku")) {
+    and.push({ OR: [{ sku: null }, { sku: "" }] });
+  }
+  if (opts.filters.includes("missingPrice")) {
+    and.push({ price: null });
+  }
+  if (opts.filters.includes("compareAtNotAbovePrice")) {
+    // The classic data error: a compare-at price that is not ABOVE the price
+    // renders no strikethrough and confuses merchants. Column-to-column
+    // comparison via Prisma field references (GA since Prisma 5).
+    and.push({
+      compareAtPrice: { not: null, lte: db.productVariant.fields.price },
+      price: { not: null },
+    });
+  }
+
+  const where: Prisma.ProductVariantWhereInput = { product: { shop }, AND: and };
+
+  // DB-backed sorts only (§3.3): variant title/sku/price/compareAtPrice/
+  // position plus the product title (nested). Default mirrors the Shopify
+  // admin: product title, then variant position.
+  let orderBy: Prisma.ProductVariantOrderByWithRelationInput[] = [
+    { product: { title: "asc" } },
+    { position: "asc" },
+  ];
+  if (opts.sort) {
+    const column = getColumnForType("variant", opts.sort.columnId);
+    const key = column?.sortKey;
+    if (key === "productTitle") {
+      orderBy = [{ product: { title: opts.sort.direction } }, { position: "asc" }];
+    } else if (key === "title" || key === "sku" || key === "price" || key === "compareAtPrice" || key === "position") {
+      orderBy = [{ [key]: opts.sort.direction }, { position: "asc" }];
+    }
+  }
+
+  const select = {
+    shopifyGid: true,
+    title: true,
+    sku: true,
+    price: true,
+    compareAtPrice: true,
+    barcode: true,
+    position: true,
+    product: {
+      select: {
+        id: true,
+        title: true,
+        featuredImageUrl: true,
+        featuredImageAlt: true,
+        hasMoreVariants: true,
+      },
+    },
+  } as const;
+
+  const [items, total] = await Promise.all([
+    db.productVariant.findMany({ where, select, orderBy, skip, take }),
+    db.productVariant.count({ where }),
+  ]);
+
+  return {
+    rows: items.map((v) => ({
+      // The ROW id is the variant GID (shopifyGid) — ProductVariant.id is the
+      // numeric Shopify id, and the diff validation requires GID shape.
+      id: v.shopifyGid,
+      type: "variant" as const,
+      title: v.title,
+      seoTitle: "",
+      seoDescription: "",
+      handle: "",
+      productId: v.product.id,
+      productTitle: v.product.title,
+      imageUrl: v.product.featuredImageUrl ?? undefined,
+      imageAlt: v.product.featuredImageAlt ?? undefined,
+      sku: v.sku ?? "",
+      price: decimalToGridValue(v.price),
+      compareAtPrice: decimalToGridValue(v.compareAtPrice),
+      barcode: v.barcode ?? "",
+      position: v.position,
+      hasMoreVariants: v.product.hasMoreVariants,
+    })),
+    total,
+    translationFilterApproximate: false,
+  };
 }
