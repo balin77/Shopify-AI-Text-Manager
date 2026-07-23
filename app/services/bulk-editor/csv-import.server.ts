@@ -24,7 +24,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { loadBulkRows } from "./load.server";
+import { loadBulkRows, type BulkAdminClient } from "./load.server";
 import { debugLog } from "../../utils/debug";
 import {
   mapCsvHeader,
@@ -101,9 +101,19 @@ export interface CsvImportArgs {
    * truth for what this merchant may edit (§8.2). */
   columns: ColumnDescriptor[];
   productCells?: { metafieldSpecs: MetafieldColumnSpec[]; caps: ProductColumnCaps };
+  /** Blog rows are live-fetched (Phase 5) — required for type "blog". */
+  admin?: BulkAdminClient;
 }
 
-/** handle → all row ids carrying it, per row type (variants have none). */
+/** Row types the import resolves by `id` ONLY — no handle fallback: variants
+ * (SKUs aren't unique), blogs (no DB cache to resolve handles against),
+ * policies (no handle at all) and metaobjects (handles only unique per
+ * definition type — resolving across types would be the "guessing" §8.2
+ * forbids). Their exports always carry the id column, so a round trip works. */
+const ID_ONLY_ROW_TYPES: ReadonlySet<BulkRowType> = new Set(["variant", "blog", "policy", "metaobject"]);
+
+/** handle → all row ids carrying it, per row type (id-only types resolve no
+ * handles — see ID_ONLY_ROW_TYPES). */
 async function loadIdsByHandle(
   db: PrismaClient,
   shop: string,
@@ -111,7 +121,7 @@ async function loadIdsByHandle(
   handles: string[],
 ): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
-  if (handles.length === 0 || type === "variant") return map;
+  if (handles.length === 0 || ID_ONLY_ROW_TYPES.has(type)) return map;
   const where = { shop, handle: { in: handles } };
   const select = { id: true, handle: true } as const;
   const rows =
@@ -153,6 +163,7 @@ async function loadRowsByIds(
       take: chunk.length,
       ids: chunk,
       productCells: args.productCells,
+      admin: args.admin,
     });
     for (const row of page.rows) byId.set(row.id, row);
   }
@@ -185,7 +196,7 @@ export async function buildCsvImportPreview(
   // resolution always runs against the PRIMARY handle — which is what the
   // id-less case means in practice (a hand-built file).
   const handleIndex = mapping.columns.find((m) => m.column.id === "field.handle")?.index ?? -1;
-  if (mapping.idIndex === -1 && (args.type === "variant" || handleIndex === -1)) {
+  if (mapping.idIndex === -1 && (ID_ONLY_ROW_TYPES.has(args.type) || handleIndex === -1)) {
     return { ok: false, error: "noIdColumn" };
   }
 

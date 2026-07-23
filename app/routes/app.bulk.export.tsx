@@ -29,6 +29,7 @@ import {
 } from "../services/bulk-editor/columns.shared";
 import {
   allowedRowTypesForPlan,
+  loadMetaobjectColumnSpecs,
   loadProductMetafieldColumnSpecs,
   productColumnCapsForPlan,
 } from "../services/bulk-editor/columns.server";
@@ -47,7 +48,7 @@ export interface BulkCsvExportPayload {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
 
@@ -87,7 +88,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     type === "product" && productCaps.metafields
       ? await loadProductMetafieldColumnSpecs(db, shop)
       : [];
-  const columns = buildColumnsForType(type, metafieldSpecs, productCaps);
+  const metaobjectSpecs = type === "metaobject" ? await loadMetaobjectColumnSpecs(db, shop) : [];
+  const columns = buildColumnsForType(type, metafieldSpecs, productCaps, metaobjectSpecs);
+  // Metaobject exports mirror the current view's definition-type filter —
+  // validated against the real definitions (unknown value = no filter, which
+  // only ever yields MORE rows of the same shop, never foreign data).
+  const rawMoType = url.searchParams.get("moType") || "";
+  const moType =
+    type === "metaobject" && metaobjectSpecs.some((s) => s.type === rawMoType) ? rawMoType : "";
 
   const result = await buildBulkCsvExport(db, shop, {
     type,
@@ -100,6 +108,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     columns,
     delimiter,
     productCells: { metafieldSpecs, caps: productCaps },
+    admin,
+    moType,
   });
 
   if (!result.ok) {

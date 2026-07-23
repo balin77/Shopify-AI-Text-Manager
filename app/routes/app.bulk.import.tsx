@@ -37,7 +37,7 @@ export type CsvImportActionResult =
   | { ok: false; error: "gated" | "invalid" | "tooLarge" };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
 
@@ -102,6 +102,9 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     csvText,
     columns: columnsByType[type],
     productCells: { metafieldSpecs, caps: productCaps },
+    // Blog rows are live-fetched (Phase 5) — the id-restricted row load needs
+    // the client. Import resolution stays id-only for blogs (§8.2).
+    admin,
   });
   return json<CsvImportActionResult>(preview);
 };

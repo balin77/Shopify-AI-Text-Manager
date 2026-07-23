@@ -17,7 +17,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { loadBulkRows } from "./load.server";
+import { loadBulkRows, type BulkAdminClient } from "./load.server";
 import { buildCsv, CSV_EXPORT_MAX_ROWS, CSV_ID_HEADER, type CsvDelimiter } from "./csv.shared";
 import {
   resolveCellValue,
@@ -33,9 +33,18 @@ import {
 /** Page size for the server-side collection sweep. */
 const EXPORT_PAGE_SIZE = 250;
 
-/** Recognition lead columns for variant rows (§8.1 decision): id + product
- * title + variant title + SKU. */
+/** Recognition lead columns per row type (§8.1 decision): variants lead with
+ * product/variant title + SKU (no handle — re-import resolves by id only);
+ * policies with their read-only title (no handle at all); metaobjects with
+ * display name + handle (re-import still resolves by id only — metaobject
+ * handles are only unique per type). Everything else leads with the handle
+ * column. */
 const VARIANT_LEAD_COLUMN_IDS = ["productTitle", "variantTitle", "var.sku"];
+const LEAD_COLUMN_IDS_BY_TYPE: Partial<Record<BulkRowType, string[]>> = {
+  variant: VARIANT_LEAD_COLUMN_IDS,
+  policy: ["policyTitle"],
+  metaobject: ["moDisplayName", "moHandle"],
+};
 
 export interface BulkCsvExportOptions {
   type: BulkRowType;
@@ -52,6 +61,11 @@ export interface BulkCsvExportOptions {
   columns: ColumnDescriptor[];
   delimiter: CsvDelimiter;
   productCells?: { metafieldSpecs: MetafieldColumnSpec[]; caps: ProductColumnCaps };
+  /** Blog rows are live-fetched (Phase 5) — required for type "blog". */
+  admin?: BulkAdminClient;
+  /** Metaobject rows: the toolbar's definition-type filter — the export
+   * mirrors the current view (§8.1), so it exports the selected type only. */
+  moType?: string;
 }
 
 export type BulkCsvExportResult =
@@ -79,7 +93,7 @@ export function buildExportColumns(
   columns: ColumnDescriptor[],
 ): ColumnDescriptor[] {
   const byId = new Map(columns.map((c) => [c.id, c] as const));
-  const leadIds = type === "variant" ? VARIANT_LEAD_COLUMN_IDS : ["field.handle"];
+  const leadIds = LEAD_COLUMN_IDS_BY_TYPE[type] ?? ["field.handle"];
   const lead = leadIds
     .map((id) => byId.get(id))
     .filter((c): c is ColumnDescriptor => !!c);
@@ -115,6 +129,8 @@ export async function buildBulkCsvExport(
       skip,
       take: EXPORT_PAGE_SIZE,
       productCells: opts.productCells,
+      admin: opts.admin,
+      moType: opts.moType,
     });
     if (page.total > CSV_EXPORT_MAX_ROWS) {
       return { ok: false, error: "tooLarge", total: page.total };
