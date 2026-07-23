@@ -24,7 +24,14 @@ import {
   type ProductColumnCaps,
   getColumnForType,
   metafieldColumnId,
+  metaobjectColumnId,
 } from "./columns.shared";
+
+/** Minimal admin-client surface the blog live-fetch needs — the same shape
+ * getShopCurrencyCode already accepts. */
+export interface BulkAdminClient {
+  graphql: (query: string, opts?: Record<string, unknown>) => Promise<Response>;
+}
 
 export interface LoadBulkRowsOptions {
   type: BulkRowType;
@@ -50,6 +57,18 @@ export interface LoadBulkRowsOptions {
     metafieldSpecs: MetafieldColumnSpec[];
     caps: ProductColumnCaps;
   };
+  /** REQUIRED for type "blog" (Phase 5, Plan §7): blog containers have no DB
+   * cache — they are live-fetched from Shopify in the loader. Blogs are a
+   * two-digit population, so one un-paginated blogs(first:250) query per page
+   * view is acceptable; search/filter/sort/pagination then run IN MEMORY on
+   * the server so the semantics (URL params, counts) stay identical to the
+   * DB-backed types. */
+  admin?: BulkAdminClient;
+  /** Metaobject rows only (Phase 5): restrict to ONE MetaobjectDefinition
+   * type — the toolbar's mandatory type filter (metaobjects are only
+   * schema-homogeneous per type). "" / absent = no restriction (used by the
+   * CSV import, which resolves rows by id). */
+  moType?: string;
 }
 
 export interface LoadBulkRowsResult {
@@ -72,6 +91,9 @@ const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   collection: "Collection",
   article: "Article",
   page: "Page",
+  blog: "Blog",
+  policy: "ShopPolicy",
+  metaobject: "Metaobject", // unused — metaobjects read MetaobjectTranslation instead
 };
 
 // ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
@@ -123,6 +145,9 @@ async function buildWhere(
   db: PrismaClient,
   shop: string,
   opts: LoadBulkRowsOptions,
+  /** DB columns the free-text search matches — policies have no handle (and
+   * no SEO fields), so their branch narrows this to ["title"]. */
+  searchFields: string[] = ["title", "handle"],
 ): Promise<BuiltWhere> {
   const and: Record<string, unknown>[] = [];
   let translationFilterApproximate = false;
@@ -132,13 +157,14 @@ async function buildWhere(
   const search = opts.search.trim();
   if (search) {
     and.push({
-      OR: [
-        { title: { contains: search, mode: "insensitive" } },
-        { handle: { contains: search, mode: "insensitive" } },
-      ],
+      OR: searchFields.map((field) => ({ [field]: { contains: search, mode: "insensitive" } })),
     });
   }
 
+  // Policies/metaobjects have no SEO columns — their branches never receive
+  // these filter ids (the FilterBar hides them), and a hand-crafted URL param
+  // hitting them here would raise a Prisma unknown-column error rather than
+  // silently lying, so the guard lives in the branch, not here.
   if (opts.filters.includes("missingSeoTitle")) and.push(missingField("seoTitle"));
   if (opts.filters.includes("missingSeoDescription")) and.push(missingField("seoDescription"));
 
@@ -274,6 +300,12 @@ async function attachForeignValues(
   rows: BulkRow[],
 ): Promise<void> {
   if (rows.length === 0) return;
+  // Metaobject translations live in their OWN table
+  // (MetaobjectTranslation, unique shop_metaobjectId_key_locale_marketId) —
+  // not in ContentTranslation like every other content type.
+  if (opts.type === "metaobject") {
+    return attachMetaobjectForeignValues(db, shop, opts, rows);
+  }
   const keyByColumnId = translationKeysByColumnId(opts.type);
   if (keyByColumnId.size === 0) return;
   // Reverse map: Shopify key → columnId (bijective per type — each key backs
@@ -322,6 +354,18 @@ async function loadBulkRowsInner(
   // filters, nested sort) — they bypass the content-type where builder.
   if (type === "variant") {
     return loadVariantRows(db, shop, opts);
+  }
+  // Phase-5 shapes with their own sources: blog containers are LIVE-fetched
+  // (no DB model), policies have no handle/SEO columns, metaobjects filter by
+  // definition type and read MetaobjectTranslation.
+  if (type === "blog") {
+    return loadBlogRows(db, shop, opts);
+  }
+  if (type === "policy") {
+    return loadPolicyRows(db, shop, opts);
+  }
+  if (type === "metaobject") {
+    return loadMetaobjectRows(db, shop, opts);
   }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
   const orderBy = buildOrderBy(type, opts.sort);
@@ -628,4 +672,277 @@ async function loadVariantRows(
     total,
     translationFilterApproximate: false,
   };
+}
+
+// ─── Blog container rows (Phase 5 — Plan §7) ───────────────────────────────
+
+/** Un-paginated ceiling of the live blogs query — matches app.blog.tsx. A
+ * shop with 250+ blogs would be truncated; blogs are realistically two-digit
+ * (that is WHY the live fetch is acceptable, Plan §7). */
+const BLOGS_QUERY_FIRST = 250;
+
+interface LiveBlogNode {
+  id: string;
+  title: string;
+  handle: string;
+  seoTitle?: { value: string } | null;
+  seoDescription?: { value: string } | null;
+}
+
+/**
+ * Blog containers have NO DB cache (Plan §0.3) — one live blogs(first:250)
+ * query, then search/filters/sort/pagination IN MEMORY on the server
+ * (documented decision: server-side like every other type, so URL params,
+ * counts and CSV export behave identically; the population is tiny). SEO
+ * title/description come from the global.title_tag / description_tag
+ * METAFIELDS — same source the single editor reads (app.blog.tsx).
+ */
+async function loadBlogRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<LoadBulkRowsResult> {
+  if (!opts.admin) {
+    throw new Error("Blog rows require a live Shopify fetch — no admin client was provided.");
+  }
+  const response = await opts.admin.graphql(
+    `#graphql
+      query bulkEditorBlogs {
+        blogs(first: ${BLOGS_QUERY_FIRST}) {
+          edges {
+            node {
+              id
+              title
+              handle
+              seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+              seoDescription: metafield(namespace: "global", key: "description_tag") { value }
+            }
+          }
+        }
+      }`,
+  );
+  const data = (await response.json()) as {
+    data?: { blogs?: { edges?: { node: LiveBlogNode }[] } };
+    errors?: { message: string }[];
+  };
+  if (data.errors && data.errors.length > 0) throw new Error(data.errors[0].message);
+
+  let rows: BulkRow[] = (data.data?.blogs?.edges ?? []).map(({ node }) => ({
+    id: node.id,
+    type: "blog" as const,
+    title: node.title,
+    seoTitle: node.seoTitle?.value ?? "",
+    seoDescription: node.seoDescription?.value ?? "",
+    handle: node.handle,
+  }));
+
+  if (opts.ids) {
+    const wanted = new Set(opts.ids);
+    rows = rows.filter((r) => wanted.has(r.id));
+  }
+  const search = opts.search.trim().toLowerCase();
+  if (search) {
+    rows = rows.filter(
+      (r) => r.title.toLowerCase().includes(search) || r.handle.toLowerCase().includes(search),
+    );
+  }
+  if (opts.filters.includes("missingSeoTitle")) rows = rows.filter((r) => r.seoTitle === "");
+  if (opts.filters.includes("missingSeoDescription")) rows = rows.filter((r) => r.seoDescription === "");
+  if (opts.filters.includes("missingTranslation") && opts.locale !== "" && rows.length > 0) {
+    // Same anti-join as the DB-backed types, evaluated in memory: blogs WITH
+    // a ContentTranslation row (resourceType "Blog", grid-relevant keys) for
+    // the selected locale/market drop out.
+    const columnKeys = [...new Set(translationKeysByColumnId("blog").values())];
+    const translated = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceType: RESOURCE_TYPE_BY_ROW_TYPE.blog,
+        resourceId: { in: rows.map((r) => r.id) },
+        locale: opts.locale,
+        marketId: opts.marketId,
+        key: { in: columnKeys },
+      },
+      select: { resourceId: true },
+      distinct: ["resourceId"],
+    });
+    const translatedIds = new Set(translated.map((t) => t.resourceId));
+    rows = rows.filter((r) => !translatedIds.has(r.id));
+  }
+
+  // In-memory sort on the columns that declare a sortKey (title, handle) —
+  // the same contract parseSortParam validated against.
+  const sortColumn = opts.sort ? getColumnForType("blog", opts.sort.columnId) : undefined;
+  const sortKey = sortColumn?.sortKey === "handle" ? "handle" : "title";
+  const direction = opts.sort?.direction === "desc" ? -1 : 1;
+  rows.sort((a, b) => direction * a[sortKey].localeCompare(b[sortKey]));
+
+  const total = rows.length;
+  return {
+    rows: rows.slice(opts.skip, opts.skip + opts.take),
+    total,
+    translationFilterApproximate: false,
+  };
+}
+
+// ─── Policy rows (Phase 5 — Plan §7) ───────────────────────────────────────
+
+/**
+ * ShopPolicy rows from the DB cache. Policies have NO handle and NO SEO
+ * columns — search runs on the title only, and the SEO filter ids are
+ * stripped (the FilterBar never offers them for this type; a hand-crafted
+ * URL param must not become a Prisma unknown-column error). Title renders
+ * read-only (§14: shopPolicyUpdate has no title input); only `body` edits.
+ */
+async function loadPolicyRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<LoadBulkRowsResult> {
+  const supported = opts.filters.filter((f) => f === "missingTranslation");
+  const { and, translationFilterApproximate } = await buildWhere(
+    db,
+    shop,
+    { ...opts, filters: supported },
+    ["title"],
+  );
+  const where: Prisma.ShopPolicyWhereInput = { shop, AND: and as Prisma.ShopPolicyWhereInput[] };
+  const orderBy = buildOrderBy("policy", opts.sort);
+  const select = { id: true, title: true, body: true, type: true } as const;
+  const [items, total] = await Promise.all([
+    db.shopPolicy.findMany({ where, select, orderBy, skip: opts.skip, take: opts.take }),
+    db.shopPolicy.count({ where }),
+  ]);
+  return {
+    rows: items.map((i) => ({
+      id: i.id,
+      type: "policy" as const,
+      title: i.title,
+      seoTitle: "",
+      seoDescription: "",
+      handle: "",
+      body: i.body ?? "",
+    })),
+    total,
+    translationFilterApproximate,
+  };
+}
+
+// ─── Metaobject rows (Phase 5 — Plan §7) ───────────────────────────────────
+
+/**
+ * Metaobject rows, restricted to ONE definition type via opts.moType (the
+ * toolbar's mandatory type filter — without it the column set would be the
+ * union of every definition). Field values come from the Metaobject.fields
+ * JSON, keyed by column id ("mo.<type>.<key>"); the missingTranslation
+ * anti-join runs against MetaobjectTranslation (not ContentTranslation).
+ */
+async function loadMetaobjectRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<LoadBulkRowsResult> {
+  const and: Prisma.MetaobjectWhereInput[] = [];
+  if (opts.ids) and.push({ id: { in: opts.ids } });
+  if (opts.moType) and.push({ type: opts.moType });
+  const search = opts.search.trim();
+  if (search) {
+    and.push({
+      OR: [
+        { displayName: { contains: search, mode: "insensitive" } },
+        { handle: { contains: search, mode: "insensitive" } },
+      ],
+    });
+  }
+  let translationFilterApproximate = false;
+  if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
+    const translated = await db.metaobjectTranslation.findMany({
+      where: {
+        shop,
+        ...(opts.moType ? { type: opts.moType } : {}),
+        locale: opts.locale,
+        marketId: opts.marketId,
+      },
+      select: { metaobjectId: true },
+      distinct: ["metaobjectId"],
+      take: TRANSLATION_NOT_IN_CAP + 1,
+    });
+    let ids = translated.map((t) => t.metaobjectId);
+    if (ids.length > TRANSLATION_NOT_IN_CAP) {
+      ids = ids.slice(0, TRANSLATION_NOT_IN_CAP);
+      translationFilterApproximate = true;
+    }
+    if (ids.length > 0) and.push({ id: { notIn: ids } });
+  }
+
+  const where: Prisma.MetaobjectWhereInput = { shop, AND: and };
+  const sortColumn = opts.sort ? getColumnForType("metaobject", opts.sort.columnId) : undefined;
+  const orderBy: Prisma.MetaobjectOrderByWithRelationInput =
+    sortColumn?.sortKey === "handle"
+      ? { handle: opts.sort!.direction }
+      : sortColumn?.sortKey === "displayName"
+        ? { displayName: opts.sort!.direction }
+        : { displayName: "asc" };
+
+  const select = { id: true, type: true, handle: true, displayName: true, fields: true } as const;
+  const [items, total] = await Promise.all([
+    db.metaobject.findMany({ where, select, orderBy, skip: opts.skip, take: opts.take }),
+    db.metaobject.count({ where }),
+  ]);
+
+  return {
+    rows: items.map((i) => {
+      // fields JSON shape (metaobject-sync.service.ts): [{key, value, type}].
+      const moFields: Record<string, string> = {};
+      const fields = Array.isArray(i.fields) ? i.fields : [];
+      for (const raw of fields) {
+        if (!raw || typeof raw !== "object") continue;
+        const field = raw as { key?: unknown; value?: unknown };
+        if (typeof field.key !== "string") continue;
+        moFields[metaobjectColumnId(i.type, field.key)] =
+          typeof field.value === "string" ? field.value : "";
+      }
+      return {
+        id: i.id,
+        type: "metaobject" as const,
+        title: i.displayName,
+        seoTitle: "",
+        seoDescription: "",
+        handle: i.handle,
+        moType: i.type,
+        moFields,
+      };
+    }),
+    total,
+    translationFilterApproximate,
+  };
+}
+
+/** MetaobjectTranslation → BulkRow.foreignValues, the metaobject counterpart
+ * of the ContentTranslation attachment above (same key format
+ * `${locale}|${marketId}|${columnId}`, same global-layer inclusion under a
+ * market override). */
+async function attachMetaobjectForeignValues(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  rows: BulkRow[],
+): Promise<void> {
+  const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
+  const byId = new Map(rows.map((r) => [r.id, r] as const));
+  const translations = await db.metaobjectTranslation.findMany({
+    where: {
+      shop,
+      metaobjectId: { in: rows.map((r) => r.id) },
+      locale: opts.locale,
+      marketId: { in: marketIds },
+    },
+    select: { metaobjectId: true, key: true, value: true, marketId: true },
+  });
+  for (const t of translations) {
+    const row = byId.get(t.metaobjectId);
+    if (!row || !row.moType) continue;
+    const columnId = metaobjectColumnId(row.moType, t.key);
+    row.foreignValues = row.foreignValues ?? {};
+    row.foreignValues[`${opts.locale}|${t.marketId}|${columnId}`] = t.value;
+  }
 }
