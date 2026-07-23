@@ -354,15 +354,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  // Item counts per type: the distribution modal's cost preview needs the
-  // target-set size before anything runs.
-  const [productCount, collectionCount, articleCount, pageCount] = await Promise.all([
-    db.product.count({ where: { shop } }),
-    db.collection.count({ where: { shop } }),
-    db.article.count({ where: { shop } }),
-    db.page.count({ where: { shop } }),
-  ]);
-
   // Product facets for the distribution modal's optional target filter
   // (plan §5.4 — Product only; the handler filters server-side). Note: the
   // cached Product model has NO vendor column, so the plan's vendor facet is
@@ -401,12 +392,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     runningDistribution,
     distributionPreview,
     suggestTaskId,
-    itemCounts: {
-      Product: productCount,
-      Collection: collectionCount,
-      Article: articleCount,
-      Page: pageCount,
-    } as Record<KeywordResourceType, number>,
   });
 };
 
@@ -637,37 +622,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     const groupId = getFormString(form, "groupId");
     const keywordId = getFormString(form, "keywordId");
     if (groupId && keywordId) await removeKeywordFromGroup(db, session.shop, groupId, keywordId);
-    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
-  }
-
-  if (actionType === "addToGroup") {
-    const groupId = getFormString(form, "groupId");
-    const keyword = getFormString(form, "keyword").trim();
-    const localeInput = getFormString(form, "locale");
-    if (!groupId || !keyword || keyword.length > MAX_KEYWORD_LENGTH) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-    }
-    // Ownership check (review H1): a client-supplied groupId must never write
-    // into another shop's group — same guard as importCsv below.
-    const targetGroup = await db.seoKeywordGroup.findFirst({
-      where: { id: groupId, shop: session.shop },
-      select: { id: true },
-    });
-    if (!targetGroup) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-    }
-    let locale = "";
-    if (localeInput) {
-      const shopLocales = await getCachedShopLocales(admin, session.shop);
-      const isPublishedSecondary = shopLocales.some(
-        (l: any) => !l.primary && l.published && l.locale === localeInput,
-      );
-      if (!isPublishedSecondary) {
-        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-      }
-      locale = localeInput;
-    }
-    await addKeywordsToGroup(db, session.shop, groupId, [{ keyword, locale }]);
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
@@ -1179,7 +1133,7 @@ export default function SeoKeywords() {
         />
         {/* Tab SubNavBar: Bibliothek / Zuordnungen. */}
         <SubNavBar
-          ariaLabel={k.localeNavLabel}
+          ariaLabel={k.tabNavLabel}
           items={tabNavItems}
           activeId={tab}
           onSelect={onTabSelect}
@@ -1215,7 +1169,6 @@ export default function SeoKeywords() {
             distributionPreview={data.distributionPreview}
             researchAvailability={data.researchAvailability}
             productTypes={data.productTypes}
-            itemCounts={data.itemCounts}
             localeOptions={localeOptions}
             priorityOptions={priorityOptions}
             intentLabel={intentLabel}

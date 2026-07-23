@@ -36,12 +36,24 @@ interface PickerItem {
 }
 
 /** Pure builder for the shared `where` filter (used by both the query and the count). */
-function buildWhere(shop: string, type: PickerType, q: string, productType: string) {
+export function buildWhere(shop: string, type: PickerType, q: string, productType: string) {
   return {
     shop,
     ...(q ? { title: { contains: q, mode: "insensitive" as const } } : {}),
     ...(type === "Product" && productType ? { productType } : {}),
   };
+}
+
+/**
+ * Pure builder for the optional cursor page args (skip the cursor row itself).
+ * The explicit return type keeps the result assignable when spread into
+ * `findMany` args — same shape as the previous inline `cursorArgs` const.
+ */
+export function buildCursorArgs(
+  shop: string,
+  cursor: string,
+): { cursor?: { shop_id: { shop: string; id: string } }; skip?: number } {
+  return cursor ? { cursor: { shop_id: { shop, id: cursor } }, skip: 1 } : {};
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -61,11 +73,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const where = buildWhere(shop, type, q, productType);
     const orderBy = [{ title: "asc" as const }, { id: "asc" as const }];
-    // Optional cursor page (skip the cursor row itself). Typed with optional
-    // fields so spreading into `findMany` args stays assignable when absent.
-    const cursorArgs: { cursor?: { shop_id: { shop: string; id: string } }; skip?: number } = cursor
-      ? { cursor: { shop_id: { shop, id: cursor } }, skip: 1 }
-      : {};
+    // Optional cursor page (skip the cursor row itself).
+    const cursorArgs = buildCursorArgs(shop, cursor);
 
     // Per-type query — each cache model has a different image column
     // (Product.featuredImageUrl, Collection/Article.imageUrl, Page: none).

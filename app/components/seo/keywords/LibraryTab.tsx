@@ -60,7 +60,6 @@ export interface LibraryTabProps {
   distributionPreview: LoaderData["distributionPreview"];
   researchAvailability: LoaderData["researchAvailability"];
   productTypes: LoaderData["productTypes"];
-  itemCounts: LoaderData["itemCounts"];
   localeOptions: LoaderData["localeOptions"];
   priorityOptions: { label: string; value: string }[];
   intentLabel: (intent: string | null | undefined) => string | null;
@@ -134,7 +133,6 @@ export function LibraryTab({
   distributionPreview,
   researchAvailability,
   productTypes,
-  itemCounts,
   localeOptions,
   priorityOptions,
   intentLabel,
