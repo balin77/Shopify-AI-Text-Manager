@@ -26,15 +26,18 @@ import { meetsPlan } from "~/utils/planUtils";
 import { PLAN_CONFIG, type Plan } from "~/config/plans";
 import {
   isValidBulkDiffEntry,
+  estimateCalls,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   MAX_BULK_TASK_ITEMS,
+  MAX_TASK_CALLS,
   type BulkDiffEntry,
   type BulkRowType,
   type ColumnDescriptor,
 } from "~/services/bulk-editor/columns.shared";
 import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { findInvalidLocaleOrMarket } from "~/services/bulk-editor/translations.server";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 
@@ -75,6 +78,27 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
       { success: false, error: `A single save is limited to ${MAX_BULK_TASK_ITEMS} rows.` },
       { status: 400 },
     );
+  }
+  // Call budget (Plan §10.1): the UI refuses over-budget saves before
+  // submitting; enforce the same ceiling here since this endpoint is directly
+  // POSTable.
+  const estimated = estimateCalls(diff, Object.values(columnsByType).flat());
+  if (estimated > MAX_TASK_CALLS) {
+    return json(
+      {
+        success: false,
+        code: "OVER_BUDGET",
+        error: `This save would need about ${estimated} Shopify calls (limit ${MAX_TASK_CALLS}). Save in several steps or narrow the filter.`,
+      },
+      { status: 400 },
+    );
+  }
+  // Phase 4 data-integrity gate: foreign locales must be PUBLISHED shop
+  // locales and markets must be ACTIVE — never let an unknown locale/market
+  // slip through to translationsRegister.
+  const localeError = await findInvalidLocaleOrMarket(admin, session.shop, diff);
+  if (localeError) {
+    return json({ success: false, error: localeError }, { status: 400 });
   }
 
   // Single-flight: only one seoBulkMeta run per shop at a time — a second

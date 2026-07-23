@@ -20,7 +20,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, BlockStack, InlineStack, Text, Button, Select, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -35,6 +35,7 @@ import { PLAN_CONFIG, type Plan } from "../config/plans";
 // module-head comment in columns.shared.ts).
 import {
   computeDiff,
+  estimateCalls,
   makeEditKey,
   parseEditKey,
   parseSortParam,
@@ -48,6 +49,7 @@ import {
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
   MAX_SYNC_SAVE,
+  MAX_TASK_CALLS,
   MAX_VISIBLE_COLUMNS,
   type BulkRowType,
   type BulkRow,
@@ -64,6 +66,7 @@ import { debugLog } from "../utils/debug";
 // strips from the client build.
 import { loadBulkRows } from "../services/bulk-editor/load.server";
 import { applyBulkDiff } from "../services/bulk-editor/apply.server";
+import { findInvalidLocaleOrMarket } from "../services/bulk-editor/translations.server";
 import {
   buildServerColumnsByType,
   loadProductMetafieldColumnSpecs,
@@ -72,6 +75,10 @@ import {
 import { BulkGrid } from "../components/bulk-editor/BulkGrid";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
+import {
+  TranslateMissingModal,
+  type TranslateMissingMode,
+} from "../components/bulk-editor/TranslateMissingModal";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -109,12 +116,18 @@ interface LoaderData {
   metafieldColumns: MetafieldColumnSpec[];
   /** Plan-gated dynamic product column capabilities (Plan §10.7). */
   productCaps: ProductColumnCaps;
+  /** PUBLISHED shop locales, primary first (Phase 4 language selector). */
+  locales: { locale: string; name: string; primary: boolean }[];
+  /** ACTIVE markets (loadMarkets gates on status === 'ACTIVE' — CLAUDE.md). */
+  markets: { id: string; name: string }[];
+  /** Pro gate for the "translate missing" AI action (Plan §10.7). */
+  aiTranslateAllowed: boolean;
 }
 
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
 
@@ -136,6 +149,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translationFilterApproximate: false,
       metafieldColumns: [],
       productCaps: NO_PRODUCT_CAPS,
+      locales: [],
+      markets: [],
+      aiTranslateAllowed: false,
     });
   }
 
@@ -155,9 +171,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const filters = (url.searchParams.get("f") || "")
     .split(",")
     .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
-  const locale = url.searchParams.get("locale") || "";
-  const marketId = url.searchParams.get("market") || "";
   const sort = parseSortParam(type, url.searchParams.get("sort"));
+
+  // Language + market dimension (Phase 4). Both cached/degrading loaders:
+  // locales via the 60-s shop-locales cache, markets ACTIVE-gated inside
+  // loadMarkets (CLAUDE.md: status === 'ACTIVE', never the deprecated
+  // `enabled`; secondary markets without own web presences stay listed).
+  const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+  const { ShopifyContentService } = await import("../../src/services/shopify-content.service");
+  const [shopLocales, marketsResult] = await Promise.all([
+    getCachedShopLocales(admin, shop).catch(() => []),
+    new ShopifyContentService(admin as never).loadMarkets().catch(() => ({ markets: [] })),
+  ]);
+  const locales = shopLocales
+    .filter((l) => l.published || l.primary)
+    .sort((a, b) => Number(b.primary) - Number(a.primary))
+    .map((l) => ({ locale: l.locale, name: l.name || l.locale, primary: l.primary }));
+  const markets = marketsResult.markets.map((m) => ({ id: m.id, name: m.name }));
+
+  // URL params are validated, never trusted: an unknown locale collapses to
+  // "" (primary) instead of silently mislabeling primary content as a
+  // translation; a market requires a foreign locale (primary is always
+  // global) and must be one of the ACTIVE markets.
+  const rawLocale = url.searchParams.get("locale") || "";
+  const locale = locales.some((l) => !l.primary && l.locale === rawLocale) ? rawLocale : "";
+  const rawMarket = url.searchParams.get("market") || "";
+  const marketId = locale !== "" && markets.some((m) => m.id === rawMarket) ? rawMarket : "";
 
   // Dynamic product columns (Phase 2): the metafield column source is the
   // enabled-definitions ∩ translatable-types set — the same filter the
@@ -196,6 +235,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     translationFilterApproximate,
     metafieldColumns,
     productCaps,
+    locales,
+    markets,
+    aiTranslateAllowed: meetsPlan(plan, "pro"),
   });
 };
 
@@ -232,6 +274,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   if (!diff.every((e) => isValidBulkDiffEntry(e, allowedTypes, columnsByType))) {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
   }
+  // Phase 4 data-integrity gate: foreign locales must be PUBLISHED shop
+  // locales, markets must be ACTIVE — an unknown locale must never reach
+  // translationsRegister (it could otherwise silently misfile content).
+  const localeError = await findInvalidLocaleOrMarket(admin, shop, diff);
+  if (localeError) {
+    return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+  }
   // Defensive only — the client routes >MAX_SYNC_SAVE dirty cells to /api/ai
   // "seoBulkMeta" instead of posting here.
   if (diff.length > MAX_SYNC_SAVE) {
@@ -255,6 +304,24 @@ interface BulkFetcherResult {
   error?: string;
   taskId?: string;
   total?: number;
+}
+
+interface TranslateFetcherResult {
+  success: boolean;
+  error?: string;
+  taskId?: string;
+  total?: number;
+  /** True when the filter set has no empty cells to translate. */
+  none?: boolean;
+}
+
+/** Task.result payload of a completed bulkEditorTranslate run (see
+ * bulk-editor-translate.handler.ts). */
+interface TranslateTaskResult {
+  mode: "preview" | "save";
+  suggestions?: BulkDiffEntry[];
+  failures?: { rowId: string; columnId?: string; message: string }[];
+  saved?: number;
 }
 
 /** Localstorage key holding the user's per-type visible column selection
@@ -343,12 +410,36 @@ export default function BulkEditor() {
 
   const saveFetcher = useFetcher<ActionResult>();
   const bulkFetcher = useFetcher<BulkFetcherResult>();
+  const translateFetcher = useFetcher<TranslateFetcherResult>();
 
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
+  const [overBudgetBanner, setOverBudgetBanner] = useState(false);
+  const [translateModalOpen, setTranslateModalOpen] = useState(false);
+  const [translateBanner, setTranslateBanner] = useState<
+    | { kind: "running" }
+    | { kind: "applied"; count: number }
+    | { kind: "saved"; count: number; failed: number }
+    | { kind: "none" }
+    | { kind: "failed"; message?: string }
+    | null
+  >(null);
+  /** Running bulkEditorTranslate task being polled (Plan §6.5 preview flow). */
+  const [translateTask, setTranslateTask] = useState<{ id: string; mode: TranslateMissingMode } | null>(null);
+
+  /** True when a foreign locale is selected — the grid then edits the
+   * translation layer (Plan §1.3: language is a dimension, not a 2nd editor). */
+  const isForeign = locale !== "";
+
+  // Foreign baselines seen so far, accumulated ACROSS locale/market switches:
+  // `rowId → (localeKey → value)`. computeDiff compares an edit against the
+  // loaded translation of ITS OWN locale — without this accumulation,
+  // switching locales would drop the baselines of the previous locale and a
+  // deliberate clear there would silently stop counting as a change.
+  const foreignBaselinesRef = useRef<Record<string, Record<string, string>>>({});
 
   // Full column universe for the current type: static per-type columns plus
   // (for products) the shop's enabled metafield columns, the option column
@@ -382,15 +473,50 @@ export default function BulkEditor() {
   // [rows]: a partial-failure save calls revalidator.revalidate() to refresh
   // `rows` WITHOUT navigating, and that must NOT wipe the edits still held
   // for the rows that failed (see the saveFetcher effect below).
+  // locale/marketId are deliberately NOT in this list — switching the
+  // language/market KEEPS unsaved edits (they live under their own key
+  // segments, Plan §6.4).
   useEffect(() => {
     setEdits({});
     setLastFailures([]);
     setLastSavedCount(null);
+    setOverBudgetBanner(false);
+    foreignBaselinesRef.current = {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, page, pageSize, search, data.sort, filters.join(",")]);
 
-  const dirty = useMemo(() => computeDiff(rows as BulkRow[], allColumns, edits), [rows, allColumns, edits]);
+  // Rows with the ACCUMULATED foreign baselines merged in: the loader only
+  // ships the current locale/market's translations; baselines of previously
+  // visited combos are kept so cross-locale edits diff correctly (see
+  // foreignBaselinesRef). Fresh loader data wins over the accumulation.
+  const mergedRows = useMemo(() => {
+    const acc = foreignBaselinesRef.current;
+    return (rows as BulkRow[]).map((row) => {
+      const previous = acc[row.id];
+      if (!previous && !row.foreignValues) return row;
+      const merged = { ...previous, ...(row.foreignValues ?? {}) };
+      acc[row.id] = merged;
+      return { ...row, foreignValues: merged };
+    });
+  }, [rows]);
+
+  const dirty = useMemo(() => computeDiff(mergedRows, allColumns, edits), [mergedRows, allColumns, edits]);
   const dirtyRowIds = useMemo(() => new Set(dirty.map((d) => d.rowId)), [dirty]);
+
+  // §10.1: refuse an over-budget save BEFORE submitting.
+  const estimatedCalls = useMemo(() => estimateCalls(dirty, allColumns), [dirty, allColumns]);
+
+  // "Unsaved changes in N other languages/markets" (Plan §6.4) — edits are
+  // kept across locale switches, so make their existence visible.
+  const otherLocaleComboCount = useMemo(() => {
+    const current = `${locale}|${marketId}`;
+    const combos = new Set<string>();
+    for (const entry of dirty) {
+      const combo = `${entry.locale}|${entry.marketId}`;
+      if (combo !== current) combos.add(combo);
+    }
+    return combos.size;
+  }, [dirty, locale, marketId]);
 
   const saving = saveFetcher.state !== "idle" || bulkFetcher.state !== "idle";
 
@@ -402,8 +528,13 @@ export default function BulkEditor() {
       // §4.4); everything saved is dropped. Row-level failures (no columnId —
       // single-mutation types) keep the whole row's edits.
       const failures = saveFetcher.data.failures;
+      // Cell keys carry the locale/market segments (Phase 4) so only the
+      // failed LANGUAGE's edit is kept — the same cell saved fine in another
+      // locale is dropped normally.
       const failedCells = new Set(
-        failures.filter((f) => f.columnId).map((f) => `${f.rowId}|${f.columnId}`),
+        failures
+          .filter((f) => f.columnId)
+          .map((f) => `${f.rowId}|${f.locale ?? ""}|${f.marketId ?? ""}|${f.columnId}`),
       );
       const failedRows = new Set(failures.filter((f) => !f.columnId).map((f) => f.rowId));
       setEdits((prev) => {
@@ -411,7 +542,10 @@ export default function BulkEditor() {
         for (const [key, value] of Object.entries(prev)) {
           const parsed = parseEditKey(key);
           if (!parsed) continue;
-          if (failedRows.has(parsed.rowId) || failedCells.has(`${parsed.rowId}|${parsed.columnId}`)) {
+          if (
+            failedRows.has(parsed.rowId) ||
+            failedCells.has(`${parsed.rowId}|${parsed.locale}|${parsed.marketId}|${parsed.columnId}`)
+          ) {
             next[key] = value;
           }
         }
@@ -439,11 +573,11 @@ export default function BulkEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkFetcher.state, bulkFetcher.data]);
 
-  // Phase 1 edits always target the primary language / all markets — the
-  // locale/market URL params only steer the missing-translation filter until
-  // the selectors land in Phase 4. The key format carries the segments
-  // already so the edit map never has to migrate again.
-  const editKeyFor = (row: BulkRow, column: ColumnDescriptor) => makeEditKey(row.id, "", "", column.id);
+  // Edits target the SELECTED language/market (Phase 4): primary is
+  // ("", ""), a foreign locale carries its locale + market segments in the
+  // key, so switching the selectors keeps every combo's unsaved edits apart.
+  const editKeyFor = (row: BulkRow, column: ColumnDescriptor) =>
+    makeEditKey(row.id, locale, isForeign ? marketId : "", column.id);
 
   const setEdit = (row: BulkRow, column: ColumnDescriptor, value: string) => {
     setEdits((prev) => ({ ...prev, [editKeyFor(row, column)]: value }));
@@ -451,6 +585,21 @@ export default function BulkEditor() {
   const valueFor = (row: BulkRow, column: ColumnDescriptor): string => {
     const editKey = editKeyFor(row, column);
     if (editKey in edits) return edits[editKey];
+    if (!isForeign) return resolveCellValue(row, column).value;
+    // Foreign view: non-translatable columns show the primary value (they
+    // render read-only/grey); translatable ones show the loaded translation
+    // of the selected locale+market layer — an empty cell renders the ghost.
+    if (!column.translatable) return resolveCellValue(row, column).value;
+    return row.foreignValues?.[`${locale}|${marketId}|${column.id}`] ?? "";
+  };
+  /** Ghost for an empty foreign cell (Plan §6.4): under a market override the
+   * GLOBAL translation of the same locale, otherwise the primary value. */
+  const ghostFor = (row: BulkRow, column: ColumnDescriptor): string => {
+    if (!isForeign) return "";
+    if (marketId !== "") {
+      const global = row.foreignValues?.[`${locale}||${column.id}`];
+      if (global) return global;
+    }
     return resolveCellValue(row, column).value;
   };
   const isDirtyCell = (row: BulkRow, column: ColumnDescriptor): boolean =>
@@ -468,6 +617,12 @@ export default function BulkEditor() {
 
   const handleTypeChange = (value: string) =>
     navigateGrid({ type: value, page: "1", sort: "", f: filters.join(",") });
+  // Language/market switches deliberately do NOT reset the page — the edits
+  // (and the merchant's position) survive the switch (Plan §6.4). Selecting
+  // the primary language clears the market (primary is always global).
+  const handleLocaleChange = (value: string) =>
+    navigateGrid({ locale: value, ...(value === "" ? { market: "" } : {}) });
+  const handleMarketChange = (value: string) => navigateGrid({ market: value });
   const goToPage = (nextPage: number) => navigateGrid({ page: String(nextPage) });
   const handleSearchCommit = (q: string) => navigateGrid({ q, page: "1" });
   const handleFiltersChange = (next: BulkFilterId[]) => navigateGrid({ f: next.join(","), page: "1" });
@@ -485,18 +640,29 @@ export default function BulkEditor() {
 
   const handleSave = () => {
     if (dirty.length === 0 || saving) return;
+    // §10.1: report a budget overrun BEFORE submitting — not 20 minutes into
+    // a task run.
+    if (estimatedCalls > MAX_TASK_CALLS) {
+      setOverBudgetBanner(true);
+      return;
+    }
+    setOverBudgetBanner(false);
     // §10.5: summary only — never cell values.
     debugLog.bulkDiff("saving", {
       cells: dirty.length,
       rows: new Set(dirty.map((d) => d.rowId)).size,
+      calls: estimatedCalls,
       path: dirty.length > MAX_SYNC_SAVE ? "task" : "sync",
     });
     if (dirty.length > MAX_SYNC_SAVE) {
-      // `contentType` is currently ignored by seo-bulk-meta.handler.ts (it
-      // drives off each diff entry's own `rowType`), but sending the actual
-      // current type makes request logs / Tasks tab records honest.
+      // `contentType` must be a VALID_CONTENT_TYPES value ("products", not
+      // "product") — /api/ai validates it before dispatching to the handler.
       bulkFetcher.submit(
-        { action: "seoBulkMeta", contentType: type, diff: JSON.stringify(dirty) },
+        {
+          action: "seoBulkMeta",
+          contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[type],
+          diff: JSON.stringify(dirty),
+        },
         { method: "post", action: "/api/ai" },
       );
     } else {
@@ -511,7 +677,124 @@ export default function BulkEditor() {
     setEdits({});
     setLastFailures([]);
     setLastSavedCount(null);
+    setOverBudgetBanner(false);
   };
+
+  // ── "Translate missing" (Plan §6.5) ──────────────────────────────────────
+
+  const foreignLocales = useMemo(
+    () => data.locales.filter((l) => !l.primary).map((l) => ({ locale: l.locale, name: l.name })),
+    [data.locales],
+  );
+
+  /** AI-translatable columns: base FIELD columns only (Phase-4 scope) —
+   * handle is deliberately excluded (bulk-generating URL slugs is a guided
+   * single-editor concern); metafield/option/alt columns are Phase 4b. */
+  const aiColumns = useMemo(
+    () => allColumns.filter((c) => c.kind === "field" && c.translatable && c.id !== "field.handle"),
+    [allColumns],
+  );
+
+  /** Mode of the just-requested translate run — the poller needs it before
+   * the task result arrives. */
+  const pendingTranslateModeRef = useRef<TranslateMissingMode>("preview");
+
+  const handleTranslateStart = (choice: { columnId: string; targetLocale: string; mode: TranslateMissingMode }) => {
+    setTranslateModalOpen(false);
+    setTranslateBanner(null);
+    translateFetcher.submit(
+      {
+        action: "bulkEditorTranslate",
+        contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[type],
+        rowType: type,
+        columnId: choice.columnId,
+        targetLocale: choice.targetLocale,
+        mode: choice.mode,
+        search,
+        filters: filters.join(","),
+      },
+      { method: "post", action: "/api/ai" },
+    );
+    // Remember the requested mode for the poller below (the task row itself
+    // doesn't carry it back in a queryable way before completion).
+    pendingTranslateModeRef.current = choice.mode;
+  };
+
+  useEffect(() => {
+    if (translateFetcher.state !== "idle" || !translateFetcher.data) return;
+    const result = translateFetcher.data;
+    if (result.success && result.none) {
+      setTranslateBanner({ kind: "none" });
+    } else if (result.success && result.taskId) {
+      setTranslateBanner({ kind: "running" });
+      setTranslateTask({ id: result.taskId, mode: pendingTranslateModeRef.current });
+    } else if (!result.success) {
+      setTranslateBanner({ kind: "failed", message: result.error });
+    }
+    // Only react when the fetcher settles with new data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translateFetcher.state, translateFetcher.data]);
+
+  // Poll the detached task (same /api/task-result pattern as the content
+  // editors). Preview mode merges the suggestions into the edit map — the
+  // merchant reviews them as ordinary dirty cells and saves through the
+  // normal verified pipeline; save mode just reports and revalidates.
+  useEffect(() => {
+    if (!translateTask) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/task-result?taskId=${encodeURIComponent(translateTask.id)}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok || cancelled) return;
+        const payload = (await res.json()) as {
+          task?: { status: string; result?: string | null; error?: string | null };
+        };
+        const task = payload.task;
+        if (!task || (task.status !== "completed" && task.status !== "failed") || cancelled) return;
+
+        setTranslateTask(null);
+        if (task.status === "failed") {
+          setTranslateBanner({ kind: "failed", message: task.error ?? undefined });
+          return;
+        }
+        let parsed: TranslateTaskResult | null = null;
+        try {
+          parsed = task.result ? (JSON.parse(task.result) as TranslateTaskResult) : null;
+        } catch {
+          parsed = null;
+        }
+        if (parsed?.mode === "preview") {
+          const suggestions = parsed.suggestions ?? [];
+          let appliedCount = 0;
+          setEdits((prev) => {
+            const next = { ...prev };
+            for (const s of suggestions) {
+              const key = makeEditKey(s.rowId, s.locale, s.marketId, s.columnId);
+              // Never overwrite something the merchant typed meanwhile.
+              if (key in next) continue;
+              next[key] = s.value;
+              appliedCount++;
+            }
+            return next;
+          });
+          setTranslateBanner({ kind: "applied", count: appliedCount });
+        } else {
+          const failed = new Set((parsed?.failures ?? []).map((f) => f.rowId)).size;
+          setTranslateBanner({ kind: "saved", count: parsed?.saved ?? 0, failed });
+          revalidator.revalidate();
+        }
+      } catch {
+        // transient poll error — next tick retries
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translateTask]);
 
   const toggleColumn = (columnId: string) => {
     setVisibleColumnIds((prev) => {
@@ -577,11 +860,15 @@ export default function BulkEditor() {
     const byCell = new Map<string, string>();
     const rowLevel = new Map<string, string>();
     for (const f of lastFailures) {
+      // Only failures of the CURRENTLY shown language/market mark cells —
+      // a failure in another locale stays visible via the banner (and its
+      // edit is kept in the map for when the merchant switches back).
+      if ((f.locale ?? "") !== locale || (f.marketId ?? "") !== marketId) continue;
       if (f.columnId) byCell.set(`${f.rowId}|${f.columnId}`, f.message);
       else rowLevel.set(f.rowId, f.message);
     }
     return { failuresByCell: byCell, rowLevelFailures: rowLevel };
-  }, [lastFailures]);
+  }, [lastFailures, locale, marketId]);
 
   const failedRowCount = useMemo(
     () => new Set(lastFailures.map((f) => f.rowId)).size,
@@ -600,7 +887,19 @@ export default function BulkEditor() {
     });
   }, [lastFailures]);
 
-  const visibleRows = onlyChanged ? (rows as BulkRow[]).filter((r) => dirtyRowIds.has(r.id)) : (rows as BulkRow[]);
+  const visibleRows = onlyChanged ? mergedRows.filter((r) => dirtyRowIds.has(r.id)) : mergedRows;
+
+  const translateBusy = translateFetcher.state !== "idle" || translateTask !== null;
+
+  const localeOptions = data.locales.map((l) => ({
+    label: l.primary ? `${l.name} ${b.primaryLocaleSuffix}` : l.name,
+    // "" = primary — same sentinel as the edit-map/URL segments.
+    value: l.primary ? "" : l.locale,
+  }));
+  const marketOptions = [
+    { label: b.allMarkets, value: "" },
+    ...data.markets.map((m) => ({ label: m.name, value: m.id })),
+  ];
 
   // aria-live status for screen readers: announce save results (§2 ARIA).
   const liveMessage =
@@ -649,6 +948,49 @@ export default function BulkEditor() {
                 {queuedBanner && <Banner tone="success">{b.queuedBanner}</Banner>}
                 {bulkError && <Banner tone="critical">{bulkError}</Banner>}
                 {saveError && <Banner tone="critical">{saveError}</Banner>}
+                {overBudgetBanner && (
+                  <Banner tone="critical">
+                    {b.budgetExceeded
+                      .replace("{calls}", String(estimatedCalls))
+                      .replace("{max}", String(MAX_TASK_CALLS))}
+                  </Banner>
+                )}
+                {otherLocaleComboCount > 0 && (
+                  <Banner tone="info">
+                    {b.unsavedOtherLocales.replace("{count}", String(otherLocaleComboCount))}
+                  </Banner>
+                )}
+                {translateBanner?.kind === "running" && (
+                  <Banner tone="info">{b.translateMissing.running}</Banner>
+                )}
+                {translateBanner?.kind === "applied" && (
+                  <Banner
+                    tone="success"
+                    onDismiss={() => setTranslateBanner(null)}
+                  >
+                    {b.translateMissing.applied.replace("{count}", String(translateBanner.count))}
+                  </Banner>
+                )}
+                {translateBanner?.kind === "saved" && (
+                  <Banner
+                    tone={translateBanner.failed > 0 ? "warning" : "success"}
+                    onDismiss={() => setTranslateBanner(null)}
+                  >
+                    {b.translateMissing.savedResult
+                      .replace("{count}", String(translateBanner.count))
+                      .replace("{failed}", String(translateBanner.failed))}
+                  </Banner>
+                )}
+                {translateBanner?.kind === "none" && (
+                  <Banner tone="info" onDismiss={() => setTranslateBanner(null)}>
+                    {b.translateMissing.noneMissing}
+                  </Banner>
+                )}
+                {translateBanner?.kind === "failed" && (
+                  <Banner tone="critical" onDismiss={() => setTranslateBanner(null)}>
+                    {translateBanner.message || b.translateMissing.failed}
+                  </Banner>
+                )}
                 {data.translationFilterApproximate && (
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
@@ -674,10 +1016,39 @@ export default function BulkEditor() {
                 )}
 
                 <InlineStack align="space-between" blockAlign="end" gap="200" wrap>
-                  <div style={{ maxWidth: "220px", flex: "0 0 220px" }}>
-                    <Select label={b.typeLabel} options={typeOptions} value={type} onChange={handleTypeChange} />
-                  </div>
-                  <Button onClick={() => setPickerOpen(true)}>{b.chooseColumns}</Button>
+                  <InlineStack gap="200" blockAlign="end" wrap>
+                    <div style={{ maxWidth: "220px", flex: "0 0 220px" }}>
+                      <Select label={b.typeLabel} options={typeOptions} value={type} onChange={handleTypeChange} />
+                    </div>
+                    {localeOptions.length > 1 && (
+                      <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
+                        <Select
+                          label={b.languageLabel}
+                          options={localeOptions}
+                          value={locale}
+                          onChange={handleLocaleChange}
+                        />
+                      </div>
+                    )}
+                    {isForeign && data.markets.length > 0 && (
+                      <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
+                        <Select
+                          label={b.marketLabel}
+                          options={marketOptions}
+                          value={marketId}
+                          onChange={handleMarketChange}
+                        />
+                      </div>
+                    )}
+                  </InlineStack>
+                  <InlineStack gap="200" blockAlign="end">
+                    {data.aiTranslateAllowed && foreignLocales.length > 0 && aiColumns.length > 0 && (
+                      <Button onClick={() => setTranslateModalOpen(true)} loading={translateBusy}>
+                        {b.translateMissing.button}
+                      </Button>
+                    )}
+                    <Button onClick={() => setPickerOpen(true)}>{b.chooseColumns}</Button>
+                  </InlineStack>
                 </InlineStack>
 
                 <FilterBar
@@ -715,6 +1086,9 @@ export default function BulkEditor() {
                       valueFor={valueFor}
                       isDirty={isDirtyCell}
                       setEdit={setEdit}
+                      isForeignLocale={isForeign}
+                      ghostFor={ghostFor}
+                      notTranslatableTooltip={b.notTranslatableTooltip}
                       failuresByCell={failuresByCell}
                       rowLevelFailures={rowLevelFailures}
                       sort={sort}
@@ -774,6 +1148,29 @@ export default function BulkEditor() {
               loading={saving}
               saveText={b.saveButton}
               discardText={b.discardButton}
+            />
+
+            <TranslateMissingModal
+              open={translateModalOpen}
+              onClose={() => setTranslateModalOpen(false)}
+              columns={aiColumns}
+              columnLabel={columnHeading}
+              locales={foreignLocales}
+              defaultLocale={locale}
+              busy={translateBusy}
+              onStart={handleTranslateStart}
+              strings={{
+                title: b.translateMissing.title,
+                intro: b.translateMissing.intro,
+                columnLabel: b.translateMissing.columnLabel,
+                targetLocaleLabel: b.translateMissing.targetLocaleLabel,
+                modeLabel: b.translateMissing.modeLabel,
+                modePreview: b.translateMissing.modePreview,
+                modeSave: b.translateMissing.modeSave,
+                start: b.translateMissing.start,
+                cancel: b.translateMissing.cancel,
+                marketHint: b.translateMissing.marketHint,
+              }}
             />
 
             <ColumnPickerModal

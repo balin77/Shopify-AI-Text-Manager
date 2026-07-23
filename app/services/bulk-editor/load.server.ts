@@ -12,6 +12,7 @@
 import type { PrismaClient, Prisma } from "@prisma/client";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
+import { translationKeysByColumnId } from "./translations.server";
 import {
   type BulkRow,
   type BulkRowType,
@@ -99,15 +100,21 @@ async function buildWhere(
   if (opts.filters.includes("missingSeoTitle")) and.push(missingField("seoTitle"));
   if (opts.filters.includes("missingSeoDescription")) and.push(missingField("seoDescription"));
 
-  // Anti-join over ContentTranslation: ids WITH any translation row for
+  // Anti-join over ContentTranslation: ids WITH a translation row for
   // (locale, marketId) are excluded. Only meaningful with a concrete locale.
+  // Phase 4 refinement: the join is restricted to the KEYS the grid's
+  // translatable columns actually carry for this type (title, body_html, …) —
+  // a stray row under some other key must not make a resource count as
+  // "translated" for the grid's purposes.
   if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
+    const columnKeys = [...new Set(translationKeysByColumnId(opts.type).values())];
     const translated = await db.contentTranslation.findMany({
       where: {
         shop,
         resourceType: RESOURCE_TYPE_BY_ROW_TYPE[opts.type],
         locale: opts.locale,
         marketId: opts.marketId,
+        key: { in: columnKeys },
       },
       select: { resourceId: true },
       distinct: ["resourceId"],
@@ -195,15 +202,72 @@ export async function loadBulkRows(
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
   const result = await loadBulkRowsInner(db, shop, opts);
+  if (opts.locale !== "") {
+    await attachForeignValues(db, shop, opts, result.rows);
+  }
   // §10.5: summaries only — never row/field values.
   debugLog.bulkLoad("page loaded", {
     type: opts.type,
     rows: result.rows.length,
     total: result.total,
     filters: opts.filters,
+    locale: opts.locale,
+    hasMarket: opts.marketId !== "",
     hasSearch: opts.search.trim() !== "",
   });
   return result;
+}
+
+/**
+ * Fills BulkRow.foreignValues (`${locale}|${marketId}|${columnId}` → value)
+ * from ContentTranslation for the page's rows (Phase 4). With a concrete
+ * market selected, the GLOBAL rows (marketId "") are loaded too — the grid
+ * shows the global value as the ghost under a market override, and the diff
+ * baseline needs the market layer itself.
+ */
+async function attachForeignValues(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  rows: BulkRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const keyByColumnId = translationKeysByColumnId(opts.type);
+  if (keyByColumnId.size === 0) return;
+  // Reverse map: Shopify key → columnId (bijective per type — each key backs
+  // exactly one column of a given row type).
+  const columnIdByKey = new Map<string, string>();
+  for (const [columnId, key] of keyByColumnId) columnIdByKey.set(key, columnId);
+
+  const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
+  const translations = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      resourceType: RESOURCE_TYPE_BY_ROW_TYPE[opts.type],
+      resourceId: { in: rows.map((r) => r.id) },
+      locale: opts.locale,
+      marketId: { in: marketIds },
+      key: { in: [...columnIdByKey.keys()] },
+    },
+    select: { resourceId: true, key: true, value: true, marketId: true },
+  });
+  if (translations.length === 0) return;
+
+  const byRow = new Map<string, Record<string, string>>();
+  for (const t of translations) {
+    const columnId = columnIdByKey.get(t.key);
+    if (!columnId) continue;
+    let record = byRow.get(t.resourceId);
+    if (!record) {
+      record = {};
+      byRow.set(t.resourceId, record);
+    }
+    record[`${opts.locale}|${t.marketId}|${columnId}`] = t.value;
+  }
+  for (const row of rows) {
+    const record = byRow.get(row.id);
+    if (record) row.foreignValues = record;
+  }
 }
 
 async function loadBulkRowsInner(

@@ -29,8 +29,11 @@ import {
   REMOVE_TRANSLATIONS,
 } from "../../graphql/content.mutations";
 import { logger } from "../../utils/logger.server";
+import { getCachedShopLocales } from "../../utils/shop-locales-cache.server";
 import {
   FIELD_TO_TRANSLATION_KEY,
+  ShopifyContentService,
+  type ShopifyAdminClient,
 } from "../../../src/services/shopify-content.service";
 import {
   DIGEST_BATCH_CHUNK,
@@ -65,6 +68,14 @@ export function translationKeyForColumn(column: ColumnDescriptor): string | null
   return FIELD_TO_TRANSLATION_KEY[COLUMN_FIELD_ALIAS[field] ?? field] ?? null;
 }
 
+/** Canonical UI field name for a bulk column ("descriptionHtml" →
+ * "description") — the name the AI translation prompts and the single-editor
+ * paths use. */
+export function canonicalFieldNameForColumn(column: ColumnDescriptor): string {
+  const field = fieldNameOfColumn(column);
+  return COLUMN_FIELD_ALIAS[field] ?? field;
+}
+
 /** columnId → Shopify key for every translatable column of a row type — used
  * by the loader (foreignValues), the missing-translation filter and the
  * digest prefetch. */
@@ -89,6 +100,51 @@ export const CONTENT_RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   article: "Article",
   page: "Page",
 };
+
+// ─── Entrance-side locale/market validation ────────────────────────────────
+
+/**
+ * Data-integrity gate for both save entrances (route action + /api/ai
+ * handler): every foreign locale in a diff must be a PUBLISHED, non-primary
+ * shop locale, and every market must be an ACTIVE market (loadMarkets already
+ * gates on status === 'ACTIVE' — CLAUDE.md). An unknown locale silently
+ * collapsing to primary would rewrite live primary content; a stale market id
+ * would write an override no storefront can ever show. Returns an error
+ * message, or null when everything checks out.
+ */
+export async function findInvalidLocaleOrMarket(
+  admin: ShopifyAdminClient,
+  shop: string,
+  entries: { locale: string; marketId: string }[],
+): Promise<string | null> {
+  const locales = new Set<string>();
+  const marketIds = new Set<string>();
+  for (const entry of entries) {
+    if (entry.locale !== "") locales.add(entry.locale);
+    if (entry.marketId !== "") marketIds.add(entry.marketId);
+  }
+  if (locales.size === 0 && marketIds.size === 0) return null;
+
+  if (locales.size > 0) {
+    const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
+    for (const locale of locales) {
+      const match = shopLocales.find((l) => l.locale === locale && l.published && !l.primary);
+      if (!match) {
+        return `Locale "${locale}" is not a published foreign locale of this shop.`;
+      }
+    }
+  }
+
+  if (marketIds.size > 0) {
+    const { markets } = await new ShopifyContentService(admin).loadMarkets();
+    for (const marketId of marketIds) {
+      if (!markets.some((m) => m.id === marketId)) {
+        return `Market "${marketId}" is not an active market of this shop.`;
+      }
+    }
+  }
+  return null;
+}
 
 // ─── Digest loading ────────────────────────────────────────────────────────
 

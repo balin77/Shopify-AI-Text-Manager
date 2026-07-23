@@ -37,6 +37,11 @@ interface BulkCellProps {
   error?: string;
   /** Unique id for the visually-hidden error message (aria-describedby). */
   errorId?: string;
+  /** Ghost placeholder (Phase 4, Plan §1.3): the primary value (or, under a
+   * market override, the global translation) shown greyed in an EMPTY foreign
+   * cell so it stays visible what needs translating. Typing over it creates
+   * the translation; the ghost itself is never part of the value. */
+  ghost?: string;
   statusOptions: BulkCellStatusOptions;
   onChange: (value: string) => void;
 }
@@ -52,6 +57,7 @@ export function BulkCell({
   onOpenInEditor,
   error,
   errorId,
+  ghost,
   statusOptions,
   onChange,
 }: BulkCellProps) {
@@ -103,6 +109,7 @@ export function BulkCell({
       isDirty={isDirty}
       error={error}
       errorId={errorId}
+      ghost={ghost}
       onChange={onChange}
     />
   );
@@ -113,6 +120,7 @@ interface LazyTextCellProps {
   isDirty: boolean;
   error?: string;
   errorId?: string;
+  ghost?: string;
   onChange: (value: string) => void;
 }
 
@@ -122,10 +130,11 @@ interface LazyTextCellProps {
  * div participates in the tab order (tabIndex=0) so keyboard users reach it;
  * receiving focus promotes it to the textarea, which takes focus itself.
  */
-function LazyTextCell({ value, isDirty, error, errorId, onChange }: LazyTextCellProps) {
+function LazyTextCell({ value, isDirty, error, errorId, ghost, onChange }: LazyTextCellProps) {
   const [editing, setEditing] = useState(false);
 
   const stateClass = `${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`;
+  const showGhost = value === "" && !!ghost;
 
   if (!editing) {
     return (
@@ -140,7 +149,17 @@ function LazyTextCell({ value, isDirty, error, errorId, onChange }: LazyTextCell
         onFocus={() => setEditing(true)}
         onClick={() => setEditing(true)}
       >
-        {value}
+        {showGhost ? (
+          // Ghost (untranslated) state: the primary value greyed out. It is
+          // NOT the cell's value — focusing swaps in an EMPTY textarea whose
+          // placeholder repeats the ghost. aria-hidden keeps screen readers
+          // on the truthful "empty" cell semantics.
+          <span className="cp-bulk-ghost" aria-hidden="true">
+            {ghost}
+          </span>
+        ) : (
+          value
+        )}
         {error && errorId && (
           <span id={errorId} className="cp-bulk-visually-hidden">
             {error}
@@ -159,6 +178,7 @@ function LazyTextCell({ value, isDirty, error, errorId, onChange }: LazyTextCell
         className={`cp-bulk-textarea${stateClass}`}
         ariaInvalid={!!error}
         ariaDescribedBy={error && errorId ? errorId : undefined}
+        placeholder={ghost}
       />
       {error && errorId && (
         <span id={errorId} className="cp-bulk-visually-hidden">
@@ -176,6 +196,7 @@ interface CellTextAreaProps {
   className: string;
   ariaInvalid: boolean;
   ariaDescribedBy?: string;
+  placeholder?: string;
 }
 
 /**
@@ -193,7 +214,7 @@ interface CellTextAreaProps {
  * short values render a ~30-px control with the rest of the cell dead to
  * clicks — see the original bulk-meta grid notes.)
  */
-function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDescribedBy }: CellTextAreaProps) {
+function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDescribedBy, placeholder }: CellTextAreaProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   // The cell just swapped from the static div: move focus into the textarea
@@ -236,6 +257,7 @@ function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDes
       onBlur={onBlur}
       aria-invalid={ariaInvalid || undefined}
       aria-describedby={ariaDescribedBy}
+      placeholder={placeholder}
       rows={1}
       spellCheck={false}
     />

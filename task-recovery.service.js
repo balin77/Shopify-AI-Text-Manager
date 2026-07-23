@@ -54,6 +54,11 @@ const LONG_RUNNING_TASK_TYPES = [
   // up to 500 sequential Shopify saves + DB updates, same shape as seoBulkFix
   // minus the AI call, so it needs the same generous stuck-task threshold.
   'seoBulkMeta',
+  // Bulk editor "Translate missing" (PLAN_BULK_EDITOR.md §6.5,
+  // bulk-editor-translate.handler.ts) — up to 500 sequential AI translations
+  // plus (in save mode) verified translationsRegister writes, same shape as
+  // seoBulkFix, so it needs the same generous stuck-task threshold.
+  'bulkEditorTranslate',
   // AI keyword distribution (PLAN_KEYWORDS_EXPANSION.md §5.4,
   // keyword-distribution.handler.ts) — dozens of sequential LLM batch calls
   // (suggest stage) or hundreds of DB upserts (apply stage), same shape as

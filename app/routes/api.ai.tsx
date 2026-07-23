@@ -45,6 +45,7 @@ import {
 import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
 import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
+import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-translate.handler";
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleClassifyKeywordIntents } from "./api-ai-handlers/keyword-intent.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
@@ -141,6 +142,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleSeoAudit(ctx);
       case "seoBulkMeta":
         return handleSeoBulkMeta(ctx);
+      case "bulkEditorTranslate":
+        return handleBulkEditorTranslate(ctx);
       case "distributeKeywords":
         return handleDistributeKeywords(ctx);
       case "classifyKeywordIntents":

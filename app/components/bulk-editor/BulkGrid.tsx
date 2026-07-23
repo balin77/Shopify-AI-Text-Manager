@@ -45,6 +45,15 @@ interface BulkGridProps {
   valueFor: (row: BulkRow, column: ColumnDescriptor) => string;
   isDirty: (row: BulkRow, column: ColumnDescriptor) => boolean;
   setEdit: (row: BulkRow, column: ColumnDescriptor, value: string) => void;
+  /** True when a foreign locale is selected (Phase 4): non-translatable
+   * columns render read-only (grey + tooltip) and empty translatable cells
+   * show the ghost from `ghostFor`. */
+  isForeignLocale: boolean;
+  /** Ghost placeholder for an empty foreign cell — the primary value, or the
+   * global translation under a market override (Plan §6.4). */
+  ghostFor: (row: BulkRow, column: ColumnDescriptor) => string;
+  /** Tooltip for columns that are read-only in a foreign locale. */
+  notTranslatableTooltip: string;
   /** `${rowId}|${columnId}` → failure message of the last save — marks
    * exactly that CELL invalid (Plan §4.4 cell-granular failures). */
   failuresByCell: ReadonlyMap<string, string>;
@@ -72,6 +81,9 @@ export function BulkGrid({
   valueFor,
   isDirty,
   setEdit,
+  isForeignLocale,
+  ghostFor,
+  notTranslatableTooltip,
   failuresByCell,
   rowLevelFailures,
   sort,
@@ -296,6 +308,16 @@ export function BulkGrid({
           outline-offset: -1px;
           border-radius: 4px;
         }
+        /* Ghost (untranslated) state: the primary value greyed out in an
+           empty foreign cell (§2 "▒grau▒"). The focused textarea repeats it
+           as a native placeholder. */
+        .cp-bulk-ghost {
+          color: var(--p-color-text-disabled, #8c9196);
+        }
+        .cp-bulk-textarea::placeholder {
+          color: var(--p-color-text-disabled, #8c9196);
+          opacity: 1;
+        }
         .cp-bulk-visually-hidden {
           position: absolute;
           width: 1px;
@@ -363,18 +385,28 @@ export function BulkGrid({
                 const cellFailure = failuresByCell.get(`${row.id}|${col.id}`);
                 const error = cellFailure ?? (rowFailure && dirty ? rowFailure : undefined);
                 // Editability varies per ROW now (linked options, missing
-                // mediaId, rich-text metafields) — resolve it per cell.
+                // mediaId, rich-text metafields) — resolve it per cell. In a
+                // foreign locale, non-translatable columns are additionally
+                // read-only with their own tooltip (Plan §6.4).
                 const resolved = resolveCellValue(row, col);
+                const foreignReadOnly = isForeignLocale && !col.translatable;
                 return (
                   <div key={col.id} role="cell" className={`cp-bulk-cell${stickyClass(i + 1)}`}>
                     <BulkCell
                       column={col}
                       value={valueFor(row, col)}
-                      readOnly={!resolved.editable}
+                      readOnly={!resolved.editable || foreignReadOnly}
                       readOnlyTooltip={
-                        resolved.readOnlyReason
-                          ? readOnlyTooltips[resolved.readOnlyReason]
-                          : readOnlyTooltips.column
+                        foreignReadOnly
+                          ? notTranslatableTooltip
+                          : resolved.readOnlyReason
+                            ? readOnlyTooltips[resolved.readOnlyReason]
+                            : readOnlyTooltips.column
+                      }
+                      ghost={
+                        isForeignLocale && !foreignReadOnly && resolved.editable
+                          ? ghostFor(row, col)
+                          : undefined
                       }
                       showOpenInEditor={resolved.readOnlyReason === "richText"}
                       openInEditorLabel={openInEditorLabel}
