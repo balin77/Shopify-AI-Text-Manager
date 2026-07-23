@@ -167,8 +167,15 @@ export function BulkGrid({
       <style>{`
         .cp-bulk-grid {
           display: grid;
-          min-width: 100%;
-          width: max-content;
+          /* DEFINITE width (not max-content): under width:max-content the
+             minmax(px,1fr) tracks resolve as max-content and each column
+             blows up to the widest UNWRAPPED cell — long product titles then
+             swallowed ~80% of the grid. With a definite 100% the 1fr tracks
+             share the real container width and long text wraps inside its
+             column. When the columns' min widths exceed the container the grid
+             simply overflows → the parent's overflow-x:auto scrolls (many
+             columns still scroll horizontally, as before). */
+          width: 100%;
         }
         /* display:contents makes each row-div disappear as a box; its cells
            become direct grid items of .cp-bulk-grid, so all cells share ONE
