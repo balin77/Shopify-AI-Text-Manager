@@ -925,8 +925,10 @@ const FINDING_TITLE_STYLE: CSSProperties = { flex: "1 1 auto", minWidth: 0 };
  * the real group sections, just clickable, with a caret marking that they open.
  */
 const GROUP_TOGGLE_STYLE: CSSProperties = {
-  display: "inline-flex",
+  display: "flex",
+  width: "100%",
   alignItems: "center",
+  justifyContent: "space-between",
   gap: "6px",
   background: "none",
   border: "none",
@@ -935,6 +937,7 @@ const GROUP_TOGGLE_STYLE: CSSProperties = {
   font: "inherit",
   color: "inherit",
   cursor: "pointer",
+  textAlign: "left",
 };
 
 const CODE_TEXT_STYLE: CSSProperties = {
@@ -1750,8 +1753,8 @@ function QualityFindings({
               aria-controls={`finding-${passedKey}`}
               style={GROUP_TOGGLE_STYLE}
             >
-              <DisclosureGlyph open={passedOpen} />
               <span>{labels.passedTitle.replace("{count}", String(passedAudits.length))}</span>
+              <DisclosureGlyph open={passedOpen} />
             </button>
           </Text>
           <Collapsible open={passedOpen} id={`finding-${passedKey}`} transition={false}>
@@ -1782,8 +1785,8 @@ function QualityFindings({
               aria-controls={`finding-${naKey}`}
               style={GROUP_TOGGLE_STYLE}
             >
-              <DisclosureGlyph open={naOpen} />
               <span>{labels.notApplicableTitle.replace("{count}", String(notApplicable.length))}</span>
+              <DisclosureGlyph open={naOpen} />
             </button>
           </Text>
           <Collapsible open={naOpen} id={`finding-${naKey}`} transition={false}>
