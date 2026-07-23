@@ -1128,6 +1128,7 @@ export const en: Translation = {
       bulkEditorTranslate: "Bulk editor translation",
       distributeKeywords: "Keyword distribution",
       keywordIntent: "Keyword intent classification",
+      pageSpeed: "Speed test",
     },
     status: {
       pending: "Pending",
@@ -1541,6 +1542,7 @@ export const en: Translation = {
       recentRunRerunAction: "Measure again anyway",
       recentRunCancelAction: "Cancel",
       runningHint: "This can take about 15–30 seconds…",
+      stillRunningHint: "This test is still running in the background — the result will appear automatically as soon as it finishes.",
       errors: {
         invalidUrl: "That URL doesn't belong to your store and can't be tested.",
         auditFailed: "The test could not be completed. Please try again.",

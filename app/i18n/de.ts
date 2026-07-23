@@ -1125,6 +1125,7 @@ export const de = {
       bulkEditorTranslate: "Bulk-Editor-Übersetzung",
       distributeKeywords: "Keyword-Verteilung",
       keywordIntent: "Keyword-Intent-Klassifizierung",
+      pageSpeed: "Ladezeit-Test",
     },
     status: {
       pending: "Wartend",
@@ -1538,6 +1539,7 @@ export const de = {
       recentRunRerunAction: "Trotzdem neu messen",
       recentRunCancelAction: "Abbrechen",
       runningHint: "Das dauert etwa 15–30 Sekunden…",
+      stillRunningHint: "Dieser Test läuft noch im Hintergrund — das Ergebnis erscheint automatisch, sobald er fertig ist.",
       errors: {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",
         auditFailed: "Der Test konnte nicht durchgeführt werden. Bitte erneut versuchen.",

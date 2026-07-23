@@ -1127,6 +1127,7 @@ export const es: Translation = {
       bulkEditorTranslate: "Traducción del editor masivo",
       distributeKeywords: "Distribución de palabras clave",
       keywordIntent: "Clasificación de intención de palabras clave",
+      pageSpeed: "Prueba de velocidad",
     },
     status: {
       pending: "Pendiente",
@@ -1540,6 +1541,7 @@ export const es: Translation = {
       recentRunRerunAction: "Medir de nuevo igualmente",
       recentRunCancelAction: "Cancelar",
       runningHint: "Esto puede tardar entre 15 y 30 segundos…",
+      stillRunningHint: "Esta prueba sigue ejecutándose en segundo plano — el resultado aparecerá automáticamente en cuanto termine.",
       errors: {
         invalidUrl: "Esa URL no pertenece a tu tienda y no se puede probar.",
         auditFailed: "No se pudo completar la prueba. Inténtalo de nuevo.",
