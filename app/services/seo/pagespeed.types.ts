@@ -142,6 +142,12 @@ export interface QualityIssue {
   description?: string;
   /** 0 = failed, 1 = passed, null = not scorable. NEVER smooth null to 0. */
   score: number | null;
+  /**
+   * Lighthouse group heading this audit belongs to, already resolved to its
+   * localized title (e.g. "Vertrauen und Sicherheit", "Browserkompatibilität")
+   * from `categoryGroups`. Absent when the audit ref carries no group.
+   */
+  group?: string;
   /** Affected elements, capped. */
   items: Array<{ selector?: string; snippet?: string; url?: string }>;
   /** Number of affected elements BEFORE the cap. */
@@ -179,6 +185,21 @@ export interface QualityResult {
    */
   accessibilityPassed?: PageSpeedPassedAudit[];
   bestPracticesPassed?: PageSpeedPassedAudit[];
+  /**
+   * Informative / advisory audits (score null, no pass-fail verdict) — the
+   * gray-circle entries PSI groups under "Trust and Safety" /
+   * "Browser Compatibility" etc. (CSP, HSTS, clickjacking, third-party
+   * cookies …). Carry a title, description, optional table and group, but no
+   * score. Absent on legacy runs.
+   */
+  accessibilityAdvisory?: QualityIssue[];
+  bestPracticesAdvisory?: QualityIssue[];
+  /**
+   * Audits that did not apply to this page (scoreDisplayMode notApplicable) —
+   * PSI's "Not applicable" list, title-only. Absent on legacy runs.
+   */
+  accessibilityNotApplicable?: PageSpeedPassedAudit[];
+  bestPracticesNotApplicable?: PageSpeedPassedAudit[];
 }
 
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";

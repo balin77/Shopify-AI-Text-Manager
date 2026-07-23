@@ -472,6 +472,29 @@ describe("parsePageSpeedResponse", () => {
     expect(findingIds).not.toContain("deprecations");
   });
 
+  it("collects informative advisory checks (gray-circle) and resolves their group heading", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    // csp-xss is informative with NO items → advisory, not a finding.
+    const advisory = r.quality?.bestPracticesAdvisory ?? [];
+    expect(advisory.map((a) => a.id)).toEqual(["csp-xss"]);
+    expect(advisory[0].score).toBeNull();
+    expect(advisory[0].group).toBe("Trust and Safety");
+    // It must not leak into the findings list.
+    expect((r.quality?.bestPractices ?? []).map((i) => i.id)).not.toContain("csp-xss");
+    // Findings carry their group heading too (from categoryGroups).
+    const errors = r.quality?.bestPractices.find((i) => i.id === "errors-in-console");
+    expect(errors?.group).toBe("General");
+  });
+
+  it("collects the not-applicable audits per category, title-only", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    // video-caption is notApplicable in the mock's accessibility category.
+    expect(r.quality?.accessibilityNotApplicable?.map((a) => a.id)).toEqual(["video-caption"]);
+    // It appears in neither findings nor passed.
+    expect((r.quality?.accessibility ?? []).map((i) => i.id)).not.toContain("video-caption");
+    expect((r.quality?.accessibilityPassed ?? []).map((a) => a.id)).not.toContain("video-caption");
+  });
+
   it("normalizes the failing best-practices finding's details into a table when Lighthouse gives headings", () => {
     const raw = structuredClone(mockPsiResponse) as any;
     // Real PSI ships errors-in-console with headings; the base mock omits them.

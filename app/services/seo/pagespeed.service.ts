@@ -546,10 +546,9 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
     const bpCategory = categories?.["best-practices"];
     if (!a11yCategory && !bpCategory) return undefined;
 
-    const a11y = extractQualityIssues(a11yCategory, audits);
-    const bp = extractQualityIssues(bpCategory, audits);
-    const a11yPassed = extractCategoryPassed(a11yCategory, audits);
-    const bpPassed = extractCategoryPassed(bpCategory, audits);
+    const groupTitles = resolveGroupTitles(lighthouseResult);
+    const a11y = extractCategoryBuckets(a11yCategory, audits, groupTitles);
+    const bp = extractCategoryBuckets(bpCategory, audits, groupTitles);
     return {
       a11yScore: extractCategoryScore(a11yCategory),
       bestPracticesScore: extractCategoryScore(bpCategory),
@@ -557,8 +556,12 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
       bestPractices: bp.issues,
       accessibilityTotal: a11y.total,
       bestPracticesTotal: bp.total,
-      ...(a11yPassed.length > 0 ? { accessibilityPassed: a11yPassed } : {}),
-      ...(bpPassed.length > 0 ? { bestPracticesPassed: bpPassed } : {}),
+      ...(a11y.passed.length > 0 ? { accessibilityPassed: a11y.passed } : {}),
+      ...(bp.passed.length > 0 ? { bestPracticesPassed: bp.passed } : {}),
+      ...(a11y.advisory.length > 0 ? { accessibilityAdvisory: a11y.advisory } : {}),
+      ...(bp.advisory.length > 0 ? { bestPracticesAdvisory: bp.advisory } : {}),
+      ...(a11y.notApplicable.length > 0 ? { accessibilityNotApplicable: a11y.notApplicable } : {}),
+      ...(bp.notApplicable.length > 0 ? { bestPracticesNotApplicable: bp.notApplicable } : {}),
     };
   } catch {
     return undefined;
@@ -566,35 +569,20 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
 }
 
 /**
- * Audits a quality category already passes, title-only — the "Passed checks"
- * list the performance tab shows, now available for accessibility and best
- * practices too. Same rule as extractPassedAudits, but scoped to this one
- * category's `auditRefs`: score >= 0.9 and an actually-verified mode
- * (notApplicable / manual / informative are not "passed").
+ * Map of Lighthouse group id → its localized title (e.g.
+ * "best-practices-trust-safety" → "Vertrauen und Sicherheit"), read from the
+ * response's `categoryGroups`. Used to group findings/advisory the way PSI does.
  */
-function extractCategoryPassed(category: any, audits: Record<string, any>): PageSpeedPassedAudit[] {
-  const refs = Array.isArray(category?.auditRefs) ? category.auditRefs : [];
-  const passed: PageSpeedPassedAudit[] = [];
-  const seen = new Set<string>();
-  for (const ref of refs) {
-    const id = typeof ref?.id === "string" ? ref.id : "";
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const audit: any = audits[id];
-    if (!audit || typeof audit !== "object") continue;
-    const mode = typeof audit.scoreDisplayMode === "string" ? audit.scoreDisplayMode : "";
-    if (mode === "notApplicable" || mode === "manual" || mode === "informative") continue;
-    const score = typeof audit.score === "number" ? audit.score : null;
-    if (score === null || score < 0.9) continue;
-    const displayValue = typeof audit.displayValue === "string" ? audit.displayValue : undefined;
-    passed.push({
-      id,
-      title: typeof audit.title === "string" ? audit.title : id,
-      ...(displayValue ? { displayValue } : {}),
-    });
+function resolveGroupTitles(lighthouseResult: any): Record<string, string> {
+  const map: Record<string, string> = {};
+  const groups = lighthouseResult?.categoryGroups;
+  if (groups && typeof groups === "object") {
+    for (const [id, g] of Object.entries(groups)) {
+      const title = (g as any)?.title;
+      if (typeof title === "string" && title) map[id] = title;
+    }
   }
-  passed.sort((a, b) => a.title.localeCompare(b.title));
-  return passed.slice(0, MAX_PASSED_AUDITS);
+  return map;
 }
 
 /**
@@ -608,25 +596,39 @@ function qualityIssueRank(issue: QualityIssue): number {
 }
 
 /**
- * Walk a category's `auditRefs`, keep the failing audits (plus the manual
- * checks, flagged `manual: true`). `total` counts the failing findings BEFORE
- * the cap and does NOT include manual audits — they are not failures.
+ * Classify every audit ref of a quality category into the buckets PSI shows:
  *
- * Findings and manual checks are capped SEPARATELY (MAX_QUALITY_ISSUES each):
- * Lighthouse's accessibility category always carries ~10 manual audits, so a
- * shared cap would silently swallow the manual-checks block (plan §3.5) as
- * soon as a page has a handful of real findings.
+ *  - `issues`   — failing findings (score < 0.9, or an informative audit that
+ *                 reported affected items) PLUS the manual checks (manual: true),
+ *                 concatenated as before so the UI can split them by `.manual`.
+ *  - `advisory` — informative audits with NO verdict and no affected-items list
+ *                 (the gray-circle entries: CSP, HSTS, clickjacking, …).
+ *  - `passed`   — audits that pass (score >= 0.9), title-only.
+ *  - `notApplicable` — audits that did not apply to this page, title-only.
+ *  - `total`    — failing findings BEFORE the cap (manual/advisory excluded).
  *
- * "Failing" mirrors extractOpportunities: a numeric score < 0.9, or an
- * informative audit (score null) that actually reported affected items.
- * Passed and notApplicable audits are dropped entirely.
+ * Findings, manual checks and advisory are capped SEPARATELY (a shared cap
+ * would let a handful of findings swallow the ~10 manual checks a11y always
+ * carries). Each finding/advisory/manual carries its resolved Lighthouse group
+ * title so the UI can render PSI's group headings.
  */
-function extractQualityIssues(
+function extractCategoryBuckets(
   category: any,
   audits: Record<string, any>,
-): { issues: QualityIssue[]; total: number } {
+  groupTitles: Record<string, string>,
+): {
+  issues: QualityIssue[];
+  total: number;
+  advisory: QualityIssue[];
+  passed: PageSpeedPassedAudit[];
+  notApplicable: PageSpeedPassedAudit[];
+} {
   const refs = Array.isArray(category?.auditRefs) ? category.auditRefs : [];
-  const issues: QualityIssue[] = [];
+  const findings: QualityIssue[] = [];
+  const manualIssues: QualityIssue[] = [];
+  const advisory: QualityIssue[] = [];
+  const passed: PageSpeedPassedAudit[] = [];
+  const notApplicable: PageSpeedPassedAudit[] = [];
   const seen = new Set<string>();
   let total = 0;
 
@@ -638,39 +640,80 @@ function extractQualityIssues(
     if (!audit || typeof audit !== "object") continue;
 
     const mode = typeof audit.scoreDisplayMode === "string" ? audit.scoreDisplayMode : "";
-    if (mode === "notApplicable") continue;
+    const title = typeof audit.title === "string" ? audit.title : id;
+    const displayValue = typeof audit.displayValue === "string" ? audit.displayValue : undefined;
+    const groupId = typeof ref?.group === "string" ? ref.group : "";
+    const group = groupId && groupTitles[groupId] ? groupTitles[groupId] : undefined;
+
+    if (mode === "notApplicable") {
+      notApplicable.push({ id, title, ...(displayValue ? { displayValue } : {}) });
+      continue;
+    }
 
     const score = typeof audit.score === "number" ? audit.score : null;
-    const manual = mode === "manual";
-    if (!manual) {
-      const hasItems = Array.isArray(audit.details?.items) && audit.details.items.length > 0;
-      const failing = score === null ? mode === "informative" && hasItems : score < 0.9;
-      if (!failing) continue;
-      total += 1;
+
+    // Passed: a real verdict >= 0.9 (informative audits never "pass").
+    if (score !== null && score >= 0.9 && mode !== "informative") {
+      passed.push({ id, title, ...(displayValue ? { displayValue } : {}) });
+      continue;
     }
 
     const { items, itemTotal } = extractQualityIssueItems(audit.details);
     const description = typeof audit.description === "string" ? audit.description : undefined;
+    const manual = mode === "manual";
     // Richer than the flat items list: source location, console error text, CSP
     // directive, etc. No nodesMap — quality findings carry no screenshot crops.
     const table = manual ? undefined : extractTable(audit.details, null);
-    issues.push({
+    const issue: QualityIssue = {
       id,
-      title: typeof audit.title === "string" ? audit.title : id,
+      title,
       ...(description ? { description: stripMarkdownLinks(description) } : {}),
-      score,
+      score: manual ? null : score,
       items,
       itemTotal,
       ...(table ? { table } : {}),
       manual,
-    });
+      ...(group ? { group } : {}),
+    };
+
+    if (manual) {
+      manualIssues.push(issue);
+      continue;
+    }
+
+    if (score === null) {
+      // Informative: a real finding when Lighthouse listed affected items to act
+      // on (raw items, mirroring the previous rule), else an advisory hint — the
+      // gray-circle entries (CSP, HSTS, …), still worth surfacing.
+      const hasRawItems = Array.isArray(audit.details?.items) && audit.details.items.length > 0;
+      if (mode === "informative" && hasRawItems) {
+        findings.push(issue);
+        total += 1;
+      } else if (mode === "informative") {
+        advisory.push(issue);
+      }
+      // score null with no informative mode → neither pass, fail nor advice; drop.
+      continue;
+    }
+
+    // Numeric score below the pass bar → a failing finding.
+    findings.push(issue);
+    total += 1;
   }
 
-  // Stable sort: refs order is preserved within each rank.
-  issues.sort((a, b) => qualityIssueRank(a) - qualityIssueRank(b));
-  const findings = issues.filter((i) => !i.manual).slice(0, MAX_QUALITY_ISSUES);
-  const manual = issues.filter((i) => i.manual).slice(0, MAX_QUALITY_ISSUES);
-  return { issues: [...findings, ...manual], total };
+  findings.sort((a, b) => qualityIssueRank(a) - qualityIssueRank(b));
+  passed.sort((a, b) => a.title.localeCompare(b.title));
+  notApplicable.sort((a, b) => a.title.localeCompare(b.title));
+  return {
+    issues: [
+      ...findings.slice(0, MAX_QUALITY_ISSUES),
+      ...manualIssues.slice(0, MAX_QUALITY_ISSUES),
+    ],
+    total,
+    advisory: advisory.slice(0, MAX_QUALITY_ISSUES),
+    passed: passed.slice(0, MAX_PASSED_AUDITS),
+    notApplicable: notApplicable.slice(0, MAX_PASSED_AUDITS),
+  };
 }
 
 /**

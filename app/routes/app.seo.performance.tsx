@@ -743,9 +743,10 @@ const FIELD_GRID_STYLE: CSSProperties = {
  */
 const RECENT_RUN_WINDOW_MS = 5 * 60 * 1000;
 
-/** Synthetic accordion ids for the two grouped rows (not Lighthouse audit ids). */
+/** Synthetic accordion ids for the grouped rows (not Lighthouse audit ids). */
 const ELEMENTS_FINDING_ID = "__elements__";
 const PASSED_FINDING_ID = "__passed__";
+const NOT_APPLICABLE_FINDING_ID = "__na__";
 
 const FINDING_ROW_STYLE: CSSProperties = {
   borderTop: "1px solid var(--p-color-border-secondary, #e1e3e5)",
@@ -1433,7 +1434,9 @@ function QualityIssueRow({
 function QualityFindings({
   issues,
   manualIssues,
+  advisory,
   passedAudits,
+  notApplicable,
   total,
   keyPrefix,
   openFindings,
@@ -1444,8 +1447,12 @@ function QualityFindings({
   /** Automated (non-manual) findings, already filtered. */
   issues: QualityIssue[];
   manualIssues: QualityIssue[];
+  /** Informative advisory checks (gray-circle): no verdict, worth showing. */
+  advisory?: QualityIssue[];
   /** Audits this category already passes, title-only. */
   passedAudits?: PageSpeedPassedAudit[];
+  /** Audits that did not apply to this page, title-only. */
+  notApplicable?: PageSpeedPassedAudit[];
   /** Category finding count before the server-side cap, manual excluded. */
   total: number;
   /** Namespaces accordion ids so a11y and best-practices rows never collide. */
@@ -1461,6 +1468,7 @@ function QualityFindings({
     findingsTruncated: string;
     generateAltText: string;
     passedTitle: string;
+    notApplicableTitle: string;
   };
   /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
   altBridge?: AltTextBridgeState;
@@ -1469,32 +1477,60 @@ function QualityFindings({
   const manualOpen = openFindings.has(manualKey);
   const passedKey = `${keyPrefix}-${PASSED_FINDING_ID}`;
   const passedOpen = openFindings.has(passedKey);
+  const naKey = `${keyPrefix}-${NOT_APPLICABLE_FINDING_ID}`;
+  const naOpen = openFindings.has(naKey);
+
+  // Findings and advisory checks share PSI's group headings (Trust and Safety,
+  // Browser Compatibility, …). Grouped by their resolved group title, in order
+  // of first appearance; audits without a group fall under an untitled lead
+  // block so nothing is hidden.
+  const graded = [...issues, ...(advisory ?? [])];
+  const groupOrder: string[] = [];
+  const byGroup = new Map<string, QualityIssue[]>();
+  for (const it of graded) {
+    const key = it.group ?? "";
+    if (!byGroup.has(key)) {
+      byGroup.set(key, []);
+      groupOrder.push(key);
+    }
+    byGroup.get(key)!.push(it);
+  }
+
   return (
     <BlockStack gap="300">
-      {issues.length === 0 ? (
+      {graded.length === 0 ? (
         <Text as="p" variant="bodySm" tone="subdued">{labels.noIssues}</Text>
       ) : (
-        <div>
-          {issues.map((issue) => {
-            const rowKey = `${keyPrefix}-${issue.id}`;
-            return (
-              <QualityIssueRow
-                key={issue.id}
-                issue={issue}
-                open={openFindings.has(rowKey)}
-                onToggle={() => onToggle(rowKey)}
-                domId={`finding-${rowKey}`}
-                itemsTruncatedLabel={labels.itemsTruncated}
-                tableRowsTruncatedLabel={labels.tableRowsTruncated}
-                generateAltTextLabel={labels.generateAltText}
-                altBridge={altBridge}
-              />
-            );
-          })}
+        <BlockStack gap="400">
+          {groupOrder.map((groupKey) => (
+            <BlockStack key={groupKey || "__ungrouped__"} gap="150">
+              {groupKey && (
+                <Text as="h4" variant="headingSm" tone="subdued">{groupKey}</Text>
+              )}
+              <div>
+                {byGroup.get(groupKey)!.map((issue) => {
+                  const rowKey = `${keyPrefix}-${issue.id}`;
+                  return (
+                    <QualityIssueRow
+                      key={issue.id}
+                      issue={issue}
+                      open={openFindings.has(rowKey)}
+                      onToggle={() => onToggle(rowKey)}
+                      domId={`finding-${rowKey}`}
+                      itemsTruncatedLabel={labels.itemsTruncated}
+                      tableRowsTruncatedLabel={labels.tableRowsTruncated}
+                      generateAltTextLabel={labels.generateAltText}
+                      altBridge={altBridge}
+                    />
+                  );
+                })}
+              </div>
+            </BlockStack>
+          ))}
           {/* Server cap (max 15 findings) — disclose it instead of letting a
               truncated list read as the complete picture. */}
           {total > issues.length && (
-            <div style={{ paddingTop: "12px" }}>
+            <div>
               <Text as="p" variant="bodySm" tone="subdued">
                 {labels.findingsTruncated
                   .replace("{shown}", String(issues.length))
@@ -1502,7 +1538,7 @@ function QualityFindings({
               </Text>
             </div>
           )}
-        </div>
+        </BlockStack>
       )}
 
       {manualIssues.length > 0 && (
@@ -1571,6 +1607,42 @@ function QualityFindings({
                     {a.displayValue && (
                       <Text as="span" variant="bodySm" tone="subdued">{a.displayValue}</Text>
                     )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </div>
+          </Collapsible>
+        </div>
+      )}
+
+      {/* Not applicable — checks that did not apply to this page (gray in PSI).
+          Title-only, collapsed; informative only. Absent on legacy runs. */}
+      {notApplicable && notApplicable.length > 0 && (
+        <div style={FINDING_ROW_STYLE}>
+          <button
+            type="button"
+            onClick={() => onToggle(naKey)}
+            aria-expanded={naOpen}
+            aria-controls={`finding-${naKey}`}
+            style={FINDING_HEADER_STYLE}
+          >
+            <span style={FINDING_TITLE_STYLE}>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <ToneMarker />
+                <Text as="span" variant="bodyMd" fontWeight="medium">
+                  {labels.notApplicableTitle.replace("{count}", String(notApplicable.length))}
+                </Text>
+              </InlineStack>
+            </span>
+            <DisclosureGlyph open={naOpen} />
+          </button>
+          <Collapsible open={naOpen} id={`finding-${naKey}`} transition={false}>
+            <div style={{ padding: "0 12px 16px" }}>
+              <BlockStack gap="150">
+                {notApplicable.map((a) => (
+                  <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
+                    <ToneMarker />
+                    <Text as="span" variant="bodySm" tone="subdued">{a.title}</Text>
                   </InlineStack>
                 ))}
               </BlockStack>
@@ -2033,6 +2105,7 @@ export default function SeoPerformance() {
     findingsTruncated: p.a11y.findingsTruncated,
     generateAltText: p.a11y.generateAltText,
     passedTitle: p.passedTitle,
+    notApplicableTitle: p.notApplicableTitle,
   };
 
   // Handed only to the accessibility tab — image-alt is an a11y-only audit.
@@ -2604,7 +2677,9 @@ export default function SeoPerformance() {
                         <QualityFindings
                           issues={a11yAutomated}
                           manualIssues={a11yManual}
+                          advisory={quality.accessibilityAdvisory}
                           passedAudits={quality.accessibilityPassed}
+                          notApplicable={quality.accessibilityNotApplicable}
                           total={quality.accessibilityTotal}
                           keyPrefix="a11y"
                           openFindings={openFindings}
@@ -2630,7 +2705,9 @@ export default function SeoPerformance() {
                         <QualityFindings
                           issues={bpAutomated}
                           manualIssues={bpManual}
+                          advisory={quality.bestPracticesAdvisory}
                           passedAudits={quality.bestPracticesPassed}
+                          notApplicable={quality.bestPracticesNotApplicable}
                           total={quality.bestPracticesTotal}
                           keyPrefix="bp"
                           openFindings={openFindings}

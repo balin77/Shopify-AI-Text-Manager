@@ -9,6 +9,11 @@
 
 export const mockPsiResponse = {
   lighthouseResult: {
+    // Group id → localized title, the source for the finding/advisory headings.
+    categoryGroups: {
+      "best-practices-trust-safety": { title: "Trust and Safety" },
+      "best-practices-general": { title: "General" },
+    },
     categories: {
       performance: { score: 0.67 },
       accessibility: {
@@ -17,16 +22,17 @@ export const mockPsiResponse = {
           { id: "image-alt" },
           { id: "color-contrast" },
           { id: "focus-traps" }, // manual — listed, flagged, not counted
-          { id: "aria-allowed-attr" }, // passed — must NOT surface
-          { id: "video-caption" }, // notApplicable — must NOT surface
+          { id: "aria-allowed-attr" }, // passed — surfaces under accessibilityPassed
+          { id: "video-caption" }, // notApplicable — surfaces under accessibilityNotApplicable
         ],
       },
       "best-practices": {
         score: 0.93,
         auditRefs: [
-          { id: "errors-in-console" },
-          { id: "js-libraries" }, // informative with items — surfaces
-          { id: "deprecations" }, // passed — must NOT surface
+          { id: "errors-in-console", group: "best-practices-general" },
+          { id: "js-libraries", group: "best-practices-general" }, // informative with items — finding
+          { id: "csp-xss", group: "best-practices-trust-safety" }, // informative, no items — advisory
+          { id: "deprecations", group: "best-practices-general" }, // passed
         ],
       },
     },
@@ -240,6 +246,14 @@ export const mockPsiResponse = {
         title: "Avoids deprecated APIs",
         score: 1,
         scoreDisplayMode: "binary",
+        details: { type: "table", items: [] },
+      },
+      "csp-xss": {
+        id: "csp-xss",
+        title: "Ensure CSP is effective against XSS attacks",
+        description: "A strong Content Security Policy significantly reduces XSS risk.",
+        score: null,
+        scoreDisplayMode: "informative", // no items → advisory (gray-circle)
         details: { type: "table", items: [] },
       },
     },
