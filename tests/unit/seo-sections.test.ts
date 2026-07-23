@@ -23,9 +23,9 @@ describe("getActiveSeoSection — longest-path-first", () => {
     expect(getActiveSeoSection("/app/products")).toBeNull();
     expect(getActiveSeoSection("/app/seoxyz")).toBeNull();
   });
-  it("does not claim the bulk editor (its own main-nav tab) although the sub-nav links to it", () => {
-    // PLAN_BULK_EDITOR.md §1.1: the bulkMeta entry links OUT to /app/bulk —
-    // matching it here would light the SEO main-nav tab on the bulk editor.
+  it("does not claim the bulk editor — it is its own main-nav tab", () => {
+    // The bulk editor lives at /app/bulk with its own main-nav entry
+    // (PLAN_BULK_EDITOR.md §1.1) and no longer appears in the SEO sub-nav.
     expect(getActiveSeoSection("/app/bulk")).toBeNull();
     expect(isSeoPath("/app/bulk")).toBe(false);
   });
@@ -45,16 +45,10 @@ describe("path predicates", () => {
 });
 
 describe("descriptor invariants", () => {
-  it("every section has a unique id and a path under /app/seo — except the bulk-editor link-out", () => {
+  it("every section has a unique id and a path under /app/seo", () => {
     const ids = SEO_SECTIONS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const s of SEO_SECTIONS) {
-      if (s.id === "bulkMeta") {
-        // The bulk editor left the SEO section (PLAN_BULK_EDITOR.md §1.1);
-        // its sub-nav entry stays as a deliberate link-out.
-        expect(s.path).toBe("/app/bulk");
-        continue;
-      }
       expect(s.path === "/app/seo" || s.path.startsWith("/app/seo/")).toBe(true);
     }
   });

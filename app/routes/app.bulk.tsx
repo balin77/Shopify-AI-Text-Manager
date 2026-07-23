@@ -1466,6 +1466,27 @@ export default function BulkEditor() {
   const hasPrev = page > 1;
   const hasNext = to < total;
 
+  /** Page info + prev/next, rendered BOTH above and below the grid (§3.3) so
+   * the merchant sees the count and can page without scrolling to the bottom. */
+  const renderPagination = () => (
+    <InlineStack align="space-between" blockAlign="center">
+      <Text as="span" variant="bodySm" tone="subdued">
+        {b.pageInfo
+          .replace("{from}", String(from))
+          .replace("{to}", String(to))
+          .replace("{total}", String(total))}
+      </Text>
+      <InlineStack gap="200">
+        <Button disabled={!hasPrev} onClick={() => goToPage(page - 1)}>
+          {b.prevPage}
+        </Button>
+        <Button disabled={!hasNext} onClick={() => goToPage(page + 1)}>
+          {b.nextPage}
+        </Button>
+      </InlineStack>
+    </InlineStack>
+  );
+
   const saveError = saveFetcher.data && !saveFetcher.data.ok ? b.errorGeneric : null;
   const bulkError = bulkFetcher.data && !bulkFetcher.data.success ? bulkFetcher.data.error || b.errorGeneric : null;
 
@@ -1867,6 +1888,8 @@ export default function BulkEditor() {
                   }}
                 />
 
+                {total > 0 && renderPagination()}
+
                 {visibleRows.length === 0 ? (
                   <Text as="p" tone="subdued">
                     {onlyChanged && rows.length > 0 ? b.noChangedRows : b.noRows}
@@ -1920,22 +1943,7 @@ export default function BulkEditor() {
                     />
                     </div>
 
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        {b.pageInfo
-                          .replace("{from}", String(from))
-                          .replace("{to}", String(to))
-                          .replace("{total}", String(total))}
-                      </Text>
-                      <InlineStack gap="200">
-                        <Button disabled={!hasPrev} onClick={() => goToPage(page - 1)}>
-                          {b.prevPage}
-                        </Button>
-                        <Button disabled={!hasNext} onClick={() => goToPage(page + 1)}>
-                          {b.nextPage}
-                        </Button>
-                      </InlineStack>
-                    </InlineStack>
+                    {renderPagination()}
                   </BlockStack>
                 )}
               </BlockStack>

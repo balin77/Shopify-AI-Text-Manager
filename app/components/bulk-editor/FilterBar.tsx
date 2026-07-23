@@ -7,13 +7,17 @@
  */
 
 import { useEffect, useState } from "react";
-import { Button, Checkbox, ChoiceList, InlineStack, Popover, Select, TextField } from "@shopify/polaris";
+import { Button, ChoiceList, InlineStack, Popover, Select, TextField } from "@shopify/polaris";
 import {
   BULK_PAGE_SIZES,
   FILTER_IDS_BY_SET,
   type BulkFilterId,
   type BulkFilterSet,
 } from "../../services/bulk-editor/columns.shared";
+
+/** Synthetic ChoiceList value for the client-side "only changed" toggle —
+ * kept out of BulkFilterId (which is the server-filter vocabulary). */
+const CHANGED_FILTER_ID = "__changed";
 
 interface FilterBarProps {
   search: string;
@@ -84,15 +88,35 @@ export function FilterBar({
   };
   // ONE id source per set (FILTER_IDS_BY_SET, Finding 13); the translation
   // filter additionally needs a selected foreign locale to mean anything.
-  const filterChoices = FILTER_IDS_BY_SET[filterSet]
+  const serverChoices = FILTER_IDS_BY_SET[filterSet]
     .filter((id) => id !== "missingTranslation" || showTranslationFilter)
     .map((id) => ({ label: filterLabels[id], value: id }));
+  // "Nur geänderte" lives in the SAME popover as the server filters (one place
+  // for every filter), but it stays a CLIENT toggle — it filters the loaded
+  // page, never navigates. It is universally applicable, so the popover shows
+  // even for types with no server filters (policy/metaobject primary).
+  const filterChoices = [
+    { label: strings.onlyChangedLabel, value: CHANGED_FILTER_ID },
+    ...serverChoices,
+  ];
+  const selectedFilterValues = [...(onlyChanged ? [CHANGED_FILTER_ID] : []), ...filters];
+  const activeCount = filters.length + (onlyChanged ? 1 : 0);
 
   const filterButtonLabel =
-    filters.length > 0 ? `${strings.filtersLabel} (${filters.length})` : strings.filtersLabel;
-  // Policy/metaobject rows in the primary language have no applicable filters
-  // at all — hide the empty popover button instead of showing a dead control.
-  const showFilterButton = filterChoices.length > 0;
+    activeCount > 0 ? `${strings.filtersLabel} (${activeCount})` : strings.filtersLabel;
+  const showFilterButton = true;
+
+  // Split one ChoiceList change back into its client + server halves, and only
+  // fire each handler when ITS half actually changed — toggling "nur geänderte"
+  // must not re-navigate/reset the page, and vice versa.
+  const handleChoiceChange = (selected: string[]) => {
+    const wantChanged = selected.includes(CHANGED_FILTER_ID);
+    if (wantChanged !== onlyChanged) onOnlyChangedChange(wantChanged);
+    const nextServer = selected.filter((id) => id !== CHANGED_FILTER_ID) as BulkFilterId[];
+    const serverChanged =
+      nextServer.length !== filters.length || nextServer.some((id) => !filters.includes(id));
+    if (serverChanged) onFiltersChange(nextServer);
+  };
 
   return (
     <InlineStack gap="200" blockAlign="end" wrap>
@@ -113,7 +137,7 @@ export function FilterBar({
           active={popoverActive}
           onClose={() => setPopoverActive(false)}
           activator={
-            <Button disclosure pressed={filters.length > 0} onClick={() => setPopoverActive((v) => !v)}>
+            <Button disclosure pressed={activeCount > 0} onClick={() => setPopoverActive((v) => !v)}>
               {filterButtonLabel}
             </Button>
           }
@@ -124,8 +148,8 @@ export function FilterBar({
               title={strings.filtersLabel}
               titleHidden
               choices={filterChoices}
-              selected={filters}
-              onChange={(selected) => onFiltersChange(selected as BulkFilterId[])}
+              selected={selectedFilterValues}
+              onChange={handleChoiceChange}
             />
           </div>
         </Popover>
@@ -139,7 +163,6 @@ export function FilterBar({
           onChange={(v) => onPageSizeChange(parseInt(v, 10))}
         />
       </div>
-      <Checkbox label={strings.onlyChangedLabel} checked={onlyChanged} onChange={onOnlyChangedChange} />
     </InlineStack>
   );
 }
