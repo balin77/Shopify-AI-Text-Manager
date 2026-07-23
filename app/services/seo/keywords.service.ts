@@ -453,6 +453,246 @@ export async function assignKeyword(
   });
 }
 
+// ── Bulk assignment (PLAN_KEYWORDS_UI_REWORK.md §4.1) ───────────────────────
+
+export interface AssignManyTarget {
+  resourceType: KeywordResourceType;
+  resourceId: string;
+}
+export type AssignManySkipReason = "limitReached" | "primaryExists" | "duplicate";
+export interface AssignManySkip {
+  keywordId: string;
+  resourceId: string;
+  reason: AssignManySkipReason;
+}
+export interface AssignManyResult {
+  applied: number;
+  skipped: AssignManySkip[];
+}
+
+/**
+ * PURE planner for ONE (item, locale) bucket — the piece that makes the 5er
+ * limit + one-primary rule testable and lets the dryRun preview and the real
+ * write path share the same accounting. Given the item's CURRENT (item, locale)
+ * assignments (`siblings`) it simulates assigning `keywords` in order, tracking
+ * a working keyword→role set and a running count so the Nth add that would
+ * exceed MAX_KEYWORDS_PER_ITEM is skipped `limitReached`.
+ *
+ * Mirrors assignKeyword's invariants:
+ *  - already present + same role → `duplicate`;
+ *  - already present as secondary, requested primary → promotion (may demote a
+ *    different existing primary, subject to `demoteExisting`), no count change;
+ *  - new keyword over the cap → `limitReached`;
+ *  - new primary while a different primary exists → `primaryExists` (skip) or,
+ *    with `demoteExisting`, a `demote: true` apply that flips the old primary;
+ *  - only ONE primary ever lives in the working set.
+ */
+export function planItemAssignments(input: {
+  resourceId: string;
+  keywords: { keywordId: string; role: KeywordRole }[];
+  siblings: { keywordId: string; role: KeywordRole }[];
+  demoteExisting: boolean;
+}): {
+  applies: { keywordId: string; role: KeywordRole; demote: boolean }[];
+  skipped: AssignManySkip[];
+} {
+  const { resourceId, keywords, siblings, demoteExisting } = input;
+  const working = new Map<string, KeywordRole>();
+  for (const s of siblings) working.set(s.keywordId, s.role);
+  let count = working.size;
+
+  const applies: { keywordId: string; role: KeywordRole; demote: boolean }[] = [];
+  const skipped: AssignManySkip[] = [];
+
+  const currentPrimaryId = (): string | undefined => {
+    for (const [id, role] of working) if (role === "primary") return id;
+    return undefined;
+  };
+
+  for (const req of keywords) {
+    const self = working.get(req.keywordId);
+
+    if (self !== undefined) {
+      // Already assigned to this item/locale.
+      if (self === req.role) {
+        skipped.push({ keywordId: req.keywordId, resourceId, reason: "duplicate" });
+        continue;
+      }
+      if (req.role === "primary") {
+        // Promotion (self is currently secondary) — may displace a different
+        // existing primary, same rule as the new-primary branch. No count change.
+        const existing = currentPrimaryId();
+        if (existing && existing !== req.keywordId) {
+          if (!demoteExisting) {
+            skipped.push({ keywordId: req.keywordId, resourceId, reason: "primaryExists" });
+            continue;
+          }
+          working.set(existing, "secondary");
+          applies.push({ keywordId: req.keywordId, role: "primary", demote: true });
+        } else {
+          applies.push({ keywordId: req.keywordId, role: "primary", demote: false });
+        }
+        working.set(req.keywordId, "primary");
+      } else {
+        // Demotion (self is currently primary → secondary). No count change.
+        applies.push({ keywordId: req.keywordId, role: "secondary", demote: false });
+        working.set(req.keywordId, "secondary");
+      }
+      continue;
+    }
+
+    // New keyword for this item/locale.
+    if (count >= MAX_KEYWORDS_PER_ITEM) {
+      skipped.push({ keywordId: req.keywordId, resourceId, reason: "limitReached" });
+      continue;
+    }
+    if (req.role === "primary") {
+      const existing = currentPrimaryId();
+      if (existing) {
+        if (!demoteExisting) {
+          skipped.push({ keywordId: req.keywordId, resourceId, reason: "primaryExists" });
+          continue;
+        }
+        working.set(existing, "secondary");
+        applies.push({ keywordId: req.keywordId, role: "primary", demote: true });
+      } else {
+        applies.push({ keywordId: req.keywordId, role: "primary", demote: false });
+      }
+      working.set(req.keywordId, "primary");
+    } else {
+      applies.push({ keywordId: req.keywordId, role: "secondary", demote: false });
+      working.set(req.keywordId, "secondary");
+    }
+    count += 1;
+  }
+
+  return { applies, skipped };
+}
+
+/**
+ * Assign several keywords to several items in one action (plan §4.1). Plans the
+ * writes with `planItemAssignments` (per (target, locale) bucket — a keyword
+ * only competes with same-locale siblings on that item) for a correct
+ * cumulative-limit preview, then — unless `dryRun` — executes each planned
+ * apply through `assignKeyword`, whose serializable transaction re-checks every
+ * invariant so the real path stays race-safe and consistent with the AI-apply
+ * path. Hard aborts become a per-pair skip report instead.
+ */
+export async function assignMany(
+  db: PrismaClient,
+  shop: string,
+  input: {
+    keywordIds: string[];
+    targets: AssignManyTarget[];
+    role: KeywordRole;
+    demoteExisting?: boolean;
+    dryRun?: boolean;
+  },
+): Promise<AssignManyResult> {
+  const role = input.role;
+  const demoteExisting = input.demoteExisting ?? false;
+
+  // 1. Load the keyword rows; drop unknown/foreign ids (keep requested order).
+  const keywordRows = await db.seoKeyword.findMany({
+    where: { shop, id: { in: input.keywordIds } },
+    select: { id: true, keyword: true, locale: true },
+  });
+  const keywordById = new Map(keywordRows.map((k) => [k.id, k]));
+  const validKeywordIds = input.keywordIds.filter((id) => keywordById.has(id));
+  if (validKeywordIds.length === 0 || input.targets.length === 0) {
+    return { applied: 0, skipped: [] };
+  }
+
+  // 2. Load every existing assignment for the target items in ONE query, and
+  //    index siblings by (resourceId, keyword.locale).
+  const targetIds = Array.from(new Set(input.targets.map((t) => t.resourceId)));
+  const existing = await db.seoKeywordAssignment.findMany({
+    where: { shop, resourceId: { in: targetIds } },
+    include: { keyword: { select: { id: true, locale: true } } },
+  });
+  const siblingKey = (resourceId: string, locale: string) => `${resourceId}::${locale}`;
+  const siblingIndex = new Map<string, { keywordId: string; role: KeywordRole }[]>();
+  for (const a of existing) {
+    const key = siblingKey(a.resourceId, a.keyword.locale);
+    let bucket = siblingIndex.get(key);
+    if (!bucket) {
+      bucket = [];
+      siblingIndex.set(key, bucket);
+    }
+    bucket.push({ keywordId: a.keyword.id, role: a.role as KeywordRole });
+  }
+
+  // 3. Plan per (target, locale) bucket.
+  interface PlannedApply {
+    target: AssignManyTarget;
+    keywordId: string;
+    keyword: string;
+    locale: string;
+    role: KeywordRole;
+    demote: boolean;
+  }
+  const plannedApplies: PlannedApply[] = [];
+  const skipped: AssignManySkip[] = [];
+
+  for (const target of input.targets) {
+    const byLocale = new Map<string, { keywordId: string; role: KeywordRole }[]>();
+    for (const id of validKeywordIds) {
+      const kw = keywordById.get(id)!;
+      let bucket = byLocale.get(kw.locale);
+      if (!bucket) {
+        bucket = [];
+        byLocale.set(kw.locale, bucket);
+      }
+      bucket.push({ keywordId: id, role });
+    }
+    for (const [locale, requested] of byLocale) {
+      const plan = planItemAssignments({
+        resourceId: target.resourceId,
+        keywords: requested,
+        siblings: siblingIndex.get(siblingKey(target.resourceId, locale)) ?? [],
+        demoteExisting,
+      });
+      skipped.push(...plan.skipped);
+      for (const a of plan.applies) {
+        plannedApplies.push({
+          target,
+          keywordId: a.keywordId,
+          keyword: keywordById.get(a.keywordId)!.keyword,
+          locale,
+          role: a.role,
+          demote: a.demote,
+        });
+      }
+    }
+  }
+
+  // 4. dryRun: predicted counts only, no writes.
+  if (input.dryRun) {
+    return { applied: plannedApplies.length, skipped };
+  }
+
+  // 5. Real path: each apply through assignKeyword (race-safe re-check).
+  let applied = 0;
+  for (const p of plannedApplies) {
+    const res = await assignKeyword(db, shop, {
+      resourceType: p.target.resourceType,
+      resourceId: p.target.resourceId,
+      keyword: p.keyword,
+      locale: p.locale,
+      role: p.role,
+      demoteExisting: p.demote,
+    });
+    if (res.ok) {
+      applied += 1;
+    } else if (res.reason === "tooMany") {
+      skipped.push({ keywordId: p.keywordId, resourceId: p.target.resourceId, reason: "limitReached" });
+    } else {
+      skipped.push({ keywordId: p.keywordId, resourceId: p.target.resourceId, reason: "primaryExists" });
+    }
+  }
+  return { applied, skipped };
+}
+
 /** All assignments of a shop (keywords tab listing), newest keyword first. */
 export async function listAssignments(
   db: PrismaClient,

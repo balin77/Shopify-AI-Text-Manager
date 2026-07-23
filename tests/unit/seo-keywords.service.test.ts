@@ -4,6 +4,8 @@ import {
   analyzeMultiKeyword,
   normalizeKeyword,
   assignKeyword,
+  assignMany,
+  planItemAssignments,
   removeAssignment,
   listAssignments,
   MAX_KEYWORDS_PER_ITEM,
@@ -500,6 +502,187 @@ describe("persistence helpers (keyword + assignment)", () => {
     expect(result.map((r) => r.role)).toEqual(["primary", "secondary"]);
     expect(result[1].gscPosition).toBe(3.2);
     expect(result[1].priority).toBe(1);
+  });
+});
+
+describe("assignMany / planItemAssignments", () => {
+  const SHOP = "s.myshopify.com";
+  const P1 = "gid://shopify/Product/1";
+
+  // ── planItemAssignments (pure) ──
+
+  it("planItemAssignments skips the add that would exceed the 5-limit (cumulative)", () => {
+    const siblings = [
+      { keywordId: "s1", role: "secondary" as const },
+      { keywordId: "s2", role: "secondary" as const },
+      { keywordId: "s3", role: "secondary" as const },
+    ];
+    const keywords = [
+      { keywordId: "a", role: "secondary" as const },
+      { keywordId: "b", role: "secondary" as const },
+      { keywordId: "c", role: "secondary" as const },
+    ];
+    const plan = planItemAssignments({ resourceId: P1, keywords, siblings, demoteExisting: false });
+    // 3 existing + a (→4) + b (→5) apply; c would be the 6th → limitReached.
+    expect(plan.applies.map((a) => a.keywordId)).toEqual(["a", "b"]);
+    expect(plan.skipped).toEqual([{ keywordId: "c", resourceId: P1, reason: "limitReached" }]);
+  });
+
+  it("planItemAssignments skips a new primary as primaryExists when a different primary exists (no demote)", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "new", role: "primary" }],
+      siblings: [{ keywordId: "old", role: "primary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([]);
+    expect(plan.skipped).toEqual([{ keywordId: "new", resourceId: P1, reason: "primaryExists" }]);
+  });
+
+  it("planItemAssignments demotes the old primary when demoteExisting flips it", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "new", role: "primary" }],
+      siblings: [{ keywordId: "old", role: "primary" }],
+      demoteExisting: true,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "new", role: "primary", demote: true }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  it("planItemAssignments skips a keyword already present with the same role as duplicate", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "secondary" }],
+      siblings: [{ keywordId: "a", role: "secondary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([]);
+    expect(plan.skipped).toEqual([{ keywordId: "a", resourceId: P1, reason: "duplicate" }]);
+  });
+
+  it("planItemAssignments promotes an existing secondary to primary (no count change, no different primary)", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "primary" }],
+      siblings: [{ keywordId: "a", role: "secondary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "a", role: "primary", demote: false }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  it("planItemAssignments promotion demotes a different existing primary with demoteExisting", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "primary" }],
+      siblings: [
+        { keywordId: "a", role: "secondary" },
+        { keywordId: "old", role: "primary" },
+      ],
+      demoteExisting: true,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "a", role: "primary", demote: true }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  // ── assignMany ──
+
+  it("assignMany dryRun returns the predicted applied count + skips WITHOUT writing", async () => {
+    // Six keywords, one empty-sibling item, secondary role → 5 apply, 6th limitReached.
+    const ids = ["k0", "k1", "k2", "k3", "k4", "k5"];
+    const keywordFindMany = vi.fn(async (_args: any) =>
+      ids.map((id) => ({ id, keyword: id, locale: "" })),
+    );
+    const assignmentFindMany = vi.fn(async (_args: any) => []);
+    const upsert = vi.fn(async (_args: any) => ({}));
+    const $transaction = vi.fn(async (fn: any) => fn({}));
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: assignmentFindMany, upsert },
+      $transaction,
+    } as any;
+
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ids,
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+      dryRun: true,
+    });
+    expect(result.applied).toBe(5);
+    expect(result.skipped).toEqual([{ keywordId: "k5", resourceId: P1, reason: "limitReached" }]);
+    // No writes at all in a dry run.
+    expect(upsert).not.toHaveBeenCalled();
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it("assignMany real path counts applied and folds a tooMany return into skipped", async () => {
+    const ids = ["kwA", "kwB"];
+    const keywordFindMany = vi.fn(async (_args: any) => [
+      { id: "kwA", keyword: "a", locale: "" },
+      { id: "kwB", keyword: "b", locale: "" },
+    ]);
+    // Top-level lookup: no existing assignments → planner plans BOTH.
+    const topAssignmentFindMany = vi.fn(async (_args: any) => []);
+
+    // Inside each assignKeyword transaction: kwA sees no siblings (applies),
+    // kwB races into a full item (5 siblings) → tooMany, folded to limitReached.
+    const fiveSiblings = Array.from({ length: MAX_KEYWORDS_PER_ITEM }, (_, i) => ({
+      id: `x${i}`,
+      keywordId: `kwOther${i}`,
+      role: "secondary",
+      keyword: { id: `kwOther${i}`, keyword: `kw ${i}`, locale: "" },
+    }));
+    const txUpsertKw = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "kwA", keyword: "a", locale: "" })
+      .mockResolvedValueOnce({ id: "kwB", keyword: "b", locale: "" });
+    const txAssignmentFindMany = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(fiveSiblings);
+    const txAssignmentUpsert = vi.fn(async (_args: any) => ({}));
+    const tx = {
+      seoKeyword: { upsert: txUpsertKw },
+      seoKeywordAssignment: {
+        findMany: txAssignmentFindMany,
+        upsert: txAssignmentUpsert,
+        update: vi.fn(async (_args: any) => ({})),
+      },
+    };
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: topAssignmentFindMany },
+      $transaction: vi.fn(async (fn: any) => fn(tx)),
+    } as any;
+
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ids,
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+    });
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual([{ keywordId: "kwB", resourceId: P1, reason: "limitReached" }]);
+    // kwA was actually written; kwB never reached the upsert (tooMany short-circuit).
+    expect(txAssignmentUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("assignMany drops unknown/foreign keyword ids before planning", async () => {
+    const keywordFindMany = vi.fn(async (_args: any) => [{ id: "known", keyword: "a", locale: "" }]);
+    const assignmentFindMany = vi.fn(async (_args: any) => []);
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: assignmentFindMany },
+    } as any;
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ["known", "foreign"],
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+      dryRun: true,
+    });
+    // Only the known keyword is planned.
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual([]);
   });
 });
 

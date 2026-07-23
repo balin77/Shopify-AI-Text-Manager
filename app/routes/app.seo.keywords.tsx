@@ -23,6 +23,7 @@ import {
   analyzeOnPage,
   listAssignments,
   assignKeyword,
+  assignMany,
   promoteAssignment,
   removeAssignment,
   listGroups,
@@ -48,6 +49,8 @@ import {
   type KeywordRole,
   type TranslationRow,
   type GroupKeywordRow,
+  type AssignManyTarget,
+  type AssignManySkip,
 } from "../services/seo/keywords.service";
 import { parseKeywordsCsv } from "../services/seo/keywords-csv";
 // Loader-only import (server module) — tree-shaken from the client bundle.
@@ -438,6 +441,9 @@ type CsvErrorRow = { row: number; keyword: string; error: string };
 export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
   | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  // Bulk assignment (plan §4.1): `applied` writes plus a per-pair skip report.
+  // `dryRun` echoes back so the client can tell a preview from a real apply.
+  | { ok: true; kind: "assigned"; applied: number; skipped: AssignManySkip[]; dryRun?: boolean }
   | { ok: false; error: "invalid" | "tooMany" | "duplicateName" | "csvEmpty" | "csvTooMany"; existingKeyword?: never }
   // A different keyword already holds the primary role for this (item, locale)
   // — the UI confirms the swap and re-submits with demoteExisting=true.
@@ -539,6 +545,49 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       return json<ActionResult>({ ok: false, error: "tooMany" }, { status: 409 });
     }
     return json<ActionResult>({ ok: true, kind: "saved" });
+  }
+
+  // ── Bulk assignment (plan §4.1): several keywords × several items ──
+  if (actionType === "assignMany") {
+    const roleInput = getFormString(form, "role");
+    const role: KeywordRole = roleInput === "secondary" ? "secondary" : "primary";
+    const demoteExisting = getFormString(form, "demoteExisting") === "true";
+    const dryRun = getFormString(form, "dryRun") === "true";
+
+    let keywordIds: unknown;
+    let targets: unknown;
+    try {
+      keywordIds = JSON.parse(getFormString(form, "keywordIds"));
+      targets = JSON.parse(getFormString(form, "targets"));
+    } catch {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    if (
+      !Array.isArray(keywordIds) ||
+      !Array.isArray(targets) ||
+      keywordIds.length === 0 ||
+      targets.length === 0 ||
+      keywordIds.length > 500 ||
+      targets.length > 500 ||
+      !keywordIds.every((id) => typeof id === "string") ||
+      !targets.every(
+        (t): t is AssignManyTarget =>
+          !!t &&
+          typeof t === "object" &&
+          typeof (t as { resourceId?: unknown }).resourceId === "string" &&
+          RESOURCE_TYPES.includes((t as { resourceType?: KeywordResourceType }).resourceType as KeywordResourceType),
+      )
+    ) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const { applied, skipped } = await assignMany(db, session.shop, {
+      keywordIds: keywordIds as string[],
+      targets: targets as AssignManyTarget[],
+      role,
+      demoteExisting,
+      dryRun,
+    });
+    return json<ActionResult>({ ok: true, kind: "assigned", applied, skipped, dryRun });
   }
 
   if (actionType === "deleteKeyword") {
