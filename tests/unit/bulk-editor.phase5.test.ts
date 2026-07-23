@@ -159,6 +159,19 @@ describe("resolveCellValue — metaobject rows", () => {
     expect(cell).toEqual({ value: "a | b", editable: true });
   });
 
+  it("makes a list field READ-ONLY when an entry contains '|' (Finding 11)", () => {
+    const conflictRow: BulkRow = {
+      ...row,
+      moFields: {
+        ...row.moFields,
+        [metaobjectColumnId("faq", "tags")]: JSON.stringify(["a", "b|c"]),
+      },
+    };
+    const cell = resolveCellValue(conflictRow, col(metaobjectColumnId("faq", "tags")));
+    expect(cell.editable).toBe(false);
+    expect(cell.readOnlyReason).toBe("listSeparatorInValue");
+  });
+
   it("resolves the read-only context columns from the row", () => {
     expect(resolveCellValue(row, col("moDisplayName")).value).toBe("What is it?");
     expect(resolveCellValue(row, col("moHandle")).value).toBe("what-is-it");

@@ -11,6 +11,9 @@ import {
   resolveCellValue,
   formatListMetafieldValue,
   parseListMetafieldInput,
+  listValueContainsSeparator,
+  filterSetForType,
+  FILTER_IDS_BY_SET,
   metafieldColumnId,
   optionColumnId,
   richTextPreview,
@@ -548,6 +551,29 @@ describe("resolveCellValue (Plan §12 column resolution)", () => {
     expect(resolved).toEqual({ value: "Red | Blue | Green", editable: true });
   });
 
+  it("makes a list metafield READ-ONLY when an entry contains '|' (Finding 11)", () => {
+    const conflictRow: BulkRow = {
+      ...productRow,
+      metafields: {
+        ...productRow.metafields,
+        [metafieldColumnId("custom", "tags")]: {
+          id: "gid://shopify/Metafield/2",
+          value: JSON.stringify(["Red", "Black|White"]),
+          type: "list.single_line_text_field",
+        },
+      },
+    };
+    const resolved = resolveCellValue(conflictRow, col(metafieldColumnId("custom", "tags")));
+    expect(resolved.editable).toBe(false);
+    expect(resolved.readOnlyReason).toBe("listSeparatorInValue");
+    // computeDiff drops an edit that sneaks into the read-only cell — saving
+    // it would re-split "Black|White" into two entries.
+    const edits = {
+      [makeEditKey(conflictRow.id, "", "", metafieldColumnId("custom", "tags"))]: "Red | Black | White | X",
+    };
+    expect(computeDiff([conflictRow], phase2Columns, edits)).toEqual([]);
+  });
+
   it("makes rich_text metafields read-only with a plain-text preview", () => {
     const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "story")));
     expect(resolved.editable).toBe(false);
@@ -644,6 +670,37 @@ describe("list-metafield parsing (Plan §12 round-trip)", () => {
   it("shows non-JSON cache values verbatim instead of crashing", () => {
     expect(formatListMetafieldValue("not-json")).toBe("not-json");
     expect(formatListMetafieldValue("")).toBe("");
+  });
+
+  it("detects '|' inside a list entry (Finding 11) — non-JSON never flags", () => {
+    expect(listValueContainsSeparator(JSON.stringify(["a", "b|c"]))).toBe(true);
+    expect(listValueContainsSeparator(JSON.stringify(["a", "b"]))).toBe(false);
+    expect(listValueContainsSeparator("")).toBe(false);
+    expect(listValueContainsSeparator("plain|text-not-json")).toBe(false);
+  });
+});
+
+describe("filter sets per row type (Finding 13)", () => {
+  it("maps every row type to its filter vocabulary", () => {
+    expect(filterSetForType("product")).toBe("content");
+    expect(filterSetForType("collection")).toBe("content");
+    expect(filterSetForType("article")).toBe("content");
+    expect(filterSetForType("page")).toBe("content");
+    expect(filterSetForType("blog")).toBe("content");
+    expect(filterSetForType("variant")).toBe("variant");
+    expect(filterSetForType("policy")).toBe("translationOnly");
+    expect(filterSetForType("metaobject")).toBe("translationOnly");
+  });
+
+  it("prunes foreign filter ids on a type switch (the route's handleTypeChange contract)", () => {
+    const carried = ["missingSku", "missingTranslation", "missingSeoTitle"];
+    const productValid = FILTER_IDS_BY_SET[filterSetForType("product")];
+    expect(carried.filter((f) => (productValid as string[]).includes(f))).toEqual([
+      "missingTranslation",
+      "missingSeoTitle",
+    ]);
+    const variantValid = FILTER_IDS_BY_SET[filterSetForType("variant")];
+    expect(carried.filter((f) => (variantValid as string[]).includes(f))).toEqual(["missingSku"]);
   });
 });
 

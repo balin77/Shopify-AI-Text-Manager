@@ -586,6 +586,25 @@ export function formatListMetafieldValue(raw: string): string {
   return raw;
 }
 
+/**
+ * True when a stored JSON list value has an ENTRY that itself contains the
+ * "|" separator character (review Finding 11): the display form joins entries
+ * with " | ", so editing such a cell would re-split on "|" and silently
+ * shatter the entry into several. Cells like this render READ-ONLY with an
+ * "edit in the single editor" tooltip instead. Non-JSON input renders
+ * verbatim (no join/split round-trip) and stays editable.
+ */
+export function listValueContainsSeparator(raw: string): boolean {
+  if (!raw) return false;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return arr.some((v) => String(v).includes("|"));
+  } catch {
+    // Not JSON — formatListMetafieldValue shows it verbatim, no split risk.
+  }
+  return false;
+}
+
 /** `A | B | C` display value → string array for metafieldsSet. Every entry
  * must be non-empty after trimming (Plan §4.1 validation); an entirely empty
  * cell never reaches this parser — it is the metafieldsDelete path. */
@@ -623,7 +642,7 @@ export function richTextPreview(raw: string): string {
 
 export type ParseMoneyResult =
   | { ok: true; /** Normalized dot value "1299.90"; null = empty input. */ value: string | null }
-  | { ok: false; error: "negative" | "invalid" };
+  | { ok: false; error: "negative" | "invalid" | "ambiguous" };
 
 /**
  * Locale-tolerant money parser (Plan §5.5). The app is trilingual: German and
@@ -634,9 +653,13 @@ export type ParseMoneyResult =
  * 1. Whitespace and currency symbols/codes are stripped.
  * 2. If the LAST separator is a comma followed by 1–2 digits, the comma is
  *    the decimal separator and dots are thousands separators; otherwise the
- *    dot is decimal and commas are thousands. (Consequence, documented: a
- *    bare "1.299" reads as 1.30 — the dot counts as decimal there.)
- * 3. The result is normalized to two fraction digits. Negative amounts are an
+ *    dot is decimal and commas are thousands.
+ * 3. A bare `1.299` — a SINGLE dot with EXACTLY three digits after it and no
+ *    other separator — is genuinely ambiguous (German thousands vs. English
+ *    milli-decimal) and is rejected as error "ambiguous" instead of silently
+ *    normalizing to 1.30 (review Finding 3). Merchants disambiguate by
+ *    writing `1299` or `1.299,00`.
+ * 4. The result is normalized to two fraction digits. Negative amounts are an
  *    error; empty input returns value:null and the CALLER decides (price:
  *    cell error — Shopify's price is not nullable; compareAtPrice: null
  *    clears, §14).
@@ -650,6 +673,11 @@ export function parseMoney(input: string): ParseMoneyResult {
   const stripped = trimmed.replace(/[^0-9.,-]/g, "");
   if (stripped.includes("-")) return { ok: false, error: "negative" };
   if (!/[0-9]/.test(stripped)) return { ok: false, error: "invalid" };
+
+  // Rule 3: single dot, exactly three digits after it, no other separator —
+  // "1.299" could be 1299 (de/es thousands) or 1.299 (en decimal). Never
+  // guess silently — surface a cell error with a disambiguation hint.
+  if (/^\d+\.\d{3}$/.test(stripped)) return { ok: false, error: "ambiguous" };
 
   const lastComma = stripped.lastIndexOf(",");
   const lastDot = stripped.lastIndexOf(".");
@@ -764,9 +792,13 @@ export const MAX_VISIBLE_COLUMNS = 20;
  * (seo-bulk-meta.handler.ts) instead of a synchronous save. */
 export const MAX_SYNC_SAVE = 25;
 
-/** Hard cap on one detached run. No per-item AI call here, so the ceiling can
- * be much higher than AI bulk paths — it just bounds one runner's worst-case
- * wall-clock time. */
+/** Hard cap on one detached run, counted in diff ENTRIES — i.e. changed
+ * CELLS, not rows (the seoBulkMeta handler compares `diff.length` against
+ * it; bulkEditorTranslate uses it as its candidate-row window, where one row
+ * is exactly one cell). No per-item AI call on the save path, so the ceiling
+ * can be much higher than AI bulk paths — it just bounds one runner's
+ * worst-case wall-clock time. Client-safe on purpose: submitDiff and the CSV
+ * import preview enforce the same ceiling BEFORE submitting (Finding 2). */
 export const MAX_BULK_TASK_ITEMS = 500;
 
 /** Shopify's documented metafieldsSet input limit (Plan §14). Lives here (not
@@ -891,7 +923,8 @@ export type CellReadOnlyReason =
   | "legacyOptionValues" // values without GIDs — can't be mapped for update
   | "missingImage" // product has no image at all
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
-  | "wrongMetaobjectType"; // mofield column of another definition type (Phase 5)
+  | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
+  | "listSeparatorInValue"; // a list entry contains "|" — editing would shatter it (Finding 11)
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
@@ -922,6 +955,12 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         return { value: richTextPreview(raw), editable: false, readOnlyReason: "richText" };
       }
       if (column.metafieldType === METAFIELD_TYPE_LIST_SINGLE_LINE) {
+        // "|" is the display separator — an entry containing it would shatter
+        // on the split when saving. Read-only + "single editor" tooltip
+        // (Finding 11); computeDiff drops any edit that sneaks in.
+        if (listValueContainsSeparator(raw)) {
+          return { value: formatListMetafieldValue(raw), editable: false, readOnlyReason: "listSeparatorInValue" };
+        }
         return { value: formatListMetafieldValue(raw), editable: true };
       }
       return { value: raw, editable: true };
@@ -978,6 +1017,10 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
         return { value: richTextPreview(raw), editable: false, readOnlyReason: "richText" };
       }
       if (column.moFieldType === METAFIELD_TYPE_LIST_SINGLE_LINE) {
+        // Same "|"-in-entry guard as list metafields (Finding 11).
+        if (listValueContainsSeparator(raw)) {
+          return { value: formatListMetafieldValue(raw), editable: false, readOnlyReason: "listSeparatorInValue" };
+        }
         return { value: formatListMetafieldValue(raw), editable: true };
       }
       // Missing field on the instance ⇒ empty, still editable — the save
@@ -1099,6 +1142,13 @@ export interface BulkApplyResult {
  * `columns` is the descriptor universe used to resolve column ids — pass ALL
  * columns of the current type (not just the visible ones), so edits made in a
  * since-hidden column still save.
+ *
+ * NEVER diff without a baseline: an edit whose rowId is not in `rows` is
+ * DROPPED here — there is no load baseline to compare against, and inventing
+ * one (e.g. "") would turn the save into a blind overwrite (data-loss risk).
+ * The route therefore KEEPS such edits in its map (they survive paging via
+ * baseline accumulation and become diffable once the row loads) and surfaces
+ * their count in a banner instead of silently losing them (Finding 1).
  */
 export function computeDiff(
   rows: BulkRow[],
@@ -1198,7 +1248,7 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  *
  * Counting mirrors the persistence pipeline:
  * - primary product group: 1 productUpdate (any field cell) +
- *   ceil(metafield sets / 25) + 1 metafieldsDelete (any cleared metafield) +
+ *   ceil(metafield sets / 25) + ceil(metafield deletes / 25) +
  *   1 productOptionUpdate per dirty option position + 1 productUpdateMedia;
  * - primary variant groups: ONE productVariantsBulkUpdate per PRODUCT
  *   (Plan §5.4 grouping) — the row→product mapping comes from
@@ -1288,7 +1338,7 @@ export function estimateCalls(
     calls +=
       base +
       Math.ceil(metafieldSets / METAFIELDS_SET_CHUNK) +
-      (metafieldDeletes > 0 ? 1 : 0) +
+      Math.ceil(metafieldDeletes / METAFIELDS_SET_CHUNK) +
       optionPositions.size +
       imageAlt;
   }
@@ -1365,6 +1415,29 @@ export const BULK_FILTER_IDS: BulkFilterId[] = [
 /** Filters that apply to variant rows — the FilterBar shows exactly these for
  * type "variant" and exactly the others for the content types. */
 export const VARIANT_FILTER_IDS: BulkFilterId[] = ["missingSku", "missingPrice", "compareAtNotAbovePrice"];
+
+/** Which filter vocabulary a row type speaks (Phase 3/5): "content" = SEO +
+ * translation filters; "variant" = the price/SKU data filters;
+ * "translationOnly" = policy/metaobject rows, which have no SEO columns. */
+export type BulkFilterSet = "content" | "variant" | "translationOnly";
+
+export function filterSetForType(type: BulkRowType): BulkFilterSet {
+  if (type === "variant") return "variant";
+  if (type === "policy" || type === "metaobject") return "translationOnly";
+  return "content";
+}
+
+/**
+ * THE per-set filter-id source (Finding 13): the FilterBar builds its choices
+ * from this, and handleTypeChange prunes the URL's filter ids against the
+ * NEW type's set on a type switch — otherwise e.g. `missingSku` silently
+ * rides along into a product view.
+ */
+export const FILTER_IDS_BY_SET: Record<BulkFilterSet, BulkFilterId[]> = {
+  content: ["missingSeoTitle", "missingSeoDescription", "missingTranslation"],
+  variant: VARIANT_FILTER_IDS,
+  translationOnly: ["missingTranslation"],
+};
 
 export type SortDirection = "asc" | "desc";
 

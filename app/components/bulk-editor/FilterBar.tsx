@@ -10,7 +10,9 @@ import { useEffect, useState } from "react";
 import { Button, Checkbox, ChoiceList, InlineStack, Popover, Select, TextField } from "@shopify/polaris";
 import {
   BULK_PAGE_SIZES,
+  FILTER_IDS_BY_SET,
   type BulkFilterId,
+  type BulkFilterSet,
 } from "../../services/bulk-editor/columns.shared";
 
 interface FilterBarProps {
@@ -21,10 +23,10 @@ interface FilterBarProps {
   /** The missingTranslation filter needs a concrete locale — hidden until the
    * locale selector lands (Phase 4) unless the URL already carries one. */
   showTranslationFilter: boolean;
-  /** Which filter vocabulary the type speaks (Phase 3/5): "content" = SEO +
-   * translation filters; "variant" = the price/SKU data filters;
-   * "translationOnly" = policy/metaobject rows, which have no SEO columns. */
-  filterSet: "content" | "variant" | "translationOnly";
+  /** Which filter vocabulary the type speaks (Phase 3/5) — the id source is
+   * the shared FILTER_IDS_BY_SET (columns.shared.ts), which the route also
+   * uses to prune stale filter ids on a type switch (Finding 13). */
+  filterSet: BulkFilterSet;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   onlyChanged: boolean;
@@ -72,23 +74,19 @@ export function FilterBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  const translationChoice = showTranslationFilter
-    ? [{ label: strings.filterMissingTranslation, value: "missingTranslation" }]
-    : [];
-  const filterChoices =
-    filterSet === "variant"
-      ? [
-          { label: strings.filterMissingSku, value: "missingSku" },
-          { label: strings.filterMissingPrice, value: "missingPrice" },
-          { label: strings.filterCompareAtNotAbovePrice, value: "compareAtNotAbovePrice" },
-        ]
-      : filterSet === "translationOnly"
-        ? translationChoice
-        : [
-            { label: strings.filterMissingSeoTitle, value: "missingSeoTitle" },
-            { label: strings.filterMissingSeoDescription, value: "missingSeoDescription" },
-            ...translationChoice,
-          ];
+  const filterLabels: Record<BulkFilterId, string> = {
+    missingSeoTitle: strings.filterMissingSeoTitle,
+    missingSeoDescription: strings.filterMissingSeoDescription,
+    missingTranslation: strings.filterMissingTranslation,
+    missingSku: strings.filterMissingSku,
+    missingPrice: strings.filterMissingPrice,
+    compareAtNotAbovePrice: strings.filterCompareAtNotAbovePrice,
+  };
+  // ONE id source per set (FILTER_IDS_BY_SET, Finding 13); the translation
+  // filter additionally needs a selected foreign locale to mean anything.
+  const filterChoices = FILTER_IDS_BY_SET[filterSet]
+    .filter((id) => id !== "missingTranslation" || showTranslationFilter)
+    .map((id) => ({ label: filterLabels[id], value: id }));
 
   const filterButtonLabel =
     filters.length > 0 ? `${strings.filtersLabel} (${filters.length})` : strings.filtersLabel;

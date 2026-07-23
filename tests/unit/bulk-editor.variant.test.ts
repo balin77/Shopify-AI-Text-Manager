@@ -84,6 +84,21 @@ describe("parseMoney (Plan §5.5/§12)", () => {
     // …but a comma with 3 digits after is a thousands separator.
     expect(parseMoney("1,299")).toEqual({ ok: true, value: "1299.00" });
   });
+
+  it("rejects a bare single dot with EXACTLY three digits as ambiguous (Finding 3)", () => {
+    // "1.299" could be 1299 (de/es thousands) or 1.299 (en decimal) — never
+    // guess; the merchant disambiguates via 1299 or 1.299,00.
+    expect(parseMoney("1.299")).toEqual({ ok: false, error: "ambiguous" });
+    expect(parseMoney("12.995")).toEqual({ ok: false, error: "ambiguous" });
+    expect(parseMoney("€ 1.299")).toEqual({ ok: false, error: "ambiguous" });
+  });
+
+  it("keeps the unambiguous neighbours of the ambiguous case parsing", () => {
+    expect(parseMoney("1.299,00")).toEqual({ ok: true, value: "1299.00" });
+    expect(parseMoney("1.29")).toEqual({ ok: true, value: "1.29" });
+    expect(parseMoney("1.2999")).toEqual({ ok: true, value: "1.30" });
+    expect(parseMoney("1,299.00")).toEqual({ ok: true, value: "1299.00" });
+  });
 });
 
 describe("formatMoneyForDisplay", () => {

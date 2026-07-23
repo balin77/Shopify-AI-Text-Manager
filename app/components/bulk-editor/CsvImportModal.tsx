@@ -37,6 +37,7 @@ export interface CsvImportModalStrings {
   moreChanges: string; // {count}
   emptyValue: string;
   overBudget: string; // {calls} {max}
+  overCellLimit: string; // {cells} {max}
   apply: string;
   cancel: string;
 }
@@ -50,6 +51,11 @@ interface CsvImportModalProps {
    * the confirm button is disabled and the reason shown. */
   overBudget: boolean;
   maxCalls: number;
+  /** True when the diff exceeds the per-save cell cap of the task path
+   * (MAX_BULK_TASK_ITEMS, Finding 2) — same disable+reason treatment as the
+   * call budget, BEFORE the server would 400 the confirmed import. */
+  overCellLimit: boolean;
+  maxCells: number;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -74,6 +80,8 @@ export function CsvImportModal({
   columnLabel,
   overBudget,
   maxCalls,
+  overCellLimit,
+  maxCells,
   busy,
   onConfirm,
   onCancel,
@@ -95,7 +103,7 @@ export function CsvImportModal({
       primaryAction={{
         content: s.apply,
         onAction: onConfirm,
-        disabled: !hasChanges || overBudget || busy,
+        disabled: !hasChanges || overBudget || overCellLimit || busy,
         loading: busy,
       }}
       secondaryActions={[{ content: s.cancel, onAction: onCancel, disabled: busy }]}
@@ -124,6 +132,13 @@ export function CsvImportModal({
               {s.overBudget
                 .replace("{calls}", String(preview.estimatedCalls))
                 .replace("{max}", String(maxCalls))}
+            </Banner>
+          )}
+          {overCellLimit && (
+            <Banner tone="critical">
+              {s.overCellLimit
+                .replace("{cells}", String(preview.cellsChanged))
+                .replace("{max}", String(maxCells))}
             </Banner>
           )}
 

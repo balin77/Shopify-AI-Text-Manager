@@ -50,8 +50,11 @@ import {
   BULK_FILTER_IDS,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
+  FILTER_IDS_BY_SET,
+  filterSetForType,
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
+  MAX_BULK_TASK_ITEMS,
   MAX_VISIBLE_COLUMNS,
   VAR_PRICE_COLUMN_ID,
   VAR_COMPARE_AT_COLUMN_ID,
@@ -398,6 +401,18 @@ interface TranslateFetcherResult {
   total?: number;
   /** True when the filter set has no empty cells to translate. */
   none?: boolean;
+  /** Finding 6: the candidate window was capped at `rowLimit` rows out of
+   * `matchedRows` matching the filter — the remainder needs another run. */
+  truncated?: boolean;
+  matchedRows?: number;
+  rowLimit?: number;
+}
+
+/** Truncation info of a translate run, carried through to the result banner
+ * (Finding 6). */
+interface TranslateTruncation {
+  matchedRows: number;
+  rowLimit: number;
 }
 
 /** Task.result payload of a completed bulkEditorTranslate run (see
@@ -520,19 +535,28 @@ export default function BulkEditor() {
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [overBudgetBanner, setOverBudgetBanner] = useState(false);
+  /** "X cells, maximum 500 per save" refusal (Finding 2) — set to the cell
+   * count of the refused diff. */
+  const [cellLimitBanner, setCellLimitBanner] = useState<number | null>(null);
   /** "{count} cells updated" feedback after a price bulk action (Plan §5.6). */
   const [priceActionBanner, setPriceActionBanner] = useState<number | null>(null);
   const [translateModalOpen, setTranslateModalOpen] = useState(false);
   const [translateBanner, setTranslateBanner] = useState<
     | { kind: "running" }
-    | { kind: "applied"; count: number }
-    | { kind: "saved"; count: number; failed: number }
+    // offPage (Finding 1): suggestions merged for rows NOT currently loaded —
+    // visible (and saveable) once the merchant pages to them.
+    | { kind: "applied"; count: number; offPage: number; truncated: TranslateTruncation | null }
+    | { kind: "saved"; count: number; failed: number; truncated: TranslateTruncation | null }
     | { kind: "none" }
     | { kind: "failed"; message?: string }
     | null
   >(null);
   /** Running bulkEditorTranslate task being polled (Plan §6.5 preview flow). */
-  const [translateTask, setTranslateTask] = useState<{ id: string; mode: TranslateMissingMode } | null>(null);
+  const [translateTask, setTranslateTask] = useState<{
+    id: string;
+    mode: TranslateMissingMode;
+    truncated: TranslateTruncation | null;
+  } | null>(null);
 
   // ── CSV export/import + paste/undo state (Phase 6) ───────────────────────
   const [exportError, setExportError] = useState<string | null>(null);
@@ -571,6 +595,15 @@ export default function BulkEditor() {
   // switching locales would drop the baselines of the previous locale and a
   // deliberate clear there would silently stop counting as a change.
   const foreignBaselinesRef = useRef<Record<string, Record<string, string>>>({});
+
+  // ROW baselines seen so far, accumulated ACROSS page/search/filter changes
+  // (Finding 1) — the same §6.4 pattern as foreignBaselinesRef, one level up:
+  // edits survive paging, so the diff needs the load baseline of rows that
+  // are no longer on the current page. Rows the loader JUST delivered win
+  // wholesale over their accumulated snapshot. Keyed per row id; cleared on
+  // type/moType switches together with the edits. Kept in a ref (not state):
+  // it only feeds memo computations that already re-run when `rows` changes.
+  const accumulatedRowsRef = useRef<Map<string, BulkRow>>(new Map());
 
   // Full column universe for the current type: static per-type columns plus
   // (for products) the shop's enabled metafield columns, the option column
@@ -624,30 +657,33 @@ export default function BulkEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, data.moType]);
 
-  // A navigation to a different page/type/filter set starts from a clean
-  // slate — stale edits from a different page would silently target the
-  // wrong rows otherwise. Deliberately keyed on the URL state rather than
+  // Only a TYPE (or metaobject-type) switch starts from a clean slate — its
+  // edits would target columns/rows of a different schema. Everything else
+  // (page, pageSize, search, sort, filters) KEEPS unsaved edits (Finding 1):
+  // edits are keyed by rowId, so they can never target the wrong row, and
+  // the accumulated row baselines (accumulatedRowsRef) keep them diffable
+  // across paging — the same §6.4 pattern that already keeps edits across
+  // locale/market switches. Deliberately keyed on the URL state rather than
   // [rows]: a partial-failure save calls revalidator.revalidate() to refresh
   // `rows` WITHOUT navigating, and that must NOT wipe the edits still held
   // for the rows that failed (see the saveFetcher effect below).
-  // locale/marketId are deliberately NOT in this list — switching the
-  // language/market KEEPS unsaved edits (they live under their own key
-  // segments, Plan §6.4).
   useEffect(() => {
     setEdits({});
     setLastFailures([]);
     setLastSavedCount(null);
     setOverBudgetBanner(false);
+    setCellLimitBanner(null);
     setPriceActionBanner(null);
     foreignBaselinesRef.current = {};
+    accumulatedRowsRef.current = new Map();
     // Undo history and paste feedback die with the edits they describe —
-    // popping a snapshot from a different page would resurrect edits that
+    // popping a snapshot from a different type would resurrect edits that
     // silently target the wrong rows (§8.4).
     undoStackRef.current = [];
     pasteInverseRef.current = null;
     setPasteBanner(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, page, pageSize, search, data.sort, filters.join(","), data.moType]);
+  }, [type, data.moType]);
 
   // Rows with the ACCUMULATED foreign baselines merged in: the loader only
   // ships the current locale/market's translations; baselines of previously
@@ -664,33 +700,71 @@ export default function BulkEditor() {
           ? [`${locale}|${marketId}|`, `${locale}||`]
           : [`${locale}||`];
     const acc = foreignBaselinesRef.current;
+    const accRows = accumulatedRowsRef.current;
     return (rows as BulkRow[]).map((row) => {
       const previous = acc[row.id];
-      if (!previous && !row.foreignValues) return row;
-      const merged: Record<string, string> = {};
-      for (const [key, value] of Object.entries(previous ?? {})) {
-        if (loadedPrefixes.some((prefix) => key.startsWith(prefix))) continue;
-        merged[key] = value;
+      let result = row;
+      if (previous || row.foreignValues) {
+        const merged: Record<string, string> = {};
+        for (const [key, value] of Object.entries(previous ?? {})) {
+          if (loadedPrefixes.some((prefix) => key.startsWith(prefix))) continue;
+          merged[key] = value;
+        }
+        Object.assign(merged, row.foreignValues ?? {});
+        acc[row.id] = merged;
+        result = { ...row, foreignValues: merged };
       }
-      Object.assign(merged, row.foreignValues ?? {});
-      acc[row.id] = merged;
-      return { ...row, foreignValues: merged };
+      // Row-baseline accumulation (Finding 1): freshly loaded rows replace
+      // their accumulated snapshot WHOLESALE — the loader is authoritative.
+      accRows.set(result.id, result);
+      return result;
     });
   }, [rows, locale, marketId]);
 
-  const dirty = useMemo(() => computeDiff(mergedRows, allColumns, edits), [mergedRows, allColumns, edits]);
+  // The diff universe (Finding 1): the current page's rows PLUS the
+  // accumulated baselines of previously visited pages/filter sets, so edits
+  // that survived paging stay dirty and saveable. Rows never visited this
+  // session have NO baseline — computeDiff drops their edits (never diff
+  // without a baseline) and offPageEditCount surfaces them below.
+  const diffRows = useMemo(() => {
+    const currentIds = new Set(mergedRows.map((r) => r.id));
+    const extra: BulkRow[] = [];
+    for (const row of accumulatedRowsRef.current.values()) {
+      if (!currentIds.has(row.id)) extra.push(row);
+    }
+    return extra.length === 0 ? mergedRows : [...mergedRows, ...extra];
+  }, [mergedRows]);
+
+  const dirty = useMemo(() => computeDiff(diffRows, allColumns, edits), [diffRows, allColumns, edits]);
   const dirtyRowIds = useMemo(() => new Set(dirty.map((d) => d.rowId)), [dirty]);
+
+  // Edits whose row has never been loaded this session (Finding 1): typically
+  // AI-preview suggestions for rows beyond the current page. They are KEPT in
+  // the map (they become saveable once their row loads while paging) but
+  // cannot be part of a save yet — the banner makes that explicit instead of
+  // letting them vanish silently.
+  const offPageEditCount = useMemo(() => {
+    const known = accumulatedRowsRef.current;
+    let count = 0;
+    for (const key of Object.keys(edits)) {
+      const parsed = parseEditKey(key);
+      if (parsed && !known.has(parsed.rowId)) count++;
+    }
+    return count;
+    // accumulatedRowsRef mutates when diffRows recomputes — depend on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edits, diffRows]);
 
   // Variant rows: rowId → productId for the per-product call estimate
   // (Plan §5.4 — one productVariantsBulkUpdate per product).
   const variantProductIdByRowId = useMemo(() => {
     if (type !== "variant") return undefined;
     const map: Record<string, string> = {};
-    for (const row of mergedRows) {
+    for (const row of diffRows) {
       if (row.productId) map[row.id] = row.productId;
     }
     return map;
-  }, [type, mergedRows]);
+  }, [type, diffRows]);
 
   // §10.1: refuse an over-budget save BEFORE submitting.
   const estimatedCalls = useMemo(
@@ -715,10 +789,13 @@ export default function BulkEditor() {
   useEffect(() => {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
     if (saveFetcher.data.ok) {
-      // Keep only the edits of CELLS that failed — their typed values stay in
-      // the form for retry (Plan §0.2 no. 5, refined to cell granularity in
-      // §4.4); everything saved is dropped. Row-level failures (no columnId —
-      // single-mutation types) keep the whole row's edits.
+      // Prune ONLY the edit keys that were part of the SUBMITTED diff
+      // (Finding 1) — edits that never made it into the diff (rows without a
+      // loaded baseline, e.g. AI suggestions for pages not visited yet) must
+      // survive the save, otherwise they are silently lost. Of the submitted
+      // keys, the ones that FAILED keep their typed values for retry
+      // (Plan §0.2 no. 5, cell granularity per §4.4); row-level failures (no
+      // columnId — single-mutation types) keep the whole row's edits.
       const failures = saveFetcher.data.failures;
       // Cell keys carry the locale/market segments (Phase 4) so only the
       // failed LANGUAGE's edit is kept — the same cell saved fine in another
@@ -729,12 +806,14 @@ export default function BulkEditor() {
           .map((f) => `${f.rowId}|${f.locale ?? ""}|${f.marketId ?? ""}|${f.columnId}`),
       );
       const failedRows = new Set(failures.filter((f) => !f.columnId).map((f) => f.rowId));
+      const submitted = lastSubmittedKeysRef.current;
       setEdits((prev) => {
         const next: Record<string, string> = {};
         for (const [key, value] of Object.entries(prev)) {
           const parsed = parseEditKey(key);
           if (!parsed) continue;
           if (
+            !submitted.has(key) ||
             failedRows.has(parsed.rowId) ||
             failedCells.has(`${parsed.rowId}|${parsed.locale}|${parsed.marketId}|${parsed.columnId}`)
           ) {
@@ -825,8 +904,19 @@ export default function BulkEditor() {
     handleNavigate("/app/bulk", { searchParams: params, replace: true });
   };
 
-  const handleTypeChange = (value: string) =>
-    navigateGrid({ type: value, page: "1", sort: "", f: filters.join(","), moType: "" });
+  const handleTypeChange = (value: string) => {
+    // Finding 13: prune the carried-over filter ids to the ones the NEW type
+    // actually speaks (same FILTER_IDS_BY_SET source the FilterBar renders
+    // from) — otherwise e.g. `missingSku` silently rides into a product view.
+    const validIds = FILTER_IDS_BY_SET[filterSetForType(value as BulkRowType)];
+    navigateGrid({
+      type: value,
+      page: "1",
+      sort: "",
+      f: filters.filter((f) => validIds.includes(f)).join(","),
+      moType: "",
+    });
+  };
   /** Metaobject definition-type filter (Phase 5) — resets the page like any
    * other filter; edits are cleared by the reset effect (they would target
    * columns the new schema doesn't render). */
@@ -852,11 +942,27 @@ export default function BulkEditor() {
     navigateGrid({ sort: next ? serializeSortParam(next) : "", page: "1" });
   };
 
+  /** Edit keys of the last SUBMITTED diff — the post-save prune removes
+   * exactly these (minus failures), never edits that were not part of the
+   * save (Finding 1). */
+  const lastSubmittedKeysRef = useRef<Set<string>>(new Set());
+
   /** ONE submission path for both entrances (grid edits AND the confirmed
    * CSV-import diff, §8.2 step 4): ≤MAX_SYNC_SAVE cells through this route's
    * action, anything bigger through the /api/ai seoBulkMeta task. */
   const submitDiff = (diffToSave: BulkDiffEntry[]) => {
     if (diffToSave.length === 0 || saving) return;
+    // Finding 2: the task path rejects >MAX_BULK_TASK_ITEMS diff entries
+    // (= cells) with a 400 — refuse HERE with a clear message instead of
+    // after the server round-trip.
+    if (diffToSave.length > MAX_BULK_TASK_ITEMS) {
+      setCellLimitBanner(diffToSave.length);
+      return;
+    }
+    setCellLimitBanner(null);
+    lastSubmittedKeysRef.current = new Set(
+      diffToSave.map((d) => makeEditKey(d.rowId, d.locale, d.marketId, d.columnId)),
+    );
     // §10.5: summary only — never cell values.
     debugLog.bulkDiff("saving", {
       cells: diffToSave.length,
@@ -900,6 +1006,7 @@ export default function BulkEditor() {
     setLastFailures([]);
     setLastSavedCount(null);
     setOverBudgetBanner(false);
+    setCellLimitBanner(null);
     setPriceActionBanner(null);
     undoStackRef.current = [];
     pasteInverseRef.current = null;
@@ -1099,9 +1206,13 @@ export default function BulkEditor() {
   }, [importFetcher.state, importFetcher.data]);
 
   const importOverBudget = (importPreview?.estimatedCalls ?? 0) > MAX_TASK_CALLS;
+  // Finding 2: >MAX_SYNC_SAVE cells route to the task path, which caps one
+  // save at MAX_BULK_TASK_ITEMS cells — block the confirm (with the reason
+  // shown in the modal) instead of 400ing after a confirmed preview.
+  const importOverCellLimit = (importPreview?.cellsChanged ?? 0) > MAX_BULK_TASK_ITEMS;
 
   const handleImportConfirm = () => {
-    if (!importPreview || importOverBudget) return;
+    if (!importPreview || importOverBudget || importOverCellLimit) return;
     const diff = importPreview.diff;
     setImportPreview(null);
     submitDiff(diff);
@@ -1121,28 +1232,39 @@ export default function BulkEditor() {
     return parsed.ok ? parsed.value : null;
   };
 
+  /** Unique-tag counter for price-action undo snapshots (§8.4 — batch
+   * operations never coalesce). */
+  const priceActionCounterRef = useRef(0);
+
   const handlePriceAction = (action: PriceAction) => {
+    // Computed OUTSIDE setEdits so the undo snapshot (Finding 10) is only
+    // pushed when the action actually changed something — same batch-tag
+    // pattern as the rectangle paste (grid-interactions.shared.ts).
     let applied = 0;
-    setEdits((prev) => {
-      const next = { ...prev };
-      for (const row of visibleRows) {
-        if (row.type !== "variant") continue;
-        const current = currentPriceOf(row);
-        if (action.id === "compareAtFromPrice") {
-          if (current === null) continue;
-          next[makeEditKey(row.id, "", "", VAR_COMPARE_AT_COLUMN_ID)] = formatMoneyForDisplay(current, uiLocale);
-          applied++;
-          continue;
-        }
-        const result = applyPriceAction(current ?? "", action);
-        if (result === null) continue;
-        // Store the LOCALIZED form — that is what the merchant reviews in the
-        // cell; computeDiff normalizes it back before comparing/submitting.
-        next[makeEditKey(row.id, "", "", VAR_PRICE_COLUMN_ID)] = formatMoneyForDisplay(result, uiLocale);
+    const next = { ...edits };
+    for (const row of visibleRows) {
+      if (row.type !== "variant") continue;
+      const current = currentPriceOf(row);
+      if (action.id === "compareAtFromPrice") {
+        if (current === null) continue;
+        next[makeEditKey(row.id, "", "", VAR_COMPARE_AT_COLUMN_ID)] = formatMoneyForDisplay(current, uiLocale);
         applied++;
+        continue;
       }
-      return next;
-    });
+      const result = applyPriceAction(current ?? "", action);
+      if (result === null) continue;
+      // Store the LOCALIZED form — that is what the merchant reviews in the
+      // cell; computeDiff normalizes it back before comparing/submitting.
+      next[makeEditKey(row.id, "", "", VAR_PRICE_COLUMN_ID)] = formatMoneyForDisplay(result, uiLocale);
+      applied++;
+    }
+    if (applied > 0) {
+      undoStackRef.current = pushSnapshot(undoStackRef.current, {
+        edits,
+        tag: `price|${++priceActionCounterRef.current}`,
+      });
+      setEdits(next);
+    }
     setPriceActionBanner(applied);
   };
 
@@ -1193,7 +1315,17 @@ export default function BulkEditor() {
       setTranslateBanner({ kind: "none" });
     } else if (result.success && result.taskId) {
       setTranslateBanner({ kind: "running" });
-      setTranslateTask({ id: result.taskId, mode: pendingTranslateModeRef.current });
+      setTranslateTask({
+        id: result.taskId,
+        mode: pendingTranslateModeRef.current,
+        // Finding 6: remember the truncation for the RESULT banner — the
+        // merchant must learn that only the first `rowLimit` of
+        // `matchedRows` rows were covered.
+        truncated:
+          result.truncated && result.matchedRows && result.rowLimit
+            ? { matchedRows: result.matchedRows, rowLimit: result.rowLimit }
+            : null,
+      });
     } else if (!result.success) {
       setTranslateBanner({ kind: "failed", message: result.error });
     }
@@ -1234,6 +1366,13 @@ export default function BulkEditor() {
         if (parsed?.mode === "preview") {
           const suggestions = parsed.suggestions ?? [];
           let appliedCount = 0;
+          // Finding 1: the task merges up to MAX_BULK_TASK_ITEMS rows while
+          // the page shows at most 250 — count the suggestions that landed on
+          // rows NOT loaded yet and say so in the banner. They stay in the
+          // edit map and become visible/saveable when the merchant pages to
+          // them (baseline accumulation).
+          let offPageCount = 0;
+          const knownRows = accumulatedRowsRef.current;
           setEdits((prev) => {
             const next = { ...prev };
             for (const s of suggestions) {
@@ -1242,13 +1381,24 @@ export default function BulkEditor() {
               if (key in next) continue;
               next[key] = s.value;
               appliedCount++;
+              if (!knownRows.has(s.rowId)) offPageCount++;
             }
             return next;
           });
-          setTranslateBanner({ kind: "applied", count: appliedCount });
+          setTranslateBanner({
+            kind: "applied",
+            count: appliedCount,
+            offPage: offPageCount,
+            truncated: translateTask.truncated,
+          });
         } else {
           const failed = new Set((parsed?.failures ?? []).map((f) => f.rowId)).size;
-          setTranslateBanner({ kind: "saved", count: parsed?.saved ?? 0, failed });
+          setTranslateBanner({
+            kind: "saved",
+            count: parsed?.saved ?? 0,
+            failed,
+            truncated: translateTask.truncated,
+          });
           revalidator.revalidate();
         }
       } catch {
@@ -1358,6 +1508,42 @@ export default function BulkEditor() {
     [lastFailures],
   );
 
+  // Client-side money validation (Finding 3): negative/unparseable and —
+  // new — AMBIGUOUS amounts ("1.299") mark their cell immediately, localized,
+  // instead of first surfacing after a failed save. Money columns are
+  // primary-only (translatable:false), so this never collides with the
+  // locale-filtered server failures above; a server failure for the same
+  // cell wins (it reflects what actually happened on save).
+  const moneyErrorsByCell = useMemo(() => {
+    const map = new Map<string, string>();
+    if (isForeign) return map;
+    const moneyColumnIds = new Set(allColumns.filter((c) => c.inputType === "money").map((c) => c.id));
+    if (moneyColumnIds.size === 0) return map;
+    for (const [key, value] of Object.entries(edits)) {
+      const parsed = parseEditKey(key);
+      if (!parsed || parsed.locale !== "" || !moneyColumnIds.has(parsed.columnId)) continue;
+      const result = parseMoney(value);
+      if (result.ok) continue;
+      map.set(
+        `${parsed.rowId}|${parsed.columnId}`,
+        result.error === "ambiguous"
+          ? b.moneyErrors.ambiguous
+          : result.error === "negative"
+            ? b.moneyErrors.negative
+            : b.moneyErrors.invalid,
+      );
+    }
+    return map;
+  }, [edits, allColumns, isForeign, b]);
+
+  const cellFailuresForGrid = useMemo(() => {
+    if (moneyErrorsByCell.size === 0) return failuresByCell;
+    const merged = new Map(moneyErrorsByCell);
+    // Server-reported failures override the local pre-save validation.
+    for (const [key, message] of failuresByCell) merged.set(key, message);
+    return merged;
+  }, [failuresByCell, moneyErrorsByCell]);
+
   // Banner list: several failed cells of one row often share one root cause —
   // dedupe by (row, message) so the banner stays readable.
   const bannerFailures = useMemo(() => {
@@ -1442,9 +1628,21 @@ export default function BulkEditor() {
                       .replace("{max}", String(MAX_TASK_CALLS))}
                   </Banner>
                 )}
+                {cellLimitBanner !== null && (
+                  <Banner tone="critical" onDismiss={() => setCellLimitBanner(null)}>
+                    {b.cellLimitExceeded
+                      .replace("{cells}", String(cellLimitBanner))
+                      .replace("{max}", String(MAX_BULK_TASK_ITEMS))}
+                  </Banner>
+                )}
                 {otherLocaleComboCount > 0 && (
                   <Banner tone="info">
                     {b.unsavedOtherLocales.replace("{count}", String(otherLocaleComboCount))}
+                  </Banner>
+                )}
+                {offPageEditCount > 0 && (
+                  <Banner tone="info">
+                    {b.offPageEdits.replace("{count}", String(offPageEditCount))}
                   </Banner>
                 )}
                 {translateBanner?.kind === "running" && (
@@ -1455,7 +1653,11 @@ export default function BulkEditor() {
                     tone="success"
                     onDismiss={() => setTranslateBanner(null)}
                   >
-                    {b.translateMissing.applied.replace("{count}", String(translateBanner.count))}
+                    {(translateBanner.offPage > 0
+                      ? b.translateMissing.appliedWithOffPage
+                          .replace("{count}", String(translateBanner.count))
+                          .replace("{offPage}", String(translateBanner.offPage))
+                      : b.translateMissing.applied.replace("{count}", String(translateBanner.count)))}
                   </Banner>
                 )}
                 {translateBanner?.kind === "saved" && (
@@ -1468,6 +1670,14 @@ export default function BulkEditor() {
                       .replace("{failed}", String(translateBanner.failed))}
                   </Banner>
                 )}
+                {(translateBanner?.kind === "applied" || translateBanner?.kind === "saved") &&
+                  translateBanner.truncated && (
+                    <Banner tone="warning">
+                      {b.translateMissing.truncated
+                        .replace("{limit}", String(translateBanner.truncated.rowLimit))
+                        .replace("{total}", String(translateBanner.truncated.matchedRows))}
+                    </Banner>
+                  )}
                 {translateBanner?.kind === "none" && (
                   <Banner tone="info" onDismiss={() => setTranslateBanner(null)}>
                     {b.translateMissing.noneMissing}
@@ -1632,13 +1842,7 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
-                  filterSet={
-                    type === "variant"
-                      ? "variant"
-                      : type === "policy" || type === "metaobject"
-                        ? "translationOnly"
-                        : "content"
-                  }
+                  filterSet={filterSetForType(type)}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
@@ -1684,7 +1888,7 @@ export default function BulkEditor() {
                       isForeignLocale={isForeign}
                       ghostFor={ghostFor}
                       notTranslatableTooltip={b.notTranslatableTooltip}
-                      failuresByCell={failuresByCell}
+                      failuresByCell={cellFailuresForGrid}
                       rowLevelFailures={rowLevelFailures}
                       sort={sort}
                       onSortToggle={handleSortToggle}
@@ -1707,6 +1911,7 @@ export default function BulkEditor() {
                         missingImage: b.readOnlyReasons.missingImage,
                         missingMediaId: b.readOnlyReasons.missingMediaId,
                         wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
+                        listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
                       }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}
@@ -1782,6 +1987,8 @@ export default function BulkEditor() {
               }}
               overBudget={importOverBudget}
               maxCalls={MAX_TASK_CALLS}
+              overCellLimit={importOverCellLimit}
+              maxCells={MAX_BULK_TASK_ITEMS}
               busy={saving}
               onConfirm={handleImportConfirm}
               onCancel={() => setImportPreview(null)}
@@ -1802,6 +2009,7 @@ export default function BulkEditor() {
                 moreChanges: b.csv.preview.moreChanges,
                 emptyValue: b.csv.preview.emptyValue,
                 overBudget: b.budgetExceeded,
+                overCellLimit: b.cellLimitExceeded,
                 apply: b.csv.preview.apply,
                 cancel: b.csv.preview.cancel,
               }}
