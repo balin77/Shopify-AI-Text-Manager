@@ -15,6 +15,7 @@ import {
   computeQueryDeltas,
   findLostQueries,
   enrichKeywordsFromGsc,
+  enrichPageStatsFromGsc,
   getGscAccessToken,
   revokeGoogleToken,
   submitSitemap,
@@ -596,6 +597,132 @@ describe("enrichKeywordsFromGsc", () => {
     expect(enriched).toBe(1);
     expect(upserts).toHaveLength(1);
     expect(upserts[0].create.assignmentId).toBe("k1");
+  });
+});
+
+describe("enrichPageStatsFromGsc — Phase 3 per-page rollup (PLAN_SEO_SUITE_COMPLETION.md §5.1 option b)", () => {
+  beforeEach(() => {
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "cid");
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "csec");
+    vi.stubEnv("GOOGLE_OAUTH_REDIRECT_URI", "https://app.example.com/auth/google/callback");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  function stubGscPageFetch(rows: any[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("/token")) return resp(true, { access_token: "at" });
+        if (String(url).includes("searchAnalytics")) return resp(true, { rows });
+        return resp(false, { error: { message: "unexpected" } });
+      }),
+    );
+  }
+
+  function makeDb(opts: { products?: Array<{ id: string; handle: string }>; onUpsert: (args: any) => void }) {
+    return {
+      googleSearchConsoleConnection: {
+        findUnique: async () => ({
+          shop: "s.myshopify.com",
+          propertyUrl: "sc-domain:example.com",
+          refreshToken: encryptApiKey("rt"),
+        }),
+        deleteMany: async () => ({ count: 0 }),
+      },
+      product: { findMany: async () => opts.products ?? [] },
+      collection: { findMany: async () => [] },
+      page: { findMany: async () => [] },
+      article: { findMany: async () => [] },
+      seoGscPageStat: {
+        upsert: async (args: any) => {
+          opts.onUpsert(args);
+          return {};
+        },
+      },
+    } as any;
+  }
+
+  it("resolves each GSC page row to a store resource and upserts SeoGscPageStat", async () => {
+    stubGscPageFetch([
+      { keys: ["https://shop.example.com/products/blue-shoes"], clicks: 12, impressions: 500, ctr: 0.024, position: 6.2 },
+    ]);
+    const upserts: any[] = [];
+    const db = makeDb({
+      products: [{ id: "gid://shopify/Product/1", handle: "blue-shoes" }],
+      onUpsert: (args) => upserts.push(args),
+    });
+
+    const synced = await enrichPageStatsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(synced).toBe(1);
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].where).toEqual({
+      shop_page: { shop: "s.myshopify.com", page: "https://shop.example.com/products/blue-shoes" },
+    });
+    expect(upserts[0].create).toMatchObject({
+      shop: "s.myshopify.com",
+      page: "https://shop.example.com/products/blue-shoes",
+      resourceType: "Product",
+      resourceId: "gid://shopify/Product/1",
+      position: 6.2,
+      clicks: 12,
+      impressions: 500,
+      ctr: 0.024,
+      windowDays: 90,
+    });
+  });
+
+  it("upserts with null resourceType/resourceId for a page that doesn't resolve to a known resource", async () => {
+    stubGscPageFetch([
+      { keys: ["https://shop.example.com/search"], clicks: 1, impressions: 20, ctr: 0.05, position: 15 },
+    ]);
+    const upserts: any[] = [];
+    const db = makeDb({ onUpsert: (args) => upserts.push(args) });
+
+    const synced = await enrichPageStatsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(synced).toBe(1);
+    expect(upserts[0].create.resourceType).toBeNull();
+    expect(upserts[0].create.resourceId).toBeNull();
+  });
+
+  it("returns 0 without upserting when GSC returns no page rows", async () => {
+    stubGscPageFetch([]);
+    const upserts: any[] = [];
+    const db = makeDb({ onUpsert: (args) => upserts.push(args) });
+
+    const synced = await enrichPageStatsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(synced).toBe(0);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it("queries a 90-day window (not the 28-day keyword-sync window)", async () => {
+    let capturedBody: any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: any) => {
+        if (String(url).includes("/token")) return resp(true, { access_token: "at" });
+        if (String(url).includes("searchAnalytics")) {
+          capturedBody = JSON.parse(init.body);
+          return resp(true, { rows: [] });
+        }
+        return resp(false, { error: { message: "unexpected" } });
+      }),
+    );
+    const db = makeDb({ onUpsert: () => {} });
+
+    await enrichPageStatsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(capturedBody.dimensions).toEqual(["page"]);
+    expect(capturedBody.rowLimit).toBe(1000);
+    const start = new Date(capturedBody.startDate);
+    const end = new Date(capturedBody.endDate);
+    const days = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+    expect(days).toBe(90);
   });
 });
 

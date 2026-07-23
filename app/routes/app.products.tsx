@@ -328,6 +328,21 @@ export default function ProductsPage() {
   const [searchParams] = useSearchParams();
   const initialItemId = searchParams.get("select") || undefined;
 
+  // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
+  // "Mit AI überarbeiten" button on the Freshness panel links here with
+  // ?select=<GID>&preset=refresh. Deliberately NOT a new AI-instructions
+  // plumbing/template system (the plan explicitly rules that out) — just a
+  // one-time hint pointing the merchant at the existing "Generate with AI"
+  // action for the preselected item.
+  const shownRefreshPresetRef = useRef(false);
+  useEffect(() => {
+    if (shownRefreshPresetRef.current) return;
+    if (searchParams.get("preset") === "refresh" && initialItemId) {
+      shownRefreshPresetRef.current = true;
+      showInfoBox(t.seo.dashboard.freshnessPresetHint, "info");
+    }
+  }, [searchParams, initialItemId, showInfoBox, t]);
+
   // Initialize unified content editor - MUST be called before any conditional returns
   const editor = useUnifiedContentEditor({
     config: PRODUCTS_CONFIG,

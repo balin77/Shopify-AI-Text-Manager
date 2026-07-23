@@ -1364,6 +1364,12 @@ export const de = {
       foreignLocaleBanner: "SEO-Analyse für {locale}. Score, Probleme und KI-Fixes gelten für diese Sprache — der Primärsprachen-Score bleibt separat.",
       scanStartError: "Der Scan konnte nicht gestartet werden. Bitte erneut versuchen.",
       problemsTruncated: "{shown} von {total} betroffenen Inhalten werden angezeigt.",
+      freshnessCardTitle: "Content-Freshness",
+      freshnessCardCount: "{count} Refresh-Kandidaten — Inhalte, die gut ranken, aber lange nicht aktualisiert wurden.",
+      freshnessCardButton: "Ansehen",
+      // Shown as an InfoBox hint in the item editor when arriving via the
+      // Freshness "Mit AI überarbeiten" deep-link (?preset=refresh).
+      freshnessPresetHint: "Refresh-Kandidat: Dieser Inhalt rankt gut in der Google-Suche, wurde aber länger nicht aktualisiert. Nutze „Mit KI generieren\", um ihn aufzufrischen.",
       problems: {
         metaDescriptionMissing: "Meta-Description fehlt",
         metaDescriptionLength: "Meta-Description-Länge nicht optimal",
@@ -1984,6 +1990,14 @@ export const de = {
       deviceMobile: "Mobil",
       deviceTablet: "Tablet",
       exportCsv: "Als CSV exportieren",
+      freshnessTitle: "Content-Freshness — Refresh-Kandidaten",
+      freshnessHint: "Inhalte, die gut ranken (Position ≤ 20) und Traffic bekommen (≥ 100 Impressionen in 90 Tagen), aber seit über 6 Monaten nicht mehr aktualisiert wurden.",
+      freshnessColItem: "Inhalt",
+      colLastModified: "Zuletzt geändert",
+      freshnessDaysAgo: "vor {days} Tagen",
+      freshnessBonusBadge: "CTR-Chance",
+      freshnessRefreshAction: "Mit AI überarbeiten",
+      freshnessDismissAction: "Ignorieren",
     },
     aeoPage: {
       helpTitle: "SEO für KI-Suche (AEO)",

@@ -47,6 +47,8 @@ import {
 } from "../services/seo/audit.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { analyzeFreshness, excludeDismissed } from "../services/seo/freshness.service";
+import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
@@ -92,6 +94,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitleSuffixEnabled: true,
       seoTitleSuffix: true,
       seoLimits: true,
+      seoFreshnessDismissed: true,
     },
   });
 
@@ -155,6 +158,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
+  // Content-Freshness card (PLAN_SEO_SUITE_COMPLETION.md §5.3): just a count
+  // here — the detail table lives on the Search Console tab (§5.3 "picked
+  // one", see that route's header comment). Pro-gated (freshness presupposes
+  // GSC) and best-effort: a DB error here must not break the dashboard.
+  let freshnessCandidateCount = 0;
+  if (meetsPlan(plan, "pro")) {
+    try {
+      const dismissed = Array.isArray(settings?.seoFreshnessDismissed)
+        ? (settings!.seoFreshnessDismissed as string[])
+        : [];
+      const freshness = await analyzeFreshness(session.shop, { db });
+      freshnessCandidateCount = excludeDismissed(freshness.candidates, dismissed).length;
+    } catch {
+      freshnessCandidateCount = 0;
+    }
+  }
+
   return json({
     audit: snapshot.audit,
     lastScannedAt: snapshot.createdAt.toISOString(),
@@ -163,6 +183,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopLocales,
     primaryLocale,
     activeLocale: activeLocaleKey, // "" = primary; else the foreign locale code
+    freshnessCandidateCount,
   });
 };
 
@@ -183,6 +204,7 @@ export default function SeoDashboard() {
     shopLocales,
     primaryLocale,
     activeLocale,
+    freshnessCandidateCount,
   } = useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -555,6 +577,28 @@ export default function SeoDashboard() {
             ))}
           </BlockStack>
         </Card>
+
+        {/* Content-Freshness (PLAN_SEO_SUITE_COMPLETION.md §5.3): count only —
+            the detail table (position/CTR/impressions/last modified, "Mit AI
+            überarbeiten"/"Ignorieren") lives on the Search Console tab, which
+            already carries the GSC-connection chrome this feature depends on. */}
+        {freshnessCandidateCount > 0 && (
+          <Card>
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">
+                  {d.freshnessCardTitle}
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {d.freshnessCardCount.replace("{count}", String(freshnessCandidateCount))}
+                </Text>
+              </BlockStack>
+              <Button onClick={() => handleNavigate("/app/seo/search-console")}>
+                {d.freshnessCardButton}
+              </Button>
+            </InlineStack>
+          </Card>
+        )}
 
         {/* Most common problems */}
         {audit.problems.length > 0 && (

@@ -15,7 +15,7 @@ import { PAGES_CONFIG } from "../config/content-fields.config";
 import { useI18n } from "../contexts/I18nContext";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
@@ -109,6 +109,20 @@ export default function PagesPage() {
   // Deep-link from the SEO dashboard: ?select=<Shopify GID> preselects the item.
   const [searchParams] = useSearchParams();
   const initialItemId = searchParams.get("select") || undefined;
+
+  // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
+  // "Mit AI überarbeiten" button on the Freshness panel links here with
+  // ?select=<GID>&preset=refresh — a one-time hint pointing at the existing
+  // "Generate with AI" action, not a new AI-instructions plumbing/template
+  // system (the plan explicitly rules that out).
+  const shownRefreshPresetRef = useRef(false);
+  useEffect(() => {
+    if (shownRefreshPresetRef.current) return;
+    if (searchParams.get("preset") === "refresh" && initialItemId) {
+      shownRefreshPresetRef.current = true;
+      showInfoBox(t.seo.dashboard.freshnessPresetHint, "info");
+    }
+  }, [searchParams, initialItemId, showInfoBox, t]);
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({

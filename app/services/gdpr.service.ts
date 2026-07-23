@@ -205,7 +205,7 @@ export async function redactCustomerData(
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
- *      SeoCrawlBrokenLink                        (all scoped by `shop`)
+ *      SeoCrawlBrokenLink, SeoGscPageStat         (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -513,6 +513,15 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoCrawlSnapshotsDeleted.count} SEO crawl snapshots`);
+
+    // Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+    // option b): per-page GSC rollup. The "Ignorieren" dismissed-list itself
+    // is a JSON column on AISettings (already purged above), not a separate
+    // model.
+    const seoGscPageStatsDeleted = await tx.seoGscPageStat.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoGscPageStatsDeleted.count} SEO GSC page stats`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

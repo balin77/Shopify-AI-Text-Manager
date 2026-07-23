@@ -136,6 +136,16 @@ model AISettings {
   // EnabledMetafieldDefinition so existing merchants' editors stay populated.
   metafieldsLastScanAt DateTime?
 
+  // Content-Freshness audit (PLAN_SEO_SUITE_COMPLETION.md §5.3/§5.5): the
+  // merchant's "Ignorieren" list for refresh candidates. Deliberately NOT a
+  // separate Prisma model — the plan leaves the store open ("bei Umsetzung
+  // entscheiden") and a dismissed-set has no history/reporting need of its
+  // own, so it rides along on the per-shop settings row that already exists
+  // and is already purged on shop/redact (no separate GDPR entry needed).
+  // JSON array of "<resourceType>:<resourceId>" strings, e.g.
+  // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
+  seoFreshnessDismissed Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1343,4 +1353,31 @@ model SeoCrawlBrokenLink {
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([shop, snapshotId])
+}
+
+// Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+// option b): per-page GSC rollup. Written daily by
+// app/services/seo/gsc-auto-sync.service.ts (one extra dimensions:["page"]
+// query, 90d window, alongside the existing per-keyword sync) via
+// enrichPageStatsFromGsc (google-search-console.server.ts). resourceType/
+// resourceId are resolved via the shared resolvePathsToResources
+// (seo/url-resolver.server.ts) — null when the page doesn't map to a known
+// content type. Read by app/services/seo/freshness.service.ts.
+// Retention: the unique (shop, page) key overwrites on every sync — no
+// history table (PLAN §2 "Retention").
+model SeoGscPageStat {
+  id           String   @id @default(cuid())
+  shop         String
+  page         String // full GSC page URL
+  resourceType String? // "Product" | "Collection" | "Article" | "Page" | null
+  resourceId   String? // Shopify GID, when resolved
+  position     Float
+  clicks       Int
+  impressions  Int
+  ctr          Float
+  windowDays   Int      @default(90)
+  syncedAt     DateTime @default(now())
+
+  @@unique([shop, page])
+  @@index([shop, resourceType, resourceId])
 }

@@ -15,6 +15,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
+import { resolvePathsToResources } from "./seo/url-resolver.server";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -857,4 +858,73 @@ export async function enrichKeywordsFromGsc(
   await db.seoKeywordSnapshot.deleteMany({ where: { shop, capturedAt: { lt: retentionCutoff } } });
 
   return enriched;
+}
+
+// ── Per-page rollup (PLAN_SEO_SUITE_COMPLETION.md §5.1 option b) ────────────
+
+/** Trailing window for the per-page rollup — wider than the 28d keyword
+ *  window: freshness analysis (freshness.service.ts) wants a stable,
+ *  low-noise read on long-term ranking rather than day-to-day movement. */
+const PAGE_STAT_WINDOW_DAYS = 90;
+const PAGE_STAT_ROW_LIMIT = 1000;
+
+/**
+ * Fetch GSC page-dimensioned analytics (ONE extra API call) and upsert
+ * SeoGscPageStat rows — the per-page rollup app/services/seo/freshness.service.ts
+ * joins against `shopifyUpdatedAt`. Called once per daily auto-sync tick
+ * (gsc-auto-sync.service.ts), right after the existing keyword enrichment —
+ * kept in its OWN try/catch there so a failure here (quota, transient Google
+ * error) never blocks the keyword sync that already existed. Returns the
+ * number of rows upserted. Caller must pass `now` (stays deterministic/testable).
+ */
+export async function enrichPageStatsFromGsc(db: PrismaClient, shop: string, now: Date): Promise<number> {
+  const { accessToken, propertyUrl } = await getGscAccessToken(db, shop);
+  const { startDate, endDate } = defaultDateRange(now, PAGE_STAT_WINDOW_DAYS);
+  const rows = await querySearchAnalytics(accessToken, propertyUrl, {
+    startDate,
+    endDate,
+    dimensions: ["page"],
+    rowLimit: PAGE_STAT_ROW_LIMIT,
+  });
+  if (rows.length === 0) return 0;
+
+  const pages = rows.map((r) => r.keys?.[0]).filter((p): p is string => !!p);
+  const resolved = await resolvePathsToResources(db, shop, pages);
+
+  let synced = 0;
+  for (const row of rows) {
+    const page = row.keys?.[0];
+    if (!page) continue;
+    const ref = resolved.get(page);
+    const resourceType = ref?.id ? ref.resourceType : null;
+    const resourceId = ref?.id ?? null;
+    await db.seoGscPageStat.upsert({
+      where: { shop_page: { shop, page } },
+      create: {
+        shop,
+        page,
+        resourceType,
+        resourceId,
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+        windowDays: PAGE_STAT_WINDOW_DAYS,
+        syncedAt: now,
+      },
+      update: {
+        resourceType,
+        resourceId,
+        position: row.position,
+        clicks: row.clicks,
+        impressions: row.impressions,
+        ctr: row.ctr,
+        windowDays: PAGE_STAT_WINDOW_DAYS,
+        syncedAt: now,
+      },
+    });
+    synced += 1;
+  }
+
+  return synced;
 }

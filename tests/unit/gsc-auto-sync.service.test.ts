@@ -14,18 +14,21 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockEnrich, GscReconnectRequiredError } = vi.hoisted(() => {
+const { mockEnrich, mockEnrichPageStats, GscReconnectRequiredError } = vi.hoisted(() => {
   class GscReconnectRequiredError extends Error {
     constructor(public reason: string) {
       super(`GSC reconnect required: ${reason}`);
       this.name = "GscReconnectRequiredError";
     }
   }
-  return { mockEnrich: vi.fn(), GscReconnectRequiredError };
+  return { mockEnrich: vi.fn(), mockEnrichPageStats: vi.fn(), GscReconnectRequiredError };
 });
 
 vi.mock("~/services/google-search-console.server", () => ({
   enrichKeywordsFromGsc: mockEnrich,
+  // Phase 3 (PLAN_SEO_SUITE_COMPLETION.md §5.1 option b): the per-page
+  // rollup call added alongside the existing keyword sync.
+  enrichPageStatsFromGsc: mockEnrichPageStats,
   GscReconnectRequiredError,
 }));
 
@@ -117,6 +120,8 @@ describe("GscAutoSyncService.tick()", () => {
     vi.clearAllMocks();
     mockEnrich.mockReset();
     mockEnrich.mockResolvedValue(3);
+    mockEnrichPageStats.mockReset();
+    mockEnrichPageStats.mockResolvedValue(0);
   });
 
   it("picks a never-synced connection and skips a freshly-synced one", async () => {
@@ -207,6 +212,29 @@ describe("GscAutoSyncService.tick()", () => {
 
     expect(stats.reconnectRequired).toBe(1);
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("calls enrichPageStatsFromGsc after a successful keyword sync (Phase 3 §5.1 option b)", async () => {
+    addConn("due-shop.myshopify.com", { lastKeywordSyncAt: null });
+    plans.set("due-shop.myshopify.com", "pro");
+    keywordCounts.set("due-shop.myshopify.com", 5);
+
+    await service.tick(now);
+
+    expect(mockEnrichPageStats).toHaveBeenCalledWith(expect.anything(), "due-shop.myshopify.com", now);
+  });
+
+  it("a page-stat rollup failure does not undo the keyword sync or the stamp", async () => {
+    addConn("due-shop.myshopify.com", { lastKeywordSyncAt: null });
+    plans.set("due-shop.myshopify.com", "pro");
+    keywordCounts.set("due-shop.myshopify.com", 5);
+    mockEnrichPageStats.mockRejectedValueOnce(new Error("GSC quota exceeded"));
+
+    const stats = await service.tick(now);
+
+    expect(stats.synced).toBe(1);
+    expect(stats.errored).toBe(0);
+    expect(table[0].lastKeywordSyncAt).toEqual(now);
   });
 
   it("ignores a connection with an empty propertyUrl (never completed property selection)", async () => {
