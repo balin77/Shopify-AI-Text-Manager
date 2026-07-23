@@ -60,6 +60,9 @@ interface BulkGridProps {
   ghostFor: (row: BulkRow, column: ColumnDescriptor) => string;
   /** Field colour per cell (Plan §2) — see CellTranslationStatus. */
   translationStatus: (row: BulkRow, column: ColumnDescriptor) => CellTranslationStatus;
+  /** Tooltip text for a blue "missingTranslation" cell — the foreign languages
+   * still lacking a translation. Only consulted for cells coloured blue. */
+  translationTooltip?: (row: BulkRow, column: ColumnDescriptor) => string | null;
   /** Tooltip for columns that are read-only in a foreign locale. */
   notTranslatableTooltip: string;
   /** `${rowId}|${columnId}` → failure message of the last save — marks
@@ -98,6 +101,7 @@ export function BulkGrid({
   isForeignLocale,
   ghostFor,
   translationStatus,
+  translationTooltip,
   notTranslatableTooltip,
   failuresByCell,
   rowLevelFailures,
@@ -449,6 +453,7 @@ export function BulkGrid({
                 // read-only with their own tooltip (Plan §6.4).
                 const resolved = resolveCellValue(row, col);
                 const foreignReadOnly = isForeignLocale && !col.translatable;
+                const cellReadOnly = !resolved.editable || foreignReadOnly;
                 // Field colour (Plan §2). On the WRAPPER so the transparent
                 // input shows it and the dirty/error inner backgrounds take
                 // precedence naturally (a dirty or errored cell is never
@@ -460,12 +465,26 @@ export function BulkGrid({
                     : status === "missingTranslation"
                       ? " cp-bulk-cell-missing"
                       : "";
+                // Blue cells only: which foreign languages still lack a
+                // translation, surfaced as a native `title` tooltip on the cell
+                // wrapper. A native title injects NO element, so the grid's
+                // `display:contents` rows, sticky columns and the direct-child
+                // `.cp-bulk-cell > .cp-bulk-textarea` flex rule all stay intact
+                // (a Polaris Tooltip wrapper would break them). Read-only cells
+                // keep BulkCell's own explanatory tooltip instead.
+                const tip =
+                  status === "missingTranslation" && !cellReadOnly ? translationTooltip?.(row, col) : null;
                 return (
-                  <div key={col.id} role="cell" className={`cp-bulk-cell${stickyClass(i + 1)}${statusClass}`}>
+                  <div
+                    key={col.id}
+                    role="cell"
+                    className={`cp-bulk-cell${stickyClass(i + 1)}${statusClass}`}
+                    title={tip ?? undefined}
+                  >
                     <BulkCell
                       column={col}
                       value={valueFor(row, col)}
-                      readOnly={!resolved.editable || foreignReadOnly}
+                      readOnly={cellReadOnly}
                       readOnlyTooltip={
                         foreignReadOnly
                           ? notTranslatableTooltip

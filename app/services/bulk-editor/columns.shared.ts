@@ -909,6 +909,11 @@ export interface BulkRow {
    * foreign views (where the colour is "empty in the selected language"
    * instead, computed client-side from the cell value). */
   untranslatedColumnIds?: string[];
+  /** PRIMARY view only: column id → the published foreign locales still MISSING
+   * a non-empty translation for that column. Same source as
+   * `untranslatedColumnIds` but keeps the per-locale detail (which the flag
+   * collapses) so the blue cell can show a "missing in DE, FR" tooltip. */
+  untranslatedLocalesByColumnId?: Record<string, string[]>;
 }
 
 /** The row's primary-locale value for a field column ("" for non-field

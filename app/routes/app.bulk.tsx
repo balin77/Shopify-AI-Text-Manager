@@ -28,6 +28,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { getFormString, getFormJSON } from "../utils/form-data.utils";
+import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { meetsPlan } from "../utils/planUtils";
 import { type Plan } from "../config/plans";
 // Pure/client-safe pieces from the shared module — the component uses them,
@@ -915,6 +916,25 @@ export default function BulkEditor() {
     if (isForeign) return value === "" ? "untranslated" : null;
     if (value === "") return "untranslated";
     return row.untranslatedColumnIds?.includes(column.id) ? "missingTranslation" : null;
+  };
+
+  /** Locale code → app-language display name, for the blue-cell tooltip. Same
+   * helper the single editor uses; falls back to the Shopify name / the code. */
+  const localeNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of data.locales) m.set(l.locale, getLocalizedLanguageName(l.locale, uiLocale, l.name));
+    return m;
+  }, [data.locales, uiLocale]);
+
+  /** Tooltip for a blue "missingTranslation" cell: lists the foreign languages
+   * that still lack a translation, e.g. "Missing translations: French, Italian".
+   * The grid only asks for this on cells it already coloured blue. */
+  const cellTranslationTooltip = (row: BulkRow, column: ColumnDescriptor): string | null => {
+    if (isForeign) return null;
+    const missing = row.untranslatedLocalesByColumnId?.[column.id];
+    if (!missing || missing.length === 0) return null;
+    const names = missing.map((loc) => localeNameByCode.get(loc) ?? loc).join(", ");
+    return `${t.common.missingTranslations} ${names}`;
   };
 
   /** Navigate with updated grid params (all state is in the URL, §3.3).
@@ -1938,6 +1958,7 @@ export default function BulkEditor() {
                       isForeignLocale={isForeign}
                       ghostFor={ghostFor}
                       translationStatus={cellTranslationStatus}
+                      translationTooltip={cellTranslationTooltip}
                       notTranslatableTooltip={b.notTranslatableTooltip}
                       failuresByCell={cellFailuresForGrid}
                       rowLevelFailures={rowLevelFailures}

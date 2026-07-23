@@ -414,14 +414,22 @@ async function attachMissingTranslationFlags(
     set.add(t.locale);
   }
 
-  const total = foreignLocales.length;
   for (const row of rows) {
     const keyMap = localesByRowKey.get(row.id);
     const untranslated: string[] = [];
+    const missingByColumn: Record<string, string[]> = {};
     for (const [columnId, key] of keyByColumnId) {
-      if ((keyMap?.get(key)?.size ?? 0) < total) untranslated.push(columnId);
+      const have = keyMap?.get(key);
+      const missing = foreignLocales.filter((loc) => !have?.has(loc));
+      if (missing.length > 0) {
+        untranslated.push(columnId);
+        missingByColumn[columnId] = missing;
+      }
     }
-    if (untranslated.length > 0) row.untranslatedColumnIds = untranslated;
+    if (untranslated.length > 0) {
+      row.untranslatedColumnIds = untranslated;
+      row.untranslatedLocalesByColumnId = missingByColumn;
+    }
   }
 }
 
