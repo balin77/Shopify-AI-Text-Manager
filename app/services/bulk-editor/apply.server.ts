@@ -183,6 +183,16 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
 
 // ─── Product row: stage 1 — base fields via productUpdate ──────────────────
 
+/**
+ * KNOWN GAP (deliberate, Phase-4b follow-up — PLAN_BULK_EDITOR §6.6): bulk
+ * PRIMARY saves (this function and every other primary persist path in this
+ * module) do NOT invalidate now-stale foreign translations of the changed
+ * fields, while the single editor does (updateContent deletes them on Shopify
+ * and locally). Wiring that invalidation in here touches the shared
+ * translation plumbing that every other surface uses too, so it is scoped
+ * into the same clearly-bounded 4b step that makes the AI paths market-aware
+ * — see the "4b-Folgearbeiten" note at the end of §6.6 in the plan.
+ */
 async function persistProductBaseFields(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -211,6 +221,37 @@ async function persistProductBaseFields(
     }
   }
 
+  // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
+  // sending only `title` wipes the existing description (and vice versa).
+  // When only one half is dirty, load the untouched half from the DB cache
+  // and send it too. See "Partial SEO clobber" in CLAUDE.md. If the cache
+  // row cannot be resolved, the SEO write is REJECTED as a cell error
+  // (Finding 7) — falling back to "" would be exactly the wipe the guard
+  // exists to prevent. A cached row with NULL values is fine: null means
+  // "no value set on Shopify", so sending "" changes nothing.
+  const partialSeo = (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
+  let untouchedSeo: { seoTitle: string | null; seoDescription: string | null } | null = null;
+  if (partialSeo) {
+    untouchedSeo = await db.product
+      .findUnique({
+        where: { shop_id: { shop, id } },
+        select: { seoTitle: true, seoDescription: true },
+      })
+      .catch(() => null);
+    if (!untouchedSeo) {
+      const dirtyHalf = fields.seoTitle !== undefined ? "field.seoTitle" : "field.seoDescription";
+      failures.push(
+        failureOf(
+          group,
+          "The untouched SEO value could not be loaded from the local cache — resync this product, then save the SEO change. (Sending only one half would wipe the other on Shopify.)",
+          dirtyHalf,
+        ),
+      );
+      delete fields.seoTitle;
+      delete fields.seoDescription;
+    }
+  }
+
   const remainingColumnIds = cells.baseColumnIds.filter(
     (columnId) => fields[columnId.slice("field.".length)] !== undefined,
   );
@@ -227,22 +268,10 @@ async function persistProductBaseFields(
     if (fields.productType !== undefined) input.productType = fields.productType;
     if (fields.status !== undefined) input.status = fields.status;
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
-      // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
-      // sending only `title` wipes the existing description (and vice versa).
-      // When only one half is dirty, load the untouched half from the DB
-      // cache and send it too. See "Partial SEO clobber" in CLAUDE.md.
-      const partialSeo = (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
-      let untouched: { seoTitle: string | null; seoDescription: string | null } | null = null;
-      if (partialSeo) {
-        untouched = await db.product.findUnique({
-          where: { shop_id: { shop, id } },
-          select: { seoTitle: true, seoDescription: true },
-        });
-      }
       input.seo = {
-        title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.seoTitle ?? "",
+        title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
         description:
-          fields.seoDescription !== undefined ? fields.seoDescription : untouched?.seoDescription ?? "",
+          fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.seoDescription ?? "",
       };
     }
     const response = await gateway.graphql(
@@ -398,10 +427,12 @@ async function persistProductMetafields(
     }
   }
 
-  if (deletes.length > 0) {
+  // Same 25-input chunking as metafieldsSet (Finding 9) — metafieldsDelete
+  // shares Shopify's per-call input limit.
+  for (const deleteChunk of chunk(deletes, METAFIELDS_SET_CHUNK)) {
     try {
       const response = await gateway.graphql(METAFIELDS_DELETE, {
-        variables: { metafields: deletes.map((d) => d.identifier) },
+        variables: { metafields: deleteChunk.map((d) => d.identifier) },
       });
       const data = (await response.json()) as {
         data?: {
@@ -413,12 +444,12 @@ async function persistProductMetafields(
       };
       const userErrors = data.data?.metafieldsDelete?.userErrors ?? [];
       if (userErrors.length > 0) {
-        for (const entry of deletes) failures.push(failureOf(group, userErrors[0].message, entry.columnId));
+        for (const entry of deleteChunk) failures.push(failureOf(group, userErrors[0].message, entry.columnId));
       } else {
         // Delete-echo check (CLAUDE.md): only remove the local row when
         // Shopify confirmed the removal — otherwise state diverges.
         const echoed = data.data?.metafieldsDelete?.deletedMetafields ?? [];
-        for (const entry of deletes) {
+        for (const entry of deleteChunk) {
           const confirmed = echoed?.some(
             (d) => d.namespace === entry.identifier.namespace && d.key === entry.identifier.key,
           );
@@ -433,7 +464,7 @@ async function persistProductMetafields(
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      for (const entry of deletes) failures.push(failureOf(group, message, entry.columnId));
+      for (const entry of deleteChunk) failures.push(failureOf(group, message, entry.columnId));
     }
   }
 
@@ -742,16 +773,26 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   switch (type) {
     case "collection": {
       // Same partial-SEO clobber guard as products — collectionUpdate also
-      // treats `seo` as a unit.
+      // treats `seo` as a unit. An unresolvable cache row REJECTS the write
+      // (Finding 7): falling back to "" would wipe the untouched half. This
+      // throw happens BEFORE any Shopify call, so nothing is half-written;
+      // collection rows are single-mutation, so the failure is row-level.
       let seo: { title: string; description: string } | undefined;
       if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
         const partialSeo = (fields.seoTitle !== undefined) !== (fields.seoDescription !== undefined);
         let untouched: { seoTitle: string | null; seoDescription: string | null } | null = null;
         if (partialSeo) {
-          untouched = await db.collection.findUnique({
-            where: { shop_id: { shop, id } },
-            select: { seoTitle: true, seoDescription: true },
-          });
+          untouched = await db.collection
+            .findUnique({
+              where: { shop_id: { shop, id } },
+              select: { seoTitle: true, seoDescription: true },
+            })
+            .catch(() => null);
+          if (!untouched) {
+            throw new Error(
+              "The untouched SEO value could not be loaded from the local cache — resync this collection, then save the SEO change. (Sending only one half would wipe the other on Shopify.)",
+            );
+          }
         }
         seo = {
           title: fields.seoTitle !== undefined ? fields.seoTitle : untouched?.seoTitle ?? "",
@@ -1284,6 +1325,23 @@ function variantColumnForErrorField(tail: string): string | null {
   }
 }
 
+/** Server-side money cell-error text. The negative/ambiguous branches mirror
+ * the client's pre-save messages (t.bulkEditor.moneyErrors) — the client
+ * catches these while typing, this is the defensive second layer for diffs
+ * that arrive via direct POST/CSV. */
+function moneyErrorMessage(error: "negative" | "invalid" | "ambiguous", value: string): string {
+  switch (error) {
+    case "negative":
+      return "The amount cannot be negative.";
+    case "ambiguous":
+      // Finding 3: "1.299" is ambiguous (German thousands vs. English
+      // decimal) — never guess; tell the merchant how to disambiguate.
+      return `"${value}" is ambiguous — write 1299 or 1.299,00 instead.`;
+    default:
+      return `"${value}" is not a valid amount.`;
+  }
+}
+
 /**
  * Builds the ProductVariantsBulkInput for one variant row group, reporting
  * invalid money cells as failures (they are dropped from the input, the rest
@@ -1301,13 +1359,7 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
       case VAR_PRICE_COLUMN_ID: {
         const parsed = parseMoney(value);
         if (!parsed.ok) {
-          failures.push(
-            failureOf(
-              group,
-              parsed.error === "negative" ? "The price cannot be negative." : `"${value}" is not a valid amount.`,
-              columnId,
-            ),
-          );
+          failures.push(failureOf(group, moneyErrorMessage(parsed.error, value), columnId));
           break;
         }
         if (parsed.value === null) {
@@ -1323,15 +1375,7 @@ function buildVariantInput(group: BulkDiffRowGroup): { prepared: PreparedVariant
       case VAR_COMPARE_AT_COLUMN_ID: {
         const parsed = parseMoney(value);
         if (!parsed.ok) {
-          failures.push(
-            failureOf(
-              group,
-              parsed.error === "negative"
-                ? "The compare-at price cannot be negative."
-                : `"${value}" is not a valid amount.`,
-              columnId,
-            ),
-          );
+          failures.push(failureOf(group, moneyErrorMessage(parsed.error, value), columnId));
           break;
         }
         // Cleared cell ⇒ explicit null (clears the compare-at price, §14).

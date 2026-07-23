@@ -250,6 +250,29 @@ describe("applyBulkDiff — metafields (Plan §4.1/§4.4/§14)", () => {
     expect(db.productMetafield.upsert).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
   });
 
+  it("chunks metafieldsDelete at 25 like metafieldsSet (Finding 9)", async () => {
+    const specs: MetafieldColumnSpec[] = [];
+    const diff: BulkDiffEntry[] = [];
+    for (let i = 0; i < METAFIELDS_SET_CHUNK + 1; i++) {
+      specs.push({ namespace: "custom", key: `field${i}`, type: "single_line_text_field" });
+      diff.push(entry(metafieldColumnId("custom", `field${i}`), "")); // "" = clear
+    }
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor(specs) },
+      diff,
+    );
+
+    expect(result.failures).toEqual([]);
+    const deleteCalls = calls.filter((c) => c.query.includes("metafieldsDelete("));
+    expect(deleteCalls).toHaveLength(2);
+    expect((deleteCalls[0].variables?.metafields as unknown[]).length).toBe(METAFIELDS_SET_CHUNK);
+    expect((deleteCalls[1].variables?.metafields as unknown[]).length).toBe(1);
+    expect(db.productMetafield.deleteMany).toHaveBeenCalledTimes(METAFIELDS_SET_CHUNK + 1);
+  });
+
   it("clears a metafield cell via metafieldsDelete, NEVER metafieldsSet with '' (§14 no. 4)", async () => {
     const { admin, calls } = mockAdmin();
     const db = mockDb();
@@ -445,6 +468,60 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBe(IMG_ALT_COLUMN_ID);
     expect(calls.some((c) => c.query.includes("productUpdateMedia("))).toBe(false);
+  });
+
+  it("rejects a partial-SEO product write as a CELL error when the cache row is missing (Finding 7)", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+    // No cache row → the untouched SEO half cannot be resolved.
+    db.product.findUnique.mockResolvedValue(null as never);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.seoTitle", "New SEO title"), entry("field.title", "Still saves")],
+    );
+
+    // The SEO cell fails with the resync hint — and NO productUpdate call
+    // ever carries a `seo` input (the "" fallback would wipe the untouched
+    // description on Shopify).
+    const seoFailure = result.failures.find((f) => f.columnId === "field.seoTitle");
+    expect(seoFailure).toBeDefined();
+    expect(seoFailure?.message).toContain("resync");
+    const updateCalls = calls.filter((c) => c.query.includes("productUpdate("));
+    expect(updateCalls).toHaveLength(1);
+    const input = updateCalls[0].variables?.input as Record<string, unknown>;
+    expect(input.seo).toBeUndefined();
+    // The row's OTHER base cell still saved.
+    expect(input.title).toBe("Still saves");
+    expect(result.failures.some((f) => f.columnId === "field.title")).toBe(false);
+  });
+
+  it("rejects a partial-SEO collection write BEFORE any Shopify call when the cache row is missing (Finding 7)", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+    db.collection.findUnique.mockResolvedValue(null as never);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [
+        {
+          rowId: "gid://shopify/Collection/3",
+          rowType: "collection",
+          locale: "",
+          marketId: "",
+          columnId: "field.seoDescription",
+          value: "Only one half",
+        },
+      ],
+    );
+
+    // Row-level failure (collections are single-mutation) with the resync
+    // hint — and NOT A SINGLE Shopify call, so nothing was half-written.
+    expect(result.saved).toBe(0);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBeUndefined();
+    expect(result.failures[0].message).toContain("resync");
+    expect(calls).toHaveLength(0);
   });
 
   it("keeps single-mutation rows on row-level failures (no columnId)", async () => {

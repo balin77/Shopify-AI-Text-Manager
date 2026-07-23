@@ -73,9 +73,15 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
     return json({ success: false, error: "Invalid diff payload." }, { status: 400 });
   }
   const diff = rawDiff as BulkDiffEntry[];
+  // The limit counts diff ENTRIES = changed CELLS, not rows (Finding 2/12).
+  // The client checks the same constant in submitDiff/the CSV preview before
+  // submitting; this is the defensive server half for direct POSTs.
   if (diff.length > MAX_BULK_TASK_ITEMS) {
     return json(
-      { success: false, error: `A single save is limited to ${MAX_BULK_TASK_ITEMS} rows.` },
+      {
+        success: false,
+        error: `A single save is limited to ${MAX_BULK_TASK_ITEMS} changed cells (this diff has ${diff.length}). Save in several steps or narrow the filter.`,
+      },
       { status: 400 },
     );
   }

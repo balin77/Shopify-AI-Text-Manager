@@ -199,7 +199,17 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
     });
   });
 
-  return json({ success: true, taskId: task.id, total: jobs.length, truncated: total > rows.length });
+  // truncated (Finding 6): the candidate window is capped at
+  // MAX_BULK_TASK_ITEMS rows — report the cap AND the full match count so the
+  // client can tell the merchant that the remainder needs another run.
+  return json({
+    success: true,
+    taskId: task.id,
+    total: jobs.length,
+    truncated: total > rows.length,
+    matchedRows: total,
+    rowLimit: MAX_BULK_TASK_ITEMS,
+  });
 }
 
 // ─── Runner ────────────────────────────────────────────────────────────────
@@ -377,6 +387,11 @@ async function translateProductTypeGrouped(
   let handledSources = 0;
   for (const [source, rowIds] of rowsBySource) {
     let value: string | null = null;
+    // Failure bookkeeping (Finding 5): the catch below records its own
+    // failures; without the flag, a null/empty AI result WITHOUT an exception
+    // fell through both branches and the rows silently vanished from the run
+    // (neither suggestion nor failure).
+    let failed = false;
     try {
       const lookup = await groupedService.lookup({
         shop,
@@ -417,13 +432,18 @@ async function translateProductTypeGrouped(
       const message = errorMessage(err);
       for (const rowId of rowIds) failures.push({ rowId, columnId: column.id, message });
       value = null;
+      failed = true;
     }
 
-    if (value && value.trim()) {
-      for (const rowId of rowIds) pushSuggestion(rowId, value);
-    } else if (value !== null) {
-      for (const rowId of rowIds) {
-        failures.push({ rowId, columnId: column.id, message: "AI returned no translation." });
+    if (!failed) {
+      if (value && value.trim()) {
+        for (const rowId of rowIds) pushSuggestion(rowId, value);
+      } else {
+        // null/undefined/empty AI result — every affected row fails visibly
+        // (Finding 5); never substitute the source text (N-H3).
+        for (const rowId of rowIds) {
+          failures.push({ rowId, columnId: column.id, message: "AI returned no translation." });
+        }
       }
     }
 

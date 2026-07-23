@@ -453,6 +453,11 @@ Aktion über der Tabelle: **Spalte + Zielsprache wählen → alle leeren Zellen 
 
 `translateAllContent`, `translateMetaobjectEntries`, `saveImageAltTextTranslation` und sämtliche `api-ai-handlers`-Schreiber setzen `marketId: ""` **hart**. Solange das so ist, kann „Fehlende übersetzen" nur global arbeiten. **Entscheidung:** Phase 4 liefert markt-**bewusstes manuelles** Übersetzen und global-only AI-Übersetzen; das Durchreichen von `marketId` in die AI-Pfade ist ein eigener, klar abgegrenzter Schritt (Phase 4b) — und er berührt Code, den alle anderen Oberflächen mitbenutzen, gehört also nicht in dieselbe Auslieferung.
 
+**4b-Folgearbeiten** (gesammelt, damit der Schnitt sichtbar bleibt):
+
+1. `marketId` in die AI-Pfade durchreichen (siehe oben) — markt-bewusstes „Fehlende übersetzen".
+2. **Bulk-Primär-Saves invalidieren keine veralteten Fremdübersetzungen** (Review-Finding 8): Der Einzeleditor löscht beim Ändern eines Primärwerts die dadurch stale gewordenen Übersetzungen über `updateContent` (Shopify + lokal); die Bulk-Persistenz (`apply.server.ts`, `persistProductBaseFields` & Co.) tut das bewusst noch nicht — die Invalidierung berührt die geteilte Übersetzungs-Plumbing aller Oberflächen und gehört deshalb in denselben klar abgegrenzten 4b-Schritt. Bis dahin gilt: Nach einem Bulk-Primär-Save können Fremdübersetzungen der geänderten Felder veraltet weiterbestehen (identisches Verhalten wie ein Direkt-Edit im Shopify-Admin).
+
 ### 6.7 Abnahme Phase 4
 
 - 100 Produkte × Spalte „Meta-Description" × Sprache FR: manuelles Ausfüllen, Speichern, Reload zeigt die Werte — **und** Shopifys Übersetzungsansicht ebenfalls (Echo-Prüfung greift).
