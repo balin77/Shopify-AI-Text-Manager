@@ -34,6 +34,9 @@ function columnsFor(specs: MetafieldColumnSpec[]): Record<BulkRowType, ColumnDes
     collection: BULK_COLUMNS_BY_TYPE.collection,
     article: BULK_COLUMNS_BY_TYPE.article,
     page: BULK_COLUMNS_BY_TYPE.page,
+    blog: BULK_COLUMNS_BY_TYPE.blog,
+    policy: BULK_COLUMNS_BY_TYPE.policy,
+    metaobject: BULK_COLUMNS_BY_TYPE.metaobject,
   };
 }
 

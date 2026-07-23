@@ -17,12 +17,31 @@ import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
-/** Row types the bulk editor supports today. Phase 5 adds "blog", "policy",
- * "metaobject" here. "variant" (Phase 3, Plan §5.3): one row = one variant,
- * with product image/title as read-only sticky context columns. */
-export type BulkRowType = "product" | "variant" | "collection" | "article" | "page";
+/** Row types the bulk editor supports. "variant" (Phase 3, Plan §5.3): one
+ * row = one variant, with product image/title as read-only sticky context
+ * columns. Phase 5 (Plan §7): "blog" = blog CONTAINERS (live-fetched, no DB
+ * cache), "policy" = ShopPolicy rows, "metaobject" = Metaobject rows with
+ * per-definition dynamic columns. */
+export type BulkRowType =
+  | "product"
+  | "variant"
+  | "collection"
+  | "article"
+  | "page"
+  | "blog"
+  | "policy"
+  | "metaobject";
 
-export const BULK_ROW_TYPES: BulkRowType[] = ["product", "variant", "collection", "article", "page"];
+export const BULK_ROW_TYPES: BulkRowType[] = [
+  "product",
+  "variant",
+  "collection",
+  "article",
+  "page",
+  "blog",
+  "policy",
+  "metaobject",
+];
 
 /**
  * Maps each bulk row type to the plan ContentType that gates it
@@ -31,6 +50,8 @@ export const BULK_ROW_TYPES: BulkRowType[] = ["product", "variant", "collection"
  * inconsistency where a Basic shop was offered `article` although its plan
  * never syncs article content. Variants hang off products (Plan §5.3): the
  * same "products" gate covers them, so they are Basic+ like the other types.
+ * Phase 5 (Plan §10.7): "policies" is Basic+, "blogs"/"metaobjects" are Pro+
+ * per PLAN_CONFIG — this map is what enforces that, at all three gates.
  */
 export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   product: "products",
@@ -38,11 +59,14 @@ export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   collection: "collections",
   article: "articles",
   page: "pages",
+  blog: "blogs",
+  policy: "policies",
+  metaobject: "metaobjects",
 };
 
 // ─── Column descriptors (Plan §1.2) ────────────────────────────────────────
 
-export type ColumnKind = "field" | "metafield" | "option" | "variant" | "image" | "readonly";
+export type ColumnKind = "field" | "metafield" | "option" | "variant" | "image" | "readonly" | "mofield";
 
 /** Column-picker group (Plan §2): Basis · SEO · Metafelder · Bilder · Optionen. */
 export type ColumnGroup = "base" | "seo" | "metafields" | "images" | "options";
@@ -83,6 +107,18 @@ export interface ColumnDescriptor {
   optionPosition?: number;
   /** kind "option": whether the column edits the option's name or its values. */
   optionField?: "name" | "values";
+  /** kind "mofield" (Phase 5): the MetaobjectDefinition.type this column
+   * belongs to — a column is only editable on rows of the SAME type (the
+   * toolbar's type filter keeps the visible set homogeneous). Carried
+   * explicitly, same reasoning as metafieldNamespace/-Key: parsing it back
+   * out of "mo.<type>.<fieldKey>" would rely on "no dots in type names". */
+  moType?: string;
+  /** kind "mofield": the field key inside Metaobject.fields — doubling as the
+   * Shopify translatable-content key for MetaobjectTranslation. */
+  moFieldKey?: string;
+  /** kind "mofield": the Shopify field type (drives cell rendering; rich_text
+   * stays read-only, list types use the `|` display format). */
+  moFieldType?: string;
 }
 
 /** For kind "field": the flat row property (and Prisma column) behind the
@@ -111,6 +147,50 @@ const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   translatable: false,
   inputType: "text",
   minWidth: 140,
+};
+
+// ─── Phase-5 static columns (Plan §7) ──────────────────────────────────────
+
+/** Policy title is READ-ONLY: shopPolicyUpdate(shopPolicy:{type,body}) has no
+ * title field (Plan §14) — Shopify derives the title from the policy type. */
+const POLICY_TITLE_COLUMN: ColumnDescriptor = {
+  id: "policyTitle",
+  kind: "readonly",
+  label: "policyTitle",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 200,
+  sortKey: "title",
+};
+
+/** Metaobject display name — read-only context (editing happens through the
+ * type's own field columns; the label field IS one of them). */
+const MO_DISPLAY_NAME_COLUMN: ColumnDescriptor = {
+  id: "moDisplayName",
+  kind: "readonly",
+  label: "moDisplayName",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 180,
+  sortKey: "displayName",
+};
+
+/** Metaobject handle — read-only recognition column (handles are structural;
+ * renaming them is a guided single-editor concern). */
+const MO_HANDLE_COLUMN: ColumnDescriptor = {
+  id: "moHandle",
+  kind: "readonly",
+  label: "moHandle",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 160,
+  sortKey: "handle",
 };
 
 // ─── Variant row columns (Phase 3 — Plan §5.3) ─────────────────────────────
@@ -260,6 +340,21 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_SEO_DESCRIPTION,
   ],
   page: [IMAGE_COLUMN, COL_TITLE, COL_BODY, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  // Blog CONTAINERS (Plan §7): no body — Shopify's translatable keys for BLOG
+  // are title/handle/meta_title/meta_description (Plan §14 no. 6), and the
+  // primary write path (blogUpdate + global.title_tag/description_tag
+  // metafields) covers exactly these four. Rows are live-fetched (no DB
+  // cache), so the sortKeys here are resolved IN MEMORY by the loader.
+  blog: [COL_TITLE, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  // Policies (Plan §7): title read-only (§14 — shopPolicyUpdate has no title
+  // input), body editable exactly like descriptionHtml/body on other types.
+  // body IS translatable — under the ShopPolicy key exception ("body", not
+  // "body_html"; fieldTranslationKeyMap in shopify-content.service.ts).
+  policy: [POLICY_TITLE_COLUMN, COL_BODY],
+  // Metaobjects (Plan §7): static read-only context columns only — the
+  // editable columns are the per-definition mofield columns appended by
+  // buildColumnsForType from the shop's MetaobjectDefinition specs.
+  metaobject: [MO_DISPLAY_NAME_COLUMN, MO_HANDLE_COLUMN],
 };
 
 export function getColumnForType(type: BulkRowType, columnId: string): ColumnDescriptor | undefined {
@@ -316,6 +411,66 @@ export function buildMetafieldColumn(spec: MetafieldColumnSpec): ColumnDescripto
     metafieldType: spec.type,
     metafieldNamespace: spec.namespace,
     metafieldKey: spec.key,
+  };
+}
+
+// ─── Dynamic metaobject columns (Phase 5 — Plan §7) ────────────────────────
+
+/**
+ * One column per MetaobjectDefinition field, produced server-side
+ * (columns.server.ts loadMetaobjectColumnSpecs) from the synced definitions
+ * and shipped to the client as plain data. Same type filter as metafields:
+ * only text-like types get a column at all; rich_text gets a READ-ONLY column
+ * ("open in editor" — Plan §7/§11: grid-editing Shopify's rich-text JSON
+ * recreates the theme-richtext normalization divergence).
+ */
+export interface MetaobjectColumnSpec {
+  /** MetaobjectDefinition.type (e.g. "size_guide"). */
+  type: string;
+  fieldKey: string;
+  /** Shopify field type name (single_line_text_field, …). */
+  fieldType: string;
+  /** Shop-defined field display name — rendered verbatim, never translated
+   * (§10.4, same rule as metafield labels). */
+  name: string;
+}
+
+/** Column id shape "mo.<type>.<fieldKey>" — collision-free against every
+ * other id shape ("field."/"mf."/"opt."/"var."/"img." prefixes); type and
+ * fieldKey are ADDITIONALLY carried as descriptor props (moType/moFieldKey),
+ * so nothing ever parses this id back apart. */
+export function metaobjectColumnId(type: string, fieldKey: string): string {
+  return `mo.${type}.${fieldKey}`;
+}
+
+/** Metaobject field types the grid can edit inline — the same text-type set
+ * as metafield columns. Everything else (references, numbers, booleans…)
+ * gets NO column; rich_text gets a read-only column. */
+export function isEditableMetaobjectFieldType(fieldType: string): boolean {
+  return (
+    fieldType === METAFIELD_TYPE_SINGLE_LINE ||
+    fieldType === METAFIELD_TYPE_MULTI_LINE ||
+    fieldType === METAFIELD_TYPE_LIST_SINGLE_LINE
+  );
+}
+
+export function buildMetaobjectColumn(spec: MetaobjectColumnSpec): ColumnDescriptor {
+  const richText = spec.fieldType === METAFIELD_TYPE_RICH_TEXT;
+  return {
+    id: metaobjectColumnId(spec.type, spec.fieldKey),
+    kind: "mofield",
+    // Shop-defined field name, rendered verbatim (§10.4).
+    label: spec.name || spec.fieldKey,
+    group: "metafields",
+    editable: !richText,
+    // Text fields translate into MetaobjectTranslation
+    // (shop_metaobjectId_key_locale_marketId) via the verified Phase-4 path.
+    translatable: !richText,
+    inputType: spec.fieldType === METAFIELD_TYPE_SINGLE_LINE ? "text" : "textarea",
+    minWidth: 200,
+    moType: spec.type,
+    moFieldKey: spec.fieldKey,
+    moFieldType: spec.fieldType,
   };
 }
 
@@ -383,16 +538,24 @@ export interface ProductColumnCaps {
 /**
  * The full column universe for a type: the static per-type columns plus (for
  * products) the shop's enabled metafield columns, the option column pairs and
- * the main-image alt-text column. Pure and client-safe — the server builds
- * the same list (columns.server.ts) for validation, the client builds it from
- * loader data for rendering.
+ * the main-image alt-text column, and (for metaobjects) one column per
+ * definition field across ALL definitions — the toolbar's type filter narrows
+ * the RENDERED set to one definition, but validation and the diff pipeline
+ * work on the union (a diff entry for any real definition column is valid).
+ * Pure and client-safe — the server builds the same list (columns.server.ts)
+ * for validation, the client builds it from loader data for rendering.
  */
 export function buildColumnsForType(
   type: BulkRowType,
   metafieldSpecs: MetafieldColumnSpec[],
   caps: ProductColumnCaps,
+  metaobjectSpecs: MetaobjectColumnSpec[] = [],
 ): ColumnDescriptor[] {
   const columns = [...BULK_COLUMNS_BY_TYPE[type]];
+  if (type === "metaobject") {
+    columns.push(...metaobjectSpecs.map(buildMetaobjectColumn));
+    return columns;
+  }
   if (type !== "product") return columns;
   if (caps.metafields) columns.push(...metafieldSpecs.map(buildMetafieldColumn));
   if (caps.imageAlt) columns.push(buildImgAltColumn());
@@ -694,6 +857,14 @@ export interface BulkRow {
    * read-only with a "resync" hint (Plan §4.3 — productUpdateMedia needs the
    * MediaImage GID). Absent ⇒ product has no image. */
   mainImage?: { mediaId: string | null; alt: string };
+  /** Metaobject rows (Phase 5): the row's MetaobjectDefinition.type. A
+   * mofield column is only editable when its moType matches this. `title`
+   * holds the displayName, `handle` the metaobject handle. */
+  moType?: string;
+  /** Metaobject field values keyed by column id ("mo.<type>.<key>"). A
+   * missing entry = the instance has no value for that field yet — empty
+   * cell, and the save SETS it via metaobjectUpdate. */
+  moFields?: Record<string, string>;
   /** Foreign-language cell values, keyed `${locale}|${marketId}|${columnId}`.
    * Phase 4 (languages/markets) fills this from ContentTranslation; in Phase 1
    * the UI only edits the primary locale, but the diff pipeline already
@@ -719,7 +890,8 @@ export type CellReadOnlyReason =
   | "missingOption" // product has no option at this position
   | "legacyOptionValues" // values without GIDs — can't be mapped for update
   | "missingImage" // product has no image at all
-  | "missingMediaId"; // image row lacks the MediaImage GID — resync needed
+  | "missingMediaId" // image row lacks the MediaImage GID — resync needed
+  | "wrongMetaobjectType"; // mofield column of another definition type (Phase 5)
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
@@ -794,12 +966,32 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
           return { value: "", editable: false, readOnlyReason: "column" };
       }
     }
+    case "mofield": {
+      // Cross-type cell (the union universe contains every definition's
+      // columns, Plan §7): a column of another definition type is read-only
+      // and empty for this row — computeDiff drops any edit that sneaks in.
+      if (row.moType !== column.moType) {
+        return { value: "", editable: false, readOnlyReason: "wrongMetaobjectType" };
+      }
+      const raw = row.moFields?.[column.id] ?? "";
+      if (column.moFieldType === METAFIELD_TYPE_RICH_TEXT) {
+        return { value: richTextPreview(raw), editable: false, readOnlyReason: "richText" };
+      }
+      if (column.moFieldType === METAFIELD_TYPE_LIST_SINGLE_LINE) {
+        return { value: formatListMetafieldValue(raw), editable: true };
+      }
+      // Missing field on the instance ⇒ empty, still editable — the save
+      // SETS the field via metaobjectUpdate (§12 test case).
+      return { value: raw, editable: true };
+    }
     case "readonly": {
       let value = "";
       if (column.id === "blogTitle") value = row.blogTitle ?? "";
       else if (column.id === "productTitle") value = row.productTitle ?? "";
       else if (column.id === "variantTitle") value = row.title;
       else if (column.id === "position") value = row.position != null ? String(row.position) : "";
+      else if (column.id === "policyTitle" || column.id === "moDisplayName") value = row.title;
+      else if (column.id === "moHandle") value = row.handle;
       return { value, editable: false, readOnlyReason: "column" };
     }
     default:
@@ -808,12 +1000,14 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
 }
 
 /** Per-type membership for a (possibly dynamic) column: dynamic product
- * columns (metafields, options, img.alt) belong to product rows only; static
- * columns fall back to the per-type allowlist. */
+ * columns (metafields, options, img.alt) belong to product rows only,
+ * mofield columns to metaobject rows only; static columns fall back to the
+ * per-type allowlist. */
 export function columnAllowedForType(type: BulkRowType, column: ColumnDescriptor): boolean {
   if (column.kind === "metafield" || column.kind === "option" || column.id === IMG_ALT_COLUMN_ID) {
     return type === "product";
   }
+  if (column.kind === "mofield") return type === "metaobject";
   return !!getColumnForType(type, column.id);
 }
 
@@ -1011,7 +1205,10 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  *   `opts.variantProductIdByRowId` (the client builds it from the loaded
  *   rows); without it every variant row counts as its own call, which
  *   over-estimates but never under-estimates;
- * - primary non-product group: 1 (single-mutation row);
+ * - primary non-product group: 1 (single-mutation row); EXCEPT blog rows,
+ *   which count 1 blogUpdate + 1 metafieldsDelete when an SEO cell is
+ *   CLEARED (Plan §7/§14 no. 4 — clearing global.title_tag/description_tag
+ *   needs the extra delete call; setting rides inside blogUpdate);
  * - foreign group: 1 translationsRegister (any non-empty cell) +
  *   1 translationsRemove (any cleared cell);
  * - plus ceil(unique foreign resources / DIGEST_BATCH_CHUNK) digest batches.
@@ -1045,7 +1242,19 @@ export function estimateCalls(
       variantTargets.add(opts?.variantProductIdByRowId?.[group.rowId] ?? group.rowId);
       continue;
     }
+    if (group.rowType === "blog") {
+      // updateBlog = ONE blogUpdate (SEO sets ride in its metafields input)
+      // plus ONE metafieldsDelete when any SEO half is cleared (§14 no. 4).
+      const clearsSeo = entries.some(
+        ([columnId, value]) =>
+          (columnId === "field.seoTitle" || columnId === "field.seoDescription") && value === "",
+      );
+      calls += 1 + (clearsSeo ? 1 : 0);
+      continue;
+    }
     if (group.rowType !== "product") {
+      // Single-mutation rows: collection/page/article, policy
+      // (shopPolicyUpdate) and metaobject (metaobjectUpdate) — 1 call each.
       calls += 1;
       continue;
     }

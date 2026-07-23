@@ -387,6 +387,9 @@ describe("isValidBulkDiffEntry", () => {
     collection: buildColumnsForType("collection", [], fullCaps),
     article: buildColumnsForType("article", [], fullCaps),
     page: buildColumnsForType("page", [], fullCaps),
+    blog: buildColumnsForType("blog", [], fullCaps),
+    policy: buildColumnsForType("policy", [], fullCaps),
+    metaobject: buildColumnsForType("metaobject", [], fullCaps),
   };
 
   it("accepts an ENABLED metafield column and rejects a non-enabled one", () => {

@@ -32,6 +32,7 @@ import { logger } from "../../utils/logger.server";
 import { getCachedShopLocales } from "../../utils/shop-locales-cache.server";
 import {
   FIELD_TO_TRANSLATION_KEY,
+  fieldTranslationKeyMap,
   ShopifyContentService,
   type ShopifyAdminClient,
 } from "../../../src/services/shopify-content.service";
@@ -58,14 +59,21 @@ const COLUMN_FIELD_ALIAS: Record<string, string> = {
 
 /**
  * Shopify translatable-content key for a bulk column, or null when the column
- * has none (non-field kinds, non-translatable fields like status). None of
- * the bulk row types is ShopPolicy, so the plain map (body → "body_html")
- * applies without the fieldTranslationKeyMap() exception.
+ * has none (non-field/mofield kinds, non-translatable fields like status).
+ *
+ * `rowType` matters twice (Phase 5):
+ * - "policy" rows resolve through fieldTranslationKeyMap("ShopPolicy") — the
+ *   ONE resource where body translates under "body", not "body_html";
+ * - "metaobject" rows use the field key itself: Shopify's translatable
+ *   content for a Metaobject is keyed by MetaobjectDefinition field key.
  */
-export function translationKeyForColumn(column: ColumnDescriptor): string | null {
-  if (column.kind !== "field" || !column.translatable) return null;
+export function translationKeyForColumn(column: ColumnDescriptor, rowType?: BulkRowType): string | null {
+  if (!column.translatable) return null;
+  if (column.kind === "mofield") return column.moFieldKey ?? null;
+  if (column.kind !== "field") return null;
   const field = fieldNameOfColumn(column);
-  return FIELD_TO_TRANSLATION_KEY[COLUMN_FIELD_ALIAS[field] ?? field] ?? null;
+  const keyMap = rowType === "policy" ? fieldTranslationKeyMap("ShopPolicy") : FIELD_TO_TRANSLATION_KEY;
+  return keyMap[COLUMN_FIELD_ALIAS[field] ?? field] ?? null;
 }
 
 /** Canonical UI field name for a bulk column ("descriptionHtml" →
@@ -82,7 +90,7 @@ export function canonicalFieldNameForColumn(column: ColumnDescriptor): string {
 export function translationKeysByColumnId(type: BulkRowType): Map<string, string> {
   const map = new Map<string, string>();
   for (const column of BULK_COLUMNS_BY_TYPE[type]) {
-    const key = translationKeyForColumn(column);
+    const key = translationKeyForColumn(column, type);
     if (key) map.set(column.id, key);
   }
   return map;
@@ -90,10 +98,13 @@ export function translationKeysByColumnId(type: BulkRowType): Map<string, string
 
 /** ContentTranslation.resourceType value per bulk row type — matches the
  * strings every existing writer uses ("Product", "Collection", "Article",
- * "Page"). Note: the TranslatableResourceType ENUM (only needed for
- * translatableResources(resourceType:) queries, which this module does not
- * use) is PRODUCT/COLLECTION/ARTICLE/PAGE per Plan §14 no. 6 — the
- * ONLINE_STORE_* names were removed with 2024-10. */
+ * "Page"; Phase 5: "Blog" per app.blog.tsx, "ShopPolicy" per the policies
+ * editor). Metaobject rows do NOT mirror into ContentTranslation at all —
+ * they use MetaobjectTranslation (persistTranslationRow branches on it); the
+ * entry only keeps the Record total. Note: the TranslatableResourceType ENUM
+ * (only needed for translatableResources(resourceType:) queries, which this
+ * module does not use) is PRODUCT/COLLECTION/ARTICLE/PAGE/BLOG per Plan §14
+ * no. 6 — the ONLINE_STORE_* names were removed with 2024-10. */
 export const CONTENT_RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   product: "Product",
   // Variant rows never reach the translation path (all their columns are
@@ -102,6 +113,9 @@ export const CONTENT_RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   collection: "Collection",
   article: "Article",
   page: "Page",
+  blog: "Blog",
+  policy: "ShopPolicy",
+  metaobject: "Metaobject",
 };
 
 // ─── Entrance-side locale/market validation ────────────────────────────────

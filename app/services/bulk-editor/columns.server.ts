@@ -27,11 +27,14 @@ import {
 import { PLAN_CONFIG, type Plan } from "../../config/plans";
 import {
   buildColumnsForType,
+  isEditableMetaobjectFieldType,
+  METAFIELD_TYPE_RICH_TEXT,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   type BulkRowType,
   type ColumnDescriptor,
   type MetafieldColumnSpec,
+  type MetaobjectColumnSpec,
   type ProductColumnCaps,
 } from "./columns.shared";
 
@@ -90,19 +93,65 @@ export async function loadProductMetafieldColumnSpecs(
   );
 }
 
+/**
+ * The shop's metaobject columns (Phase 5, Plan §7): one spec per field of
+ * every synced MetaobjectDefinition, restricted to text-like types (plus
+ * rich_text, which becomes a read-only column). Sorted by (type, definition
+ * order) so the grid shows a definition's fields in their authored order.
+ */
+export async function loadMetaobjectColumnSpecs(
+  db: Pick<PrismaClient, "metaobjectDefinition">,
+  shop: string,
+): Promise<MetaobjectColumnSpec[]> {
+  const definitions = await db.metaobjectDefinition.findMany({
+    where: { shop },
+    select: { type: true, fieldDefinitions: true },
+    orderBy: { type: "asc" },
+  });
+
+  const specs: MetaobjectColumnSpec[] = [];
+  for (const def of definitions) {
+    // fieldDefinitions JSON shape from metaobject-sync.service.ts:
+    // Array<{ key, name, type: { name } }>. Defensive parse — a malformed
+    // row yields no columns for that definition, never a crash.
+    const fields = Array.isArray(def.fieldDefinitions) ? def.fieldDefinitions : [];
+    for (const raw of fields) {
+      if (!raw || typeof raw !== "object") continue;
+      const field = raw as { key?: unknown; name?: unknown; type?: { name?: unknown } | null };
+      const key = typeof field.key === "string" ? field.key : "";
+      const fieldType = typeof field.type?.name === "string" ? field.type.name : "";
+      if (!key || !fieldType) continue;
+      if (!isEditableMetaobjectFieldType(fieldType) && fieldType !== METAFIELD_TYPE_RICH_TEXT) continue;
+      specs.push({
+        type: def.type,
+        fieldKey: key,
+        fieldType,
+        name: typeof field.name === "string" ? field.name : key,
+      });
+    }
+  }
+  return specs;
+}
+
 /** The full, trustworthy column universe per row type for this shop + plan —
  * the validation allowlist for both save entrances and the descriptor source
- * for applyBulkDiff. */
+ * for applyBulkDiff. Metaobject columns are the UNION over all definitions
+ * (Plan §7) — the toolbar's type filter narrows rendering, not validity. */
 export async function buildServerColumnsByType(
-  db: Pick<PrismaClient, "enabledMetafieldDefinition" | "productMetafield">,
+  db: Pick<PrismaClient, "enabledMetafieldDefinition" | "productMetafield" | "metaobjectDefinition">,
   shop: string,
   plan: Plan,
 ): Promise<Record<BulkRowType, ColumnDescriptor[]>> {
   const caps = productColumnCapsForPlan(plan);
   const metafieldSpecs = caps.metafields ? await loadProductMetafieldColumnSpecs(db, shop) : [];
+  // Only load definitions when the plan can see metaobject rows at all
+  // (§10.7) — allowedRowTypesForPlan is the same gate the entrances apply.
+  const metaobjectSpecs = allowedRowTypesForPlan(plan).includes("metaobject")
+    ? await loadMetaobjectColumnSpecs(db, shop)
+    : [];
   const byType = {} as Record<BulkRowType, ColumnDescriptor[]>;
   for (const type of BULK_ROW_TYPES) {
-    byType[type] = buildColumnsForType(type, metafieldSpecs, caps);
+    byType[type] = buildColumnsForType(type, metafieldSpecs, caps, metaobjectSpecs);
   }
   return byType;
 }
