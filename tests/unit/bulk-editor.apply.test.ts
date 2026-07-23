@@ -176,11 +176,11 @@ function mockDb() {
     // exist ⇒ invalidation short-circuits before any Shopify call.
     contentTranslation: {
       findMany: vi.fn(async () => [] as { key: string; locale: string }[]),
-      deleteMany: vi.fn(async () => ({ count: 1 })),
+      deleteMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
     metaobjectTranslation: {
       findMany: vi.fn(async () => [] as { key: string; locale: string }[]),
-      deleteMany: vi.fn(async () => ({ count: 1 })),
+      deleteMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
   };
 }
@@ -650,7 +650,7 @@ describe("applyBulkDiff — stale-foreign-translation invalidation (Phase 4b)", 
     expect(remove?.variables?.locales).toEqual(["de"]);
     // Local row deleted only after the echo confirmed it.
     expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
-    const del = db.contentTranslation.deleteMany.mock.calls[0][0] as { where: Record<string, unknown> };
+    const del = db.contentTranslation.deleteMany.mock.calls[0][0] as unknown as { where: Record<string, unknown> };
     expect(del.where).toMatchObject({ resourceId: PRODUCT_ID, locale: "de", marketId: "" });
   });
 
