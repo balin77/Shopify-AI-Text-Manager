@@ -369,6 +369,38 @@ describe("validateJsonLd", () => {
     expect(msgs).toMatch(/reviewCount/);
   });
 
+  it("flags orgNoSameAs (info) when Organization has no sameAs", () => {
+    const ld = buildOrganizationJsonLd({ domain: "shop.example.com", name: "Acme" });
+    const w = validateJsonLd(ld);
+    const found = w.find((x) => x.code === "orgNoSameAs");
+    expect(found).toBeDefined();
+    expect(found?.severity).toBe("info");
+  });
+  it("does not flag orgNoSameAs when Organization has sameAs", () => {
+    const ld = buildOrganizationJsonLd(shop); // fixture has sameAs
+    const w = validateJsonLd(ld);
+    expect(w.some((x) => x.code === "orgNoSameAs")).toBe(false);
+  });
+  it("offerNoAvailability is suppressed under previewMode (Phase 5 batch audit — DB cache has no availability column)", () => {
+    const ld = buildProductJsonLd(
+      { title: "X", handle: "x", price: 1, currency: "USD", mpn: "MPN-1" },
+      shop,
+    );
+    const previewWarnings = validateJsonLd(ld, { previewMode: true });
+    expect(previewWarnings.some((w) => w.code === "offerNoAvailability")).toBe(false);
+    // Default (previewMode false) behavior is unchanged.
+    const defaultWarnings = validateJsonLd(ld);
+    expect(defaultWarnings.some((w) => w.code === "offerNoAvailability")).toBe(true);
+  });
+  it("offerNoCurrency still fires under previewMode (only availability is gated)", () => {
+    const ld = buildProductJsonLd(
+      { title: "X", handle: "x", price: 1, available: true, mpn: "MPN-1" },
+      shop,
+    );
+    const w = validateJsonLd(ld, { previewMode: true });
+    expect(w.some((x) => x.code === "offerNoCurrency")).toBe(true);
+  });
+
   it("FAQPage with an empty mainEntity is an error", () => {
     const w = validateJsonLd({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: [] });
     expect(w.some((x) => x.severity === "error" && /FAQPage/.test(x.message))).toBe(true);

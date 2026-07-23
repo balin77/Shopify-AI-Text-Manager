@@ -22,10 +22,12 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useEffect, useRef, useState } from "react";
+import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import {
   buildOrganizationJsonLd,
@@ -34,20 +36,13 @@ import {
   buildArticleJsonLd,
   renderJsonLdScript,
   validateJsonLd,
+  slugify,
+  GOOGLE_RICH_RESULTS_TEST,
   type ShopInfo,
   type JsonLdWarning,
 } from "../services/structured-data.service";
 import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
-
-const GOOGLE_RICH_RESULTS_TEST = "https://search.google.com/test/rich-results";
-
-function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/json-ld-audit.service";
 
 /** Extract the trailing numeric id from a GID like "gid://shopify/Product/123". */
 function gidToNumericId(gid: string | null | undefined): string | null {
@@ -322,7 +317,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         title: article.title,
         body: article.body,
         handle: article.handle,
-        blogHandle: slug(article.blogTitle || ""),
+        blogHandle: slugify(article.blogTitle || ""),
         imageUrl: article.imageUrl,
         publishedAt: articlePublishedAt,
         updatedAt: article.shopifyUpdatedAt,
@@ -357,6 +352,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ? `https://${shop}/admin/articles/${articleAdminId}`
     : null;
 
+  // Phase 5 batch audit (§7): read the last completed seoJsonLdAudit Task's
+  // aggregate result + whether one is currently running, same cheap
+  // existence-check pattern app.seo._index.tsx uses for its seoAudit rescan
+  // button (single-flight is enforced server-side by the handler; this is
+  // only so the button renders disabled/loading after a reload).
+  const [lastJsonLdAuditTask, runningJsonLdAuditTask] = await Promise.all([
+    db.task.findFirst({
+      where: { shop, type: "seoJsonLdAudit", status: "completed" },
+      orderBy: { completedAt: "desc" },
+      select: { result: true, completedAt: true },
+    }),
+    db.task.findFirst({
+      where: { shop, type: "seoJsonLdAudit", status: "running" },
+      select: { id: true },
+    }),
+  ]);
+  let jsonLdAudit: JsonLdAuditAggregate | null = null;
+  if (lastJsonLdAuditTask?.result) {
+    try {
+      jsonLdAudit = JSON.parse(lastJsonLdAuditTask.result) as JsonLdAuditAggregate;
+    } catch {
+      jsonLdAudit = null;
+    }
+  }
+
   return json({
     previews,
     themeEditorUrl,
@@ -364,7 +384,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     brandingUrl,
     sampleProductAdminUrl,
     sampleArticleAdminUrl,
+    jsonLdAudit,
+    jsonLdAuditRunning: !!runningJsonLdAuditTask,
   });
+};
+
+/** Editor list route per audited type — target of the batch-report row
+ *  deep-link (`?select=<GID>`). Mirrors TYPE_PATH in app.seo._index.tsx. */
+const BATCH_TYPE_PATH: Record<JsonLdAuditItemType, string> = {
+  product: "/app/products",
+  collection: "/app/collections",
+  article: "/app/blog",
 };
 
 // Which warnings get a "fix it here" deep-link button next to them, and
@@ -372,9 +402,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 // unmatched codes render the hint text only (no button). Kept as a plain map
 // so a compile error surfaces the moment we add a warning code without
 // deciding whether it deserves a button.
-type FixLinkKind = "branding" | "productAdmin" | "articleAdmin";
+type FixLinkKind = "branding" | "productAdmin" | "articleAdmin" | "themeEditorJsonLd";
 const FIX_LINK_BY_CODE: Record<string, FixLinkKind> = {
   orgNoLogo: "branding",
+  // The social_urls setting that feeds Organization.sameAs lives on the same
+  // app-embed block as JSON-LD activation, not in a dedicated admin settings
+  // page — so the fix-up link reuses the JSON-LD theme-editor deep-link.
+  orgNoSameAs: "themeEditorJsonLd",
   productMissingName: "productAdmin",
   productNoImage: "productAdmin",
   productNoDescription: "productAdmin",
@@ -394,9 +428,13 @@ export default function SeoStructuredData() {
     brandingUrl,
     sampleProductAdminUrl,
     sampleArticleAdminUrl,
+    jsonLdAudit,
+    jsonLdAuditRunning,
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
   const s = t.seo.structuredDataPage;
+  const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
   const hintCopy = (s as any).hints as Record<string, string>;
 
@@ -412,13 +450,75 @@ export default function SeoStructuredData() {
     if (kind === "branding") return brandingUrl;
     if (kind === "productAdmin") return sampleProductAdminUrl;
     if (kind === "articleAdmin") return sampleArticleAdminUrl;
+    if (kind === "themeEditorJsonLd") return themeEditorUrl;
     return null;
   };
   const fixLabelFor = (kind: FixLinkKind): string => {
     if (kind === "branding") return s.setBrandLogo;
     if (kind === "productAdmin") return (s as any).openSampleProduct as string;
     if (kind === "articleAdmin") return (s as any).openSampleArticle as string;
+    if (kind === "themeEditorJsonLd") return s.activateInThemeEditor;
     return "";
+  };
+
+  const severityTone = (severity: string): "critical" | "info" | "warning" =>
+    severity === "error" ? "critical" : severity === "info" ? "info" : "warning";
+
+  // "Jetzt prüfen" — kicks off the detached "seoJsonLdAudit" Task
+  // (seo-json-ld-audit.handler.ts) through the same shared /api/ai route
+  // every other non-AI SEO scan uses (mirrors handleRescan in
+  // app.seo._index.tsx). contentType is an unused-but-valid placeholder to
+  // satisfy /api/ai's generic contentType gate — the handler itself is a
+  // non-AI, shop-wide action (see NON_AI_ACTIONS in api.ai.tsx).
+  const checkFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const [checkStarted, setCheckStarted] = useState(false);
+  const [checkBanner, setCheckBanner] = useState<{ tone: "critical"; message: string } | null>(null);
+  const checkStartedAtRef = useRef(0);
+
+  useEffect(() => {
+    if (checkFetcher.state !== "idle" || !checkFetcher.data) return;
+    if (checkFetcher.data.success) {
+      checkStartedAtRef.current = Date.now();
+      setCheckStarted(true);
+    } else {
+      setCheckBanner({ tone: "critical", message: checkFetcher.data.error || b.checkStartError });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkFetcher.state, checkFetcher.data]);
+
+  const checkInProgress = jsonLdAuditRunning || checkStarted;
+
+  const handleCheckNow = () => {
+    if (checkInProgress || checkFetcher.state !== "idle") return;
+    setCheckBanner(null);
+    const formData = new FormData();
+    formData.append("action", "seoJsonLdAudit");
+    formData.append("contentType", "products");
+    checkFetcher.submit(formData, { method: "post", action: "/api/ai" });
+  };
+
+  // Poll the loader while a check is running, same pattern as the SEO
+  // dashboard's rescan poller.
+  const revalidator = useRevalidator();
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
+
+  useEffect(() => {
+    if (!checkInProgress) return;
+    const interval = setInterval(() => {
+      revalidatorRef.current.revalidate();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [checkInProgress]);
+
+  useEffect(() => {
+    if (!checkStarted || jsonLdAuditRunning) return;
+    if (Date.now() - checkStartedAtRef.current > 5000) setCheckStarted(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jsonLdAuditRunning, checkStarted, jsonLdAudit]);
+
+  const openBatchItemInEditor = (type: JsonLdAuditItemType, id: string) => {
+    handleNavigate(BATCH_TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
   };
 
   return (
@@ -529,7 +629,7 @@ export default function SeoStructuredData() {
                         return (
                           <BlockStack key={i} gap="100">
                             <InlineStack gap="100" blockAlign="center">
-                              <Badge tone={w.severity === "error" ? "critical" : "warning"}>
+                              <Badge tone={severityTone(w.severity)}>
                                 {w.severity}
                               </Badge>
                               <Text as="span" variant="bodySm">
@@ -569,6 +669,100 @@ export default function SeoStructuredData() {
                   </pre>
                 </BlockStack>
               ))
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* 5. Batch-Prüfung (Phase 5, PLAN_SEO_SUITE_COMPLETION.md §7): runs
+            validateJsonLd over the WHOLE cached catalog instead of one
+            example item per type, aggregated by warning code. */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingLg">
+                {b.title}
+              </Text>
+              <Button onClick={handleCheckNow} disabled={checkInProgress || checkFetcher.state !== "idle"} loading={checkFetcher.state !== "idle"}>
+                {b.checkNow}
+              </Button>
+            </InlineStack>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {b.intro}
+            </Text>
+
+            {checkBanner && (
+              <Banner tone={checkBanner.tone} onDismiss={() => setCheckBanner(null)}>
+                {checkBanner.message}
+              </Banner>
+            )}
+            {!checkBanner && checkInProgress && <Banner tone="info">{b.checking}</Banner>}
+
+            <Text as="p" variant="bodySm" tone="subdued">
+              {jsonLdAudit
+                ? b.lastChecked.replace("{time}", new Date(jsonLdAudit.generatedAt).toLocaleString())
+                : b.neverChecked}
+            </Text>
+
+            {jsonLdAudit && (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm">
+                  {b.totalScanned
+                    .replace("{scanned}", String(jsonLdAudit.totalScanned))
+                    .replace("{available}", String(jsonLdAudit.totalAvailable))}
+                </Text>
+                {jsonLdAudit.capped && <Banner tone="warning">{b.capped}</Banner>}
+
+                {jsonLdAudit.buckets.length === 0 ? (
+                  <Badge tone="success">{b.empty}</Badge>
+                ) : (
+                  <DataTable
+                    columnContentTypes={["text", "text", "numeric", "text"]}
+                    headings={[b.codeColumn, "", b.countColumn, b.itemsColumn]}
+                    rows={jsonLdAudit.buckets.map((bucket) => {
+                      const localizedCode = warningCopy?.[bucket.code] || bucket.code;
+                      const visibleItems = bucket.items.slice(0, 10);
+                      const remaining = bucket.count - visibleItems.length;
+                      return [
+                        localizedCode,
+                        <Badge key="sev" tone={severityTone(bucket.severity)}>
+                          {bucket.severity === "error"
+                            ? b.severityError
+                            : bucket.severity === "info"
+                            ? b.severityInfo
+                            : b.severityWarning}
+                        </Badge>,
+                        bucket.count,
+                        <BlockStack key="items" gap="100">
+                          {visibleItems.map((item) => (
+                            <InlineStack key={item.id} gap="100" blockAlign="center">
+                              <Button
+                                variant="plain"
+                                onClick={() => openBatchItemInEditor(item.type, item.id)}
+                              >
+                                {item.title}
+                              </Button>
+                              {item.url && (
+                                <Button
+                                  variant="plain"
+                                  url={`${GOOGLE_RICH_RESULTS_TEST}?url=${encodeURIComponent(item.url)}`}
+                                  target="_blank"
+                                >
+                                  {b.richResultsTest}
+                                </Button>
+                              )}
+                            </InlineStack>
+                          ))}
+                          {remaining > 0 && (
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {b.moreItems.replace("{count}", String(remaining))}
+                            </Text>
+                          )}
+                        </BlockStack>,
+                      ];
+                    })}
+                  />
+                )}
+              </BlockStack>
             )}
           </BlockStack>
         </Card>

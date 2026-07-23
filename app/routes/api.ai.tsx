@@ -45,6 +45,7 @@ import {
 import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
 import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
+import { handleSeoJsonLdAudit } from "./api-ai-handlers/seo-json-ld-audit.handler";
 import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-translate.handler";
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleClassifyKeywordIntents } from "./api-ai-handlers/keyword-intent.handler";
@@ -54,7 +55,7 @@ import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.
 // content cache and/or Shopify directly — so a shop with no AI key
 // configured yet must still be able to use them. Kept as a Set (rather than
 // growing the single seoAudit ternary below) now that there's more than one.
-const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta"]);
+const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta", "seoJsonLdAudit"]);
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -142,6 +143,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleSeoAudit(ctx);
       case "seoBulkMeta":
         return handleSeoBulkMeta(ctx);
+      case "seoJsonLdAudit":
+        return handleSeoJsonLdAudit(ctx);
       case "bulkEditorTranslate":
         return handleBulkEditorTranslate(ctx);
       case "distributeKeywords":

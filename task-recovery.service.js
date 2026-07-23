@@ -64,6 +64,12 @@ const LONG_RUNNING_TASK_TYPES = [
   // (suggest stage) or hundreds of DB upserts (apply stage), same shape as
   // seoBulkFix, so it needs the same generous stuck-task threshold.
   'distributeKeywords',
+  // JSON-LD batch audit (PLAN_SEO_SUITE_COMPLETION.md §7, Phase 5,
+  // seo-json-ld-audit.handler.ts) — builds + validates JSON-LD for every
+  // cached product/collection/article (up to 3×1000 rows), same DB-cache
+  // scan shape as seoAudit, so it needs the same generous stuck-task
+  // threshold rather than the short default cutoff.
+  'seoJsonLdAudit',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement
