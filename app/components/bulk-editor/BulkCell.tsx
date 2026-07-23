@@ -9,9 +9,20 @@
  * 250 rows × 20 columns as live textareas is exactly the load the plan caps.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+} from "react";
 import { Button, InlineStack, Select, Text, Tooltip } from "@shopify/polaris";
 import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
+
+/** Keyboard navigation directions (Plan §8.4): Tab/Shift-Tab walk the
+ * editable cells, Enter goes one row down in the same column. */
+export type CellNavDirection = "next" | "prev" | "down";
 
 export interface BulkCellStatusOptions {
   active: string;
@@ -44,6 +55,18 @@ interface BulkCellProps {
   ghost?: string;
   statusOptions: BulkCellStatusOptions;
   onChange: (value: string) => void;
+  /** Grid coordinate "row:col" — stamped as data-cp-cell on the focusable
+   * element so BulkGrid can move focus for Tab/Enter navigation (§8.4). Text
+   * cells only; the status Select keeps its native keyboard handling. */
+  cellCoord?: string;
+  /** Tab/Shift-Tab/Enter navigation (§8.4) — the grid resolves the target
+   * cell and focuses it (lazy textarea swap included). */
+  onNavigate?: (direction: CellNavDirection) => void;
+  /** Esc (§8.4): reset the cell to its load value (drop the edit-map entry). */
+  onEscape?: () => void;
+  /** Raw paste hook (§8.3): return true to consume the paste (rectangle
+   * distribution); false lets the browser paste normally into the textarea. */
+  onPasteText?: (text: string) => boolean;
 }
 
 export function BulkCell({
@@ -60,6 +83,10 @@ export function BulkCell({
   ghost,
   statusOptions,
   onChange,
+  cellCoord,
+  onNavigate,
+  onEscape,
+  onPasteText,
 }: BulkCellProps) {
   // Read-only cells (blogTitle, rich-text metafields, linked options, …):
   // grey text + tooltip explaining why; rich-text cells additionally offer
@@ -111,6 +138,10 @@ export function BulkCell({
       errorId={errorId}
       ghost={ghost}
       onChange={onChange}
+      cellCoord={cellCoord}
+      onNavigate={onNavigate}
+      onEscape={onEscape}
+      onPasteText={onPasteText}
     />
   );
 }
@@ -122,6 +153,10 @@ interface LazyTextCellProps {
   errorId?: string;
   ghost?: string;
   onChange: (value: string) => void;
+  cellCoord?: string;
+  onNavigate?: (direction: CellNavDirection) => void;
+  onEscape?: () => void;
+  onPasteText?: (text: string) => boolean;
 }
 
 /**
@@ -129,8 +164,22 @@ interface LazyTextCellProps {
  * focuses or clicks it, then swaps in the real auto-growing textarea. The
  * div participates in the tab order (tabIndex=0) so keyboard users reach it;
  * receiving focus promotes it to the textarea, which takes focus itself.
+ * Both incarnations carry data-cp-cell, so grid keyboard navigation (§8.4)
+ * can focus the cell in either state — focusing the static div swaps in the
+ * textarea automatically.
  */
-function LazyTextCell({ value, isDirty, error, errorId, ghost, onChange }: LazyTextCellProps) {
+function LazyTextCell({
+  value,
+  isDirty,
+  error,
+  errorId,
+  ghost,
+  onChange,
+  cellCoord,
+  onNavigate,
+  onEscape,
+  onPasteText,
+}: LazyTextCellProps) {
   const [editing, setEditing] = useState(false);
 
   const stateClass = `${isDirty ? " cp-bulk-cell-dirty" : ""}${error ? " cp-bulk-cell-error" : ""}`;
@@ -145,6 +194,7 @@ function LazyTextCell({ value, isDirty, error, errorId, ghost, onChange }: LazyT
         aria-invalid={error ? true : undefined}
         aria-describedby={error && errorId ? errorId : undefined}
         tabIndex={0}
+        data-cp-cell={cellCoord}
         className={`cp-bulk-cell-static${stateClass}`}
         onFocus={() => setEditing(true)}
         onClick={() => setEditing(true)}
@@ -179,6 +229,10 @@ function LazyTextCell({ value, isDirty, error, errorId, ghost, onChange }: LazyT
         ariaInvalid={!!error}
         ariaDescribedBy={error && errorId ? errorId : undefined}
         placeholder={ghost}
+        cellCoord={cellCoord}
+        onNavigate={onNavigate}
+        onEscape={onEscape}
+        onPasteText={onPasteText}
       />
       {error && errorId && (
         <span id={errorId} className="cp-bulk-visually-hidden">
@@ -197,6 +251,10 @@ interface CellTextAreaProps {
   ariaInvalid: boolean;
   ariaDescribedBy?: string;
   placeholder?: string;
+  cellCoord?: string;
+  onNavigate?: (direction: CellNavDirection) => void;
+  onEscape?: () => void;
+  onPasteText?: (text: string) => boolean;
 }
 
 /**
@@ -214,8 +272,47 @@ interface CellTextAreaProps {
  * short values render a ~30-px control with the rest of the cell dead to
  * clicks — see the original bulk-meta grid notes.)
  */
-function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDescribedBy, placeholder }: CellTextAreaProps) {
+function CellTextArea({
+  value,
+  onChange,
+  onBlur,
+  className,
+  ariaInvalid,
+  ariaDescribedBy,
+  placeholder,
+  cellCoord,
+  onNavigate,
+  onEscape,
+  onPasteText,
+}: CellTextAreaProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // Keyboard contract (§8.4): Tab/Shift-Tab walk the editable cells, Enter
+  // moves one row down in the same column (Shift+Enter keeps inserting a
+  // line break in multi-line cells), Esc resets the cell to its load value.
+  // Ctrl/Cmd+Z is NOT handled here — the route intercepts it at the grid
+  // container (edit-map history, not the browser's per-textarea undo).
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Tab" && onNavigate) {
+      e.preventDefault();
+      onNavigate(e.shiftKey ? "prev" : "next");
+    } else if (e.key === "Enter" && !e.shiftKey && onNavigate) {
+      e.preventDefault();
+      onNavigate("down");
+    } else if (e.key === "Escape" && onEscape) {
+      e.preventDefault();
+      onEscape();
+    }
+  };
+
+  // §8.3: a clipboard rectangle (tab AND newline) is distributed over the
+  // grid by the route's handler; it returns true to consume the event —
+  // anything else pastes normally into this textarea.
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onPasteText) return;
+    const text = e.clipboardData.getData("text/plain");
+    if (text && onPasteText(text)) e.preventDefault();
+  };
 
   // The cell just swapped from the static div: move focus into the textarea
   // with the caret at the end, so typing continues where the merchant clicked.
@@ -255,9 +352,12 @@ function CellTextArea({ value, onChange, onBlur, className, ariaInvalid, ariaDes
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onBlur}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
       aria-invalid={ariaInvalid || undefined}
       aria-describedby={ariaDescribedBy}
       placeholder={placeholder}
+      data-cp-cell={cellCoord}
       rows={1}
       spellCheck={false}
     />

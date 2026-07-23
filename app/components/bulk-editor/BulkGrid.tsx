@@ -20,6 +20,7 @@
  * the title column stay pinned while the grid scrolls horizontally.
  */
 
+import { useRef } from "react";
 import { Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import {
@@ -30,7 +31,7 @@ import {
   type CellReadOnlyReason,
   type ColumnDescriptor,
 } from "../../services/bulk-editor/columns.shared";
-import { BulkCell, type BulkCellStatusOptions } from "./BulkCell";
+import { BulkCell, type BulkCellStatusOptions, type CellNavDirection } from "./BulkCell";
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
@@ -72,6 +73,12 @@ interface BulkGridProps {
   sortButtonLabel: string;
   /** Visually-hidden table label — the localized content-type name. */
   caption: string;
+  /** Esc on a cell (§8.4): reset it to its load value (drop the edit). */
+  onResetCell: (row: BulkRow, column: ColumnDescriptor) => void;
+  /** Rectangle paste hook (§8.3): coordinates are indices into the VISIBLE
+   * rows × display columns (image column excluded — same list this grid
+   * renders). Return true to consume the paste. */
+  onPasteRect: (startRow: number, startCol: number, text: string) => boolean;
 }
 
 export function BulkGrid({
@@ -96,7 +103,36 @@ export function BulkGrid({
   readOnlyTooltips,
   sortButtonLabel,
   caption,
+  onResetCell,
+  onPasteRect,
 }: BulkGridProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  /** Keyboard navigation (§8.4). Every editable TEXT cell stamps its
+   * coordinate as data-cp-cell on whichever element is mounted (static div or
+   * textarea — the lazy swap, §10.2), so "next"/"prev" is simply the DOM
+   * order of those elements (row-major thanks to display:contents), and
+   * "down" is the same column in the next row that has an editable cell.
+   * Focusing a static div promotes it to the textarea automatically. */
+  const navigateFromCell = (rowIndex: number, colIndex: number, direction: CellNavDirection) => {
+    const container = containerRef.current;
+    if (!container) return;
+    if (direction === "down") {
+      for (let r = rowIndex + 1; r < rows.length; r++) {
+        const el = container.querySelector<HTMLElement>(`[data-cp-cell="${r}:${colIndex}"]`);
+        if (el) {
+          el.focus();
+          return;
+        }
+      }
+      return;
+    }
+    const cells = [...container.querySelectorAll<HTMLElement>("[data-cp-cell]")];
+    const current = cells.findIndex((el) => el.dataset.cpCell === `${rowIndex}:${colIndex}`);
+    if (current === -1) return;
+    const target = cells[current + (direction === "next" ? 1 : -1)];
+    target?.focus();
+  };
   // Image column is ALWAYS the leftmost cell and doubles as the
   // "open in editor" affordance via a hover overlay (see BulkImageCell) —
   // consistent across every content type, so pages get the same left-side
@@ -127,7 +163,7 @@ export function BulkGrid({
   };
 
   return (
-    <div style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-scroll">
+    <div ref={containerRef} style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-scroll">
       <style>{`
         .cp-bulk-grid {
           display: grid;
@@ -418,6 +454,10 @@ export function BulkGrid({
                       errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}
                       statusOptions={statusOptions}
                       onChange={(v) => setEdit(row, col, v)}
+                      cellCoord={`${rowIndex}:${i}`}
+                      onNavigate={(direction) => navigateFromCell(rowIndex, i, direction)}
+                      onEscape={() => onResetCell(row, col)}
+                      onPasteText={(text) => onPasteRect(rowIndex, i, text)}
                     />
                   </div>
                 );

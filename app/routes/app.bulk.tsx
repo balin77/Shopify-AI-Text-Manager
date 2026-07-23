@@ -20,8 +20,8 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Card, BlockStack, InlineStack, Text, Button, Select, Banner } from "@shopify/polaris";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -67,6 +67,21 @@ import {
   type PriceAction,
   type ProductColumnCaps,
 } from "../services/bulk-editor/columns.shared";
+// CSV limits + delimiter choice (§8.1/§8.2) — client-safe module.
+import {
+  CSV_EXPORT_MAX_ROWS,
+  CSV_IMPORT_MAX_BYTES,
+  delimiterForAppLanguage,
+} from "../services/bulk-editor/csv.shared";
+// Excel-paste rectangle + undo stack (§8.3/§8.4) — client-safe pure pieces.
+import {
+  isRectClipboard,
+  parseClipboardRect,
+  distributeRect,
+  pushSnapshot,
+  popSnapshot,
+  type EditMapSnapshot,
+} from "../services/bulk-editor/grid-interactions.shared";
 import { debugLog } from "../utils/debug";
 // Server-only I/O — referenced exclusively from loader/action, which Remix
 // strips from the client build.
@@ -79,6 +94,12 @@ import {
   productColumnCapsForPlan,
 } from "../services/bulk-editor/columns.server";
 import { BulkGrid } from "../components/bulk-editor/BulkGrid";
+import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
+// Type-only imports from the resource routes / server service — erased at
+// compile time, so nothing server-only reaches the client bundle.
+import type { BulkCsvExportPayload } from "./app.bulk.export";
+import type { CsvImportActionResult } from "./app.bulk.import";
+import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
@@ -129,6 +150,9 @@ interface LoaderData {
   markets: { id: string; name: string }[];
   /** Pro gate for the "translate missing" AI action (Plan §10.7). */
   aiTranslateAllowed: boolean;
+  /** Pro gate for CSV import (Plan §10.7 — export stays Basic). The server
+   * gate lives in app.bulk.import.tsx; this only drives the button state. */
+  csvImportAllowed: boolean;
   /** Shop-wide currency (Plan §5.2), shown as a money-column header suffix.
    * "" when unknown or not a variant view. */
   currencyCode: string;
@@ -162,6 +186,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       locales: [],
       markets: [],
       aiTranslateAllowed: false,
+      csvImportAllowed: false,
       currencyCode: "",
     });
   }
@@ -254,6 +279,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     locales,
     markets,
     aiTranslateAllowed: meetsPlan(plan, "pro"),
+    csvImportAllowed: meetsPlan(plan, "pro"),
     currencyCode,
   });
 };
@@ -432,6 +458,13 @@ export default function BulkEditor() {
   const saveFetcher = useFetcher<ActionResult>();
   const bulkFetcher = useFetcher<BulkFetcherResult>();
   const translateFetcher = useFetcher<TranslateFetcherResult>();
+  // CSV export (§8.1) — same resource-route + Blob-download pattern as the
+  // redirects export; the response carries the ready CSV string (BOM inside).
+  const exportFetcher = useFetcher<BulkCsvExportPayload>();
+  // CSV import preview (§8.2) — the server parses/diffs, this client only
+  // shows the preview and, after confirmation, submits the returned diff
+  // through the NORMAL save pipeline (submitDiff below).
+  const importFetcher = useFetcher<CsvImportActionResult>();
 
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
@@ -452,6 +485,33 @@ export default function BulkEditor() {
   >(null);
   /** Running bulkEditorTranslate task being polled (Plan §6.5 preview flow). */
   const [translateTask, setTranslateTask] = useState<{ id: string; mode: TranslateMissingMode } | null>(null);
+
+  // ── CSV export/import + paste/undo state (Phase 6) ───────────────────────
+  const [exportError, setExportError] = useState<string | null>(null);
+  /** One-download guard: the effect below fires on every render while the
+   * fetcher holds data — remember what was already downloaded. */
+  const downloadedExportKeyRef = useRef<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importPreview, setImportPreview] = useState<CsvImportPreview | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  /** "12 × 3 cells pasted" feedback (§8.3) with its undo action. */
+  const [pasteBanner, setPasteBanner] = useState<{
+    rows: number;
+    cols: number;
+    applied: number;
+    skipped: number;
+  } | null>(null);
+  /** Inverse of the last paste: affected keys → previous value (undefined =
+   * key did not exist). The banner's undo restores EXACTLY these entries —
+   * robust even if the merchant typed elsewhere in between. */
+  const pasteInverseRef = useRef<{ key: string; prev: string | undefined }[] | null>(null);
+  const pasteCounterRef = useRef(0);
+  /** Undo history (§8.4): edit-map snapshots, coalesced per cell burst,
+   * capped at UNDO_STACK_LIMIT. Ctrl/Cmd+Z pops — NOT the browser's
+   * per-textarea undo. Redo is deliberately not offered (see
+   * grid-interactions.shared.ts head comment). Lives in a ref: pushing must
+   * not re-render the grid. */
+  const undoStackRef = useRef<EditMapSnapshot[]>([]);
 
   /** True when a foreign locale is selected — the grid then edits the
    * translation layer (Plan §1.3: language is a dimension, not a 2nd editor). */
@@ -506,6 +566,12 @@ export default function BulkEditor() {
     setOverBudgetBanner(false);
     setPriceActionBanner(null);
     foreignBaselinesRef.current = {};
+    // Undo history and paste feedback die with the edits they describe —
+    // popping a snapshot from a different page would resurrect edits that
+    // silently target the wrong rows (§8.4).
+    undoStackRef.current = [];
+    pasteInverseRef.current = null;
+    setPasteBanner(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, page, pageSize, search, data.sort, filters.join(",")]);
 
@@ -605,6 +671,11 @@ export default function BulkEditor() {
       });
       setLastFailures(saveFetcher.data.failures);
       setLastSavedCount(saveFetcher.data.saved);
+      // Undo snapshots taken before the save describe a pre-save world —
+      // popping one would resurrect just-saved values as dirty edits (§8.4).
+      undoStackRef.current = [];
+      pasteInverseRef.current = null;
+      setPasteBanner(null);
       revalidator.revalidate();
     }
     // Only react when the fetcher settles with new data.
@@ -632,7 +703,13 @@ export default function BulkEditor() {
     makeEditKey(row.id, locale, isForeign ? marketId : "", column.id);
 
   const setEdit = (row: BulkRow, column: ColumnDescriptor, value: string) => {
-    setEdits((prev) => ({ ...prev, [editKeyFor(row, column)]: value }));
+    const key = editKeyFor(row, column);
+    // Undo history (§8.4): snapshot BEFORE the change, coalesced on the edit
+    // key — a typing burst into one cell is ONE undo step (pushSnapshot drops
+    // pushes whose tag matches the stack top), so `edits` from this render's
+    // closure is exactly the pre-burst map for the push that sticks.
+    undoStackRef.current = pushSnapshot(undoStackRef.current, { edits, tag: key });
+    setEdits((prev) => ({ ...prev, [key]: value }));
   };
   const valueFor = (row: BulkRow, column: ColumnDescriptor): string => {
     const editKey = editKeyFor(row, column);
@@ -697,6 +774,37 @@ export default function BulkEditor() {
     navigateGrid({ sort: next ? serializeSortParam(next) : "", page: "1" });
   };
 
+  /** ONE submission path for both entrances (grid edits AND the confirmed
+   * CSV-import diff, §8.2 step 4): ≤MAX_SYNC_SAVE cells through this route's
+   * action, anything bigger through the /api/ai seoBulkMeta task. */
+  const submitDiff = (diffToSave: BulkDiffEntry[]) => {
+    if (diffToSave.length === 0 || saving) return;
+    // §10.5: summary only — never cell values.
+    debugLog.bulkDiff("saving", {
+      cells: diffToSave.length,
+      rows: new Set(diffToSave.map((d) => d.rowId)).size,
+      calls: estimatedCalls,
+      path: diffToSave.length > MAX_SYNC_SAVE ? "task" : "sync",
+    });
+    if (diffToSave.length > MAX_SYNC_SAVE) {
+      // `contentType` must be a VALID_CONTENT_TYPES value ("products", not
+      // "product") — /api/ai validates it before dispatching to the handler.
+      bulkFetcher.submit(
+        {
+          action: "seoBulkMeta",
+          contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[type],
+          diff: JSON.stringify(diffToSave),
+        },
+        { method: "post", action: "/api/ai" },
+      );
+    } else {
+      saveFetcher.submit(
+        { actionType: "saveBulkEdits", diff: JSON.stringify(diffToSave) },
+        { method: "post" },
+      );
+    }
+  };
+
   const handleSave = () => {
     if (dirty.length === 0 || saving) return;
     // §10.1: report a budget overrun BEFORE submitting — not 20 minutes into
@@ -706,30 +814,7 @@ export default function BulkEditor() {
       return;
     }
     setOverBudgetBanner(false);
-    // §10.5: summary only — never cell values.
-    debugLog.bulkDiff("saving", {
-      cells: dirty.length,
-      rows: new Set(dirty.map((d) => d.rowId)).size,
-      calls: estimatedCalls,
-      path: dirty.length > MAX_SYNC_SAVE ? "task" : "sync",
-    });
-    if (dirty.length > MAX_SYNC_SAVE) {
-      // `contentType` must be a VALID_CONTENT_TYPES value ("products", not
-      // "product") — /api/ai validates it before dispatching to the handler.
-      bulkFetcher.submit(
-        {
-          action: "seoBulkMeta",
-          contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[type],
-          diff: JSON.stringify(dirty),
-        },
-        { method: "post", action: "/api/ai" },
-      );
-    } else {
-      saveFetcher.submit(
-        { actionType: "saveBulkEdits", diff: JSON.stringify(dirty) },
-        { method: "post" },
-      );
-    }
+    submitDiff(dirty);
   };
 
   const handleDiscard = () => {
@@ -738,6 +823,207 @@ export default function BulkEditor() {
     setLastSavedCount(null);
     setOverBudgetBanner(false);
     setPriceActionBanner(null);
+    undoStackRef.current = [];
+    pasteInverseRef.current = null;
+    setPasteBanner(null);
+  };
+
+  // ── Keyboard: Esc reset + Ctrl/Cmd+Z undo (§8.4) ─────────────────────────
+
+  /** Esc on a cell: drop its edit-map entry — the cell re-renders its load
+   * baseline. Pushed to the undo stack (unique tag), so Ctrl+Z restores it. */
+  const resetCell = (row: BulkRow, column: ColumnDescriptor) => {
+    const key = editKeyFor(row, column);
+    if (!(key in edits)) return;
+    undoStackRef.current = pushSnapshot(undoStackRef.current, {
+      edits,
+      tag: `esc|${key}|${Date.now()}`,
+    });
+    setEdits((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const performUndo = () => {
+    const popped = popSnapshot(undoStackRef.current);
+    if (!popped) return;
+    undoStackRef.current = popped.stack;
+    setEdits(popped.snapshot.edits);
+  };
+
+  /** Grid-scoped capture handler: Ctrl/Cmd+Z inside the grid walks the
+   * edit-map history instead of the browser's per-textarea undo (§8.4).
+   * Capture phase, so the textarea never sees the event. Scoped to the grid
+   * wrapper — search field, modals etc. keep their native undo. */
+  const handleUndoKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      e.stopPropagation();
+      performUndo();
+    }
+  };
+
+  // ── Excel/Sheets rectangle paste (§8.3) ──────────────────────────────────
+  // NOTE: displayColumns/visibleRows are declared further down (with the rest
+  // of the render-time derivations) — these handlers only run on events,
+  // after the whole component body has executed.
+
+  const handlePasteRect = (startRow: number, startCol: number, text: string): boolean => {
+    if (!isRectClipboard(text)) return false; // normal paste into the cell
+    const rect = parseClipboardRect(text);
+    // Editability matrix over the VISIBLE rows × display columns: per-row
+    // resolution (linked options, missing mediaId, …) plus the foreign-locale
+    // translatable rule — same verdicts the cells themselves render with.
+    const editable = visibleRows.map((row) =>
+      displayColumns.map((col) => {
+        const resolved = resolveCellValue(row, col);
+        return resolved.editable && (!isForeign || col.translatable);
+      }),
+    );
+    const dist = distributeRect(rect, editable, startRow, startCol);
+    if (dist.cells.length > 0) {
+      const tag = `paste|${++pasteCounterRef.current}`;
+      undoStackRef.current = pushSnapshot(undoStackRef.current, { edits, tag });
+      const inverse: { key: string; prev: string | undefined }[] = [];
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const cell of dist.cells) {
+          const key = editKeyFor(visibleRows[cell.row], displayColumns[cell.col]);
+          inverse.push({ key, prev: key in prev ? prev[key] : undefined });
+          next[key] = cell.value;
+        }
+        return next;
+      });
+      pasteInverseRef.current = inverse;
+    }
+    setPasteBanner({
+      rows: dist.rows,
+      cols: dist.cols,
+      applied: dist.cells.length,
+      skipped: dist.skippedReadOnly,
+    });
+    return true;
+  };
+
+  /** Banner undo (§8.3): restores exactly the paste-affected entries via the
+   * stored inverse — robust even if the merchant typed elsewhere since. */
+  const undoPaste = () => {
+    const inverse = pasteInverseRef.current;
+    if (inverse) {
+      undoStackRef.current = pushSnapshot(undoStackRef.current, {
+        edits,
+        tag: `pasteundo|${Date.now()}`,
+      });
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const { key, prev: previous } of inverse) {
+          if (previous === undefined) delete next[key];
+          else next[key] = previous;
+        }
+        return next;
+      });
+      pasteInverseRef.current = null;
+    }
+    setPasteBanner(null);
+  };
+
+  // ── CSV export (§8.1) ────────────────────────────────────────────────────
+
+  const handleExport = () => {
+    setExportError(null);
+    const params = new URLSearchParams({
+      type,
+      locale,
+      market: isForeign ? marketId : "",
+      q: search,
+      f: filters.join(","),
+      sort: data.sort ?? "",
+      columns: visibleColumnIds.join(","),
+      // The APP language picks the delimiter (§8.1: ; for de/es, , for en).
+      lang: uiLocale,
+    });
+    exportFetcher.load(`/app/bulk/export?${params.toString()}`);
+  };
+
+  useEffect(() => {
+    if (exportFetcher.state !== "idle" || !exportFetcher.data) return;
+    const payload = exportFetcher.data;
+    if (payload.error) {
+      setExportError(
+        payload.error === "tooLarge"
+          ? b.csv.exportTooLarge
+              .replace("{total}", String(payload.total ?? 0))
+              .replace("{max}", String(payload.max ?? CSV_EXPORT_MAX_ROWS))
+          : b.csv.exportFailed,
+      );
+      return;
+    }
+    if (!payload.csv || !payload.filename) return;
+    const key = `${payload.filename}:${payload.generatedAt ?? 0}`;
+    if (downloadedExportKeyRef.current === key) return;
+    downloadedExportKeyRef.current = key;
+    const blob = new Blob([payload.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = payload.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportFetcher.state, exportFetcher.data]);
+
+  // ── CSV import (§8.2 — Pro; preview first, save through submitDiff) ──────
+
+  const handleImportFile = async (file: File) => {
+    setImportError(null);
+    // UX pre-check only — the server re-enforces the byte cap (§8.2).
+    if (file.size > CSV_IMPORT_MAX_BYTES) {
+      setImportError(b.csv.fileTooLarge.replace("{max}", "5"));
+      return;
+    }
+    const text = await file.text();
+    importFetcher.submit(
+      {
+        actionType: "csvImportPreview",
+        type,
+        locale,
+        market: isForeign ? marketId : "",
+        csv: text,
+      },
+      { method: "post", action: "/app/bulk/import" },
+    );
+  };
+
+  useEffect(() => {
+    if (importFetcher.state !== "idle" || !importFetcher.data) return;
+    const result = importFetcher.data;
+    if (result.ok) {
+      setImportPreview(result);
+    } else {
+      setImportError(
+        result.error === "tooLarge"
+          ? b.csv.fileTooLarge.replace("{max}", "5")
+          : result.error === "tooManyRows"
+            ? b.csv.tooManyRows.replace("{max}", "10000")
+            : result.error === "empty"
+              ? b.csv.emptyFile
+              : result.error === "noIdColumn"
+                ? b.csv.noIdColumn
+                : b.csv.importFailed,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importFetcher.state, importFetcher.data]);
+
+  const importOverBudget = (importPreview?.estimatedCalls ?? 0) > MAX_TASK_CALLS;
+
+  const handleImportConfirm = () => {
+    if (!importPreview || importOverBudget) return;
+    const diff = importPreview.diff;
+    setImportPreview(null);
+    submitDiff(diff);
   };
 
   // ── Price bulk actions (Plan §5.6) ───────────────────────────────────────
@@ -958,6 +1244,10 @@ export default function BulkEditor() {
     [visibleColumnIds, allColumns],
   );
 
+  /** The columns the grid actually renders cells for (its own image-column
+   * exclusion) — paste coordinates from BulkGrid arrive in THIS space. */
+  const displayColumns = useMemo(() => activeColumns.filter((c) => c.id !== "image"), [activeColumns]);
+
   // Cell-granular failures (Plan §4.4): failures with a columnId mark exactly
   // that cell; row-level failures (single-mutation types) fall back to the
   // row's dirty cells.
@@ -1100,6 +1390,32 @@ export default function BulkEditor() {
                     {translateBanner.message || b.translateMissing.failed}
                   </Banner>
                 )}
+                {exportError && (
+                  <Banner tone="critical" onDismiss={() => setExportError(null)}>
+                    {exportError}
+                  </Banner>
+                )}
+                {importError && (
+                  <Banner tone="critical" onDismiss={() => setImportError(null)}>
+                    {importError}
+                  </Banner>
+                )}
+                {pasteBanner && (
+                  <Banner
+                    tone={pasteBanner.applied > 0 ? "success" : "info"}
+                    onDismiss={() => setPasteBanner(null)}
+                    action={
+                      pasteBanner.applied > 0
+                        ? { content: b.paste.undo, onAction: undoPaste }
+                        : undefined
+                    }
+                  >
+                    {(pasteBanner.skipped > 0 ? b.paste.appliedWithSkipped : b.paste.applied)
+                      .replace("{rows}", String(pasteBanner.rows))
+                      .replace("{cols}", String(pasteBanner.cols))
+                      .replace("{skipped}", String(pasteBanner.skipped))}
+                  </Banner>
+                )}
                 {data.translationFilterApproximate && (
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
@@ -1178,9 +1494,39 @@ export default function BulkEditor() {
                         {b.translateMissing.button}
                       </Button>
                     )}
+                    <Button onClick={handleExport} loading={exportFetcher.state !== "idle"}>
+                      {b.csv.exportButton}
+                    </Button>
+                    {data.csvImportAllowed ? (
+                      <Button
+                        onClick={() => importFileRef.current?.click()}
+                        loading={importFetcher.state !== "idle"}
+                      >
+                        {b.csv.importButton}
+                      </Button>
+                    ) : (
+                      // Pro gate (§10.7) — the button stays visible but
+                      // disabled with the plan hint; the server enforces the
+                      // same gate in app.bulk.import.tsx.
+                      <Tooltip content={b.csv.importProTooltip}>
+                        <Button disabled>{b.csv.importButton}</Button>
+                      </Tooltip>
+                    )}
                     <Button onClick={() => setPickerOpen(true)}>{b.chooseColumns}</Button>
                   </InlineStack>
                 </InlineStack>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".csv,text/csv,text/plain"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void handleImportFile(file);
+                    // Selecting the SAME file again must re-fire onChange.
+                    e.target.value = "";
+                  }}
+                />
 
                 <FilterBar
                   search={search}
@@ -1214,6 +1560,11 @@ export default function BulkEditor() {
                   </Text>
                 ) : (
                   <BlockStack gap="200">
+                    {/* Capture wrapper: Ctrl/Cmd+Z inside the grid = edit-map
+                        history (§8.4), scoped so search/modals keep native
+                        undo. */}
+                    {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+                    <div onKeyDownCapture={handleUndoKeyDown}>
                     <BulkGrid
                       rows={visibleRows}
                       type={type}
@@ -1249,7 +1600,10 @@ export default function BulkEditor() {
                       }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}
+                      onResetCell={resetCell}
+                      onPasteRect={handlePasteRect}
                     />
+                    </div>
 
                     <InlineStack align="space-between" blockAlign="center">
                       <Text as="span" variant="bodySm" tone="subdued">
@@ -1306,6 +1660,40 @@ export default function BulkEditor() {
                 start: b.translateMissing.start,
                 cancel: b.translateMissing.cancel,
                 marketHint: b.translateMissing.marketHint,
+              }}
+            />
+
+            <CsvImportModal
+              open={importPreview !== null}
+              preview={importPreview}
+              columnLabel={(columnId) => {
+                const column = allColumns.find((c) => c.id === columnId);
+                return column ? columnHeading(column) : columnId;
+              }}
+              overBudget={importOverBudget}
+              maxCalls={MAX_TASK_CALLS}
+              busy={saving}
+              onConfirm={handleImportConfirm}
+              onCancel={() => setImportPreview(null)}
+              strings={{
+                title: b.csv.preview.title,
+                summary: b.csv.preview.summary,
+                noChanges: b.csv.preview.noChanges,
+                clearHint: b.csv.preview.clearHint,
+                unknownColumns: b.csv.preview.unknownColumns,
+                ignoredColumns: b.csv.preview.ignoredColumns,
+                rowErrorsTitle: b.csv.preview.rowErrorsTitle,
+                rowErrorMissingId: b.csv.preview.rowErrorMissingId,
+                rowErrorUnknownId: b.csv.preview.rowErrorUnknownId,
+                rowErrorUnknownHandle: b.csv.preview.rowErrorUnknownHandle,
+                rowErrorAmbiguousHandle: b.csv.preview.rowErrorAmbiguousHandle,
+                moreRowErrors: b.csv.preview.moreRowErrors,
+                changesHeading: b.csv.preview.changesHeading,
+                moreChanges: b.csv.preview.moreChanges,
+                emptyValue: b.csv.preview.emptyValue,
+                overBudget: b.budgetExceeded,
+                apply: b.csv.preview.apply,
+                cancel: b.csv.preview.cancel,
               }}
             />
 
