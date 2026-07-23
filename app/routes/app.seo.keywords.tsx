@@ -55,9 +55,6 @@ import {
 import { parseKeywordsCsv } from "../services/seo/keywords-csv";
 // Loader-only import (server module) — tree-shaken from the client bundle.
 import { getSuggestionsAvailability } from "../services/seo/keyword-suggestions.service";
-// Client-safe shared module — NOT keyword-distribution.service, which pulls
-// the prompt sanitizer → logger.server into the browser bundle.
-import { estimateDistributionCost } from "../services/seo/keyword-distribution.shared";
 import type { DistributionSuggestResult } from "./api-ai-handlers/keyword-distribution.handler";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
@@ -895,14 +892,19 @@ export default function SeoKeywords() {
   const groupFetcher = useFetcher<ActionResult>();
   const priorityFetcher = useFetcher<ActionResult>();
   const distFetcher = useFetcher<{ success: boolean; taskId?: string; error?: string; code?: string }>();
+  // Bulk assignMany (dry-run + real apply) for the unified assign panel (§4.1).
+  const assignFetcher = useFetcher<ActionResult>();
 
   const [newGroupName, setNewGroupName] = useState("");
-  const [showDistModal, setShowDistModal] = useState(false);
-  const [distTargetType, setDistTargetType] = useState<KeywordResourceType>("Product");
-  const [distMaxSecondaries, setDistMaxSecondaries] = useState("3");
-  // Optional Product facet filter (plan §5.4 modal) — "" = no filter.
-  // (productType only — the cached Product model has no vendor column.)
-  const [distFilterProductType, setDistFilterProductType] = useState("");
+  // Unified assign panel (Phase 4b): which keyword set is being assigned, and
+  // whether the modal is open. Opened from the three group flows.
+  const [assignPanelOpen, setAssignPanelOpen] = useState(false);
+  const [assignPanelKeywords, setAssignPanelKeywords] = useState<{ keywordId: string; keyword: string }[]>([]);
+  const openAssignPanel = (keywords: { keywordId: string; keyword: string }[]) => {
+    setAssignPanelKeywords(keywords);
+    setAssignPanelOpen(true);
+  };
+  const closeAssignPanel = () => setAssignPanelOpen(false);
   // Group rename + bulk priority (plan §5.1).
   const [renameValue, setRenameValue] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
@@ -957,16 +959,36 @@ export default function SeoKeywords() {
   }, [runningDistId]);
 
   // A successful suggest/apply start also needs polling to kick in — the
-  // loader only knows about the task after the next revalidate.
+  // loader only knows about the task after the next revalidate. Starting an AI
+  // distribution also closes the assign panel (its onClose already fires, but
+  // this covers the apply-stage path that has no panel).
   useEffect(() => {
     if (distFetcher.state === "idle" && distFetcher.data?.success) {
-      setShowDistModal(false);
+      setAssignPanelOpen(false);
       revalidator.revalidate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [distFetcher.state, distFetcher.data]);
 
-  const startDistribution = () => {
+  // A real (non-dryRun) bulk assign closes the panel and refreshes counts;
+  // the panel itself shows the applied/skipped banner before the user closes.
+  useEffect(() => {
+    if (assignFetcher.state !== "idle" || !assignFetcher.data) return;
+    const d = assignFetcher.data;
+    if (d.ok && d.kind === "assigned" && !d.dryRun) {
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignFetcher.state, assignFetcher.data]);
+
+  // AI distribution over an explicit item selection (§3): the assign panel
+  // hands us the chosen resourceIds + target type. targetType still selects the
+  // cache table for the batch; resourceIds narrow it to exactly those items.
+  const startDistribution = (opts: {
+    resourceIds: string[];
+    targetType: KeywordResourceType;
+    maxSecondaries: string;
+  }) => {
     if (!data.groupDetail) return;
     distFetcher.submit(
       {
@@ -974,11 +996,9 @@ export default function SeoKeywords() {
         contentType: "products",
         stage: "suggest",
         groupId: data.groupDetail.id,
-        targetType: distTargetType,
-        maxSecondaries: distMaxSecondaries,
-        ...(distTargetType === "Product" && distFilterProductType
-          ? { filterProductType: distFilterProductType }
-          : {}),
+        targetType: opts.targetType,
+        maxSecondaries: opts.maxSecondaries,
+        resourceIds: JSON.stringify(opts.resourceIds),
       },
       { method: "post", action: "/api/ai" },
     );
@@ -1018,11 +1038,6 @@ export default function SeoKeywords() {
       { method: "post", action: "/api/ai" },
     );
   };
-
-  const distCost = useMemo(() => {
-    if (!data.groupDetail) return null;
-    return estimateDistributionCost(data.groupDetail.keywords.length, data.itemCounts[distTargetType] ?? 0);
-  }, [data.groupDetail, data.itemCounts, distTargetType]);
 
   const priorityOptions = [
     { label: k.priority?.high || "1 — high", value: "1" },
@@ -1306,22 +1321,18 @@ export default function SeoKeywords() {
             bulkPriority={bulkPriority}
             setBulkPriority={setBulkPriority}
             priorityFetcher={priorityFetcher}
-            setShowDistModal={setShowDistModal}
             distFetcher={distFetcher}
             decisions={decisions}
             setDecisions={setDecisions}
             demoteExisting={demoteExisting}
             setDemoteExisting={setDemoteExisting}
             applyDistribution={applyDistribution}
-            showDistModal={showDistModal}
+            assignPanelOpen={assignPanelOpen}
+            assignPanelKeywords={assignPanelKeywords}
+            openAssignPanel={openAssignPanel}
+            closeAssignPanel={closeAssignPanel}
+            assignFetcher={assignFetcher}
             startDistribution={startDistribution}
-            distTargetType={distTargetType}
-            setDistTargetType={setDistTargetType}
-            distMaxSecondaries={distMaxSecondaries}
-            setDistMaxSecondaries={setDistMaxSecondaries}
-            distFilterProductType={distFilterProductType}
-            setDistFilterProductType={setDistFilterProductType}
-            distCost={distCost}
           />
         )}
       </BlockStack>

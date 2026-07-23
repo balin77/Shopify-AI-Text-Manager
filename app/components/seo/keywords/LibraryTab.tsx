@@ -30,9 +30,9 @@ import {
   Select,
   Banner,
   IndexTable,
-  Modal,
   Checkbox,
   ProgressBar,
+  useIndexResourceState,
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { SerializeFrom } from "@remix-run/node";
@@ -42,12 +42,12 @@ import type { loader, ActionResult } from "../../../routes/app.seo.keywords";
 import { GroupSidebar } from "./GroupSidebar";
 import { KeywordPaste } from "./KeywordPaste";
 import { ResearchPanel } from "./ResearchPanel";
+import { AssignPanel } from "./AssignPanel";
 
 type LoaderData = SerializeFrom<typeof loader>;
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 type DecisionMap = Record<string, "accept" | "secondaryOnly" | "reject">;
-
-const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
+type AssignKeyword = { keywordId: string; keyword: string };
 
 export interface LibraryTabProps {
   k: KeywordsPageStrings;
@@ -98,7 +98,6 @@ export interface LibraryTabProps {
   bulkPriority: string;
   setBulkPriority: (v: string) => void;
   priorityFetcher: FetcherWithComponents<ActionResult>;
-  setShowDistModal: (v: boolean) => void;
   distFetcher: FetcherWithComponents<{
     success: boolean;
     taskId?: string;
@@ -111,16 +110,17 @@ export interface LibraryTabProps {
   setDemoteExisting: (v: boolean) => void;
   applyDistribution: () => void;
 
-  // Distribution modal
-  showDistModal: boolean;
-  startDistribution: () => void;
-  distTargetType: KeywordResourceType;
-  setDistTargetType: (t: KeywordResourceType) => void;
-  distMaxSecondaries: string;
-  setDistMaxSecondaries: (v: string) => void;
-  distFilterProductType: string;
-  setDistFilterProductType: (v: string) => void;
-  distCost: { batches: number; usd: number } | null;
+  // Assign panel (Phase 4b) — unified entry for both distribution modes.
+  assignPanelOpen: boolean;
+  assignPanelKeywords: AssignKeyword[];
+  openAssignPanel: (keywords: AssignKeyword[]) => void;
+  closeAssignPanel: () => void;
+  assignFetcher: FetcherWithComponents<ActionResult>;
+  startDistribution: (opts: {
+    resourceIds: string[];
+    targetType: KeywordResourceType;
+    maxSecondaries: string;
+  }) => void;
 }
 
 export function LibraryTab({
@@ -161,24 +161,40 @@ export function LibraryTab({
   bulkPriority,
   setBulkPriority,
   priorityFetcher,
-  setShowDistModal,
   distFetcher,
   decisions,
   setDecisions,
   demoteExisting,
   setDemoteExisting,
   applyDistribution,
-  showDistModal,
+  assignPanelOpen,
+  assignPanelKeywords,
+  openAssignPanel,
+  closeAssignPanel,
+  assignFetcher,
   startDistribution,
-  distTargetType,
-  setDistTargetType,
-  distMaxSecondaries,
-  setDistMaxSecondaries,
-  distFilterProductType,
-  setDistFilterProductType,
-  distCost,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
+
+  // Group-keyword table selection (real groups only) drives the "Auswahl
+  // zuordnen" bulk action. Transient view state — the selected ids map back to
+  // the group's keyword rows when the assign panel opens.
+  const keywordRows = groupDetail?.keywords ?? [];
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(
+    keywordRows as unknown as { [key: string]: unknown }[],
+    { resourceIDResolver: (r) => (r as unknown as { keywordId: string }).keywordId },
+  );
+
+  // Keywords in this group not yet assigned to any item — the "redistribute"
+  // (§3.3) entry offers exactly these; disabled when none remain.
+  const unassignedKeywords = keywordRows.filter((r) => r.assignmentCount === 0);
+
+  const openAssignForSelection = () => {
+    const subset = keywordRows
+      .filter((r) => selectedResources.includes(r.keywordId))
+      .map((r) => ({ keywordId: r.keywordId, keyword: r.keyword }));
+    if (subset.length > 0) openAssignPanel(subset);
+  };
   const pseudoTitle =
     groupDetail?.pseudo === "all"
       ? k.groupAll || "All"
@@ -209,11 +225,21 @@ export function LibraryTab({
     return (
       <IndexTable
         itemCount={groupDetail.keywords.length}
-        selectable={false}
+        selectable={!readOnly}
+        selectedItemsCount={readOnly ? undefined : allResourcesSelected ? "All" : selectedResources.length}
+        onSelectionChange={readOnly ? undefined : handleSelectionChange}
+        promotedBulkActions={
+          readOnly ? undefined : [{ content: k.assign.assignSelection, onAction: openAssignForSelection }]
+        }
         headings={headings as [{ title: string }, ...{ title: string }[]]}
       >
         {groupDetail.keywords.map((gk, index) => (
-          <IndexTable.Row id={gk.keywordId} key={gk.keywordId} position={index}>
+          <IndexTable.Row
+            id={gk.keywordId}
+            key={gk.keywordId}
+            position={index}
+            selected={!readOnly && selectedResources.includes(gk.keywordId)}
+          >
             <IndexTable.Cell>
               <InlineStack gap="100" blockAlign="center" wrap={false}>
                 <Text as="span" variant="bodyMd">
@@ -350,19 +376,33 @@ export function LibraryTab({
           <InlineStack gap="200">
             <Button
               variant="primary"
-              disabled={!isPro || !!runningDistribution || groupDetail.keywords.length === 0}
-              onClick={() => setShowDistModal(true)}
+              disabled={!!runningDistribution || groupDetail.keywords.length === 0}
+              onClick={() =>
+                openAssignPanel(
+                  groupDetail.keywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
+                )
+              }
             >
               {k.distributeButton || "Distribute onto items"}
+            </Button>
+            <Button
+              disabled={!!runningDistribution || unassignedKeywords.length === 0}
+              onClick={() =>
+                openAssignPanel(
+                  unassignedKeywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
+                )
+              }
+            >
+              {k.assign.redistribute}
             </Button>
             <Button tone="critical" variant="plain" onClick={handleDeleteGroup}>
               {k.groupDelete || "Delete group"}
             </Button>
           </InlineStack>
         </InlineStack>
-        {!isPro && (
+        {unassignedKeywords.length === 0 && groupDetail.keywords.length > 0 && (
           <Text as="p" variant="bodySm" tone="subdued">
-            {k.distributeProHint || "AI distribution requires the Pro plan."}
+            {k.assign.redistributeNone}
           </Text>
         )}
 
@@ -556,71 +596,21 @@ export function LibraryTab({
         {editor}
       </InlineGrid>
 
-      {/* Distribution modal (plan §5.4): target + rules + cost preview */}
-      <Modal
-        open={showDistModal}
-        onClose={() => setShowDistModal(false)}
-        title={k.distModalTitle || "Distribute keywords onto items"}
-        primaryAction={{
-          content: k.distModalStart || "Start distribution",
-          loading: distFetcher.state !== "idle",
-          onAction: startDistribution,
-        }}
-        secondaryActions={[{ content: k.distModalCancel || "Cancel", onAction: () => setShowDistModal(false) }]}
-      >
-        <Modal.Section>
-          <BlockStack gap="300">
-            <Select
-              label={k.distModalTarget || "Target type"}
-              options={RESOURCE_TYPES.map((rt) => ({
-                label: `${k.types[rt]} (${itemCounts[rt] ?? 0})`,
-                value: rt,
-              }))}
-              value={distTargetType}
-              onChange={(v) => setDistTargetType(v as KeywordResourceType)}
-            />
-            <Select
-              label={k.distModalMaxSecondaries || "Max secondaries per item"}
-              options={["0", "1", "2", "3", "4"].map((v) => ({ label: v, value: v }))}
-              value={distMaxSecondaries}
-              onChange={setDistMaxSecondaries}
-            />
-            {distTargetType === "Product" && productTypes.length > 0 && (
-              <Select
-                label={k.distModalFilterType || "Filter: product type"}
-                options={[
-                  { label: k.distModalFilterAll || "All", value: "" },
-                  ...productTypes.map((p) => ({ label: p, value: p })),
-                ]}
-                value={distFilterProductType}
-                onChange={setDistFilterProductType}
-                helpText={
-                  productTypes.length >= 100
-                    ? k.distModalFilterCapped || "Only the first 100 product types are listed."
-                    : undefined
-                }
-              />
-            )}
-            {distTargetType === "Product" && distFilterProductType && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {k.distModalFilterHint ||
-                  "The cost estimate below assumes ALL items of this type — with a filter the actual cost is lower."}
-              </Text>
-            )}
-            {distCost && (
-              <Text as="p" variant="bodySm" tone={distCost.batches > 30 ? "caution" : "subdued"}>
-                {(k.distCostPreview || "~{batches} AI call(s), estimated ~${usd}.")
-                  .replace("{batches}", String(distCost.batches))
-                  .replace("{usd}", distCost.usd.toFixed(2))}
-              </Text>
-            )}
-            <Text as="p" variant="bodySm" tone="subdued">
-              {k.distModalHint ||
-                "Nothing is assigned automatically — you review every suggestion before it is applied."}
-            </Text>
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
+      {/* Unified assign panel (Phase 4b): ItemPicker + manual/AI modes. */}
+      <AssignPanel
+        open={assignPanelOpen}
+        onClose={closeAssignPanel}
+        keywords={assignPanelKeywords}
+        groupName={groupDetail?.name ?? pseudoTitle}
+        locale={activeLocale || localeOptions[0]?.name || k.localePrimary}
+        activeLocale={activeLocale}
+        productTypes={productTypes.map((p) => ({ label: p, value: p }))}
+        isPro={isPro}
+        k={k}
+        assignFetcher={assignFetcher}
+        startDistribution={startDistribution}
+        runningDistribution={runningDistribution}
+      />
     </BlockStack>
   );
 }

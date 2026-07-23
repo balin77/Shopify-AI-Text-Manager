@@ -16,7 +16,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TextField, Select, Button, Spinner, Text, InlineStack, BlockStack } from "@shopify/polaris";
 import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
 
-type PickerType = "Product" | "Collection" | "Article" | "Page";
+export type PickerType = "Product" | "Collection" | "Article" | "Page";
+
+/**
+ * One selected item, carrying its resource type. Selection can span type tabs,
+ * so the id alone is not enough for the consumer (the assign panel needs each
+ * item's type to build assignMany targets / route the AI batch). Reporting
+ * `{ id, resourceType }` keeps that contract explicit instead of asking the
+ * caller to reverse-map ids back to a type.
+ */
+export interface SelectedPickerItem {
+  id: string;
+  resourceType: PickerType;
+}
 
 interface PickerItem {
   id: string;
@@ -31,8 +43,8 @@ interface PickerResponse {
 }
 
 export interface ItemPickerProps {
-  selectedIds: string[];
-  onChange: (ids: string[]) => void;
+  selected: SelectedPickerItem[];
+  onChange: (selected: SelectedPickerItem[]) => void;
   /** Options for the Product-only type facet (excluding the "all" entry). */
   productTypes: { label: string; value: string }[];
   /** Active locale ("" = primary). Drives the translated-title overlay. */
@@ -68,7 +80,7 @@ function initials(title: string): string {
   return (title.trim()[0] || "?").toUpperCase();
 }
 
-export function ItemPicker({ selectedIds, onChange, productTypes, locale, labels }: ItemPickerProps) {
+export function ItemPicker({ selected, onChange, productTypes, locale, labels }: ItemPickerProps) {
   const [type, setType] = useState<PickerType>("Product");
   const [rawFilter, setRawFilter] = useState("");
   const [debouncedFilter, setDebouncedFilter] = useState("");
@@ -82,7 +94,7 @@ export function ItemPicker({ selectedIds, onChange, productTypes, locale, labels
   // Guards against a stale in-flight response overwriting a newer query's result.
   const requestSeq = useRef(0);
 
-  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedSet = useMemo(() => new Set(selected.map((s) => s.id)), [selected]);
 
   const typeItems: SubNavBarItem[] = useMemo(
     () => [
@@ -151,19 +163,20 @@ export function ItemPicker({ selectedIds, onChange, productTypes, locale, labels
   const toggle = useCallback(
     (id: string) => {
       if (selectedSet.has(id)) {
-        onChange(selectedIds.filter((x) => x !== id));
+        onChange(selected.filter((s) => s.id !== id));
       } else {
-        onChange([...selectedIds, id]);
+        onChange([...selected, { id, resourceType: type }]);
       }
     },
-    [selectedSet, selectedIds, onChange],
+    [selectedSet, selected, onChange, type],
   );
 
   const selectAllVisible = useCallback(() => {
-    const merged = new Set(selectedIds);
-    for (const it of items) merged.add(it.id);
-    onChange(Array.from(merged));
-  }, [items, selectedIds, onChange]);
+    // De-dupe by id, stamping the current type tab onto any newly added ids.
+    const byId = new Map(selected.map((s) => [s.id, s]));
+    for (const it of items) byId.set(it.id, { id: it.id, resourceType: type });
+    onChange(Array.from(byId.values()));
+  }, [items, selected, onChange, type]);
 
   const productTypeOptions = useMemo(
     () => [{ label: labels.productTypeAll, value: "" }, ...productTypes],
