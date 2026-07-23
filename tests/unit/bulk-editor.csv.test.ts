@@ -71,6 +71,14 @@ describe("encodeCsvCell / decodeCsvCell", () => {
     expect(encodeCsvCell("normal", ",")).toBe("normal");
   });
 
+  it("prefixes leading TAB / CR too — a spreadsheet strips leading whitespace before evaluating", () => {
+    expect(encodeCsvCell("\t=cmd|'!A1", ",")).toBe("'\t=cmd|'!A1");
+    // CR-leading also gets the apostrophe (and RFC-quoting because of the \r).
+    expect(encodeCsvCell("\r=cmd", ",")).toBe('"\'\r=cmd"');
+    // Round-trips: the apostrophe is stripped back off on import.
+    expect(decodeCsvCell("'\t=cmd")).toBe("\t=cmd");
+  });
+
   it("quotes AND prefixes when both apply", () => {
     expect(encodeCsvCell("=a;b", ";")).toBe('"\'=a;b"');
   });

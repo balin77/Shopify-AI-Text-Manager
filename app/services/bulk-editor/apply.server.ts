@@ -575,11 +575,32 @@ async function persistProductOptions(
         },
       });
       const data = (await response.json()) as {
-        data?: { productOptionUpdate?: { userErrors?: { field?: string[] | string; message: string }[] } };
+        data?: {
+          productOptionUpdate?: {
+            product?: { options?: { id: string; name?: string; values?: string[] }[] } | null;
+            userErrors?: { field?: string[] | string; message: string }[];
+          };
+        };
       };
       const userErrors = data.data?.productOptionUpdate?.userErrors ?? [];
       if (userErrors.length > 0) {
         for (const columnId of validColumnIds) failures.push(failureOf(group, userErrors[0].message, columnId));
+        continue;
+      }
+
+      // Echo check (not just userErrors:[]): confirm Shopify echoed the target
+      // option back with the values we sent — a silent no-op would otherwise be
+      // mirrored to the DB as success (same guard as the metafield/variant
+      // paths). The echoed `values` carries all value names; a landed rename
+      // must show the new name (valueUpdates only holds actually-changed names).
+      const echoedOption = data.data?.productOptionUpdate?.product?.options?.find((o) => o.id === option.id);
+      const nameEchoed = optionInput.name === undefined || echoedOption?.name === optionInput.name;
+      const valuesEchoed =
+        !valueUpdates || valueUpdates.every((v) => (echoedOption?.values ?? []).includes(v.name));
+      if (!echoedOption || !nameEchoed || !valuesEchoed) {
+        for (const columnId of validColumnIds) {
+          failures.push(failureOf(group, "Shopify did not confirm the option update.", columnId));
+        }
         continue;
       }
 
@@ -691,7 +712,13 @@ async function persistProductImageAlt(
       fail(mediaErrors[0].message);
       return failures;
     }
-    if (!payload?.media || payload.media.length === 0) {
+    // Echo check (not just "media non-empty"): productUpdateMedia can accept
+    // the call with empty mediaErrors yet leave the alt untouched — the silent
+    // no-op class this module guards against everywhere else. Compare the
+    // echoed alt against what we sent (Shopify returns null for a cleared alt,
+    // which our empty-string input normalizes to). Only mirror on a match.
+    const echoedAlt = payload?.media?.[0]?.alt ?? "";
+    if (!payload?.media || payload.media.length === 0 || echoedAlt !== imageAlt.value) {
       fail("Shopify did not confirm the alt-text write.");
       return failures;
     }

@@ -62,9 +62,11 @@ export function delimiterForAppLanguage(language: string): CsvDelimiter {
 
 // ─── Cell encoding (RFC 4180 + formula-injection guard) ────────────────────
 
-/** True when the raw value would be interpreted as a formula by Excel/Sheets
- * (leading = + - @). */
-const FORMULA_PREFIX_RE = /^[=+\-@]/;
+/** True when the raw value would be interpreted as a formula by Excel/Sheets.
+ * Covers the formula starters = + - @ plus leading TAB / CR: a spreadsheet
+ * strips leading whitespace before evaluating, so `\t=cmd` is just as live as
+ * `=cmd` (OWASP CSV-injection guidance). */
+const FORMULA_PREFIX_RE = /^[=+\-@\t\r]/;
 
 /**
  * Encodes one cell for CSV output: apostrophe-prefixes formula starters, then

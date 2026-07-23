@@ -100,10 +100,30 @@ function defaultResponse(query: string, variables: Record<string, unknown> | und
     return { data: { metafieldsDelete: { deletedMetafields: identifiers, userErrors: [] } } };
   }
   if (query.includes("productOptionUpdate(")) {
-    return { data: { productOptionUpdate: { userErrors: [] } } };
+    // Echo the option back (like Shopify) so the persist path's echo check
+    // passes: the target option with its sent name and the changed value names.
+    const opt = (variables?.option ?? {}) as { id: string; name?: string };
+    const valueUpdates = (variables?.optionValuesToUpdate ?? []) as { id: string; name: string }[];
+    return {
+      data: {
+        productOptionUpdate: {
+          product: { options: [{ id: opt.id, name: opt.name ?? "Size", values: valueUpdates.map((v) => v.name) }] },
+          userErrors: [],
+        },
+      },
+    };
   }
   if (query.includes("productUpdateMedia(")) {
-    return { data: { productUpdateMedia: { media: [{ alt: "ok", mediaErrors: [] }], mediaUserErrors: [] } } };
+    // Echo the sent alt back (like Shopify) so the persist path's echo check passes.
+    const media = (variables?.media ?? []) as { id: string; alt?: string }[];
+    return {
+      data: {
+        productUpdateMedia: {
+          media: media.map((m) => ({ alt: m.alt ?? null, mediaErrors: [] })),
+          mediaUserErrors: [],
+        },
+      },
+    };
   }
   throw new Error(`Unexpected query in test: ${query.slice(0, 120)}`);
 }
@@ -450,6 +470,27 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     ]);
   });
 
+  it("fails the option update and skips the DB mirror when Shopify does not echo it back (silent no-op guard)", async () => {
+    // userErrors:[] but the product echoes no matching option → the accepted
+    // call stored nothing. Must surface as a cell error, never mirror to DB.
+    const { admin } = mockAdmin({
+      respond: (query) =>
+        query.includes("productOptionUpdate(")
+          ? { data: { productOptionUpdate: { product: { options: [] }, userErrors: [] } } }
+          : undefined,
+    });
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry(optionColumnId(1, "values"), "Small | M")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe(optionColumnId(1, "values"));
+    expect(db.productOption.update).not.toHaveBeenCalled();
+  });
+
   it("fails img.alt as a cell error when the cached image has no mediaId (§4.3)", async () => {
     const { admin, calls } = mockAdmin();
     const db = mockDb();
@@ -468,6 +509,27 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBe(IMG_ALT_COLUMN_ID);
     expect(calls.some((c) => c.query.includes("productUpdateMedia("))).toBe(false);
+  });
+
+  it("fails img.alt and skips the DB mirror when Shopify echoes back the unchanged alt (silent no-op guard)", async () => {
+    // Accepted call, no mediaErrors, but the echoed alt is still the OLD value
+    // → Shopify stored nothing. Must not mirror "new alt" into the DB.
+    const { admin } = mockAdmin({
+      respond: (query) =>
+        query.includes("productUpdateMedia(")
+          ? { data: { productUpdateMedia: { media: [{ alt: "old alt", mediaErrors: [] }], mediaUserErrors: [] } } }
+          : undefined,
+    });
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry(IMG_ALT_COLUMN_ID, "new alt")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe(IMG_ALT_COLUMN_ID);
+    expect(db.productImage.update).not.toHaveBeenCalled();
   });
 
   it("rejects a partial-SEO product write as a CELL error when the cache row is missing (Finding 7)", async () => {
