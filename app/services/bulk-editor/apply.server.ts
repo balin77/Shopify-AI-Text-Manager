@@ -33,6 +33,7 @@ import {
   METAFIELDS_SET,
   METAFIELDS_DELETE,
   PRODUCT_OPTION_UPDATE,
+  METAOBJECT_UPDATE,
 } from "../../graphql/content.mutations";
 import { debugLog } from "../../utils/debug";
 import { markTranslationSaved } from "../../utils/translation-save-lock.server";
@@ -795,6 +796,46 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
     }
+    case "blog": {
+      // Blog CONTAINER (Phase 5, Plan §7). SEO title/description are the
+      // global.title_tag / description_tag METAFIELDS (CLAUDE.md gotcha):
+      // updateBlog sends non-empty values inside blogUpdate's metafields
+      // input and CLEARS emptied ones via metafieldsDelete — setting "" would
+      // silently not clear ("Value can't be blank", §14 no. 4). Same gateway
+      // path as the single editor (app.blog.tsx → updateContent → updateBlog).
+      // NO DB mirror: blog containers have no cache model — the grid's
+      // post-save revalidation live-fetches the fresh state from Shopify.
+      await contentService.updateBlog(id, {
+        ...(fields.title !== undefined ? { title: fields.title } : {}),
+        ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
+        ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
+        ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+      });
+      break;
+    }
+    case "policy": {
+      // ShopPolicy (Phase 5): shopPolicyUpdate is keyed by policy TYPE, not
+      // id (§14 — and it has no title input; the title column is read-only).
+      // The type is resolved SERVER-side from the cache row, which doubles as
+      // the tenancy check — a policy id of another shop simply doesn't
+      // resolve.
+      if (fields.body === undefined) {
+        throw new Error("Only the policy text (body) can be edited here.");
+      }
+      const policy = await db.shopPolicy.findUnique({
+        where: { shop_id: { shop, id } },
+        select: { type: true },
+      });
+      if (!policy) {
+        throw new Error("This policy is not in the local cache — resync content first.");
+      }
+      await contentService.updateShopPolicy(policy.type, fields.body);
+      await db.shopPolicy.update({
+        where: { shop_id: { shop, id } },
+        data: { body: fields.body, lastSyncedAt: new Date() },
+      });
+      break;
+    }
     default: {
       // Exhaustiveness backstop — a new BulkRowType without a persist branch
       // must fail the row loudly, never silently skip the Shopify push while
@@ -802,6 +843,139 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       throw new Error(`Unsupported row type "${type}".`);
     }
   }
+}
+
+// ─── Metaobject rows: metaobjectUpdate with echo verification (Phase 5) ────
+
+/**
+ * Persists one primary metaobject row group with ONE metaobjectUpdate
+ * (Plan §7). The row's dirty mofield cells become the mutation's `fields`
+ * input; the cache row resolves the definition type SERVER-side (tenancy
+ * check — a foreign shop's metaobject doesn't resolve) and guards against
+ * cross-type columns. Echo semantics (CLAUDE.md): only when Shopify returns
+ * the metaobject with our values in `fields` is the cache mirrored —
+ * `userErrors: []` alone is not success.
+ */
+async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<BulkFailure[]> {
+  const { db, shop, gateway } = deps;
+  const id = group.rowId;
+  const columns = deps.columnsByType.metaobject;
+  const failures: BulkFailure[] = [];
+
+  const cached = await db.metaobject.findUnique({
+    where: { shop_id: { shop, id } },
+    select: { type: true },
+  });
+  if (!cached) {
+    return [failureOf(group, "This metaobject is not in the local cache — resync content first.")];
+  }
+
+  interface FieldWrite {
+    columnId: string;
+    key: string;
+    value: string;
+  }
+  const writes: FieldWrite[] = [];
+  for (const [columnId, value] of Object.entries(group.cells)) {
+    const column = columns.find((c) => c.id === columnId);
+    if (!column || !column.editable || column.kind !== "mofield" || !column.moFieldKey) {
+      failures.push(failureOf(group, `Column "${columnId}" is not editable on ${group.rowType}.`, columnId));
+      continue;
+    }
+    // Cross-type guard: the validation universe is the UNION of every
+    // definition's columns (Plan §7) — a column of another type must fail
+    // loudly here, never write a stray field into this metaobject.
+    if (column.moType !== cached.type) {
+      failures.push(
+        failureOf(group, `This metaobject is of type "${cached.type}" — the column belongs to "${column.moType}".`, columnId),
+      );
+      continue;
+    }
+    let outgoing = value;
+    if (column.moFieldType === METAFIELD_TYPE_LIST_SINGLE_LINE && value !== "") {
+      const parsed = parseListMetafieldInput(value);
+      if (!parsed.ok) {
+        failures.push(
+          failureOf(group, "List values must not be empty — separate values with | and remove empty entries.", columnId),
+        );
+        continue;
+      }
+      outgoing = JSON.stringify(parsed.values);
+    }
+    // "" clears the field value (MetaobjectFieldInput.value is a plain
+    // String) — if a definition-level validation rejects the empty value,
+    // Shopify answers with a userError and the cell fails visibly below.
+    writes.push({ columnId, key: column.moFieldKey, value: outgoing });
+  }
+  if (writes.length === 0) return failures;
+
+  const failAllWrites = (message: string) => {
+    for (const write of writes) failures.push(failureOf(group, message, write.columnId));
+  };
+
+  try {
+    const response = await gateway.graphql(METAOBJECT_UPDATE, {
+      variables: {
+        id,
+        metaobject: { fields: writes.map((w) => ({ key: w.key, value: w.value })) },
+      },
+    });
+    const data = (await response.json()) as {
+      data?: {
+        metaobjectUpdate?: {
+          metaobject?: {
+            id: string;
+            handle?: string;
+            displayName?: string;
+            type?: string;
+            fields?: { key: string; value: string | null; type: string }[] | null;
+          } | null;
+          userErrors?: { field?: string[] | string; message: string }[];
+        };
+      };
+      errors?: { message: string }[];
+    };
+    if (data.errors && data.errors.length > 0) {
+      failAllWrites(data.errors[0].message);
+      return failures;
+    }
+    const payload = data.data?.metaobjectUpdate;
+    const userErrors = payload?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      failAllWrites(userErrors[0].message);
+      return failures;
+    }
+    // Echo check: the mutation returns the full metaobject — every written
+    // key must come back with OUR value, otherwise that cell failed silently.
+    const echoedFields = payload?.metaobject?.fields ?? [];
+    const confirmed: FieldWrite[] = [];
+    for (const write of writes) {
+      const echo = echoedFields?.find((f) => f.key === write.key);
+      if (!echo || (echo.value ?? "") !== write.value) {
+        failures.push(failureOf(group, "Shopify did not confirm the field write.", write.columnId));
+        continue;
+      }
+      confirmed.push(write);
+    }
+    if (confirmed.length > 0 && payload?.metaobject) {
+      // Mirror the ECHOED state wholesale — fields JSON, displayName (the
+      // label field may have been one of the writes) — same shape the sync
+      // writes.
+      await db.metaobject.update({
+        where: { shop_id: { shop, id } },
+        data: {
+          fields: echoedFields as object[],
+          ...(payload.metaobject.displayName !== undefined
+            ? { displayName: payload.metaobject.displayName ?? "" }
+            : {}),
+          lastSyncedAt: new Date(),
+        },
+      });
+    }
+  } catch (err: unknown) {
+    failAllWrites(err instanceof Error ? err.message : String(err));
+  }
+  return failures;
 }
 
 // ─── Foreign-locale rows: translationsRegister/-Remove with verification ───
@@ -854,7 +1028,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   const clears: TranslationCell[] = [];
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
-    const key = column ? translationKeyForColumn(column) : null;
+    const key = column ? translationKeyForColumn(column, group.rowType) : null;
     if (!column || !key) {
       // Validation rejected non-translatable columns already — reaching this
       // is a programming error, surfaced per cell (never silently dropped).
@@ -947,28 +1121,62 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
-        await db.contentTranslation.upsert({
-          where: {
-            shop_resourceId_key_locale_marketId: {
+        if (group.rowType === "metaobject") {
+          // Metaobject translations mirror into their OWN table (Phase 5,
+          // unique shop_metaobjectId_key_locale_marketId) — the shape every
+          // existing writer and the sync use. `type` comes from the cache
+          // row; "" if the metaobject is (pathologically) uncached, the sync
+          // repairs it.
+          const cached = await db.metaobject.findUnique({
+            where: { shop_id: { shop, id: resourceId } },
+            select: { type: true },
+          });
+          await db.metaobjectTranslation.upsert({
+            where: {
+              shop_metaobjectId_key_locale_marketId: {
+                shop,
+                metaobjectId: resourceId,
+                key: write.key,
+                locale,
+                marketId,
+              },
+            },
+            update: { value: write.value, outdated: false },
+            create: {
               shop,
-              resourceId,
+              metaobjectId: resourceId,
+              type: cached?.type ?? "",
               key: write.key,
+              value: write.value,
               locale,
               marketId,
+              outdated: false,
             },
-          },
-          update: { value: write.value, digest: write.digest, resourceType },
-          create: {
-            shop,
-            resourceId,
-            resourceType,
-            key: write.key,
-            value: write.value,
-            locale,
-            marketId,
-            digest: write.digest,
-          },
-        });
+          });
+        } else {
+          await db.contentTranslation.upsert({
+            where: {
+              shop_resourceId_key_locale_marketId: {
+                shop,
+                resourceId,
+                key: write.key,
+                locale,
+                marketId,
+              },
+            },
+            update: { value: write.value, digest: write.digest, resourceType },
+            create: {
+              shop,
+              resourceId,
+              resourceType,
+              key: write.key,
+              value: write.value,
+              locale,
+              marketId,
+              digest: write.digest,
+            },
+          });
+        }
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1001,9 +1209,15 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
-        await db.contentTranslation.deleteMany({
-          where: { shop, resourceId, key: clear.key, locale, marketId },
-        });
+        if (group.rowType === "metaobject") {
+          await db.metaobjectTranslation.deleteMany({
+            where: { shop, metaobjectId: resourceId, key: clear.key, locale, marketId },
+          });
+        } else {
+          await db.contentTranslation.deleteMany({
+            where: { shop, resourceId, key: clear.key, locale, marketId },
+          });
+        }
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1283,6 +1497,9 @@ async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<B
   if (group.rowType === "product") {
     return persistProductRow(group, deps);
   }
+  if (group.rowType === "metaobject") {
+    return persistMetaobjectRow(group, deps);
+  }
 
   try {
     await persistSingleMutationRow(group, deps);
@@ -1324,7 +1541,7 @@ export async function applyBulkDiff(
     for (const [columnId, value] of Object.entries(group.cells)) {
       if (value === "") continue;
       const column = columns.find((c) => c.id === columnId);
-      const key = column ? translationKeyForColumn(column) : null;
+      const key = column ? translationKeyForColumn(column, group.rowType) : null;
       if (key) {
         foreignKeys.add(key);
         hasWrite = true;

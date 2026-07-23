@@ -86,7 +86,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
   const columnId = getFormString(formData, "columnId");
   const columnsByType = await buildServerColumnsByType(db, shop, plan);
   const column = columnsByType[rowType].find((c) => c.id === columnId);
-  const translationKey = column ? translationKeyForColumn(column) : null;
+  const translationKey = column ? translationKeyForColumn(column, rowType) : null;
   // AI scope (Phase 4 decision): BASE field columns only. handle is
   // translatable at Shopify and may be typed manually, but bulk-AI-generating
   // hundreds of URL slugs is excluded — the single editor treats handles as a
@@ -147,6 +147,8 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
     skip: 0,
     take: MAX_BULK_TASK_ITEMS,
     productCells: { metafieldSpecs, caps: productCaps },
+    // Blog rows are live-fetched (Phase 5) — the loader needs the client.
+    admin,
   });
 
   const jobs: { rowId: string; source: string }[] = [];
