@@ -14,6 +14,7 @@ import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation,
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
+import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -88,6 +89,12 @@ interface ShopifyProductData {
   status: string;
   productType: string | null;
   updatedAt: string;
+  /** Variant window of the sync (Plan §5.1): first 100 only, NO pagination —
+   * hasNextPage marks products whose remainder stays in the Shopify admin. */
+  variants?: {
+    pageInfo?: { hasNextPage: boolean } | null;
+    nodes?: ShopifySyncVariant[] | null;
+  } | null;
   seo: {
     title: string | null;
     description: string | null;
@@ -231,6 +238,23 @@ export class ProductSyncService {
                       }
                     }
                   }
+                  variants(first: 100) {
+                    pageInfo {
+                      hasNextPage
+                    }
+                    nodes {
+                      id
+                      title
+                      sku
+                      price
+                      compareAtPrice
+                      position
+                      barcode
+                      image {
+                        url
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -280,6 +304,11 @@ export class ProductSyncService {
       // payload directly — they call syncProduct(), which fetches the CURRENT
       // live product state from Shopify, so the last write always reflects
       // the freshest Shopify state regardless of delivery order.
+      // hasMoreVariants (Plan §5.1): only touched when the variants block was
+      // actually delivered — a partial response must not flip the flag.
+      const hasMoreVariants = product.variants
+        ? product.variants.pageInfo?.hasNextPage ?? false
+        : undefined;
       await tx.product.upsert({
         where: { shop_id: { shop: this.shop, id: product.id } },
         create: {
@@ -294,6 +323,7 @@ export class ProductSyncService {
           seoDescription: product.seo?.description || null,
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
+          hasMoreVariants: hasMoreVariants ?? false,
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -307,6 +337,7 @@ export class ProductSyncService {
           seoDescription: product.seo?.description || null,
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
+          ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -381,6 +412,11 @@ export class ProductSyncService {
       // Upsert metafields (idempotent — safe under concurrent execution)
       const metafields = product.metafields?.edges?.map((edge) => edge.node) ?? [];
       await upsertProductMetafields(tx, product.id, metafields);
+
+      // Variants (Plan §5.1): targeted upsert + targeted delete of vanished
+      // ids — NEVER deleteMany+createMany, galleryJson/imageKey come from the
+      // image manager and must survive.
+      await syncProductVariantRows(tx, product.id, product.variants?.nodes ?? null);
     };
 
     const PRODUCT_BATCH_SIZE = 100;
@@ -1229,6 +1265,23 @@ export class ProductSyncService {
                 endCursor
               }
             }
+            variants(first: 100) {
+              pageInfo {
+                hasNextPage
+              }
+              nodes {
+                id
+                title
+                sku
+                price
+                compareAtPrice
+                position
+                barcode
+                image {
+                  url
+                }
+              }
+            }
           }
         }`,
       { variables: { id: productId, metafieldsFirst: 250, metafieldsAfter: null } }
@@ -1602,6 +1655,11 @@ export class ProductSyncService {
         logger.warn(`[ProductSync] Aborting write — product deleted mid-transaction: ${productData.id}`);
         return;
       }
+      // hasMoreVariants (Plan §5.1): only touched when the variants block was
+      // actually delivered — a partial response must not flip the flag.
+      const hasMoreVariants = productData.variants
+        ? productData.variants.pageInfo?.hasNextPage ?? false
+        : undefined;
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1622,6 +1680,7 @@ export class ProductSyncService {
           seoDescription: productData.seo?.description || null,
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
+          hasMoreVariants: hasMoreVariants ?? false,
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1635,6 +1694,7 @@ export class ProductSyncService {
           seoDescription: productData.seo?.description || null,
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
+          ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1897,6 +1957,11 @@ export class ProductSyncService {
       if (metafields.length > 0) {
         logger.debug(`[ProductSync] Saved ${metafields.length} metafields`);
       }
+
+      // Variants (Plan §5.1): targeted upsert + targeted delete of vanished
+      // ids — NEVER deleteMany+createMany, galleryJson/imageKey come from the
+      // image manager and must survive (§10.3).
+      await syncProductVariantRows(tx, productData.id, productData.variants?.nodes ?? null);
     }));
 
     logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
