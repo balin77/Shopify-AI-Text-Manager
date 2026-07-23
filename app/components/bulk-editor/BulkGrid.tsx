@@ -105,7 +105,9 @@ export function BulkGrid({
   // Sticky pinning: image at left:0, title (canonically the first data
   // column) at left:72px — but only when title actually renders directly
   // after the image, otherwise a gap column would scroll underneath it.
-  const titleSticky = displayColumns[0]?.id === "field.title";
+  // Variant rows (Plan §5.3) pin the product-title CONTEXT column instead.
+  const titleSticky =
+    displayColumns[0]?.id === "field.title" || displayColumns[0]?.id === "productTitle";
 
   const gridTemplateColumns = [
     `${IMAGE_COLUMN_WIDTH}px`,

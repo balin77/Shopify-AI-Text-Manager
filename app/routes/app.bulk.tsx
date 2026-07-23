@@ -43,6 +43,9 @@ import {
   resolveCellValue,
   buildColumnsForType,
   isValidBulkDiffEntry,
+  parseMoney,
+  formatMoneyForDisplay,
+  applyPriceAction,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   BULK_FILTER_IDS,
@@ -51,6 +54,8 @@ import {
   MAX_SYNC_SAVE,
   MAX_TASK_CALLS,
   MAX_VISIBLE_COLUMNS,
+  VAR_PRICE_COLUMN_ID,
+  VAR_COMPARE_AT_COLUMN_ID,
   type BulkRowType,
   type BulkRow,
   type BulkSort,
@@ -59,12 +64,13 @@ import {
   type BulkFailure,
   type ColumnDescriptor,
   type MetafieldColumnSpec,
+  type PriceAction,
   type ProductColumnCaps,
 } from "../services/bulk-editor/columns.shared";
 import { debugLog } from "../utils/debug";
 // Server-only I/O — referenced exclusively from loader/action, which Remix
 // strips from the client build.
-import { loadBulkRows } from "../services/bulk-editor/load.server";
+import { loadBulkRows, getShopCurrencyCode } from "../services/bulk-editor/load.server";
 import { applyBulkDiff } from "../services/bulk-editor/apply.server";
 import { findInvalidLocaleOrMarket } from "../services/bulk-editor/translations.server";
 import {
@@ -75,6 +81,7 @@ import {
 import { BulkGrid } from "../components/bulk-editor/BulkGrid";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
+import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import {
   TranslateMissingModal,
   type TranslateMissingMode,
@@ -122,6 +129,9 @@ interface LoaderData {
   markets: { id: string; name: string }[];
   /** Pro gate for the "translate missing" AI action (Plan §10.7). */
   aiTranslateAllowed: boolean;
+  /** Shop-wide currency (Plan §5.2), shown as a money-column header suffix.
+   * "" when unknown or not a variant view. */
+  currencyCode: string;
 }
 
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
@@ -152,6 +162,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       locales: [],
       markets: [],
       aiTranslateAllowed: false,
+      currencyCode: "",
     });
   }
 
@@ -207,17 +218,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ? await loadProductMetafieldColumnSpecs(db, shop)
       : [];
 
-  const { rows, total, translationFilterApproximate } = await loadBulkRows(db, shop, {
-    type,
-    locale,
-    marketId,
-    search,
-    filters,
-    sort,
-    skip: (page - 1) * pageSize,
-    take: pageSize,
-    productCells: { metafieldSpecs: metafieldColumns, caps: productCaps },
-  });
+  const [{ rows, total, translationFilterApproximate }, currencyCode] = await Promise.all([
+    loadBulkRows(db, shop, {
+      type,
+      locale,
+      marketId,
+      search,
+      filters,
+      sort,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      productCells: { metafieldSpecs: metafieldColumns, caps: productCaps },
+    }),
+    // Currency suffix for the money columns (Plan §5.2) — variant view only;
+    // process-cached, so this is one query per shop per boot.
+    type === "variant" ? getShopCurrencyCode(admin, shop) : Promise.resolve(""),
+  ]);
 
   return json<LoaderData>({
     gated: false,
@@ -238,6 +254,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     locales,
     markets,
     aiTranslateAllowed: meetsPlan(plan, "pro"),
+    currencyCode,
   });
 };
 
@@ -291,9 +308,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
 };
 
-/** Deep-link target per content type for the row's "open in editor" action. */
+/** Deep-link target per content type for the row's "open in editor" action.
+ * Variant rows jump to their PRODUCT (row.productId) — variants have no
+ * standalone editor page. */
 const TYPE_EDITOR_PATH: Record<BulkRowType, string> = {
   product: "/app/products",
+  variant: "/app/products",
   collection: "/app/collections",
   article: "/app/blog",
   page: "/app/pages",
@@ -337,6 +357,7 @@ const LEGACY_COLUMNS_STORAGE_KEY = "contentpilot:bulkMeta:columns";
  * on-screen without horizontal scrolling for the common case. */
 const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   product: ["image", "field.title", "field.productType", "field.handle", "field.seoTitle", "field.seoDescription"],
+  variant: ["image", "productTitle", "variantTitle", "var.sku", "var.price", "var.compareAtPrice", "var.barcode"],
   collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
   article: ["image", "field.title", "field.summary", "field.handle", "field.seoTitle", "field.seoDescription"],
   page: ["field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
@@ -401,7 +422,7 @@ function saveColumnPrefs(type: BulkRowType, cols: string[]) {
 export default function BulkEditor() {
   const data = useLoaderData<typeof loader>();
   const { gated, rows, allowedTypes, type, page, pageSize, total, search, filters, locale, marketId } = data;
-  const { t } = useI18n();
+  const { t, locale: uiLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const revalidator = useRevalidator();
   const b = t.bulkEditor;
@@ -418,6 +439,8 @@ export default function BulkEditor() {
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [overBudgetBanner, setOverBudgetBanner] = useState(false);
+  /** "{count} cells updated" feedback after a price bulk action (Plan §5.6). */
+  const [priceActionBanner, setPriceActionBanner] = useState<number | null>(null);
   const [translateModalOpen, setTranslateModalOpen] = useState(false);
   const [translateBanner, setTranslateBanner] = useState<
     | { kind: "running" }
@@ -481,6 +504,7 @@ export default function BulkEditor() {
     setLastFailures([]);
     setLastSavedCount(null);
     setOverBudgetBanner(false);
+    setPriceActionBanner(null);
     foreignBaselinesRef.current = {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, page, pageSize, search, data.sort, filters.join(",")]);
@@ -517,8 +541,22 @@ export default function BulkEditor() {
   const dirty = useMemo(() => computeDiff(mergedRows, allColumns, edits), [mergedRows, allColumns, edits]);
   const dirtyRowIds = useMemo(() => new Set(dirty.map((d) => d.rowId)), [dirty]);
 
+  // Variant rows: rowId → productId for the per-product call estimate
+  // (Plan §5.4 — one productVariantsBulkUpdate per product).
+  const variantProductIdByRowId = useMemo(() => {
+    if (type !== "variant") return undefined;
+    const map: Record<string, string> = {};
+    for (const row of mergedRows) {
+      if (row.productId) map[row.id] = row.productId;
+    }
+    return map;
+  }, [type, mergedRows]);
+
   // §10.1: refuse an over-budget save BEFORE submitting.
-  const estimatedCalls = useMemo(() => estimateCalls(dirty, allColumns), [dirty, allColumns]);
+  const estimatedCalls = useMemo(
+    () => estimateCalls(dirty, allColumns, variantProductIdByRowId ? { variantProductIdByRowId } : undefined),
+    [dirty, allColumns, variantProductIdByRowId],
+  );
 
   // "Unsaved changes in N other languages/markets" (Plan §6.4) — edits are
   // kept across locale switches, so make their existence visible.
@@ -599,6 +637,13 @@ export default function BulkEditor() {
   const valueFor = (row: BulkRow, column: ColumnDescriptor): string => {
     const editKey = editKeyFor(row, column);
     if (editKey in edits) return edits[editKey];
+    // Money cells (Plan §5.5): the stored value is the normalized dot form;
+    // UNTOUCHED cells display it localized (Intl.NumberFormat in the app
+    // language). Once the merchant types, their raw input shows verbatim and
+    // computeDiff normalizes it back — so both directions round-trip.
+    if (column.inputType === "money") {
+      return formatMoneyForDisplay(resolveCellValue(row, column).value, uiLocale);
+    }
     if (!isForeign) return resolveCellValue(row, column).value;
     // Foreign view: non-translatable columns show the primary value (they
     // render read-only/grey); translatable ones show the loaded translation
@@ -692,6 +737,46 @@ export default function BulkEditor() {
     setLastFailures([]);
     setLastSavedCount(null);
     setOverBudgetBanner(false);
+    setPriceActionBanner(null);
+  };
+
+  // ── Price bulk actions (Plan §5.6) ───────────────────────────────────────
+  // Applied to the CURRENT (filtered, loaded) selection — i.e. the rows the
+  // grid shows right now. Results go into the EDIT MAP only: preview,
+  // correction and saving all run through the normal diff pipeline.
+
+  /** Effective current price of a row: pending edit first, then baseline —
+   * normalized; null when empty/unparseable. */
+  const currentPriceOf = (row: BulkRow): string | null => {
+    const editKey = makeEditKey(row.id, "", "", VAR_PRICE_COLUMN_ID);
+    const raw = editKey in edits ? edits[editKey] : row.price ?? "";
+    const parsed = parseMoney(raw);
+    return parsed.ok ? parsed.value : null;
+  };
+
+  const handlePriceAction = (action: PriceAction) => {
+    let applied = 0;
+    setEdits((prev) => {
+      const next = { ...prev };
+      for (const row of visibleRows) {
+        if (row.type !== "variant") continue;
+        const current = currentPriceOf(row);
+        if (action.id === "compareAtFromPrice") {
+          if (current === null) continue;
+          next[makeEditKey(row.id, "", "", VAR_COMPARE_AT_COLUMN_ID)] = formatMoneyForDisplay(current, uiLocale);
+          applied++;
+          continue;
+        }
+        const result = applyPriceAction(current ?? "", action);
+        if (result === null) continue;
+        // Store the LOCALIZED form — that is what the merchant reviews in the
+        // cell; computeDiff normalizes it back before comparing/submitting.
+        next[makeEditKey(row.id, "", "", VAR_PRICE_COLUMN_ID)] = formatMoneyForDisplay(result, uiLocale);
+        applied++;
+      }
+      return next;
+    });
+    setPriceActionBanner(applied);
   };
 
   // ── "Translate missing" (Plan §6.5) ──────────────────────────────────────
@@ -843,7 +928,13 @@ export default function BulkEditor() {
       return template.replace("{position}", String(col.optionPosition ?? 0));
     }
     if (col.id === "img.alt") return b.columns.imgAlt;
-    return (b.columns as unknown as Record<string, string>)[col.label] ?? col.label;
+    const heading = (b.columns as unknown as Record<string, string>)[col.label] ?? col.label;
+    // Money columns carry the shop currency as a suffix (Plan §5.2) — the
+    // currency is shop-wide, never per cell.
+    if (col.inputType === "money" && data.currencyCode) {
+      return `${heading} (${data.currencyCode})`;
+    }
+    return heading;
   };
 
   const typeOptions = allowedTypes.map((rt) => ({ label: b.types[rt], value: rt }));
@@ -902,6 +993,10 @@ export default function BulkEditor() {
   }, [lastFailures]);
 
   const visibleRows = onlyChanged ? mergedRows.filter((r) => dirtyRowIds.has(r.id)) : mergedRows;
+
+  // >100-variant hint (Plan §5.1): the sync caps at variants(first:100) —
+  // point merchants at the Shopify admin for the remainder.
+  const showMoreVariantsHint = type === "variant" && rows.some((r) => (r as BulkRow).hasMoreVariants);
 
   const translateBusy = translateFetcher.state !== "idle" || translateTask !== null;
 
@@ -1008,6 +1103,15 @@ export default function BulkEditor() {
                 {data.translationFilterApproximate && (
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
+                {showMoreVariantsHint && <Banner tone="info">{b.moreVariantsBanner}</Banner>}
+                {priceActionBanner !== null && (
+                  <Banner
+                    tone={priceActionBanner > 0 ? "success" : "info"}
+                    onDismiss={() => setPriceActionBanner(null)}
+                  >
+                    {b.priceActions.applied.replace("{count}", String(priceActionBanner))}
+                  </Banner>
+                )}
                 {lastSavedCount !== null && (
                   <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
                     {failedRowCount > 0
@@ -1056,6 +1160,19 @@ export default function BulkEditor() {
                     )}
                   </InlineStack>
                   <InlineStack gap="200" blockAlign="end">
+                    {type === "variant" && !isForeign && (
+                      <PriceActionsPopover
+                        disabled={visibleRows.length === 0 || saving}
+                        strings={{
+                          button: b.priceActions.button,
+                          actionLabel: b.priceActions.actionLabel,
+                          amountLabel: b.priceActions.amountLabel,
+                          apply: b.priceActions.apply,
+                          actions: b.priceActions.actions,
+                        }}
+                        onApply={handlePriceAction}
+                      />
+                    )}
                     {data.aiTranslateAllowed && foreignLocales.length > 0 && aiColumns.length > 0 && (
                       <Button onClick={() => setTranslateModalOpen(true)} loading={translateBusy}>
                         {b.translateMissing.button}
@@ -1071,17 +1188,21 @@ export default function BulkEditor() {
                   filters={filters}
                   onFiltersChange={handleFiltersChange}
                   showTranslationFilter={locale !== ""}
+                  variantFilters={type === "variant"}
                   pageSize={pageSize}
                   onPageSizeChange={handlePageSizeChange}
                   onlyChanged={onlyChanged}
                   onOnlyChangedChange={setOnlyChanged}
                   strings={{
-                    searchPlaceholder: b.searchPlaceholder,
+                    searchPlaceholder: type === "variant" ? b.searchPlaceholderVariant : b.searchPlaceholder,
                     searchLabel: b.searchLabel,
                     filtersLabel: b.filtersLabel,
                     filterMissingSeoTitle: b.filters.missingSeoTitle,
                     filterMissingSeoDescription: b.filters.missingSeoDescription,
                     filterMissingTranslation: b.filters.missingTranslation,
+                    filterMissingSku: b.filters.missingSku,
+                    filterMissingPrice: b.filters.missingPrice,
+                    filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}
@@ -1110,7 +1231,8 @@ export default function BulkEditor() {
                       openInEditorLabel={b.openInEditor}
                       onOpenInEditor={(row) =>
                         handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                          searchParams: new URLSearchParams({ select: row.id }),
+                          // Variant rows open their PRODUCT in the editor.
+                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
                         })
                       }
                       columnHeading={columnHeading}

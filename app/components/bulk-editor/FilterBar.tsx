@@ -21,6 +21,9 @@ interface FilterBarProps {
   /** The missingTranslation filter needs a concrete locale — hidden until the
    * locale selector lands (Phase 4) unless the URL already carries one. */
   showTranslationFilter: boolean;
+  /** Variant rows (Phase 3, Plan §5.3) swap the SEO/translation filters for
+   * the price/SKU data filters. */
+  variantFilters: boolean;
   pageSize: number;
   onPageSizeChange: (size: number) => void;
   onlyChanged: boolean;
@@ -32,6 +35,9 @@ interface FilterBarProps {
     filterMissingSeoTitle: string;
     filterMissingSeoDescription: string;
     filterMissingTranslation: string;
+    filterMissingSku: string;
+    filterMissingPrice: string;
+    filterCompareAtNotAbovePrice: string;
     pageSizeLabel: string;
     onlyChangedLabel: string;
   };
@@ -43,6 +49,7 @@ export function FilterBar({
   filters,
   onFiltersChange,
   showTranslationFilter,
+  variantFilters,
   pageSize,
   onPageSizeChange,
   onlyChanged,
@@ -64,13 +71,19 @@ export function FilterBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  const filterChoices = [
-    { label: strings.filterMissingSeoTitle, value: "missingSeoTitle" },
-    { label: strings.filterMissingSeoDescription, value: "missingSeoDescription" },
-    ...(showTranslationFilter
-      ? [{ label: strings.filterMissingTranslation, value: "missingTranslation" }]
-      : []),
-  ];
+  const filterChoices = variantFilters
+    ? [
+        { label: strings.filterMissingSku, value: "missingSku" },
+        { label: strings.filterMissingPrice, value: "missingPrice" },
+        { label: strings.filterCompareAtNotAbovePrice, value: "compareAtNotAbovePrice" },
+      ]
+    : [
+        { label: strings.filterMissingSeoTitle, value: "missingSeoTitle" },
+        { label: strings.filterMissingSeoDescription, value: "missingSeoDescription" },
+        ...(showTranslationFilter
+          ? [{ label: strings.filterMissingTranslation, value: "missingTranslation" }]
+          : []),
+      ];
 
   const filterButtonLabel =
     filters.length > 0 ? `${strings.filtersLabel} (${filters.length})` : strings.filtersLabel;
