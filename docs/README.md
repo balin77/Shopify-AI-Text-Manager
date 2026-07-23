@@ -90,7 +90,6 @@ die Doku korrigieren.
 | Dokument | Beschreibung |
 |----------|--------------|
 | [PLAN_SEO_SUITE_COMPLETION.md](plans/PLAN_SEO_SUITE_COMPLETION.md) | Fertigstellung der SEO-Suite |
-| [PLAN_BULK_EDITOR.md](plans/PLAN_BULK_EDITOR.md) | Bulk-Editor: Metafelder, Optionen, Varianten/Preise, Übersetzungen, CSV |
 
 ---
 
