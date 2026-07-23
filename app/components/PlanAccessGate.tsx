@@ -2,36 +2,50 @@
  * PlanAccessGate
  *
  * Reusable component that blocks access to a page if the user's plan
- * does not include the specified content type. Shows a centered upgrade
- * message while keeping the navigation visible.
+ * does not grant it. Two gating modes:
+ *   - `contentType`: plan must include the content type (original mode)
+ *   - `minPlan`: plan must rank at or above the given tier (hierarchical,
+ *     e.g. the bulk editor requires "basic")
+ * Shows a centered upgrade message while keeping the navigation visible.
  *
  * Usage:
- *   <PlanAccessGate contentType="articles">
- *     {/* page content rendered only when plan allows access *​/}
- *   </PlanAccessGate>
+ *   <PlanAccessGate contentType="articles">…</PlanAccessGate>
+ *   <PlanAccessGate minPlan="basic">…</PlanAccessGate>
  */
 
 import type { ReactNode } from "react";
 import { Text } from "@shopify/polaris";
 import { usePlan } from "../contexts/PlanContext";
 import { useI18n } from "../contexts/I18nContext";
-import { getMinimumPlanForContentType } from "../utils/planUtils";
-import { PLAN_DISPLAY_NAMES, type ContentType } from "../config/plans";
+import { getMinimumPlanForContentType, meetsPlan } from "../utils/planUtils";
+import { PLAN_DISPLAY_NAMES, type ContentType, type Plan } from "../config/plans";
 
 interface PlanAccessGateProps {
-  contentType: ContentType;
+  /** Content-type mode: plan must include this content type. */
+  contentType?: ContentType;
+  /** Tier mode: plan must rank at or above this plan. */
+  minPlan?: Plan;
   children: ReactNode;
 }
 
-export function PlanAccessGate({ contentType, children }: PlanAccessGateProps) {
-  const { canAccessContentType } = usePlan();
+export function PlanAccessGate({ contentType, minPlan, children }: PlanAccessGateProps) {
+  const { plan, canAccessContentType } = usePlan();
   const { t } = useI18n();
 
-  if (canAccessContentType(contentType)) {
+  const allowed =
+    (contentType === undefined || canAccessContentType(contentType)) &&
+    (minPlan === undefined || meetsPlan(plan, minPlan));
+
+  if (allowed) {
     return <>{children}</>;
   }
 
-  const requiredPlan = getMinimumPlanForContentType(contentType);
+  const requiredPlan =
+    minPlan !== undefined && !meetsPlan(plan, minPlan)
+      ? minPlan
+      : contentType !== undefined
+        ? getMinimumPlanForContentType(contentType)
+        : null;
   const planName = requiredPlan ? PLAN_DISPLAY_NAMES[requiredPlan] : "Pro";
 
   return (

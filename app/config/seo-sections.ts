@@ -72,8 +72,11 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "tool",
   },
   {
+    // The bulk editor moved out of the SEO section to /app/bulk (its own
+    // main-nav entry, PLAN_BULK_EDITOR.md §1.1). This sub-nav entry stays as
+    // a convenience link; /app/seo/bulk-meta additionally 302-redirects.
     id: "bulkMeta",
-    path: "/app/seo/bulk-meta",
+    path: "/app/bulk",
     icon: "📝",
     labelKey: "bulkMeta",
     kind: "tool",
@@ -115,9 +118,15 @@ export function isSeoIndexPath(pathname: string): boolean {
  *
  * Matched longest-path-first because "/app/seo" is a prefix of every sub-path —
  * a naive `startsWith` would always resolve to the overview section.
+ *
+ * Only sections living under /app/seo participate: the bulkMeta entry links
+ * OUT to /app/bulk (its own main-nav tab), and matching it here would light
+ * the SEO main-nav tab on the bulk editor page.
  */
 export function getActiveSeoSection(pathname: string): SeoSectionDef | null {
-  const byLongestPath = [...SEO_SECTIONS].sort((a, b) => b.path.length - a.path.length);
+  const byLongestPath = SEO_SECTIONS.filter((s) => s.path.startsWith("/app/seo")).sort(
+    (a, b) => b.path.length - a.path.length,
+  );
   for (const section of byLongestPath) {
     if (pathname === section.path || pathname.startsWith(section.path + "/")) {
       return section;

@@ -50,6 +50,23 @@ export function metafieldEnableKey(namespace: string, key: string): string {
 }
 
 /**
+ * THE editor-visibility predicate for product metafields: translatable text
+ * type AND enabled by the merchant in the settings tab. Shared by the product
+ * editor loader (app.products.tsx) and the bulk editor's column source
+ * (bulk-editor/columns.server.ts) — the two surfaces MUST show the same
+ * fields, so neither may invent its own filter (Plan §4.1).
+ */
+export function isEditableProductMetafield(
+  mf: { namespace: string; key: string; type: string },
+  enabledKeys: Set<string>,
+): boolean {
+  return (
+    TRANSLATABLE_METAFIELD_TYPES.includes(mf.type) &&
+    enabledKeys.has(metafieldEnableKey(mf.namespace, mf.key))
+  );
+}
+
+/**
  * Data-driven scan of a shop's product metafields.
  *
  * Sources the candidate list from the ACTUAL metafields present on products

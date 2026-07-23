@@ -15,6 +15,45 @@ export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
 }
 
+/**
+ * UI field name → Shopify translatable-content key — THE canonical map.
+ *
+ * IMPORTANT — Shopify is inconsistent with body field naming:
+ *   Product, Collection, Page, Article → translation key is "body_html"
+ *   ShopPolicy                         → translation key is "body"
+ *
+ * This is a Shopify API inconsistency: the GraphQL *mutation* input for Page
+ * and Article also uses "body", but the *translatable content* key (used in
+ * translationsRegister and returned by the translatableContent query) is
+ * "body_html". ShopPolicy is the only resource type where both mutation and
+ * translation key use plain "body" — resolve that one exception via
+ * fieldTranslationKeyMap(resourceType).
+ *
+ * This constant used to exist as three inline copies inside this file (Plan
+ * §6.1: "a third copy would be the bug that surfaces later") — every caller,
+ * including the bulk editor (app/services/bulk-editor/translations.server.ts),
+ * must use this export instead of re-declaring the mapping.
+ *
+ * See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
+ */
+export const FIELD_TO_TRANSLATION_KEY: Readonly<Record<string, string>> = {
+  title: 'title',
+  description: 'body_html',
+  body: 'body_html',
+  handle: 'handle',
+  seoTitle: 'meta_title',
+  metaDescription: 'meta_description',
+  productType: 'product_type',
+  summary: 'summary_html',
+};
+
+/** The field→key map with the single ShopPolicy exception applied
+ * (description/body → "body" instead of "body_html"). */
+export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<string, string>> {
+  if (resourceType !== 'ShopPolicy') return FIELD_TO_TRANSLATION_KEY;
+  return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
+}
+
 export class ShopifyContentService {
   private admin: ShopifyAdminClient;
 
@@ -732,30 +771,10 @@ export class ShopifyContentService {
       const translationsToDelete: string[] = [];
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
-      // Map UI field names to Shopify translatable content keys.
-      //
-      // IMPORTANT — Shopify is inconsistent with body field naming:
-      //   Product, Collection, Page, Article → translation key is "body_html"
-      //   ShopPolicy                         → translation key is "body"
-      //
-      // This is a Shopify API inconsistency: the GraphQL *mutation* input for Page
-      // and Article also uses "body", but the *translatable content* key (used in
-      // translationsRegister and returned by translatableContent query) is "body_html".
-      // ShopPolicy is the only resource type where both mutation and translation key
-      // use plain "body".
-      //
-      // See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
-      const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-      const keyMapping: Record<string, string> = {
-        title: 'title',
-        description: bodyKey,
-        body: bodyKey,
-        handle: 'handle',
-        seoTitle: 'meta_title',
-        metaDescription: 'meta_description',
-        productType: 'product_type',
-        summary: 'summary_html',
-      };
+      // Map UI field names to Shopify translatable content keys — the ONE
+      // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
+      // for the body/body_html ShopPolicy nuance).
+      const keyMapping = fieldTranslationKeyMap(resourceType);
 
       for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
@@ -1100,20 +1119,9 @@ export class ShopifyContentService {
 
       // Delete translations for changed fields across ALL foreign locales
       if (changedFields && changedFields.length > 0) {
-        // Map UI field names to Shopify translation keys.
-        // ShopPolicy uses "body", all other resource types use "body_html".
-        // See comment at line ~293 for full explanation of this Shopify inconsistency.
-        const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-        const keyMapping: Record<string, string> = {
-          title: 'title',
-          description: bodyKey,
-          body: bodyKey,
-          handle: 'handle',
-          seoTitle: 'meta_title',
-          metaDescription: 'meta_description',
-          productType: 'product_type',
-          summary: 'summary_html',
-        };
+        // Map UI field names to Shopify translation keys — the ONE canonical
+        // map (FIELD_TO_TRANSLATION_KEY, top of this file).
+        const keyMapping = fieldTranslationKeyMap(resourceType);
 
         const translationKeysToDelete = changedFields
           .map(field => keyMapping[field])
@@ -1231,19 +1239,9 @@ export class ShopifyContentService {
 
     loggers.translation('debug', 'Using hybrid approach', { shortFields: Object.keys(shortFields), longFields: Object.keys(longFields) });
 
-    // ShopPolicy uses "body", all other resource types use "body_html".
-    // See comment in updateContent() (~line 293) for full explanation of this Shopify inconsistency.
-    const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-    const keyMapping: Record<string, string> = {
-      title: 'title',
-      description: bodyKey,
-      body: bodyKey,
-      handle: 'handle',
-      seoTitle: 'meta_title',
-      metaDescription: 'meta_description',
-      productType: 'product_type',
-      summary: 'summary_html',
-    };
+    // ShopPolicy uses "body", all other resource types use "body_html" — the
+    // ONE canonical map (FIELD_TO_TRANSLATION_KEY, top of this file).
+    const keyMapping = fieldTranslationKeyMap(resourceType);
 
     // Track which translation keys have already had a digest retry to avoid
     // redundant loadTranslatableContent calls for the same missing key.

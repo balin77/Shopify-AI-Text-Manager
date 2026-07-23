@@ -62,4 +62,10 @@ export const debugLog = {
 
   /** UiDataLoader resolve (field value resolution) */
   resolve: createLogger('RESOLVE'),
+
+  /** Bulk editor (docs/plans/PLAN_BULK_EDITOR.md §10.5). Summaries ONLY —
+   * never log field values, product texts are merchant data. */
+  bulkLoad: createLogger('bulk:load'),
+  bulkDiff: createLogger('bulk:diff'),
+  bulkSave: createLogger('bulk:save'),
 };

@@ -1,11 +1,16 @@
 /**
- * Manual bulk-meta editor — large-batch save action (SEO_TAB_IMPLEMENTATION_PLAN.md
- * Anhang C3). The route itself (app.seo.bulk-meta.tsx) applies a diff of
- * ≤MAX_SYNC_SAVE rows synchronously; anything bigger is routed here instead,
- * through the shared /api/ai action (same trick seoBulkFix/seoAudit use to
- * reuse that route's Task/detached-runner plumbing).
+ * Bulk editor — large-batch save action (docs/plans/PLAN_BULK_EDITOR.md §3).
+ * The route itself (app.bulk.tsx) applies a diff of ≤MAX_SYNC_SAVE cells
+ * synchronously; anything bigger is routed here instead, through the shared
+ * /api/ai action (same trick seoBulkFix/seoAudit use to reuse that route's
+ * Task/detached-runner plumbing).
  *
- * IMPORTANT: this is a non-AI task — applyBulkMetaDiff only writes the fields
+ * Handler file and task type keep their historical "seoBulkMeta" name even
+ * though the editor moved to /app/bulk — renaming the task type would break
+ * running tasks and LONG_RUNNING_TASK_TYPES (task-recovery.service.js); only
+ * the i18n label under t.tasks.taskType.seoBulkMeta was updated (Plan §1.1).
+ *
+ * IMPORTANT: this is a non-AI task — applyBulkDiff only writes the cells
  * the merchant actually typed, no provider call is made. It must never go
  * through AIQueueService, and (see api.ai.tsx) it is exempt from the route's
  * "shop must have an AI key" gate, same as seoAudit.
@@ -17,37 +22,29 @@ import { errorMessage } from "./shared";
 import { getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
-import { isValidShopifyGID } from "~/utils/validation";
 import { meetsPlan } from "~/utils/planUtils";
-import type { Plan } from "~/config/plans";
+import { PLAN_CONFIG, type Plan } from "~/config/plans";
 import {
-  applyBulkMetaDiff,
-  BULK_META_FIELDS,
-  BULK_META_TYPES,
-  MAX_BULK_META_TASK_ITEMS,
-  type BulkMetaDiffEntry,
-} from "~/services/seo/bulk-meta.service";
+  isValidBulkDiffEntry,
+  estimateCalls,
+  BULK_ROW_TYPES,
+  BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  MAX_BULK_TASK_ITEMS,
+  MAX_TASK_CALLS,
+  type BulkDiffEntry,
+  type BulkRowType,
+  type ColumnDescriptor,
+} from "~/services/bulk-editor/columns.shared";
+import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
+import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { findInvalidLocaleOrMarket } from "~/services/bulk-editor/translations.server";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
-
-function isValidDiffEntry(e: unknown): e is BulkMetaDiffEntry {
-  if (!e || typeof e !== "object") return false;
-  const entry = e as Record<string, unknown>;
-  return (
-    typeof entry.id === "string" &&
-    isValidShopifyGID(entry.id) &&
-    typeof entry.type === "string" &&
-    (BULK_META_TYPES as string[]).includes(entry.type) &&
-    typeof entry.field === "string" &&
-    (BULK_META_FIELDS as string[]).includes(entry.field) &&
-    typeof entry.value === "string"
-  );
-}
 
 export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response> {
   const { session, admin, db, formData, settings } = ctx;
 
-  // Plan gate (review W1): the bulk-meta route enforces "basic" in its own
+  // Plan gate (review W1): the bulk route enforces "basic" in its own
   // loader/action, but this handler is reachable directly via /api/ai — which
   // has no route-level plan gate AND exempts seoBulkMeta from the AI-key gate.
   // Without this check a free-plan shop could drive the Basic feature by
@@ -57,19 +54,57 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
     return json({ success: false, error: "This feature requires the Basic plan or higher." }, { status: 403 });
   }
 
+  // Row types are additionally intersected with the plan's contentTypes
+  // (Plan §3.4) — a Basic shop must not push article diffs through here.
+  const planContentTypes = PLAN_CONFIG[plan].contentTypes as string[];
+  const allowedTypes: BulkRowType[] = BULK_ROW_TYPES.filter((t) =>
+    planContentTypes.includes(BULK_ROW_TYPE_TO_CONTENT_TYPE[t]),
+  );
+
   const rawDiff = getFormJSON<unknown[]>(formData, "diff");
   if (!Array.isArray(rawDiff) || rawDiff.length === 0) {
     return json({ success: false, error: "No changes to save." }, { status: 400 });
   }
-  if (!rawDiff.every(isValidDiffEntry)) {
+  // Server-built column universe (Plan §4.1): the mf.-column allowlist is
+  // checked against the shop's ENABLED metafield definitions here — never
+  // against whatever column ids the client claims exist.
+  const columnsByType = await buildServerColumnsByType(db, session.shop, plan);
+  if (!rawDiff.every((e) => isValidBulkDiffEntry(e, allowedTypes, columnsByType))) {
     return json({ success: false, error: "Invalid diff payload." }, { status: 400 });
   }
-  const diff = rawDiff as BulkMetaDiffEntry[];
-  if (diff.length > MAX_BULK_META_TASK_ITEMS) {
+  const diff = rawDiff as BulkDiffEntry[];
+  // The limit counts diff ENTRIES = changed CELLS, not rows (Finding 2/12).
+  // The client checks the same constant in submitDiff/the CSV preview before
+  // submitting; this is the defensive server half for direct POSTs.
+  if (diff.length > MAX_BULK_TASK_ITEMS) {
     return json(
-      { success: false, error: `A single save is limited to ${MAX_BULK_META_TASK_ITEMS} rows.` },
+      {
+        success: false,
+        error: `A single save is limited to ${MAX_BULK_TASK_ITEMS} changed cells (this diff has ${diff.length}). Save in several steps or narrow the filter.`,
+      },
       { status: 400 },
     );
+  }
+  // Call budget (Plan §10.1): the UI refuses over-budget saves before
+  // submitting; enforce the same ceiling here since this endpoint is directly
+  // POSTable.
+  const estimated = estimateCalls(diff, Object.values(columnsByType).flat());
+  if (estimated > MAX_TASK_CALLS) {
+    return json(
+      {
+        success: false,
+        code: "OVER_BUDGET",
+        error: `This save would need about ${estimated} Shopify calls (limit ${MAX_TASK_CALLS}). Save in several steps or narrow the filter.`,
+      },
+      { status: 400 },
+    );
+  }
+  // Phase 4 data-integrity gate: foreign locales must be PUBLISHED shop
+  // locales and markets must be ACTIVE — never let an unknown locale/market
+  // slip through to translationsRegister.
+  const localeError = await findInvalidLocaleOrMarket(admin, session.shop, diff);
+  if (localeError) {
+    return json({ success: false, error: localeError }, { status: 400 });
   }
 
   // Single-flight: only one seoBulkMeta run per shop at a time — a second
@@ -83,16 +118,16 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
       {
         success: false,
         code: "ALREADY_RUNNING",
-        error: "A bulk-meta save is already running for this store. Check the Tasks tab for progress.",
+        error: "A bulk save is already running for this store. Check the Tasks tab for progress.",
         taskId: runningTask.id,
       },
       { status: 409 },
     );
   }
 
-  // Rows, not fields — matches groupDiffByRow so `total` lines up with the
+  // Rows, not cells — matches groupDiffByRow so `total` lines up with the
   // heartbeat's `processed` count in the runner below.
-  const rowCount = new Set(diff.map((e) => `${e.type}:${e.id}`)).size;
+  const rowCount = new Set(diff.map((e) => `${e.rowType}|${e.rowId}|${e.locale}|${e.marketId}`)).size;
 
   const task = await db.task.create({
     data: {
@@ -111,8 +146,8 @@ export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response>
   // Fire-and-forget: survives navigation, same pattern as runSeoBulkFix /
   // runBulkAltTextGeneration. Progress/results persist to Task after every
   // row (heartbeat), so a crash only loses the in-flight row.
-  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin, diff }).catch((err: unknown) => {
-    logger.error("[API-AI] SEO bulk-meta crashed", {
+  void runSeoBulkMeta(task.id, { db, shop: session.shop, admin, diff, columnsByType }).catch((err: unknown) => {
+    logger.error("[API-AI] Bulk-editor save crashed", {
       context: "AI",
       taskId: task.id,
       error: errorMessage(err),
@@ -128,19 +163,20 @@ interface RunArgs {
   db: PrismaClient;
   shop: string;
   admin: AdminApiContext;
-  diff: BulkMetaDiffEntry[];
+  diff: BulkDiffEntry[];
+  columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
 }
 
 async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, admin, diff } = args;
+  const { db, shop, admin, diff, columnsByType } = args;
 
   try {
-    const result = await applyBulkMetaDiff({ db, shop, admin }, diff, async (processed, total) => {
+    const result = await applyBulkDiff({ db, shop, admin, columnsByType }, diff, async (processed, total) => {
       const progressPercent = Math.round((processed / total) * 100);
       await db.task
         .update({ where: { id: taskId }, data: { progress: progressPercent, processed } })
         .catch((err: unknown) => {
-          logger.error("[API-AI] SEO bulk-meta: failed to persist progress", {
+          logger.error("[API-AI] Bulk-editor save: failed to persist progress", {
             context: "AI",
             taskId,
             error: errorMessage(err),
@@ -148,10 +184,13 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
         });
     });
 
-    const finalStatus = result.saved === 0 && result.failures.length > 0 ? "failed" : "completed";
+    // Failures are per CELL since Phase 2 (Plan §4.4) — summarize per ROW so
+    // the count lines up with `total`/`processed`.
+    const failedRowCount = new Set(result.failures.map((f) => f.rowId)).size;
+    const finalStatus = result.saved === 0 && failedRowCount > 0 ? "failed" : "completed";
     const failureSummary =
-      result.failures.length > 0
-        ? `${result.failures.length} of ${result.saved + result.failures.length} row(s) failed`
+      failedRowCount > 0
+        ? `${failedRowCount} of ${result.saved + failedRowCount} row(s) failed`
         : null;
 
     await db.task.update({
@@ -166,14 +205,14 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
     });
   } catch (err: unknown) {
     const message = errorMessage(err);
-    logger.error("[API-AI] SEO bulk-meta: run failed", { context: "AI", taskId, error: message });
+    logger.error("[API-AI] Bulk-editor save: run failed", { context: "AI", taskId, error: message });
     await db.task
       .update({
         where: { id: taskId },
         data: { status: "failed", progress: 100, completedAt: new Date(), error: message.substring(0, 1000) },
       })
       .catch((updateErr: unknown) => {
-        logger.error("[API-AI] SEO bulk-meta: failed to persist failure state", {
+        logger.error("[API-AI] Bulk-editor save: failed to persist failure state", {
           context: "AI",
           taskId,
           error: errorMessage(updateErr),

@@ -16,6 +16,35 @@ export const TRANSLATE_CONTENT = `#graphql
   }
 `;
 
+/**
+ * TRANSLATE_CONTENT with the FULL echo selection required for verified saves
+ * (Plan §14 no. 7): `market` is an OBJECT on the Translation type — a flat
+ * `marketId` does not exist in the response, so market-aware callers must
+ * select `market { id }`. Kept as a separate document (instead of widening
+ * TRANSLATE_CONTENT) so the many existing callers keep their exact response
+ * shape. Used by registerAndVerify (bulk-editor translations.server.ts) — the
+ * echo (`translations`) is the ONLY proof a key was actually stored;
+ * `userErrors: []` alone is not (CLAUDE.md invariant).
+ */
+export const TRANSLATE_CONTENT_VERIFIED = `#graphql
+  mutation translateContentVerified($resourceId: ID!, $translations: [TranslationInput!]!) {
+    translationsRegister(resourceId: $resourceId, translations: $translations) {
+      userErrors {
+        field
+        message
+      }
+      translations {
+        key
+        locale
+        value
+        market {
+          id
+        }
+      }
+    }
+  }
+`;
+
 // $marketIds is optional: omit (or pass null) to remove the GLOBAL translation
 // (all markets); pass [gid://shopify/Market/<id>] to remove only that market's
 // override while the global translation survives. Existing callers that don't
