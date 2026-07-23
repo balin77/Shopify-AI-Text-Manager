@@ -205,7 +205,8 @@ export async function redactCustomerData(
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
- *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion
+ *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion,
+ *      SeoSitemapExclusion
  *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
@@ -530,6 +531,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoInternalLinkSuggestionsDeleted.count} SEO internal link suggestions`);
+
+    // Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md
+    // §2/§6): sitemap-exclusion suggestions + applied/reverted decisions.
+    const seoSitemapExclusionsDeleted = await tx.seoSitemapExclusion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoSitemapExclusionsDeleted.count} SEO sitemap exclusions`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

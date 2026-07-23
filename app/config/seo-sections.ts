@@ -111,6 +111,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "tool",
     planGate: "pro",
   },
+  {
+    id: "sitemap",
+    path: "/app/seo/sitemap",
+    icon: "🗺️",
+    labelKey: "sitemap",
+    kind: "tool",
+    planGate: "pro",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */

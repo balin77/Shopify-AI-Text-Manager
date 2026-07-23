@@ -1418,3 +1418,33 @@ model SeoInternalLinkSuggestion {
   @@unique([shop, fromResourceType, fromResourceId, toResourceType, toResourceId, locale], map: "SeoInternalLinkSuggestion_shop_from_to_locale_key")
   @@index([shop, status])
 }
+
+// Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md §2/§6):
+// one merchant-facing suggestion (or applied/reverted decision) to exclude a
+// resource from Shopify's platform-generated sitemap via the documented
+// `seo.hidden` metafield lever (namespace "seo", key "hidden") — set/cleared
+// by app/services/seo/sitemap.service.ts's applyExclusion/revertExclusion.
+// resourceType uses SeoCrawlPage's lowercase convention ("product" |
+// "collection" | "page" | "article" | "blog"), NOT SeoInternalLinkSuggestion's
+// capitalized one — sitemap.service.ts builds candidates directly from the
+// same AuditType-shaped buckets crawl.service.ts/audit.service.ts use.
+//
+// Lifecycle: "suggested" (we proposed it) -> "applied" (seo.hidden set via
+// API AND Shopify echoed the write back — userErrors alone is not enough,
+// CLAUDE.md invariant) -> "reverted" (metafieldsDelete echoed back). A
+// re-run of the suggestion sweep upserts idempotently via the unique key
+// below and — same rule as SeoInternalLinkSuggestion — never reactivates a
+// row the merchant (or a prior apply) already moved off "suggested".
+model SeoSitemapExclusion {
+  id           String    @id @default(cuid())
+  shop         String
+  resourceType String // "product" | "collection" | "page" | "article" | "blog"
+  resourceId   String // Shopify GID
+  reason       String? // "emptyCollection" | "thinContent" | "archivedProduct" | "manual" | …
+  status       String    @default("suggested")
+  appliedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([shop, resourceType, resourceId])
+  @@index([shop, status])
+}
