@@ -1032,6 +1032,42 @@ Respond in JSON format: ["title1", "title2", ...]`;
   }
 
   /**
+   * Up to `maxCount` synonyms / close alternative phrases for a product or
+   * collection's title / primary keyword — extra anchor candidates for the
+   * internal-linking matcher (PLAN_SEO_SUITE_COMPLETION.md §4.1/§4.3,
+   * internal-links.service.ts). One call per target item; the result is used
+   * once and never persisted (§4.4 "ephemeral-per-run" decision — see that
+   * service's header comment), so this is a plain raw-JSON call rather than a
+   * structured helper with its own prompt-tuning history. Never throws —
+   * matching is still useful with zero synonyms, so a parse/provider failure
+   * degrades to an empty list instead of failing the whole run.
+   */
+  async generateSynonyms(term: string, locale: string, maxCount = 3): Promise<string[]> {
+    const sanitizedTerm = sanitizePromptInput(term, { maxLength: 200 });
+    if (!sanitizedTerm) return [];
+
+    const language = localeName(locale) || 'English';
+    const prompt = `List up to ${maxCount} short synonyms or close alternative phrases a shopper might realistically use instead of "${sanitizedTerm}" in ${language}, for finding mentions of this same product/topic in other text (blog articles, page content). Single words or short phrases only — no full sentences.
+
+Respond with ONLY a JSON array of strings, no explanation. Example: ["synonym one", "synonym two"]. If you can't think of any good ones, respond with [].`;
+
+    try {
+      const responseText = await this.askAI(prompt);
+      const parsed: unknown = this.parseJSONResponse(responseText);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+        .map((s) => s.trim())
+        .slice(0, maxCount);
+    } catch (err) {
+      loggers.ai('warn', '[AI-SERVICE] generateSynonyms failed — continuing with zero synonyms', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+  }
+
+  /**
    * Permissive recovery for a malformed `["a", "b", ...]` response when the
    * model forgot to escape a straight " inside one of the values (common with
    * typographic content like German „Foo"). Strict JSON.parse rejects the

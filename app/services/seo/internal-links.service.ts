@@ -1,0 +1,614 @@
+/**
+ * Internal Linking Suggestions (Phase 2 of PLAN_SEO_SUITE_COMPLETION.md §4).
+ *
+ * "12 mentions of 'ceramic vase' across blog articles could link to product
+ * X." Pure DB-cache content analysis (contract §3/§6) — no live fetch, so
+ * this is independent of the Phase 1 crawler.
+ *
+ * ── Algorithm (§4.1) ────────────────────────────────────────────────────────
+ * 1. TARGET set: Product/Collection rows with a handle, keyed to their
+ *    keyword assignments (SeoKeywordAssignment via keywords.service's
+ *    `listAssignments`, primary + secondary, KEYWORDS_CONTRACT.md already
+ *    shipped) plus title, plus optional AI synonyms (§4.4 below). Draft/
+ *    archived PRODUCTS are excluded as targets (Collection has no status
+ *    column in the DB cache — see CLAUDE.md, so it can't be filtered the
+ *    same way; documented gap, not a bug).
+ * 2. SOURCE set: HTML bodies of Article/Page + Product descriptionHtml (DB
+ *    cache, uncapped by status — the plan's skip-rule is target-only).
+ * 3. MATCH: per source, per target, try that target's anchors in priority
+ *    order (title > primary keyword > secondary > synonym) against the
+ *    source's TEXT NODES ONLY — never inside an existing `<a>`, never inside
+ *    a heading, and never via a regex sweep of the raw HTML string (cheerio
+ *    DOM traversal only, so `<a href="x">Product Foo</a>` never becomes a
+ *    nested link, and "Foo" inside `<h2>` is never turned into an anchor).
+ *    Skips: source already links to target (href contains the target's
+ *    `/products/<handle>` or `/collections/<handle>` path); target === source;
+ *    target draft/archived (Product only, see above).
+ * 4. CONFIDENCE: base score per match kind (title > primary > secondary >
+ *    synonym), reduced by how late in the document the match occurred.
+ * 5. Idempotent upsert into `SeoInternalLinkSuggestion` — a `dismissed` row
+ *    whose `dismissedUntil` is still in the future is left untouched.
+ *
+ * ── Locale (§4.1 "Locale rule") ─────────────────────────────────────────────
+ * v1 only matches PRIMARY-locale content (source locale = primary is
+ * explicitly the plan's assumption; cross-locale matching is a stated
+ * non-goal). Every suggestion this module produces therefore carries
+ * `locale: ""`. Keyword anchors are filtered to `locale === ""` for the same
+ * reason (SeoKeyword.locale: "" = primary, see KEYWORDS_CONTRACT.md §1).
+ *
+ * ── resourceType casing ─────────────────────────────────────────────────────
+ * "Product" | "Collection" | "Article" | "Page" — the SAME capitalized
+ * convention as ContentTranslation/SeoKeywordAssignment/SeoGscPageStat/
+ * FreshnessResourceType, NOT SeoCrawlPage's lowercase `AuditType` convention.
+ * Chosen because the target set is built directly from SeoKeywordAssignment
+ * rows, which already use this casing — converting back and forth would be
+ * pure friction with no benefit.
+ *
+ * ── Synonym cache (§4.4 / §11.1, "open for implementation") ─────────────────
+ * DECISION: ephemeral-per-run, ADR-style reasoning below. No schema change,
+ * no GDPR surface added beyond the suggestion rows themselves.
+ *   - A persistent synonym cache (JSON column on Product/Collection, or a new
+ *     table) would need its own invalidation story (title changes, keyword
+ *     re-assignment) that nothing else in this codebase currently tracks for
+ *     ANY AI-derived field — every existing AI cache in this app (alt text,
+ *     generated titles, etc.) is either a direct content field (invalidated
+ *     by the normal edit flow) or genuinely ephemeral. Synonyms have no
+ *     natural "this changed" signal to key off.
+ *   - The run is merchant-triggered and infrequent (a manual button, not a
+ *     cron), and the match loop itself is LLM-free — so the "cost" of
+ *     ephemeral is N synonym calls once per manual run, not once per page
+ *     view or per scheduled sweep. Capped at MAX_SYNONYM_TARGETS per run to
+ *     bound that cost further (see below).
+ *   - If usage data later shows merchants re-running this often enough that
+ *     synonym cost dominates, the fix is a cache keyed by (title, locale) —
+ *     but that is speculative today, so it is not built (contract: don't
+ *     build ahead of evidence).
+ */
+
+import * as cheerio from "cheerio";
+import type { AnyNode } from "domhandler";
+import type { PrismaClient } from "@prisma/client";
+import { listAssignments } from "./keywords.service";
+import { MAX_AUDIT_ITEMS_PER_TYPE } from "./audit.service";
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+/** §4.1 "Cap": at most this many suggestions surface per source item per run. */
+export const MAX_SUGGESTIONS_PER_SOURCE = 3;
+/** §4.1 "Cap": at most this many `pending` suggestions open per shop at once. */
+export const MAX_PENDING_PER_SHOP = 200;
+/**
+ * Bounds the number of target items that get a synonym LLM call in one run
+ * (§4.3 "roughly 1 call per target item" — capped so a shop with thousands of
+ * products/collections can't turn one button click into thousands of AI
+ * calls). Targets beyond this cap still match on title/keywords, just
+ * without synonyms.
+ */
+export const MAX_SYNONYM_TARGETS = 200;
+/** §4.3 heartbeat cadence. */
+export const HEARTBEAT_EVERY_SOURCES = 20;
+
+export type TargetResourceType = "Product" | "Collection";
+export type SourceResourceType = "Product" | "Article" | "Page";
+export type AnchorKind = "title" | "primary" | "secondary" | "synonym";
+
+const KIND_BASE_CONFIDENCE: Record<AnchorKind, number> = {
+  title: 0.95,
+  primary: 0.85,
+  secondary: 0.7,
+  synonym: 0.55,
+};
+
+export interface AnchorCandidate {
+  text: string;
+  kind: AnchorKind;
+}
+
+export interface TargetItem {
+  resourceType: TargetResourceType;
+  resourceId: string;
+  handle: string;
+  title: string;
+  /** Priority-ordered: title, then primary keyword, then secondaries, then synonyms. */
+  anchors: AnchorCandidate[];
+}
+
+export interface SourceItem {
+  resourceType: SourceResourceType;
+  resourceId: string;
+  html: string;
+}
+
+export interface LinkMatch {
+  toResourceType: TargetResourceType;
+  toResourceId: string;
+  anchorText: string; // the exact substring found in the source
+  confidence: number;
+  matchKind: AnchorKind;
+}
+
+// ── Anchor candidates (pure) ────────────────────────────────────────────────
+
+/**
+ * Priority-ordered, de-duplicated (case-insensitive) anchor list for one
+ * target item — title first, then primary keyword, then secondaries in the
+ * order given, then synonyms in the order given.
+ */
+export function buildAnchorCandidates(input: {
+  title: string;
+  primaryKeyword?: string | null;
+  secondaryKeywords?: string[];
+  synonyms?: string[];
+}): AnchorCandidate[] {
+  const seen = new Set<string>();
+  const out: AnchorCandidate[] = [];
+  const push = (text: string | null | undefined, kind: AnchorKind) => {
+    const t = (text || "").trim();
+    if (!t) return;
+    const key = t.toLocaleLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ text: t, kind });
+  };
+  push(input.title, "title");
+  push(input.primaryKeyword, "primary");
+  for (const s of input.secondaryKeywords ?? []) push(s, "secondary");
+  for (const s of input.synonyms ?? []) push(s, "synonym");
+  return out;
+}
+
+/** `/products/<handle>` or `/collections/<handle>` — the storefront path
+ *  used both for the "already linked" check and the Accept-time href. */
+export function targetUrlPath(target: { resourceType: TargetResourceType; handle: string }): string {
+  const segment = target.resourceType === "Product" ? "products" : "collections";
+  return `/${segment}/${target.handle}`;
+}
+
+// ── cheerio text-node traversal (pure) ──────────────────────────────────────
+
+const EXCLUDED_ANCESTOR_SELECTOR = "a, h1, h2, h3, h4, h5, h6, script, style, title";
+
+interface TextNodeRef {
+  el: AnyNode; // cheerio/domhandler text node
+  text: string;
+}
+
+/**
+ * Every non-empty text node in the document EXCEPT ones nested inside an
+ * `<a>`, a heading, or `<script>`/`<style>`/`<title>` — the eligible surface
+ * for both matching (§4.1 "nur Text-Knoten... nicht innerhalb bestehender
+ * <a>, nicht in Headings") and insertion (Accept flow, §4.2).
+ */
+function collectTextNodes($: cheerio.CheerioAPI): TextNodeRef[] {
+  const out: TextNodeRef[] = [];
+  $("*")
+    .addBack()
+    .contents()
+    .each((_i, el) => {
+      if (el.type !== "text") return;
+      const text = el.data;
+      if (!text || !text.trim()) return;
+      const parent = $(el).parent();
+      if (parent.length && parent.closest(EXCLUDED_ANCESTOR_SELECTOR).length > 0) return;
+      out.push({ el, text });
+    });
+  return out;
+}
+
+function collectHrefs($: cheerio.CheerioAPI): string[] {
+  const hrefs: string[] = [];
+  $("a[href]").each((_i, el) => {
+    const href = $(el).attr("href");
+    if (href) hrefs.push(href);
+  });
+  return hrefs;
+}
+
+function isAlreadyLinked(hrefs: string[], target: { resourceType: TargetResourceType; handle: string }): boolean {
+  const needle = targetUrlPath(target);
+  return hrefs.some((h) => h.includes(needle));
+}
+
+/**
+ * Unicode-aware whole-word/whole-phrase, case-insensitive match (same
+ * boundary trick as keywords.service's private `buildWordBoundaryRegex` —
+ * re-implemented rather than imported/exported because this one needs the
+ * match INDEX for position-based confidence and insertion, which the
+ * presence/counting use case in keywords.service never needed).
+ */
+function buildAnchorRegex(anchorText: string): RegExp {
+  const escaped = anchorText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<=^|[^\\p{L}\\p{N}])(${escaped})(?=$|[^\\p{L}\\p{N}])`, "iu");
+}
+
+/** First occurrence of `anchorText` across the text nodes, in document order,
+ *  plus its character offset into the concatenated eligible text (for the
+ *  position-based confidence penalty). Null when no eligible node matches. */
+function findFirstMatch(textNodes: TextNodeRef[], anchorText: string): { matchedText: string; charOffset: number } | null {
+  if (!anchorText.trim()) return null;
+  const re = buildAnchorRegex(anchorText);
+  let offset = 0;
+  for (const node of textNodes) {
+    const m = node.text.match(re);
+    if (m && typeof m.index === "number") {
+      return { matchedText: m[1], charOffset: offset + m.index };
+    }
+    offset += node.text.length;
+  }
+  return null;
+}
+
+function computeConfidence(kind: AnchorKind, positionRatio: number): number {
+  const base = KIND_BASE_CONFIDENCE[kind];
+  const positionPenalty = Math.min(0.15, Math.max(0, positionRatio) * 0.15);
+  const raw = base - positionPenalty;
+  return Math.max(0, Math.min(1, Math.round(raw * 100) / 100));
+}
+
+// ── Per-source matching (pure — no DB, no network) ──────────────────────────
+
+/**
+ * Match every candidate target against one source's HTML, returning up to
+ * `MAX_SUGGESTIONS_PER_SOURCE` matches sorted by confidence. `targets` must
+ * already exclude the source item itself (target === source is a §4.1 skip
+ * the caller applies before calling this, since it needs no HTML parsing).
+ */
+export function matchSourceAgainstTargets(
+  sourceHtml: string | null | undefined,
+  targets: TargetItem[],
+  maxPerSource: number = MAX_SUGGESTIONS_PER_SOURCE,
+): LinkMatch[] {
+  if (!sourceHtml || !sourceHtml.trim() || targets.length === 0) return [];
+
+  const $ = cheerio.load(sourceHtml);
+  const textNodes = collectTextNodes($);
+  if (textNodes.length === 0) return [];
+  const totalLength = textNodes.reduce((sum, n) => sum + n.text.length, 0) || 1;
+  const hrefs = collectHrefs($);
+
+  const candidates: LinkMatch[] = [];
+  for (const target of targets) {
+    if (isAlreadyLinked(hrefs, target)) continue;
+    for (const anchor of target.anchors) {
+      const match = findFirstMatch(textNodes, anchor.text);
+      if (!match) continue;
+      candidates.push({
+        toResourceType: target.resourceType,
+        toResourceId: target.resourceId,
+        anchorText: match.matchedText,
+        confidence: computeConfidence(anchor.kind, match.charOffset / totalLength),
+        matchKind: anchor.kind,
+      });
+      break; // priority order already encoded in target.anchors — first hit wins for this target
+    }
+  }
+
+  candidates.sort((a, b) => b.confidence - a.confidence);
+  return candidates.slice(0, maxPerSource);
+}
+
+// ── Accept-time insertion (pure) ────────────────────────────────────────────
+
+export interface InsertLinkResult {
+  html: string;
+  inserted: boolean;
+}
+
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttr(s: string): string {
+  return escapeHtmlText(s).replace(/"/g, "&quot;");
+}
+
+/**
+ * cheerio-based link insertion for the Accept flow (§4.2) — finds the FIRST
+ * eligible text node (same exclusion rules as matching: not inside an `<a>`
+ * or heading) containing `anchorText` and wraps just that substring in
+ * `<a href="href">`, leaving every surrounding tag untouched. NEVER a regex
+ * replace over the raw HTML string (would silently strip/garble the rest of
+ * the markup on any real-world rich-text body).
+ *
+ * Returns `{ inserted: false }` unchanged when the anchor text is no longer
+ * present (content changed since the suggestion was generated) — callers
+ * must treat that as "suggestion stale", not silently save unrelated HTML.
+ */
+export function insertLinkIntoHtml(sourceHtml: string, anchorText: string, href: string): InsertLinkResult {
+  if (!sourceHtml || !sourceHtml.trim() || !anchorText.trim()) {
+    return { html: sourceHtml, inserted: false };
+  }
+
+  const $ = cheerio.load(sourceHtml);
+  const textNodes = collectTextNodes($);
+  const re = buildAnchorRegex(anchorText);
+
+  for (const { el, text } of textNodes) {
+    const m = text.match(re);
+    if (!m || typeof m.index !== "number") continue;
+
+    const matchedText = m[1];
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + matchedText.length);
+    const linkHtml = `<a href="${escapeHtmlAttr(href)}">${escapeHtmlText(matchedText)}</a>`;
+    const replacementHtml = `${escapeHtmlText(before)}${linkHtml}${escapeHtmlText(after)}`;
+
+    $(el).replaceWith(replacementHtml);
+    return { html: $("body").html() ?? "", inserted: true };
+  }
+
+  return { html: sourceHtml, inserted: false };
+}
+
+// ── DB orchestration ─────────────────────────────────────────────────────────
+
+export interface InternalLinksSummary {
+  targetsConsidered: number;
+  targetsWithSynonyms: number;
+  sourcesScanned: number;
+  created: number;
+  updated: number;
+  /** True if the shop's MAX_PENDING_PER_SHOP cap was hit before every source
+   *  was scanned — some real matches were not persisted this run. */
+  cappedByPendingLimit: boolean;
+}
+
+export interface AssignmentLike {
+  resourceType: string;
+  resourceId: string;
+  keyword: string;
+  role: "primary" | "secondary";
+  locale: string;
+}
+
+/** Build the per-target keyword map (primary + secondaries) from the shop's
+ *  full assignment list, filtered to primary-locale Product/Collection rows
+ *  (§4.1 locale rule). Exported for the locale-isolation unit test — a
+ *  foreign-locale keyword assignment must never surface as an anchor. */
+export function keywordsByResource(assignments: AssignmentLike[]): Map<string, { primary: string | null; secondaries: string[] }> {
+  const map = new Map<string, { primary: string | null; secondaries: string[] }>();
+  for (const a of assignments) {
+    if (a.locale !== "") continue;
+    if (a.resourceType !== "Product" && a.resourceType !== "Collection") continue;
+    const key = `${a.resourceType}:${a.resourceId}`;
+    const entry = map.get(key) ?? { primary: null, secondaries: [] };
+    if (a.role === "primary") entry.primary = a.keyword;
+    else entry.secondaries.push(a.keyword);
+    map.set(key, entry);
+  }
+  return map;
+}
+
+function suggestionKey(row: { fromResourceType: string; fromResourceId: string; toResourceType: string; toResourceId: string; locale: string }): string {
+  return `${row.fromResourceType}:${row.fromResourceId}::${row.toResourceType}:${row.toResourceId}::${row.locale}`;
+}
+
+export interface RunInternalLinksDeps {
+  db: PrismaClient;
+  /** Optional — omitted (e.g. no AI key configured) means targets match on
+   *  title/keywords only, no synonyms. Matches AIService.generateSynonyms's
+   *  shape without importing the AI service into this DB-cache-first module. */
+  synonymProvider?: (term: string, locale: string) => Promise<string[]>;
+  onProgress?: (processed: number, total: number) => void | Promise<void>;
+  heartbeatEvery?: number;
+}
+
+/**
+ * The full merchant-triggered run (§4.1–§4.3): load targets + sources from
+ * the DB cache, optionally enrich targets with AI synonyms, match, and
+ * upsert suggestions. This is the ONLY function in this module that touches
+ * the database — everything above is pure and unit-testable without a DB.
+ */
+export async function runInternalLinkSuggestions(shop: string, deps: RunInternalLinksDeps): Promise<InternalLinksSummary> {
+  const { db, synonymProvider, onProgress, heartbeatEvery = HEARTBEAT_EVERY_SOURCES } = deps;
+
+  // ── Targets ────────────────────────────────────────────────────────────
+  const [products, collections, assignments] = await Promise.all([
+    db.product.findMany({
+      where: { shop, status: "ACTIVE" },
+      select: { id: true, handle: true, title: true },
+      take: MAX_AUDIT_ITEMS_PER_TYPE,
+    }),
+    db.collection.findMany({
+      where: { shop },
+      select: { id: true, handle: true, title: true },
+      take: MAX_AUDIT_ITEMS_PER_TYPE,
+    }),
+    listAssignments(db, shop),
+  ]);
+
+  const keywordMap = keywordsByResource(assignments as unknown as AssignmentLike[]);
+
+  const targets: TargetItem[] = [
+    ...products
+      .filter((p) => p.handle)
+      .map((p) => ({ resourceType: "Product" as const, resourceId: p.id, handle: p.handle, title: p.title })),
+    ...collections
+      .filter((c) => c.handle)
+      .map((c) => ({ resourceType: "Collection" as const, resourceId: c.id, handle: c.handle, title: c.title })),
+  ].map((base) => {
+    const kw = keywordMap.get(`${base.resourceType}:${base.resourceId}`);
+    return {
+      ...base,
+      anchors: buildAnchorCandidates({
+        title: base.title,
+        primaryKeyword: kw?.primary ?? null,
+        secondaryKeywords: kw?.secondaries ?? [],
+      }),
+    } satisfies TargetItem;
+  });
+
+  // ── Synonyms (§4.4 — ephemeral, capped) ───────────────────────────────
+  let targetsWithSynonyms = 0;
+  if (synonymProvider) {
+    for (const target of targets.slice(0, MAX_SYNONYM_TARGETS)) {
+      const seed = target.anchors.find((a) => a.kind === "primary")?.text || target.title;
+      try {
+        const synonyms = await synonymProvider(seed, "");
+        if (synonyms.length > 0) {
+          target.anchors.push(...buildAnchorCandidates({ title: "", synonyms }).filter((a) => a.kind === "synonym"));
+          targetsWithSynonyms++;
+        }
+      } catch {
+        // Best-effort — a single failed synonym call must not abort the run;
+        // that target simply matches on title/keywords only.
+      }
+    }
+  }
+
+  // ── Sources ────────────────────────────────────────────────────────────
+  const [sourceProducts, articles, pages] = await Promise.all([
+    db.product.findMany({
+      where: { shop },
+      select: { id: true, descriptionHtml: true },
+      take: MAX_AUDIT_ITEMS_PER_TYPE,
+    }),
+    db.article.findMany({
+      where: { shop },
+      select: { id: true, body: true },
+      take: MAX_AUDIT_ITEMS_PER_TYPE,
+    }),
+    db.page.findMany({
+      where: { shop },
+      select: { id: true, body: true },
+      take: MAX_AUDIT_ITEMS_PER_TYPE,
+    }),
+  ]);
+
+  const sources: SourceItem[] = [
+    ...sourceProducts.map((p) => ({ resourceType: "Product" as const, resourceId: p.id, html: p.descriptionHtml || "" })),
+    ...articles.map((a) => ({ resourceType: "Article" as const, resourceId: a.id, html: a.body || "" })),
+    ...pages.map((p) => ({ resourceType: "Page" as const, resourceId: p.id, html: p.body || "" })),
+  ];
+
+  // ── Existing suggestions (dismissed-future guard + pending budget) ─────
+  const existingRows = await db.seoInternalLinkSuggestion.findMany({
+    where: { shop },
+    select: {
+      fromResourceType: true,
+      fromResourceId: true,
+      toResourceType: true,
+      toResourceId: true,
+      locale: true,
+      status: true,
+      dismissedUntil: true,
+    },
+    take: 5000,
+  });
+  const existingByKey = new Map(existingRows.map((r) => [suggestionKey(r), r]));
+  let pendingCount = existingRows.filter((r) => r.status === "pending").length;
+
+  const now = new Date();
+  let created = 0;
+  let updated = 0;
+  let cappedByPendingLimit = false;
+  let processed = 0;
+
+  for (const source of sources) {
+    processed++;
+    const eligibleTargets = targets.filter(
+      (t) => !(t.resourceType === source.resourceType && t.resourceId === source.resourceId),
+    );
+    const matches = matchSourceAgainstTargets(source.html, eligibleTargets);
+
+    for (const match of matches) {
+      const candidateKey = suggestionKey({
+        fromResourceType: source.resourceType,
+        fromResourceId: source.resourceId,
+        toResourceType: match.toResourceType,
+        toResourceId: match.toResourceId,
+        locale: "",
+      });
+      const existing = existingByKey.get(candidateKey);
+
+      // "Ablehnen" (permanent reject) stores dismissedUntil: null; "90 Tage
+      // ignorieren" stores a future date. Either way, a dismissed row is
+      // reactivatable ONLY once its dismissedUntil has passed — a null
+      // dismissedUntil never passes, so a permanent reject is never
+      // reactivated by a later run.
+      if (existing?.status === "dismissed" && (!existing.dismissedUntil || existing.dismissedUntil > now)) {
+        continue;
+      }
+      if (existing?.status === "accepted") {
+        continue; // already applied — a rerun should see it as "already linked" anyway
+      }
+
+      if (!existing) {
+        if (pendingCount >= MAX_PENDING_PER_SHOP) {
+          cappedByPendingLimit = true;
+          continue;
+        }
+        await db.seoInternalLinkSuggestion.create({
+          data: {
+            shop,
+            locale: "",
+            fromResourceType: source.resourceType,
+            fromResourceId: source.resourceId,
+            toResourceType: match.toResourceType,
+            toResourceId: match.toResourceId,
+            anchorText: match.anchorText,
+            confidence: match.confidence,
+            status: "pending",
+          },
+        });
+        pendingCount++;
+        created++;
+        existingByKey.set(candidateKey, {
+          fromResourceType: source.resourceType,
+          fromResourceId: source.resourceId,
+          toResourceType: match.toResourceType,
+          toResourceId: match.toResourceId,
+          locale: "",
+          status: "pending",
+          dismissedUntil: null,
+        });
+      } else {
+        // Existing "pending" row, or a "dismissed" row whose dismissedUntil
+        // has lapsed — refresh it back to pending with the latest match.
+        // Reviving a lapsed dismissal counts against the same budget as a
+        // brand-new suggestion (it wasn't in the pending count above).
+        const wasPending = existing.status === "pending";
+        if (!wasPending && pendingCount >= MAX_PENDING_PER_SHOP) {
+          cappedByPendingLimit = true;
+          continue;
+        }
+        if (!wasPending) pendingCount++;
+        await db.seoInternalLinkSuggestion.update({
+          where: {
+            shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale: {
+              shop,
+              fromResourceType: source.resourceType,
+              fromResourceId: source.resourceId,
+              toResourceType: match.toResourceType,
+              toResourceId: match.toResourceId,
+              locale: "",
+            },
+          },
+          data: {
+            anchorText: match.anchorText,
+            confidence: match.confidence,
+            status: "pending",
+            dismissedUntil: null,
+          },
+        });
+        updated++;
+        existing.status = "pending";
+        existing.dismissedUntil = null;
+      }
+    }
+
+    if (onProgress && processed % heartbeatEvery === 0) {
+      await onProgress(processed, sources.length);
+    }
+  }
+  if (onProgress) await onProgress(processed, sources.length);
+
+  return {
+    targetsConsidered: targets.length,
+    targetsWithSynonyms,
+    sourcesScanned: sources.length,
+    created,
+    updated,
+    cappedByPendingLimit,
+  };
+}

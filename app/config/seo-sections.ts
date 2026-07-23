@@ -103,6 +103,14 @@ export const SEO_SECTIONS: SeoSectionDef[] = [
     kind: "audit",
     planGate: "pro",
   },
+  {
+    id: "internalLinks",
+    path: "/app/seo/internal-links",
+    icon: "🔗",
+    labelKey: "internalLinks",
+    kind: "tool",
+    planGate: "pro",
+  },
 ];
 
 /** True when `pathname` is the SEO overview/index (exact, not a sub-path). */

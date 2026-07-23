@@ -175,6 +175,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
+  // Internal-linking suggestions card (PLAN_SEO_SUITE_COMPLETION.md §4.2):
+  // count only — the table lives on its own section. Pro-gated like the
+  // freshness card; best-effort so a DB error never breaks the dashboard.
+  let internalLinksSuggestionCount = 0;
+  if (meetsPlan(plan, "pro")) {
+    try {
+      internalLinksSuggestionCount = await db.seoInternalLinkSuggestion.count({
+        where: { shop: session.shop, status: "pending" },
+      });
+    } catch {
+      internalLinksSuggestionCount = 0;
+    }
+  }
+
   return json({
     audit: snapshot.audit,
     lastScannedAt: snapshot.createdAt.toISOString(),
@@ -184,6 +198,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     primaryLocale,
     activeLocale: activeLocaleKey, // "" = primary; else the foreign locale code
     freshnessCandidateCount,
+    internalLinksSuggestionCount,
   });
 };
 
@@ -205,6 +220,7 @@ export default function SeoDashboard() {
     primaryLocale,
     activeLocale,
     freshnessCandidateCount,
+    internalLinksSuggestionCount,
   } = useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -595,6 +611,26 @@ export default function SeoDashboard() {
               </BlockStack>
               <Button onClick={() => handleNavigate("/app/seo/search-console")}>
                 {d.freshnessCardButton}
+              </Button>
+            </InlineStack>
+          </Card>
+        )}
+
+        {/* Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.2):
+            count only — the table lives on its own section. */}
+        {internalLinksSuggestionCount > 0 && (
+          <Card>
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">
+                  {d.internalLinksCardTitle}
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {d.internalLinksCardCount.replace("{count}", String(internalLinksSuggestionCount))}
+                </Text>
+              </BlockStack>
+              <Button onClick={() => handleNavigate("/app/seo/internal-links")}>
+                {d.internalLinksCardButton}
               </Button>
             </InlineStack>
           </Card>

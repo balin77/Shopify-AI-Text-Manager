@@ -47,6 +47,7 @@ import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
 import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
 import { handleSeoJsonLdAudit } from "./api-ai-handlers/seo-json-ld-audit.handler";
 import { handleSeoCrawl } from "./api-ai-handlers/seo-crawl.handler";
+import { handleSeoInternalLinks } from "./api-ai-handlers/seo-internal-links.handler";
 import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-translate.handler";
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleClassifyKeywordIntents } from "./api-ai-handlers/keyword-intent.handler";
@@ -148,6 +149,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleSeoJsonLdAudit(ctx);
       case "seoCrawl":
         return handleSeoCrawl(ctx);
+      case "seoInternalLinks":
+        return handleSeoInternalLinks(ctx);
       case "bulkEditorTranslate":
         return handleBulkEditorTranslate(ctx);
       case "distributeKeywords":

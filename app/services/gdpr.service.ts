@@ -205,7 +205,8 @@ export async function redactCustomerData(
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
- *      SeoCrawlBrokenLink, SeoGscPageStat         (all scoped by `shop`)
+ *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion
+ *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -522,6 +523,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoGscPageStatsDeleted.count} SEO GSC page stats`);
+
+    // Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4):
+    // suggested internal links between DB-cached content.
+    const seoInternalLinkSuggestionsDeleted = await tx.seoInternalLinkSuggestion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoInternalLinkSuggestionsDeleted.count} SEO internal link suggestions`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

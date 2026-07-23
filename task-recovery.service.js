@@ -76,6 +76,12 @@ const LONG_RUNNING_TASK_TYPES = [
   // 5xx/timeout) can legitimately run for many minutes on a large shop, so it
   // needs the same generous stuck-task threshold as the other detached scans.
   'seoCrawl',
+  // Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.3, Phase 2,
+  // internal-links.handler.ts) — a synonym LLM call per target product/
+  // collection (up to a few hundred) followed by an LLM-free cheerio match
+  // loop over every article/page/product body, same fan-out shape as
+  // seoBulkFix, so it needs the same generous stuck-task threshold.
+  'seoInternalLinks',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

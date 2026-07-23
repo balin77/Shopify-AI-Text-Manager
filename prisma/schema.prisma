@@ -1381,3 +1381,40 @@ model SeoGscPageStat {
   @@unique([shop, page])
   @@index([shop, resourceType, resourceId])
 }
+
+// Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4): one
+// suggested internal link "source item mentions target item's anchor text
+// → link to it". resourceType uses the SAME capitalized convention as
+// ContentTranslation/SeoKeywordAssignment/SeoGscPageStat ("Product" |
+// "Collection" | "Article" | "Page"), since the matcher's target set is
+// built from SeoKeywordAssignment and the source set includes ContentTranslation-
+// adjacent content — NOT SeoCrawlPage's lowercase convention.
+// locale is always "" (primary) in v1 — Phase 2 explicitly does not match
+// across locales (see internal-links.service.ts header).
+// Idempotent across re-runs via the composite unique key; a `dismissed` row
+// whose dismissedUntil is still in the future is never reactivated by a
+// later run (internal-links.service.ts upsertSuggestions).
+model SeoInternalLinkSuggestion {
+  id               String    @id @default(cuid())
+  shop             String
+  locale           String    @default("") // anchor + target always same locale
+  fromResourceType String
+  fromResourceId   String
+  anchorText       String // the mention found in the source content
+  toResourceType   String
+  toResourceId     String
+  confidence       Float
+  status           String // "pending" | "accepted" | "dismissed"
+  // "Ablehnen" (permanent reject) -> null (never reactivated by a later run).
+  // "90 Tage ignorieren" -> a future date (reactivatable once it has passed).
+  dismissedUntil   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Default Prisma-generated constraint name would exceed Postgres' 63-byte
+  // identifier limit (101 chars) — explicit short `map`, same fix as
+  // ThemeTranslation's shop_resourceId_groupId_key_locale_themeId_marketId
+  // unique key (see CLAUDE.md).
+  @@unique([shop, fromResourceType, fromResourceId, toResourceType, toResourceId, locale], map: "SeoInternalLinkSuggestion_shop_from_to_locale_key")
+  @@index([shop, status])
+}
