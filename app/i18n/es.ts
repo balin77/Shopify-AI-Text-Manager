@@ -1877,6 +1877,17 @@ export const es: Translation = {
         empty: "No se encontraron elementos.",
         loading: "Cargando…",
       },
+      // Pestaña Asignaciones (Fase 5): lista agrupada por elemento y expandible.
+      assignFilterPlaceholder: "Filtrar elemento o palabra clave…",
+      scoreFilterLabel: "Puntuación",
+      scoreFilterAll: "Todas las puntuaciones",
+      scoreFilterUnder50: "< 50",
+      scoreFilterUnder80: "< 80",
+      gscAvg: "GSC ⌀",
+      expandItem: "Expandir «{item}»",
+      collapseItem: "Contraer «{item}»",
+      addKeywordInline: "+ Palabra clave",
+      addKeywordInlinePlaceholder: "Añadir palabra clave…",
     },
     searchConsolePage: {
       helpTitle: "¿Qué te da conectar Search Console?",

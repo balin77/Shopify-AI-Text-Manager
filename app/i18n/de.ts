@@ -1875,6 +1875,17 @@ export const de = {
         empty: "Keine Inhalte gefunden.",
         loading: "Lädt…",
       },
+      // Zuordnungen-Tab (Phase 5): item-gruppierte, aufklappbare Liste.
+      assignFilterPlaceholder: "Inhalt oder Keyword filtern…",
+      scoreFilterLabel: "Score",
+      scoreFilterAll: "Alle Scores",
+      scoreFilterUnder50: "< 50",
+      scoreFilterUnder80: "< 80",
+      gscAvg: "GSC ⌀",
+      expandItem: "„{item}“ aufklappen",
+      collapseItem: "„{item}“ einklappen",
+      addKeywordInline: "+ Keyword",
+      addKeywordInlinePlaceholder: "Keyword hinzufügen…",
     },
     searchConsolePage: {
       helpTitle: "Was bringt dir die Search-Console-Verbindung?",

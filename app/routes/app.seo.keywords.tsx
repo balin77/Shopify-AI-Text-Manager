@@ -9,7 +9,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BlockStack, Banner, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -61,15 +61,8 @@ import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getFormString } from "../utils/form-data.utils";
 
-/** Items shown per type in the add-keyword picker. */
-const PICKER_CAP = 250;
-
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
 
-interface PickerItem {
-  id: string;
-  title: string;
-}
 interface ItemContent {
   title: string;
   seoTitle: string;
@@ -242,21 +235,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Intent classification backlog (§7.2) — drives the classify button label.
   const unclassifiedCount = await db.seoKeyword.count({ where: { shop, intent: null } });
 
-  // Lightweight per-type pickers for the add form (capped).
-  const [products, collections, articles, pages] = await Promise.all([
-    db.product.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.collection.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.article.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.page.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-  ]);
-
-  const pickers: Record<KeywordResourceType, PickerItem[]> = {
-    Product: products,
-    Collection: collections,
-    Article: articles,
-    Page: pages,
-  };
-
   // Locale options for the add-form's Select: primary first (value "" — the
   // SeoKeyword convention), then published secondaries by their Shopify code.
   const localeOptions = [
@@ -402,7 +380,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     keywords,
-    pickers,
     localeOptions,
     // Active locale for the Locale-Navbar highlight: a ?group= deeplink forces
     // the group's own language, otherwise ?loc= (primary "" by default).
@@ -759,7 +736,7 @@ const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
 
 export default function SeoKeywords() {
   const data = useLoaderData<typeof loader>();
-  const { keywords, pickers, localeOptions } = data;
+  const { keywords, localeOptions } = data;
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -768,18 +745,6 @@ export default function SeoKeywords() {
   const saveFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
 
-  const [type, setType] = useState<KeywordResourceType>("Product");
-  const [itemId, setItemId] = useState("");
-  // Text typed into the item Autocomplete's TextField — separate from itemId
-  // so the field can show a human-readable label while itemId stores the id.
-  const [itemInputValue, setItemInputValue] = useState("");
-  const [keyword, setKeywordInput] = useState("");
-  // "" = primary locale (default). Not reset after save, same as `type`, so
-  // tracking several keywords in a row for the same secondary locale is quick.
-  const [locale, setLocale] = useState("");
-  // Role for the add form (Phase 1): primary is the default; secondaries
-  // supplement it (max 5 keywords per item, enforced server-side).
-  const [role, setRole] = useState<KeywordRole>("primary");
   // Which row's action is in flight — the rowFetcher is shared across rows,
   // so this is what lets us spinner the right button and disable the rest.
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
@@ -792,9 +757,8 @@ export default function SeoKeywords() {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
     const data = saveFetcher.data;
     if (data.ok && data.kind === "saved") {
-      setKeywordInput("");
-      setItemId("");
-      setItemInputValue("");
+      // The inline "+ Keyword" controls own their own draft state and clear
+      // themselves on this success; the Shell only drops the confirm-flow ref.
       lastSubmitRef.current = null;
       return;
     }
@@ -854,14 +818,24 @@ export default function SeoKeywords() {
     if (rowFetcher.state === "idle") setPendingRowId(null);
   }, [rowFetcher.state]);
 
-  const handleSubmitKeyword = () => {
+  // Per-item inline add (§2.3): the AssignmentsTab's "+ Keyword" control drives
+  // this. Locale is fixed to the active language (the top dimension) — the
+  // per-form Select/Autocomplete of the old add-form is gone. Still routes
+  // through saveFetcher so the primaryExists-swap and cannibalization confirm
+  // effects above keep working unchanged.
+  const handleAddKeyword = (args: {
+    resourceType: KeywordResourceType;
+    resourceId: string;
+    keyword: string;
+    role: KeywordRole;
+  }) => {
     const payload: Record<string, string> = {
       actionType: "setKeyword",
-      resourceType: type,
-      resourceId: itemId,
-      keyword,
-      locale,
-      role,
+      resourceType: args.resourceType,
+      resourceId: args.resourceId,
+      keyword: args.keyword,
+      locale: data.activeLocale,
+      role: args.role,
     };
     lastSubmitRef.current = payload;
     saveFetcher.submit(payload, { method: "post" });
@@ -1094,12 +1068,6 @@ export default function SeoKeywords() {
 
   // ── Intent classification + filter (plan §7.2) ──
   const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
-  const [intentFilter, setIntentFilter] = useState("all");
-  const filteredKeywords = useMemo(() => {
-    if (intentFilter === "all") return keywords;
-    if (intentFilter === "none") return keywords.filter((r) => !r.intent);
-    return keywords.filter((r) => r.intent === intentFilter);
-  }, [keywords, intentFilter]);
 
   useEffect(() => {
     if (intentFetcher.state === "idle" && intentFetcher.data?.success) {
@@ -1110,31 +1078,6 @@ export default function SeoKeywords() {
 
   const intentLabel = (intent: string | null | undefined): string | null =>
     intent ? (k.intents as Record<string, string> | undefined)?.[intent] ?? intent : null;
-
-  const items = pickers[type] ?? [];
-  // Full option list for the current type (Autocomplete filters this client-side
-  // as the merchant types — no "select an item" placeholder entry needed since
-  // an empty text field naturally shows every loaded item).
-  const itemOptions = useMemo(
-    () => items.map((i) => ({ label: i.title || i.id, value: i.id })),
-    [items],
-  );
-  const filteredItemOptions = useMemo(() => {
-    const q = itemInputValue.trim().toLowerCase();
-    if (!q) return itemOptions;
-    return itemOptions.filter((o) => o.label.toLowerCase().includes(q));
-  }, [itemOptions, itemInputValue]);
-  const typeOptions = RESOURCE_TYPES.map((rt) => ({ label: k.types[rt], value: rt }));
-  const localeSelectOptions = useMemo(
-    () =>
-      localeOptions.map((l) => ({
-        label: l.primary ? `${l.name} (${k.localePrimary})` : l.name,
-        value: l.locale,
-      })),
-    [localeOptions, k.localePrimary],
-  );
-
-  const canSave = !!itemId && !!keyword.trim();
 
   const openInEditor = (row: { resourceType: string; resourceId: string }) => {
     const path = KEYWORD_TYPE_PATH[row.resourceType as KeywordResourceType];
@@ -1245,39 +1188,17 @@ export default function SeoKeywords() {
         {tab === "assignments" ? (
           <AssignmentsTab
             k={k}
+            activeLocale={data.activeLocale}
             conflicts={data.conflicts}
+            keywords={keywords}
             isPro={data.isPro}
             unclassifiedCount={data.unclassifiedCount}
-            typeOptions={typeOptions}
-            type={type}
-            setType={setType}
-            itemId={itemId}
-            setItemId={setItemId}
-            itemInputValue={itemInputValue}
-            setItemInputValue={setItemInputValue}
-            itemOptions={itemOptions}
-            filteredItemOptions={filteredItemOptions}
-            keyword={keyword}
-            setKeywordInput={setKeywordInput}
-            locale={locale}
-            setLocale={setLocale}
-            localeSelectOptions={localeSelectOptions}
-            role={role}
-            setRole={setRole}
-            canSave={canSave}
-            handleSubmitKeyword={handleSubmitKeyword}
-            itemsCount={items.length}
-            pickerCap={PICKER_CAP}
-            saveFetcher={saveFetcher}
-            intentFilter={intentFilter}
-            setIntentFilter={setIntentFilter}
             intentLabel={intentLabel}
-            filteredKeywords={filteredKeywords}
-            priorityOptions={priorityOptions}
+            saveFetcher={saveFetcher}
             rowFetcher={rowFetcher}
-            priorityFetcher={priorityFetcher}
             intentFetcher={intentFetcher}
             pendingRowId={pendingRowId}
+            handleAddKeyword={handleAddKeyword}
             handleMakePrimary={handleMakePrimary}
             handleDeleteKeyword={handleDeleteKeyword}
             openInEditor={openInEditor}

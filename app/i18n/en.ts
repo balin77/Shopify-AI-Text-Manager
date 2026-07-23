@@ -1878,6 +1878,17 @@ export const en: Translation = {
         empty: "No items found.",
         loading: "Loading…",
       },
+      // Assignments tab (Phase 5): item-grouped, expandable list.
+      assignFilterPlaceholder: "Filter item or keyword…",
+      scoreFilterLabel: "Score",
+      scoreFilterAll: "All scores",
+      scoreFilterUnder50: "< 50",
+      scoreFilterUnder80: "< 80",
+      gscAvg: "GSC ⌀",
+      expandItem: "Expand \"{item}\"",
+      collapseItem: "Collapse \"{item}\"",
+      addKeywordInline: "+ Keyword",
+      addKeywordInlinePlaceholder: "Add a keyword…",
     },
     searchConsolePage: {
       helpTitle: "What does connecting Search Console get you?",
