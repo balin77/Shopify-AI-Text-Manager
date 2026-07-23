@@ -488,17 +488,31 @@ export default function BulkEditor() {
   // Rows with the ACCUMULATED foreign baselines merged in: the loader only
   // ships the current locale/market's translations; baselines of previously
   // visited combos are kept so cross-locale edits diff correctly (see
-  // foreignBaselinesRef). Fresh loader data wins over the accumulation.
+  // foreignBaselinesRef). For the combos the loader JUST covered, its data is
+  // authoritative WHOLESALE — accumulated keys of those combos are dropped
+  // first, so a translation that was cleared on Shopify doesn't resurrect
+  // from the stale accumulation.
   const mergedRows = useMemo(() => {
+    const loadedPrefixes =
+      locale === ""
+        ? []
+        : marketId !== ""
+          ? [`${locale}|${marketId}|`, `${locale}||`]
+          : [`${locale}||`];
     const acc = foreignBaselinesRef.current;
     return (rows as BulkRow[]).map((row) => {
       const previous = acc[row.id];
       if (!previous && !row.foreignValues) return row;
-      const merged = { ...previous, ...(row.foreignValues ?? {}) };
+      const merged: Record<string, string> = {};
+      for (const [key, value] of Object.entries(previous ?? {})) {
+        if (loadedPrefixes.some((prefix) => key.startsWith(prefix))) continue;
+        merged[key] = value;
+      }
+      Object.assign(merged, row.foreignValues ?? {});
       acc[row.id] = merged;
       return { ...row, foreignValues: merged };
     });
-  }, [rows]);
+  }, [rows, locale, marketId]);
 
   const dirty = useMemo(() => computeDiff(mergedRows, allColumns, edits), [mergedRows, allColumns, edits]);
   const dirtyRowIds = useMemo(() => new Set(dirty.map((d) => d.rowId)), [dirty]);
