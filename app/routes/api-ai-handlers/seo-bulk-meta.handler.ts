@@ -171,7 +171,13 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
   const { db, shop, admin, diff, columnsByType } = args;
 
   try {
-    const result = await applyBulkDiff({ db, shop, admin, columnsByType }, diff, async (processed, total) => {
+    // Phase 4b: published foreign locales — target set for the primary-save
+    // stale-translation invalidation inside applyBulkDiff (cached read).
+    const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
+    const foreignLocales = (await getCachedShopLocales(admin, shop).catch(() => []))
+      .filter((l) => l.published && !l.primary)
+      .map((l) => l.locale);
+    const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales }, diff, async (processed, total) => {
       const progressPercent = Math.round((processed / total) * 100);
       await db.task
         .update({ where: { id: taskId }, data: { progress: progressPercent, processed } })

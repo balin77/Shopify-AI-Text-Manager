@@ -125,6 +125,13 @@ function defaultResponse(query: string, variables: Record<string, unknown> | und
       },
     };
   }
+  if (query.includes("translationsRemove(")) {
+    // Phase 4b invalidation — echo back every (key, locale) asked for.
+    const keys = (variables?.translationKeys ?? []) as string[];
+    const locales = (variables?.locales ?? []) as string[];
+    const translations = locales.flatMap((locale) => keys.map((key) => ({ key, locale })));
+    return { data: { translationsRemove: { translations, userErrors: [] } } };
+  }
   throw new Error(`Unexpected query in test: ${query.slice(0, 120)}`);
 }
 
@@ -164,6 +171,17 @@ function mockDb() {
     collection: { findUnique: vi.fn(), update: vi.fn() },
     page: { update: vi.fn() },
     article: { update: vi.fn() },
+    // Phase 4b: stale-foreign-translation invalidation reads existing foreign
+    // rows and deletes the confirmed ones. Default: no foreign translations
+    // exist ⇒ invalidation short-circuits before any Shopify call.
+    contentTranslation: {
+      findMany: vi.fn(async () => [] as { key: string; locale: string }[]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
+    metaobjectTranslation: {
+      findMany: vi.fn(async () => [] as { key: string; locale: string }[]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
   };
 }
 
@@ -609,5 +627,63 @@ describe("applyBulkDiff — cell-granular partial failures (Plan §4.4/§12)", (
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0].columnId).toBeUndefined();
     expect(result.failures[0].message).toBe("Title cannot be empty.");
+  });
+});
+
+describe("applyBulkDiff — stale-foreign-translation invalidation (Phase 4b)", () => {
+  it("removes the changed primary field's foreign translations (Shopify + DB) on save", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+    // One existing German title translation → must be invalidated.
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "title", locale: "de" }] as never);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]), foreignLocales: ["de"] },
+      [entry("field.title", "New title")],
+    );
+
+    expect(result.failures).toEqual([]);
+    // Shopify removal issued for the title key in de.
+    const remove = calls.find((c) => c.query.includes("translationsRemove("));
+    expect(remove).toBeDefined();
+    expect(remove?.variables?.translationKeys).toEqual(["title"]);
+    expect(remove?.variables?.locales).toEqual(["de"]);
+    // Local row deleted only after the echo confirmed it.
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalledTimes(1);
+    const del = db.contentTranslation.deleteMany.mock.calls[0][0] as { where: Record<string, unknown> };
+    expect(del.where).toMatchObject({ resourceId: PRODUCT_ID, locale: "de", marketId: "" });
+  });
+
+  it("does NOT delete the local row when Shopify does not confirm the removal", async () => {
+    const { admin } = mockAdmin({
+      respond: (query) =>
+        query.includes("translationsRemove(")
+          ? { data: { translationsRemove: { translations: [], userErrors: [] } } } // no echo
+          : undefined,
+    });
+    const db = mockDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "title", locale: "de" }] as never);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]), foreignLocales: ["de"] },
+      [entry("field.title", "New title")],
+    );
+
+    expect(result.failures).toEqual([]); // primary save still succeeded
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("makes no invalidation query when no foreign locales are configured", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    await applyBulkDiff(
+      // foreignLocales omitted → invalidation is a no-op.
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.title", "New title")],
+    );
+
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.query.includes("translationsRemove("))).toBe(false);
   });
 });

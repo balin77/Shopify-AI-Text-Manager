@@ -69,6 +69,12 @@ export interface LoadBulkRowsOptions {
    * schema-homogeneous per type). "" / absent = no restriction (used by the
    * CSV import, which resolves rows by id). */
   moType?: string;
+  /** Published, non-primary shop locales. On the PRIMARY view they drive the
+   * "missing translation" (blue) field colour: a primary field not translated
+   * into every one of these locales is flagged (BulkRow.untranslatedColumnIds).
+   * Passed by the caller (which already has the locales); absent ⇒ the flag is
+   * skipped (no extra query), which the grid simply renders as no blue. */
+  foreignLocales?: string[];
 }
 
 export interface LoadBulkRowsResult {
@@ -272,6 +278,10 @@ export async function loadBulkRows(
   const result = await loadBulkRowsInner(db, shop, opts);
   if (opts.locale !== "") {
     await attachForeignValues(db, shop, opts, result.rows);
+  } else {
+    // Primary view: flag columns that lack a translation in some foreign locale
+    // (the blue "missing translation" colour). Only meaningful in primary view.
+    await attachMissingTranslationFlags(db, shop, opts, result.rows);
   }
   // §10.5: summaries only — never row/field values.
   debugLog.bulkLoad("page loaded", {
@@ -341,6 +351,77 @@ async function attachForeignValues(
   for (const row of rows) {
     const record = byRow.get(row.id);
     if (record) row.foreignValues = record;
+  }
+}
+
+/**
+ * PRIMARY view: fills BulkRow.untranslatedColumnIds — the translatable columns
+ * whose primary value is NOT translated (non-empty) into EVERY published
+ * foreign locale (globally, marketId ""). Drives the blue "missing translation"
+ * field colour (the grid additionally requires the primary cell to have
+ * content). No-op without foreignLocales or when the type has no translatable
+ * columns (e.g. variant; metaobject columns are dynamic and not covered).
+ * Metaobject rows would read MetaobjectTranslation; every other type reads
+ * ContentTranslation.
+ */
+async function attachMissingTranslationFlags(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  rows: BulkRow[],
+): Promise<void> {
+  const foreignLocales = opts.foreignLocales ?? [];
+  if (rows.length === 0 || foreignLocales.length === 0) return;
+  const keyByColumnId = translationKeysByColumnId(opts.type);
+  if (keyByColumnId.size === 0) return;
+  const keys = [...new Set([...keyByColumnId.values()])];
+  const isMetaobject = opts.type === "metaobject";
+  const rowIds = rows.map((r) => r.id);
+
+  const translated = isMetaobject
+    ? await db.metaobjectTranslation.findMany({
+        where: { shop, metaobjectId: { in: rowIds }, marketId: "", key: { in: keys }, locale: { in: foreignLocales } },
+        select: { metaobjectId: true, key: true, locale: true, value: true },
+      })
+    : await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceType: RESOURCE_TYPE_BY_ROW_TYPE[opts.type],
+          resourceId: { in: rowIds },
+          marketId: "",
+          key: { in: keys },
+          locale: { in: foreignLocales },
+        },
+        select: { resourceId: true, key: true, locale: true, value: true },
+      });
+
+  // rowId → key → set of foreign locales carrying a NON-EMPTY translation
+  // (an empty translation still counts as "missing", like a cleared cell).
+  const localesByRowKey = new Map<string, Map<string, Set<string>>>();
+  for (const t of translated as { key: string; locale: string; value: string | null; resourceId?: string; metaobjectId?: string }[]) {
+    if (!t.value || t.value.trim() === "") continue;
+    const rowId = (isMetaobject ? t.metaobjectId : t.resourceId) ?? "";
+    let keyMap = localesByRowKey.get(rowId);
+    if (!keyMap) {
+      keyMap = new Map();
+      localesByRowKey.set(rowId, keyMap);
+    }
+    let set = keyMap.get(t.key);
+    if (!set) {
+      set = new Set();
+      keyMap.set(t.key, set);
+    }
+    set.add(t.locale);
+  }
+
+  const total = foreignLocales.length;
+  for (const row of rows) {
+    const keyMap = localesByRowKey.get(row.id);
+    const untranslated: string[] = [];
+    for (const [columnId, key] of keyByColumnId) {
+      if ((keyMap?.get(key)?.size ?? 0) < total) untranslated.push(columnId);
+    }
+    if (untranslated.length > 0) row.untranslatedColumnIds = untranslated;
   }
 }
 

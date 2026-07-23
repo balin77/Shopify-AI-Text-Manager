@@ -440,3 +440,52 @@ export async function removeAndVerify(
   }
   return { confirmedKeys, userErrors };
 }
+
+/** Separator for a confirmed `${locale} ${key}` pair (NUL can't occur in a
+ * locale or a translation key). */
+export const LOCALE_KEY_SEP = " ";
+
+/**
+ * translationsRemove for ONE resource across SEVERAL locales in a single call,
+ * with per-(locale, key) echo verification — the multi-locale generalization
+ * of removeAndVerify used by the primary-save stale-translation invalidation
+ * (Plan §6.6 / Phase 4b). Returns the set of CONFIRMED `${locale} ${key}`
+ * pairs Shopify echoed back; ONLY those may be deleted locally (an unconfirmed
+ * removal keeps the local row — CLAUDE.md). Throws on transport/GraphQL errors.
+ */
+export async function removeAndVerifyAcrossLocales(
+  gateway: ShopifyApiGateway,
+  resourceId: string,
+  translationKeys: string[],
+  locales: string[],
+  marketId: string,
+): Promise<{ confirmedPairs: Set<string>; userErrors: TranslationUserError[] }> {
+  if (translationKeys.length === 0 || locales.length === 0) {
+    return { confirmedPairs: new Set(), userErrors: [] };
+  }
+
+  const response = await gateway.graphql(REMOVE_TRANSLATIONS, {
+    variables: {
+      resourceId,
+      translationKeys,
+      locales,
+      marketIds: marketId ? [marketId] : null,
+    },
+  });
+  const data = (await response.json()) as {
+    data?: {
+      translationsRemove?: {
+        translations?: { key: string; locale: string }[] | null;
+        userErrors?: TranslationUserError[];
+      };
+    };
+    errors?: { message: string }[];
+  };
+  if (data.errors && data.errors.length > 0) throw new Error(data.errors[0].message);
+
+  const userErrors = data.data?.translationsRemove?.userErrors ?? [];
+  const echoed = data.data?.translationsRemove?.translations ?? [];
+  const confirmedPairs = new Set<string>();
+  for (const t of echoed ?? []) confirmedPairs.add(`${t.locale}${LOCALE_KEY_SEP}${t.key}`);
+  return { confirmedPairs, userErrors };
+}

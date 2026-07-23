@@ -1589,6 +1589,7 @@ export const es: Translation = {
       informativeBadge: "Sin puntuación",
       elementsTitle: "Elementos marcados",
       passedTitle: "Comprobaciones superadas ({count})",
+      notApplicableTitle: "No aplicable ({count})",
       a11y: {
         disclaimer: "Esta comprobación es automática (axe-core a través de Lighthouse) y solo detecta una parte de las barreras reales — muchos problemas solo se encuentran con pruebas manuales. Por eso, una puntuación alta no significa que tu página sea accesible ni garantiza el cumplimiento legal, por ejemplo respecto a la Ley Europea de Accesibilidad (European Accessibility Act).",
         noIssues: "No se encontraron problemas detectables automáticamente — buena señal, pero no es una garantía de accesibilidad.",
@@ -2107,7 +2108,8 @@ export const es: Translation = {
       modeSave: "Traducir y guardar — los resultados se escriben directamente",
       start: "Traducir",
       cancel: "Cancelar",
-      marketHint: "La traducción con IA solo escribe traducciones globales (\"Todos los mercados\") — introduce los valores por mercado manualmente.",
+      marketHintGlobal: "La traducción con IA escribe traducciones globales (\"Todos los mercados\").",
+      marketHintMarket: "La traducción con IA escribe traducciones para el mercado \"{market}\".",
       running: "Traducción con IA iniciada — sigue el progreso en la pestaña Tareas.",
       applied: "{count} sugerencias de traducción añadidas a la tabla — revisa y guarda.",
       appliedWithOffPage: "{count} sugerencias de traducción añadidas, {offPage} de ellas en otras páginas — visibles allí al paginar. Revisa y guarda.",

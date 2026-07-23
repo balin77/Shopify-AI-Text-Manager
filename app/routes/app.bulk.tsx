@@ -98,7 +98,7 @@ import {
   loadProductMetafieldColumnSpecs,
   productColumnCapsForPlan,
 } from "../services/bulk-editor/columns.server";
-import { BulkGrid } from "../components/bulk-editor/BulkGrid";
+import { BulkGrid, type CellTranslationStatus } from "../components/bulk-editor/BulkGrid";
 import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
 // Type-only imports from the resource routes / server service — erased at
 // compile time, so nothing server-only reaches the client bundle.
@@ -290,6 +290,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // admin client; other types ignore it.
       admin,
       moType,
+      // Primary-view "missing translation" (blue) colour needs the published
+      // foreign locales (already loaded above).
+      foreignLocales: shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale),
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -369,7 +372,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: false, error: "tooLarge" }, { status: 400 });
   }
 
-  const result = await applyBulkDiff({ db, shop, admin, columnsByType }, diff);
+  // Phase 4b: the published foreign locales are the target set for the
+  // primary-save stale-translation invalidation (cached read).
+  const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+  const foreignLocales = (await getCachedShopLocales(admin, shop).catch(() => []))
+    .filter((l) => l.published && !l.primary)
+    .map((l) => l.locale);
+
+  const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales }, diff);
   return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
 };
 
@@ -894,6 +904,19 @@ export default function BulkEditor() {
   const isDirtyCell = (row: BulkRow, column: ColumnDescriptor): boolean =>
     editKeyFor(row, column) in edits;
 
+  /** Field colour, mirroring the single editor (Plan §2): "untranslated"
+   * (yellow) when the CURRENTLY SELECTED language has no value for this field,
+   * "missingTranslation" (blue) when — on the primary view — the primary value
+   * exists but some foreign locale lacks the translation. Only translatable
+   * columns colour; uses valueFor so it updates live as the merchant types. */
+  const cellTranslationStatus = (row: BulkRow, column: ColumnDescriptor): CellTranslationStatus => {
+    if (!column.translatable) return null;
+    const value = valueFor(row, column).trim();
+    if (isForeign) return value === "" ? "untranslated" : null;
+    if (value === "") return "untranslated";
+    return row.untranslatedColumnIds?.includes(column.id) ? "missingTranslation" : null;
+  };
+
   /** Navigate with updated grid params (all state is in the URL, §3.3).
    * handleNavigate merges with the current params, so untouched ones —
    * including Shopify's host/shop/embedded — survive. */
@@ -1300,6 +1323,10 @@ export default function BulkEditor() {
         mode: choice.mode,
         search,
         filters: filters.join(","),
+        // Phase 4b: market-aware — only forward the grid's market when the
+        // modal's target locale matches the locale the market was chosen for
+        // (the market lives in URL state coupled to the current foreign view).
+        market: isForeign && choice.targetLocale === locale ? marketId : "",
       },
       { method: "post", action: "/api/ai" },
     );
@@ -1910,6 +1937,7 @@ export default function BulkEditor() {
                       setEdit={setEdit}
                       isForeignLocale={isForeign}
                       ghostFor={ghostFor}
+                      translationStatus={cellTranslationStatus}
                       notTranslatableTooltip={b.notTranslatableTooltip}
                       failuresByCell={cellFailuresForGrid}
                       rowLevelFailures={rowLevelFailures}
@@ -1970,6 +1998,11 @@ export default function BulkEditor() {
               columnLabel={columnHeading}
               locales={foreignLocales}
               defaultLocale={locale}
+              market={
+                isForeign && marketId
+                  ? { name: data.markets.find((m) => m.id === marketId)?.name ?? marketId, locale }
+                  : null
+              }
               busy={translateBusy}
               onStart={handleTranslateStart}
               strings={{
@@ -1982,7 +2015,8 @@ export default function BulkEditor() {
                 modeSave: b.translateMissing.modeSave,
                 start: b.translateMissing.start,
                 cancel: b.translateMissing.cancel,
-                marketHint: b.translateMissing.marketHint,
+                marketHintGlobal: b.translateMissing.marketHintGlobal,
+                marketHintMarket: b.translateMissing.marketHintMarket,
               }}
             />
 

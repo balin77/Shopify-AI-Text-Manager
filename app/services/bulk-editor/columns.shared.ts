@@ -902,6 +902,13 @@ export interface BulkRow {
    * the UI only edits the primary locale, but the diff pipeline already
    * carries the segments so the key format never has to migrate again. */
   foreignValues?: Record<string, string>;
+  /** PRIMARY view only: column ids whose primary value is NOT translated into
+   * at least one published foreign locale (globally, marketId ""). Drives the
+   * "missing translation" (blue) field colour — the grid shows blue when the
+   * primary cell HAS content and its column id is listed here. Absent on the
+   * foreign views (where the colour is "empty in the selected language"
+   * instead, computed client-side from the cell value). */
+  untranslatedColumnIds?: string[];
 }
 
 /** The row's primary-locale value for a field column ("" for non-field

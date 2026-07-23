@@ -22,6 +22,10 @@ interface TranslateMissingModalProps {
   locales: { locale: string; name: string }[];
   /** Preselected target — the grid's current foreign locale, if any. */
   defaultLocale: string;
+  /** Phase 4b: the grid's selected market (name + the locale it is bound to),
+   * or null when the grid is global. The AI translation writes market-specific
+   * values only when the chosen target locale matches that market's locale. */
+  market: { name: string; locale: string } | null;
   busy: boolean;
   onStart: (choice: { columnId: string; targetLocale: string; mode: TranslateMissingMode }) => void;
   strings: {
@@ -34,7 +38,10 @@ interface TranslateMissingModalProps {
     modeSave: string;
     start: string;
     cancel: string;
-    marketHint: string;
+    /** Shown when the run writes GLOBAL (all-markets) translations. */
+    marketHintGlobal: string;
+    /** Shown when the run writes for a specific market; "{market}" is filled. */
+    marketHintMarket: string;
   };
 }
 
@@ -45,6 +52,7 @@ export function TranslateMissingModal({
   columnLabel,
   locales,
   defaultLocale,
+  market,
   busy,
   onStart,
   strings,
@@ -66,6 +74,10 @@ export function TranslateMissingModal({
   }, [open]);
 
   const canStart = !!columnId && !!targetLocale && !busy;
+
+  // Market-specific writes happen only when the chosen target locale is the
+  // one the grid's market is bound to; otherwise the run is global.
+  const marketApplies = !!market && targetLocale === market.locale;
 
   return (
     <Modal
@@ -106,9 +118,13 @@ export function TranslateMissingModal({
             selected={[mode]}
             onChange={(selected) => setMode((selected[0] as TranslateMissingMode) ?? "preview")}
           />
-          {/* §6.6: the AI path is GLOBAL-only — market-specific values stay a
-              manual-typing feature until Phase 4b. */}
-          <Banner tone="info">{strings.marketHint}</Banner>
+          {/* Phase 4b: the AI path is market-aware — it writes for the grid's
+              market when the target locale matches it, otherwise globally. */}
+          <Banner tone="info">
+            {marketApplies
+              ? strings.marketHintMarket.replace("{market}", market!.name)
+              : strings.marketHintGlobal}
+          </Banner>
         </BlockStack>
       </Modal.Section>
     </Modal>

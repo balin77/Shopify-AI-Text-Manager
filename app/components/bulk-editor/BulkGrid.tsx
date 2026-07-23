@@ -37,6 +37,11 @@ import { BulkCell, type BulkCellStatusOptions, type CellNavDirection } from "./B
  * can sit at left:72px. */
 const IMAGE_COLUMN_WIDTH = 72;
 
+/** Field-colour state, mirroring the single editor: "untranslated" (yellow —
+ * empty in the selected language) or "missingTranslation" (blue — primary set
+ * but a foreign locale lacks it, primary view only); null = no colour. */
+export type CellTranslationStatus = "untranslated" | "missingTranslation" | null;
+
 interface BulkGridProps {
   rows: BulkRow[];
   type: BulkRowType;
@@ -53,6 +58,8 @@ interface BulkGridProps {
   /** Ghost placeholder for an empty foreign cell — the primary value, or the
    * global translation under a market override (Plan §6.4). */
   ghostFor: (row: BulkRow, column: ColumnDescriptor) => string;
+  /** Field colour per cell (Plan §2) — see CellTranslationStatus. */
+  translationStatus: (row: BulkRow, column: ColumnDescriptor) => CellTranslationStatus;
   /** Tooltip for columns that are read-only in a foreign locale. */
   notTranslatableTooltip: string;
   /** `${rowId}|${columnId}` → failure message of the last save — marks
@@ -90,6 +97,7 @@ export function BulkGrid({
   setEdit,
   isForeignLocale,
   ghostFor,
+  translationStatus,
   notTranslatableTooltip,
   failuresByCell,
   rowLevelFailures,
@@ -213,6 +221,12 @@ export function BulkGrid({
         .cp-bulk-sticky-0 { left: 0; }
         .cp-bulk-sticky-1 { left: ${IMAGE_COLUMN_WIDTH}px; box-shadow: 1px 0 0 var(--p-color-border, #e1e3e5); }
         .cp-bulk-th.cp-bulk-sticky { z-index: 4; }
+        /* Field colours, matching the single editor (Plan §2): applied to the
+           cell WRAPPER (the input itself is transparent). Same hexes as
+           AIEditableField.css so "Inhalt" and the bulk grid read identically.
+           Dirty/error cells are never recoloured (see the grid render). */
+        .cp-bulk-cell-untranslated { background: #fff4e5; }
+        .cp-bulk-cell-missing { background: #e0f2fe; }
         /* Sortable header: the whole heading is a button; the caret shows
            the current direction. */
         .cp-bulk-sort-btn {
@@ -435,8 +449,19 @@ export function BulkGrid({
                 // read-only with their own tooltip (Plan §6.4).
                 const resolved = resolveCellValue(row, col);
                 const foreignReadOnly = isForeignLocale && !col.translatable;
+                // Field colour (Plan §2). On the WRAPPER so the transparent
+                // input shows it and the dirty/error inner backgrounds take
+                // precedence naturally (a dirty or errored cell is never
+                // recoloured).
+                const status = dirty || error ? null : translationStatus(row, col);
+                const statusClass =
+                  status === "untranslated"
+                    ? " cp-bulk-cell-untranslated"
+                    : status === "missingTranslation"
+                      ? " cp-bulk-cell-missing"
+                      : "";
                 return (
-                  <div key={col.id} role="cell" className={`cp-bulk-cell${stickyClass(i + 1)}`}>
+                  <div key={col.id} role="cell" className={`cp-bulk-cell${stickyClass(i + 1)}${statusClass}`}>
                     <BulkCell
                       column={col}
                       value={valueFor(row, col)}

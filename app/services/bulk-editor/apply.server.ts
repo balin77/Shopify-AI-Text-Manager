@@ -42,10 +42,13 @@ import {
   fetchDigestsForResource,
   registerAndVerify,
   removeAndVerify,
+  removeAndVerifyAcrossLocales,
+  LOCALE_KEY_SEP,
   translationKeyForColumn,
   CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
   type TranslationInput,
 } from "./translations.server";
+import { logger } from "../../utils/logger.server";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -75,6 +78,11 @@ interface ApplyContext {
    * position, …). Both save entrances validated the diff against the SAME
    * object, so an unknown column here is a hard bug, not bad input. */
   columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
+  /** Published, non-primary shop locales — the target set for the Phase-4b
+   * primary-save stale-translation invalidation. Passed in by the caller
+   * (which already has the shop locales) so applyBulkDiff makes no extra
+   * fetch; omitted/empty ⇒ invalidation safely no-ops (e.g. in unit tests). */
+  foreignLocales?: string[];
 }
 
 const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
@@ -101,6 +109,10 @@ interface PersistDeps {
   /** §6.3 re-fetch bookkeeping: each resource gets at most ONE digest
    * re-fetch per run — after that a still-missing digest is a cell error. */
   digestRefetched: Set<string>;
+  /** Published, non-primary shop locales — the target set for the primary-save
+   * stale-foreign-translation invalidation (Plan §6.6 / Phase 4b). Loaded once
+   * per run; empty when the lookup failed (invalidation then safely no-ops). */
+  foreignLocales: string[];
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -181,18 +193,115 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
   return out;
 }
 
-// ─── Product row: stage 1 — base fields via productUpdate ──────────────────
+// ─── Primary-save stale-foreign-translation invalidation (Phase 4b) ────────
 
 /**
- * KNOWN GAP (deliberate, Phase-4b follow-up — PLAN_BULK_EDITOR §6.6): bulk
- * PRIMARY saves (this function and every other primary persist path in this
- * module) do NOT invalidate now-stale foreign translations of the changed
- * fields, while the single editor does (updateContent deletes them on Shopify
- * and locally). Wiring that invalidation in here touches the shared
- * translation plumbing that every other surface uses too, so it is scoped
- * into the same clearly-bounded 4b step that makes the AI paths market-aware
- * — see the "4b-Folgearbeiten" note at the end of §6.6 in the plan.
+ * PLAN_BULK_EDITOR §6.6 / Phase 4b: after a PRIMARY translatable field changes,
+ * its existing FOREIGN translations are stale — remove them on Shopify AND
+ * locally, exactly as the single editor does (updateContent), but through the
+ * ECHO-VERIFIED remove path so a silent translationsRemove no-op can never
+ * orphan the storefront from the DB (the single editor skips that echo — a
+ * documented CLAUDE.md violation this bulk path deliberately does NOT copy).
+ *
+ * GLOBAL rows only (marketId ""): a market-specific override is a deliberate,
+ * separate value, so it survives a primary change — matching the single
+ * editor. Metaobjects use MetaobjectTranslation; every other type uses
+ * ContentTranslation.
+ *
+ * BEST-EFFORT: the primary save already succeeded. A failure here logs and
+ * leaves the stale rows (the pre-4b behaviour, identical to a direct edit in
+ * the Shopify admin) rather than failing the cell.
  */
+async function invalidateStaleForeignTranslations(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  resourceId: string,
+  translationKeys: string[],
+): Promise<void> {
+  const { db, shop, gateway, foreignLocales } = deps;
+  const keys = [...new Set(translationKeys.filter(Boolean))];
+  if (keys.length === 0 || foreignLocales.length === 0) return;
+
+  const isMetaobject = rowType === "metaobject";
+  try {
+    // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
+    // entirely when there is nothing to invalidate (the common case on shops
+    // that never translated this field).
+    const existing = isMetaobject
+      ? await db.metaobjectTranslation.findMany({
+          where: { shop, metaobjectId: resourceId, marketId: "", key: { in: keys }, locale: { in: foreignLocales } },
+          select: { key: true, locale: true },
+        })
+      : await db.contentTranslation.findMany({
+          where: {
+            shop,
+            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+            resourceId,
+            marketId: "",
+            key: { in: keys },
+            locale: { in: foreignLocales },
+          },
+          select: { key: true, locale: true },
+        });
+    if (existing.length === 0) return;
+
+    const presentLocales = [...new Set(existing.map((e) => e.locale))];
+    const presentKeys = [...new Set(existing.map((e) => e.key))];
+    const { confirmedPairs } = await removeAndVerifyAcrossLocales(gateway, resourceId, presentKeys, presentLocales, "");
+    if (confirmedPairs.size === 0) return;
+
+    // Delete ONLY the rows Shopify confirmed removed, grouped per locale to
+    // keep the DB round-trips down.
+    const confirmedKeysByLocale = new Map<string, string[]>();
+    for (const row of existing) {
+      if (!confirmedPairs.has(`${row.locale}${LOCALE_KEY_SEP}${row.key}`)) continue;
+      const list = confirmedKeysByLocale.get(row.locale) ?? [];
+      list.push(row.key);
+      confirmedKeysByLocale.set(row.locale, list);
+    }
+    for (const [locale, localeKeys] of confirmedKeysByLocale) {
+      if (isMetaobject) {
+        await db.metaobjectTranslation.deleteMany({
+          where: { shop, metaobjectId: resourceId, key: { in: localeKeys }, locale, marketId: "" },
+        });
+      } else {
+        await db.contentTranslation.deleteMany({
+          where: {
+            shop,
+            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+            resourceId,
+            key: { in: localeKeys },
+            locale,
+            marketId: "",
+          },
+        });
+      }
+    }
+  } catch (err: unknown) {
+    logger.warn("[BULK] Stale foreign-translation invalidation failed — stale rows kept", {
+      context: "Bulk",
+      resourceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** Shopify translation keys of the row's WRITTEN base/field columns that are
+ * translatable — the invalidation target for a primary save. */
+function translatableKeysForColumnIds(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  columnIds: string[],
+): string[] {
+  const columns = deps.columnsByType[rowType];
+  return columnIds
+    .map((cid) => columns.find((c) => c.id === cid))
+    .map((col) => (col ? translationKeyForColumn(col, rowType) : null))
+    .filter((k): k is string => !!k);
+}
+
+// ─── Product row: stage 1 — base fields via productUpdate ──────────────────
+
 async function persistProductBaseFields(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -292,6 +401,9 @@ async function persistProductBaseFields(
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
     for (const key of Object.keys(fields)) dbData[key] = fields[key];
     await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
+
+    // Phase 4b: the changed primary fields' foreign translations are now stale.
+    await invalidateStaleForeignTranslations(deps, "product", id, translatableKeysForColumnIds(deps, "product", remainingColumnIds));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // productUpdate is one atomic mutation over every base cell — attribute
@@ -911,6 +1023,16 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       throw new Error(`Unsupported row type "${type}".`);
     }
   }
+
+  // Reached only on a successful write (every branch throws on failure).
+  // Phase 4b: invalidate the changed primary fields' now-stale foreign
+  // translations. Columns are keyed `field.<name>` in the universe.
+  await invalidateStaleForeignTranslations(
+    deps,
+    type,
+    id,
+    translatableKeysForColumnIds(deps, type, Object.keys(fields).map((name) => `field.${name}`)),
+  );
 }
 
 // ─── Metaobject rows: metaobjectUpdate with echo verification (Phase 5) ────
@@ -1039,6 +1161,9 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
           lastSyncedAt: new Date(),
         },
       });
+      // Phase 4b: the confirmed primary field changes make their foreign
+      // MetaobjectTranslation rows stale — invalidate by field key.
+      await invalidateStaleForeignTranslations(deps, "metaobject", id, confirmed.map((w) => w.key));
     }
   } catch (err: unknown) {
     failAllWrites(err instanceof Error ? err.message : String(err));
@@ -1600,6 +1725,10 @@ export async function applyBulkDiff(
 
   const groups = groupDiffByRow(diff);
 
+  // Published foreign locales for the Phase-4b invalidation come from the
+  // caller (which already loaded them) — no extra fetch here.
+  const foreignLocales = ctx.foreignLocales ?? [];
+
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
   // Clears need no digest; only keys that will be REGISTERED are collected.
@@ -1633,6 +1762,7 @@ export async function applyBulkDiff(
     columnsByType,
     digests,
     digestRefetched: new Set(),
+    foreignLocales,
   };
   const failures: BulkFailure[] = [];
   let saved = 0;

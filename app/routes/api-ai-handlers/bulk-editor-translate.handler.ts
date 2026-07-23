@@ -19,8 +19,10 @@
  *   registerAndVerify echo check, DB mirror, markTranslationSaved) as manual
  *   saving. No second write path exists.
  *
- * §6.6: this task is GLOBAL-only (marketId "") — the AI plumbing it reuses
- * writes marketId "" throughout; market-aware AI is Phase 4b.
+ * §6.6 → Phase 4b: this task is MARKET-AWARE. It reads the grid's selected
+ * market and writes the suggestions with that marketId ("" stays global); the
+ * verified write path (registerAndVerify / persistTranslationRow) already keys
+ * off each entry's marketId, so no second write path exists.
  *
  * Plan gate: Pro (fan-out AI work, §10.7) — checked here because this handler
  * is reachable directly via POST /api/ai.
@@ -54,6 +56,7 @@ import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import {
   translationKeyForColumn,
   canonicalFieldNameForColumn,
+  findInvalidLocaleOrMarket,
 } from "~/services/bulk-editor/translations.server";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -107,6 +110,18 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
     );
   }
 
+  // §6.6 → Phase 4b: the AI path is now MARKET-AWARE. A non-empty market must
+  // be an ACTIVE market of this shop (findInvalidLocaleOrMarket also re-checks
+  // the locale, which is harmless). A market only ever accompanies a foreign
+  // locale — the client only sends one when the grid is on a foreign view.
+  const market = getFormString(formData, "market") || "";
+  if (market !== "") {
+    const invalid = await findInvalidLocaleOrMarket(admin, shop, [{ locale: targetLocale, marketId: market }]);
+    if (invalid) {
+      return json({ success: false, error: invalid }, { status: 400 });
+    }
+  }
+
   const mode = getFormString(formData, "mode") === "save" ? "save" : "preview";
   const search = getFormString(formData, "search") || "";
   const filters = (getFormString(formData, "filters") || "")
@@ -140,7 +155,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
   const { rows, total } = await loadBulkRows(db, shop, {
     type: rowType,
     locale: targetLocale,
-    marketId: "", // §6.6: AI path is global-only
+    marketId: market, // Phase 4b: market-aware — "" stays global
     search,
     filters,
     sort: null,
@@ -153,7 +168,11 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
 
   const jobs: { rowId: string; source: string }[] = [];
   for (const row of rows) {
-    const existing = row.foreignValues?.[`${targetLocale}||${columnId}`];
+    // "Empty" means empty in the CURRENT (locale, market) layer: under a
+    // market only a missing market-specific override counts (the global value
+    // shows as a ghost but is not the market's value). marketId "" → the key
+    // collapses to the global `${locale}||${columnId}` (pre-4b behaviour).
+    const existing = row.foreignValues?.[`${targetLocale}|${market}|${columnId}`];
     if (existing && existing.trim() !== "") continue; // already translated
     const source = primaryValueForColumn(row, column);
     if (!source || source.trim() === "") continue; // nothing to translate
@@ -188,6 +207,7 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<R
     column,
     rowType,
     targetLocale,
+    marketId: market,
     primaryLocale,
     mode,
     columnsByType,
@@ -223,6 +243,8 @@ interface RunArgs {
   column: ColumnDescriptor;
   rowType: BulkRowType;
   targetLocale: string;
+  /** Phase 4b: "" = global, a Market GID = market-specific override. */
+  marketId: string;
   primaryLocale: string;
   mode: "preview" | "save";
   columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
@@ -237,7 +259,7 @@ interface TranslateResultJson {
 }
 
 async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, admin, settings, jobs, column, rowType, targetLocale, primaryLocale, mode, columnsByType } = args;
+  const { db, shop, admin, settings, jobs, column, rowType, targetLocale, marketId, primaryLocale, mode, columnsByType } = args;
   const fieldName = canonicalFieldNameForColumn(column);
   const contentType = BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType];
   // createAIService(settings, shop, taskId) → every provider call goes
@@ -261,7 +283,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       rowId,
       rowType,
       locale: targetLocale,
-      marketId: "", // §6.6 — global only
+      marketId, // Phase 4b: the selected market ("" = global)
       columnId: column.id,
       value,
     });
@@ -317,6 +339,9 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
     if (mode === "save" && suggestions.length > 0) {
       // The SAME verified write path as manual saving: digest rule (§6.3),
       // registerAndVerify echo check, DB mirror, markTranslationSaved.
+      // No foreignLocales needed: every suggestion is a FOREIGN write (locale =
+      // targetLocale) → persistTranslationRow, never a primary path, so the
+      // Phase-4b invalidation never triggers here.
       const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType }, suggestions, async (done, totalRows) => {
         await heartbeat(jobs.length, 80 + (done / totalRows) * 20);
       });

@@ -1587,6 +1587,7 @@ export const de = {
       informativeBadge: "Nicht bewertet",
       elementsTitle: "Markierte Elemente",
       passedTitle: "Bestandene Prüfungen ({count})",
+      notApplicableTitle: "Nicht anwendbar ({count})",
       a11y: {
         disclaimer: "Diese Prüfung läuft automatisiert (axe-core über Lighthouse) und erkennt nur einen Teil der realen Barrieren — viele Probleme lassen sich nur manuell feststellen. Ein hoher Score bedeutet deshalb nicht, dass deine Seite barrierefrei ist, und bietet keine Rechtssicherheit, etwa im Hinblick auf den European Accessibility Act.",
         noIssues: "Keine automatisch erkennbaren Probleme gefunden — das ist ein gutes Zeichen, aber keine Garantie für Barrierefreiheit.",
@@ -2105,7 +2106,8 @@ export const de = {
       modeSave: "Übersetzen & speichern — Ergebnisse werden direkt gespeichert",
       start: "Übersetzen",
       cancel: "Abbrechen",
-      marketHint: "KI-Übersetzen schreibt nur globale Übersetzungen (\"Alle Märkte\") — markt-spezifische Werte bitte manuell eintragen.",
+      marketHintGlobal: "KI-Übersetzen schreibt globale Übersetzungen (\"Alle Märkte\").",
+      marketHintMarket: "KI-Übersetzen schreibt Übersetzungen für den Markt „{market}\".",
       running: "KI-Übersetzung gestartet — Fortschritt im Tab \"Aufgaben\".",
       applied: "{count} Übersetzungsvorschläge in die Tabelle übernommen — bitte prüfen und speichern.",
       appliedWithOffPage: "{count} Übersetzungsvorschläge übernommen, davon {offPage} auf anderen Seiten — dort sichtbar beim Blättern. Bitte prüfen und speichern.",

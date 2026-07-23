@@ -5,6 +5,8 @@ import {
   fetchDigestsForResource,
   registerAndVerify,
   removeAndVerify,
+  removeAndVerifyAcrossLocales,
+  LOCALE_KEY_SEP,
   translationKeyForColumn,
   translationKeysByColumnId,
 } from "~/services/bulk-editor/translations.server";
@@ -276,6 +278,52 @@ describe("removeAndVerify", () => {
     }));
     await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
     expect(calls[0].variables?.marketIds).toBeNull();
+  });
+});
+
+describe("removeAndVerifyAcrossLocales (Phase 4b invalidation)", () => {
+  it("confirms only the (locale, key) pairs Shopify echoes back", async () => {
+    const { gateway, calls } = fakeGateway(() => ({
+      data: {
+        translationsRemove: {
+          // Asked for title+body_html across de+fr; Shopify only removed two.
+          translations: [
+            { key: "title", locale: "de" },
+            { key: "body_html", locale: "fr" },
+          ],
+          userErrors: [],
+        },
+      },
+    }));
+
+    const { confirmedPairs } = await removeAndVerifyAcrossLocales(
+      gateway,
+      PRODUCT_ID,
+      ["title", "body_html"],
+      ["de", "fr"],
+      "",
+    );
+
+    expect(confirmedPairs.has(`de${LOCALE_KEY_SEP}title`)).toBe(true);
+    expect(confirmedPairs.has(`fr${LOCALE_KEY_SEP}body_html`)).toBe(true);
+    // Not echoed → not confirmed → the caller keeps those local rows.
+    expect(confirmedPairs.has(`fr${LOCALE_KEY_SEP}title`)).toBe(false);
+    expect(confirmedPairs.has(`de${LOCALE_KEY_SEP}body_html`)).toBe(false);
+    // One call, all locales at once.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables?.locales).toEqual(["de", "fr"]);
+    expect(calls[0].variables?.marketIds).toBeNull();
+  });
+
+  it("no-ops without keys or locales (no Shopify call)", async () => {
+    const { gateway, calls } = fakeGateway(() => ({
+      data: { translationsRemove: { translations: [], userErrors: [] } },
+    }));
+    const a = await removeAndVerifyAcrossLocales(gateway, PRODUCT_ID, [], ["de"], "");
+    const b = await removeAndVerifyAcrossLocales(gateway, PRODUCT_ID, ["title"], [], "");
+    expect(a.confirmedPairs.size).toBe(0);
+    expect(b.confirmedPairs.size).toBe(0);
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -1590,6 +1590,7 @@ export const en: Translation = {
       informativeBadge: "Not scored",
       elementsTitle: "Flagged elements",
       passedTitle: "Passed checks ({count})",
+      notApplicableTitle: "Not applicable ({count})",
       a11y: {
         disclaimer: "This is an automated check (axe-core via Lighthouse) and it only catches a subset of real-world barriers — many issues can only be found by manual testing. A high score therefore does not mean your page is accessible, and it is no guarantee of legal compliance, for example with the European Accessibility Act.",
         noIssues: "No automatically detectable issues found — a good sign, but not a guarantee of accessibility.",
@@ -2108,7 +2109,8 @@ export const en: Translation = {
       modeSave: "Translate & save — results are written directly",
       start: "Translate",
       cancel: "Cancel",
-      marketHint: "AI translation writes global translations only (\"All markets\") — enter market-specific values manually.",
+      marketHintGlobal: "AI translation writes global translations (\"All markets\").",
+      marketHintMarket: "AI translation writes translations for the \"{market}\" market.",
       running: "AI translation started — track progress in the Tasks tab.",
       applied: "{count} translation suggestions added to the grid — please review and save.",
       appliedWithOffPage: "{count} translation suggestions added, {offPage} of them on other pages — visible there while paging. Please review and save.",
