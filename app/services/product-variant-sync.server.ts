@@ -66,11 +66,21 @@ export interface VariantSyncTx {
  * whose ids Shopify no longer returned. Targeted upsert on shopifyGid —
  * NEVER delete+recreate (see module head). `variants` null/undefined means
  * "the query did not deliver the block": skip entirely, keep the cache.
+ *
+ * `hasNextPage` (review Finding 4): the sync fetches variants(first:100)
+ * WITHOUT pagination (Plan §5.1). When Shopify reports more pages, the
+ * fetched list is only a WINDOW — a cached row absent from it may simply
+ * live beyond the window, so deleting `notIn: keptGids` would wipe real
+ * variants (including their image-manager galleryJson/imageKey). Deletion is
+ * therefore skipped entirely for such products; truly deleted variants are
+ * cleaned up once the product drops to ≤100 variants, and the UI already
+ * flags the capped window via Product.hasMoreVariants.
  */
 export async function syncProductVariantRows(
   tx: VariantSyncTx,
   productId: string,
   variants: ShopifySyncVariant[] | null | undefined,
+  hasNextPage: boolean = false,
 ): Promise<void> {
   if (!variants) return;
 
@@ -104,6 +114,9 @@ export async function syncProductVariantRows(
 
   // Targeted removal of vanished variants only. An empty keptGids list means
   // Shopify really returned zero variants for the product — remove all rows.
+  // With hasNextPage the fetched list is a truncated window (see doc above):
+  // NEVER delete on partial knowledge.
+  if (hasNextPage) return;
   await tx.productVariant.deleteMany({
     where: { productId, shopifyGid: { notIn: keptGids } },
   });

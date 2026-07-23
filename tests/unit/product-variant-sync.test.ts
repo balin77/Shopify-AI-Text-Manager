@@ -93,6 +93,17 @@ describe("syncProductVariantRows (Plan §5.1)", () => {
     });
   });
 
+  it("skips DELETION when hasNextPage is true — the 100-variant window is truncated (Finding 4)", async () => {
+    const tx = mockTx();
+    await syncProductVariantRows(tx, PRODUCT_ID, [variant(1), variant(2)], true);
+    // Upserts still run — the fetched window is real data.
+    expect(tx.productVariant.upsert).toHaveBeenCalledTimes(2);
+    // But rows beyond the window (variants 101+) MUST NOT be wiped: they are
+    // absent from keptGids only because the sync never paginates (Plan §5.1),
+    // and they carry image-manager galleryJson/imageKey.
+    expect(tx.productVariant.deleteMany).not.toHaveBeenCalled();
+  });
+
   it("does NOTHING when the variants block is missing — never wipe on uncertainty", async () => {
     const tx = mockTx();
     await syncProductVariantRows(tx, PRODUCT_ID, null);

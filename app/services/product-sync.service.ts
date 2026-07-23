@@ -415,8 +415,14 @@ export class ProductSyncService {
 
       // Variants (Plan §5.1): targeted upsert + targeted delete of vanished
       // ids — NEVER deleteMany+createMany, galleryJson/imageKey come from the
-      // image manager and must survive.
-      await syncProductVariantRows(tx, product.id, product.variants?.nodes ?? null);
+      // image manager and must survive. hasNextPage = the 100-variant window
+      // is truncated — deletion is skipped inside (review Finding 4).
+      await syncProductVariantRows(
+        tx,
+        product.id,
+        product.variants?.nodes ?? null,
+        product.variants?.pageInfo?.hasNextPage ?? false,
+      );
     };
 
     const PRODUCT_BATCH_SIZE = 100;
@@ -1960,8 +1966,14 @@ export class ProductSyncService {
 
       // Variants (Plan §5.1): targeted upsert + targeted delete of vanished
       // ids — NEVER deleteMany+createMany, galleryJson/imageKey come from the
-      // image manager and must survive (§10.3).
-      await syncProductVariantRows(tx, productData.id, productData.variants?.nodes ?? null);
+      // image manager and must survive (§10.3). hasNextPage = the 100-variant
+      // window is truncated — deletion is skipped inside (review Finding 4).
+      await syncProductVariantRows(
+        tx,
+        productData.id,
+        productData.variants?.nodes ?? null,
+        productData.variants?.pageInfo?.hasNextPage ?? false,
+      );
     }));
 
     logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
