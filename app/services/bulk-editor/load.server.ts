@@ -38,6 +38,11 @@ export interface LoadBulkRowsOptions {
   sort: BulkSort | null;
   skip: number;
   take: number;
+  /** Restrict to exactly these row ids (CSV import, Plan §8.2 — the import
+   * diffs against the CURRENT DB values of the referenced rows): content
+   * types match on `id`, variant rows on `shopifyGid`. AND-combined with the
+   * other filters. */
+  ids?: string[];
   /** Phase 2 (product rows only): which dynamic cell payloads to load —
    * driven by the plan caps + the shop's enabled metafield columns
    * (columns.server.ts). Absent/empty = base fields only. */
@@ -121,6 +126,8 @@ async function buildWhere(
 ): Promise<BuiltWhere> {
   const and: Record<string, unknown>[] = [];
   let translationFilterApproximate = false;
+
+  if (opts.ids) and.push({ id: { in: opts.ids } });
 
   const search = opts.search.trim();
   if (search) {
@@ -523,6 +530,10 @@ async function loadVariantRows(
 ): Promise<LoadBulkRowsResult> {
   const { skip, take } = opts;
   const and: Prisma.ProductVariantWhereInput[] = [];
+
+  // Row ids of variant rows are the variant GIDs (shopifyGid), not the
+  // numeric primary key — see the row mapping below.
+  if (opts.ids) and.push({ shopifyGid: { in: opts.ids } });
 
   const search = opts.search.trim();
   if (search) {

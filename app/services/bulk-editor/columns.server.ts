@@ -28,11 +28,20 @@ import { PLAN_CONFIG, type Plan } from "../../config/plans";
 import {
   buildColumnsForType,
   BULK_ROW_TYPES,
+  BULK_ROW_TYPE_TO_CONTENT_TYPE,
   type BulkRowType,
   type ColumnDescriptor,
   type MetafieldColumnSpec,
   type ProductColumnCaps,
 } from "./columns.shared";
+
+/** Row types the shop's plan may edit (Plan §3.4): supported types ∩
+ * PLAN_CONFIG[plan].contentTypes — the same intersection the bulk route and
+ * the seoBulkMeta handler apply; the CSV export/import routes use this. */
+export function allowedRowTypesForPlan(plan: Plan): BulkRowType[] {
+  const contentTypes = PLAN_CONFIG[plan].contentTypes as string[];
+  return BULK_ROW_TYPES.filter((t) => contentTypes.includes(BULK_ROW_TYPE_TO_CONTENT_TYPE[t]));
+}
 
 /** Which dynamic product columns the plan may offer (Plan §10.7): the cache
  * that feeds them is only maintained from Basic on. */
