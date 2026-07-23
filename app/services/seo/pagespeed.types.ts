@@ -146,6 +146,14 @@ export interface QualityIssue {
   items: Array<{ selector?: string; snippet?: string; url?: string }>;
   /** Number of affected elements BEFORE the cap. */
   itemTotal: number;
+  /**
+   * The audit's full `details` table, normalized like a performance
+   * opportunity's — carries the richer columns (source location, console error
+   * text, CSP directive, …) that the flat `items` list cannot represent.
+   * Absent when the audit has no renderable table. No screenshot node rects:
+   * quality findings are parsed with nodesMap=null.
+   */
+  table?: PageSpeedTable;
   /** scoreDisplayMode "manual" — not automatically checked by Lighthouse. */
   manual: boolean;
 }
@@ -164,6 +172,13 @@ export interface QualityResult {
   /** Findings before the cap (manual audits not counted). */
   accessibilityTotal: number;
   bestPracticesTotal: number;
+  /**
+   * Audits this page already passes, per category — the same "Passed checks"
+   * list the performance tab shows, title-only. Absent on runs stored before
+   * this was captured; legacy audits then simply show no passed list.
+   */
+  accessibilityPassed?: PageSpeedPassedAudit[];
+  bestPracticesPassed?: PageSpeedPassedAudit[];
 }
 
 export type CruxCategory = "FAST" | "AVERAGE" | "SLOW";
@@ -289,5 +304,7 @@ export interface PageSpeedHistoryEntry {
   performanceScore: number | null;
   /** Lighthouse accessibility score 0-100; null on rows stored before the quality columns existed. */
   a11yScore: number | null;
+  /** Lighthouse best-practices score 0-100; null on rows stored before the quality columns existed. */
+  bestPracticesScore: number | null;
   createdAt: string;
 }

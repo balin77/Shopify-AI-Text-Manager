@@ -17,7 +17,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -33,8 +33,9 @@ import {
   Divider,
   Collapsible,
   Modal,
-  Tabs,
+  Tooltip,
 } from "@shopify/polaris";
+import { DeleteIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -46,6 +47,7 @@ import {
   listPageSpeedHistory,
   findLatestPageSpeedAudit,
   findPageSpeedAuditById,
+  deletePageSpeedAudit,
   countPageSpeedRunsToday,
   PageSpeedQuotaExceededError,
   PageSpeedDailyLimitError,
@@ -61,6 +63,7 @@ import type {
   PageSpeedRect,
   PageSpeedScreenshot,
   PageSpeedTable,
+  PageSpeedPassedAudit,
   CruxCategory,
   QualityIssue,
 } from "../services/seo/pagespeed.types";
@@ -172,6 +175,11 @@ type ActionResult =
   | { ok: true; result: PageSpeedAuditResult }
   | { ok: false; error: string; detail?: string };
 
+/** Response of the `deleteHistory` intent (History-row trash button). */
+type DeleteHistoryResult =
+  | { ok: true; deletedId: string }
+  | { ok: false; error: string };
+
 /** Response of the `matchAltImages` intent (alt-text bridge, plan §7). */
 type MatchAltImagesResult =
   | { ok: true; matches: Record<string, AltImageMatch | null> }
@@ -216,6 +224,20 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       return json<ActionResult>({ ok: false, error: "notFound" }, { status: 404 });
     }
     return json<ActionResult>({ ok: true, result: stored });
+  }
+
+  // Delete one stored past audit (History-row trash button). Shop-scoped in the
+  // service so a tampered id cannot reach another tenant's row.
+  if (intent === "deleteHistory") {
+    const auditId = getFormString(form, "auditId");
+    if (!auditId) {
+      return json<DeleteHistoryResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const removed = await deletePageSpeedAudit(db, shop, auditId);
+    if (removed === 0) {
+      return json<DeleteHistoryResult>({ ok: false, error: "notFound" }, { status: 404 });
+    }
+    return json<DeleteHistoryResult>({ ok: true, deletedId: auditId });
   }
 
   // Alt-text bridge, step 1 (plan §7): map the image URLs of the current
@@ -522,6 +544,10 @@ function FieldMetricBar({
   /** Shown on hover when the segment widths are bands, not measured shares. */
   fallbackHint: string;
 }) {
+  // Which color segment the pointer is over — the threshold numbers are hidden
+  // by default and only revealed for the segment(s) a hovered color borders, so
+  // the bar stays clean until the merchant reaches for a specific number.
+  const [hoveredSeg, setHoveredSeg] = useState<number | null>(null);
   const thresholds = FIELD_THRESHOLDS[metricKey];
   const measured = !!(distributions && distributions.length === 3);
   const buckets =
@@ -586,10 +612,15 @@ function FieldMetricBar({
           {buckets.map((b, i) => (
             <div
               key={i}
+              onMouseEnter={() => setHoveredSeg(i)}
+              onMouseLeave={() => setHoveredSeg((h) => (h === i ? null : h))}
               style={{
                 width: `${(b.proportion / total) * 100}%`,
                 background: PERF_COLOR[tones[i]],
                 borderRadius: "2px",
+                // A hair taller hit area than the 4px bar so the thin segments
+                // are still easy to hover; the visible bar keeps its height.
+                cursor: "default",
               }}
             />
           ))}
@@ -610,30 +641,39 @@ function FieldMetricBar({
         />
       </div>
       <div style={{ position: "relative", height: stacked ? "32px" : "16px", marginTop: "4px" }}>
-        {labelPositions.map((label, i) => (
-          <span
-            key={i}
-            style={{
-              position: "absolute",
-              left: `${label.pct}%`,
-              top: stacked && i === 1 ? "16px" : 0,
-              // Anchored at the edges instead of centred, so a boundary at 96%
-              // keeps its label on the bar.
-              transform:
-                label.pct <= 6
-                  ? "translateX(0)"
-                  : label.pct >= 94
-                    ? "translateX(-100%)"
-                    : "translateX(-50%)",
-              whiteSpace: "nowrap",
-              fontSize: "11px",
-              lineHeight: "16px",
-              color: "var(--p-color-text-secondary, #6d7175)",
-            }}
-          >
-            {label.text}
-          </span>
-        ))}
+        {labelPositions.map((label, i) => {
+          // Boundary i sits between segment i and segment i+1, so it belongs to
+          // both — reveal it whenever either of those colors is hovered.
+          const visible = hoveredSeg === i || hoveredSeg === i + 1;
+          return (
+            <span
+              key={i}
+              style={{
+                position: "absolute",
+                left: `${label.pct}%`,
+                top: stacked && i === 1 ? "16px" : 0,
+                // Anchored at the edges instead of centred, so a boundary at 96%
+                // keeps its label on the bar.
+                transform:
+                  label.pct <= 6
+                    ? "translateX(0)"
+                    : label.pct >= 94
+                      ? "translateX(-100%)"
+                      : "translateX(-50%)",
+                whiteSpace: "nowrap",
+                fontSize: "11px",
+                lineHeight: "16px",
+                color: "var(--p-color-text-secondary, #6d7175)",
+                // Hidden until its color is hovered; never eats the hover itself.
+                opacity: visible ? 1 : 0,
+                pointerEvents: "none",
+                transition: "opacity 120ms ease-in-out",
+              }}
+            >
+              {label.text}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -1126,9 +1166,12 @@ const STRIP_GAUGE_RADIUS = 20;
 const STRIP_GAUGE_STROKE = 4;
 
 /**
- * The category overview above the tab list: one small ring per Lighthouse
- * category, doubling as tab navigation. No hover split — the weight story only
- * exists for the performance score, and the big gauge in the tab tells it.
+ * The category overview: one small ring per Lighthouse category, each in its
+ * own bordered card that doubles as the section selector (the old tab list is
+ * gone — these cards ARE the navigation, §3.3). The selected card is outlined
+ * in the accent color and tinted; the others show a plain border and highlight
+ * on hover so it reads as "these are clickable too". No hover ring split — the
+ * weight story only exists for the performance score, told by the big gauge.
  */
 function ScoreStrip({
   categories,
@@ -1145,18 +1188,21 @@ function ScoreStrip({
   /** `strip.noScore` — placeholder {category}. */
   noScoreAriaLabel: string;
 }) {
+  const [hovered, setHovered] = useState<number | null>(null);
   return (
-    <InlineStack gap="800" align="center" blockAlign="start">
+    <InlineStack gap="400" align="center" blockAlign="stretch">
       {categories.map((cat, index) => {
         const active = index === selected;
+        const isHovered = index === hovered;
         return (
           <button
             key={cat.key}
             type="button"
             onClick={() => onSelect(index)}
+            onMouseEnter={() => setHovered(index)}
+            onMouseLeave={() => setHovered((h) => (h === index ? null : h))}
             // aria-pressed, not aria-selected: the latter is only valid on
-            // tab/option/gridcell/row roles, and the real tablist lives in the
-            // Polaris <Tabs> below — a second one here would double-announce.
+            // tab/option/gridcell/row roles, and there is no ARIA tablist here.
             aria-pressed={active}
             aria-label={
               cat.score != null
@@ -1166,12 +1212,28 @@ function ScoreStrip({
                 : noScoreAriaLabel.replace("{category}", cat.label)
             }
             style={{
-              background: "none",
-              border: "none",
-              padding: 0,
+              flex: "1 1 0",
+              maxWidth: "220px",
+              padding: "16px 20px",
               cursor: "pointer",
               font: "inherit",
               color: "inherit",
+              textAlign: "center",
+              borderRadius: "12px",
+              border: `2px solid ${
+                active
+                  ? "var(--p-color-border-emphasis, #4a90e2)"
+                  : isHovered
+                    ? "var(--p-color-border-hover, #8c9196)"
+                    : "var(--p-color-border, #c9cccf)"
+              }`,
+              background: active
+                ? "var(--p-color-bg-surface-selected, #f2f7fe)"
+                : "var(--p-color-bg-surface, #fff)",
+              boxShadow: active
+                ? "var(--p-shadow-200, 0 1px 3px rgba(0,0,0,0.12))"
+                : "none",
+              transition: "border-color 150ms ease-in-out, background 150ms ease-in-out",
             }}
           >
             <BlockStack gap="150" inlineAlign="center">
@@ -1229,6 +1291,7 @@ function QualityIssueRow({
   onToggle,
   domId,
   itemsTruncatedLabel,
+  tableRowsTruncatedLabel,
   generateAltTextLabel,
   altBridge,
 }: {
@@ -1237,9 +1300,14 @@ function QualityIssueRow({
   onToggle: () => void;
   domId: string;
   itemsTruncatedLabel: string;
+  tableRowsTruncatedLabel: string;
   generateAltTextLabel: string;
   altBridge?: AltTextBridgeState;
 }) {
+  // image-alt keeps its flat list so the alt-text bridge button stays; every
+  // other finding with a details table shows the richer table instead of the
+  // sparse selector/snippet list.
+  const showTable = !!issue.table && issue.id !== "image-alt";
   return (
     <div style={FINDING_ROW_STYLE}>
       <button
@@ -1263,7 +1331,14 @@ function QualityIssueRow({
             {issue.description && (
               <Text as="p" variant="bodySm" tone="subdued">{issue.description}</Text>
             )}
-            {issue.items.length > 0 && (
+            {showTable && (
+              <FindingTable
+                table={issue.table!}
+                screenshot={null}
+                truncatedLabel={tableRowsTruncatedLabel}
+              />
+            )}
+            {!showTable && issue.items.length > 0 && (
               <BlockStack gap="300">
                 {issue.items.map((item, i) => (
                   <BlockStack key={i} gap="050">
@@ -1358,6 +1433,7 @@ function QualityIssueRow({
 function QualityFindings({
   issues,
   manualIssues,
+  passedAudits,
   total,
   keyPrefix,
   openFindings,
@@ -1368,6 +1444,8 @@ function QualityFindings({
   /** Automated (non-manual) findings, already filtered. */
   issues: QualityIssue[];
   manualIssues: QualityIssue[];
+  /** Audits this category already passes, title-only. */
+  passedAudits?: PageSpeedPassedAudit[];
   /** Category finding count before the server-side cap, manual excluded. */
   total: number;
   /** Namespaces accordion ids so a11y and best-practices rows never collide. */
@@ -1379,14 +1457,18 @@ function QualityFindings({
     manualTitle: string;
     manualHint: string;
     itemsTruncated: string;
+    tableRowsTruncated: string;
     findingsTruncated: string;
     generateAltText: string;
+    passedTitle: string;
   };
   /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
   altBridge?: AltTextBridgeState;
 }) {
   const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
   const manualOpen = openFindings.has(manualKey);
+  const passedKey = `${keyPrefix}-${PASSED_FINDING_ID}`;
+  const passedOpen = openFindings.has(passedKey);
   return (
     <BlockStack gap="300">
       {issues.length === 0 ? (
@@ -1403,6 +1485,7 @@ function QualityFindings({
                 onToggle={() => onToggle(rowKey)}
                 domId={`finding-${rowKey}`}
                 itemsTruncatedLabel={labels.itemsTruncated}
+                tableRowsTruncatedLabel={labels.tableRowsTruncated}
                 generateAltTextLabel={labels.generateAltText}
                 altBridge={altBridge}
               />
@@ -1456,6 +1539,45 @@ function QualityFindings({
           </Collapsible>
         </div>
       )}
+
+      {/* Passed checks — the same collapsed list the performance tab shows,
+          now for this quality category too. Absent on legacy stored runs. */}
+      {passedAudits && passedAudits.length > 0 && (
+        <div style={FINDING_ROW_STYLE}>
+          <button
+            type="button"
+            onClick={() => onToggle(passedKey)}
+            aria-expanded={passedOpen}
+            aria-controls={`finding-${passedKey}`}
+            style={FINDING_HEADER_STYLE}
+          >
+            <span style={FINDING_TITLE_STYLE}>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <ToneMarker tone="success" />
+                <Text as="span" variant="bodyMd" fontWeight="medium">
+                  {labels.passedTitle.replace("{count}", String(passedAudits.length))}
+                </Text>
+              </InlineStack>
+            </span>
+            <DisclosureGlyph open={passedOpen} />
+          </button>
+          <Collapsible open={passedOpen} id={`finding-${passedKey}`} transition={false}>
+            <div style={{ padding: "0 12px 16px" }}>
+              <BlockStack gap="150">
+                {passedAudits.map((a) => (
+                  <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
+                    <ToneMarker tone="success" />
+                    <Text as="span" variant="bodySm">{a.title}</Text>
+                    {a.displayValue && (
+                      <Text as="span" variant="bodySm" tone="subdued">{a.displayValue}</Text>
+                    )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </div>
+          </Collapsible>
+        </div>
+      )}
     </BlockStack>
   );
 }
@@ -1495,6 +1617,14 @@ export default function SeoPerformance() {
 
   const fetcher = useFetcher<ActionResult>();
   const historyFetcher = useFetcher<ActionResult>();
+  const deleteFetcher = useFetcher<DeleteHistoryResult>();
+
+  // History rows removed via the trash button. The loader data is static within
+  // a session, so deleted ids are tracked here and filtered out of the table
+  // optimistically (restored if the server rejects the delete).
+  const [deletedHistoryIds, setDeletedHistoryIds] = useState<Set<string>>(new Set());
+  // The id of the most recent delete submission, restored on server rejection.
+  const lastDeletedIdRef = useRef<string | null>(null);
 
   const [selectedPath, setSelectedPath] = useState<string>("/");
   const [customUrl, setCustomUrl] = useState("");
@@ -1591,6 +1721,32 @@ export default function SeoPerformance() {
     setViewedHistoryResult(null);
   };
 
+  const deleteHistoryEntry = (id: string) => {
+    // Close the result view if the deleted run is the one on screen.
+    if (id === viewedHistoryId) closeHistoryView();
+    // Optimistic: hide the row immediately, restore it if the server rejects.
+    lastDeletedIdRef.current = id;
+    setDeletedHistoryIds((prev) => new Set(prev).add(id));
+    deleteFetcher.submit(
+      { intent: "deleteHistory", auditId: id },
+      { method: "post" },
+    );
+  };
+
+  // A rejected delete puts that one row back so a failed removal is never silent.
+  useEffect(() => {
+    if (deleteFetcher.state === "idle" && deleteFetcher.data && !deleteFetcher.data.ok) {
+      const failedId = lastDeletedIdRef.current;
+      if (failedId) {
+        setDeletedHistoryIds((prev) => {
+          const next = new Set(prev);
+          next.delete(failedId);
+          return next;
+        });
+      }
+    }
+  }, [deleteFetcher.state, deleteFetcher.data]);
+
   const submitAudit = (force: boolean) => {
     fetcher.submit(
       { intent: "runAudit", url: effectiveUrl, strategy, force: force ? "1" : "0" },
@@ -1657,7 +1813,9 @@ export default function SeoPerformance() {
   };
 
   const annotatable = !!result?.screenshot?.fullPage;
-  const visibleHistory = history.slice(0, HISTORY_VISIBLE_LIMIT);
+  const visibleHistory = history
+    .filter((entry) => !deletedHistoryIds.has(entry.id))
+    .slice(0, HISTORY_VISIBLE_LIMIT);
 
   // Both lists are capped server-side; disclose how much was left out instead
   // of letting a truncated list read as the complete picture. `?? 0` covers
@@ -1859,13 +2017,8 @@ export default function SeoPerformance() {
     }
   }, [altGenFetcher.state, altGenFetcher.data, altGenPendingUrl]);
 
-  // Tab labels double as the strip captions (§3.3) — same keys, same words.
-  const tabDescriptors = [
-    { id: "perf-tab-performance", content: p.tabs.performance, panelID: "perf-panel-performance" },
-    { id: "perf-tab-accessibility", content: p.tabs.accessibility, panelID: "perf-panel-accessibility" },
-    { id: "perf-tab-bestPractices", content: p.tabs.bestPractices, panelID: "perf-panel-bestPractices" },
-  ];
-
+  // The three category cards carry these captions (§3.3) — same keys as the
+  // former tab list, which they replaced.
   const stripCategories = [
     { key: "performance", label: p.tabs.performance, score: result?.performanceScore ?? null },
     { key: "accessibility", label: p.tabs.accessibility, score: quality?.a11yScore ?? null },
@@ -1876,8 +2029,10 @@ export default function SeoPerformance() {
     manualTitle: p.a11y.manualTitle,
     manualHint: p.a11y.manualHint,
     itemsTruncated: p.a11y.itemsTruncated,
+    tableRowsTruncated: p.tableRowsTruncated,
     findingsTruncated: p.a11y.findingsTruncated,
     generateAltText: p.a11y.generateAltText,
+    passedTitle: p.passedTitle,
   };
 
   // Handed only to the accessibility tab — image-alt is an a11y-only audit.
@@ -2057,8 +2212,9 @@ export default function SeoPerformance() {
                 </Banner>
               )}
 
-              {/* §3.3 — every category score at a glance, doubling as tab
-                  navigation; the tabs below stay the detail level. */}
+              {/* §3.3 — the three category cards ARE the section selector; the
+                  selected card is outlined in the accent color, the panel below
+                  shows that category's detail. */}
               <ScoreStrip
                 categories={stripCategories}
                 selected={selectedTab}
@@ -2067,7 +2223,7 @@ export default function SeoPerformance() {
                 noScoreAriaLabel={p.strip.noScore}
               />
 
-              <Tabs tabs={tabDescriptors} selected={selectedTab} onSelect={setSelectedTab}>
+              <div>
                 {selectedTab === 0 && (
                 <BlockStack gap="500">
             {/* Real-user (CrUX) field data — leads the result the way PSI does,
@@ -2448,6 +2604,7 @@ export default function SeoPerformance() {
                         <QualityFindings
                           issues={a11yAutomated}
                           manualIssues={a11yManual}
+                          passedAudits={quality.accessibilityPassed}
                           total={quality.accessibilityTotal}
                           keyPrefix="a11y"
                           openFindings={openFindings}
@@ -2473,6 +2630,7 @@ export default function SeoPerformance() {
                         <QualityFindings
                           issues={bpAutomated}
                           manualIssues={bpManual}
+                          passedAudits={quality.bestPracticesPassed}
                           total={quality.bestPracticesTotal}
                           keyPrefix="bp"
                           openFindings={openFindings}
@@ -2483,7 +2641,7 @@ export default function SeoPerformance() {
                     )}
                   </BlockStack>
                 )}
-              </Tabs>
+              </div>
             </BlockStack>
           </Card>
         )}
@@ -2616,7 +2774,9 @@ export default function SeoPerformance() {
                     { title: p.historyColStrategy },
                     { title: p.historyColScore },
                     { title: p.historyColA11y },
+                    { title: p.historyColBestPractices },
                     { title: p.historyColDate },
+                    { title: p.historyColActions, hidden: true },
                   ]}
                 >
                   {visibleHistory.map((entry, index) => {
@@ -2660,9 +2820,34 @@ export default function SeoPerformance() {
                           )}
                         </IndexTable.Cell>
                         <IndexTable.Cell>
+                          {/* Null on rows stored before the quality categories
+                              existed — shown as "–", never glossed to 0. */}
+                          {entry.bestPracticesScore != null ? (
+                            <Badge tone={lighthouseTone(entry.bestPracticesScore)}>{String(entry.bestPracticesScore)}</Badge>
+                          ) : (
+                            <Text as="span" tone="subdued">–</Text>
+                          )}
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
                           <Text as="span" variant="bodyMd">
                             {new Date(entry.createdAt).toLocaleDateString(undefined)}
                           </Text>
+                        </IndexTable.Cell>
+                        <IndexTable.Cell>
+                          {/* stopPropagation: the trash button lives inside a
+                              row whose onClick opens the run — without it a
+                              delete click would also load the audit first. */}
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <Tooltip content={p.historyDelete}>
+                              <Button
+                                icon={DeleteIcon}
+                                variant="tertiary"
+                                tone="critical"
+                                accessibilityLabel={p.historyDelete}
+                                onClick={() => deleteHistoryEntry(entry.id)}
+                              />
+                            </Tooltip>
+                          </div>
                         </IndexTable.Cell>
                       </IndexTable.Row>
                     );
@@ -2671,6 +2856,7 @@ export default function SeoPerformance() {
                 {loadingHistory && (
                   <Text as="p" variant="bodySm" tone="subdued">{p.historyLoading}</Text>
                 )}
+                <Text as="p" variant="bodySm" tone="subdued">{p.historyRetentionHint}</Text>
               </BlockStack>
             )}
           </BlockStack>

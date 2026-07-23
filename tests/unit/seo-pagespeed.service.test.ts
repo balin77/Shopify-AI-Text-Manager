@@ -455,6 +455,36 @@ describe("parsePageSpeedResponse", () => {
     expect(allIds).not.toContain("deprecations");
   });
 
+  it("collects the passed checks per quality category, title-only, excluding manual/notApplicable", () => {
+    const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
+    // aria-allowed-attr (score 1) is the only passed a11y audit in the mock;
+    // focus-traps (manual) and video-caption (notApplicable) are not "passed".
+    expect(r.quality?.accessibilityPassed?.map((a) => a.id)).toEqual(["aria-allowed-attr"]);
+    // deprecations (score 1) is the passed best-practices audit; the failing
+    // and informative ones stay out of the passed list.
+    expect(r.quality?.bestPracticesPassed?.map((a) => a.id)).toEqual(["deprecations"]);
+    // Passed checks must never also appear as findings.
+    const findingIds = [
+      ...(r.quality?.accessibility ?? []),
+      ...(r.quality?.bestPractices ?? []),
+    ].map((i) => i.id);
+    expect(findingIds).not.toContain("aria-allowed-attr");
+    expect(findingIds).not.toContain("deprecations");
+  });
+
+  it("normalizes the failing best-practices finding's details into a table when Lighthouse gives headings", () => {
+    const raw = structuredClone(mockPsiResponse) as any;
+    // Real PSI ships errors-in-console with headings; the base mock omits them.
+    raw.lighthouseResult.audits["errors-in-console"].details.headings = [
+      { key: "url", valueType: "url", label: "URL" },
+      { key: "description", valueType: "text", label: "Description" },
+    ];
+    const r = parsePageSpeedResponse(raw, "https://example.com/", "mobile", "now");
+    const finding = r.quality?.bestPractices.find((i) => i.id === "errors-in-console");
+    expect(finding?.table?.columns.map((c) => c.label)).toEqual(["URL", "Description"]);
+    expect(finding?.table?.rows).toHaveLength(1);
+  });
+
   it("includes informative audits only when they carry items, and never smooths null scores to 0", () => {
     const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
     const bp = r.quality?.bestPractices ?? [];

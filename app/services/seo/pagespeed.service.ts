@@ -299,7 +299,15 @@ export async function listPageSpeedHistory(opts: ListPageSpeedHistoryOptions): P
     where: { shop },
     orderBy: { createdAt: "desc" },
     take: limit,
-    select: { id: true, url: true, strategy: true, score: true, a11yScore: true, createdAt: true },
+    select: {
+      id: true,
+      url: true,
+      strategy: true,
+      score: true,
+      a11yScore: true,
+      bestPracticesScore: true,
+      createdAt: true,
+    },
   });
   return rows.map((r: any) => ({
     id: r.id,
@@ -307,8 +315,19 @@ export async function listPageSpeedHistory(opts: ListPageSpeedHistoryOptions): P
     strategy: r.strategy,
     performanceScore: typeof r.score === "number" ? r.score : null,
     a11yScore: typeof r.a11yScore === "number" ? r.a11yScore : null,
+    bestPracticesScore: typeof r.bestPracticesScore === "number" ? r.bestPracticesScore : null,
     createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
   }));
+}
+
+/**
+ * Delete one stored audit by its row id, scoped to `shop` so a tampered request
+ * cannot delete another tenant's history. Returns the number of rows removed
+ * (0 when the id does not exist / belongs to a different shop).
+ */
+export async function deletePageSpeedAudit(db: any, shop: string, id: string): Promise<number> {
+  const res = await db.seoPageSpeedAudit.deleteMany({ where: { id, shop } });
+  return typeof res?.count === "number" ? res.count : 0;
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
@@ -529,6 +548,8 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
 
     const a11y = extractQualityIssues(a11yCategory, audits);
     const bp = extractQualityIssues(bpCategory, audits);
+    const a11yPassed = extractCategoryPassed(a11yCategory, audits);
+    const bpPassed = extractCategoryPassed(bpCategory, audits);
     return {
       a11yScore: extractCategoryScore(a11yCategory),
       bestPracticesScore: extractCategoryScore(bpCategory),
@@ -536,10 +557,44 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
       bestPractices: bp.issues,
       accessibilityTotal: a11y.total,
       bestPracticesTotal: bp.total,
+      ...(a11yPassed.length > 0 ? { accessibilityPassed: a11yPassed } : {}),
+      ...(bpPassed.length > 0 ? { bestPracticesPassed: bpPassed } : {}),
     };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Audits a quality category already passes, title-only — the "Passed checks"
+ * list the performance tab shows, now available for accessibility and best
+ * practices too. Same rule as extractPassedAudits, but scoped to this one
+ * category's `auditRefs`: score >= 0.9 and an actually-verified mode
+ * (notApplicable / manual / informative are not "passed").
+ */
+function extractCategoryPassed(category: any, audits: Record<string, any>): PageSpeedPassedAudit[] {
+  const refs = Array.isArray(category?.auditRefs) ? category.auditRefs : [];
+  const passed: PageSpeedPassedAudit[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    const id = typeof ref?.id === "string" ? ref.id : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const audit: any = audits[id];
+    if (!audit || typeof audit !== "object") continue;
+    const mode = typeof audit.scoreDisplayMode === "string" ? audit.scoreDisplayMode : "";
+    if (mode === "notApplicable" || mode === "manual" || mode === "informative") continue;
+    const score = typeof audit.score === "number" ? audit.score : null;
+    if (score === null || score < 0.9) continue;
+    const displayValue = typeof audit.displayValue === "string" ? audit.displayValue : undefined;
+    passed.push({
+      id,
+      title: typeof audit.title === "string" ? audit.title : id,
+      ...(displayValue ? { displayValue } : {}),
+    });
+  }
+  passed.sort((a, b) => a.title.localeCompare(b.title));
+  return passed.slice(0, MAX_PASSED_AUDITS);
 }
 
 /**
@@ -596,6 +651,9 @@ function extractQualityIssues(
 
     const { items, itemTotal } = extractQualityIssueItems(audit.details);
     const description = typeof audit.description === "string" ? audit.description : undefined;
+    // Richer than the flat items list: source location, console error text, CSP
+    // directive, etc. No nodesMap — quality findings carry no screenshot crops.
+    const table = manual ? undefined : extractTable(audit.details, null);
     issues.push({
       id,
       title: typeof audit.title === "string" ? audit.title : id,
@@ -603,6 +661,7 @@ function extractQualityIssues(
       score,
       items,
       itemTotal,
+      ...(table ? { table } : {}),
       manual,
     });
   }
