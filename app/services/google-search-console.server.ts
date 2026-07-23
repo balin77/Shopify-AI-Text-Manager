@@ -576,62 +576,14 @@ export function aggregateQueryPageRows(rows: SearchAnalyticsRow[]): AggregatedQu
   return { queries, topPageByQuery };
 }
 
-/** A GSC page URL resolved to the store resource it points at (for the Quick
- *  wins "Optimize" deep-link — see resolveGscPagePath). */
-export interface ResolvedGscPage {
-  resourceType: "Product" | "Collection" | "Page" | "Article";
-  handle: string;
-  /**
-   * The locale prefix the path carried (e.g. "de" from "/de/products/foo"),
-   * lowercased, or null for an unprefixed path. GSC queries carry no locale —
-   * for a multilingual shop a French query ranks on the FR page, so the adopt
-   * flow (PLAN_KEYWORDS_EXPANSION.md §4.2) uses this as the LOCALE SUGGESTION
-   * for the tracked keyword (validated against the shop's published locales
-   * by the caller — a random two-letter first segment must not silently
-   * create keywords under a nonexistent locale).
-   */
-  locale: string | null;
-}
-
-// Matches an optional leading locale segment in a storefront path, e.g.
-// "/de/products/foo" or "/en-us/collections/bar" — Shopify prefixes every
-// path with the active locale under an internationalized domain/subfolder
-// setup, and that segment must be stripped before matching /products/ etc.
-const LOCALE_SEGMENT_RE = /^[a-z]{2}(-[a-z]{2,4})?$/i;
-
 /**
- * Map a GSC "page" URL (as returned by the query/page-dimensioned Search
- * Analytics rows) back to the store resource it points at, so the Quick wins
- * table's "Optimize" button knows what to track/deep-link to. Pure and
- * exported for unit testing. Returns null for anything that isn't a
- * recognized content path (home page, /search, cart, unknown routes, or an
- * unparsable URL) — the caller must not render the Optimize button then.
- */
-export function resolveGscPagePath(pageUrl: string): ResolvedGscPage | null {
-  let path: string;
-  try {
-    path = new URL(pageUrl).pathname;
-  } catch {
-    return null;
-  }
-
-  const segments = path.split("/").filter(Boolean);
-  let locale: string | null = null;
-  if (segments.length > 0 && LOCALE_SEGMENT_RE.test(segments[0])) {
-    locale = segments[0].toLowerCase();
-    segments.shift();
-  }
-  if (segments.length === 0) return null;
-
-  const [first, second, third] = segments;
-  if (first === "products" && second) return { resourceType: "Product", handle: second, locale };
-  if (first === "collections" && second) return { resourceType: "Collection", handle: second, locale };
-  if (first === "pages" && second) return { resourceType: "Page", handle: second, locale };
-  // /blogs/<blogHandle>/<articleHandle> — the article's own handle (third
-  // segment) is what SeoKeyword/Article rows are keyed by, not the blog handle.
-  if (first === "blogs" && second && third) return { resourceType: "Article", handle: third, locale };
-  return null;
-}
+ * `resolveGscPagePath` used to be defined here — extracted to
+ * `seo/url-resolver.server.ts` (PLAN_SEO_SUITE_COMPLETION.md §1/§3.1) so the
+ * Phase-1 crawler can share the exact same path→resource mapping instead of
+ * a second, drifting copy. Re-exported so every existing importer (the Quick
+ * wins "Optimize" deep-link in app.seo.search-console.tsx, and this file's
+ * own unit tests) keeps working unchanged. */
+export { resolveGscPagePath, type ResolvedGscPage } from "./seo/url-resolver.server";
 
 /**
  * Submit a sitemap to GSC. `sitemapUrl` must be the sitemap's FULL absolute URL

@@ -104,10 +104,30 @@ interface RunArgs {
   seoLimits: Record<string, number> | null;
 }
 
+const SHOP_NAME_QUERY = `#graphql
+  query seoAuditShopName {
+    shop { name }
+  }
+`;
+
+/** Best-effort shop display name — used only to strip the "– ShopName"
+ *  suffix in the crawl-derived headDrift bucket (audit.service.ts §3.6).
+ *  Never fails the whole scan on a GraphQL error. */
+async function fetchShopName(admin: AdminApiContext, fallbackShop: string): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_NAME_QUERY);
+    const j: any = await res.json();
+    return j?.data?.shop?.name || fallbackShop.replace(/\.myshopify\.com$/, "");
+  } catch {
+    return fallbackShop.replace(/\.myshopify\.com$/, "");
+  }
+}
+
 async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
   const { db, admin, shop, plan, seoTitleEffectiveLimit: effectiveLimit, seoLimits } = args;
 
   try {
+    const shopName = await fetchShopName(admin, shop);
     // Enumerate every shop locale so the SEO overview language switcher has a
     // fresh snapshot per tab. Primary snapshot uses locale="" (sentinel) so
     // it stays compatible with pre-locale rows. Published-but-non-primary
@@ -162,6 +182,7 @@ async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
           seoLimits,
           plan,
           locale: target.locale || undefined,
+          shopName,
         });
         await saveAuditSnapshot(db, shop, audit, target.snapshotKey);
 

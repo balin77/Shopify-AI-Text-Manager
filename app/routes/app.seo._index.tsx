@@ -63,6 +63,24 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
   "duplicateSeoDescription",
 ]);
 
+const SHOP_NAME_QUERY = `#graphql
+  query seoDashboardShopName {
+    shop { name }
+  }
+`;
+
+/** Best-effort shop display name for the crawl-derived headDrift bucket's
+ *  "– ShopName" suffix strip (audit.service.ts §3.6). Never throws. */
+async function fetchShopNameForAudit(admin: any, fallbackShop: string): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_NAME_QUERY);
+    const j: any = await res.json();
+    return j?.data?.shop?.name || fallbackShop.replace(/\.myshopify\.com$/, "");
+  } catch {
+    return fallbackShop.replace(/\.myshopify\.com$/, "");
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -106,12 +124,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // inline ONCE so this load still works, and persist it immediately so
     // every subsequent visit is instantly cached from here on. The next
     // "Rescan" click will refresh every locale in one Task.
+    // shopName is only fetched on this cold path (not the hot cached-snapshot
+    // path above) — it's only used for the crawl-derived headDrift bucket's
+    // "– ShopName" suffix strip (audit.service.ts §3.6).
+    const shopName = await fetchShopNameForAudit(admin, session.shop);
     const audit = await analyzeStore(session.shop, {
       db,
       seoTitleEffectiveLimit: effectiveLimit,
       seoLimits,
       plan,
       locale: activeLocaleKey || undefined,
+      shopName,
     });
     await saveAuditSnapshot(db, session.shop, audit, activeLocaleKey);
     snapshot = { audit, createdAt: new Date() };
@@ -581,15 +604,21 @@ export default function SeoDashboard() {
                         <Badge tone="attention">
                           {d.affectedItems.replace("{count}", String(p.count))}
                         </Badge>
-                        {AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
-                          <Button
-                            size="slim"
-                            onClick={() => handleFixWithAi(p.code)}
-                            disabled={disableFixButtons || fixFetcher.state !== "idle"}
-                            loading={fixingCode === p.code && fixFetcher.state !== "idle"}
-                          >
-                            {d.fixAllWithAi}
+                        {p.action === "deepLink" ? (
+                          <Button size="slim" onClick={() => handleNavigate("/app/seo/crawl")}>
+                            {d.viewInCrawlTab}
                           </Button>
+                        ) : (
+                          AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
+                            <Button
+                              size="slim"
+                              onClick={() => handleFixWithAi(p.code)}
+                              disabled={disableFixButtons || fixFetcher.state !== "idle"}
+                              loading={fixingCode === p.code && fixFetcher.state !== "idle"}
+                            >
+                              {d.fixAllWithAi}
+                            </Button>
+                          )
                         )}
                       </InlineStack>
                     </InlineStack>

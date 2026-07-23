@@ -53,6 +53,7 @@
     "@shopify/shopify-app-remix": "^4.1.0",
     "@shopify/shopify-app-session-storage-prisma": "^8.0.0",
     "@types/express": "^5.0.6",
+    "cheerio": "^1.2.0",
     "compression": "^1.8.1",
     "dotenv": "^17.2.3",
     "express": "^4.22.1",

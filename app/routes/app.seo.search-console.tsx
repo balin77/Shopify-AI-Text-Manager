@@ -70,6 +70,7 @@ import {
   type KeywordResourceType,
 } from "../services/seo/keywords.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
+import { resolvePathsToResources } from "../services/seo/url-resolver.server";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -108,74 +109,28 @@ export interface QuickWinOpportunity extends CtrOpportunity {
   resourceId: string | null;
 }
 
-const QUICK_WIN_RESOURCE_MODELS = ["Product", "Collection", "Page", "Article"] as const;
-
 /**
  * Best-effort resolve each Quick-win row's underlying store resource
  * (Product/Collection/Page/Article), scoped to this shop, so the "Optimize"
- * button knows which resource to track a keyword against / deep-link to. Uses
- * one batched findMany per resource type instead of one query per row. A DB
- * failure here must not break the whole page — affected rows just don't get
- * a button (resourceId stays null).
+ * button knows which resource to track a keyword against / deep-link to.
+ * Thin wrapper around the shared `resolvePathsToResources`
+ * (seo/url-resolver.server.ts, PLAN_SEO_SUITE_COMPLETION.md §1/§3.1 —
+ * extracted from this exact function) so the batched handle-lookup can be
+ * reused by the crawler without a second, drifting copy.
  */
 async function resolveQuickWinResources(
   db: any,
   shop: string,
   opportunities: CtrOpportunity[],
 ): Promise<QuickWinOpportunity[]> {
-  const parsed = opportunities.map((opp) => ({ opp, resolved: resolveGscPagePath(opp.page) }));
-
-  const handlesByType: Record<(typeof QUICK_WIN_RESOURCE_MODELS)[number], Set<string>> = {
-    Product: new Set(),
-    Collection: new Set(),
-    Page: new Set(),
-    Article: new Set(),
-  };
-  for (const { resolved } of parsed) {
-    if (resolved) handlesByType[resolved.resourceType].add(resolved.handle);
-  }
-
-  const idByTypeAndHandle = new Map<string, string>(); // key: `${resourceType}::${handle}`
-  try {
-    const [products, collections, pages, articles] = await Promise.all([
-      handlesByType.Product.size
-        ? db.product.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Product) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Collection.size
-        ? db.collection.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Collection) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Page.size
-        ? db.page.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Page) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Article.size
-        ? db.article.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Article) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    for (const p of products as { id: string; handle: string }[]) idByTypeAndHandle.set(`Product::${p.handle}`, p.id);
-    for (const c of collections as { id: string; handle: string }[]) idByTypeAndHandle.set(`Collection::${c.handle}`, c.id);
-    for (const pg of pages as { id: string; handle: string }[]) idByTypeAndHandle.set(`Page::${pg.handle}`, pg.id);
-    for (const a of articles as { id: string; handle: string }[]) idByTypeAndHandle.set(`Article::${a.handle}`, a.id);
-  } catch {
-    // Best-effort: leave idByTypeAndHandle empty — every row falls back to "no
-    // button" below rather than failing the whole page load.
-  }
-
-  return parsed.map(({ opp, resolved }) => {
-    if (!resolved) return { ...opp, resourceType: null, resourceId: null };
-    const id = idByTypeAndHandle.get(`${resolved.resourceType}::${resolved.handle}`);
-    return { ...opp, resourceType: id ? resolved.resourceType : null, resourceId: id ?? null };
+  const resolved = await resolvePathsToResources(db, shop, opportunities.map((o) => o.page));
+  return opportunities.map((opp) => {
+    const r = resolved.get(opp.page);
+    return {
+      ...opp,
+      resourceType: r?.id ? (r.resourceType as KeywordResourceType) : null,
+      resourceId: r?.id ?? null,
+    };
   });
 }
 

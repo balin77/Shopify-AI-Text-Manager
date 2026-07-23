@@ -70,6 +70,12 @@ const LONG_RUNNING_TASK_TYPES = [
   // scan shape as seoAudit, so it needs the same generous stuck-task
   // threshold rather than the short default cutoff.
   'seoJsonLdAudit',
+  // Storefront crawler / site audit (PLAN_SEO_SUITE_COMPLETION.md §3.5,
+  // Phase 1, seo-crawl.handler.ts) — a live BFS crawl of up to 2000 pages
+  // (5 parallel requests, ~200ms spacing, 10s timeout + one retry on
+  // 5xx/timeout) can legitimately run for many minutes on a large shop, so it
+  // needs the same generous stuck-task threshold as the other detached scans.
+  'seoCrawl',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

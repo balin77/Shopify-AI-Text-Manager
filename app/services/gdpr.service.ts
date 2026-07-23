@@ -204,7 +204,8 @@ export async function redactCustomerData(
  *      SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
- *      GlossaryEntry, SeoWebVitalSample          (all scoped by `shop`)
+ *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
+ *      SeoCrawlBrokenLink                        (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -494,6 +495,24 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoWebVitalSamplesDeleted.count} SEO web-vital samples`);
+
+    // Phase 1 (storefront crawler, PLAN_SEO_SUITE_COMPLETION.md §2/§3):
+    // children before the parent so the logged counts stay meaningful, even
+    // though onDelete: Cascade on snapshotId would clean them up either way.
+    const seoCrawlBrokenLinksDeleted = await tx.seoCrawlBrokenLink.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlBrokenLinksDeleted.count} SEO crawl broken links`);
+
+    const seoCrawlPagesDeleted = await tx.seoCrawlPage.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlPagesDeleted.count} SEO crawl pages`);
+
+    const seoCrawlSnapshotsDeleted = await tx.seoCrawlSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlSnapshotsDeleted.count} SEO crawl snapshots`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

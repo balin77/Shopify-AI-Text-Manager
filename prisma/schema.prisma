@@ -1265,3 +1265,82 @@ model SeoWebVitalSample {
   @@index([shop, createdAt])
   @@index([shop, template, device, createdAt])
 }
+
+// ── Phase 1 (Storefront crawler / site audit, PLAN_SEO_SUITE_COMPLETION.md
+// §2/§3) ─────────────────────────────────────────────────────────────────
+//
+// One row per "Jetzt scannen" run (seoCrawl Task, seo-crawl.handler.ts /
+// crawl.service.ts). Children (SeoCrawlPage, SeoCrawlBrokenLink) cascade on
+// delete but ALSO carry their own `shop` column — the GDPR schema-coverage
+// guard (tests/unit/gdpr.service.test.ts) checks for a `shop`/`shopId` field
+// per model and expects an explicit deleteMany, not a cascade, so every
+// child needs the column even though the FK alone would clean it up.
+// Retention: on a new crawl start, delete all but the newest 5 snapshots per
+// shop (see pruneOldCrawlSnapshots in crawl.service.ts) — cascade removes the
+// pruned snapshots' pages/brokenLinks with them.
+model SeoCrawlSnapshot {
+  id              String    @id @default(cuid())
+  shop            String
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  status          String // "running" | "completed" | "failed" | "capped"
+  error           String? // short reason on "failed" (e.g. "storefront_password", "bot_blocked")
+  pagesCrawled    Int       @default(0)
+  totalDiscovered Int       @default(0) // URLs found, even beyond the cap
+  pagesOk         Int       @default(0)
+  pagesBroken     Int       @default(0)
+  orphanCount     Int       @default(0)
+  headDriftCount  Int       @default(0)
+
+  pages       SeoCrawlPage[]
+  brokenLinks SeoCrawlBrokenLink[]
+
+  @@index([shop, startedAt])
+}
+
+// One row per crawled URL (post query-strip/dedupe normalization, §3.2).
+// `resourceType`/`resourceId` are resolved via the shared
+// `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
+// doesn't map to a known content type (theme/metaobject pages, §3.8).
+model SeoCrawlPage {
+  id            String  @id @default(cuid())
+  shop          String
+  snapshotId    String
+  url           String // normalized URL (query params stripped, §3.2)
+  statusCode    Int
+  redirectedTo  String? // final URL, if a 3xx chain was followed
+  responseMs    Int
+  title         String? // <title> from the rendered HTML
+  metaDesc      String?
+  canonical     String?
+  h1Count       Int     @default(0)
+  wordCount     Int     @default(0)
+  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
+  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount  Int     @default(0) // internal links pointing HERE
+  outboundCount Int     @default(0)
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, url])
+  @@index([shop, snapshotId])
+  @@index([shop, snapshotId, statusCode])
+}
+
+// A same-origin link edge whose target failed (>=400, timeout, or a redirect
+// loop/too-many-hops). The link GRAPH itself is not persisted (§2 — would be
+// ~200k rows/crawl on a 2000-page site); only broken edges land here.
+model SeoCrawlBrokenLink {
+  id         String  @id @default(cuid())
+  shop       String
+  snapshotId String
+  fromUrl    String
+  toUrl      String
+  statusCode Int // 404/410/5xx; 0 = timeout, -1 = redirect chain >3 hops / loop
+  anchor     String?
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([shop, snapshotId])
+}
