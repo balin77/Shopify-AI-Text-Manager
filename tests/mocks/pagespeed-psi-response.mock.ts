@@ -32,6 +32,7 @@ export const mockPsiResponse = {
           { id: "errors-in-console", group: "best-practices-general" },
           { id: "js-libraries", group: "best-practices-general" }, // informative with items — finding
           { id: "csp-xss", group: "best-practices-trust-safety" }, // informative, no items — advisory
+          { id: "has-hsts", group: "best-practices-trust-safety" }, // informative WITH a nominal score — still advisory, never green
           { id: "deprecations", group: "best-practices-general" }, // passed
         ],
       },
@@ -254,6 +255,15 @@ export const mockPsiResponse = {
         description: "A strong Content Security Policy significantly reduces XSS risk.",
         score: null,
         scoreDisplayMode: "informative", // no items → advisory (gray-circle)
+        details: { type: "table", items: [] },
+      },
+      "has-hsts": {
+        id: "has-hsts",
+        title: "Use a strong HSTS policy",
+        // Informative audits sometimes carry a nominal score; it must NOT make
+        // them render as a green "pass" — they have no verdict.
+        score: 1,
+        scoreDisplayMode: "informative",
         details: { type: "table", items: [] },
       },
     },

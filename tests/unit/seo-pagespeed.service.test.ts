@@ -472,18 +472,24 @@ describe("parsePageSpeedResponse", () => {
     expect(findingIds).not.toContain("deprecations");
   });
 
-  it("collects informative advisory checks (gray-circle) and resolves their group heading", () => {
+  it("collects informative advisory checks (gray-circle) and resolves their group heading + id", () => {
     const r = parsePageSpeedResponse(mockPsiResponse, "https://example.com/", "mobile", "now");
-    // csp-xss is informative with NO items → advisory, not a finding.
+    // csp-xss (no items) and has-hsts (informative WITH a nominal score) are
+    // both advisory — no verdict, so their score is forced null (never green).
     const advisory = r.quality?.bestPracticesAdvisory ?? [];
-    expect(advisory.map((a) => a.id)).toEqual(["csp-xss"]);
-    expect(advisory[0].score).toBeNull();
-    expect(advisory[0].group).toBe("Trust and Safety");
-    // It must not leak into the findings list.
+    expect(advisory.map((a) => a.id).sort()).toEqual(["csp-xss", "has-hsts"]);
+    expect(advisory.every((a) => a.score === null)).toBe(true);
+    const csp = advisory.find((a) => a.id === "csp-xss");
+    expect(csp?.group).toBe("Trust and Safety");
+    expect(csp?.groupId).toBe("best-practices-trust-safety");
+    // Advisory must not leak into findings OR passed.
     expect((r.quality?.bestPractices ?? []).map((i) => i.id)).not.toContain("csp-xss");
-    // Findings carry their group heading too (from categoryGroups).
+    expect((r.quality?.bestPractices ?? []).map((i) => i.id)).not.toContain("has-hsts");
+    expect((r.quality?.bestPracticesPassed ?? []).map((a) => a.id)).not.toContain("has-hsts");
+    // Findings carry their group heading + id too (from categoryGroups).
     const errors = r.quality?.bestPractices.find((i) => i.id === "errors-in-console");
     expect(errors?.group).toBe("General");
+    expect(errors?.groupId).toBe("best-practices-general");
   });
 
   it("collects the not-applicable audits per category, title-only", () => {

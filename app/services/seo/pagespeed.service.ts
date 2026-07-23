@@ -651,16 +651,18 @@ function extractCategoryBuckets(
     }
 
     const score = typeof audit.score === "number" ? audit.score : null;
+    const informative = mode === "informative";
+    const manual = mode === "manual";
 
-    // Passed: a real verdict >= 0.9 (informative audits never "pass").
-    if (score !== null && score >= 0.9 && mode !== "informative") {
+    // Passed: a real binary/numeric verdict >= 0.9. Informative audits are never
+    // "passed" even when they carry a nominal score — they have no verdict.
+    if (!informative && !manual && score !== null && score >= 0.9) {
       passed.push({ id, title, ...(displayValue ? { displayValue } : {}) });
       continue;
     }
 
     const { items, itemTotal } = extractQualityIssueItems(audit.details);
     const description = typeof audit.description === "string" ? audit.description : undefined;
-    const manual = mode === "manual";
     // Richer than the flat items list: source location, console error text, CSP
     // directive, etc. No nodesMap — quality findings carry no screenshot crops.
     const table = manual ? undefined : extractTable(audit.details, null);
@@ -668,12 +670,15 @@ function extractCategoryBuckets(
       id,
       title,
       ...(description ? { description: stripMarkdownLinks(description) } : {}),
-      score: manual ? null : score,
+      // Informative and manual audits have no verdict — force score null so they
+      // render neutral (gray), never as a green "pass" via a nominal score.
+      score: manual || informative ? null : score,
       items,
       itemTotal,
       ...(table ? { table } : {}),
       manual,
       ...(group ? { group } : {}),
+      ...(groupId ? { groupId } : {}),
     };
 
     if (manual) {
@@ -681,24 +686,26 @@ function extractCategoryBuckets(
       continue;
     }
 
-    if (score === null) {
-      // Informative: a real finding when Lighthouse listed affected items to act
-      // on (raw items, mirroring the previous rule), else an advisory hint — the
+    if (informative) {
+      // A real finding when Lighthouse listed affected items to act on (raw
+      // items, mirroring the previous rule), else an advisory hint — the
       // gray-circle entries (CSP, HSTS, …), still worth surfacing.
       const hasRawItems = Array.isArray(audit.details?.items) && audit.details.items.length > 0;
-      if (mode === "informative" && hasRawItems) {
+      if (hasRawItems) {
         findings.push(issue);
         total += 1;
-      } else if (mode === "informative") {
+      } else {
         advisory.push(issue);
       }
-      // score null with no informative mode → neither pass, fail nor advice; drop.
       continue;
     }
 
-    // Numeric score below the pass bar → a failing finding.
-    findings.push(issue);
-    total += 1;
+    // Non-informative with a numeric score below the pass bar → failing finding.
+    // A null score here is neither pass, fail nor advice → dropped.
+    if (score !== null) {
+      findings.push(issue);
+      total += 1;
+    }
   }
 
   findings.sort((a, b) => qualityIssueRank(a) - qualityIssueRank(b));

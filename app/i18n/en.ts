@@ -1562,6 +1562,7 @@ export const en: Translation = {
       },
       qualityUnavailable: "This run was saved before the quality checks existed — start a new test to get accessibility and best-practices results.",
       scoreTitle: "Performance score",
+      scannedUrlLabel: "Scanned page:",
       testedLabel: "Tested: {url} · {strategy} · {date}",
       redirectNotice: "Heads up: the page redirected — what was actually measured is {url}.",
       runtimeErrorTitle: "Google could not analyse this page",

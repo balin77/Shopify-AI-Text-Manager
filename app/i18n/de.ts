@@ -1559,6 +1559,7 @@ export const de = {
       },
       qualityUnavailable: "Dieser Testlauf wurde vor der Qualitätsprüfung gespeichert — starte einen neuen Test, um Barrierefreiheit und Best Practices auszuwerten.",
       scoreTitle: "Performance-Score",
+      scannedUrlLabel: "Gescannte Seite:",
       testedLabel: "Getestet: {url} · {strategy} · {date}",
       redirectNotice: "Achtung: Die Seite hat weitergeleitet — gemessen wurde tatsächlich {url}.",
       runtimeErrorTitle: "Google konnte diese Seite nicht analysieren",

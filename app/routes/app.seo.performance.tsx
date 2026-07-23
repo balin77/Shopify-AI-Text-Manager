@@ -16,7 +16,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Card,
@@ -38,6 +38,7 @@ import {
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useTaskCount } from "../contexts/TaskCountContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { HelpTooltip } from "../components/HelpTooltip";
 import { getFormString } from "../utils/form-data.utils";
@@ -112,6 +113,13 @@ const PICKER_CAP = 100;
 /** History rows requested from the server / shown in the table. */
 const HISTORY_LOAD_LIMIT = 20;
 const HISTORY_VISIBLE_LIMIT = 10;
+/**
+ * How long after it was triggered a PageSpeed run is still "the run in
+ * progress" for this page: within this window the loader hands back the run's
+ * task so returning to the page either shows its progress or auto-opens its
+ * result. Past it, the merchant just gets the normal idle controls + history.
+ */
+const ACTIVE_AUDIT_WINDOW_MS = 30 * 60 * 1000;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -158,6 +166,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/web-vitals`
     : `https://${shop}/admin/themes/current/editor?context=apps`;
 
+  // The run this page most recently kicked off (the `runAudit` action models it
+  // as a `Task`, like the AI generations do). When one is still fresh, the
+  // client uses it to either show the in-progress state or auto-open the
+  // finished result on return — instead of the run silently vanishing from the
+  // UI while it keeps writing to history in the background.
+  const activeAudit = await resolveActiveAudit(db, shop, history);
+
   return json({
     domain,
     products,
@@ -168,8 +183,56 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     rumEmbedUrl,
     runsToday,
     dailyLimit: getDailyPageSpeedRunsLimit(plan),
+    activeAudit,
   });
 };
+
+/** What the loader hands the client about the most recent PageSpeed run. */
+type ActiveAudit = {
+  taskId: string;
+  status: string;
+  /** Row id of the finished audit (completed runs only), else null. */
+  auditId: string | null;
+  url: string | null;
+  strategy: PageSpeedStrategy | null;
+};
+
+/**
+ * Newest `pageSpeed` task within the window. For a completed run its stored
+ * `{ url, strategy }` is matched against the newest history row for that target
+ * (history is newest-first) to recover the audit's row id, so the client can
+ * re-open exactly that result via the existing `loadHistory` intent.
+ */
+async function resolveActiveAudit(
+  db: any,
+  shop: string,
+  history: { id: string; url: string; strategy: string }[],
+): Promise<ActiveAudit | null> {
+  const task = await db.task.findFirst({
+    where: { shop, type: "pageSpeed", createdAt: { gte: new Date(Date.now() - ACTIVE_AUDIT_WINDOW_MS) } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, result: true },
+  });
+  if (!task) return null;
+
+  let url: string | null = null;
+  let strategy: PageSpeedStrategy | null = null;
+  try {
+    const parsed = task.result ? JSON.parse(task.result) : null;
+    if (typeof parsed?.url === "string") url = parsed.url;
+    if (parsed?.strategy === "mobile" || parsed?.strategy === "desktop") strategy = parsed.strategy;
+  } catch {
+    // Malformed result payload — degrade to an id-only active audit.
+  }
+
+  let auditId: string | null = null;
+  if (task.status === "completed" && url && strategy) {
+    const match = history.find((h) => h.url === url && h.strategy === strategy);
+    auditId = match?.id ?? null;
+  }
+
+  return { taskId: task.id, status: task.status, auditId, url, strategy };
+}
 
 type ActionResult =
   | { ok: true; result: PageSpeedAuditResult }
@@ -429,17 +492,59 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: false, error: "invalidUrl" }, { status: 400 });
   }
 
+  const [plan, locale] = await Promise.all([getShopPlan(db, shop), getShopLanguage(db, shop)]);
+
+  // Model the run as a Task, exactly like the AI generations (see
+  // text-generation.handler.ts). This is what makes a run survive navigation:
+  // it shows up in the nav "Tasks" badge/preview while it runs, and the loader
+  // can hand it back to the page on return. The `result` payload carries the
+  // target so the loader can recover the finished audit's row id from history.
+  // Task-writes are best-effort — a task-row failure must never sink the audit.
+  const { getTaskExpirationDate } = await import("../config/constants");
+  let pageLabel = url;
   try {
-    const [plan, locale] = await Promise.all([getShopPlan(db, shop), getShopLanguage(db, shop)]);
+    const parsed = new URL(url);
+    pageLabel = parsed.pathname === "/" ? parsed.host : parsed.pathname;
+  } catch {
+    // Keep the raw url as the label.
+  }
+  const task = await db.task
+    .create({
+      data: {
+        shop,
+        type: "pageSpeed",
+        status: "running",
+        resourceType: "page",
+        resourceTitle: pageLabel,
+        fieldType: strategy,
+        progress: 10,
+        result: JSON.stringify({ url, strategy }),
+        expiresAt: getTaskExpirationDate(),
+      },
+    })
+    .catch(() => null);
+
+  const finishTask = (data: Record<string, unknown>) =>
+    task ? db.task.update({ where: { id: task.id }, data }).catch(() => {}) : Promise.resolve();
+
+  try {
     const result = await runPageSpeedAudit({ db, shop, url, strategy, force, plan, locale });
+    await finishTask({
+      status: "completed",
+      progress: 100,
+      completedAt: new Date(),
+      result: JSON.stringify({ url, strategy }),
+    });
     return json<ActionResult>({ ok: true, result });
   } catch (err: any) {
     // Both budget failures degrade the same way: serve a stored audit of any
     // age so the merchant sees something rather than a hard error. Only the
     // wording differs — Google's quota is not our daily budget, and blaming
-    // Google for our own limit would be wrong.
+    // Google for our own limit would be wrong. No real measurement happened, so
+    // the task is marked failed (it never reached Google).
     if (err instanceof PageSpeedQuotaExceededError || err instanceof PageSpeedDailyLimitError) {
       const staleReason = err instanceof PageSpeedDailyLimitError ? "dailyLimit" : "quota";
+      await finishTask({ status: "failed", completedAt: new Date(), error: staleReason });
       const stale = await findLatestPageSpeedAudit(db, shop, url, strategy);
       if (stale) return json<ActionResult>({ ok: true, result: { ...stale, staleReason } });
       return json<ActionResult>(
@@ -447,6 +552,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
         { status: 429 },
       );
     }
+    await finishTask({ status: "failed", completedAt: new Date(), error: String(err?.message || err) });
     return json<ActionResult>(
       { ok: false, error: "auditFailed", detail: String(err?.message || err) },
       { status: 502 },
@@ -747,6 +853,19 @@ const RECENT_RUN_WINDOW_MS = 5 * 60 * 1000;
 const ELEMENTS_FINDING_ID = "__elements__";
 const PASSED_FINDING_ID = "__passed__";
 const NOT_APPLICABLE_FINDING_ID = "__na__";
+
+/**
+ * Fixed order for the quality group headings, by Lighthouse group id (matched
+ * on id, not translated title). Best practices: General → Trust and Safety →
+ * Browser Compatibility → User Experience. Groups not listed (e.g. the
+ * accessibility groups) keep PSI's own order after these.
+ */
+const QUALITY_GROUP_ORDER = [
+  "best-practices-general",
+  "best-practices-trust-safety",
+  "best-practices-browser-compat",
+  "best-practices-ux",
+];
 
 const FINDING_ROW_STYLE: CSSProperties = {
   borderTop: "1px solid var(--p-color-border-secondary, #e1e3e5)",
@@ -1481,20 +1600,27 @@ function QualityFindings({
   const naOpen = openFindings.has(naKey);
 
   // Findings and advisory checks share PSI's group headings (Trust and Safety,
-  // Browser Compatibility, …). Grouped by their resolved group title, in order
-  // of first appearance; audits without a group fall under an untitled lead
-  // block so nothing is hidden.
+  // Browser Compatibility, …). Grouped by their group id and ordered by
+  // QUALITY_GROUP_ORDER (General → Trust & Safety → Browser Compatibility → …);
+  // groups not listed keep PSI's own order after them. The localized title is
+  // taken from the first issue in each group. Ungrouped audits trail last.
   const graded = [...issues, ...(advisory ?? [])];
-  const groupOrder: string[] = [];
-  const byGroup = new Map<string, QualityIssue[]>();
+  const groupsById = new Map<string, { id: string; title?: string; items: QualityIssue[] }>();
   for (const it of graded) {
-    const key = it.group ?? "";
-    if (!byGroup.has(key)) {
-      byGroup.set(key, []);
-      groupOrder.push(key);
+    const id = it.groupId ?? "";
+    let entry = groupsById.get(id);
+    if (!entry) {
+      entry = { id, title: it.group, items: [] };
+      groupsById.set(id, entry);
     }
-    byGroup.get(key)!.push(it);
+    entry.items.push(it);
   }
+  const orderRank = (id: string): number => {
+    if (!id) return Number.MAX_SAFE_INTEGER; // ungrouped last
+    const i = QUALITY_GROUP_ORDER.indexOf(id);
+    return i === -1 ? Number.MAX_SAFE_INTEGER - 1 : i;
+  };
+  const orderedGroups = [...groupsById.values()].sort((a, b) => orderRank(a.id) - orderRank(b.id));
 
   return (
     <BlockStack gap="300">
@@ -1502,13 +1628,13 @@ function QualityFindings({
         <Text as="p" variant="bodySm" tone="subdued">{labels.noIssues}</Text>
       ) : (
         <BlockStack gap="400">
-          {groupOrder.map((groupKey) => (
-            <BlockStack key={groupKey || "__ungrouped__"} gap="150">
-              {groupKey && (
-                <Text as="h4" variant="headingSm" tone="subdued">{groupKey}</Text>
+          {orderedGroups.map((grp) => (
+            <BlockStack key={grp.id || "__ungrouped__"} gap="150">
+              {grp.title && (
+                <Text as="h4" variant="headingSm" tone="subdued">{grp.title}</Text>
               )}
               <div>
-                {byGroup.get(groupKey)!.map((issue) => {
+                {grp.items.map((issue) => {
                   const rowKey = `${keyPrefix}-${issue.id}`;
                   return (
                     <QualityIssueRow
@@ -1682,7 +1808,7 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit } =
+  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit } =
     useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
@@ -1690,6 +1816,17 @@ export default function SeoPerformance() {
   const fetcher = useFetcher<ActionResult>();
   const historyFetcher = useFetcher<ActionResult>();
   const deleteFetcher = useFetcher<DeleteHistoryResult>();
+
+  // The run the loader says this page most recently kicked off (modeled as a
+  // Task by the action). Used to restore the run on return: show its progress
+  // while it runs, auto-open its result once it finishes. `useTaskCount` is the
+  // app-wide task poller — it tells us the moment our run completes so we can
+  // revalidate and pick up the finished audit's id.
+  const revalidator = useRevalidator();
+  const { recentlyCompletedTasks } = useTaskCount();
+  // Guards the one-shot auto-open so it can't fight the merchant reopening a
+  // different history row, or re-fire on every render.
+  const autoOpenedRef = useRef(false);
 
   // History rows removed via the trash button. The loader data is static within
   // a session, so deleted ids are tracked here and filtered out of the table
@@ -1774,6 +1911,13 @@ export default function SeoPerformance() {
   const budgetExhausted = runsToday >= dailyLimit;
   const runsLeft = Math.max(0, dailyLimit - runsToday);
 
+  // A run this page kicked off is still going server-side, but no fetcher is
+  // in flight here (the merchant navigated away and back). Drives the same
+  // "running" affordances as a live submission. Suppressed once a fresh on-page
+  // run is in flight or has produced a result.
+  const showRestoredRunning =
+    !!activeAudit && activeAudit.status === "running" && !running && !data;
+
   const openHistoryEntry = (entry: (typeof history)[number]) => {
     // Mirror the row's URL + strategy into the controls so "Re-test" naturally
     // targets the same page the merchant is looking at.
@@ -1792,6 +1936,33 @@ export default function SeoPerformance() {
     setViewedHistoryId(null);
     setViewedHistoryResult(null);
   };
+
+  // Return-to-page restore, half 1: a run that finished while the merchant was
+  // away auto-opens its result (the same path a history-row click takes), once.
+  // Skipped when a fresh on-page run is showing or the merchant already opened a
+  // history row, so it never yanks the view out from under them.
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (!activeAudit || activeAudit.status !== "completed" || !activeAudit.auditId) return;
+    if (data || viewedHistoryId) return;
+    const entry = history.find((h) => h.id === activeAudit.auditId);
+    if (!entry) return;
+    autoOpenedRef.current = true;
+    openHistoryEntry(entry);
+    // One-shot restore keyed on the loader's active audit; the rest is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAudit, data, viewedHistoryId, history]);
+
+  // Return-to-page restore, half 2: while the run is still going, the app-wide
+  // task poller tells us the moment it completes — pull fresh loader data so
+  // `activeAudit` flips to "completed" (with its audit id) and half 1 can open
+  // the result.
+  useEffect(() => {
+    if (activeAudit?.status !== "running") return;
+    if (recentlyCompletedTasks.some((task) => task.id === activeAudit.taskId) && revalidator.state === "idle") {
+      revalidator.revalidate();
+    }
+  }, [activeAudit, recentlyCompletedTasks, revalidator]);
 
   const deleteHistoryEntry = (id: string) => {
     // Close the result view if the deleted run is the one on screen.
@@ -2168,8 +2339,8 @@ export default function SeoPerformance() {
               </div>
               <Button
                 variant="primary"
-                loading={running}
-                disabled={!effectiveUrl || budgetExhausted}
+                loading={running || showRestoredRunning}
+                disabled={!effectiveUrl || budgetExhausted || showRestoredRunning}
                 onClick={requestAudit}
               >
                 {p.testButton}
@@ -2185,9 +2356,9 @@ export default function SeoPerformance() {
                 </Badge>
               </div>
             </InlineStack>
-            {running && (
+            {(running || showRestoredRunning) && (
               <Text as="p" variant="bodySm" tone="subdued">
-                {p.runningHint}
+                {showRestoredRunning ? p.stillRunningHint : p.runningHint}
               </Text>
             )}
             {budgetExhausted && (
@@ -2284,6 +2455,42 @@ export default function SeoPerformance() {
                   </BlockStack>
                 </Banner>
               )}
+
+              {/* Which page these numbers belong to — full scanned URL, device
+                  and time, pinned above the scores so the result is never
+                  ambiguous no matter which category is open. */}
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--p-color-border, #c9cccf)",
+                  background: "var(--p-color-bg-surface-secondary, #f6f6f7)",
+                }}
+              >
+                <InlineStack gap="300" align="space-between" blockAlign="center" wrap>
+                  <InlineStack gap="200" blockAlign="baseline" wrap>
+                    <Text as="span" variant="bodySm" tone="subdued" fontWeight="medium">
+                      {p.scannedUrlLabel}
+                    </Text>
+                    <Text as="span" variant="bodyMd" fontWeight="semibold" breakWord>
+                      {result.url}
+                    </Text>
+                  </InlineStack>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Badge>{strategyLabel(result.strategy)}</Badge>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {new Date(result.fetchedAt).toLocaleString()}
+                    </Text>
+                  </InlineStack>
+                </InlineStack>
+                {result.finalUrl && (
+                  <div style={{ marginTop: "4px" }}>
+                    <Text as="span" variant="bodySm" tone="caution">
+                      {p.redirectNotice.replace("{url}", result.finalUrl)}
+                    </Text>
+                  </div>
+                )}
+              </div>
 
               {/* §3.3 — the three category cards ARE the section selector; the
                   selected card is outlined in the accent color, the panel below

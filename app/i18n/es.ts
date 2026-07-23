@@ -1561,6 +1561,7 @@ export const es: Translation = {
       },
       qualityUnavailable: "Esta prueba se guardó antes de que existieran las comprobaciones de calidad — ejecuta una prueba nueva para obtener resultados de accesibilidad y buenas prácticas.",
       scoreTitle: "Puntuación de rendimiento",
+      scannedUrlLabel: "Página escaneada:",
       testedLabel: "Probado: {url} · {strategy} · {date}",
       redirectNotice: "Atención: la página redirigió — lo que se midió realmente es {url}.",
       runtimeErrorTitle: "Google no pudo analizar esta página",

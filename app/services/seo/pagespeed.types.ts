@@ -148,6 +148,12 @@ export interface QualityIssue {
    * from `categoryGroups`. Absent when the audit ref carries no group.
    */
   group?: string;
+  /**
+   * Raw Lighthouse group id (e.g. "best-practices-trust-safety") — kept
+   * alongside the localized `group` title so the UI can order the group
+   * sections deterministically without matching on translated strings.
+   */
+  groupId?: string;
   /** Affected elements, capped. */
   items: Array<{ selector?: string; snippet?: string; url?: string }>;
   /** Number of affected elements BEFORE the cap. */
