@@ -33,6 +33,10 @@ import {
   findPrimaryElsewhere,
   findCannibalizationConflicts,
   getGroupKeywords,
+  countAllKeywords,
+  listAllKeywords,
+  countUngrouped,
+  listUngrouped,
   addKeywordsToGroup,
   removeKeywordFromGroup,
   setKeywordPriority,
@@ -274,12 +278,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const loc = url.searchParams.get("loc") ?? "";
   const selectedGroupId = url.searchParams.get("group") || "";
 
+  // Pseudo-group sentinels (§2.1): "Alle" and "Ohne Gruppe" are not real rows —
+  // they are read-only views over the active locale's keywords. They are NOT
+  // groups, so the group-locale lookup below is skipped for them (they use loc).
+  const isPseudoGroup = selectedGroupId === "__all__" || selectedGroupId === "__ungrouped__";
+
   // A ?group= deeplink implies the active language (§8.6): the group carries
   // its own locale, and a bookmarked group must land in THAT language even if
   // ?loc= says otherwise. Resolve the group's locale up front so the listGroups
   // call below lists the right language's groups.
   let groupLocale: string | null = null;
-  if (selectedGroupId) {
+  if (selectedGroupId && !isPseudoGroup) {
     const g = await db.seoKeywordGroup.findFirst({
       where: { id: selectedGroupId, shop },
       select: { locale: true },
@@ -289,10 +298,43 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const activeLocale = groupLocale ?? loc;
 
   const groups = await listGroups(db, shop, activeLocale);
+
+  // Sidebar counts for the "Alle" / "Ohne Gruppe" pseudo-groups (§2.1), scoped
+  // to the active locale — badges without loading the rows.
+  const [allCount, ungroupedCount] = await Promise.all([
+    countAllKeywords(db, shop, activeLocale),
+    countUngrouped(db, shop, activeLocale),
+  ]);
+
   let groupDetail:
-    | { id: string; name: string; description: string | null; locale: string; keywords: GroupKeywordRow[] }
+    | {
+        id: string;
+        name: string | null;
+        description: string | null;
+        locale: string;
+        keywords: GroupKeywordRow[];
+        pseudo: "all" | "ungrouped" | null;
+      }
     | null = null;
-  if (selectedGroupId) {
+  if (selectedGroupId === "__all__") {
+    groupDetail = {
+      id: "__all__",
+      name: null,
+      description: null,
+      locale: activeLocale,
+      keywords: await listAllKeywords(db, shop, activeLocale),
+      pseudo: "all",
+    };
+  } else if (selectedGroupId === "__ungrouped__") {
+    groupDetail = {
+      id: "__ungrouped__",
+      name: null,
+      description: null,
+      locale: activeLocale,
+      keywords: await listUngrouped(db, shop, activeLocale),
+      pseudo: "ungrouped",
+    };
+  } else if (selectedGroupId) {
     const g = groups.find((grp) => grp.id === selectedGroupId);
     if (g) {
       groupDetail = {
@@ -301,6 +343,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         description: g.description,
         locale: g.locale,
         keywords: await getGroupKeywords(db, shop, g.id),
+        pseudo: null,
       };
     }
   }
@@ -375,6 +418,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productTypes,
     isPro,
     groups,
+    allCount,
+    ungroupedCount,
     groupDetail,
     runningDistribution,
     distributionPreview,
@@ -629,11 +674,22 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (parsed.rows.length > MAX_CSV_ROWS) {
       return json<ActionResult>({ ok: false, error: "csvTooMany" }, { status: 400 });
     }
+    // Bulk-paste default priority (§2.1): the KeywordPaste box carries a
+    // Select whose value fills in rows that did NOT set an explicit priority
+    // column. An explicit per-row priority always wins; parseKeywordsCsv is
+    // untouched.
+    const defaultPriorityRaw = Number(getFormString(form, "defaultPriority"));
+    const defaultPriority = [1, 2, 3].includes(defaultPriorityRaw) ? defaultPriorityRaw : undefined;
     const { added, alreadyInGroup } = await addKeywordsToGroup(
       db,
       session.shop,
       groupId,
-      parsed.rows.map((r) => ({ keyword: r.keyword, locale: r.locale, priority: r.priority, intent: r.intent })),
+      parsed.rows.map((r) => ({
+        keyword: r.keyword,
+        locale: r.locale,
+        priority: r.priority ?? defaultPriority,
+        intent: r.intent,
+      })),
     );
     return json<ActionResult>({
       ok: true,
@@ -792,9 +848,6 @@ export default function SeoKeywords() {
   const distFetcher = useFetcher<{ success: boolean; taskId?: string; error?: string; code?: string }>();
 
   const [newGroupName, setNewGroupName] = useState("");
-  const [groupKeywordInput, setGroupKeywordInput] = useState("");
-  const [groupKeywordLocale, setGroupKeywordLocale] = useState("");
-  const [csvText, setCsvText] = useState("");
   const [showDistModal, setShowDistModal] = useState(false);
   const [distTargetType, setDistTargetType] = useState<KeywordResourceType>("Product");
   const [distMaxSecondaries, setDistMaxSecondaries] = useState("3");
@@ -935,15 +988,18 @@ export default function SeoKeywords() {
     error?: "invalid" | "rateLimited" | "blocked";
   }>();
   const [seedInput, setSeedInput] = useState("");
-  const [seedHl, setSeedHl] = useState(data.primaryLocaleCode);
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
   const [importGroupId, setImportGroupId] = useState("");
+
+  // Research language follows the global active locale (§2.1): no own Select —
+  // primary ("") falls back to the shop's primary Shopify code for the hl param.
+  const researchHl = data.activeLocale || data.primaryLocaleCode;
 
   const runResearch = (expandAlphabet: boolean) => {
     if (!seedInput.trim()) return;
     setSelectedSuggestions(new Set());
     suggestFetcher.submit(
-      { seed: seedInput, hl: seedHl, expandAlphabet: expandAlphabet ? "true" : "false" },
+      { seed: seedInput, hl: researchHl, expandAlphabet: expandAlphabet ? "true" : "false" },
       { method: "post", action: "/api/keyword-suggestions" },
     );
   };
@@ -959,25 +1015,18 @@ export default function SeoKeywords() {
 
   const importSelectedSuggestions = () => {
     if (!importGroupId || selectedSuggestions.size === 0) return;
-    // Reuse the CSV import path — the research locale becomes the keyword
-    // locale when it matches a published secondary; primary otherwise.
-    const isSecondary = localeOptions.some((l) => !l.primary && l.locale.toLowerCase() === seedHl.toLowerCase());
+    // Reuse the CSV import path. The keyword locale is OWNED by the target
+    // group now (§3.1), so the locale column is ignored server-side — but we
+    // still stamp the research locale for backward-compatible files.
+    const isSecondary = localeOptions.some((l) => !l.primary && l.locale.toLowerCase() === researchHl.toLowerCase());
     const csv =
       "keyword,locale\n" +
       Array.from(selectedSuggestions)
-        .map((s) => `"${s.replace(/"/g, '""')}",${isSecondary ? seedHl.toLowerCase() : ""}`)
+        .map((s) => `"${s.replace(/"/g, '""')}",${isSecondary ? researchHl.toLowerCase() : ""}`)
         .join("\n");
     groupFetcher.submit({ actionType: "importCsv", groupId: importGroupId, csv }, { method: "post" });
     setSelectedSuggestions(new Set());
   };
-
-  const hlOptions = useMemo(() => {
-    const codes = new Set<string>([data.primaryLocaleCode.toLowerCase()]);
-    for (const l of localeOptions) {
-      if (!l.primary && l.locale) codes.add(l.locale.toLowerCase());
-    }
-    return Array.from(codes).map((c) => ({ label: c, value: c }));
-  }, [data.primaryLocaleCode, localeOptions]);
 
   // ── Intent classification + filter (plan §7.2) ──
   const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
@@ -1173,27 +1222,25 @@ export default function SeoKeywords() {
           <LibraryTab
             k={k}
             groups={data.groups}
+            allCount={data.allCount}
+            ungroupedCount={data.ungroupedCount}
             groupDetail={data.groupDetail}
             isPro={data.isPro}
             runningDistribution={data.runningDistribution}
             distributionPreview={data.distributionPreview}
-            suggestTaskId={data.suggestTaskId}
             researchAvailability={data.researchAvailability}
             productTypes={data.productTypes}
             itemCounts={data.itemCounts}
             localeOptions={localeOptions}
-            localeSelectOptions={localeSelectOptions}
             priorityOptions={priorityOptions}
             intentLabel={intentLabel}
             selectGroup={selectGroup}
+            activeLocale={data.activeLocale}
             newGroupName={newGroupName}
             setNewGroupName={setNewGroupName}
             groupFetcher={groupFetcher}
             seedInput={seedInput}
             setSeedInput={setSeedInput}
-            seedHl={seedHl}
-            setSeedHl={setSeedHl}
-            hlOptions={hlOptions}
             suggestFetcher={suggestFetcher}
             runResearch={runResearch}
             selectedSuggestions={selectedSuggestions}
@@ -1210,12 +1257,6 @@ export default function SeoKeywords() {
             bulkPriority={bulkPriority}
             setBulkPriority={setBulkPriority}
             priorityFetcher={priorityFetcher}
-            groupKeywordInput={groupKeywordInput}
-            setGroupKeywordInput={setGroupKeywordInput}
-            groupKeywordLocale={groupKeywordLocale}
-            setGroupKeywordLocale={setGroupKeywordLocale}
-            csvText={csvText}
-            setCsvText={setCsvText}
             setShowDistModal={setShowDistModal}
             distFetcher={distFetcher}
             decisions={decisions}

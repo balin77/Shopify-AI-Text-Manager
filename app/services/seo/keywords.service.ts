@@ -775,6 +775,35 @@ export async function listUngrouped(
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
 }
 
+/** How many keywords a locale has in total (§2.1 "Alle" pseudo-group badge —
+ *  drives the sidebar count without loading the rows). */
+export async function countAllKeywords(db: PrismaClient, shop: string, locale = ""): Promise<number> {
+  return db.seoKeyword.count({ where: { shop, locale } });
+}
+
+/** Every keyword of one locale (§2.1 "Alle" pseudo-group), same row shape +
+ *  sort as getGroupKeywords/listUngrouped. */
+export async function listAllKeywords(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<GroupKeywordRow[]> {
+  const keywords = await db.seoKeyword.findMany({
+    where: { shop, locale },
+    include: { _count: { select: { assignments: true } } },
+  });
+  return keywords
+    .map((k) => ({
+      keywordId: k.id,
+      keyword: k.keyword,
+      locale: k.locale,
+      priority: k.priority,
+      intent: k.intent,
+      assignmentCount: k._count.assignments,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
+}
+
 export interface GroupImportEntry {
   keyword: string;
   locale?: string;

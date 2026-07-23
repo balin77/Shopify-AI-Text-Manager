@@ -623,6 +623,31 @@ describe("group locale (Phase 0)", () => {
     expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
     expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
   });
+
+  it("countAllKeywords passes { shop, locale }", async () => {
+    const { countAllKeywords } = await import("~/services/seo/keywords.service");
+    const count = vi.fn(async (_args: any) => 312);
+    const db = { seoKeyword: { count } } as any;
+
+    expect(await countAllKeywords(db, SHOP, "fr")).toBe(312);
+    expect(count.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr" });
+  });
+
+  it("listAllKeywords passes { shop, locale } and maps + sorts rows", async () => {
+    const { listAllKeywords } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+    ]);
+    const db = { seoKeyword: { findMany } } as any;
+
+    const rows = await listAllKeywords(db, SHOP);
+    // No groups filter — "Alle" is every keyword of the locale.
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "" });
+    // Same sort as getGroupKeywords: priority asc, then keyword asc.
+    expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
+  });
 });
 
 describe("buildTranslatedContentInput", () => {
