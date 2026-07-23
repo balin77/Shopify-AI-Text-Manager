@@ -120,6 +120,15 @@ const HISTORY_VISIBLE_LIMIT = 10;
  * result. Past it, the merchant just gets the normal idle controls + history.
  */
 const ACTIVE_AUDIT_WINDOW_MS = 30 * 60 * 1000;
+/**
+ * A run marks its own task completed/failed in the same request, and a real
+ * audit lasts ≤60s (PSI_TIMEOUT_MS). So a task still "running" past this bound
+ * is almost certainly dead — the request that owned it died mid-audit (dyno
+ * redeploy, OOM, crash) and no other process will ever finish it. Treating it
+ * as active would leave the "test" button disabled for the full 30-min window,
+ * so a stale-running task is ignored (idle controls + history instead).
+ */
+const RUNNING_STALE_MS = 3 * 60 * 1000;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -211,9 +220,18 @@ async function resolveActiveAudit(
   const task = await db.task.findFirst({
     where: { shop, type: "pageSpeed", createdAt: { gte: new Date(Date.now() - ACTIVE_AUDIT_WINDOW_MS) } },
     orderBy: { createdAt: "desc" },
-    select: { id: true, status: true, result: true },
+    select: { id: true, status: true, result: true, createdAt: true },
   });
   if (!task) return null;
+
+  // A task still "running" long past a real audit's duration is a dead run
+  // (the request that owned it died before it could mark it done). Ignore it,
+  // otherwise the "test" button stays disabled for the whole 30-min window.
+  if (task.status === "running") {
+    const createdAtMs =
+      task.createdAt instanceof Date ? task.createdAt.getTime() : new Date(task.createdAt).getTime();
+    if (Date.now() - createdAtMs > RUNNING_STALE_MS) return null;
+  }
 
   let url: string | null = null;
   let strategy: PageSpeedStrategy | null = null;
@@ -900,6 +918,24 @@ function DisclosureGlyph({ open }: { open: boolean }) {
 }
 
 const FINDING_TITLE_STYLE: CSSProperties = { flex: "1 1 auto", minWidth: 0 };
+
+/**
+ * Plain, borderless toggle used to turn a group heading (h4) into a collapsible
+ * one — the "Passed checks" / "Not applicable" summaries read as headings like
+ * the real group sections, just clickable, with a caret marking that they open.
+ */
+const GROUP_TOGGLE_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "6px",
+  background: "none",
+  border: "none",
+  padding: 0,
+  margin: 0,
+  font: "inherit",
+  color: "inherit",
+  cursor: "pointer",
+};
 
 const CODE_TEXT_STYLE: CSSProperties = {
   fontFamily: "var(--p-font-family-mono, monospace)",
@@ -1702,79 +1738,65 @@ function QualityFindings({
         </div>
       )}
 
-      {/* Passed checks — the same collapsed list the performance tab shows,
-          now for this quality category too. Absent on legacy stored runs. */}
+      {/* Passed checks — a heading like the group sections above, but
+          collapsible; expanding shows the checks directly beneath it. */}
       {passedAudits && passedAudits.length > 0 && (
-        <div style={FINDING_ROW_STYLE}>
-          <button
-            type="button"
-            onClick={() => onToggle(passedKey)}
-            aria-expanded={passedOpen}
-            aria-controls={`finding-${passedKey}`}
-            style={FINDING_HEADER_STYLE}
-          >
-            <span style={FINDING_TITLE_STYLE}>
-              <InlineStack gap="200" blockAlign="center" wrap={false}>
-                <ToneMarker tone="success" />
-                <Text as="span" variant="bodyMd" fontWeight="medium">
-                  {labels.passedTitle.replace("{count}", String(passedAudits.length))}
-                </Text>
-              </InlineStack>
-            </span>
-            <DisclosureGlyph open={passedOpen} />
-          </button>
+        <BlockStack gap="150">
+          <Text as="h4" variant="headingSm" tone="subdued">
+            <button
+              type="button"
+              onClick={() => onToggle(passedKey)}
+              aria-expanded={passedOpen}
+              aria-controls={`finding-${passedKey}`}
+              style={GROUP_TOGGLE_STYLE}
+            >
+              <DisclosureGlyph open={passedOpen} />
+              <span>{labels.passedTitle.replace("{count}", String(passedAudits.length))}</span>
+            </button>
+          </Text>
           <Collapsible open={passedOpen} id={`finding-${passedKey}`} transition={false}>
-            <div style={{ padding: "0 12px 16px" }}>
-              <BlockStack gap="150">
-                {passedAudits.map((a) => (
-                  <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
-                    <ToneMarker tone="success" />
-                    <Text as="span" variant="bodySm">{a.title}</Text>
-                    {a.displayValue && (
-                      <Text as="span" variant="bodySm" tone="subdued">{a.displayValue}</Text>
-                    )}
-                  </InlineStack>
-                ))}
-              </BlockStack>
-            </div>
+            <BlockStack gap="150">
+              {passedAudits.map((a) => (
+                <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
+                  <ToneMarker tone="success" />
+                  <Text as="span" variant="bodySm">{a.title}</Text>
+                  {a.displayValue && (
+                    <Text as="span" variant="bodySm" tone="subdued">{a.displayValue}</Text>
+                  )}
+                </InlineStack>
+              ))}
+            </BlockStack>
           </Collapsible>
-        </div>
+        </BlockStack>
       )}
 
       {/* Not applicable — checks that did not apply to this page (gray in PSI).
-          Title-only, collapsed; informative only. Absent on legacy runs. */}
+          Same collapsible-heading treatment as the passed section. */}
       {notApplicable && notApplicable.length > 0 && (
-        <div style={FINDING_ROW_STYLE}>
-          <button
-            type="button"
-            onClick={() => onToggle(naKey)}
-            aria-expanded={naOpen}
-            aria-controls={`finding-${naKey}`}
-            style={FINDING_HEADER_STYLE}
-          >
-            <span style={FINDING_TITLE_STYLE}>
-              <InlineStack gap="200" blockAlign="center" wrap={false}>
-                <ToneMarker />
-                <Text as="span" variant="bodyMd" fontWeight="medium">
-                  {labels.notApplicableTitle.replace("{count}", String(notApplicable.length))}
-                </Text>
-              </InlineStack>
-            </span>
-            <DisclosureGlyph open={naOpen} />
-          </button>
+        <BlockStack gap="150">
+          <Text as="h4" variant="headingSm" tone="subdued">
+            <button
+              type="button"
+              onClick={() => onToggle(naKey)}
+              aria-expanded={naOpen}
+              aria-controls={`finding-${naKey}`}
+              style={GROUP_TOGGLE_STYLE}
+            >
+              <DisclosureGlyph open={naOpen} />
+              <span>{labels.notApplicableTitle.replace("{count}", String(notApplicable.length))}</span>
+            </button>
+          </Text>
           <Collapsible open={naOpen} id={`finding-${naKey}`} transition={false}>
-            <div style={{ padding: "0 12px 16px" }}>
-              <BlockStack gap="150">
-                {notApplicable.map((a) => (
-                  <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
-                    <ToneMarker />
-                    <Text as="span" variant="bodySm" tone="subdued">{a.title}</Text>
-                  </InlineStack>
-                ))}
-              </BlockStack>
-            </div>
+            <BlockStack gap="150">
+              {notApplicable.map((a) => (
+                <InlineStack key={a.id} gap="200" blockAlign="center" wrap={false}>
+                  <ToneMarker />
+                  <Text as="span" variant="bodySm" tone="subdued">{a.title}</Text>
+                </InlineStack>
+              ))}
+            </BlockStack>
           </Collapsible>
-        </div>
+        </BlockStack>
       )}
     </BlockStack>
   );
@@ -1943,9 +1965,10 @@ export default function SeoPerformance() {
   // history row, so it never yanks the view out from under them.
   useEffect(() => {
     if (autoOpenedRef.current) return;
-    if (!activeAudit || activeAudit.status !== "completed" || !activeAudit.auditId) return;
+    const auditId = activeAudit?.status === "completed" ? activeAudit.auditId : null;
+    if (!auditId) return;
     if (data || viewedHistoryId) return;
-    const entry = history.find((h) => h.id === activeAudit.auditId);
+    const entry = history.find((h) => h.id === auditId);
     if (!entry) return;
     autoOpenedRef.current = true;
     openHistoryEntry(entry);
@@ -1958,8 +1981,9 @@ export default function SeoPerformance() {
   // `activeAudit` flips to "completed" (with its audit id) and half 1 can open
   // the result.
   useEffect(() => {
-    if (activeAudit?.status !== "running") return;
-    if (recentlyCompletedTasks.some((task) => task.id === activeAudit.taskId) && revalidator.state === "idle") {
+    const taskId = activeAudit?.status === "running" ? activeAudit.taskId : null;
+    if (!taskId) return;
+    if (recentlyCompletedTasks.some((task) => task.id === taskId) && revalidator.state === "idle") {
       revalidator.revalidate();
     }
   }, [activeAudit, recentlyCompletedTasks, revalidator]);
