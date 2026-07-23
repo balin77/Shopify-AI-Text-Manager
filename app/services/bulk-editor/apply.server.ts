@@ -800,6 +800,28 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
 
 // ─── Foreign-locale rows: translationsRegister/-Remove with verification ───
 
+/** Primary-locale handle of a row — for the duplicate-slug guard below. */
+async function loadPrimaryHandle(
+  db: PrismaClient,
+  shop: string,
+  group: BulkDiffRowGroup,
+): Promise<string | null> {
+  const where = { shop_id: { shop, id: group.rowId } };
+  const select = { handle: true } as const;
+  switch (group.rowType) {
+    case "product":
+      return (await db.product.findUnique({ where, select }))?.handle ?? null;
+    case "collection":
+      return (await db.collection.findUnique({ where, select }))?.handle ?? null;
+    case "article":
+      return (await db.article.findUnique({ where, select }))?.handle ?? null;
+    case "page":
+      return (await db.page.findUnique({ where, select }))?.handle ?? null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Persists one foreign-locale row group (Plan §6): non-empty cells become ONE
  * verified translationsRegister, cleared cells ONE verified
@@ -835,6 +857,26 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     }
     if (value === "") clears.push({ columnId, key, value });
     else writes.push({ columnId, key, value });
+  }
+
+  // Duplicate-slug guard (same rule as updateContent in the single editor):
+  // a handle "translation" identical to the primary handle causes Shopify
+  // routing conflicts across locales. The single editor silently skips it; in
+  // a 250-row grid a silent skip is invisible, so it is an explicit cell
+  // failure here.
+  const handleIndex = writes.findIndex((w) => w.key === "handle");
+  if (handleIndex >= 0) {
+    const primaryHandle = await loadPrimaryHandle(db, shop, group).catch(() => null);
+    if (primaryHandle && writes[handleIndex].value.trim() === primaryHandle.trim()) {
+      failures.push(
+        failureOf(
+          group,
+          "The translated handle is identical to the primary handle — duplicate slugs across locales cause routing conflicts.",
+          writes[handleIndex].columnId,
+        ),
+      );
+      writes.splice(handleIndex, 1);
+    }
   }
 
   // ── Digest rule (§6.3, ONE strict rule): no digest ⇒ one re-fetch of the

@@ -478,6 +478,30 @@ describe("applyBulkDiff — foreign-locale groups (Plan §6)", () => {
     });
   });
 
+  it("rejects a handle translation identical to the primary handle (duplicate-slug guard)", async () => {
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { handle: "d-handle" });
+      }
+      throw new Error(`unexpected: ${query.slice(0, 60)}`);
+    });
+    const db = {
+      ...mockDb(),
+      product: { findUnique: vi.fn(async () => ({ handle: "summer-dress" })) },
+    };
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry("field.handle", "summer-dress")],
+    );
+
+    // No register attempted, no DB mirror — the cell fails with the guard.
+    expect(db.contentTranslation.upsert).not.toHaveBeenCalled();
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe("field.handle");
+    expect(result.failures[0].message).toMatch(/identical to the primary handle/);
+  });
+
   it("missing digest ⇒ ONE re-fetch ⇒ still missing ⇒ cell error, NO register, NO DB write (§6.3)", async () => {
     let refetches = 0;
     let registers = 0;
