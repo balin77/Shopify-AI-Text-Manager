@@ -604,6 +604,7 @@ export function findCannibalizationConflicts(
 export interface KeywordGroupRow {
   id: string;
   name: string;
+  locale: string;
   description: string | null;
   keywordCount: number;
 }
@@ -618,15 +619,20 @@ export interface GroupKeywordRow {
   assignmentCount: number;
 }
 
-export async function listGroups(db: PrismaClient, shop: string): Promise<KeywordGroupRow[]> {
+export async function listGroups(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<KeywordGroupRow[]> {
   const groups = await db.seoKeywordGroup.findMany({
-    where: { shop },
+    where: { shop, locale },
     orderBy: { name: "asc" },
     include: { _count: { select: { memberships: true } } },
   });
   return groups.map((g) => ({
     id: g.id,
     name: g.name,
+    locale: g.locale,
     description: g.description,
     keywordCount: g._count.memberships,
   }));
@@ -638,17 +644,18 @@ export async function createGroup(
   db: PrismaClient,
   shop: string,
   name: string,
+  locale = "",
   description?: string,
 ): Promise<CreateGroupResult> {
   const trimmed = name.trim();
   const existing = await db.seoKeywordGroup.findUnique({
-    where: { shop_name: { shop, name: trimmed } },
+    where: { shop_name_locale: { shop, name: trimmed, locale } },
     select: { id: true },
   });
   if (existing) return { ok: false, reason: "duplicateName" };
   try {
     const created = await db.seoKeywordGroup.create({
-      data: { shop, name: trimmed, description: description?.trim() || null },
+      data: { shop, name: trimmed, locale, description: description?.trim() || null },
     });
     return { ok: true, id: created.id };
   } catch (err) {
@@ -687,9 +694,10 @@ export async function renameGroup(
   }
 }
 
-/** Delete a group — memberships cascade, keywords survive (plan §5.1: delete
- *  cascades memberships, not keywords). Fully orphaned keywords (no
- *  assignments, no other groups) are cleaned up so nothing invisible stays. */
+/** Delete a group — the group now OWNS its keywords (§3.2). Deleting it removes
+ *  every member keyword that is not also in another group, regardless of item
+ *  assignments; those assignments (and their snapshots) cascade via
+ *  onDelete: Cascade. A keyword that also belongs to another group survives. */
 export async function deleteGroup(db: PrismaClient, shop: string, groupId: string): Promise<void> {
   await db.$transaction(async (tx) => {
     const group = await tx.seoKeywordGroup.findFirst({ where: { id: groupId, shop }, select: { id: true } });
@@ -706,7 +714,6 @@ export async function deleteGroup(db: PrismaClient, shop: string, groupId: strin
         where: {
           id: { in: memberKeywordIds },
           shop,
-          assignments: { none: {} },
           groups: { none: {} },
         },
       });
@@ -739,6 +746,35 @@ export async function getGroupKeywords(
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
 }
 
+/** How many of a locale's keywords belong to no group at all (§3.2 ungrouped
+ *  bucket count — drives the sidebar badge without loading the rows). */
+export async function countUngrouped(db: PrismaClient, shop: string, locale = ""): Promise<number> {
+  return db.seoKeyword.count({ where: { shop, locale, groups: { none: {} } } });
+}
+
+/** The ungrouped keywords for one locale (§3.2), same row shape + sort as
+ *  getGroupKeywords — the "Ungrouped" pseudo-group's keyword list. */
+export async function listUngrouped(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<GroupKeywordRow[]> {
+  const keywords = await db.seoKeyword.findMany({
+    where: { shop, locale, groups: { none: {} } },
+    include: { _count: { select: { assignments: true } } },
+  });
+  return keywords
+    .map((k) => ({
+      keywordId: k.id,
+      keyword: k.keyword,
+      locale: k.locale,
+      priority: k.priority,
+      intent: k.intent,
+      assignmentCount: k._count.assignments,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
+}
+
 export interface GroupImportEntry {
   keyword: string;
   locale?: string;
@@ -748,11 +784,13 @@ export interface GroupImportEntry {
 
 /**
  * Upsert keywords (by (shop, keyword, locale)) and put them into a group —
- * the CSV importer's write path, also used for single manual adds. Explicit
- * priority/intent from the file win over an existing keyword's values;
- * omitted ones (undefined priority / null intent) leave the existing row
- * untouched. Returns how many keywords were newly added to the group vs.
- * already members.
+ * the CSV importer's write path, also used for single manual adds. The locale
+ * is OWNED by the group (§3.1 invariant: membership.keyword.locale ===
+ * group.locale), so `entry.locale` is IGNORED — every keyword is created under
+ * the group's locale. Explicit priority/intent from the file win over an
+ * existing keyword's values; omitted ones (undefined priority / null intent)
+ * leave the existing row untouched. Returns how many keywords were newly added
+ * to the group vs. already members. A missing/foreign group is a no-op.
  *
  * Batched (review L13): a 2000-row import used to be ~6000 sequential
  * queries inside a synchronous Remix action — now it's a handful of
@@ -767,11 +805,17 @@ export async function addKeywordsToGroup(
 ): Promise<{ added: number; alreadyInGroup: number }> {
   // Normalize + dedupe within the request by (keyword, locale) — later
   // duplicates win so an explicit priority late in the file still applies.
+  const group = await db.seoKeywordGroup.findFirst({
+    where: { id: groupId, shop },
+    select: { locale: true },
+  });
+  if (!group) return { added: 0, alreadyInGroup: 0 };
   const byKey = new Map<string, { keyword: string; locale: string; priority?: number; intent?: string | null }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
     if (!keyword) continue;
-    const locale = entry.locale ?? "";
+    // The locale is owned by the group, not the entry (invariant).
+    const locale = group.locale;
     byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority, intent: entry.intent });
   }
   if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };

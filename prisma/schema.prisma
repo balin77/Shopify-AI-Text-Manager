@@ -58,7 +58,7 @@ model AISettings {
   // published (MAIN) theme — backwards compatible with the pre-selection
   // behaviour. Validated against GET_THEMES on every read
   // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
-  selectedThemeId   String?
+  selectedThemeId String?
 
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
@@ -205,7 +205,7 @@ model DirectTranslation {
   updatedAt  DateTime              @updatedAt
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId   String   @default("")
+  marketId String @default("")
 
   @@unique([itemId, locale, marketId])
 }
@@ -790,7 +790,7 @@ model ThemeTranslation {
   themeId    String  @default("")
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId   String  @default("")
+  marketId String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -857,7 +857,7 @@ model MetaobjectTranslation {
   outdated     Boolean @default(false)
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId     String  @default("")
+  marketId String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1085,6 +1085,7 @@ model SeoKeywordGroup {
   id          String  @id @default(cuid())
   shop        String
   name        String
+  locale      String  @default("") // "" = primary/default locale (SeoKeyword convention)
   description String?
 
   memberships SeoKeywordGroupMembership[]
@@ -1092,8 +1093,8 @@ model SeoKeywordGroup {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([shop, name])
-  @@index([shop])
+  @@unique([shop, name, locale])
+  @@index([shop, locale])
 }
 
 // M:N keyword ↔ group. Carries its own `shop` column (denormalized) so the

@@ -285,8 +285,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const isPro = meetsPlan((settingsRow?.subscriptionPlan || "free") as Plan, "pro");
 
-  const groups = await listGroups(db, shop);
   const url = new URL(request.url);
+  const loc = url.searchParams.get("loc") ?? "";
+  const groups = await listGroups(db, shop, loc);
   const selectedGroupId = url.searchParams.get("group") || "";
   let groupDetail:
     | { id: string; name: string; description: string | null; keywords: GroupKeywordRow[] }
@@ -520,7 +521,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (!name || name.length > 100) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    const result = await createGroup(db, session.shop, name, getFormString(form, "description"));
+    const locale = getFormString(form, "locale");
+    const result = await createGroup(db, session.shop, name, locale, getFormString(form, "description"));
     if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
     return json<ActionResult>({ ok: true, kind: "groupCreated" });
   }

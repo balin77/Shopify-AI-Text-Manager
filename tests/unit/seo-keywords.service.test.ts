@@ -503,6 +503,128 @@ describe("persistence helpers (keyword + assignment)", () => {
   });
 });
 
+describe("group locale (Phase 0)", () => {
+  const SHOP = "s.myshopify.com";
+
+  it("createGroup uses the shop_name_locale composite key and writes locale in create data", async () => {
+    const { createGroup } = await import("~/services/seo/keywords.service");
+    const findUnique = vi.fn(async (_args: any): Promise<any> => null);
+    const create = vi.fn(async (_args: any) => ({ id: "g1" }));
+    const db = { seoKeywordGroup: { findUnique, create } } as any;
+
+    const result = await createGroup(db, SHOP, "  Summer  ", "fr", "  desc  ");
+    expect(result).toEqual({ ok: true, id: "g1" });
+    expect(findUnique.mock.calls[0][0].where.shop_name_locale).toEqual({
+      shop: SHOP,
+      name: "Summer",
+      locale: "fr",
+    });
+    expect(create.mock.calls[0][0].data).toMatchObject({ shop: SHOP, name: "Summer", locale: "fr", description: "desc" });
+  });
+
+  it("createGroup defaults locale to the primary ('') bucket", async () => {
+    const { createGroup } = await import("~/services/seo/keywords.service");
+    const findUnique = vi.fn(async (_args: any): Promise<any> => null);
+    const create = vi.fn(async (_args: any) => ({ id: "g2" }));
+    const db = { seoKeywordGroup: { findUnique, create } } as any;
+
+    await createGroup(db, SHOP, "Default");
+    expect(findUnique.mock.calls[0][0].where.shop_name_locale).toEqual({ shop: SHOP, name: "Default", locale: "" });
+    expect(create.mock.calls[0][0].data.locale).toBe("");
+  });
+
+  it("listGroups filters on { shop, locale } and returns locale in the rows", async () => {
+    const { listGroups } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "g1", name: "Alpha", locale: "fr", description: null, _count: { memberships: 3 } },
+    ]);
+    const db = { seoKeywordGroup: { findMany } } as any;
+
+    const rows = await listGroups(db, SHOP, "fr");
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr" });
+    expect(rows).toEqual([{ id: "g1", name: "Alpha", locale: "fr", description: null, keywordCount: 3 }]);
+  });
+
+  it("addKeywordsToGroup ignores entry.locale and stamps the group's locale onto created keywords", async () => {
+    const { addKeywordsToGroup } = await import("~/services/seo/keywords.service");
+    const createMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const db = {
+      seoKeywordGroup: { findFirst: vi.fn(async (_args: any) => ({ locale: "de" })) },
+      seoKeyword: {
+        findMany: vi.fn(async (_args: any) => []), // nothing exists yet, then still nothing after create in this mock
+        createMany,
+      },
+      seoKeywordGroupMembership: {
+        findMany: vi.fn(async (_args: any) => []),
+        createMany: vi.fn(async (_args: any) => ({ count: 0 })),
+      },
+    } as any;
+
+    await addKeywordsToGroup(db, SHOP, "g1", [{ keyword: "Widget", locale: "fr" }]);
+    // The group's locale (de) wins over the entry's locale (fr).
+    expect(createMany.mock.calls[0][0].data[0]).toMatchObject({ shop: SHOP, keyword: "widget", locale: "de" });
+  });
+
+  it("addKeywordsToGroup returns {added:0, alreadyInGroup:0} for a missing/foreign group", async () => {
+    const { addKeywordsToGroup } = await import("~/services/seo/keywords.service");
+    const createMany = vi.fn(async (_args: any) => ({ count: 0 }));
+    const db = {
+      seoKeywordGroup: { findFirst: vi.fn(async (_args: any): Promise<any> => null) },
+      seoKeyword: { findMany: vi.fn(async (_args: any) => []), createMany },
+      seoKeywordGroupMembership: { findMany: vi.fn(async (_args: any) => []), createMany: vi.fn() },
+    } as any;
+
+    const result = await addKeywordsToGroup(db, SHOP, "foreign", [{ keyword: "widget" }]);
+    expect(result).toEqual({ added: 0, alreadyInGroup: 0 });
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("deleteGroup deletes member keywords with groups:{none} and NO assignments condition (§3.2 ownership)", async () => {
+    const { deleteGroup } = await import("~/services/seo/keywords.service");
+    const deleteMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const tx = {
+      seoKeywordGroup: {
+        findFirst: vi.fn(async (_args: any) => ({ id: "g1" })),
+        delete: vi.fn(async (_args: any) => ({})),
+      },
+      seoKeywordGroupMembership: {
+        findMany: vi.fn(async (_args: any) => [{ keywordId: "kw1" }, { keywordId: "kw2" }]),
+      },
+      seoKeyword: { deleteMany },
+    };
+    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+
+    await deleteGroup(db, SHOP, "g1");
+    const where = deleteMany.mock.calls[0][0].where;
+    expect(where).toEqual({ id: { in: ["kw1", "kw2"] }, shop: SHOP, groups: { none: {} } });
+    expect(where).not.toHaveProperty("assignments");
+  });
+
+  it("countUngrouped passes { shop, locale, groups: { none: {} } }", async () => {
+    const { countUngrouped } = await import("~/services/seo/keywords.service");
+    const count = vi.fn(async (_args: any) => 7);
+    const db = { seoKeyword: { count } } as any;
+
+    expect(await countUngrouped(db, SHOP, "fr")).toBe(7);
+    expect(count.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr", groups: { none: {} } });
+  });
+
+  it("listUngrouped passes { shop, locale, groups: { none: {} } } and maps + sorts rows", async () => {
+    const { listUngrouped } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+    ]);
+    const db = { seoKeyword: { findMany } } as any;
+
+    const rows = await listUngrouped(db, SHOP);
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "", groups: { none: {} } });
+    // Same sort as getGroupKeywords: priority asc, then keyword asc.
+    expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
+  });
+});
+
 describe("buildTranslatedContentInput", () => {
   const rows: TranslationRow[] = [
     { resourceId: "p1", locale: "fr", key: "title", value: "Titre FR" },
