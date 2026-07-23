@@ -30,6 +30,7 @@ const fullCaps: ProductColumnCaps = { metafields: true, options: true, imageAlt:
 function columnsFor(specs: MetafieldColumnSpec[]): Record<BulkRowType, ColumnDescriptor[]> {
   return {
     product: buildColumnsForType("product", specs, fullCaps),
+    variant: BULK_COLUMNS_BY_TYPE.variant,
     collection: BULK_COLUMNS_BY_TYPE.collection,
     article: BULK_COLUMNS_BY_TYPE.article,
     page: BULK_COLUMNS_BY_TYPE.page,

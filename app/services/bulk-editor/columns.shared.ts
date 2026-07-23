@@ -17,21 +17,24 @@ import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
-/** Row types the bulk editor supports today. Phase 3/5 add "variant",
- * "blog", "policy", "metaobject" here. */
-export type BulkRowType = "product" | "collection" | "article" | "page";
+/** Row types the bulk editor supports today. Phase 5 adds "blog", "policy",
+ * "metaobject" here. "variant" (Phase 3, Plan §5.3): one row = one variant,
+ * with product image/title as read-only sticky context columns. */
+export type BulkRowType = "product" | "variant" | "collection" | "article" | "page";
 
-export const BULK_ROW_TYPES: BulkRowType[] = ["product", "collection", "article", "page"];
+export const BULK_ROW_TYPES: BulkRowType[] = ["product", "variant", "collection", "article", "page"];
 
 /**
  * Maps each bulk row type to the plan ContentType that gates it
  * (PLAN_CONFIG[plan].contentTypes). The type selector, the route action and
  * the /api/ai handler all intersect against this — fixing the §0.4
  * inconsistency where a Basic shop was offered `article` although its plan
- * never syncs article content.
+ * never syncs article content. Variants hang off products (Plan §5.3): the
+ * same "products" gate covers them, so they are Basic+ like the other types.
  */
 export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   product: "products",
+  variant: "products",
   collection: "collections",
   article: "articles",
   page: "pages",
@@ -110,6 +113,77 @@ const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   minWidth: 140,
 };
 
+// ─── Variant row columns (Phase 3 — Plan §5.3) ─────────────────────────────
+// One row = one variant. Product image + product title are read-only sticky
+// context; the variant title derives from the option values and stays
+// read-only too. ALL variant columns are translatable:false — prices/SKUs
+// have no translation layer.
+
+export const VAR_SKU_COLUMN_ID = "var.sku";
+export const VAR_PRICE_COLUMN_ID = "var.price";
+export const VAR_COMPARE_AT_COLUMN_ID = "var.compareAtPrice";
+export const VAR_BARCODE_COLUMN_ID = "var.barcode";
+
+const PRODUCT_TITLE_COLUMN: ColumnDescriptor = {
+  id: "productTitle",
+  kind: "readonly",
+  label: "productTitle",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 180,
+  // Nested sort (product.title) — load.server special-cases this key.
+  sortKey: "productTitle",
+};
+
+const VARIANT_TITLE_COLUMN: ColumnDescriptor = {
+  id: "variantTitle",
+  kind: "readonly",
+  label: "variantTitle",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "text",
+  minWidth: 160,
+  sortKey: "title",
+};
+
+const VARIANT_POSITION_COLUMN: ColumnDescriptor = {
+  id: "position",
+  kind: "readonly",
+  label: "position",
+  group: "base",
+  editable: false,
+  translatable: false,
+  inputType: "number",
+  minWidth: 70,
+  sortKey: "position",
+};
+
+function variantColumn(
+  id: string,
+  label: string,
+  opts: { inputType: ColumnDescriptor["inputType"]; minWidth: number; sortKey?: string },
+): ColumnDescriptor {
+  return {
+    id,
+    kind: "variant",
+    label,
+    group: "base",
+    editable: true,
+    translatable: false,
+    inputType: opts.inputType,
+    minWidth: opts.minWidth,
+    ...(opts.sortKey ? { sortKey: opts.sortKey } : {}),
+  };
+}
+
+const VAR_SKU_COLUMN = variantColumn(VAR_SKU_COLUMN_ID, "sku", { inputType: "text", minWidth: 140, sortKey: "sku" });
+const VAR_PRICE_COLUMN = variantColumn(VAR_PRICE_COLUMN_ID, "price", { inputType: "money", minWidth: 110, sortKey: "price" });
+const VAR_COMPARE_AT_COLUMN = variantColumn(VAR_COMPARE_AT_COLUMN_ID, "compareAtPrice", { inputType: "money", minWidth: 130, sortKey: "compareAtPrice" });
+const VAR_BARCODE_COLUMN = variantColumn(VAR_BARCODE_COLUMN_ID, "barcode", { inputType: "text", minWidth: 140 });
+
 function fieldColumn(
   name: string,
   opts: {
@@ -163,6 +237,16 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
+  ],
+  variant: [
+    IMAGE_COLUMN,
+    PRODUCT_TITLE_COLUMN,
+    VARIANT_TITLE_COLUMN,
+    VAR_SKU_COLUMN,
+    VAR_PRICE_COLUMN,
+    VAR_COMPARE_AT_COLUMN,
+    VAR_BARCODE_COLUMN,
+    VARIANT_POSITION_COLUMN,
   ],
   collection: [IMAGE_COLUMN, COL_TITLE, COL_DESCRIPTION_HTML, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
   article: [
@@ -372,6 +456,136 @@ export function richTextPreview(raw: string): string {
   }
 }
 
+// ─── Money parsing/formatting (Phase 3 — Plan §5.5) ────────────────────────
+
+export type ParseMoneyResult =
+  | { ok: true; /** Normalized dot value "1299.90"; null = empty input. */ value: string | null }
+  | { ok: false; error: "negative" | "invalid" };
+
+/**
+ * Locale-tolerant money parser (Plan §5.5). The app is trilingual: German and
+ * Spanish merchants type `1.299,90`, English merchants `1,299.90` — a naive
+ * parseFloat reads those as 1.299 and 1.
+ *
+ * Rules:
+ * 1. Whitespace and currency symbols/codes are stripped.
+ * 2. If the LAST separator is a comma followed by 1–2 digits, the comma is
+ *    the decimal separator and dots are thousands separators; otherwise the
+ *    dot is decimal and commas are thousands. (Consequence, documented: a
+ *    bare "1.299" reads as 1.30 — the dot counts as decimal there.)
+ * 3. The result is normalized to two fraction digits. Negative amounts are an
+ *    error; empty input returns value:null and the CALLER decides (price:
+ *    cell error — Shopify's price is not nullable; compareAtPrice: null
+ *    clears, §14).
+ */
+export function parseMoney(input: string): ParseMoneyResult {
+  const trimmed = input.trim();
+  if (trimmed === "") return { ok: true, value: null };
+
+  // Strip everything that isn't a digit, separator or sign (currency symbols,
+  // letters, whitespace, NBSP…).
+  const stripped = trimmed.replace(/[^0-9.,-]/g, "");
+  if (stripped.includes("-")) return { ok: false, error: "negative" };
+  if (!/[0-9]/.test(stripped)) return { ok: false, error: "invalid" };
+
+  const lastComma = stripped.lastIndexOf(",");
+  const lastDot = stripped.lastIndexOf(".");
+  const digitsAfterComma = lastComma >= 0 ? stripped.length - lastComma - 1 : -1;
+  const commaIsDecimal = lastComma > lastDot && digitsAfterComma >= 1 && digitsAfterComma <= 2;
+
+  let normalized: string;
+  if (commaIsDecimal) {
+    const withoutThousands = stripped.replace(/\./g, "");
+    if ((withoutThousands.match(/,/g) ?? []).length !== 1) return { ok: false, error: "invalid" };
+    normalized = withoutThousands.replace(",", ".");
+  } else {
+    normalized = stripped.replace(/,/g, "");
+    if ((normalized.match(/\./g) ?? []).length > 1) return { ok: false, error: "invalid" };
+  }
+  if (!/^(\d+(\.\d+)?|\.\d+)$/.test(normalized)) return { ok: false, error: "invalid" };
+
+  const num = Number(normalized);
+  if (!Number.isFinite(num)) return { ok: false, error: "invalid" };
+  return { ok: true, value: num.toFixed(2) };
+}
+
+/** Localized display form of a normalized money value (Plan §5.5): shown via
+ * Intl.NumberFormat in the app language, while the normalized dot value is
+ * what gets stored/compared. Non-numeric input renders verbatim (defensive —
+ * an unparseable edit stays visible exactly as typed). */
+export function formatMoneyForDisplay(value: string, locale: string): string {
+  if (value === "") return "";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return value;
+  try {
+    return new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
+  } catch {
+    return value;
+  }
+}
+
+// ─── Price bulk actions (Phase 3 — Plan §5.6) ──────────────────────────────
+// Pure calculations over ONE normalized price value. The route applies them
+// to the loaded (filtered) selection by FILLING THE EDIT MAP — never writing
+// directly, so preview/correction/estimation/save all run through the normal
+// diff pipeline.
+
+export type PriceActionId =
+  | "percent" // price ± X %
+  | "absolute" // price ± X
+  | "set" // price = X
+  | "compareAtFromPrice" // compareAtPrice = current price (handled row-wise by the caller)
+  | "round00"
+  | "round90"
+  | "round95";
+
+export interface PriceAction {
+  id: PriceActionId;
+  /** Required for percent/absolute/set. percent/absolute may be negative
+   * (reductions); set must be ≥ 0. */
+  amount?: number;
+}
+
+const ROUND_ENDINGS: Partial<Record<PriceActionId, number>> = {
+  round00: 0,
+  round90: 0.9,
+  round95: 0.95,
+};
+
+/**
+ * Applies a price action to one normalized value ("1299.90"). Returns the new
+ * normalized value, or null when the action does not apply (empty/unparseable
+ * current price for anything but "set", missing amount, non-price action).
+ * Results below zero clamp to "0.00" — a bulk reduction must not produce
+ * negative prices, which Shopify rejects.
+ */
+export function applyPriceAction(current: string, action: PriceAction): string | null {
+  if (action.id === "compareAtFromPrice") return null; // caller copies row-wise
+  if (action.id === "set") {
+    if (action.amount === undefined || !Number.isFinite(action.amount) || action.amount < 0) return null;
+    return action.amount.toFixed(2);
+  }
+
+  const parsed = parseMoney(current);
+  if (!parsed.ok || parsed.value === null) return null;
+  const value = Number(parsed.value);
+
+  const ending = ROUND_ENDINGS[action.id];
+  if (ending !== undefined) {
+    // Nearest n + ending (psychological pricing): n is the integer that
+    // minimizes the distance, floored at 0.
+    const n = Math.max(0, Math.round(value - ending));
+    return (n + ending).toFixed(2);
+  }
+
+  if (action.amount === undefined || !Number.isFinite(action.amount)) return null;
+  let next: number;
+  if (action.id === "percent") next = value * (1 + action.amount / 100);
+  else if (action.id === "absolute") next = value + action.amount;
+  else return null;
+  return Math.max(0, next).toFixed(2);
+}
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 /** Selectable page sizes (Plan §3.3). Anything above 250 stays locked — the
@@ -454,6 +668,21 @@ export interface BulkRow {
   imageUrl?: string;
   imageAlt?: string;
   blogTitle?: string;
+  // Variant rows (Phase 3, Plan §5.3): `title` holds the VARIANT title;
+  // product context comes via productId/productTitle. Money values are the
+  // NORMALIZED dot form ("1299.90", "" = unset) — display formatting is a
+  // render concern (formatMoneyForDisplay), the diff always works on the
+  // normalized value.
+  productId?: string;
+  productTitle?: string;
+  sku?: string;
+  price?: string;
+  compareAtPrice?: string;
+  barcode?: string;
+  position?: number;
+  /** Product has >100 variants — the sync window is capped (Plan §5.1); the
+   * UI shows a "remainder lives in the Shopify admin" hint. */
+  hasMoreVariants?: boolean;
   /** Enabled metafield values keyed by column id ("mf.<ns>.<key>"). A missing
    * entry means the product has no such metafield yet — empty cell, and the
    * save CREATES it (Plan §4.1). */
@@ -548,12 +777,31 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       }
       return { value: "", editable: false, readOnlyReason: "column" };
     }
-    case "readonly":
-      return {
-        value: column.id === "blogTitle" ? row.blogTitle ?? "" : "",
-        editable: false,
-        readOnlyReason: "column",
-      };
+    case "variant": {
+      // Editable variant cells (Plan §5.3): SKU, price, compareAtPrice,
+      // barcode. Money values are stored normalized; display formatting
+      // happens at render time.
+      switch (column.id) {
+        case VAR_SKU_COLUMN_ID:
+          return { value: row.sku ?? "", editable: true };
+        case VAR_PRICE_COLUMN_ID:
+          return { value: row.price ?? "", editable: true };
+        case VAR_COMPARE_AT_COLUMN_ID:
+          return { value: row.compareAtPrice ?? "", editable: true };
+        case VAR_BARCODE_COLUMN_ID:
+          return { value: row.barcode ?? "", editable: true };
+        default:
+          return { value: "", editable: false, readOnlyReason: "column" };
+      }
+    }
+    case "readonly": {
+      let value = "";
+      if (column.id === "blogTitle") value = row.blogTitle ?? "";
+      else if (column.id === "productTitle") value = row.productTitle ?? "";
+      else if (column.id === "variantTitle") value = row.title;
+      else if (column.id === "position") value = row.position != null ? String(row.position) : "";
+      return { value, editable: false, readOnlyReason: "column" };
+    }
     default:
       return { value: "", editable: false, readOnlyReason: "column" };
   }
@@ -693,7 +941,18 @@ export function computeDiff(
         : row.foreignValues?.[`${locale}|${marketId}|${columnId}`] ?? "";
 
     const original = baseline.trim();
-    const next = (edits[key] ?? "").trim();
+    let next = (edits[key] ?? "").trim();
+    // Money columns (Plan §5.5): the merchant may have typed a localized form
+    // ("1.299,90") or a bulk action may have written a formatted value —
+    // normalize BEFORE comparing, so re-typing the same amount in another
+    // locale format is not dirty and the diff always carries the normalized
+    // dot value. Unparseable input passes through verbatim: it MUST stay
+    // dirty and becomes a per-cell failure in the persistence pipeline (a
+    // whole-diff rejection would nuke the batch for one typo).
+    if (column.inputType === "money") {
+      const parsed = parseMoney(next);
+      if (parsed.ok) next = parsed.value ?? "";
+    }
     if (next !== original) {
       diff.push({ rowId: row.id, rowType: row.type, locale, marketId, columnId, value: next });
     }
@@ -747,6 +1006,11 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  * - primary product group: 1 productUpdate (any field cell) +
  *   ceil(metafield sets / 25) + 1 metafieldsDelete (any cleared metafield) +
  *   1 productOptionUpdate per dirty option position + 1 productUpdateMedia;
+ * - primary variant groups: ONE productVariantsBulkUpdate per PRODUCT
+ *   (Plan §5.4 grouping) — the row→product mapping comes from
+ *   `opts.variantProductIdByRowId` (the client builds it from the loaded
+ *   rows); without it every variant row counts as its own call, which
+ *   over-estimates but never under-estimates;
  * - primary non-product group: 1 (single-mutation row);
  * - foreign group: 1 translationsRegister (any non-empty cell) +
  *   1 translationsRemove (any cleared cell);
@@ -755,11 +1019,16 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  * `columns` is the (current type's) descriptor universe — unknown column ids
  * are counted as one call each (defensive over-estimate, never under).
  */
-export function estimateCalls(diff: BulkDiffEntry[], columns: ColumnDescriptor[]): number {
+export function estimateCalls(
+  diff: BulkDiffEntry[],
+  columns: ColumnDescriptor[],
+  opts?: { variantProductIdByRowId?: Record<string, string> },
+): number {
   const columnById = new Map(columns.map((c) => [c.id, c] as const));
   const groups = groupDiffByRow(diff);
   let calls = 0;
   const foreignDigestResources = new Set<string>();
+  const variantTargets = new Set<string>();
 
   for (const group of groups) {
     const entries = Object.entries(group.cells);
@@ -768,6 +1037,12 @@ export function estimateCalls(diff: BulkDiffEntry[], columns: ColumnDescriptor[]
       const hasClears = entries.some(([, v]) => v === "");
       calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
       if (hasWrites) foreignDigestResources.add(group.rowId);
+      continue;
+    }
+    if (group.rowType === "variant") {
+      // One mutation per product (§5.4) — fall back to the row id itself when
+      // the mapping is unknown (defensive over-estimate).
+      variantTargets.add(opts?.variantProductIdByRowId?.[group.rowId] ?? group.rowId);
       continue;
     }
     if (group.rowType !== "product") {
@@ -809,6 +1084,7 @@ export function estimateCalls(diff: BulkDiffEntry[], columns: ColumnDescriptor[]
       imageAlt;
   }
 
+  calls += variantTargets.size;
   calls += Math.ceil(foreignDigestResources.size / DIGEST_BATCH_CHUNK);
   return calls;
 }
@@ -859,13 +1135,27 @@ export function isValidBulkDiffEntry(
 
 // ─── Server-side filter/sort vocabulary (client-safe: types + validation) ──
 
-export type BulkFilterId = "missingSeoTitle" | "missingSeoDescription" | "missingTranslation";
+export type BulkFilterId =
+  | "missingSeoTitle"
+  | "missingSeoDescription"
+  | "missingTranslation"
+  // Variant-row filters (Phase 3, Plan §5.3):
+  | "missingSku"
+  | "missingPrice"
+  | "compareAtNotAbovePrice"; // compareAtPrice ≤ price — the classic data error
 
 export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSeoTitle",
   "missingSeoDescription",
   "missingTranslation",
+  "missingSku",
+  "missingPrice",
+  "compareAtNotAbovePrice",
 ];
+
+/** Filters that apply to variant rows — the FilterBar shows exactly these for
+ * type "variant" and exactly the others for the content types. */
+export const VARIANT_FILTER_IDS: BulkFilterId[] = ["missingSku", "missingPrice", "compareAtNotAbovePrice"];
 
 export type SortDirection = "asc" | "desc";
 

@@ -96,6 +96,9 @@ export function translationKeysByColumnId(type: BulkRowType): Map<string, string
  * ONLINE_STORE_* names were removed with 2024-10. */
 export const CONTENT_RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   product: "Product",
+  // Variant rows never reach the translation path (all their columns are
+  // translatable:false) — the entry only keeps the Record total.
+  variant: "ProductVariant",
   collection: "Collection",
   article: "Article",
   page: "Page",

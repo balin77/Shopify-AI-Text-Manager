@@ -383,6 +383,7 @@ describe("isValidBulkDiffEntry", () => {
       [{ namespace: "custom", key: "material", type: "single_line_text_field" }],
       fullCaps,
     ),
+    variant: buildColumnsForType("variant", [], fullCaps),
     collection: buildColumnsForType("collection", [], fullCaps),
     article: buildColumnsForType("article", [], fullCaps),
     page: buildColumnsForType("page", [], fullCaps),
