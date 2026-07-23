@@ -114,10 +114,16 @@ export function AssignPanel({
       ? `${role}|${demoteExisting}|${keywordIds.join(",")}|${selected.map((s) => s.id).join(",")}`
       : "";
   const lastSigRef = useRef<string>("");
+  // Held so a real apply can cancel a still-pending dry-run — otherwise the
+  // trailing dry-run submit would land on the shared fetcher AFTER the real
+  // apply and overwrite its {applied} result with "would be rejected" counts
+  // (and the Shell's revalidate-on-real-apply effect would never fire).
+  const dryRunTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!dryRunSig || lastSigRef.current === dryRunSig) return;
     lastSigRef.current = dryRunSig;
-    const handle = setTimeout(() => {
+    dryRunTimer.current = setTimeout(() => {
+      dryRunTimer.current = null;
       assignFetcher.submit(
         {
           actionType: "assignMany",
@@ -130,7 +136,10 @@ export function AssignPanel({
         { method: "post" },
       );
     }, 250);
-    return () => clearTimeout(handle);
+    return () => {
+      if (dryRunTimer.current) clearTimeout(dryRunTimer.current);
+      dryRunTimer.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dryRunSig]);
 
@@ -169,6 +178,12 @@ export function AssignPanel({
 
   const applyManual = () => {
     if (selected.length === 0 || keywords.length === 0) return;
+    // Cancel any pending dry-run so it can't supersede this real apply on the
+    // shared fetcher.
+    if (dryRunTimer.current) {
+      clearTimeout(dryRunTimer.current);
+      dryRunTimer.current = null;
+    }
     assignFetcher.submit(
       {
         actionType: "assignMany",

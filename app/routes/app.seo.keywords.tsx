@@ -578,7 +578,22 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (!name || name.length > 100) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    const locale = getFormString(form, "locale");
+    // Validate the posted locale against the shop's published locales, same as
+    // setKeyword/importCsv — "" (primary) is always accepted. Stops a crafted
+    // ?loc=/form value from creating a group under an unpublished locale that
+    // then has no Locale-Navbar tab (effectively invisible).
+    const localeInput = getFormString(form, "locale");
+    let locale = "";
+    if (localeInput) {
+      const shopLocales = await getCachedShopLocales(admin, session.shop);
+      const isPublishedSecondary = shopLocales.some(
+        (l: any) => !l.primary && l.published && l.locale === localeInput,
+      );
+      if (!isPublishedSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      locale = localeInput;
+    }
     const result = await createGroup(db, session.shop, name, locale, getFormString(form, "description"));
     if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
     return json<ActionResult>({ ok: true, kind: "groupCreated" });

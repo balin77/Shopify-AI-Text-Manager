@@ -308,3 +308,18 @@ Phase 0 und 1 sind unabhängig voneinander und können parallel laufen; ab Phase
 5. **Slider-Performance.** Bei `take: 60` pro Seite und Bild-Thumbnails: `loading="lazy"` und feste Kachelmasse (kein Layout-Shift). Bildgrössen aus dem Cache sind ungetrimmte Shopify-CDN-URLs → `?width=120` anhängen.
 6. **`?group=`-Deeplinks** aus bestehenden Bookmarks müssen weiter funktionieren; die Gruppe bestimmt dann implizit die aktive Sprache.
 7. **Mobile.** Zweispaltiges Bibliothek-Layout braucht unter ~768 px einen Kollaps (Gruppenliste als `Select` oder Drawer). `SubNavBar` trägt bereits `desktop-only`.
+
+---
+
+## 9. Umsetzungs-Status & offene Review-Punkte (2026-07-23)
+
+Phasen 0–6 sind ausgeliefert und committet (typecheck 0, volle Test-Suite grün, Build ok). Ein unabhängiger Review-Agent hat den Gesamt-Diff geprüft: **keine Blocker, keine Major-Defekte**; die risikobehaftete Logik (`assignMany`/`planItemAssignments`, Mandanten-Scoping, Migration, Sentinel-/Pseudo-Gruppen-Routing, Client-Safety) wurde als korrekt bestätigt.
+
+Direkt behoben nach dem Review:
+- **Shared-Fetcher-Race** im `AssignPanel`: ein noch anstehender Dry-Run konnte einen echten Apply auf demselben Fetcher überschreiben → Timer wird beim echten Apply gecancelt.
+- **`createGroup` validiert das Locale** jetzt gegen die publizierten Shop-Sprachen (wie `setKeyword`/`importCsv`), damit keine Gruppe unter einer nicht-publizierten (unsichtbaren) Sprache entsteht.
+
+Bewusst als Follow-up zurückgestellt (kein Merge-Blocker):
+- **§8.3 KI-Verteilung nutzt Primärsprach-Text.** `loadTargetItems` liest Basis-Titel/Beschreibung; für locale-reine Sekundär-Gruppen sollten die **übersetzten** Item-Texte (`buildTranslatedContentInput`/`TRANSLATED_CONTENT_KEYS`) in den Prompt. Zuweisungen landen bereits in der richtigen Sprache — nur die KI-Vorschlagsqualität betrifft es.
+- **Bulk-Sekundär-Zuweisung** kann ein bestehendes Primär still zu Sekundär abstufen (mirror der Einzel-`assignKeyword`-Semantik); der Dry-Run sollte eine `demoted`-Zahl ausweisen, damit das Panel warnt.
+- **Nits:** `ItemPicker`-„Gewählt"-Zusammenfassung zählt nur geladene Items (kosmetisch); AI-Modus verarbeitet nur den gewählten Ziel-Typ einer typ-gemischten Auswahl (Manual verarbeitet alle).
