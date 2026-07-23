@@ -369,8 +369,13 @@ describe("validateJsonLd", () => {
     expect(msgs).toMatch(/reviewCount/);
   });
 
-  it("flags orgNoSameAs (info) when Organization has no sameAs", () => {
+  it("does not flag orgNoSameAs when sameAs was never checked (undefined) — regression: was a permanent false positive", () => {
     const ld = buildOrganizationJsonLd({ domain: "shop.example.com", name: "Acme" });
+    const w = validateJsonLd(ld);
+    expect(w.some((x) => x.code === "orgNoSameAs")).toBe(false);
+  });
+  it("flags orgNoSameAs (info) when sameAs was checked and came back empty", () => {
+    const ld = buildOrganizationJsonLd({ domain: "shop.example.com", name: "Acme", sameAs: [] });
     const w = validateJsonLd(ld);
     const found = w.find((x) => x.code === "orgNoSameAs");
     expect(found).toBeDefined();

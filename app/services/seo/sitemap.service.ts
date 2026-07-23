@@ -84,6 +84,14 @@ const MAX_SUB_SITEMAPS = 25;
 /** Cap on URLs kept for the broken-links crossmatch (memory guard on very
  *  large catalogs — entryCount itself is never capped). */
 const MAX_SITEMAP_URLS = 5000;
+/** Overall wall-clock budget for fetching a sitemap INDEX's sub-sitemaps
+ *  (§ fix 10): fetched concurrently (bounded at MAX_SUB_SITEMAPS, each with
+ *  its own REQUEST_TIMEOUT_MS abort) rather than sequentially — up to 25
+ *  sequential 10s fetches could otherwise block a route loader for ~250s and
+ *  trip the platform's own request timeout. This budget is defense-in-depth
+ *  on top of that: if it's ever exceeded, the loader still degrades to the
+ *  graceful `sitemapFetchError`/`ok:false` path instead of hanging further. */
+const SUB_SITEMAP_FETCH_BUDGET_MS = 20_000;
 /** "cached ~1h" (§6.3). */
 const SITEMAP_CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -281,7 +289,12 @@ export async function upsertExclusionSuggestions(
 
 export interface SitemapFetchResult {
   sitemapUrl: string;
-  /** TRUE total entry count across all sub-sitemaps — never capped. */
+  /** Sum of `<url>` entries across the sub-sitemaps actually fetched. For a
+   *  plain (non-index) sitemap this IS the true total. For a sitemap INDEX,
+   *  it is capped: only the first MAX_SUB_SITEMAPS sub-sitemaps are fetched
+   *  (and, on top of that, a hanging sub-sitemap can trip the overall fetch
+   *  budget before all of them finish) — NOT a guaranteed true total on a
+   *  catalog with more sub-sitemaps than that. */
   entryCount: number;
   /** URLs kept for the broken-links crossmatch, capped at MAX_SITEMAP_URLS. */
   urls: string[];
@@ -345,10 +358,25 @@ export async function fetchSitemapInfo(fetchImpl: typeof fetch, primaryDomain: s
     return { sitemapUrl, entryCount, urls, ok: true };
   }
 
+  // Concurrent (§ fix 10), not sequential — each `fetchXml` call already has
+  // its own REQUEST_TIMEOUT_MS abort, so fetching all sub-sitemaps in
+  // parallel bounds the whole batch to roughly one fetch's worth of time
+  // instead of MAX_SUB_SITEMAPS × REQUEST_TIMEOUT_MS. The outer race against
+  // SUB_SITEMAP_FETCH_BUDGET_MS is a defensive backstop on top of that.
+  const toFetch = subSitemapLocs.slice(0, MAX_SUB_SITEMAPS);
+  const fetchAll = Promise.all(toFetch.map((sub) => fetchXml(fetchImpl, sub)));
+  const budgetExceeded = Symbol("sub-sitemap fetch budget exceeded");
+  const budget = new Promise<typeof budgetExceeded>((resolve) =>
+    setTimeout(() => resolve(budgetExceeded), SUB_SITEMAP_FETCH_BUDGET_MS),
+  );
+  const raced = await Promise.race([fetchAll, budget]);
+  if (raced === budgetExceeded) {
+    return { sitemapUrl, entryCount: 0, urls: [], ok: false };
+  }
+
   let entryCount = 0;
   const urls: string[] = [];
-  for (const sub of subSitemapLocs.slice(0, MAX_SUB_SITEMAPS)) {
-    const subXml = await fetchXml(fetchImpl, sub);
+  for (const subXml of raced) {
     if (!subXml) continue;
     let $sub: cheerio.CheerioAPI;
     try {

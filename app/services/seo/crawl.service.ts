@@ -131,6 +131,59 @@ export function normalizeCrawlUrl(
   return u.toString();
 }
 
+/**
+ * True when `hostname` is a literal IP in a private/loopback/link-local
+ * range (§ redirect-SSRF defense-in-depth) — checked in ADDITION to the
+ * same-origin host check, since a same-origin-looking redirect could in
+ * theory still resolve to one of these via a bare IP Location header.
+ * Deliberately conservative/pattern-based (no DNS resolution here — that
+ * happens inside `fetch` itself, which this guard cannot see).
+ */
+export function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost") return true;
+  // IPv6 loopback / unique-local.
+  if (h === "::1") return true;
+  const stripped = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  if (stripped === "::1") return true;
+  if (/^fc[0-9a-f]{2}:/.test(stripped) || /^fd[0-9a-f]{2}:/.test(stripped)) return true; // fc00::/7
+  if (/^fe80:/.test(stripped)) return true; // link-local
+
+  // IPv4 literal ranges.
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const [a, b] = [parseInt(m[1], 10), parseInt(m[2], 10)];
+  if (a === 127) return true; // 127.0.0.0/8
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 (incl. cloud metadata)
+  return false;
+}
+
+/**
+ * Same-origin check shared by link discovery (`normalizeCrawlUrl`) and
+ * redirect-following (`fetchOnceWithRedirects`) — a `Location` header must
+ * pass the SAME host allowlist a discovered `<a href>` would, plus the
+ * private/loopback IP guard above. Returns false (never throws) for any
+ * unparsable/non-http(s) URL.
+ */
+export function isSameOriginCrawlTarget(url: string, canonicalHost: string, aliasHosts: string[] = []): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const host = u.hostname.toLowerCase();
+  const canon = canonicalHost.toLowerCase();
+  const aliases = aliasHosts.map((h) => h.toLowerCase());
+  if (host !== canon && !aliases.includes(host)) return false;
+  if (isPrivateOrLoopbackHost(host)) return false;
+  return true;
+}
+
 // ── robots.txt matching (§3.3, pure + unit-tested) ──────────────────────────
 
 /**
@@ -194,10 +247,24 @@ const NAMED_ENTITIES: Record<string, string> = {
  *  cheerio already decodes entities when reading `.text()`, but DB-authored
  *  titles occasionally contain literal entities (copy-pasted from HTML), so
  *  both sides of the head-drift comparison go through this. */
+/** Safe wrapper around `String.fromCodePoint` — a numeric entity from crawled
+ *  markup is untrusted input and can carry a code point outside the valid
+ *  Unicode range (> 0x10FFFF) or inside the surrogate range (0xD800–0xDFFF),
+ *  either of which throws a RangeError. Returns the original matched
+ *  substring unchanged instead of crashing the whole crawl/audit. */
+function safeFromCodePoint(cp: number, original: string): string {
+  if (!Number.isFinite(cp) || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return original;
+  try {
+    return String.fromCodePoint(cp);
+  } catch {
+    return original;
+  }
+}
+
 export function decodeHtmlEntities(text: string): string {
   return text
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, hex) => safeFromCodePoint(parseInt(hex, 16), m))
+    .replace(/&#(\d+);/g, (m, dec) => safeFromCodePoint(parseInt(dec, 10), m))
     .replace(/&([a-zA-Z]+);/g, (m, name) => NAMED_ENTITIES[name] ?? m);
 }
 
@@ -281,6 +348,8 @@ async function fetchOnceWithRedirects(
   fetchImpl: typeof fetch,
   startUrl: string,
   userAgent: string,
+  canonicalHost: string,
+  aliasHosts: string[],
 ): Promise<FetchOutcome> {
   const started = Date.now();
   let currentUrl = startUrl;
@@ -321,6 +390,23 @@ async function fetchOnceWithRedirects(
       } catch {
         return { status: -1, finalUrl: currentUrl, contentType: "", body: null, responseMs: Date.now() - started, hops };
       }
+      // Redirect-SSRF guard (§ security fix): the initial links are
+      // same-origin-gated by `normalizeCrawlUrl`, but a Location header is
+      // attacker/storefront-controlled and was NOT previously re-checked —
+      // a redirect to an arbitrary external host or an internal/link-local
+      // IP (e.g. the cloud metadata endpoint) must never be fetched. Record
+      // the target as `redirectedTo` and stop the chain there instead.
+      if (!isSameOriginCrawlTarget(next, canonicalHost, aliasHosts)) {
+        hops.push(next);
+        return {
+          status: res.status,
+          finalUrl: next,
+          contentType: res.headers.get("content-type") || "",
+          body: null,
+          responseMs: Date.now() - started,
+          hops,
+        };
+      }
       if (hop === REDIRECT_MAX_HOPS) {
         hops.push(next);
         return { status: -1, finalUrl: next, contentType: "", body: null, responseMs: Date.now() - started, hops };
@@ -348,12 +434,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** No retry on 4xx (§3.3); one retry with a small backoff on 5xx/timeout. */
-async function fetchWithRetry(fetchImpl: typeof fetch, url: string, userAgent: string): Promise<FetchOutcome> {
-  const first = await fetchOnceWithRedirects(fetchImpl, url, userAgent);
+async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  url: string,
+  userAgent: string,
+  canonicalHost: string,
+  aliasHosts: string[],
+): Promise<FetchOutcome> {
+  const first = await fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
   const shouldRetry = first.status === 0 || (first.status >= 500 && first.status < 600);
   if (!shouldRetry) return first;
   await sleep(500);
-  return fetchOnceWithRedirects(fetchImpl, url, userAgent);
+  return fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
 }
 
 async function fetchSitemapUrls(fetchImpl: typeof fetch, sitemapUrl: string, userAgent: string): Promise<string[]> {
@@ -370,7 +462,10 @@ async function fetchSitemapUrls(fetchImpl: typeof fetch, sitemapUrl: string, use
       clearTimeout(timer);
     }
     if (!res.ok) return [];
-    const text = await res.text();
+    // Same capped-read helper as page fetches (§ cheap fix 9) — an
+    // unbounded `res.text()` here let a pathological/malicious sitemap
+    // buffer an arbitrarily large response into memory.
+    const text = await readBodyCapped(res, MAX_BODY_BYTES);
     // Loose XML parse (cheerio in xmlMode) — covers both a plain urlset and a
     // sitemap index (nested <sitemap><loc>); nested sub-sitemaps are enqueued
     // like any other same-origin URL but not recursively expanded (documented
@@ -542,7 +637,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   const fetchAndProcess = async (url: string, depth: number): Promise<void> => {
     if (abortedError) return;
-    const outcome = await fetchWithRetry(fetchImpl, url, userAgent);
+    const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain]);
     pagesCompleted += 1;
 
     if (outcome.status === 403 || outcome.status === 429) {
@@ -715,7 +810,17 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       outboundCount: outboundCounts.get(url) ?? 0,
     });
 
-    if (resourceId && resourceType && resourceType !== "unknown" && page.locale === "") {
+    // statusCode must be 2xx (§ fix 5): a broken resolved page never had its
+    // body parsed, so `title` is always null there — comparing that against
+    // the DB title is a spurious drift finding, not a real one.
+    if (
+      resourceId &&
+      resourceType &&
+      resourceType !== "unknown" &&
+      page.locale === "" &&
+      page.statusCode >= 200 &&
+      page.statusCode < 300
+    ) {
       headDriftCandidates.push({ resourceType, resourceId, crawledTitle: page.title });
     }
   }

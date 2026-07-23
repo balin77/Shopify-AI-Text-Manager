@@ -290,6 +290,35 @@ describe("fetchSitemapInfo", () => {
     expect(result.entryCount).toBe(0);
   });
 
+  it("fetches sub-sitemaps concurrently, not sequentially (§ fix 10)", async () => {
+    const indexXml = `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>https://shop.example.com/sitemap_a.xml</loc></sitemap>
+  <sitemap><loc>https://shop.example.com/sitemap_b.xml</loc></sitemap>
+  <sitemap><loc>https://shop.example.com/sitemap_c.xml</loc></sitemap>
+</sitemapindex>`;
+    const leafXml = (n: string) =>
+      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://shop.example.com/${n}</loc></url></urlset>`;
+    const DELAY_MS = 60;
+    const fetchImpl = (async (url: string) => {
+      if (url === "https://shop.example.com/sitemap.xml") {
+        return { ok: true, status: 200, text: async () => indexXml } as unknown as Response;
+      }
+      await new Promise((r) => setTimeout(r, DELAY_MS));
+      const leaf = url.match(/sitemap_(\w)\.xml$/)?.[1] ?? "x";
+      return { ok: true, status: 200, text: async () => leafXml(leaf) } as unknown as Response;
+    }) as typeof fetch;
+
+    const started = Date.now();
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    const elapsed = Date.now() - started;
+
+    expect(result.ok).toBe(true);
+    expect(result.entryCount).toBe(3);
+    // Sequential would take ~3 * DELAY_MS (180ms+); concurrent should land
+    // close to a single DELAY_MS. Generous margin to avoid CI flakiness.
+    expect(elapsed).toBeLessThan(DELAY_MS * 2.5);
+  });
+
   it("does not throw and reports zero entries for well-formed XML with neither <url> nor <sitemap>", async () => {
     const fetchImpl = fakeFetch({
       "https://shop.example.com/sitemap.xml": { status: 200, body: `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>` },

@@ -6,6 +6,7 @@ import {
   isDenylistedPath,
   classifyLinkStatus,
   normalizeHeadTitle,
+  decodeHtmlEntities,
   isAllowedByRobots,
   groupDuplicateTitles,
   runCrawl,
@@ -210,6 +211,33 @@ describe("normalizeHeadTitle", () => {
   });
   it("handles an empty shop name (no suffix stripped)", () => {
     expect(normalizeHeadTitle("Blue Shoe", "")).toBe("blue shoe");
+  });
+});
+
+// ── decodeHtmlEntities (out-of-range numeric entity guard) ─────────────────
+
+describe("decodeHtmlEntities", () => {
+  it("does not throw on an out-of-range hex numeric entity (> 0x10FFFF)", () => {
+    expect(() => decodeHtmlEntities("Title &#x110000; here")).not.toThrow();
+    expect(decodeHtmlEntities("Title &#x110000; here")).toBe("Title &#x110000; here");
+  });
+
+  it("does not throw on an out-of-range decimal numeric entity", () => {
+    expect(() => decodeHtmlEntities("Title &#9999999999; here")).not.toThrow();
+    expect(decodeHtmlEntities("Title &#9999999999; here")).toBe("Title &#9999999999; here");
+  });
+
+  it("does not throw on a surrogate-range numeric entity", () => {
+    expect(() => decodeHtmlEntities("Title &#xD800; here")).not.toThrow();
+    expect(decodeHtmlEntities("Title &#xD800; here")).toBe("Title &#xD800; here");
+  });
+
+  it("still decodes an in-range numeric entity normally", () => {
+    expect(decodeHtmlEntities("Caf&#233;")).toBe("Café");
+  });
+
+  it("normalizeHeadTitle does not throw on a title with an out-of-range entity", () => {
+    expect(() => normalizeHeadTitle("Broken &#x110000; Title", "Shop")).not.toThrow();
   });
 });
 
@@ -459,6 +487,103 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
 
     expect(summary.status).toBe("failed");
     expect(summary.error).toBe("bot_blocked");
+  });
+
+  it("does not follow a redirect to a cross-origin or private/link-local host (redirect-SSRF guard)", async () => {
+    let externalFetchCount = 0;
+    let metadataFetchCount = 0;
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html("Home", `<a href="/go-external">External</a> <a href="/go-metadata">Metadata</a>`),
+        ),
+      ),
+      // 301s to an arbitrary external host and to the cloud metadata IP.
+      http.get(`${BASE}/go-external`, () => redirectTo("http://evil.example.com/")),
+      http.get(`${BASE}/go-metadata`, () => redirectTo("http://169.254.169.254/")),
+      // If the crawler ever fetches these (it must not), count it.
+      http.get("http://evil.example.com/", () => {
+        externalFetchCount += 1;
+        return HttpResponse.html(html("Evil", "<p>evil</p>"));
+      }),
+      http.get("http://169.254.169.254/", () => {
+        metadataFetchCount += 1;
+        return HttpResponse.html(html("Metadata", "<p>metadata</p>"));
+      }),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-4", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+    });
+
+    expect(summary.status).toBe("completed");
+
+    // Neither cross-origin target was ever fetched.
+    expect(externalFetchCount).toBe(0);
+    expect(metadataFetchCount).toBe(0);
+
+    // No SeoCrawlPage row exists for either external target — the chain
+    // terminated at the redirect, it was not crawled as its own page.
+    const crawledUrls = db.__created.pages.map((p: any) => p.url);
+    expect(crawledUrls.some((u: string) => u.includes("evil.example.com"))).toBe(false);
+    expect(crawledUrls.some((u: string) => u.includes("169.254.169.254"))).toBe(false);
+
+    // The redirect source pages are recorded with the (unfetched) external
+    // target as `redirectedTo`, not as a followed/crawled hop.
+    const externalPage = db.__created.pages.find((p: any) => p.url.endsWith("/go-external"));
+    expect(externalPage?.redirectedTo).toBe("http://evil.example.com/");
+    expect(externalPage?.title).toBeNull();
+
+    const metadataPage = db.__created.pages.find((p: any) => p.url.endsWith("/go-metadata"));
+    expect(metadataPage?.redirectedTo).toBe("http://169.254.169.254/");
+    expect(metadataPage?.title).toBeNull();
+  });
+
+  it("excludes a resolved page with a broken (non-2xx) status from head-drift (null title vs DB title is not a real drift)", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", `<a href="/products/broken-product">Broken</a>`)),
+      ),
+      // Resolves to a known product, but 404s — body/title are never parsed.
+      http.get(`${BASE}/products/broken-product`, () => HttpResponse.text("Not found", { status: 404 })),
+    );
+
+    const db = makeDb({
+      products: [{ id: "gid://shopify/Product/9", handle: "broken-product" }],
+    });
+    // computeHeadDrift's title lookup needs `title`/`seoTitle` too — patch
+    // the stub's product.findMany(by id) to return a title that would
+    // mismatch the (null) crawled title, so a pre-fix run WOULD have
+    // counted this as drift.
+    const baseFindMany = db.product.findMany;
+    db.product.findMany = async (args: any) => {
+      const rows = await baseFindMany(args);
+      return rows.map((r: any) => ({ ...r, title: "Broken Product", seoTitle: null }));
+    };
+
+    const summary = await runCrawl("snap-5", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+    });
+
+    expect(summary.status).toBe("completed");
+    expect(summary.headDriftCount).toBe(0);
   });
 });
 

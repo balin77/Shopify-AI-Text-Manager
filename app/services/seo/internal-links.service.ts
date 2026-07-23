@@ -204,9 +204,26 @@ function collectHrefs($: cheerio.CheerioAPI): string[] {
   return hrefs;
 }
 
+/** Exact handle-segment comparison (§ fix 7) — a naive `h.includes(needle)`
+ *  would treat `/products/vase-large` as already linking to `/products/vase`
+ *  (prefix collision). Parses the href's path and compares the final
+ *  segment exactly, tolerant of a trailing slash and of relative/absolute
+ *  hrefs (a bare `new URL(href)` would throw on `/products/vase`). */
 function isAlreadyLinked(hrefs: string[], target: { resourceType: TargetResourceType; handle: string }): boolean {
   const needle = targetUrlPath(target);
-  return hrefs.some((h) => h.includes(needle));
+  const needleSegments = needle.split("/").filter(Boolean);
+  return hrefs.some((h) => {
+    let pathname: string;
+    try {
+      pathname = new URL(h, "https://placeholder.invalid").pathname;
+    } catch {
+      return false;
+    }
+    const segments = pathname.split("/").filter(Boolean);
+    if (segments.length < needleSegments.length) return false;
+    const tail = segments.slice(segments.length - needleSegments.length);
+    return tail.every((seg, i) => seg === needleSegments[i]);
+  });
 }
 
 /**
@@ -319,7 +336,14 @@ export function insertLinkIntoHtml(sourceHtml: string, anchorText: string, href:
     return { html: sourceHtml, inserted: false };
   }
 
-  const $ = cheerio.load(sourceHtml);
+  // Fragment mode (§ fix 3): `cheerio.load(sourceHtml)` (document mode)
+  // hoists a leading `<style>`/`<meta>`/`<title>`/`<link>`/`<base>` into a
+  // synthesized `<head>`, and `$("body").html()` then excludes it —
+  // silently DELETING those elements from the saved content. Loading as a
+  // fragment (`cheerio.load(sourceHtml, null, false)`) + serializing the
+  // fragment root directly (`$.html()`, not `$("body").html()`) keeps
+  // every element exactly where it was.
+  const $ = cheerio.load(sourceHtml, null, false);
   const textNodes = collectTextNodes($);
   const re = buildAnchorRegex(anchorText);
 
@@ -334,7 +358,7 @@ export function insertLinkIntoHtml(sourceHtml: string, anchorText: string, href:
     const replacementHtml = `${escapeHtmlText(before)}${linkHtml}${escapeHtmlText(after)}`;
 
     $(el).replaceWith(replacementHtml);
-    return { html: $("body").html() ?? "", inserted: true };
+    return { html: $.html(), inserted: true };
   }
 
   return { html: sourceHtml, inserted: false };
@@ -538,30 +562,54 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
           cappedByPendingLimit = true;
           continue;
         }
-        await db.seoInternalLinkSuggestion.create({
-          data: {
-            shop,
-            locale: "",
-            fromResourceType: source.resourceType,
-            fromResourceId: source.resourceId,
-            toResourceType: match.toResourceType,
-            toResourceId: match.toResourceId,
-            anchorText: match.anchorText,
-            confidence: match.confidence,
-            status: "pending",
-          },
-        });
-        pendingCount++;
-        created++;
-        existingByKey.set(candidateKey, {
+        const whereKey = {
+          shop,
           fromResourceType: source.resourceType,
           fromResourceId: source.resourceId,
           toResourceType: match.toResourceType,
           toResourceId: match.toResourceId,
           locale: "",
-          status: "pending",
-          dismissedUntil: null,
-        });
+        };
+        try {
+          await db.seoInternalLinkSuggestion.create({
+            data: {
+              ...whereKey,
+              anchorText: match.anchorText,
+              confidence: match.confidence,
+              status: "pending",
+            },
+          });
+          pendingCount++;
+          created++;
+          existingByKey.set(candidateKey, { ...whereKey, status: "pending", dismissedUntil: null });
+        } catch (err: unknown) {
+          // §8: `existingRows` is capped at 5000 with no orderBy — beyond
+          // that a dismissed-future row can fall outside the loaded window,
+          // bypass the reactivation guard above, and land here as a unique-
+          // constraint violation (the row already exists, we just never
+          // loaded it). Re-read just THIS row and apply the same
+          // dismissed-future/accepted guards instead of crashing the run —
+          // any other error still propagates.
+          if ((err as { code?: string } | null)?.code !== "P2002") throw err;
+          const row = await db.seoInternalLinkSuggestion.findUnique({
+            where: { shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale: whereKey },
+            select: { status: true, dismissedUntil: true },
+          });
+          if (row?.status === "dismissed" && (!row.dismissedUntil || row.dismissedUntil > now)) {
+            existingByKey.set(candidateKey, { ...whereKey, status: row.status, dismissedUntil: row.dismissedUntil });
+            continue; // never resurrect a dismissed-future/permanent row via this path either
+          }
+          if (row?.status === "accepted") {
+            existingByKey.set(candidateKey, { ...whereKey, status: "accepted", dismissedUntil: row.dismissedUntil ?? null });
+            continue;
+          }
+          await db.seoInternalLinkSuggestion.update({
+            where: { shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale: whereKey },
+            data: { anchorText: match.anchorText, confidence: match.confidence, status: "pending", dismissedUntil: null },
+          });
+          updated++;
+          existingByKey.set(candidateKey, { ...whereKey, status: "pending", dismissedUntil: null });
+        }
       } else {
         // Existing "pending" row, or a "dismissed" row whose dismissedUntil
         // has lapsed — refresh it back to pending with the latest match.

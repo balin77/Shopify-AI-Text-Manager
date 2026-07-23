@@ -148,17 +148,21 @@ export interface BreadcrumbItem {
 
 export function buildOrganizationJsonLd(shop: ShopInfo): JsonLd {
   const url = normalizeBase(shop.domain);
-  return compact({
+  const jsonLd: JsonLd = compact({
     "@context": SCHEMA_CTX,
     "@type": "Organization",
     name: shop.name,
     url,
     logo: shop.logoUrl || undefined,
-    sameAs:
-      shop.sameAs && shop.sameAs.length > 0
-        ? shop.sameAs.filter(Boolean)
-        : undefined,
   });
+  // sameAs is deliberately set OUTSIDE compact() (§ fix 11): compact() drops
+  // empty arrays, which would erase the distinction between "checked, found
+  // none" (shop.sameAs === []) and "never checked" (shop.sameAs ===
+  // undefined) that validateJsonLd's orgNoSameAs gate below relies on.
+  if (shop.sameAs !== undefined) {
+    jsonLd.sameAs = shop.sameAs.filter(Boolean);
+  }
+  return jsonLd;
 }
 
 /**
@@ -556,9 +560,14 @@ export function validateJsonLd(
   // which neither this preview route nor the batch audit currently reads back
   // (it lives in theme app-embed block settings, not `settings_data.json`'s
   // documented `current.*` shape the way the logo/`current.logo` is) — so
-  // `shop.sameAs` is never populated by any caller today and this fires the
-  // same everywhere. That's an intentional, documented gap (§11), not a bug.
-  if (type === "Organization" && (!jsonLd.sameAs || (jsonLd.sameAs as unknown[]).length === 0)) {
+  // `shop.sameAs` is never populated by any caller today. That's an
+  // intentional, documented gap (§11), not a bug — BUT emitting the warning
+  // unconditionally on that basis would make it a permanent false positive
+  // for every shop forever (§ fix 11). `buildOrganizationJsonLd` only sets
+  // `jsonLd.sameAs` (even to `[]`) when the caller actually supplied
+  // `shop.sameAs` — `undefined` means "never checked", so only emit once
+  // there is something to actually be empty.
+  if (type === "Organization" && jsonLd.sameAs !== undefined && (jsonLd.sameAs as unknown[]).length === 0) {
     w.push({
       severity: "info",
       code: "orgNoSameAs",

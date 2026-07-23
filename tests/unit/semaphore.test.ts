@@ -48,4 +48,34 @@ describe("Semaphore", () => {
     expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(40);
     expect(starts[2] - starts[1]).toBeGreaterThanOrEqual(40);
   });
+
+  it("never drops a queued acquisition under contention (regression: spacing branch used to discard it)", async () => {
+    // With the old implementation, a `wait > 0` acquisition removed itself
+    // from the queue and relied solely on its own setTimeout to retry; if
+    // that timer fired while all slots were full, the acquisition was never
+    // re-queued and its promise hung forever. 40 tasks against 5 slots with
+    // spacing guarantees many acquisitions land in exactly that situation.
+    const sem = new Semaphore(5, 20);
+    let active = 0;
+    let maxActive = 0;
+    let completed = 0;
+    const TOTAL = 40;
+
+    const tasks = Array.from({ length: TOTAL }, () =>
+      sem.run(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        // Longer than the spacing interval, so slots stay busy while more
+        // acquisitions are queued up behind the spacing gate.
+        await new Promise((r) => setTimeout(r, 30));
+        active -= 1;
+        completed += 1;
+      }),
+    );
+
+    await Promise.all(tasks);
+
+    expect(completed).toBe(TOTAL);
+    expect(maxActive).toBeLessThanOrEqual(5);
+  });
 });

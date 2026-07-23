@@ -17,15 +17,15 @@
  *     SeoGscPageStat carries (not a dead page),
  *   - shopifyUpdatedAt older than FRESHNESS_STALE_DAYS.
  *
- * Bonus signal: CTR under-performing for its position band doubles priority.
- * Reuses `findCtrOpportunities` (google-search-console.server.ts) — the exact
- * position/impressions banding the existing Quick-wins panel already uses to
- * decide "this ranks decently but a title/meta rewrite has leverage here" —
- * instead of re-declaring a second position→expected-CTR curve.
+ * Bonus signal (§5.2): the double-priority bonus fires when the page's
+ * ACTUAL CTR is meaningfully below the EXPECTED CTR for its average GSC
+ * position — not merely "ranks in some band" (an earlier version of this
+ * comment claimed reuse of `findCtrOpportunities`'s position/impressions
+ * banding, but that function has no CTR term at all, so it never actually
+ * measured under-performance; see `expectedCtrForPosition` below).
  */
 
 import type { PrismaClient } from "@prisma/client";
-import { findCtrOpportunities } from "../google-search-console.server";
 
 /** Ranks at all — page 1-2 of results, roughly. */
 export const FRESHNESS_MAX_POSITION = 20;
@@ -33,6 +33,42 @@ export const FRESHNESS_MAX_POSITION = 20;
 export const FRESHNESS_MIN_IMPRESSIONS = 100;
 /** Content untouched for this long is a refresh candidate, GSC signals permitting. */
 export const FRESHNESS_STALE_DAYS = 180;
+
+/**
+ * Approximate industry CTR-by-position curve (organic search, desktop+mobile
+ * blended) — tunable, not sourced from this shop's own data (nothing in the
+ * codebase computes a per-shop expected-CTR curve). Used only as the
+ * threshold for the §5.2 CTR-bonus signal below, not surfaced to merchants
+ * directly.
+ */
+const EXPECTED_CTR_BY_POSITION: Record<number, number> = {
+  1: 0.28,
+  2: 0.15,
+  3: 0.1,
+  4: 0.07,
+  5: 0.05,
+};
+/** Expected CTR for positions 6-10. */
+const EXPECTED_CTR_6_10 = 0.03;
+/** Expected CTR for positions 11-20. */
+const EXPECTED_CTR_11_20 = 0.015;
+/** Expected CTR beyond position 20 (floor). */
+const EXPECTED_CTR_BEYOND_20 = 0.01;
+
+/** A page must underperform its position's expected CTR by at least this
+ *  factor ("meaningfully below", §5.2) to earn the double-priority bonus —
+ *  not just be a hair under the curve. */
+const CTR_BONUS_FACTOR = 0.7;
+
+/** Approximate expected CTR for a given average GSC position (§5.2). Pure,
+ *  unit-testable — the ONE place this curve is declared. */
+export function expectedCtrForPosition(position: number): number {
+  const p = Math.max(1, Math.round(position));
+  if (p <= 5) return EXPECTED_CTR_BY_POSITION[p];
+  if (p <= 10) return EXPECTED_CTR_6_10;
+  if (p <= 20) return EXPECTED_CTR_11_20;
+  return EXPECTED_CTR_BEYOND_20;
+}
 
 export type FreshnessResourceType = "Product" | "Collection" | "Article" | "Page";
 
@@ -158,17 +194,13 @@ export async function analyzeFreshness(shop: string, deps: FreshnessDeps): Promi
     if (!type || !stat.resourceId) continue;
     const item = byKey.get(`${type}::${stat.resourceId}`);
     if (!item) continue; // resolved id no longer in the content cache (deleted/renamed)
-    if (item.shopifyUpdatedAt.getTime() > staleCutoff) continue; // touched recently — not a candidate
+    // "älter als 180 Tage" (§5.2) — STRICTLY older, so an item touched
+    // exactly at the FRESHNESS_STALE_DAYS boundary does not qualify.
+    if (item.shopifyUpdatedAt.getTime() >= staleCutoff) continue; // touched recently — not a candidate
 
-    // Bonus signal (§5.2): feed this single row through the existing
-    // Quick-wins filter (position band + impression floor) rather than
-    // re-declaring a second "expected CTR for this position" rule. A
-    // non-empty result means the row itself would qualify as a Quick win.
-    const isCtrOpportunity =
-      findCtrOpportunities(
-        [{ keys: ["", stat.page], clicks: stat.clicks, impressions: stat.impressions, ctr: stat.ctr, position: stat.position }],
-        1,
-      ).length > 0;
+    // Bonus signal (§5.2): double priority when the page's actual CTR is
+    // meaningfully below the expected CTR for its position.
+    const isCtrOpportunity = stat.ctr < expectedCtrForPosition(stat.position) * CTR_BONUS_FACTOR;
 
     candidates.push({
       resourceType: type,

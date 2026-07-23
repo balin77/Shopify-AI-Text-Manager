@@ -96,6 +96,17 @@ describe("matchSourceAgainstTargets", () => {
     expect(matches).toEqual([]);
   });
 
+  it("does not treat a handle-prefix collision as already-linked (regression: /products/vase-large matching /products/vase)", () => {
+    const t = target({ resourceId: "gid-P1", handle: "vase", title: "Vase" });
+    // The only link on the page is to a DIFFERENT product whose handle
+    // happens to start with the same string ("vase-large" vs "vase") — the
+    // source is NOT actually linked to the "vase" target and should match.
+    const html = '<p>See our <a href="/products/vase-large">Big Vase</a>. Also check out our Vase collection.</p>';
+    const matches = matchSourceAgainstTargets(html, [t]);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].toResourceId).toBe("gid-P1");
+  });
+
   it("never matches inside an existing <a> or a heading", () => {
     const t = target({ resourceId: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" });
     const html =
@@ -193,6 +204,22 @@ describe("insertLinkIntoHtml", () => {
     expect(result.inserted).toBe(false);
     expect(result.html).toBe(html);
   });
+
+  it("does not hoist/drop a leading <style> block into a discarded <head> (regression: document-mode cheerio.load + $('body').html())", () => {
+    const html = `<style>.x{color:red}</style><p>Our ceramic vase is handmade.</p>`;
+    const result = insertLinkIntoHtml(html, "ceramic vase", "/products/ceramic-vase");
+    expect(result.inserted).toBe(true);
+    expect(result.html).toContain("<style>.x{color:red}</style>");
+    expect(result.html).toContain('<a href="/products/ceramic-vase">ceramic vase</a>');
+  });
+
+  it("does not drop a leading <meta> tag either", () => {
+    const html = `<meta charset="utf-8"><p>Our ceramic vase is handmade.</p>`;
+    const result = insertLinkIntoHtml(html, "ceramic vase", "/products/ceramic-vase");
+    expect(result.inserted).toBe(true);
+    expect(result.html).toContain('<meta charset="utf-8">');
+    expect(result.html).toContain('<a href="/products/ceramic-vase">ceramic vase</a>');
+  });
 });
 
 describe("targetUrlPath", () => {
@@ -220,6 +247,20 @@ function makeDb(opts: {
     status: string;
     dismissedUntil: Date | null;
   }>;
+  /** Rows that exist in the "DB" but are NOT returned by the bulk
+   *  `findMany` — simulates a row beyond the unbounded 5000-row
+   *  `existingRows` window (§ fix 8: `internal-links.service.ts:~485-497`).
+   *  `create` throws P2002 against these; `findUnique` can still see them. */
+  hiddenSuggestions?: Array<{
+    id: string;
+    fromResourceType: string;
+    fromResourceId: string;
+    toResourceType: string;
+    toResourceId: string;
+    locale: string;
+    status: string;
+    dismissedUntil: Date | null;
+  }>;
 }) {
   const products = opts.products ?? [];
   const collections = opts.collections ?? [];
@@ -227,10 +268,19 @@ function makeDb(opts: {
   const pages = opts.pages ?? [];
   const assignments = opts.assignments ?? [];
   const suggestions = [...(opts.existingSuggestions ?? [])];
+  const hidden = [...(opts.hiddenSuggestions ?? [])];
   let idCounter = 0;
+
+  const sameKey = (a: any, b: any) =>
+    a.fromResourceType === b.fromResourceType &&
+    a.fromResourceId === b.fromResourceId &&
+    a.toResourceType === b.toResourceType &&
+    a.toResourceId === b.toResourceId &&
+    a.locale === b.locale;
 
   return {
     _suggestions: suggestions,
+    _hidden: hidden,
     product: {
       // The service makes TWO different product.findMany calls: one for
       // TARGETS (where.status: "ACTIVE" — draft/archived excluded, §4.1) and
@@ -257,18 +307,33 @@ function makeDb(opts: {
     seoInternalLinkSuggestion: {
       findMany: async () => suggestions,
       create: async ({ data }: any) => {
+        const conflict = hidden.find((h) => sameKey(h, data)) ?? suggestions.find((s) => sameKey(s, data));
+        if (conflict) {
+          const err: any = new Error("Unique constraint failed on the fields: (shop,fromResourceType,fromResourceId,toResourceType,toResourceId,locale)");
+          err.code = "P2002";
+          throw err;
+        }
         const row = { id: `new-${idCounter++}`, ...data };
         suggestions.push(row);
         return row;
       },
+      findUnique: async ({ where }: any) => {
+        const key = where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale;
+        return hidden.find((h) => sameKey(h, key)) ?? suggestions.find((s) => sameKey(s, key)) ?? null;
+      },
       update: async ({ where, data }: any) => {
-        const row = suggestions.find(
-          (s) =>
-            s.fromResourceType === where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale.fromResourceType &&
-            s.fromResourceId === where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale.fromResourceId &&
-            s.toResourceType === where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale.toResourceType &&
-            s.toResourceId === where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale.toResourceId,
-        );
+        const key = where.shop_fromResourceType_fromResourceId_toResourceType_toResourceId_locale;
+        let row = suggestions.find((s) => sameKey(s, key));
+        if (!row) {
+          // Mirrors a real DB row: updating a previously-"hidden" row
+          // promotes it into the visible set.
+          const hiddenIdx = hidden.findIndex((h) => sameKey(h, key));
+          if (hiddenIdx >= 0) {
+            row = hidden[hiddenIdx];
+            hidden.splice(hiddenIdx, 1);
+            suggestions.push(row);
+          }
+        }
         if (row) Object.assign(row, data);
         return row;
       },
@@ -395,6 +460,58 @@ describe("runInternalLinkSuggestions (DB orchestration)", () => {
     const summary = await runInternalLinkSuggestions(SHOP, { db });
     expect(summary.created).toBe(0);
     expect(summary.cappedByPendingLimit).toBe(true);
+  });
+
+  it("falls back to an update instead of crashing when create hits a unique-constraint violation for a row beyond the 5000-row load window (§ fix 8)", async () => {
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+      articles: [{ id: "gid-A1", body: "<p>We love our Green Ceramic Vase in the studio.</p>" }],
+      // Not returned by the bulk findMany (simulating >5000 rows), but a
+      // real row in the "DB" — create() must P2002 against it.
+      hiddenSuggestions: [
+        {
+          id: "hidden-1",
+          fromResourceType: "Article",
+          fromResourceId: "gid-A1",
+          toResourceType: "Product",
+          toResourceId: "gid-P1",
+          locale: "",
+          status: "pending",
+          dismissedUntil: null,
+        },
+      ],
+    });
+    const summary = await runInternalLinkSuggestions(SHOP, { db });
+    expect(summary.created).toBe(0);
+    expect(summary.updated).toBe(1);
+    expect(db._suggestions).toHaveLength(1);
+    expect(db._suggestions[0].status).toBe("pending");
+  });
+
+  it("still respects the dismissed-future guard for a hidden row discovered via the P2002 fallback (§ fix 8)", async () => {
+    const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+      articles: [{ id: "gid-A1", body: "<p>We love our Green Ceramic Vase in the studio.</p>" }],
+      hiddenSuggestions: [
+        {
+          id: "hidden-1",
+          fromResourceType: "Article",
+          fromResourceId: "gid-A1",
+          toResourceType: "Product",
+          toResourceId: "gid-P1",
+          locale: "",
+          status: "dismissed",
+          dismissedUntil: future,
+        },
+      ],
+    });
+    const summary = await runInternalLinkSuggestions(SHOP, { db });
+    expect(summary.created).toBe(0);
+    expect(summary.updated).toBe(0);
+    // The hidden row must not have been resurrected/promoted to "pending".
+    expect(db._suggestions).toHaveLength(0);
+    expect(db._hidden[0].status).toBe("dismissed");
   });
 
   it("locale isolation end-to-end: a foreign-locale keyword never becomes an anchor", async () => {

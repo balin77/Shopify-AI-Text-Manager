@@ -227,7 +227,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const shopName = await fetchShopName(admin, shop);
   const headDriftCandidates = pages
-    .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.locale === "")
+    .filter(
+      (p) =>
+        p.resourceId &&
+        p.resourceType &&
+        p.resourceType !== "unknown" &&
+        p.locale === "" &&
+        p.statusCode >= 200 &&
+        p.statusCode < 300,
+    )
     .map((p) => ({
       resourceType: p.resourceType as AuditType,
       resourceId: p.resourceId as string,

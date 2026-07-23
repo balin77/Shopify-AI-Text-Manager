@@ -3,6 +3,7 @@ import {
   analyzeFreshness,
   excludeDismissed,
   freshnessDismissKey,
+  expectedCtrForPosition,
   FRESHNESS_MAX_POSITION,
   FRESHNESS_MIN_IMPRESSIONS,
   FRESHNESS_STALE_DAYS,
@@ -279,6 +280,66 @@ describe("analyzeFreshness", () => {
     expect(result.candidates.map((c) => c.resourceId)).toEqual(["gid-P2", "gid-P1"]);
   });
 
+  it("excludes an item updated exactly at the FRESHNESS_STALE_DAYS boundary (§ fix 12: strictly older, not >=)", async () => {
+    const db = makeDb({
+      pageStats: [
+        {
+          shop: SHOP,
+          page: "https://shop.example.com/products/exact-boundary",
+          resourceType: "Product",
+          resourceId: "gid-P1",
+          position: 10,
+          clicks: 5,
+          impressions: 500,
+          ctr: 0.01,
+        },
+      ],
+      products: [
+        { id: "gid-P1", title: "Exact Boundary", handle: "exact-boundary", shopifyUpdatedAt: daysAgo(FRESHNESS_STALE_DAYS) },
+      ],
+    });
+    const result = await analyzeFreshness(SHOP, { db, now: NOW });
+    expect(result.candidates).toEqual([]);
+  });
+
+  it("§ fix 6: at the same position (5), a low-CTR candidate gets the bonus and a high-CTR candidate does not", async () => {
+    const db = makeDb({
+      pageStats: [
+        {
+          shop: SHOP,
+          page: "https://shop.example.com/products/high-ctr",
+          resourceType: "Product",
+          resourceId: "gid-high",
+          position: 5,
+          clicks: 40,
+          impressions: 500,
+          ctr: 0.08, // well above expectedCtrForPosition(5) * 0.7
+        },
+        {
+          shop: SHOP,
+          page: "https://shop.example.com/products/low-ctr",
+          resourceType: "Product",
+          resourceId: "gid-low",
+          position: 5,
+          clicks: 5,
+          impressions: 500,
+          ctr: 0.01, // well below expectedCtrForPosition(5) * 0.7
+        },
+      ],
+      products: [
+        { id: "gid-high", title: "High CTR", handle: "high-ctr", shopifyUpdatedAt: daysAgo(200) },
+        { id: "gid-low", title: "Low CTR", handle: "low-ctr", shopifyUpdatedAt: daysAgo(200) },
+      ],
+    });
+    const result = await analyzeFreshness(SHOP, { db, now: NOW });
+    const high = result.candidates.find((c) => c.resourceId === "gid-high");
+    const low = result.candidates.find((c) => c.resourceId === "gid-low");
+    expect(high?.priority).toBe(1);
+    expect(low?.priority).toBe(2);
+    // The low-CTR (bonus) candidate is prioritized ahead of the high-CTR one.
+    expect(result.candidates.map((c) => c.resourceId)).toEqual(["gid-low", "gid-high"]);
+  });
+
   it("skips a resolved page-stat row whose resource no longer exists in the content cache", async () => {
     const db = makeDb({
       pageStats: [
@@ -297,6 +358,27 @@ describe("analyzeFreshness", () => {
     });
     const result = await analyzeFreshness(SHOP, { db, now: NOW });
     expect(result.candidates).toEqual([]);
+  });
+});
+
+describe("expectedCtrForPosition", () => {
+  it("is monotonically non-increasing as position gets worse", () => {
+    const positions = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21, 50];
+    for (let i = 1; i < positions.length; i++) {
+      expect(expectedCtrForPosition(positions[i])).toBeLessThanOrEqual(expectedCtrForPosition(positions[i - 1]));
+    }
+  });
+
+  it("returns a sane value for position 1 (highest expected CTR)", () => {
+    expect(expectedCtrForPosition(1)).toBeGreaterThan(0.2);
+  });
+
+  it("rounds a fractional average position before lookup", () => {
+    expect(expectedCtrForPosition(4.6)).toBe(expectedCtrForPosition(5));
+  });
+
+  it("floors out for very deep positions instead of hitting zero/undefined", () => {
+    expect(expectedCtrForPosition(500)).toBeGreaterThan(0);
   });
 });
 

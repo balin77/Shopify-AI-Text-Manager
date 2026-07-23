@@ -461,6 +461,7 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
       {
         url: "https://shop.com/products/p2",
         title: "T2 crawled title",
+        statusCode: 200,
         resourceType: "product",
         resourceId: "gid-P2",
         locale: "",
@@ -469,6 +470,7 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
       {
         url: "https://shop.com/pages/pg1",
         title: "Something Totally Different",
+        statusCode: 200,
         resourceType: "page",
         resourceId: "gid-PG1",
         locale: "",
@@ -502,6 +504,31 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
     expect(headDrift?.action).toBe("deepLink");
     expect(headDrift?.count).toBeGreaterThanOrEqual(1);
     expect(headDrift?.items.some((i) => i.id === "gid-PG1")).toBe(true);
+  });
+
+  it("does not count a broken (404) resolved page as headDrift, even though its (null) crawled title differs from the DB title (§ fix 5)", async () => {
+    const pages = [
+      {
+        url: "https://shop.com/pages/pg1",
+        title: null, // never parsed — the page 404'd, so the body was never read
+        statusCode: 404,
+        resourceType: "page",
+        resourceId: "gid-PG1",
+        locale: "",
+        inboundCount: 3,
+      },
+    ];
+    const db = makeDbWithCrawl("completed", pages, []);
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+
+    const headDrift = audit.problems.find((p) => p.code === "headDrift");
+    expect(headDrift).toBeUndefined();
   });
 
   it("suppresses the orphanPages bucket when the crawl was capped (§3.1 — unreliable orphan data)", async () => {
