@@ -13,7 +13,7 @@
  */
 
 // zod-based pure validation helpers — no server-only imports (safe here).
-import { isValidShopifyGID } from "../../utils/validation";
+import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 
 // ─── Row types ─────────────────────────────────────────────────────────────
 
@@ -392,6 +392,22 @@ export const MAX_SYNC_SAVE = 25;
  * wall-clock time. */
 export const MAX_BULK_TASK_ITEMS = 500;
 
+/** Shopify's documented metafieldsSet input limit (Plan §14). Lives here (not
+ * apply.server.ts) because estimateCalls needs it client-side. */
+export const METAFIELDS_SET_CHUNK = 25;
+
+/** Alias-batch size for the bulk digest query (Plan §6.1) — mirrors the
+ * seo-bulk-fix DIGEST_BATCH_CHUNK. Client-safe because estimateCalls counts
+ * the digest roundtrips; the actual query lives in translations.server.ts. */
+export const DIGEST_BATCH_CHUNK = 50;
+
+/** Budget for ESTIMATED Shopify calls of one save (Plan §10.1). Since a
+ * product row can fan out into up to four mutations (§4.4) and a foreign
+ * row into register+remove, rows stopped measuring anything — the UI refuses
+ * a save whose estimate exceeds this BEFORE submitting, instead of failing
+ * 20 minutes into a task. */
+export const MAX_TASK_CALLS = 2000;
+
 // ─── Rows ──────────────────────────────────────────────────────────────────
 
 /** One product-option slot on a row (Phase 2, product rows only). */
@@ -605,6 +621,11 @@ export interface BulkFailure {
    * row's mutation failed, e.g. a single-mutation page/collection row) — the
    * UI then falls back to marking the row's dirty cells. */
   columnId?: string;
+  /** Locale/market of the failed cell (Phase 4) — lets the UI mark the cell
+   * in the RIGHT language view and keep exactly that edit. Absent = primary
+   * ("" / ""), the pre-Phase-4 shape. */
+  locale?: string;
+  marketId?: string;
   message: string;
 }
 
@@ -718,6 +739,81 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
 }
 
 /**
+ * Estimated Shopify calls for a diff (Plan §10.1) — the UI compares this
+ * against MAX_TASK_CALLS BEFORE saving, and the /api/ai handler enforces the
+ * same budget server-side.
+ *
+ * Counting mirrors the persistence pipeline:
+ * - primary product group: 1 productUpdate (any field cell) +
+ *   ceil(metafield sets / 25) + 1 metafieldsDelete (any cleared metafield) +
+ *   1 productOptionUpdate per dirty option position + 1 productUpdateMedia;
+ * - primary non-product group: 1 (single-mutation row);
+ * - foreign group: 1 translationsRegister (any non-empty cell) +
+ *   1 translationsRemove (any cleared cell);
+ * - plus ceil(unique foreign resources / DIGEST_BATCH_CHUNK) digest batches.
+ *
+ * `columns` is the (current type's) descriptor universe — unknown column ids
+ * are counted as one call each (defensive over-estimate, never under).
+ */
+export function estimateCalls(diff: BulkDiffEntry[], columns: ColumnDescriptor[]): number {
+  const columnById = new Map(columns.map((c) => [c.id, c] as const));
+  const groups = groupDiffByRow(diff);
+  let calls = 0;
+  const foreignDigestResources = new Set<string>();
+
+  for (const group of groups) {
+    const entries = Object.entries(group.cells);
+    if (group.locale !== "") {
+      const hasWrites = entries.some(([, v]) => v !== "");
+      const hasClears = entries.some(([, v]) => v === "");
+      calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
+      if (hasWrites) foreignDigestResources.add(group.rowId);
+      continue;
+    }
+    if (group.rowType !== "product") {
+      calls += 1;
+      continue;
+    }
+    let base = 0;
+    let metafieldSets = 0;
+    let metafieldDeletes = 0;
+    let imageAlt = 0;
+    const optionPositions = new Set<number>();
+    for (const [columnId, value] of entries) {
+      const column = columnById.get(columnId);
+      if (!column) {
+        calls += 1; // unknown → defensive one-call estimate
+        continue;
+      }
+      switch (column.kind) {
+        case "field":
+          base = 1;
+          break;
+        case "metafield":
+          if (value === "") metafieldDeletes += 1;
+          else metafieldSets += 1;
+          break;
+        case "option":
+          optionPositions.add(column.optionPosition ?? 0);
+          break;
+        default:
+          if (column.id === IMG_ALT_COLUMN_ID) imageAlt = 1;
+          else calls += 1;
+      }
+    }
+    calls +=
+      base +
+      Math.ceil(metafieldSets / METAFIELDS_SET_CHUNK) +
+      (metafieldDeletes > 0 ? 1 : 0) +
+      optionPositions.size +
+      imageAlt;
+  }
+
+  calls += Math.ceil(foreignDigestResources.size / DIGEST_BATCH_CHUNK);
+  return calls;
+}
+
+/**
  * Diff-entry validation shared by the route action AND the /api/ai handler —
  * the handler is reachable directly via POST, so both entrances enforce the
  * exact same rules (Plan §0.2 no. 4): GID shape, plan-allowed row type,
@@ -748,10 +844,17 @@ export function isValidBulkDiffEntry(
   }
   const column = columnsByType[entry.rowType as BulkRowType]?.find((c) => c.id === entry.columnId);
   if (!column || !column.editable) return false;
-  // Until Phase 4 the server writes the primary language only — the
-  // locale/market segments ride along in the key format, but a non-empty
-  // segment has no server write path yet and is rejected, not dropped.
-  return entry.locale === "" && entry.marketId === "";
+  // Locale/market segments (Phase 4): primary edits are always global
+  // ("" / ""). Foreign-locale edits are only valid on translatable columns; a
+  // market override additionally requires a foreign locale (Shopify forbids
+  // market-specific PRIMARY content) and a well-formed Market GID. Note the
+  // route action / handler additionally verify the locale against the shop's
+  // PUBLISHED locales — that needs I/O and can't happen here.
+  if (typeof entry.locale !== "string" || typeof entry.marketId !== "string") return false;
+  if (entry.locale === "") return entry.marketId === "";
+  if (!column.translatable) return false;
+  if (!isValidLocale(entry.locale)) return false;
+  return entry.marketId === "" || isValidShopifyGID(entry.marketId);
 }
 
 // ─── Server-side filter/sort vocabulary (client-safe: types + validation) ──

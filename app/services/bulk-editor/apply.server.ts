@@ -35,10 +35,21 @@ import {
   PRODUCT_OPTION_UPDATE,
 } from "../../graphql/content.mutations";
 import { debugLog } from "../../utils/debug";
+import { markTranslationSaved } from "../../utils/translation-save-lock.server";
+import {
+  loadDigestsForRows,
+  fetchDigestsForResource,
+  registerAndVerify,
+  removeAndVerify,
+  translationKeyForColumn,
+  CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
+  type TranslationInput,
+} from "./translations.server";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
   METAFIELD_TYPE_LIST_SINGLE_LINE,
+  METAFIELDS_SET_CHUNK,
   IMG_ALT_COLUMN_ID,
   type BulkRowType,
   type BulkDiffEntry,
@@ -61,8 +72,9 @@ interface ApplyContext {
 
 const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
 
-/** Shopify's documented metafieldsSet input limit (Plan §14). */
-export const METAFIELDS_SET_CHUNK = 25;
+// Moved to columns.shared.ts (estimateCalls needs it client-side); re-exported
+// here so existing imports keep working.
+export { METAFIELDS_SET_CHUNK } from "./columns.shared";
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -76,6 +88,12 @@ interface PersistDeps {
   gateway: ShopifyApiGateway;
   contentService: ShopifyContentService;
   columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
+  /** Prefetched digests for the run's foreign groups (Plan §6.1):
+   * resourceId → key → digest, loaded in ONE batched pass by applyBulkDiff. */
+  digests: Map<string, Map<string, string>>;
+  /** §6.3 re-fetch bookkeeping: each resource gets at most ONE digest
+   * re-fetch per run — after that a still-missing digest is a cell error. */
+  digestRefetched: Set<string>;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -83,6 +101,10 @@ function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string):
     rowId: group.rowId,
     rowType: group.rowType,
     ...(columnId ? { columnId } : {}),
+    // Locale/market of the failed cell (Phase 4) — lets the UI mark the cell
+    // in the right language view. Primary groups carry "" / "".
+    ...(group.locale !== "" ? { locale: group.locale } : {}),
+    ...(group.marketId !== "" ? { marketId: group.marketId } : {}),
     message,
   };
 }
@@ -776,20 +798,186 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   }
 }
 
+// ─── Foreign-locale rows: translationsRegister/-Remove with verification ───
+
+/**
+ * Persists one foreign-locale row group (Plan §6): non-empty cells become ONE
+ * verified translationsRegister, cleared cells ONE verified
+ * translationsRemove. Only keys Shopify CONFIRMS are mirrored into
+ * ContentTranslation (register → upsert, remove → delete); everything else is
+ * a cell failure that keeps the merchant's edit (and, for clears, the local
+ * DB row) intact. After every confirmed write, markTranslationSaved()
+ * shields the resource from the webhook rebound for 60 s (§10.3).
+ */
+async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<BulkFailure[]> {
+  const { db, shop, gateway } = deps;
+  const resourceId = group.rowId;
+  const { locale, marketId } = group;
+  const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType];
+  const columns = deps.columnsByType[group.rowType];
+  const failures: BulkFailure[] = [];
+
+  interface TranslationCell {
+    columnId: string;
+    key: string;
+    value: string;
+  }
+  const writes: TranslationCell[] = [];
+  const clears: TranslationCell[] = [];
+  for (const [columnId, value] of Object.entries(group.cells)) {
+    const column = columns.find((c) => c.id === columnId);
+    const key = column ? translationKeyForColumn(column) : null;
+    if (!column || !key) {
+      // Validation rejected non-translatable columns already — reaching this
+      // is a programming error, surfaced per cell (never silently dropped).
+      failures.push(failureOf(group, `Column "${columnId}" is not translatable.`, columnId));
+      continue;
+    }
+    if (value === "") clears.push({ columnId, key, value });
+    else writes.push({ columnId, key, value });
+  }
+
+  // ── Digest rule (§6.3, ONE strict rule): no digest ⇒ one re-fetch of the
+  // resource ⇒ still none ⇒ cell error. No Shopify write, NO DB write.
+  let digestsForResource = deps.digests.get(resourceId);
+  const missingDigest = writes.some((w) => !digestsForResource?.get(w.key));
+  if (missingDigest && !deps.digestRefetched.has(resourceId)) {
+    deps.digestRefetched.add(resourceId);
+    try {
+      const fresh = await fetchDigestsForResource(gateway, resourceId);
+      const merged = new Map(digestsForResource ?? []);
+      for (const [key, digest] of fresh) merged.set(key, digest);
+      deps.digests.set(resourceId, merged);
+      digestsForResource = merged;
+    } catch {
+      // Re-fetch failed — the writes without a digest fail per cell below.
+    }
+  }
+
+  const ready: (TranslationCell & { digest: string })[] = [];
+  for (const write of writes) {
+    const digest = digestsForResource?.get(write.key);
+    if (!digest) {
+      // Expected for meta_title/meta_description without a primary SEO
+      // override (Plan §14 no. 6) — still a cell error, never a silent skip
+      // or a DB-only row.
+      failures.push(
+        failureOf(
+          group,
+          `Shopify provides no translatable digest for "${write.key}" on this resource — the translation cannot be registered. (For SEO fields this means the primary SEO value has not been set.)`,
+          write.columnId,
+        ),
+      );
+      continue;
+    }
+    ready.push({ ...write, digest });
+  }
+
+  if (ready.length > 0) {
+    const inputs: TranslationInput[] = ready.map((w) => ({
+      key: w.key,
+      value: w.value,
+      locale,
+      translatableContentDigest: w.digest,
+      ...(marketId ? { marketId } : {}),
+    }));
+    try {
+      const { confirmedKeys, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
+      for (const write of ready) {
+        if (!confirmedKeys.has(write.key)) {
+          failures.push(
+            failureOf(
+              group,
+              userErrors[0]?.message ??
+                "Shopify reported no error but did not store this translation — nothing was saved.",
+              write.columnId,
+            ),
+          );
+          continue;
+        }
+        // Webhook shield BEFORE the DB mirror — Shopify already holds the new
+        // value, so the rebound protection must be active even if the mirror
+        // fails (same ordering as updateContent).
+        markTranslationSaved(resourceId);
+        await db.contentTranslation.upsert({
+          where: {
+            shop_resourceId_key_locale_marketId: {
+              shop,
+              resourceId,
+              key: write.key,
+              locale,
+              marketId,
+            },
+          },
+          update: { value: write.value, digest: write.digest, resourceType },
+          create: {
+            shop,
+            resourceId,
+            resourceType,
+            key: write.key,
+            value: write.value,
+            locale,
+            marketId,
+            digest: write.digest,
+          },
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      for (const write of ready) failures.push(failureOf(group, message, write.columnId));
+    }
+  }
+
+  if (clears.length > 0) {
+    try {
+      const { confirmedKeys, userErrors } = await removeAndVerify(
+        gateway,
+        resourceId,
+        clears.map((c) => c.key),
+        locale,
+        marketId,
+      );
+      for (const clear of clears) {
+        if (!confirmedKeys.has(clear.key)) {
+          // NOT confirmed ⇒ the local row is NOT deleted (CLAUDE.md
+          // invariant) — otherwise the field looks gone locally while it
+          // survives on the storefront.
+          failures.push(
+            failureOf(
+              group,
+              userErrors[0]?.message ??
+                "Shopify did not confirm the translation removal — the local value was kept.",
+              clear.columnId,
+            ),
+          );
+          continue;
+        }
+        markTranslationSaved(resourceId);
+        await db.contentTranslation.deleteMany({
+          where: { shop, resourceId, key: clear.key, locale, marketId },
+        });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      for (const clear of clears) failures.push(failureOf(group, message, clear.columnId));
+    }
+  }
+
+  return failures;
+}
+
 // ─── Entry point ───────────────────────────────────────────────────────────
 
 async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<BulkFailure[]> {
-  // Phase-2 guard: the translation write path (translationsRegister with
-  // digest + echo verification, Plan §6) lands in Phase 4. The diff format
-  // already carries locale/marketId, but only primary/global groups may be
-  // persisted here — anything else must fail loudly instead of silently
-  // writing a foreign value into the primary content.
-  if (group.locale !== "" || group.marketId !== "") {
+  // Foreign-locale groups (Phase 4) go through the verified translation path;
+  // a market override without a locale has no meaning (primary content is
+  // always global) and is rejected loudly.
+  if (group.locale !== "") {
+    return persistTranslationRow(group, deps);
+  }
+  if (group.marketId !== "") {
     return [
-      failureOf(
-        group,
-        "Translated cells cannot be saved yet — the bulk editor currently edits the primary language only.",
-      ),
+      failureOf(group, "A market-specific value requires a foreign language — primary content is always global."),
     ];
   }
 
@@ -822,9 +1010,43 @@ export async function applyBulkDiff(
   const { db, shop, admin, columnsByType } = ctx;
   const gateway = new ShopifyApiGateway(admin, shop);
   const contentService = new ShopifyContentService(gateway as any); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const deps: PersistDeps = { db, shop, gateway, contentService, columnsByType };
 
   const groups = groupDiffByRow(diff);
+
+  // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
+  // only digests are bündelbar — the register itself is per resource).
+  // Clears need no digest; only keys that will be REGISTERED are collected.
+  const foreignResourceIds: string[] = [];
+  const foreignKeys = new Set<string>();
+  for (const group of groups) {
+    if (group.locale === "") continue;
+    const columns = columnsByType[group.rowType];
+    let hasWrite = false;
+    for (const [columnId, value] of Object.entries(group.cells)) {
+      if (value === "") continue;
+      const column = columns.find((c) => c.id === columnId);
+      const key = column ? translationKeyForColumn(column) : null;
+      if (key) {
+        foreignKeys.add(key);
+        hasWrite = true;
+      }
+    }
+    if (hasWrite) foreignResourceIds.push(group.rowId);
+  }
+  const digests =
+    foreignResourceIds.length > 0
+      ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
+      : new Map<string, Map<string, string>>();
+
+  const deps: PersistDeps = {
+    db,
+    shop,
+    gateway,
+    contentService,
+    columnsByType,
+    digests,
+    digestRefetched: new Set(),
+  };
   const failures: BulkFailure[] = [];
   let saved = 0;
 

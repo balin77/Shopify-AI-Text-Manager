@@ -344,9 +344,34 @@ describe("isValidBulkDiffEntry", () => {
     ).toBe(false);
   });
 
-  it("rejects foreign-locale/market entries until the translation write path exists (Phase 4)", () => {
-    expect(isValidBulkDiffEntry({ ...base, locale: "fr" }, allowed, staticColumns)).toBe(false);
+  // ── Phase 4: foreign-locale/market segments are writable now ─────────────
+
+  it("accepts a foreign-locale entry on a translatable column", () => {
+    expect(isValidBulkDiffEntry({ ...base, locale: "fr" }, allowed, staticColumns)).toBe(true);
+    expect(
+      isValidBulkDiffEntry(
+        { ...base, locale: "fr", marketId: "gid://shopify/Market/3" },
+        allowed,
+        staticColumns,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a foreign-locale entry on a non-translatable column", () => {
+    expect(
+      isValidBulkDiffEntry({ ...base, locale: "fr", columnId: "field.status" }, allowed, staticColumns),
+    ).toBe(false);
+  });
+
+  it("rejects a market override without a foreign locale — primary content is always global", () => {
     expect(isValidBulkDiffEntry({ ...base, marketId: "gid://shopify/Market/3" }, allowed, staticColumns)).toBe(false);
+  });
+
+  it("rejects malformed locale and market segments", () => {
+    expect(isValidBulkDiffEntry({ ...base, locale: "not a locale" }, allowed, staticColumns)).toBe(false);
+    expect(
+      isValidBulkDiffEntry({ ...base, locale: "fr", marketId: "not-a-gid" }, allowed, staticColumns),
+    ).toBe(false);
   });
 
   // ── Phase 2: the mf.-column allowlist is the SERVER-built universe ───────
