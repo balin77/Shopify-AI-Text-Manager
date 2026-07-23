@@ -135,9 +135,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { db } = await import("../db.server");
   const shop = session.shop;
 
-  const domain = await getShopHost(admin, shop);
-
-  const [products, collections, pages, history, rum, runsToday, plan] = await Promise.all([
+  // `getShopHost` is a Shopify GraphQL round-trip and nothing below depends on
+  // its result, so it joins the parallel batch instead of blocking it — the
+  // loader's latency is then the slowest single query, not the network hop
+  // plus the queries.
+  const [domain, products, collections, pages, history, rum, runsToday, plan] = await Promise.all([
+    getShopHost(admin, shop),
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },
