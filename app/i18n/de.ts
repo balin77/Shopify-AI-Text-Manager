@@ -1519,7 +1519,7 @@ export const de = {
     performancePage: {
       helpTitle: "Was misst dieser Test?",
       helpBody1: "Der Test ruft Google PageSpeed Insights für eine ausgewählte Seite deines Shops auf und liefert drei Auswertungen aus einem einzigen Durchlauf: die Ladezeit mit den Core Web Vitals — den Kennzahlen, mit denen Google die tatsächliche Ladeerfahrung deiner Besucher bewertet und die auch ins Google-Ranking einfließen —, eine automatische Barrierefreiheits-Prüfung und allgemeine Best Practices. Du bekommst je Kategorie einen Score und konkrete Befunde, bei der Ladezeit zusätzlich einen Screenshot mit markierten Problemstellen.",
-      helpBody2: "Ein Testlauf dauert etwa 15–30 Sekunden, da Google die Seite live lädt und analysiert. Ergebnisse werden 30 Minuten zwischengespeichert — mit \"Erneut testen\" erzwingst du einen frischen Durchlauf, der alle drei Auswertungen zugleich aktualisiert.",
+      helpBody2: "Ein Testlauf dauert etwa 20–45 Sekunden (bei umfangreichen Startseiten auch länger), da Google die Seite live lädt und analysiert. Ergebnisse werden 30 Minuten zwischengespeichert — mit \"Erneut testen\" erzwingst du einen frischen Durchlauf, der alle drei Auswertungen zugleich aktualisiert.",
       controlsTitle: "Seite testen",
       pageLabel: "Zu testende Seite",
       homepageOption: "Startseite",
@@ -1538,7 +1538,7 @@ export const de = {
       recentRunViewAction: "Vorheriges Ergebnis ansehen",
       recentRunRerunAction: "Trotzdem neu messen",
       recentRunCancelAction: "Abbrechen",
-      runningHint: "Das dauert etwa 15–30 Sekunden…",
+      runningHint: "Das dauert etwa 20–45 Sekunden, bei umfangreichen Startseiten auch länger…",
       stillRunningHint: "Dieser Test läuft noch im Hintergrund — das Ergebnis erscheint automatisch, sobald er fertig ist.",
       errors: {
         invalidUrl: "Diese URL gehört nicht zu deinem Shop und kann nicht getestet werden.",

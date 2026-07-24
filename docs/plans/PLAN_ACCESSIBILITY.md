@@ -6,7 +6,9 @@
 - **§3.3 `agentic-browsing`: entschieden — NEIN.** Die Antwort enthält exakt `performance`, `accessibility`, `best-practices`; kein `agentic-browsing`. Google liefert die Kategorie also **nicht** ungefragt in `lighthouseResult.categories` mit. Keine Kachel, kein Nachziehen nötig.
 - **§11.3 Alt-Text-Spike: entschieden — Lighthouse trägt nicht.** `image-alt` besteht (score=1, 0 items) OBWOHL das Produkt keine Alt-Texte hat, weil Shopify-Themes `alt=""` ausgeben und axe-core das als „dekorativ" durchwinkt. Der Lighthouse-`image-alt`-Trigger feuert auf Shopify-Storefronts praktisch nie. **Konsequenz (umgesetzt):** §7 hängt nicht mehr am Lighthouse-Trigger, sondern an ContentPilots eigener Alt-Text-Erkennung — zwei Warnungen im Barrierefreiheit-Tab (fehlende Haupt-Alt-Texte; fehlende Foreign-Locale-Übersetzungen), katalogweit aus `ProductImage`/`ProductImageAltTranslation`. Der alte Lighthouse-Brückenschlag bleibt als harmloser Fallback bestehen.
 
-Offen bleibt nur noch die **§5.1-Laufzeitmessung** gegen `PSI_TIMEOUT_MS` (Anzeige „Scandauer" ist dafür in der UI eingebaut).
+- **§5.1 Laufzeit gegen `PSI_TIMEOUT_MS`: gemessen — entschieden.** Scandauer mobil: Startseite 41.6 s, Produkt 23.4 s, Collection 22.4 s. `PSI_TIMEOUT_MS` von 60 s auf **90 s** angehoben (die Startseite kam der alten Grenze zu nah), Dauertexte auf „20–45 Sekunden, bei umfangreichen Startseiten auch länger" korrigiert. Details in §5.1.
+
+**Damit sind alle offenen Punkte geschlossen.** Die `PROBE`-markierte Scandauer-Anzeige und der dev-only PageSpeed-Raw-Probe-Tab können bei Bedarf entfernt werden — beide haben ihren Messzweck erfüllt.
 **Baut auf:** der bestehenden Ladezeit-Section ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts)) und dem Alt-Text-Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)).
 **Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan führt **keine** neue Section ein, sondern erweitert eine bestehende. Die Contract-Punkte zu Descriptor, `analyze()` und Dashboard-Findings entfallen damit (§11.1).
 
@@ -269,7 +271,7 @@ async function fetchPageSpeedInsights(
 
 Alles andere in der Datei — Timeout, 429/`PageSpeedQuotaExceededError`, Tageslimit, Cache-Lookup, Prune — bleibt unverändert und wird geteilt. **Kein zweiter PSI-Client, kein zweiter Aufrufpfad.**
 
-**Zu messen in Phase 1:** `PSI_TIMEOUT_MS` steht auf 60s ([pagespeed.service.ts:50](../../app/services/seo/pagespeed.service.ts#L50)). Drei Kategorien bedeuten mehr Audits und eine spürbar größere Antwort; wenn Läufe an die Grenze stoßen, muss der Wert hoch (und der `runningHint`-Text von „15–30 Sekunden" mit ihm). Das ist die einzige Stelle, an der die Zusammenlegung etwas kosten kann — sie gehört gemessen, nicht geschätzt.
+**Gemessen — entschieden 2026-07-24.** Scandauer (reine PSI-Round-Trip-Zeit, mobil, drei Kategorien): Startseite **41.6 s**, Produktseite **23.4 s**, Collection **22.4 s**. Produkt-/Collection-Seiten liegen komfortabel unter der Grenze; die Startseite (viele Sections) kam mit 41.6 s aber nah genug an die alten 60 s, dass PSI-Laufzeitschwankungen sie über die Grenze und in einen falschen Abbruch treiben könnten. **Umsetzung:** `PSI_TIMEOUT_MS` von 60 s auf **90 s** angehoben (~2× Puffer über den beobachteten Worst Case), und die Dauertexte (`runningHint`, `helpBody2`) von „15–30 Sekunden" auf „20–45 Sekunden, bei umfangreichen Startseiten auch länger" korrigiert.
 
 ### 5.2 Parser: eine Erweiterung, kein zweiter Vertrag
 

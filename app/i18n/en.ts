@@ -1522,7 +1522,7 @@ export const en: Translation = {
     performancePage: {
       helpTitle: "What does this test measure?",
       helpBody1: "The test runs Google PageSpeed Insights against a page you pick from your store and delivers three reports from a single run: page speed with the Core Web Vitals — the metrics Google uses to judge your visitors' real loading experience, which also feed into Google's ranking — plus an automated accessibility check and general best practices. You get a score and concrete findings per category, and for page speed also a screenshot with problem elements highlighted.",
-      helpBody2: "A run takes about 15–30 seconds since Google loads and analyzes the page live. Results are cached for 30 minutes — use \"Re-test\" to force a fresh run that refreshes all three reports at once.",
+      helpBody2: "A run takes about 20–45 seconds (longer for large homepages) since Google loads and analyzes the page live. Results are cached for 30 minutes — use \"Re-test\" to force a fresh run that refreshes all three reports at once.",
       controlsTitle: "Test a page",
       pageLabel: "Page to test",
       homepageOption: "Homepage",
@@ -1541,7 +1541,7 @@ export const en: Translation = {
       recentRunViewAction: "View previous result",
       recentRunRerunAction: "Measure again anyway",
       recentRunCancelAction: "Cancel",
-      runningHint: "This can take about 15–30 seconds…",
+      runningHint: "This can take about 20–45 seconds, longer for large homepages…",
       stillRunningHint: "This test is still running in the background — the result will appear automatically as soon as it finishes.",
       errors: {
         invalidUrl: "That URL doesn't belong to your store and can't be tested.",

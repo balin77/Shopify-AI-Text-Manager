@@ -1521,7 +1521,7 @@ export const es: Translation = {
     performancePage: {
       helpTitle: "¿Qué mide esta prueba?",
       helpBody1: "La prueba ejecuta Google PageSpeed Insights sobre una página que elijas de tu tienda y entrega tres informes de una sola ejecución: la velocidad de carga con los Core Web Vitals — las métricas que usa Google para evaluar la experiencia de carga real de tus visitantes y que también influyen en el posicionamiento en Google —, una comprobación automática de accesibilidad y buenas prácticas generales. Obtienes una puntuación y hallazgos concretos por categoría, y en la parte de velocidad además una captura de pantalla con los elementos problemáticos resaltados.",
-      helpBody2: "Una ejecución tarda entre 15 y 30 segundos, ya que Google carga y analiza la página en vivo. Los resultados se guardan en caché durante 30 minutos — usa «Repetir prueba» para forzar una ejecución nueva que actualiza los tres informes a la vez.",
+      helpBody2: "Una ejecución tarda entre 20 y 45 segundos (más en páginas de inicio extensas), ya que Google carga y analiza la página en vivo. Los resultados se guardan en caché durante 30 minutos — usa «Repetir prueba» para forzar una ejecución nueva que actualiza los tres informes a la vez.",
       controlsTitle: "Probar una página",
       pageLabel: "Página a probar",
       homepageOption: "Página de inicio",
@@ -1540,7 +1540,7 @@ export const es: Translation = {
       recentRunViewAction: "Ver el resultado anterior",
       recentRunRerunAction: "Medir de nuevo igualmente",
       recentRunCancelAction: "Cancelar",
-      runningHint: "Esto puede tardar entre 15 y 30 segundos…",
+      runningHint: "Esto puede tardar entre 20 y 45 segundos, más en páginas de inicio extensas…",
       stillRunningHint: "Esta prueba sigue ejecutándose en segundo plano — el resultado aparecerá automáticamente en cuanto termine.",
       errors: {
         invalidUrl: "Esa URL no pertenece a tu tienda y no se puede probar.",

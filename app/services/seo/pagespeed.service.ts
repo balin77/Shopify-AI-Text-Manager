@@ -60,7 +60,13 @@ export const PAGESPEED_CACHE_TTL_MS = 5 * 60 * 1000;
 const HISTORY_KEEP_PER_TARGET = 10;
 
 const PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-const PSI_TIMEOUT_MS = 60_000;
+// 90s, not 60s: with three categories a heavy storefront homepage was measured
+// at ~42s mobile (§5.1, 2026-07-24) — product/collection pages ~22-23s. PSI's
+// lab-run time swings with Google's server load, so a 42s homepage can spike
+// past 60s and get falsely aborted for a perfectly healthy page. 90s gives
+// ~2x headroom over the observed worst case; a genuinely hung request just
+// holds ~30s longer before aborting, which is the better trade.
+const PSI_TIMEOUT_MS = 90_000;
 
 /**
  * Thrown when Google PSI returns 429 (per-day or per-minute quota). Callers
