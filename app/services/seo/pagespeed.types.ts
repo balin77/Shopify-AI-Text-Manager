@@ -154,16 +154,21 @@ export interface QualityIssue {
    * sections deterministically without matching on translated strings.
    */
   groupId?: string;
-  /** Affected elements, capped. */
-  items: Array<{ selector?: string; snippet?: string; url?: string }>;
+  /**
+   * Affected elements, capped. `rect` is present when the element maps into the
+   * full-page screenshot, so the UI can show the same thumbnail crop the
+   * performance findings do (e.g. the flagged nodes of color-contrast).
+   */
+  items: Array<{ selector?: string; snippet?: string; url?: string; rect?: PageSpeedRect }>;
   /** Number of affected elements BEFORE the cap. */
   itemTotal: number;
   /**
    * The audit's full `details` table, normalized like a performance
    * opportunity's — carries the richer columns (source location, console error
    * text, CSP directive, …) that the flat `items` list cannot represent.
-   * Absent when the audit has no renderable table. No screenshot node rects:
-   * quality findings are parsed with nodesMap=null.
+   * Absent when the audit has no renderable table. Node cells carry screenshot
+   * rects (parsed with the full-page-screenshot nodes map) so the UI can crop
+   * element thumbnails, same as the performance findings.
    */
   table?: PageSpeedTable;
   /** scoreDisplayMode "manual" — not automatically checked by Lighthouse. */

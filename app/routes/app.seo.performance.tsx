@@ -1492,6 +1492,7 @@ function QualityIssueRow({
   tableRowsTruncatedLabel,
   generateAltTextLabel,
   altBridge,
+  screenshot,
 }: {
   issue: QualityIssue;
   open: boolean;
@@ -1501,6 +1502,8 @@ function QualityIssueRow({
   tableRowsTruncatedLabel: string;
   generateAltTextLabel: string;
   altBridge?: AltTextBridgeState;
+  /** Full-page screenshot for element thumbnail crops (null when unavailable). */
+  screenshot: PageSpeedScreenshot | null;
 }) {
   // image-alt keeps its flat list so the alt-text bridge button stays; every
   // other finding with a details table shows the richer table instead of the
@@ -1532,14 +1535,18 @@ function QualityIssueRow({
             {showTable && (
               <FindingTable
                 table={issue.table!}
-                screenshot={null}
+                screenshot={screenshot}
                 truncatedLabel={tableRowsTruncatedLabel}
               />
             )}
             {!showTable && issue.items.length > 0 && (
               <BlockStack gap="300">
                 {issue.items.map((item, i) => (
-                  <BlockStack key={i} gap="050">
+                  <InlineStack key={i} gap="200" blockAlign="start" wrap={false}>
+                    {/* Element thumbnail crop, when the node maps into the
+                        full-page screenshot (e.g. the flagged image of image-alt). */}
+                    {item.rect && <ElementThumb screenshot={screenshot} rect={item.rect} />}
+                  <BlockStack gap="050">
                     {item.selector && <span style={CODE_TEXT_STYLE}>{item.selector}</span>}
                     {item.snippet && (
                       <span
@@ -1605,6 +1612,7 @@ function QualityIssueRow({
                       );
                     })()}
                   </BlockStack>
+                  </InlineStack>
                 ))}
                 {issue.itemTotal > issue.items.length && (
                   <Text as="p" variant="bodySm" tone="subdued">
@@ -1640,6 +1648,7 @@ function QualityFindings({
   onToggle,
   labels,
   altBridge,
+  screenshot,
 }: {
   /** Automated (non-manual) findings, already filtered. */
   issues: QualityIssue[];
@@ -1669,6 +1678,8 @@ function QualityFindings({
   };
   /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
   altBridge?: AltTextBridgeState;
+  /** Full-page screenshot for element thumbnail crops (null when unavailable). */
+  screenshot: PageSpeedScreenshot | null;
 }) {
   const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
   const manualOpen = openFindings.has(manualKey);
@@ -1725,6 +1736,7 @@ function QualityFindings({
                       tableRowsTruncatedLabel={labels.tableRowsTruncated}
                       generateAltTextLabel={labels.generateAltText}
                       altBridge={altBridge}
+                      screenshot={screenshot}
                     />
                   );
                 })}
@@ -2964,6 +2976,7 @@ export default function SeoPerformance() {
                           onToggle={toggleFinding}
                           labels={{ ...qualityFindingLabels, noIssues: p.a11y.noIssues }}
                           altBridge={altTextBridge}
+                          screenshot={cropSource}
                         />
                       </>
                     )}
@@ -2991,6 +3004,7 @@ export default function SeoPerformance() {
                           openFindings={openFindings}
                           onToggle={toggleFinding}
                           labels={{ ...qualityFindingLabels, noIssues: p.bestPractices.noIssues }}
+                          screenshot={cropSource}
                         />
                       </>
                     )}

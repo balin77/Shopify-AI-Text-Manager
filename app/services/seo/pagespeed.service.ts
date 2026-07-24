@@ -454,7 +454,10 @@ function parsePageSpeedResponseInner(
   );
   const passedAudits = extractPassedAudits(audits, categories);
   const fieldData = extractFieldData(r);
-  const quality = extractQuality(lighthouseResult, audits);
+  // Pass the full-page-screenshot node map so accessibility/best-practices
+  // findings (e.g. color-contrast) carry element rects for the same thumbnail
+  // crops the performance findings show.
+  const quality = extractQuality(lighthouseResult, audits, nodesMap);
 
   const base: PageSpeedAuditResult = {
     url,
@@ -560,7 +563,11 @@ function extractCategoryScore(category: any): number | null {
  * categories were requested (legacy empty state, accessibility plan §3.8).
  * Defensive like the rest of the parser: must never throw.
  */
-function extractQuality(lighthouseResult: any, audits: Record<string, any>): QualityResult | undefined {
+function extractQuality(
+  lighthouseResult: any,
+  audits: Record<string, any>,
+  nodesMap: Record<string, RawNodeRect> | null,
+): QualityResult | undefined {
   try {
     const categories: any = lighthouseResult?.categories ?? {};
     const a11yCategory = categories?.accessibility;
@@ -568,8 +575,8 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
     if (!a11yCategory && !bpCategory) return undefined;
 
     const groupTitles = resolveGroupTitles(lighthouseResult);
-    const a11y = extractCategoryBuckets(a11yCategory, audits, groupTitles);
-    const bp = extractCategoryBuckets(bpCategory, audits, groupTitles);
+    const a11y = extractCategoryBuckets(a11yCategory, audits, groupTitles, nodesMap);
+    const bp = extractCategoryBuckets(bpCategory, audits, groupTitles, nodesMap);
     return {
       a11yScore: extractCategoryScore(a11yCategory),
       bestPracticesScore: extractCategoryScore(bpCategory),
@@ -637,6 +644,7 @@ function extractCategoryBuckets(
   category: any,
   audits: Record<string, any>,
   groupTitles: Record<string, string>,
+  nodesMap: Record<string, RawNodeRect> | null,
 ): {
   issues: QualityIssue[];
   total: number;
@@ -682,11 +690,12 @@ function extractCategoryBuckets(
       continue;
     }
 
-    const { items, itemTotal } = extractQualityIssueItems(audit.details);
+    const { items, itemTotal } = extractQualityIssueItems(audit.details, nodesMap);
     const description = typeof audit.description === "string" ? audit.description : undefined;
     // Richer than the flat items list: source location, console error text, CSP
-    // directive, etc. No nodesMap — quality findings carry no screenshot crops.
-    const table = manual ? undefined : extractTable(audit.details, null);
+    // directive, etc. nodesMap threaded through so node cells (e.g. the flagged
+    // elements of color-contrast) carry rects for the thumbnail crop.
+    const table = manual ? undefined : extractTable(audit.details, nodesMap);
     const issue: QualityIssue = {
       id,
       title,
@@ -751,7 +760,10 @@ function extractCategoryBuckets(
  * dropped — they would render as blank lines, and counting them would make
  * the truncation note claim elements the UI never had.
  */
-function extractQualityIssueItems(details: any): {
+function extractQualityIssueItems(
+  details: any,
+  nodesMap: Record<string, RawNodeRect> | null,
+): {
   items: QualityIssue["items"];
   itemTotal: number;
 } {
@@ -768,7 +780,11 @@ function extractQualityIssueItems(details: any): {
     const url =
       typeof item?.url === "string" && item.url ? item.url : extractSrcFromSnippet(rawSnippet);
     if (url) entry.url = url;
-    if (entry.selector || entry.snippet || entry.url) entries.push(entry);
+    // Element rect for the thumbnail crop, when a node maps into the full-page
+    // screenshot (same resolver the performance findings use).
+    const rect = nodesMap && item?.node ? resolveNodeRect(item.node, nodesMap) : null;
+    if (rect) entry.rect = rect;
+    if (entry.selector || entry.snippet || entry.url || entry.rect) entries.push(entry);
   }
   return { items: entries.slice(0, MAX_QUALITY_ISSUE_ITEMS), itemTotal: entries.length };
 }
