@@ -45,6 +45,7 @@ import { getFormString } from "../utils/form-data.utils";
 import {
   isAllowedAuditUrl,
   runPageSpeedAudit,
+  fetchRawPageSpeedInsights,
   listPageSpeedHistory,
   findLatestPageSpeedAudit,
   findPageSpeedAuditById,
@@ -275,6 +276,17 @@ type GenerateAltTextResult =
   | { ok: false; error: string };
 
 /**
+ * PROBE (accessibility plan §3.3): response of the `debugRawPsi` intent — the
+ * complete raw PSI answer plus its top-level category keys, so we can check
+ * whether Google ships an unrequested `agentic-browsing` category. Posted from
+ * the dev-only PageSpeed probe in Settings (SettingsPageSpeedProbeTab).
+ * Temporary — remove with §3.3.
+ */
+type DebugRawPsiResult =
+  | { ok: true; categories: string[]; raw: unknown }
+  | { ok: false; error: string };
+
+/**
  * Server-side cap on URLs per `matchAltImages` request. Lighthouse findings
  * are already capped far below this — the cap only defends against a
  * hand-crafted request forcing an oversized matching run.
@@ -492,6 +504,30 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       .catch(() => {});
 
     return json<GenerateAltTextResult>({ ok: true, altText });
+  }
+
+  // PROBE (accessibility plan §3.3): dump the complete, unparsed PSI response so
+  // the merchant can inspect — via one button — whether Google ships an
+  // `agentic-browsing` category we never requested. Bypasses cache and parsing
+  // and writes NO history row (so it doesn't count against the daily budget),
+  // but it DOES spend one Google PSI request. Temporary — remove with §3.3.
+  if (intent === "debugRawPsi") {
+    const rawUrl = getFormString(form, "url").trim();
+    const strategy: PageSpeedStrategy = getFormString(form, "strategy") === "desktop" ? "desktop" : "mobile";
+    const domain = await getShopHost(admin, shop);
+    const url = rawUrl.startsWith("/") ? `https://${domain}${rawUrl}` : rawUrl;
+    const allowedHosts = Array.from(new Set([domain, shop].filter(Boolean)));
+    if (!url || !isAllowedAuditUrl(url, allowedHosts)) {
+      return json<DebugRawPsiResult>({ ok: false, error: "invalidUrl" }, { status: 400 });
+    }
+    const locale = await getShopLanguage(db, shop);
+    try {
+      const raw = await fetchRawPageSpeedInsights(url, strategy, locale);
+      const categories = Object.keys((raw as any)?.lighthouseResult?.categories ?? {});
+      return json<DebugRawPsiResult>({ ok: true, categories, raw });
+    } catch (err: any) {
+      return json<DebugRawPsiResult>({ ok: false, error: err?.message || "failed" }, { status: 502 });
+    }
   }
 
   if (intent !== "runAudit") {
@@ -2602,6 +2638,11 @@ export default function SeoPerformance() {
                             .replace("{url}", displayPath(result.url))
                             .replace("{strategy}", strategyLabel(result.strategy))
                             .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                          {/* PROBE (accessibility plan §5.1): scan duration to the
+                              right of the timestamp. Absent on runs stored before
+                              this probe. Temporary — remove with §5.1. */}
+                          {result.scanDurationMs != null &&
+                            ` · Scandauer: ${(result.scanDurationMs / 1000).toFixed(1)} s`}
                         </Text>
                         {result.finalUrl && (
                           <Text as="p" variant="bodySm" tone="caution">

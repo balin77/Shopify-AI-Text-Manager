@@ -166,8 +166,14 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
   }
 
   const fetchedAt = new Date().toISOString();
+  // PROBE (accessibility plan §5.1): time the PSI round-trip so the UI can show
+  // "Scandauer" and we can see whether three categories push runs toward
+  // PSI_TIMEOUT_MS. Persisted into the result JSON. Temporary — remove with §5.1.
+  const scanStartedMs = Date.now();
   const raw = await fetchPageSpeedInsights(url, strategy, locale);
+  const scanDurationMs = Date.now() - scanStartedMs;
   const result = parsePageSpeedResponse(raw, url, strategy, fetchedAt);
+  result.scanDurationMs = scanDurationMs;
 
   await db.seoPageSpeedAudit.create({
     data: {
@@ -232,6 +238,21 @@ async function fetchPageSpeedInsights(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * PROBE (accessibility plan §3.3): return the complete, unparsed PSI response
+ * for one (url, strategy) so the UI can dump it to a file and we can check
+ * whether Google ships an `agentic-browsing` category we never asked for. Same
+ * categories as a real run. Bypasses cache/DB and spends one Google PSI
+ * request. Temporary — remove once §3.3 is resolved.
+ */
+export async function fetchRawPageSpeedInsights(
+  url: string,
+  strategy: PageSpeedStrategy,
+  locale?: string,
+): Promise<unknown> {
+  return fetchPageSpeedInsights(url, strategy, locale);
 }
 
 async function pruneHistory(db: any, shop: string, url: string, strategy: PageSpeedStrategy): Promise<void> {

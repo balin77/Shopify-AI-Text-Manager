@@ -18,6 +18,7 @@ import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
+import { SettingsPageSpeedProbeTab } from "../components/SettingsPageSpeedProbeTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -428,6 +429,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
     // Dev-only diagnostic surface: only visible when APP_ENV === "development".
     const showTranslationProbeTab = process.env.APP_ENV === "development";
+    // PROBE (accessibility plan §3.3): PageSpeed raw-response probe — same
+    // dev-only gate as the Translation Probe tab (APP_ENV === "development").
+    // Temporary.
+    const showPageSpeedProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -484,6 +489,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationProbeTab,
+      showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
       optionValueMemory,
@@ -1084,7 +1090,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1097,7 +1103,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe";
+  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe";
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
@@ -1116,7 +1122,8 @@ export default function SettingsPage() {
       tabParam === "imagemanager"
     ) return "other";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe"].includes(tabParam)) {
+    if (tabParam === "pagespeedprobe" && !showPageSpeedProbeTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
@@ -1204,6 +1211,7 @@ export default function SettingsPage() {
       { id: "other", title: t.settings.otherSettings || "Weiteres" },
       { id: "plan", title: t.settings.plan },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
+      ...(showPageSpeedProbeTab ? [{ id: "pagespeedprobe", title: "PageSpeed Probe" }] : []),
     ];
 
     registerItems({
@@ -1373,6 +1381,27 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              {showPageSpeedProbeTab && (
+              <button
+                onClick={() => handleSectionChange("pagespeedprobe")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "pagespeedprobe" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "pagespeedprobe" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "pagespeedprobe" ? "semibold" : "regular"}>
+                  PageSpeed Probe
+                </Text>
+              </button>
+              )}
             </Card>
           </div>
 
@@ -1520,6 +1549,9 @@ export default function SettingsPage() {
               {/* Translation Coverage Probe (Phase 0 dev tool) */}
               {selectedSection === "translationprobe" && showTranslationProbeTab && (
                 <SettingsTranslationProbeTab />
+              )}
+              {selectedSection === "pagespeedprobe" && showPageSpeedProbeTab && (
+                <SettingsPageSpeedProbeTab />
               )}
             </BlockStack>
           </div>

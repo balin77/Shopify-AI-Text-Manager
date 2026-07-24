@@ -321,6 +321,13 @@ export interface PageSpeedAuditResult {
    * (they trigger the legacy empty state instead).
    */
   quality?: QualityResult;
+  /**
+   * PROBE (accessibility plan §5.1): wall-clock of the PSI round-trip in ms,
+   * shown as "Scandauer" beside the tested-at timestamp so we can see whether
+   * three categories push runs toward PSI_TIMEOUT_MS. Absent on runs stored
+   * before this probe. Temporary — remove once §5.1 is settled.
+   */
+  scanDurationMs?: number;
 }
 
 /** Lightweight history row (no heavy result JSON) for the trend list. */
