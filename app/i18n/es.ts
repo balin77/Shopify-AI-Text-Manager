@@ -2263,6 +2263,38 @@ export const es: Translation = {
 
   // Help Tooltips
   help: {
+    // Keywords section
+    keywordsLibraryTabs: {
+      title: "Biblioteca y Asignaciones",
+      summary:
+        "Dos vistas de las mismas palabras clave. En la Biblioteca reúnes palabras clave en grupos, investigas nuevas y las distribuyes en el contenido. En Asignaciones ves, por producto, colección, página o artículo de blog, qué palabras clave están asignadas y las gestionas.",
+      tips: [
+        "Biblioteca = organizar, investigar y distribuir palabras clave",
+        "Asignaciones = revisar y ajustar el resultado por contenido",
+        "El selector de idioma de arriba se aplica a ambas vistas",
+      ],
+    },
+    keywordsDistribute: {
+      title: "Distribuir en el contenido",
+      summary:
+        "«Distribuir en el contenido» pide a la IA que sugiera productos, colecciones o páginas adecuados para todas las palabras clave del grupo y las asigna. «Redistribuir grupo» procesa solo las palabras clave que aún no están asignadas a ningún contenido.",
+      tips: [
+        "Distribuir en el contenido: todo el grupo",
+        "Redistribuir grupo: solo las palabras clave aún sin asignar",
+        "Puedes revisar y ajustar las sugerencias antes de guardar",
+      ],
+    },
+    keywordsAssignments: {
+      title: "Asignaciones",
+      summary:
+        "Esta lista muestra, por contenido, las palabras clave asignadas en el idioma activo. Filtra por texto, intención o puntuación, despliega una entrada para ver sus palabras clave y define una palabra clave principal por contenido.",
+      tips: [
+        "Al desplegar una entrada se muestran sus palabras clave",
+        "La palabra clave principal es el objetivo principal del contenido",
+        "Si la misma palabra clave principal se usa más de una vez, aparece un aviso arriba",
+      ],
+    },
+
     // Settings - AI API Access
     apiKey: {
       title: "Clave API",

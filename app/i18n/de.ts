@@ -2261,6 +2261,38 @@ export const de = {
 
   // Help Tooltips
   help: {
+    // Keywords section
+    keywordsLibraryTabs: {
+      title: "Bibliothek & Zuordnungen",
+      summary:
+        "Zwei Ansichten derselben Keywords. In der Bibliothek sammelst du Keywords in Gruppen, recherchierst neue und verteilst sie auf Inhalte. Unter Zuordnungen siehst du pro Produkt, Kollektion, Seite oder Blogartikel, welche Keywords zugewiesen sind, und verwaltest sie.",
+      tips: [
+        "Bibliothek = Keywords organisieren, recherchieren und verteilen",
+        "Zuordnungen = Ergebnis pro Inhalt prüfen und anpassen",
+        "Die Sprachauswahl oben gilt für beide Ansichten",
+      ],
+    },
+    keywordsDistribute: {
+      title: "Auf Inhalte verteilen",
+      summary:
+        "„Auf Inhalte verteilen“ lässt die KI für alle Keywords der Gruppe passende Produkte, Kollektionen oder Seiten vorschlagen und weist sie zu. „Gruppe erneut verteilen“ verarbeitet nur die Keywords, die noch keinem Inhalt zugewiesen sind.",
+      tips: [
+        "Auf Inhalte verteilen: die gesamte Gruppe",
+        "Gruppe erneut verteilen: nur noch nicht zugewiesene Keywords",
+        "Die Vorschläge kannst du vor dem Speichern prüfen und anpassen",
+      ],
+    },
+    keywordsAssignments: {
+      title: "Zuordnungen",
+      summary:
+        "Diese Liste zeigt pro Inhalt die in der aktiven Sprache zugewiesenen Keywords. Filtere nach Text, Intent oder Score, klappe einen Eintrag auf, um seine Keywords zu sehen, und lege ein primäres Keyword je Inhalt fest.",
+      tips: [
+        "Einen Eintrag aufklappen zeigt seine Keywords",
+        "Das primäre Keyword ist das Haupt-Ziel des Inhalts",
+        "Wird dasselbe primäre Keyword mehrfach vergeben, warnt ein Hinweis oben",
+      ],
+    },
+
     // Settings - AI API Access
     apiKey: {
       title: "API-Schlüssel",

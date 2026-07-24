@@ -33,6 +33,7 @@ import {
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "@remix-run/react";
 import { scoreTone } from "../../../utils/seo-score";
+import { HelpTooltip } from "../../HelpTooltip";
 import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
 import type {
   KeywordResourceType,
@@ -339,6 +340,10 @@ export function AssignmentsTab({
 
       <Card>
         <BlockStack gap="300">
+          {/* Help icon (far right) explaining how assignments work. */}
+          <InlineStack align="end">
+            <HelpTooltip helpKey="keywordsAssignments" position="below" />
+          </InlineStack>
           {/* Filters row. */}
           <InlineStack align="space-between" blockAlign="end" wrap>
             <InlineStack gap="200" blockAlign="end" wrap>

@@ -10,13 +10,14 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
-import { BlockStack, Banner, Text } from "@shopify/polaris";
+import { BlockStack, Banner, Text, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
+import { HelpTooltip } from "../components/HelpTooltip";
 import { LibraryTab } from "../components/seo/keywords/LibraryTab";
 import { AssignmentsTab } from "../components/seo/keywords/AssignmentsTab";
 import {
@@ -1139,19 +1140,38 @@ export default function SeoKeywords() {
           </BlockStack>
         </Banner>
 
-        {/* Locale-Navbar (top): language is the outermost dimension (§2). */}
-        <SubNavBar
-          ariaLabel={k.localeNavLabel}
-          items={localeNavItems}
-          activeId={localeActiveId}
-          onSelect={onLocaleSelect}
-        />
-        {/* Tab SubNavBar: Bibliothek / Zuordnungen. */}
+        {/* Locale-Navbar (top): language is the outermost dimension (§2).
+            Rendered as Polaris buttons to match the locale bar on the content
+            (Inhalte) pages — active locale = primary variant. */}
+        <div
+          role="navigation"
+          aria-label={k.localeNavLabel}
+          style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}
+        >
+          {[...localeNavItems]
+            .sort((a, b) => {
+              if (a.id === PRIMARY_LOCALE_ID) return -1;
+              if (b.id === PRIMARY_LOCALE_ID) return 1;
+              return a.label.localeCompare(b.label);
+            })
+            .map((item) => (
+              <Button
+                key={item.id}
+                size="slim"
+                variant={item.id === localeActiveId ? "primary" : undefined}
+                onClick={() => onLocaleSelect(item)}
+              >
+                {item.label}
+              </Button>
+            ))}
+        </div>
+        {/* Tab SubNavBar: Bibliothek / Zuordnungen. Help icon pinned far right. */}
         <SubNavBar
           ariaLabel={k.tabNavLabel}
           items={tabNavItems}
           activeId={tab}
           onSelect={onTabSelect}
+          trailing={<HelpTooltip helpKey="keywordsLibraryTabs" position="below" />}
         />
 
         {tab === "assignments" ? (

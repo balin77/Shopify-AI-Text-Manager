@@ -37,6 +37,7 @@ import {
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { SerializeFrom } from "@remix-run/node";
 import type { KeywordResourceType } from "../../../services/seo/keywords.service";
+import { HelpTooltip } from "../../HelpTooltip";
 import type { Translation } from "../../../i18n/de";
 import type { loader, ActionResult } from "../../../routes/app.seo.keywords";
 import { GroupSidebar } from "./GroupSidebar";
@@ -396,6 +397,7 @@ export function LibraryTab({
             <Button tone="critical" variant="plain" onClick={handleDeleteGroup}>
               {k.groupDelete || "Delete group"}
             </Button>
+            <HelpTooltip helpKey="keywordsDistribute" position="below" />
           </InlineStack>
         </InlineStack>
         {unassignedKeywords.length === 0 && groupDetail.keywords.length > 0 && (

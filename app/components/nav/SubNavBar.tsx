@@ -10,7 +10,7 @@
  */
 
 import { InlineStack, Text } from "@shopify/polaris";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 export interface SubNavBarItem {
   id: string;
@@ -31,6 +31,8 @@ export interface SubNavBarProps {
   stickyTop?: number;
   /** Called with the bar's measured height (mount + resize). */
   onMeasure?: (height: number) => void;
+  /** Optional content pinned to the far right of the bar (e.g. a HelpTooltip). */
+  trailing?: ReactNode;
 }
 
 export function SubNavBar({
@@ -40,6 +42,7 @@ export function SubNavBar({
   ariaLabel,
   stickyTop,
   onMeasure,
+  trailing,
 }: SubNavBarProps) {
   const navRef = useRef<HTMLDivElement>(null);
 
@@ -77,9 +80,12 @@ export function SubNavBar({
         ...(stickyTop != null
           ? { position: "sticky", top: `${stickyTop}px`, left: 0, right: 0, zIndex: 999 }
           : {}),
-        overflowX: "auto",
+        display: "flex",
+        alignItems: "center",
+        gap: "0.5rem",
       }}
     >
+      <div style={{ overflowX: "auto", flex: 1, minWidth: 0 }}>
       <InlineStack gap="150">
         {items.map((item) => {
           const isActive = item.id === activeId;
@@ -119,6 +125,8 @@ export function SubNavBar({
           );
         })}
       </InlineStack>
+      </div>
+      {trailing && <div style={{ flexShrink: 0 }}>{trailing}</div>}
     </div>
   );
 }

@@ -2264,6 +2264,38 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    // Keywords section
+    keywordsLibraryTabs: {
+      title: "Library & Assignments",
+      summary:
+        "Two views of the same keywords. In the Library you collect keywords into groups, research new ones and distribute them onto content. Under Assignments you see, per product, collection, page or blog article, which keywords are assigned and manage them.",
+      tips: [
+        "Library = organize, research and distribute keywords",
+        "Assignments = review and adjust the result per content item",
+        "The language selector at the top applies to both views",
+      ],
+    },
+    keywordsDistribute: {
+      title: "Distribute onto content",
+      summary:
+        "“Distribute onto content” asks the AI to suggest matching products, collections or pages for all keywords in the group and assigns them. “Redistribute group” processes only the keywords that are not yet assigned to any content.",
+      tips: [
+        "Distribute onto content: the entire group",
+        "Redistribute group: only keywords not yet assigned",
+        "You can review and adjust the suggestions before saving",
+      ],
+    },
+    keywordsAssignments: {
+      title: "Assignments",
+      summary:
+        "This list shows, per content item, the keywords assigned in the active language. Filter by text, intent or score, expand an entry to see its keywords, and set one primary keyword per item.",
+      tips: [
+        "Expanding an entry reveals its keywords",
+        "The primary keyword is the item's main target",
+        "If the same primary keyword is used more than once, a warning appears at the top",
+      ],
+    },
+
     // Settings - AI API Access
     apiKey: {
       title: "API Key",
