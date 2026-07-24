@@ -204,7 +204,10 @@ export async function redactCustomerData(
  *      SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
- *      GlossaryEntry, SeoWebVitalSample          (all scoped by `shop`)
+ *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
+ *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion,
+ *      SeoSitemapExclusion
+ *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -494,6 +497,47 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoWebVitalSamplesDeleted.count} SEO web-vital samples`);
+
+    // Phase 1 (storefront crawler, PLAN_SEO_SUITE_COMPLETION.md §2/§3):
+    // children before the parent so the logged counts stay meaningful, even
+    // though onDelete: Cascade on snapshotId would clean them up either way.
+    const seoCrawlBrokenLinksDeleted = await tx.seoCrawlBrokenLink.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlBrokenLinksDeleted.count} SEO crawl broken links`);
+
+    const seoCrawlPagesDeleted = await tx.seoCrawlPage.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlPagesDeleted.count} SEO crawl pages`);
+
+    const seoCrawlSnapshotsDeleted = await tx.seoCrawlSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlSnapshotsDeleted.count} SEO crawl snapshots`);
+
+    // Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+    // option b): per-page GSC rollup. The "Ignorieren" dismissed-list itself
+    // is a JSON column on AISettings (already purged above), not a separate
+    // model.
+    const seoGscPageStatsDeleted = await tx.seoGscPageStat.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoGscPageStatsDeleted.count} SEO GSC page stats`);
+
+    // Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4):
+    // suggested internal links between DB-cached content.
+    const seoInternalLinkSuggestionsDeleted = await tx.seoInternalLinkSuggestion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoInternalLinkSuggestionsDeleted.count} SEO internal link suggestions`);
+
+    // Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md
+    // §2/§6): sitemap-exclusion suggestions + applied/reverted decisions.
+    const seoSitemapExclusionsDeleted = await tx.seoSitemapExclusion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoSitemapExclusionsDeleted.count} SEO sitemap exclusions`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

@@ -1,0 +1,75 @@
+/**
+ * Tiny concurrency limiter (PLAN_SEO_SUITE_COMPLETION.md §1 / §3.3).
+ *
+ * `p-limit` is not in the repo and pulling it in for a single 5-parallel
+ * crawler queue is overkill — this is the ~15-line semaphore the plan asks
+ * for instead. Caps how many callbacks run at once AND enforces a minimum
+ * spacing between two callbacks starting on the SAME slot, so a burst of N
+ * queued requests doesn't hammer the storefront the instant a slot frees up.
+ */
+export class Semaphore {
+  private active = 0;
+  private lastGrantAt = 0;
+  /** Non-null while a grant is scheduled to fire after the spacing delay —
+   *  guards against scheduling two overlapping timers from concurrent
+   *  `pump()` calls (acquire() and release() can both trigger a pump). */
+  private pumpTimer: ReturnType<typeof setTimeout> | null = null;
+  /** FIFO of pending acquisitions. An entry only ever leaves via `pump()`
+   *  granting it — never dropped, never re-created — so every `acquire()`
+   *  promise is guaranteed to eventually resolve. */
+  private readonly queue: Array<() => void> = [];
+
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly minSpacingMs: number = 0,
+  ) {}
+
+  /** Run `fn` once a slot is free (respecting the min-spacing floor), returning its result. */
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.release();
+    }
+  }
+
+  private acquire(): Promise<void> {
+    return new Promise((resolve) => {
+      this.queue.push(resolve);
+      this.pump();
+    });
+  }
+
+  /**
+   * Grants queued acquisitions one at a time: a slot must be free (`active <
+   * maxConcurrent`) AND the min-spacing floor since the last grant must have
+   * elapsed. Unlike the old design, a spacing wait never removes an entry
+   * from the queue without a scheduled resolver — it just delays the next
+   * `pump()` call via `pumpTimer`, and the queued entry stays put until then.
+   */
+  private pump(): void {
+    if (this.pumpTimer !== null) return; // a grant is already scheduled — it will re-pump when it fires
+    if (this.queue.length === 0 || this.active >= this.maxConcurrent) return;
+
+    const wait = this.minSpacingMs - (Date.now() - this.lastGrantAt);
+    if (wait > 0) {
+      this.pumpTimer = setTimeout(() => {
+        this.pumpTimer = null;
+        this.pump();
+      }, wait);
+      return;
+    }
+
+    const grant = this.queue.shift()!;
+    this.active += 1;
+    this.lastGrantAt = Date.now();
+    grant();
+    this.pump(); // try to grant more of the queue (still gated by active/spacing)
+  }
+
+  private release(): void {
+    this.active -= 1;
+    this.pump();
+  }
+}

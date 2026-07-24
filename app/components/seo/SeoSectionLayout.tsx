@@ -21,6 +21,15 @@ import { PLAN_DISPLAY_NAMES } from "../../config/plans";
 interface SeoSectionLayoutProps {
   sectionId: string;
   children: ReactNode;
+  /**
+   * Optional content rendered BELOW the upgrade card when the section is
+   * plan-gated and the merchant is below the required plan (e.g. a static
+   * read-only example — PLAN_SEO_SUITE_COMPLETION.md §3.7, the crawl
+   * section's Free/Basic upsell). Ignored when the section isn't locked.
+   * Every other section leaves this unset and gets the historic
+   * upsell-card-only behavior.
+   */
+  lockedExtra?: ReactNode;
 }
 
 interface SeoSectionStrings {
@@ -29,7 +38,7 @@ interface SeoSectionStrings {
   description?: string;
 }
 
-export function SeoSectionLayout({ sectionId, children }: SeoSectionLayoutProps) {
+export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectionLayoutProps) {
   const { plan } = usePlan();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -62,26 +71,29 @@ export function SeoSectionLayout({ sectionId, children }: SeoSectionLayoutProps)
       </BlockStack>
 
       {locked ? (
-        <Card>
-          <div style={{ padding: "1rem", textAlign: "center" }}>
-            <BlockStack gap="300" inlineAlign="center">
-              <Text as="p" variant="bodyMd" tone="subdued">
-                {(t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
-                  "{plan}",
-                  PLAN_DISPLAY_NAMES[section!.planGate!],
-                ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section!.planGate!]} to use this feature.`}
-              </Text>
-              <Button
-                variant="primary"
-                onClick={() =>
-                  handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "plan" }) })
-                }
-              >
-                {(t.settings as { upgradePlan?: string }).upgradePlan || "Upgrade Plan"}
-              </Button>
-            </BlockStack>
-          </div>
-        </Card>
+        <BlockStack gap="400">
+          <Card>
+            <div style={{ padding: "1rem", textAlign: "center" }}>
+              <BlockStack gap="300" inlineAlign="center">
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {(t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[section!.planGate!],
+                  ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section!.planGate!]} to use this feature.`}
+                </Text>
+                <Button
+                  variant="primary"
+                  onClick={() =>
+                    handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "plan" }) })
+                  }
+                >
+                  {(t.settings as { upgradePlan?: string }).upgradePlan || "Upgrade Plan"}
+                </Button>
+              </BlockStack>
+            </div>
+          </Card>
+          {lockedExtra}
+        </BlockStack>
       ) : (
         children
       )}

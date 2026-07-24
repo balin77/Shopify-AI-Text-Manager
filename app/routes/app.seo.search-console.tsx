@@ -70,6 +70,13 @@ import {
   type KeywordResourceType,
 } from "../services/seo/keywords.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
+import { resolvePathsToResources } from "../services/seo/url-resolver.server";
+import {
+  analyzeFreshness,
+  excludeDismissed,
+  freshnessDismissKey,
+  type FreshnessResourceType,
+} from "../services/seo/freshness.service";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -77,6 +84,29 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
     select: { subscriptionPlan: true },
   });
   return (settings?.subscriptionPlan || "free") as Plan;
+}
+
+// Content-Freshness panel (PLAN_SEO_SUITE_COMPLETION.md §5.3): rendered here
+// rather than as an expandable dashboard section — freshness IS a GSC
+// crossmatch (rank position × traffic × shopifyUpdatedAt) and this tab
+// already carries the GSC-connection chrome (pro-gate, connect/reconnect
+// banners, resource resolution) that the feature depends on; growing the
+// already-large item-scored Dashboard (a different mental model — 0-100
+// scores, not position/CTR) would be the wrong home.
+const FRESHNESS_PANEL_LIMIT = 50;
+
+/** Serialized (Date -> ISO string) shape for the loader's JSON response. */
+export interface FreshnessCandidateView {
+  resourceType: FreshnessResourceType;
+  resourceId: string;
+  title: string;
+  handle: string;
+  position: number;
+  ctr: number;
+  impressions: number;
+  shopifyUpdatedAt: string;
+  daysSinceUpdate: number;
+  priority: 1 | 2;
 }
 
 // Same shop-primary-domain lookup pattern as app.seo.aeo.tsx. Needed to (a)
@@ -108,74 +138,28 @@ export interface QuickWinOpportunity extends CtrOpportunity {
   resourceId: string | null;
 }
 
-const QUICK_WIN_RESOURCE_MODELS = ["Product", "Collection", "Page", "Article"] as const;
-
 /**
  * Best-effort resolve each Quick-win row's underlying store resource
  * (Product/Collection/Page/Article), scoped to this shop, so the "Optimize"
- * button knows which resource to track a keyword against / deep-link to. Uses
- * one batched findMany per resource type instead of one query per row. A DB
- * failure here must not break the whole page — affected rows just don't get
- * a button (resourceId stays null).
+ * button knows which resource to track a keyword against / deep-link to.
+ * Thin wrapper around the shared `resolvePathsToResources`
+ * (seo/url-resolver.server.ts, PLAN_SEO_SUITE_COMPLETION.md §1/§3.1 —
+ * extracted from this exact function) so the batched handle-lookup can be
+ * reused by the crawler without a second, drifting copy.
  */
 async function resolveQuickWinResources(
   db: any,
   shop: string,
   opportunities: CtrOpportunity[],
 ): Promise<QuickWinOpportunity[]> {
-  const parsed = opportunities.map((opp) => ({ opp, resolved: resolveGscPagePath(opp.page) }));
-
-  const handlesByType: Record<(typeof QUICK_WIN_RESOURCE_MODELS)[number], Set<string>> = {
-    Product: new Set(),
-    Collection: new Set(),
-    Page: new Set(),
-    Article: new Set(),
-  };
-  for (const { resolved } of parsed) {
-    if (resolved) handlesByType[resolved.resourceType].add(resolved.handle);
-  }
-
-  const idByTypeAndHandle = new Map<string, string>(); // key: `${resourceType}::${handle}`
-  try {
-    const [products, collections, pages, articles] = await Promise.all([
-      handlesByType.Product.size
-        ? db.product.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Product) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Collection.size
-        ? db.collection.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Collection) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Page.size
-        ? db.page.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Page) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-      handlesByType.Article.size
-        ? db.article.findMany({
-            where: { shop, handle: { in: Array.from(handlesByType.Article) } },
-            select: { id: true, handle: true },
-          })
-        : Promise.resolve([]),
-    ]);
-    for (const p of products as { id: string; handle: string }[]) idByTypeAndHandle.set(`Product::${p.handle}`, p.id);
-    for (const c of collections as { id: string; handle: string }[]) idByTypeAndHandle.set(`Collection::${c.handle}`, c.id);
-    for (const pg of pages as { id: string; handle: string }[]) idByTypeAndHandle.set(`Page::${pg.handle}`, pg.id);
-    for (const a of articles as { id: string; handle: string }[]) idByTypeAndHandle.set(`Article::${a.handle}`, a.id);
-  } catch {
-    // Best-effort: leave idByTypeAndHandle empty — every row falls back to "no
-    // button" below rather than failing the whole page load.
-  }
-
-  return parsed.map(({ opp, resolved }) => {
-    if (!resolved) return { ...opp, resourceType: null, resourceId: null };
-    const id = idByTypeAndHandle.get(`${resolved.resourceType}::${resolved.handle}`);
-    return { ...opp, resourceType: id ? resolved.resourceType : null, resourceId: id ?? null };
+  const resolved = await resolvePathsToResources(db, shop, opportunities.map((o) => o.page));
+  return opportunities.map((opp) => {
+    const r = resolved.get(opp.page);
+    return {
+      ...opp,
+      resourceType: r?.id ? (r.resourceType as KeywordResourceType) : null,
+      resourceId: r?.id ?? null,
+    };
   });
 }
 
@@ -243,6 +227,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       KeywordResourceType,
       Array<{ id: string; title: string }>
     >,
+    // Content-Freshness (PLAN_SEO_SUITE_COMPLETION.md §5.3) — best-effort,
+    // computed from SeoGscPageStat (the daily-sync per-page rollup) rather
+    // than a live GSC call, so it's populated independently of whether
+    // today's manual queries below succeed.
+    freshnessCandidates: [] as FreshnessCandidateView[],
   };
 
   const plan = await loadPlan(db, session.shop);
@@ -269,6 +258,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   base.property = connection.propertyUrl || null;
   base.email = connection.email;
   base.lastKeywordSyncAt = connection.lastKeywordSyncAt ? connection.lastKeywordSyncAt.toISOString() : null;
+
+  // Content-Freshness (§5.3) — DB-only (SeoGscPageStat × content caches), no
+  // live GSC call, so compute it even if the property-selection branch below
+  // returns early, and even if the live analytics calls further down fail.
+  // Best-effort: any DB error here just leaves the panel empty.
+  try {
+    const settingsRow = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { seoFreshnessDismissed: true },
+    });
+    const dismissed = Array.isArray(settingsRow?.seoFreshnessDismissed)
+      ? (settingsRow!.seoFreshnessDismissed as string[])
+      : [];
+    const freshness = await analyzeFreshness(session.shop, { db });
+    base.freshnessCandidates = excludeDismissed(freshness.candidates, dismissed)
+      .slice(0, FRESHNESS_PANEL_LIMIT)
+      .map((c) => ({
+        resourceType: c.resourceType,
+        resourceId: c.resourceId,
+        title: c.title,
+        handle: c.handle,
+        position: c.position,
+        ctr: c.ctr,
+        impressions: c.impressions,
+        shopifyUpdatedAt: c.shopifyUpdatedAt.toISOString(),
+        daysSinceUpdate: c.daysSinceUpdate,
+        priority: c.priority,
+      }));
+  } catch {
+    base.freshnessCandidates = [];
+  }
 
   if (!connection.propertyUrl) {
     // OAuth succeeded but no verified property matched the shop's myshopify or
@@ -421,6 +441,7 @@ type ActionResult =
   // adoptKeyword could not map the row's page to a store item — the client
   // opens the item-picker modal and re-submits with an explicit resource.
   | { ok: false; error: "unresolved"; query: string }
+  | { ok: true; kind: "freshnessDismissed"; key: string }
   | { ok: false; error: string };
 
 const QUICK_WIN_RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
@@ -518,6 +539,38 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       const reason = e instanceof GscReconnectRequiredError ? "reconnect" : "inspect_failed";
       return json<ActionResult>({ ok: false, error: reason }, { status: 400 });
     }
+  }
+
+  // Content-Freshness "Ignorieren" (§5.3/§5.5): simplest-correct dismissed
+  // store — a JSON array of "<resourceType>:<resourceId>" keys on the
+  // existing per-shop AISettings row (see schema.prisma comment). No new
+  // model: no history/reporting need of its own, and it rides along on a
+  // row that's already purged on shop/redact.
+  if (actionType === "dismissFreshness") {
+    const resourceType = getFormString(form, "resourceType") as FreshnessResourceType | "";
+    const resourceId = getFormString(form, "resourceId");
+    if (!resourceType || !QUICK_WIN_RESOURCE_TYPES.includes(resourceType) || !resourceId) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const key = freshnessDismissKey(resourceType, resourceId);
+    const settingsRow = await db.aISettings.findUnique({
+      where: { shop: session.shop },
+      select: { seoFreshnessDismissed: true },
+    });
+    const existing = Array.isArray(settingsRow?.seoFreshnessDismissed)
+      ? (settingsRow!.seoFreshnessDismissed as string[])
+      : [];
+    if (!existing.includes(key)) {
+      // updateMany (not update-by-unique-key): mirrors the `stamp()` pattern
+      // in gsc-auto-sync.service.ts — a no-op on zero matched rows instead of
+      // throwing P2025 in the (should-never-happen) case AISettings doesn't
+      // exist yet for this shop.
+      await db.aISettings.updateMany({
+        where: { shop: session.shop },
+        data: { seoFreshnessDismissed: [...existing, key] },
+      });
+    }
+    return json<ActionResult>({ ok: true, kind: "freshnessDismissed", key });
   }
 
   if (actionType === "trackQuickWin") {
@@ -723,6 +776,45 @@ export default function SeoSearchConsole() {
       }
     }
   }, [quickWinFetcher.state, quickWinFetcher.data, handleNavigate]);
+
+  // ── Content-Freshness panel (PLAN_SEO_SUITE_COMPLETION.md §5.3) ──
+  // Own fetcher so the disconnect/sync/sitemap banner above isn't clobbered.
+  const freshnessDismissFetcher = useFetcher<ActionResult>();
+  const [dismissingFreshnessKey, setDismissingFreshnessKey] = useState<string | null>(null);
+  // Dismissed in THIS session — hides the row instantly without waiting for a
+  // reload; the loader's persisted dismissed-list covers earlier sessions.
+  const [locallyDismissedFreshness, setLocallyDismissedFreshness] = useState<Set<string>>(new Set());
+
+  const handleDismissFreshness = (resourceType: string, resourceId: string) => {
+    setDismissingFreshnessKey(`${resourceType}:${resourceId}`);
+    freshnessDismissFetcher.submit({ actionType: "dismissFreshness", resourceType, resourceId }, { method: "post" });
+  };
+
+  useEffect(() => {
+    const result = freshnessDismissFetcher.data;
+    if (freshnessDismissFetcher.state !== "idle" || !result) return;
+    setDismissingFreshnessKey(null);
+    if (result.ok && result.kind === "freshnessDismissed") {
+      setLocallyDismissedFreshness((prev) => new Set(prev).add(result.key));
+    }
+  }, [freshnessDismissFetcher.state, freshnessDismissFetcher.data]);
+
+  // "Mit AI überarbeiten": deep-link into the item's own editor, preselected
+  // (?select=<GID>) with a refresh preset (?preset=refresh) — reuses the same
+  // QUICK_WIN_TYPE_PATH resource→route map the Quick-wins "Optimize" button
+  // uses. Deliberately NOT a new AI-instructions plumbing/template system
+  // (PLAN_SEO_SUITE_COMPLETION.md §5.3 explicitly rules that out) — the target
+  // editor route reads `preset=refresh` and shows a freshness hint banner.
+  const handleRefreshWithAi = (resourceType: string, resourceId: string) => {
+    const path = QUICK_WIN_TYPE_PATH[resourceType];
+    if (path) {
+      handleNavigate(path, { searchParams: new URLSearchParams({ select: resourceId, preset: "refresh" }) });
+    }
+  };
+
+  const visibleFreshnessCandidates = data.freshnessCandidates.filter(
+    (c) => !locallyDismissedFreshness.has(`${c.resourceType}:${c.resourceId}`),
+  );
 
   // ── "Track as keyword" adopt flow (PLAN_KEYWORDS_EXPANSION.md §4) ──
   // Own fetcher so the disconnect/sync/sitemap banner isn't clobbered.
@@ -1218,6 +1310,95 @@ export default function SeoSearchConsole() {
                       </table>
                     </div>
                   )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Content-Freshness (§5.3): items that rank + get traffic (from the daily
+                SeoGscPageStat rollup) but haven't been touched in FRESHNESS_STALE_DAYS.
+                CTR-bonus rows (badge) reuse the Quick-wins position/impressions band. */}
+            {!data.needsPropertySelection && visibleFreshnessCandidates.length > 0 && (
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {g.freshnessTitle}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {g.freshnessHint}
+                  </Text>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left", borderBottom: "1px solid #e1e3e5" }}>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.freshnessColItem}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colPosition}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colCtr}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colImpressions}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colLastModified}</Text>
+                          </th>
+                          <th style={{ padding: "6px 8px" }}>
+                            <Text as="span" variant="bodySm" tone="subdued">{g.colAction}</Text>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleFreshnessCandidates.map((row) => {
+                          const key = `${row.resourceType}:${row.resourceId}`;
+                          return (
+                            <tr key={key} style={{ borderBottom: "1px solid #f1f2f3" }}>
+                              <td style={{ padding: "6px 8px", maxWidth: "280px" }}>
+                                <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                  <Text as="span" variant="bodyMd" truncate>{row.title}</Text>
+                                  {row.priority === 2 && (
+                                    <Badge tone="attention">{g.freshnessBonusBadge}</Badge>
+                                  )}
+                                </InlineStack>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{row.position.toFixed(1)}</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{(row.ctr * 100).toFixed(1)}%</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm">{row.impressions}</Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {g.freshnessDaysAgo.replace("{days}", String(row.daysSinceUpdate))}
+                                </Text>
+                              </td>
+                              <td style={{ padding: "6px 8px" }}>
+                                <InlineStack gap="200" blockAlign="center" wrap={false}>
+                                  <Button size="slim" onClick={() => handleRefreshWithAi(row.resourceType, row.resourceId)}>
+                                    {g.freshnessRefreshAction}
+                                  </Button>
+                                  <Button
+                                    size="slim"
+                                    variant="plain"
+                                    loading={freshnessDismissFetcher.state !== "idle" && dismissingFreshnessKey === key}
+                                    disabled={freshnessDismissFetcher.state !== "idle" && dismissingFreshnessKey !== key}
+                                    onClick={() => handleDismissFreshness(row.resourceType, row.resourceId)}
+                                  >
+                                    {g.freshnessDismissAction}
+                                  </Button>
+                                </InlineStack>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </BlockStack>
               </Card>
             )}

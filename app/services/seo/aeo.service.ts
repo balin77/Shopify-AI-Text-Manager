@@ -154,13 +154,19 @@ export function unwrapLlmsTxtFromTheme(content: string): string {
 
 // ── robots.txt AI-crawler audit ──────────────────────────────────────────────
 
-interface RobotsGroup {
+export interface RobotsGroup {
   agents: string[];
   rules: Array<{ type: "allow" | "disallow"; path: string }>;
 }
 
-/** Parse robots.txt text into user-agent groups (consecutive UA lines share a group). */
-function parseRobots(txt: string): RobotsGroup[] {
+/**
+ * Parse robots.txt text into user-agent groups (consecutive UA lines share a
+ * group). Exported (PLAN_SEO_SUITE_COMPLETION.md §3.3) so the Phase-1
+ * crawler (crawl.service.ts) can reuse the exact same parser instead of a
+ * second, drifting copy — `auditRobotsTxt` below is unaffected, it just calls
+ * this the same way it always did.
+ */
+export function parseRobots(txt: string): RobotsGroup[] {
   const groups: RobotsGroup[] = [];
   let current: RobotsGroup | null = null;
   let lastWasRule = false;

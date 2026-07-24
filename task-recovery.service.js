@@ -64,6 +64,24 @@ const LONG_RUNNING_TASK_TYPES = [
   // (suggest stage) or hundreds of DB upserts (apply stage), same shape as
   // seoBulkFix, so it needs the same generous stuck-task threshold.
   'distributeKeywords',
+  // JSON-LD batch audit (PLAN_SEO_SUITE_COMPLETION.md §7, Phase 5,
+  // seo-json-ld-audit.handler.ts) — builds + validates JSON-LD for every
+  // cached product/collection/article (up to 3×1000 rows), same DB-cache
+  // scan shape as seoAudit, so it needs the same generous stuck-task
+  // threshold rather than the short default cutoff.
+  'seoJsonLdAudit',
+  // Storefront crawler / site audit (PLAN_SEO_SUITE_COMPLETION.md §3.5,
+  // Phase 1, seo-crawl.handler.ts) — a live BFS crawl of up to 2000 pages
+  // (5 parallel requests, ~200ms spacing, 10s timeout + one retry on
+  // 5xx/timeout) can legitimately run for many minutes on a large shop, so it
+  // needs the same generous stuck-task threshold as the other detached scans.
+  'seoCrawl',
+  // Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.3, Phase 2,
+  // internal-links.handler.ts) — a synonym LLM call per target product/
+  // collection (up to a few hundred) followed by an LLM-free cheerio match
+  // loop over every article/page/product body, same fan-out shape as
+  // seoBulkFix, so it needs the same generous stuck-task threshold.
+  'seoInternalLinks',
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement

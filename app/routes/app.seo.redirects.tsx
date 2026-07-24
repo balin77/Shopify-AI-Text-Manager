@@ -12,7 +12,7 @@
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
 import {
   Card,
@@ -268,7 +268,11 @@ export default function SeoRedirects() {
   // never cancels/gets cancelled by an unrelated row action.
   const loadMoreFetcher = useFetcher<LoaderData>();
 
-  const [from, setFrom] = useState("");
+  // Prefilled by the crawl tab's "Redirect anlegen" deep-link
+  // (?newFrom=<path>, PLAN_SEO_SUITE_COMPLETION.md §3.4) — a broken link's
+  // target path, so the merchant only has to fill in the "to" side.
+  const [searchParams] = useSearchParams();
+  const [from, setFrom] = useState(() => searchParams.get("newFrom") || "");
   const [to, setTo] = useState("");
   const [search, setSearch] = useState(q);
   const [hitTargets, setHitTargets] = useState<Record<string, string>>({});

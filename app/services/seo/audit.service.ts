@@ -15,6 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
+import { computeHeadDrift } from "./crawl.service";
 
 export type AuditType = "product" | "collection" | "article" | "page";
 
@@ -63,6 +64,16 @@ export interface AuditProblemBucket {
    * to regenerate without trusting client-supplied ids, AND by the dashboard
    * UI to render the expandable per-bucket item list (deep-links per row). */
   items: { type: AuditType; id: string; title: string }[];
+  /**
+   * How the dashboard's bucket header button behaves (PLAN_SEO_SUITE_COMPLETION.md
+   * §3.6). "fixWithAi" (default when absent, for backward compatibility with
+   * snapshots written before this field existed) is the existing bulk-fix
+   * path. "deepLink" buckets — the three crawl-derived ones below — have no
+   * fix path here at all: they link to the crawl tab instead, where the
+   * underlying live data (broken links / orphan pages / drifted titles)
+   * lives.
+   */
+  action?: "fixWithAi" | "deepLink";
 }
 
 export interface AuditAggregate {
@@ -180,6 +191,15 @@ export interface AnalyzeStoreDeps {
   /** `seoTitleSuffix ? 60 - suffix.length : 60`, computed by the caller. */
   seoTitleEffectiveLimit: number;
   plan: Plan;
+  /**
+   * Shop display name — ONLY used to strip the "– ShopName" suffix when
+   * comparing crawled `<title>` text against the DB title for the
+   * `headDrift` dashboard bucket (§3.6). Best-effort: an empty string just
+   * means the suffix-strip is skipped (a false positive per page that
+   * carries the theme's shop-name suffix), never a hard failure. Not needed
+   * for anything else in this function.
+   */
+  shopName?: string;
   /**
    * Foreign locale to score against (empty/undefined = primary locale, the
    * historic behavior). When set, every scoring input (`title`, `description`,
@@ -327,9 +347,118 @@ async function loadProductAltCoverageForLocale(
   return map;
 }
 
+/**
+ * Builds the three crawl-derived dashboard buckets (§3.6): `brokenLinks`,
+ * `orphanPages`, `headDrift`. Reads the latest completed/capped
+ * SeoCrawlSnapshot + its SeoCrawlPage/SeoCrawlBrokenLink rows — a cheap,
+ * already-DB-cached read (the crawl itself is the one live fetch this app
+ * makes; this function makes none). Returns `[]` when no snapshot exists yet
+ * (free plan / never crawled) — no special-casing needed by the caller.
+ */
+async function buildCrawlProblemBuckets(
+  db: PrismaClient,
+  shop: string,
+  shopName: string,
+): Promise<AuditProblemBucket[]> {
+  const snapshot = await db.seoCrawlSnapshot.findFirst({
+    where: { shop, status: { in: ["completed", "capped"] } },
+    orderBy: { startedAt: "desc" },
+    select: { id: true, status: true },
+  });
+  if (!snapshot) return [];
+
+  const pages = await db.seoCrawlPage.findMany({
+    where: { shop, snapshotId: snapshot.id },
+    select: {
+      url: true,
+      title: true,
+      statusCode: true,
+      resourceType: true,
+      resourceId: true,
+      locale: true,
+      inboundCount: true,
+    },
+  });
+  const pageByUrl = new Map(pages.map((p) => [p.url, p]));
+
+  const buckets: AuditProblemBucket[] = [];
+
+  // --- brokenLinks: the FROM page of each broken edge is the affected item.
+  const brokenLinks = await db.seoCrawlBrokenLink.findMany({
+    where: { shop, snapshotId: snapshot.id },
+    select: { fromUrl: true },
+  });
+  const brokenAffected = new Map<string, { type: AuditType; id: string; title: string }>();
+  for (const bl of brokenLinks) {
+    const from = pageByUrl.get(bl.fromUrl);
+    if (!from?.resourceId || !from.resourceType || from.resourceType === "unknown") continue;
+    const key = `${from.resourceType}:${from.resourceId}`;
+    if (!brokenAffected.has(key)) {
+      brokenAffected.set(key, { type: from.resourceType as AuditType, id: from.resourceId, title: from.title || "" });
+    }
+  }
+  if (brokenAffected.size > 0) {
+    buckets.push({
+      code: "brokenLinks",
+      count: brokenAffected.size,
+      items: Array.from(brokenAffected.values()).slice(0, MAX_PROBLEM_BUCKET_ITEMS),
+      action: "deepLink",
+    });
+  }
+
+  // --- orphanPages: only valid when the crawl wasn't capped (§3.1) — a
+  // capped crawl produces phantom orphans on any large shop.
+  if (snapshot.status !== "capped") {
+    const orphans = pages.filter(
+      (p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0,
+    );
+    if (orphans.length > 0) {
+      buckets.push({
+        code: "orphanPages",
+        count: orphans.length,
+        items: orphans
+          .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
+          .map((p) => ({ type: p.resourceType as AuditType, id: p.resourceId as string, title: p.title || "" })),
+        action: "deepLink",
+      });
+    }
+  }
+
+  // --- headDrift: crawled <title> vs. stored SEO title, primary locale only
+  // (§3.1) — same comparison rule the crawl runner used for
+  // SeoCrawlSnapshot.headDriftCount (crawl.service.ts's computeHeadDrift),
+  // reused here so there is exactly one drift rule, not two.
+  const headDriftCandidates = pages
+    .filter(
+      (p) =>
+        p.resourceId &&
+        p.resourceType &&
+        p.resourceType !== "unknown" &&
+        p.locale === "" &&
+        p.statusCode >= 200 &&
+        p.statusCode < 300,
+    )
+    .map((p) => ({
+      resourceType: p.resourceType as AuditType,
+      resourceId: p.resourceId as string,
+      crawledTitle: p.title,
+    }));
+  const headDrift = await computeHeadDrift(db, shop, headDriftCandidates, shopName, MAX_PROBLEM_BUCKET_ITEMS);
+  if (headDrift.count > 0) {
+    buckets.push({
+      code: "headDrift",
+      count: headDrift.count,
+      items: headDrift.items.map((i) => ({ type: i.type, id: i.id, title: i.title })),
+      action: "deepLink",
+    });
+  }
+
+  return buckets;
+}
+
 export async function analyzeStore(
   shop: string,
-  { db, seoTitleEffectiveLimit, plan, locale, seoLimits = null }: AnalyzeStoreDeps,
+  { db, seoTitleEffectiveLimit, plan, locale, seoLimits = null, shopName = "" }: AnalyzeStoreDeps,
 ): Promise<AuditAggregate> {
   // Normalize "" / undefined to "primary". Consumers pass the sentinel "" for
   // primary snapshots so the audit + snapshot table share one call shape.
@@ -787,8 +916,24 @@ export async function analyzeStore(
   }
 
   const problems: AuditProblemBucket[] = [...bucketCounts.entries()]
-    .map(([code, count]) => ({ code, count, items: bucketItems.get(code) ?? [] }))
+    .map(([code, count]) => ({ code, count, items: bucketItems.get(code) ?? [], action: "fixWithAi" as const }))
     .sort((a, b) => b.count - a.count);
+
+  // §3.6: three additional buckets sourced from the latest Phase-1 crawl
+  // snapshot, not from the DB-cache scan above. Primary-locale scans only —
+  // the crawl only ever inspects the primary storefront (§3.1 explicitly
+  // scopes head-drift to locale==""), so a foreign-locale audit run has
+  // nothing valid to add here.
+  if (!foreignLocale) {
+    // Best-effort: a crawl-table read failure (missing delegate on an older
+    // test stub, a transient DB error) must never sink the whole dashboard
+    // scan — the three crawl buckets are additive, not load-bearing.
+    const crawlBuckets = await buildCrawlProblemBuckets(db, shop, shopName).catch(() => []);
+    if (crawlBuckets.length > 0) {
+      problems.push(...crawlBuckets);
+      problems.sort((a, b) => b.count - a.count);
+    }
+  }
 
   const worstOffenders = scored
     .filter((s) => s.row.issueCount > 0)

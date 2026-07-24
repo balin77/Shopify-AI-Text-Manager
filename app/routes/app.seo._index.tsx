@@ -47,6 +47,8 @@ import {
 } from "../services/seo/audit.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { analyzeFreshness, excludeDismissed } from "../services/seo/freshness.service";
+import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
@@ -63,6 +65,24 @@ const AI_FIXABLE_PROBLEM_CODES = new Set([
   "duplicateSeoDescription",
 ]);
 
+const SHOP_NAME_QUERY = `#graphql
+  query seoDashboardShopName {
+    shop { name }
+  }
+`;
+
+/** Best-effort shop display name for the crawl-derived headDrift bucket's
+ *  "– ShopName" suffix strip (audit.service.ts §3.6). Never throws. */
+async function fetchShopNameForAudit(admin: any, fallbackShop: string): Promise<string> {
+  try {
+    const res = await admin.graphql(SHOP_NAME_QUERY);
+    const j: any = await res.json();
+    return j?.data?.shop?.name || fallbackShop.replace(/\.myshopify\.com$/, "");
+  } catch {
+    return fallbackShop.replace(/\.myshopify\.com$/, "");
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -74,6 +94,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       seoTitleSuffixEnabled: true,
       seoTitleSuffix: true,
       seoLimits: true,
+      seoFreshnessDismissed: true,
     },
   });
 
@@ -106,12 +127,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // inline ONCE so this load still works, and persist it immediately so
     // every subsequent visit is instantly cached from here on. The next
     // "Rescan" click will refresh every locale in one Task.
+    // shopName is only fetched on this cold path (not the hot cached-snapshot
+    // path above) — it's only used for the crawl-derived headDrift bucket's
+    // "– ShopName" suffix strip (audit.service.ts §3.6).
+    const shopName = await fetchShopNameForAudit(admin, session.shop);
     const audit = await analyzeStore(session.shop, {
       db,
       seoTitleEffectiveLimit: effectiveLimit,
       seoLimits,
       plan,
       locale: activeLocaleKey || undefined,
+      shopName,
     });
     await saveAuditSnapshot(db, session.shop, audit, activeLocaleKey);
     snapshot = { audit, createdAt: new Date() };
@@ -132,6 +158,37 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
   ]);
 
+  // Content-Freshness card (PLAN_SEO_SUITE_COMPLETION.md §5.3): just a count
+  // here — the detail table lives on the Search Console tab (§5.3 "picked
+  // one", see that route's header comment). Pro-gated (freshness presupposes
+  // GSC) and best-effort: a DB error here must not break the dashboard.
+  let freshnessCandidateCount = 0;
+  if (meetsPlan(plan, "pro")) {
+    try {
+      const dismissed = Array.isArray(settings?.seoFreshnessDismissed)
+        ? (settings!.seoFreshnessDismissed as string[])
+        : [];
+      const freshness = await analyzeFreshness(session.shop, { db });
+      freshnessCandidateCount = excludeDismissed(freshness.candidates, dismissed).length;
+    } catch {
+      freshnessCandidateCount = 0;
+    }
+  }
+
+  // Internal-linking suggestions card (PLAN_SEO_SUITE_COMPLETION.md §4.2):
+  // count only — the table lives on its own section. Pro-gated like the
+  // freshness card; best-effort so a DB error never breaks the dashboard.
+  let internalLinksSuggestionCount = 0;
+  if (meetsPlan(plan, "pro")) {
+    try {
+      internalLinksSuggestionCount = await db.seoInternalLinkSuggestion.count({
+        where: { shop: session.shop, status: "pending" },
+      });
+    } catch {
+      internalLinksSuggestionCount = 0;
+    }
+  }
+
   return json({
     audit: snapshot.audit,
     lastScannedAt: snapshot.createdAt.toISOString(),
@@ -140,6 +197,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopLocales,
     primaryLocale,
     activeLocale: activeLocaleKey, // "" = primary; else the foreign locale code
+    freshnessCandidateCount,
+    internalLinksSuggestionCount,
   });
 };
 
@@ -160,6 +219,8 @@ export default function SeoDashboard() {
     shopLocales,
     primaryLocale,
     activeLocale,
+    freshnessCandidateCount,
+    internalLinksSuggestionCount,
   } = useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -533,6 +594,48 @@ export default function SeoDashboard() {
           </BlockStack>
         </Card>
 
+        {/* Content-Freshness (PLAN_SEO_SUITE_COMPLETION.md §5.3): count only —
+            the detail table (position/CTR/impressions/last modified, "Mit AI
+            überarbeiten"/"Ignorieren") lives on the Search Console tab, which
+            already carries the GSC-connection chrome this feature depends on. */}
+        {freshnessCandidateCount > 0 && (
+          <Card>
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">
+                  {d.freshnessCardTitle}
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {d.freshnessCardCount.replace("{count}", String(freshnessCandidateCount))}
+                </Text>
+              </BlockStack>
+              <Button onClick={() => handleNavigate("/app/seo/search-console")}>
+                {d.freshnessCardButton}
+              </Button>
+            </InlineStack>
+          </Card>
+        )}
+
+        {/* Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.2):
+            count only — the table lives on its own section. */}
+        {internalLinksSuggestionCount > 0 && (
+          <Card>
+            <InlineStack align="space-between" blockAlign="center" gap="300">
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">
+                  {d.internalLinksCardTitle}
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {d.internalLinksCardCount.replace("{count}", String(internalLinksSuggestionCount))}
+                </Text>
+              </BlockStack>
+              <Button onClick={() => handleNavigate("/app/seo/internal-links")}>
+                {d.internalLinksCardButton}
+              </Button>
+            </InlineStack>
+          </Card>
+        )}
+
         {/* Most common problems */}
         {audit.problems.length > 0 && (
           <Card>
@@ -581,15 +684,21 @@ export default function SeoDashboard() {
                         <Badge tone="attention">
                           {d.affectedItems.replace("{count}", String(p.count))}
                         </Badge>
-                        {AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
-                          <Button
-                            size="slim"
-                            onClick={() => handleFixWithAi(p.code)}
-                            disabled={disableFixButtons || fixFetcher.state !== "idle"}
-                            loading={fixingCode === p.code && fixFetcher.state !== "idle"}
-                          >
-                            {d.fixAllWithAi}
+                        {p.action === "deepLink" ? (
+                          <Button size="slim" onClick={() => handleNavigate("/app/seo/crawl")}>
+                            {d.viewInCrawlTab}
                           </Button>
+                        ) : (
+                          AI_FIXABLE_PROBLEM_CODES.has(p.code) && (
+                            <Button
+                              size="slim"
+                              onClick={() => handleFixWithAi(p.code)}
+                              disabled={disableFixButtons || fixFetcher.state !== "idle"}
+                              loading={fixingCode === p.code && fixFetcher.state !== "idle"}
+                            >
+                              {d.fixAllWithAi}
+                            </Button>
+                          )
                         )}
                       </InlineStack>
                     </InlineStack>

@@ -136,6 +136,16 @@ model AISettings {
   // EnabledMetafieldDefinition so existing merchants' editors stay populated.
   metafieldsLastScanAt DateTime?
 
+  // Content-Freshness audit (PLAN_SEO_SUITE_COMPLETION.md §5.3/§5.5): the
+  // merchant's "Ignorieren" list for refresh candidates. Deliberately NOT a
+  // separate Prisma model — the plan leaves the store open ("bei Umsetzung
+  // entscheiden") and a dismissed-set has no history/reporting need of its
+  // own, so it rides along on the per-shop settings row that already exists
+  // and is already purged on shop/redact (no separate GDPR entry needed).
+  // JSON array of "<resourceType>:<resourceId>" strings, e.g.
+  // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
+  seoFreshnessDismissed Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1265,4 +1275,177 @@ model SeoWebVitalSample {
 
   @@index([shop, createdAt])
   @@index([shop, template, device, createdAt])
+}
+
+// ── Phase 1 (Storefront crawler / site audit, PLAN_SEO_SUITE_COMPLETION.md
+// §2/§3) ─────────────────────────────────────────────────────────────────
+//
+// One row per "Jetzt scannen" run (seoCrawl Task, seo-crawl.handler.ts /
+// crawl.service.ts). Children (SeoCrawlPage, SeoCrawlBrokenLink) cascade on
+// delete but ALSO carry their own `shop` column — the GDPR schema-coverage
+// guard (tests/unit/gdpr.service.test.ts) checks for a `shop`/`shopId` field
+// per model and expects an explicit deleteMany, not a cascade, so every
+// child needs the column even though the FK alone would clean it up.
+// Retention: on a new crawl start, delete all but the newest 5 snapshots per
+// shop (see pruneOldCrawlSnapshots in crawl.service.ts) — cascade removes the
+// pruned snapshots' pages/brokenLinks with them.
+model SeoCrawlSnapshot {
+  id              String    @id @default(cuid())
+  shop            String
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  status          String // "running" | "completed" | "failed" | "capped"
+  error           String? // short reason on "failed" (e.g. "storefront_password", "bot_blocked")
+  pagesCrawled    Int       @default(0)
+  totalDiscovered Int       @default(0) // URLs found, even beyond the cap
+  pagesOk         Int       @default(0)
+  pagesBroken     Int       @default(0)
+  orphanCount     Int       @default(0)
+  headDriftCount  Int       @default(0)
+
+  pages       SeoCrawlPage[]
+  brokenLinks SeoCrawlBrokenLink[]
+
+  @@index([shop, startedAt])
+}
+
+// One row per crawled URL (post query-strip/dedupe normalization, §3.2).
+// `resourceType`/`resourceId` are resolved via the shared
+// `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
+// doesn't map to a known content type (theme/metaobject pages, §3.8).
+model SeoCrawlPage {
+  id            String  @id @default(cuid())
+  shop          String
+  snapshotId    String
+  url           String // normalized URL (query params stripped, §3.2)
+  statusCode    Int
+  redirectedTo  String? // final URL, if a 3xx chain was followed
+  responseMs    Int
+  title         String? // <title> from the rendered HTML
+  metaDesc      String?
+  canonical     String?
+  h1Count       Int     @default(0)
+  wordCount     Int     @default(0)
+  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
+  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount  Int     @default(0) // internal links pointing HERE
+  outboundCount Int     @default(0)
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, url])
+  @@index([shop, snapshotId])
+  @@index([shop, snapshotId, statusCode])
+}
+
+// A same-origin link edge whose target failed (>=400, timeout, or a redirect
+// loop/too-many-hops). The link GRAPH itself is not persisted (§2 — would be
+// ~200k rows/crawl on a 2000-page site); only broken edges land here.
+model SeoCrawlBrokenLink {
+  id         String  @id @default(cuid())
+  shop       String
+  snapshotId String
+  fromUrl    String
+  toUrl      String
+  statusCode Int // 404/410/5xx; 0 = timeout, -1 = redirect chain >3 hops / loop
+  anchor     String?
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([shop, snapshotId])
+}
+
+// Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+// option b): per-page GSC rollup. Written daily by
+// app/services/seo/gsc-auto-sync.service.ts (one extra dimensions:["page"]
+// query, 90d window, alongside the existing per-keyword sync) via
+// enrichPageStatsFromGsc (google-search-console.server.ts). resourceType/
+// resourceId are resolved via the shared resolvePathsToResources
+// (seo/url-resolver.server.ts) — null when the page doesn't map to a known
+// content type. Read by app/services/seo/freshness.service.ts.
+// Retention: the unique (shop, page) key overwrites on every sync — no
+// history table (PLAN §2 "Retention").
+model SeoGscPageStat {
+  id           String   @id @default(cuid())
+  shop         String
+  page         String // full GSC page URL
+  resourceType String? // "Product" | "Collection" | "Article" | "Page" | null
+  resourceId   String? // Shopify GID, when resolved
+  position     Float
+  clicks       Int
+  impressions  Int
+  ctr          Float
+  windowDays   Int      @default(90)
+  syncedAt     DateTime @default(now())
+
+  @@unique([shop, page])
+  @@index([shop, resourceType, resourceId])
+}
+
+// Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4): one
+// suggested internal link "source item mentions target item's anchor text
+// → link to it". resourceType uses the SAME capitalized convention as
+// ContentTranslation/SeoKeywordAssignment/SeoGscPageStat ("Product" |
+// "Collection" | "Article" | "Page"), since the matcher's target set is
+// built from SeoKeywordAssignment and the source set includes ContentTranslation-
+// adjacent content — NOT SeoCrawlPage's lowercase convention.
+// locale is always "" (primary) in v1 — Phase 2 explicitly does not match
+// across locales (see internal-links.service.ts header).
+// Idempotent across re-runs via the composite unique key; a `dismissed` row
+// whose dismissedUntil is still in the future is never reactivated by a
+// later run (internal-links.service.ts upsertSuggestions).
+model SeoInternalLinkSuggestion {
+  id               String    @id @default(cuid())
+  shop             String
+  locale           String    @default("") // anchor + target always same locale
+  fromResourceType String
+  fromResourceId   String
+  anchorText       String // the mention found in the source content
+  toResourceType   String
+  toResourceId     String
+  confidence       Float
+  status           String // "pending" | "accepted" | "dismissed"
+  // "Ablehnen" (permanent reject) -> null (never reactivated by a later run).
+  // "90 Tage ignorieren" -> a future date (reactivatable once it has passed).
+  dismissedUntil   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Default Prisma-generated constraint name would exceed Postgres' 63-byte
+  // identifier limit (101 chars) — explicit short `map`, same fix as
+  // ThemeTranslation's shop_resourceId_groupId_key_locale_themeId_marketId
+  // unique key (see CLAUDE.md).
+  @@unique([shop, fromResourceType, fromResourceId, toResourceType, toResourceId, locale], map: "SeoInternalLinkSuggestion_shop_from_to_locale_key")
+  @@index([shop, status])
+}
+
+// Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md §2/§6):
+// one merchant-facing suggestion (or applied/reverted decision) to exclude a
+// resource from Shopify's platform-generated sitemap via the documented
+// `seo.hidden` metafield lever (namespace "seo", key "hidden") — set/cleared
+// by app/services/seo/sitemap.service.ts's applyExclusion/revertExclusion.
+// resourceType uses SeoCrawlPage's lowercase convention ("product" |
+// "collection" | "page" | "article" | "blog"), NOT SeoInternalLinkSuggestion's
+// capitalized one — sitemap.service.ts builds candidates directly from the
+// same AuditType-shaped buckets crawl.service.ts/audit.service.ts use.
+//
+// Lifecycle: "suggested" (we proposed it) -> "applied" (seo.hidden set via
+// API AND Shopify echoed the write back — userErrors alone is not enough,
+// CLAUDE.md invariant) -> "reverted" (metafieldsDelete echoed back). A
+// re-run of the suggestion sweep upserts idempotently via the unique key
+// below and — same rule as SeoInternalLinkSuggestion — never reactivates a
+// row the merchant (or a prior apply) already moved off "suggested".
+model SeoSitemapExclusion {
+  id           String    @id @default(cuid())
+  shop         String
+  resourceType String // "product" | "collection" | "page" | "article" | "blog"
+  resourceId   String // Shopify GID
+  reason       String? // "emptyCollection" | "thinContent" | "archivedProduct" | "manual" | …
+  status       String    @default("suggested")
+  appliedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([shop, resourceType, resourceId])
+  @@index([shop, status])
 }

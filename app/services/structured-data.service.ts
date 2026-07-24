@@ -17,6 +17,26 @@ export type JsonLd = Record<string, unknown>;
 
 const SCHEMA_CTX = "https://schema.org";
 
+/** Google's Rich Results Test, keyed with a storefront URL (Phase 5 batch
+ *  audit + the existing live-preview page both deep-link here). Centralized
+ *  so the two callers can't drift on the endpoint. */
+export const GOOGLE_RICH_RESULTS_TEST = "https://search.google.com/test/rich-results";
+
+/**
+ * Slugifies a display string into a URL-safe handle segment. Used to derive
+ * an Article's blog handle from `Article.blogTitle` (the DB cache only
+ * stores the blog's display title, not its handle) — shared by the
+ * structured-data preview route and the Phase 5 batch audit so both build
+ * the same `/blogs/<handle>/<handle>` URL from the same input.
+ */
+export function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 /** Strips HTML tags + collapses whitespace; truncates to a sane length. */
 export function plainText(html: string | null | undefined, max = 5000): string {
   if (!html) return "";
@@ -128,17 +148,21 @@ export interface BreadcrumbItem {
 
 export function buildOrganizationJsonLd(shop: ShopInfo): JsonLd {
   const url = normalizeBase(shop.domain);
-  return compact({
+  const jsonLd: JsonLd = compact({
     "@context": SCHEMA_CTX,
     "@type": "Organization",
     name: shop.name,
     url,
     logo: shop.logoUrl || undefined,
-    sameAs:
-      shop.sameAs && shop.sameAs.length > 0
-        ? shop.sameAs.filter(Boolean)
-        : undefined,
   });
+  // sameAs is deliberately set OUTSIDE compact() (§ fix 11): compact() drops
+  // empty arrays, which would erase the distinction between "checked, found
+  // none" (shop.sameAs === []) and "never checked" (shop.sameAs ===
+  // undefined) that validateJsonLd's orgNoSameAs gate below relies on.
+  if (shop.sameAs !== undefined) {
+    jsonLd.sameAs = shop.sameAs.filter(Boolean);
+  }
+  return jsonLd;
 }
 
 /**
@@ -360,10 +384,11 @@ export type JsonLdWarningCode =
   | "articleMissingHeadline"
   | "articleNoImage"
   | "articleNoDatePublished"
-  | "orgNoLogo";
+  | "orgNoLogo"
+  | "orgNoSameAs";
 
 export interface JsonLdWarning {
-  severity: "error" | "warning";
+  severity: "error" | "warning" | "info";
   message: string;
   code: JsonLdWarningCode;
 }
@@ -374,7 +399,16 @@ export interface ValidateJsonLdOptions {
    *  Organization.logo from shop brand). The storefront Liquid block still
    *  emits these from native/metafield/shop-brand data, so warning here would
    *  be a false positive. Off by default so the standalone preview page and
-   *  audits keep flagging genuinely missing data. */
+   *  audits keep flagging genuinely missing data.
+   *
+   *  Phase 5 batch audit (json-ld-audit.service.ts) also sets this to `true`:
+   *  the DB content cache has no `availableForSale`/inventory column and no
+   *  `Article.publishedAt` column at all (verified against schema.prisma), so
+   *  running the batch with previewMode `false` would flag `offerNoAvailability`
+   *  / `articleNoDatePublished` on essentially every scanned item — noise, not
+   *  signal. The storefront Liquid block still emits both from live/native
+   *  data, so suppressing here is not a false "all clear", it's an honest
+   *  "we can't check this from the cache". */
   previewMode?: boolean;
 }
 
@@ -431,7 +465,14 @@ export function validateJsonLd(
           message: "Offer is missing priceCurrency.",
         });
       }
-      if (!offers.availability) {
+      // Gated by previewMode too (unlike offerNoCurrency): availability is
+      // exactly the kind of data "the caller cannot supply" that previewMode
+      // exists for — see ValidateJsonLdOptions.previewMode. The single-item
+      // preview page always live-fetches the sample product's first-variant
+      // availability (fetchProductPreviewData in app.seo.structured-data.tsx)
+      // and calls this with previewMode left at its false default, so this
+      // change doesn't affect it.
+      if (!offers.availability && !options.previewMode) {
         w.push({
           severity: "warning",
           code: "offerNoAvailability",
@@ -509,6 +550,28 @@ export function validateJsonLd(
       severity: "warning",
       code: "orgNoLogo",
       message: "Organization has no logo — recommended for knowledge panel.",
+    });
+  }
+
+  // Phase 5 (§7.1): social-profile links strengthen Google's knowledge-panel
+  // confidence but are genuinely optional — info severity, not a warning.
+  // Not gated by previewMode: sameAs is set via the storefront theme block's
+  // `social_urls` setting (extensions/storefront/blocks/structured-data.liquid),
+  // which neither this preview route nor the batch audit currently reads back
+  // (it lives in theme app-embed block settings, not `settings_data.json`'s
+  // documented `current.*` shape the way the logo/`current.logo` is) — so
+  // `shop.sameAs` is never populated by any caller today. That's an
+  // intentional, documented gap (§11), not a bug — BUT emitting the warning
+  // unconditionally on that basis would make it a permanent false positive
+  // for every shop forever (§ fix 11). `buildOrganizationJsonLd` only sets
+  // `jsonLd.sameAs` (even to `[]`) when the caller actually supplied
+  // `shop.sameAs` — `undefined` means "never checked", so only emit once
+  // there is something to actually be empty.
+  if (type === "Organization" && jsonLd.sameAs !== undefined && (jsonLd.sameAs as unknown[]).length === 0) {
+    w.push({
+      severity: "info",
+      code: "orgNoSameAs",
+      message: "Organization has no sameAs (social profile links) — recommended for a stronger knowledge panel.",
     });
   }
 

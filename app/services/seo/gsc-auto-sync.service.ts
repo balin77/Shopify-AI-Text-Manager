@@ -35,11 +35,26 @@
  *     stamped (backoff). Without this, a shop with a persistent problem
  *     (network blip, Google outage, quota) would be retried — and burn a
  *     batch slot — on every single tick forever.
+ *
+ * Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §5.1 option
+ * b): each successful tick also calls enrichPageStatsFromGsc (ONE extra
+ * dimensions:["page"] query, 90d window) to upsert SeoGscPageStat, read by
+ * app/services/seo/freshness.service.ts. Gated on the SAME eligibility as the
+ * keyword sync above (pro plan + at least one tracked keyword) rather than a
+ * separate check — a shop that hasn't engaged with SEO keyword tracking at
+ * all is a reasonable proxy for "not ready for a freshness audit either", and
+ * it keeps this service's single existing due/skip/backoff bookkeeping in
+ * one place. Wrapped in its own try/catch (see processShop) so a failure here
+ * never blocks the keyword sync it rides along with.
  */
 
 import { db } from "../../db.server";
 import { logger } from "../../utils/logger.server";
-import { enrichKeywordsFromGsc, GscReconnectRequiredError } from "../google-search-console.server";
+import {
+  enrichKeywordsFromGsc,
+  enrichPageStatsFromGsc,
+  GscReconnectRequiredError,
+} from "../google-search-console.server";
 import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
 
@@ -208,6 +223,19 @@ export class GscAutoSyncService {
 
       const count = await enrichKeywordsFromGsc(db, shop, now);
       stats.synced++;
+
+      // Per-page rollup (PLAN_SEO_SUITE_COMPLETION.md §5.1 option b) — its OWN
+      // try/catch: a failure here (quota, transient Google error) must not
+      // undo the keyword sync that just succeeded above, nor skip the stamp.
+      try {
+        const pageStatCount = await enrichPageStatsFromGsc(db, shop, now);
+        logger.info(`[GscAutoSync] Synced ${shop}: ${pageStatCount} page stat(s) rolled up`);
+      } catch (pageStatError) {
+        logger.warn(`[GscAutoSync] Page-stat rollup failed for ${shop}`, {
+          error: pageStatError instanceof Error ? pageStatError.message : String(pageStatError),
+        });
+      }
+
       await this.stamp(shop, now);
       logger.info(`[GscAutoSync] Synced ${shop}: ${count} keyword(s) enriched`);
     } catch (error) {

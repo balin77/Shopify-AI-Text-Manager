@@ -441,3 +441,178 @@ describe("getAuditTrend", () => {
   });
 });
 
+// ─── Phase 1 (PLAN_SEO_SUITE_COMPLETION.md §3.6): crawl-derived dashboard
+// buckets — brokenLinks / orphanPages / headDrift, action:"deepLink" ─────────
+
+describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
+  function makeDbWithCrawl(snapshotStatus: string | null, pages: any[] = [], brokenLinks: any[] = []) {
+    return {
+      ...makeDb(),
+      seoCrawlSnapshot: {
+        findFirst: async () => (snapshotStatus ? { id: "snap-1", status: snapshotStatus } : null),
+      },
+      seoCrawlPage: { findMany: async () => pages },
+      seoCrawlBrokenLink: { findMany: async () => brokenLinks },
+    } as any;
+  }
+
+  it("adds brokenLinks/orphanPages/headDrift buckets, all action:'deepLink'", async () => {
+    const pages = [
+      {
+        url: "https://shop.com/products/p2",
+        title: "T2 crawled title",
+        statusCode: 200,
+        resourceType: "product",
+        resourceId: "gid-P2",
+        locale: "",
+        inboundCount: 0,
+      },
+      {
+        url: "https://shop.com/pages/pg1",
+        title: "Something Totally Different",
+        statusCode: 200,
+        resourceType: "page",
+        resourceId: "gid-PG1",
+        locale: "",
+        inboundCount: 3,
+      },
+    ];
+    const brokenLinks = [
+      { fromUrl: "https://shop.com/products/p2", toUrl: "https://shop.com/products/missing", statusCode: 404 },
+    ];
+    const db = makeDbWithCrawl("completed", pages, brokenLinks);
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+
+    const broken = audit.problems.find((p) => p.code === "brokenLinks");
+    expect(broken?.action).toBe("deepLink");
+    expect(broken?.count).toBe(1);
+    expect(broken?.items[0]).toMatchObject({ type: "product", id: "gid-P2" });
+
+    const orphans = audit.problems.find((p) => p.code === "orphanPages");
+    expect(orphans?.action).toBe("deepLink");
+    expect(orphans?.count).toBe(1);
+    expect(orphans?.items[0]).toMatchObject({ type: "product", id: "gid-P2" });
+
+    // gid-PG1's DB title (U(40,"TPG1-")) differs from the crawled title.
+    const headDrift = audit.problems.find((p) => p.code === "headDrift");
+    expect(headDrift?.action).toBe("deepLink");
+    expect(headDrift?.count).toBeGreaterThanOrEqual(1);
+    expect(headDrift?.items.some((i) => i.id === "gid-PG1")).toBe(true);
+  });
+
+  it("does not count a broken (404) resolved page as headDrift, even though its (null) crawled title differs from the DB title (§ fix 5)", async () => {
+    const pages = [
+      {
+        url: "https://shop.com/pages/pg1",
+        title: null, // never parsed — the page 404'd, so the body was never read
+        statusCode: 404,
+        resourceType: "page",
+        resourceId: "gid-PG1",
+        locale: "",
+        inboundCount: 3,
+      },
+    ];
+    const db = makeDbWithCrawl("completed", pages, []);
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+
+    const headDrift = audit.problems.find((p) => p.code === "headDrift");
+    expect(headDrift).toBeUndefined();
+  });
+
+  it("suppresses the orphanPages bucket when the crawl was capped (§3.1 — unreliable orphan data)", async () => {
+    const pages = [
+      {
+        url: "https://shop.com/products/p2",
+        title: "T2",
+        resourceType: "product",
+        resourceId: "gid-P2",
+        locale: "",
+        inboundCount: 0,
+      },
+    ];
+    const db = makeDbWithCrawl("capped", pages, []);
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+    expect(audit.problems.find((p) => p.code === "orphanPages")).toBeUndefined();
+  });
+
+  it("adds no crawl buckets when no snapshot exists yet (free plan / never crawled)", async () => {
+    const db = makeDbWithCrawl(null);
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    expect(audit.problems.some((p) => p.action === "deepLink")).toBe(false);
+  });
+
+  it("existing DB-cache buckets keep action:'fixWithAi'", async () => {
+    const db = makeDbWithCrawl(null);
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    const seoTitleMissingBucket = audit.problems.find((p) => p.code === "seoTitleMissing");
+    expect(seoTitleMissingBucket?.action).toBe("fixWithAi");
+  });
+
+  it("does not query crawl tables for a foreign-locale scan (crawl data is primary-only)", async () => {
+    let called = false;
+    const db = {
+      ...makeDb(),
+      // Foreign-locale scoring reads ContentTranslation overlays + per-locale
+      // product alt coverage — irrelevant to this test, just needs to not throw.
+      contentTranslation: { findMany: async () => [] },
+      productImageAltTranslation: { groupBy: async () => [] },
+      seoCrawlSnapshot: {
+        findFirst: async () => {
+          called = true;
+          return null;
+        },
+      },
+    } as any;
+    await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      locale: "fr",
+    });
+    expect(called).toBe(false);
+  });
+
+  it("a crawl-table read failure degrades gracefully (no crawl buckets, scan still succeeds)", async () => {
+    const db = {
+      ...makeDb(),
+      seoCrawlSnapshot: {
+        findFirst: async () => {
+          throw new Error("db down");
+        },
+      },
+    } as any;
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    expect(audit.totalScanned).toBeGreaterThan(0);
+    expect(audit.problems.some((p) => p.action === "deepLink")).toBe(false);
+  });
+});
+
