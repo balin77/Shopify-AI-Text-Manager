@@ -45,6 +45,7 @@ import { getFormString } from "../utils/form-data.utils";
 import {
   isAllowedAuditUrl,
   runPageSpeedAudit,
+  fetchRawPageSpeedInsights,
   listPageSpeedHistory,
   findLatestPageSpeedAudit,
   findPageSpeedAuditById,
@@ -69,6 +70,7 @@ import type {
   QualityIssue,
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
 import { buildAltImageMatches, type AltImageMatch } from "../services/seo/alt-image-matches";
 
@@ -108,6 +110,61 @@ async function getShopHost(admin: any, fallbackShop: string): Promise<string> {
   }
 }
 
+/**
+ * Alt-text coverage audit (accessibility plan §7, app-native replacement for
+ * the Lighthouse `image-alt` trigger). Lighthouse never flags Shopify product
+ * images: themes always emit an `alt` attribute (empty `alt=""` when unset),
+ * and axe-core PASSES empty alt as "decorative" — so the Lighthouse bridge
+ * essentially never fires. This warns from OUR own data instead: images with no
+ * primary alt text, and images whose alt text is not translated into each
+ * active foreign locale.
+ */
+type AltTextAudit = {
+  totalImages: number;
+  /** Product images with no primary-language alt text. */
+  missingPrimary: number;
+  primaryLocale: string;
+  /** Per foreign locale: images that HAVE a primary alt but lack that locale's translation. */
+  foreign: Array<{ locale: string; name: string; missing: number }>;
+};
+
+async function computeAltTextAudit(
+  db: any,
+  admin: any,
+  shop: string,
+): Promise<AltTextAudit> {
+  const locales = await getCachedShopLocales(admin, shop).catch(() => []);
+  const primaryLocale = locales.find((l: any) => l.primary)?.locale || "en";
+  const foreignLocales = locales.filter((l: any) => l.published && !l.primary);
+
+  const shopScope = { product: { shop } };
+  // "Has a primary alt to translate": non-null AND non-empty.
+  const hasPrimaryWhere = { ...shopScope, altText: { not: null }, NOT: { altText: "" } };
+
+  const [totalImages, missingPrimary, foreignMissing] = await Promise.all([
+    db.productImage.count({ where: shopScope }),
+    db.productImage.count({ where: { ...shopScope, OR: [{ altText: null }, { altText: "" }] } }),
+    Promise.all(
+      foreignLocales.map((l: any) =>
+        db.productImage.count({
+          where: { ...hasPrimaryWhere, altTextTranslations: { none: { locale: l.locale, marketId: "" } } },
+        }),
+      ),
+    ),
+  ]);
+
+  return {
+    totalImages,
+    missingPrimary,
+    primaryLocale,
+    foreign: foreignLocales.map((l: any, i: number) => ({
+      locale: l.locale,
+      name: l.name || l.locale,
+      missing: foreignMissing[i] ?? 0,
+    })),
+  };
+}
+
 /** Picker cap per resource type — mirrors the pattern in app.seo.keywords.tsx. */
 const PICKER_CAP = 100;
 /** History rows requested from the server / shown in the table. */
@@ -135,9 +192,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { db } = await import("../db.server");
   const shop = session.shop;
 
-  const domain = await getShopHost(admin, shop);
-
-  const [products, collections, pages, history, rum, runsToday, plan] = await Promise.all([
+  // `getShopHost` is a Shopify GraphQL round-trip and nothing below depends on
+  // its result, so it joins the parallel batch instead of blocking it — the
+  // loader's latency is then the slowest single query, not the network hop
+  // plus the queries.
+  const [domain, products, collections, pages, history, rum, runsToday, plan, altTextAudit] = await Promise.all([
+    getShopHost(admin, shop),
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },
@@ -165,6 +225,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // inviting a click the server would reject.
     countPageSpeedRunsToday(db, shop),
     getShopPlan(db, shop),
+    // App-native alt-text coverage — replaces the Lighthouse image-alt trigger
+    // (which never fires on Shopify storefronts). Best-effort: a failure must
+    // not sink the whole page, so it degrades to null.
+    computeAltTextAudit(db, admin, shop).catch(() => null),
   ]);
 
   // Theme-editor deep link for enabling the RUM app embed — house pattern from
@@ -193,6 +257,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     runsToday,
     dailyLimit: getDailyPageSpeedRunsLimit(plan),
     activeAudit,
+    altTextAudit,
   });
 };
 
@@ -269,6 +334,17 @@ type MatchAltImagesResult =
 /** Response of the `generateAltText` intent (alt-text bridge, plan §7). */
 type GenerateAltTextResult =
   | { ok: true; altText: string }
+  | { ok: false; error: string };
+
+/**
+ * PROBE (accessibility plan §3.3): response of the `debugRawPsi` intent — the
+ * complete raw PSI answer plus its top-level category keys, so we can check
+ * whether Google ships an unrequested `agentic-browsing` category. Posted from
+ * the dev-only PageSpeed probe in Settings (SettingsPageSpeedProbeTab).
+ * Temporary — remove with §3.3.
+ */
+type DebugRawPsiResult =
+  | { ok: true; categories: string[]; raw: unknown }
   | { ok: false; error: string };
 
 /**
@@ -489,6 +565,30 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
       .catch(() => {});
 
     return json<GenerateAltTextResult>({ ok: true, altText });
+  }
+
+  // PROBE (accessibility plan §3.3): dump the complete, unparsed PSI response so
+  // the merchant can inspect — via one button — whether Google ships an
+  // `agentic-browsing` category we never requested. Bypasses cache and parsing
+  // and writes NO history row (so it doesn't count against the daily budget),
+  // but it DOES spend one Google PSI request. Temporary — remove with §3.3.
+  if (intent === "debugRawPsi") {
+    const rawUrl = getFormString(form, "url").trim();
+    const strategy: PageSpeedStrategy = getFormString(form, "strategy") === "desktop" ? "desktop" : "mobile";
+    const domain = await getShopHost(admin, shop);
+    const url = rawUrl.startsWith("/") ? `https://${domain}${rawUrl}` : rawUrl;
+    const allowedHosts = Array.from(new Set([domain, shop].filter(Boolean)));
+    if (!url || !isAllowedAuditUrl(url, allowedHosts)) {
+      return json<DebugRawPsiResult>({ ok: false, error: "invalidUrl" }, { status: 400 });
+    }
+    const locale = await getShopLanguage(db, shop);
+    try {
+      const raw = await fetchRawPageSpeedInsights(url, strategy, locale);
+      const categories = Object.keys((raw as any)?.lighthouseResult?.categories ?? {});
+      return json<DebugRawPsiResult>({ ok: true, categories, raw });
+    } catch (err: any) {
+      return json<DebugRawPsiResult>({ ok: false, error: err?.message || "failed" }, { status: 502 });
+    }
   }
 
   if (intent !== "runAudit") {
@@ -1453,6 +1553,7 @@ function QualityIssueRow({
   tableRowsTruncatedLabel,
   generateAltTextLabel,
   altBridge,
+  screenshot,
 }: {
   issue: QualityIssue;
   open: boolean;
@@ -1462,6 +1563,8 @@ function QualityIssueRow({
   tableRowsTruncatedLabel: string;
   generateAltTextLabel: string;
   altBridge?: AltTextBridgeState;
+  /** Full-page screenshot for element thumbnail crops (null when unavailable). */
+  screenshot: PageSpeedScreenshot | null;
 }) {
   // image-alt keeps its flat list so the alt-text bridge button stays; every
   // other finding with a details table shows the richer table instead of the
@@ -1493,14 +1596,18 @@ function QualityIssueRow({
             {showTable && (
               <FindingTable
                 table={issue.table!}
-                screenshot={null}
+                screenshot={screenshot}
                 truncatedLabel={tableRowsTruncatedLabel}
               />
             )}
             {!showTable && issue.items.length > 0 && (
               <BlockStack gap="300">
                 {issue.items.map((item, i) => (
-                  <BlockStack key={i} gap="050">
+                  <InlineStack key={i} gap="200" blockAlign="start" wrap={false}>
+                    {/* Element thumbnail crop, when the node maps into the
+                        full-page screenshot (e.g. the flagged image of image-alt). */}
+                    {item.rect && <ElementThumb screenshot={screenshot} rect={item.rect} />}
+                  <BlockStack gap="050">
                     {item.selector && <span style={CODE_TEXT_STYLE}>{item.selector}</span>}
                     {item.snippet && (
                       <span
@@ -1566,6 +1673,7 @@ function QualityIssueRow({
                       );
                     })()}
                   </BlockStack>
+                  </InlineStack>
                 ))}
                 {issue.itemTotal > issue.items.length && (
                   <Text as="p" variant="bodySm" tone="subdued">
@@ -1601,6 +1709,7 @@ function QualityFindings({
   onToggle,
   labels,
   altBridge,
+  screenshot,
 }: {
   /** Automated (non-manual) findings, already filtered. */
   issues: QualityIssue[];
@@ -1630,6 +1739,8 @@ function QualityFindings({
   };
   /** Alt-text bridge (plan §7) — only the accessibility tab passes one. */
   altBridge?: AltTextBridgeState;
+  /** Full-page screenshot for element thumbnail crops (null when unavailable). */
+  screenshot: PageSpeedScreenshot | null;
 }) {
   const manualKey = `${keyPrefix}-${MANUAL_FINDING_ID}`;
   const manualOpen = openFindings.has(manualKey);
@@ -1686,6 +1797,7 @@ function QualityFindings({
                       tableRowsTruncatedLabel={labels.tableRowsTruncated}
                       generateAltTextLabel={labels.generateAltText}
                       altBridge={altBridge}
+                      screenshot={screenshot}
                     />
                   );
                 })}
@@ -1833,7 +1945,7 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit } =
+  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit, altTextAudit } =
     useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
@@ -2599,6 +2711,11 @@ export default function SeoPerformance() {
                             .replace("{url}", displayPath(result.url))
                             .replace("{strategy}", strategyLabel(result.strategy))
                             .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                          {/* PROBE (accessibility plan §5.1): scan duration to the
+                              right of the timestamp. Absent on runs stored before
+                              this probe. Temporary — remove with §5.1. */}
+                          {result.scanDurationMs != null &&
+                            ` · Scandauer: ${(result.scanDurationMs / 1000).toFixed(1)} s`}
                         </Text>
                         {result.finalUrl && (
                           <Text as="p" variant="bodySm" tone="caution">
@@ -2908,6 +3025,62 @@ export default function SeoPerformance() {
                         <Banner tone="info">
                           <Text as="p" variant="bodyMd">{p.a11y.disclaimer}</Text>
                         </Banner>
+                        {/* App-native alt-text coverage (plan §7): warns from our
+                            own data because Lighthouse never flags missing alt on
+                            Shopify (empty alt="" passes axe-core). Two axes:
+                            primary-language gaps and per-foreign-locale gaps. */}
+                        {altTextAudit && (
+                          <BlockStack gap="200">
+                            <Text as="h3" variant="headingSm" tone="subdued">{p.a11y.altAudit.heading}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">{p.a11y.altAudit.intro}</Text>
+                            {altTextAudit.totalImages === 0 ? (
+                              <Text as="p" variant="bodySm" tone="subdued">{p.a11y.altAudit.noImages}</Text>
+                            ) : (
+                              <BlockStack gap="300">
+                                {altTextAudit.missingPrimary > 0 ? (
+                                  <Banner tone="warning">
+                                    <Text as="p" variant="bodyMd">
+                                      {p.a11y.altAudit.primaryWarning
+                                        .replace("{missing}", String(altTextAudit.missingPrimary))
+                                        .replace("{total}", String(altTextAudit.totalImages))
+                                        .replace("{locale}", altTextAudit.primaryLocale)}
+                                    </Text>
+                                  </Banner>
+                                ) : (
+                                  <Banner tone="success">
+                                    <Text as="p" variant="bodyMd">
+                                      {p.a11y.altAudit.allGood.replace("{total}", String(altTextAudit.totalImages))}
+                                    </Text>
+                                  </Banner>
+                                )}
+                                {altTextAudit.foreign.some((f) => f.missing > 0) && (
+                                  <Banner tone="warning">
+                                    <BlockStack gap="100">
+                                      <Text as="p" variant="bodyMd">{p.a11y.altAudit.foreignWarning}</Text>
+                                      <BlockStack gap="050">
+                                        {altTextAudit.foreign
+                                          .filter((f) => f.missing > 0)
+                                          .map((f) => (
+                                            <Text as="p" key={f.locale} variant="bodySm">
+                                              {p.a11y.altAudit.foreignLine
+                                                .replace("{name}", f.name)
+                                                .replace("{missing}", String(f.missing))}
+                                            </Text>
+                                          ))}
+                                      </BlockStack>
+                                    </BlockStack>
+                                  </Banner>
+                                )}
+                                <InlineStack>
+                                  <Button url="/app/products" variant="plain">
+                                    {p.a11y.altAudit.manageAction}
+                                  </Button>
+                                </InlineStack>
+                              </BlockStack>
+                            )}
+                            <Divider />
+                          </BlockStack>
+                        )}
                         <QualityFindings
                           issues={a11yAutomated}
                           manualIssues={a11yManual}
@@ -2920,6 +3093,7 @@ export default function SeoPerformance() {
                           onToggle={toggleFinding}
                           labels={{ ...qualityFindingLabels, noIssues: p.a11y.noIssues }}
                           altBridge={altTextBridge}
+                          screenshot={cropSource}
                         />
                       </>
                     )}
@@ -2947,6 +3121,7 @@ export default function SeoPerformance() {
                           openFindings={openFindings}
                           onToggle={toggleFinding}
                           labels={{ ...qualityFindingLabels, noIssues: p.bestPractices.noIssues }}
+                          screenshot={cropSource}
                         />
                       </>
                     )}

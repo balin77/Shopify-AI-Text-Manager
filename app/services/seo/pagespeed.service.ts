@@ -60,7 +60,13 @@ export const PAGESPEED_CACHE_TTL_MS = 5 * 60 * 1000;
 const HISTORY_KEEP_PER_TARGET = 10;
 
 const PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-const PSI_TIMEOUT_MS = 60_000;
+// 90s, not 60s: with three categories a heavy storefront homepage was measured
+// at ~42s mobile (§5.1, 2026-07-24) — product/collection pages ~22-23s. PSI's
+// lab-run time swings with Google's server load, so a 42s homepage can spike
+// past 60s and get falsely aborted for a perfectly healthy page. 90s gives
+// ~2x headroom over the observed worst case; a genuinely hung request just
+// holds ~30s longer before aborting, which is the better trade.
+const PSI_TIMEOUT_MS = 90_000;
 
 /**
  * Thrown when Google PSI returns 429 (per-day or per-minute quota). Callers
@@ -166,8 +172,14 @@ export async function runPageSpeedAudit(opts: RunPageSpeedAuditOptions): Promise
   }
 
   const fetchedAt = new Date().toISOString();
+  // PROBE (accessibility plan §5.1): time the PSI round-trip so the UI can show
+  // "Scandauer" and we can see whether three categories push runs toward
+  // PSI_TIMEOUT_MS. Persisted into the result JSON. Temporary — remove with §5.1.
+  const scanStartedMs = Date.now();
   const raw = await fetchPageSpeedInsights(url, strategy, locale);
+  const scanDurationMs = Date.now() - scanStartedMs;
   const result = parsePageSpeedResponse(raw, url, strategy, fetchedAt);
+  result.scanDurationMs = scanDurationMs;
 
   await db.seoPageSpeedAudit.create({
     data: {
@@ -232,6 +244,21 @@ async function fetchPageSpeedInsights(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * PROBE (accessibility plan §3.3): return the complete, unparsed PSI response
+ * for one (url, strategy) so the UI can dump it to a file and we can check
+ * whether Google ships an `agentic-browsing` category we never asked for. Same
+ * categories as a real run. Bypasses cache/DB and spends one Google PSI
+ * request. Temporary — remove once §3.3 is resolved.
+ */
+export async function fetchRawPageSpeedInsights(
+  url: string,
+  strategy: PageSpeedStrategy,
+  locale?: string,
+): Promise<unknown> {
+  return fetchPageSpeedInsights(url, strategy, locale);
 }
 
 async function pruneHistory(db: any, shop: string, url: string, strategy: PageSpeedStrategy): Promise<void> {
@@ -433,7 +460,10 @@ function parsePageSpeedResponseInner(
   );
   const passedAudits = extractPassedAudits(audits, categories);
   const fieldData = extractFieldData(r);
-  const quality = extractQuality(lighthouseResult, audits);
+  // Pass the full-page-screenshot node map so accessibility/best-practices
+  // findings (e.g. color-contrast) carry element rects for the same thumbnail
+  // crops the performance findings show.
+  const quality = extractQuality(lighthouseResult, audits, nodesMap);
 
   const base: PageSpeedAuditResult = {
     url,
@@ -539,7 +569,11 @@ function extractCategoryScore(category: any): number | null {
  * categories were requested (legacy empty state, accessibility plan §3.8).
  * Defensive like the rest of the parser: must never throw.
  */
-function extractQuality(lighthouseResult: any, audits: Record<string, any>): QualityResult | undefined {
+function extractQuality(
+  lighthouseResult: any,
+  audits: Record<string, any>,
+  nodesMap: Record<string, RawNodeRect> | null,
+): QualityResult | undefined {
   try {
     const categories: any = lighthouseResult?.categories ?? {};
     const a11yCategory = categories?.accessibility;
@@ -547,8 +581,8 @@ function extractQuality(lighthouseResult: any, audits: Record<string, any>): Qua
     if (!a11yCategory && !bpCategory) return undefined;
 
     const groupTitles = resolveGroupTitles(lighthouseResult);
-    const a11y = extractCategoryBuckets(a11yCategory, audits, groupTitles);
-    const bp = extractCategoryBuckets(bpCategory, audits, groupTitles);
+    const a11y = extractCategoryBuckets(a11yCategory, audits, groupTitles, nodesMap);
+    const bp = extractCategoryBuckets(bpCategory, audits, groupTitles, nodesMap);
     return {
       a11yScore: extractCategoryScore(a11yCategory),
       bestPracticesScore: extractCategoryScore(bpCategory),
@@ -616,6 +650,7 @@ function extractCategoryBuckets(
   category: any,
   audits: Record<string, any>,
   groupTitles: Record<string, string>,
+  nodesMap: Record<string, RawNodeRect> | null,
 ): {
   issues: QualityIssue[];
   total: number;
@@ -661,11 +696,12 @@ function extractCategoryBuckets(
       continue;
     }
 
-    const { items, itemTotal } = extractQualityIssueItems(audit.details);
+    const { items, itemTotal } = extractQualityIssueItems(audit.details, nodesMap);
     const description = typeof audit.description === "string" ? audit.description : undefined;
     // Richer than the flat items list: source location, console error text, CSP
-    // directive, etc. No nodesMap — quality findings carry no screenshot crops.
-    const table = manual ? undefined : extractTable(audit.details, null);
+    // directive, etc. nodesMap threaded through so node cells (e.g. the flagged
+    // elements of color-contrast) carry rects for the thumbnail crop.
+    const table = manual ? undefined : extractTable(audit.details, nodesMap);
     const issue: QualityIssue = {
       id,
       title,
@@ -730,7 +766,10 @@ function extractCategoryBuckets(
  * dropped — they would render as blank lines, and counting them would make
  * the truncation note claim elements the UI never had.
  */
-function extractQualityIssueItems(details: any): {
+function extractQualityIssueItems(
+  details: any,
+  nodesMap: Record<string, RawNodeRect> | null,
+): {
   items: QualityIssue["items"];
   itemTotal: number;
 } {
@@ -747,7 +786,11 @@ function extractQualityIssueItems(details: any): {
     const url =
       typeof item?.url === "string" && item.url ? item.url : extractSrcFromSnippet(rawSnippet);
     if (url) entry.url = url;
-    if (entry.selector || entry.snippet || entry.url) entries.push(entry);
+    // Element rect for the thumbnail crop, when a node maps into the full-page
+    // screenshot (same resolver the performance findings use).
+    const rect = nodesMap && item?.node ? resolveNodeRect(item.node, nodesMap) : null;
+    if (rect) entry.rect = rect;
+    if (entry.selector || entry.snippet || entry.url || entry.rect) entries.push(entry);
   }
   return { items: entries.slice(0, MAX_QUALITY_ISSUE_ITEMS), itemTotal: entries.length };
 }

@@ -453,6 +453,246 @@ export async function assignKeyword(
   });
 }
 
+// ── Bulk assignment (PLAN_KEYWORDS_UI_REWORK.md §4.1) ───────────────────────
+
+export interface AssignManyTarget {
+  resourceType: KeywordResourceType;
+  resourceId: string;
+}
+export type AssignManySkipReason = "limitReached" | "primaryExists" | "duplicate";
+export interface AssignManySkip {
+  keywordId: string;
+  resourceId: string;
+  reason: AssignManySkipReason;
+}
+export interface AssignManyResult {
+  applied: number;
+  skipped: AssignManySkip[];
+}
+
+/**
+ * PURE planner for ONE (item, locale) bucket — the piece that makes the 5er
+ * limit + one-primary rule testable and lets the dryRun preview and the real
+ * write path share the same accounting. Given the item's CURRENT (item, locale)
+ * assignments (`siblings`) it simulates assigning `keywords` in order, tracking
+ * a working keyword→role set and a running count so the Nth add that would
+ * exceed MAX_KEYWORDS_PER_ITEM is skipped `limitReached`.
+ *
+ * Mirrors assignKeyword's invariants:
+ *  - already present + same role → `duplicate`;
+ *  - already present as secondary, requested primary → promotion (may demote a
+ *    different existing primary, subject to `demoteExisting`), no count change;
+ *  - new keyword over the cap → `limitReached`;
+ *  - new primary while a different primary exists → `primaryExists` (skip) or,
+ *    with `demoteExisting`, a `demote: true` apply that flips the old primary;
+ *  - only ONE primary ever lives in the working set.
+ */
+export function planItemAssignments(input: {
+  resourceId: string;
+  keywords: { keywordId: string; role: KeywordRole }[];
+  siblings: { keywordId: string; role: KeywordRole }[];
+  demoteExisting: boolean;
+}): {
+  applies: { keywordId: string; role: KeywordRole; demote: boolean }[];
+  skipped: AssignManySkip[];
+} {
+  const { resourceId, keywords, siblings, demoteExisting } = input;
+  const working = new Map<string, KeywordRole>();
+  for (const s of siblings) working.set(s.keywordId, s.role);
+  let count = working.size;
+
+  const applies: { keywordId: string; role: KeywordRole; demote: boolean }[] = [];
+  const skipped: AssignManySkip[] = [];
+
+  const currentPrimaryId = (): string | undefined => {
+    for (const [id, role] of working) if (role === "primary") return id;
+    return undefined;
+  };
+
+  for (const req of keywords) {
+    const self = working.get(req.keywordId);
+
+    if (self !== undefined) {
+      // Already assigned to this item/locale.
+      if (self === req.role) {
+        skipped.push({ keywordId: req.keywordId, resourceId, reason: "duplicate" });
+        continue;
+      }
+      if (req.role === "primary") {
+        // Promotion (self is currently secondary) — may displace a different
+        // existing primary, same rule as the new-primary branch. No count change.
+        const existing = currentPrimaryId();
+        if (existing && existing !== req.keywordId) {
+          if (!demoteExisting) {
+            skipped.push({ keywordId: req.keywordId, resourceId, reason: "primaryExists" });
+            continue;
+          }
+          working.set(existing, "secondary");
+          applies.push({ keywordId: req.keywordId, role: "primary", demote: true });
+        } else {
+          applies.push({ keywordId: req.keywordId, role: "primary", demote: false });
+        }
+        working.set(req.keywordId, "primary");
+      } else {
+        // Demotion (self is currently primary → secondary). No count change.
+        applies.push({ keywordId: req.keywordId, role: "secondary", demote: false });
+        working.set(req.keywordId, "secondary");
+      }
+      continue;
+    }
+
+    // New keyword for this item/locale.
+    if (count >= MAX_KEYWORDS_PER_ITEM) {
+      skipped.push({ keywordId: req.keywordId, resourceId, reason: "limitReached" });
+      continue;
+    }
+    if (req.role === "primary") {
+      const existing = currentPrimaryId();
+      if (existing) {
+        if (!demoteExisting) {
+          skipped.push({ keywordId: req.keywordId, resourceId, reason: "primaryExists" });
+          continue;
+        }
+        working.set(existing, "secondary");
+        applies.push({ keywordId: req.keywordId, role: "primary", demote: true });
+      } else {
+        applies.push({ keywordId: req.keywordId, role: "primary", demote: false });
+      }
+      working.set(req.keywordId, "primary");
+    } else {
+      applies.push({ keywordId: req.keywordId, role: "secondary", demote: false });
+      working.set(req.keywordId, "secondary");
+    }
+    count += 1;
+  }
+
+  return { applies, skipped };
+}
+
+/**
+ * Assign several keywords to several items in one action (plan §4.1). Plans the
+ * writes with `planItemAssignments` (per (target, locale) bucket — a keyword
+ * only competes with same-locale siblings on that item) for a correct
+ * cumulative-limit preview, then — unless `dryRun` — executes each planned
+ * apply through `assignKeyword`, whose serializable transaction re-checks every
+ * invariant so the real path stays race-safe and consistent with the AI-apply
+ * path. Hard aborts become a per-pair skip report instead.
+ */
+export async function assignMany(
+  db: PrismaClient,
+  shop: string,
+  input: {
+    keywordIds: string[];
+    targets: AssignManyTarget[];
+    role: KeywordRole;
+    demoteExisting?: boolean;
+    dryRun?: boolean;
+  },
+): Promise<AssignManyResult> {
+  const role = input.role;
+  const demoteExisting = input.demoteExisting ?? false;
+
+  // 1. Load the keyword rows; drop unknown/foreign ids (keep requested order).
+  const keywordRows = await db.seoKeyword.findMany({
+    where: { shop, id: { in: input.keywordIds } },
+    select: { id: true, keyword: true, locale: true },
+  });
+  const keywordById = new Map(keywordRows.map((k) => [k.id, k]));
+  const validKeywordIds = input.keywordIds.filter((id) => keywordById.has(id));
+  if (validKeywordIds.length === 0 || input.targets.length === 0) {
+    return { applied: 0, skipped: [] };
+  }
+
+  // 2. Load every existing assignment for the target items in ONE query, and
+  //    index siblings by (resourceId, keyword.locale).
+  const targetIds = Array.from(new Set(input.targets.map((t) => t.resourceId)));
+  const existing = await db.seoKeywordAssignment.findMany({
+    where: { shop, resourceId: { in: targetIds } },
+    include: { keyword: { select: { id: true, locale: true } } },
+  });
+  const siblingKey = (resourceId: string, locale: string) => `${resourceId}::${locale}`;
+  const siblingIndex = new Map<string, { keywordId: string; role: KeywordRole }[]>();
+  for (const a of existing) {
+    const key = siblingKey(a.resourceId, a.keyword.locale);
+    let bucket = siblingIndex.get(key);
+    if (!bucket) {
+      bucket = [];
+      siblingIndex.set(key, bucket);
+    }
+    bucket.push({ keywordId: a.keyword.id, role: a.role as KeywordRole });
+  }
+
+  // 3. Plan per (target, locale) bucket.
+  interface PlannedApply {
+    target: AssignManyTarget;
+    keywordId: string;
+    keyword: string;
+    locale: string;
+    role: KeywordRole;
+    demote: boolean;
+  }
+  const plannedApplies: PlannedApply[] = [];
+  const skipped: AssignManySkip[] = [];
+
+  for (const target of input.targets) {
+    const byLocale = new Map<string, { keywordId: string; role: KeywordRole }[]>();
+    for (const id of validKeywordIds) {
+      const kw = keywordById.get(id)!;
+      let bucket = byLocale.get(kw.locale);
+      if (!bucket) {
+        bucket = [];
+        byLocale.set(kw.locale, bucket);
+      }
+      bucket.push({ keywordId: id, role });
+    }
+    for (const [locale, requested] of byLocale) {
+      const plan = planItemAssignments({
+        resourceId: target.resourceId,
+        keywords: requested,
+        siblings: siblingIndex.get(siblingKey(target.resourceId, locale)) ?? [],
+        demoteExisting,
+      });
+      skipped.push(...plan.skipped);
+      for (const a of plan.applies) {
+        plannedApplies.push({
+          target,
+          keywordId: a.keywordId,
+          keyword: keywordById.get(a.keywordId)!.keyword,
+          locale,
+          role: a.role,
+          demote: a.demote,
+        });
+      }
+    }
+  }
+
+  // 4. dryRun: predicted counts only, no writes.
+  if (input.dryRun) {
+    return { applied: plannedApplies.length, skipped };
+  }
+
+  // 5. Real path: each apply through assignKeyword (race-safe re-check).
+  let applied = 0;
+  for (const p of plannedApplies) {
+    const res = await assignKeyword(db, shop, {
+      resourceType: p.target.resourceType,
+      resourceId: p.target.resourceId,
+      keyword: p.keyword,
+      locale: p.locale,
+      role: p.role,
+      demoteExisting: p.demote,
+    });
+    if (res.ok) {
+      applied += 1;
+    } else if (res.reason === "tooMany") {
+      skipped.push({ keywordId: p.keywordId, resourceId: p.target.resourceId, reason: "limitReached" });
+    } else {
+      skipped.push({ keywordId: p.keywordId, resourceId: p.target.resourceId, reason: "primaryExists" });
+    }
+  }
+  return { applied, skipped };
+}
+
 /** All assignments of a shop (keywords tab listing), newest keyword first. */
 export async function listAssignments(
   db: PrismaClient,
@@ -604,6 +844,7 @@ export function findCannibalizationConflicts(
 export interface KeywordGroupRow {
   id: string;
   name: string;
+  locale: string;
   description: string | null;
   keywordCount: number;
 }
@@ -618,15 +859,20 @@ export interface GroupKeywordRow {
   assignmentCount: number;
 }
 
-export async function listGroups(db: PrismaClient, shop: string): Promise<KeywordGroupRow[]> {
+export async function listGroups(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<KeywordGroupRow[]> {
   const groups = await db.seoKeywordGroup.findMany({
-    where: { shop },
+    where: { shop, locale },
     orderBy: { name: "asc" },
     include: { _count: { select: { memberships: true } } },
   });
   return groups.map((g) => ({
     id: g.id,
     name: g.name,
+    locale: g.locale,
     description: g.description,
     keywordCount: g._count.memberships,
   }));
@@ -638,17 +884,18 @@ export async function createGroup(
   db: PrismaClient,
   shop: string,
   name: string,
+  locale = "",
   description?: string,
 ): Promise<CreateGroupResult> {
   const trimmed = name.trim();
   const existing = await db.seoKeywordGroup.findUnique({
-    where: { shop_name: { shop, name: trimmed } },
+    where: { shop_name_locale: { shop, name: trimmed, locale } },
     select: { id: true },
   });
   if (existing) return { ok: false, reason: "duplicateName" };
   try {
     const created = await db.seoKeywordGroup.create({
-      data: { shop, name: trimmed, description: description?.trim() || null },
+      data: { shop, name: trimmed, locale, description: description?.trim() || null },
     });
     return { ok: true, id: created.id };
   } catch (err) {
@@ -687,9 +934,10 @@ export async function renameGroup(
   }
 }
 
-/** Delete a group — memberships cascade, keywords survive (plan §5.1: delete
- *  cascades memberships, not keywords). Fully orphaned keywords (no
- *  assignments, no other groups) are cleaned up so nothing invisible stays. */
+/** Delete a group — the group now OWNS its keywords (§3.2). Deleting it removes
+ *  every member keyword that is not also in another group, regardless of item
+ *  assignments; those assignments (and their snapshots) cascade via
+ *  onDelete: Cascade. A keyword that also belongs to another group survives. */
 export async function deleteGroup(db: PrismaClient, shop: string, groupId: string): Promise<void> {
   await db.$transaction(async (tx) => {
     const group = await tx.seoKeywordGroup.findFirst({ where: { id: groupId, shop }, select: { id: true } });
@@ -706,7 +954,6 @@ export async function deleteGroup(db: PrismaClient, shop: string, groupId: strin
         where: {
           id: { in: memberKeywordIds },
           shop,
-          assignments: { none: {} },
           groups: { none: {} },
         },
       });
@@ -739,6 +986,64 @@ export async function getGroupKeywords(
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
 }
 
+/** How many of a locale's keywords belong to no group at all (§3.2 ungrouped
+ *  bucket count — drives the sidebar badge without loading the rows). */
+export async function countUngrouped(db: PrismaClient, shop: string, locale = ""): Promise<number> {
+  return db.seoKeyword.count({ where: { shop, locale, groups: { none: {} } } });
+}
+
+/** The ungrouped keywords for one locale (§3.2), same row shape + sort as
+ *  getGroupKeywords — the "Ungrouped" pseudo-group's keyword list. */
+export async function listUngrouped(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<GroupKeywordRow[]> {
+  const keywords = await db.seoKeyword.findMany({
+    where: { shop, locale, groups: { none: {} } },
+    include: { _count: { select: { assignments: true } } },
+  });
+  return keywords
+    .map((k) => ({
+      keywordId: k.id,
+      keyword: k.keyword,
+      locale: k.locale,
+      priority: k.priority,
+      intent: k.intent,
+      assignmentCount: k._count.assignments,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
+}
+
+/** How many keywords a locale has in total (§2.1 "Alle" pseudo-group badge —
+ *  drives the sidebar count without loading the rows). */
+export async function countAllKeywords(db: PrismaClient, shop: string, locale = ""): Promise<number> {
+  return db.seoKeyword.count({ where: { shop, locale } });
+}
+
+/** Every keyword of one locale (§2.1 "Alle" pseudo-group), same row shape +
+ *  sort as getGroupKeywords/listUngrouped. */
+export async function listAllKeywords(
+  db: PrismaClient,
+  shop: string,
+  locale = "",
+): Promise<GroupKeywordRow[]> {
+  const keywords = await db.seoKeyword.findMany({
+    where: { shop, locale },
+    include: { _count: { select: { assignments: true } } },
+  });
+  return keywords
+    .map((k) => ({
+      keywordId: k.id,
+      keyword: k.keyword,
+      locale: k.locale,
+      priority: k.priority,
+      intent: k.intent,
+      assignmentCount: k._count.assignments,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
+}
+
 export interface GroupImportEntry {
   keyword: string;
   locale?: string;
@@ -748,11 +1053,13 @@ export interface GroupImportEntry {
 
 /**
  * Upsert keywords (by (shop, keyword, locale)) and put them into a group —
- * the CSV importer's write path, also used for single manual adds. Explicit
- * priority/intent from the file win over an existing keyword's values;
- * omitted ones (undefined priority / null intent) leave the existing row
- * untouched. Returns how many keywords were newly added to the group vs.
- * already members.
+ * the CSV importer's write path, also used for single manual adds. The locale
+ * is OWNED by the group (§3.1 invariant: membership.keyword.locale ===
+ * group.locale), so `entry.locale` is IGNORED — every keyword is created under
+ * the group's locale. Explicit priority/intent from the file win over an
+ * existing keyword's values; omitted ones (undefined priority / null intent)
+ * leave the existing row untouched. Returns how many keywords were newly added
+ * to the group vs. already members. A missing/foreign group is a no-op.
  *
  * Batched (review L13): a 2000-row import used to be ~6000 sequential
  * queries inside a synchronous Remix action — now it's a handful of
@@ -767,11 +1074,17 @@ export async function addKeywordsToGroup(
 ): Promise<{ added: number; alreadyInGroup: number }> {
   // Normalize + dedupe within the request by (keyword, locale) — later
   // duplicates win so an explicit priority late in the file still applies.
+  const group = await db.seoKeywordGroup.findFirst({
+    where: { id: groupId, shop },
+    select: { locale: true },
+  });
+  if (!group) return { added: 0, alreadyInGroup: 0 };
   const byKey = new Map<string, { keyword: string; locale: string; priority?: number; intent?: string | null }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
     if (!keyword) continue;
-    const locale = entry.locale ?? "";
+    // The locale is owned by the group, not the entry (invariant).
+    const locale = group.locale;
     byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority, intent: entry.intent });
   }
   if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };

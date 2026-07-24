@@ -9,33 +9,23 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Card,
-  BlockStack,
-  InlineStack,
-  Text,
-  Badge,
-  Button,
-  TextField,
-  Select,
-  Banner,
-  IndexTable,
-  Autocomplete,
-  Modal,
-  Checkbox,
-  ProgressBar,
-} from "@shopify/polaris";
+import { useEffect, useRef, useState } from "react";
+import { BlockStack, Banner, Text, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
-import { scoreTone } from "../utils/seo-score";
+import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
+import { HelpTooltip } from "../components/HelpTooltip";
+import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { LibraryTab } from "../components/seo/keywords/LibraryTab";
+import { AssignmentsTab } from "../components/seo/keywords/AssignmentsTab";
 import {
   analyzeOnPage,
   listAssignments,
   assignKeyword,
+  assignMany,
   promoteAssignment,
   removeAssignment,
   listGroups,
@@ -46,6 +36,10 @@ import {
   findPrimaryElsewhere,
   findCannibalizationConflicts,
   getGroupKeywords,
+  countAllKeywords,
+  listAllKeywords,
+  countUngrouped,
+  listUngrouped,
   addKeywordsToGroup,
   removeKeywordFromGroup,
   setKeywordPriority,
@@ -55,32 +49,22 @@ import {
   TRANSLATED_CONTENT_KEYS,
   type KeywordResourceType,
   type KeywordRole,
-  type DensityBand,
   type TranslationRow,
-  type KeywordGroupRow,
   type GroupKeywordRow,
+  type AssignManyTarget,
+  type AssignManySkip,
 } from "../services/seo/keywords.service";
 import { parseKeywordsCsv } from "../services/seo/keywords-csv";
 // Loader-only import (server module) — tree-shaken from the client bundle.
 import { getSuggestionsAvailability } from "../services/seo/keyword-suggestions.service";
-// Client-safe shared module — NOT keyword-distribution.service, which pulls
-// the prompt sanitizer → logger.server into the browser bundle.
-import { estimateDistributionCost } from "../services/seo/keyword-distribution.shared";
 import type { DistributionSuggestResult } from "./api-ai-handlers/keyword-distribution.handler";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getFormString } from "../utils/form-data.utils";
 
-/** Items shown per type in the add-keyword picker. */
-const PICKER_CAP = 250;
-
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
 
-interface PickerItem {
-  id: string;
-  title: string;
-}
 interface ItemContent {
   title: string;
   seoTitle: string;
@@ -253,21 +237,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Intent classification backlog (§7.2) — drives the classify button label.
   const unclassifiedCount = await db.seoKeyword.count({ where: { shop, intent: null } });
 
-  // Lightweight per-type pickers for the add form (capped).
-  const [products, collections, articles, pages] = await Promise.all([
-    db.product.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.collection.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.article.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-    db.page.findMany({ where: { shop }, select: { id: true, title: true }, orderBy: { title: "asc" }, take: PICKER_CAP }),
-  ]);
-
-  const pickers: Record<KeywordResourceType, PickerItem[]> = {
-    Product: products,
-    Collection: collections,
-    Article: articles,
-    Page: pages,
-  };
-
   // Locale options for the add-form's Select: primary first (value "" — the
   // SeoKeyword convention), then published secondaries by their Shopify code.
   const localeOptions = [
@@ -285,20 +254,76 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const isPro = meetsPlan((settingsRow?.subscriptionPlan || "free") as Plan, "pro");
 
-  const groups = await listGroups(db, shop);
   const url = new URL(request.url);
+  const loc = url.searchParams.get("loc") ?? "";
   const selectedGroupId = url.searchParams.get("group") || "";
+
+  // Pseudo-group sentinels (§2.1): "Alle" and "Ohne Gruppe" are not real rows —
+  // they are read-only views over the active locale's keywords. They are NOT
+  // groups, so the group-locale lookup below is skipped for them (they use loc).
+  const isPseudoGroup = selectedGroupId === "__all__" || selectedGroupId === "__ungrouped__";
+
+  // A ?group= deeplink implies the active language (§8.6): the group carries
+  // its own locale, and a bookmarked group must land in THAT language even if
+  // ?loc= says otherwise. Resolve the group's locale up front so the listGroups
+  // call below lists the right language's groups.
+  let groupLocale: string | null = null;
+  if (selectedGroupId && !isPseudoGroup) {
+    const g = await db.seoKeywordGroup.findFirst({
+      where: { id: selectedGroupId, shop },
+      select: { locale: true },
+    });
+    groupLocale = g ? g.locale : null;
+  }
+  const activeLocale = groupLocale ?? loc;
+
+  const groups = await listGroups(db, shop, activeLocale);
+
+  // Sidebar counts for the "Alle" / "Ohne Gruppe" pseudo-groups (§2.1), scoped
+  // to the active locale — badges without loading the rows.
+  const [allCount, ungroupedCount] = await Promise.all([
+    countAllKeywords(db, shop, activeLocale),
+    countUngrouped(db, shop, activeLocale),
+  ]);
+
   let groupDetail:
-    | { id: string; name: string; description: string | null; keywords: GroupKeywordRow[] }
+    | {
+        id: string;
+        name: string | null;
+        description: string | null;
+        locale: string;
+        keywords: GroupKeywordRow[];
+        pseudo: "all" | "ungrouped" | null;
+      }
     | null = null;
-  if (selectedGroupId) {
+  if (selectedGroupId === "__all__") {
+    groupDetail = {
+      id: "__all__",
+      name: null,
+      description: null,
+      locale: activeLocale,
+      keywords: await listAllKeywords(db, shop, activeLocale),
+      pseudo: "all",
+    };
+  } else if (selectedGroupId === "__ungrouped__") {
+    groupDetail = {
+      id: "__ungrouped__",
+      name: null,
+      description: null,
+      locale: activeLocale,
+      keywords: await listUngrouped(db, shop, activeLocale),
+      pseudo: "ungrouped",
+    };
+  } else if (selectedGroupId) {
     const g = groups.find((grp) => grp.id === selectedGroupId);
     if (g) {
       groupDetail = {
         id: g.id,
         name: g.name,
         description: g.description,
+        locale: g.locale,
         keywords: await getGroupKeywords(db, shop, g.id),
+        pseudo: null,
       };
     }
   }
@@ -331,15 +356,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  // Item counts per type: the distribution modal's cost preview needs the
-  // target-set size before anything runs.
-  const [productCount, collectionCount, articleCount, pageCount] = await Promise.all([
-    db.product.count({ where: { shop } }),
-    db.collection.count({ where: { shop } }),
-    db.article.count({ where: { shop } }),
-    db.page.count({ where: { shop } }),
-  ]);
-
   // Product facets for the distribution modal's optional target filter
   // (plan §5.4 — Product only; the handler filters server-side). Note: the
   // cached Product model has NO vendor column, so the plan's vendor facet is
@@ -357,8 +373,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     keywords,
-    pickers,
     localeOptions,
+    // Active locale for the Locale-Navbar highlight: a ?group= deeplink forces
+    // the group's own language, otherwise ?loc= (primary "" by default).
+    activeLocale,
     // Research panel: hl codes to offer (primary first, then secondaries).
     primaryLocaleCode: String(primaryLocale?.locale || "en"),
     // Integrated §6.1 spike: cached suggestqueries reachability verdict.
@@ -370,24 +388,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productTypes,
     isPro,
     groups,
+    allCount,
+    ungroupedCount,
     groupDetail,
     runningDistribution,
     distributionPreview,
     suggestTaskId,
-    itemCounts: {
-      Product: productCount,
-      Collection: collectionCount,
-      Article: articleCount,
-      Page: pageCount,
-    } as Record<KeywordResourceType, number>,
   });
 };
 
 type CsvErrorRow = { row: number; keyword: string; error: string };
 
-type ActionResult =
+export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
   | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  // Bulk assignment (plan §4.1): `applied` writes plus a per-pair skip report.
+  // `dryRun` echoes back so the client can tell a preview from a real apply.
+  | { ok: true; kind: "assigned"; applied: number; skipped: AssignManySkip[]; dryRun?: boolean }
   | { ok: false; error: "invalid" | "tooMany" | "duplicateName" | "csvEmpty" | "csvTooMany"; existingKeyword?: never }
   // A different keyword already holds the primary role for this (item, locale)
   // — the UI confirms the swap and re-submits with demoteExisting=true.
@@ -491,6 +508,49 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "saved" });
   }
 
+  // ── Bulk assignment (plan §4.1): several keywords × several items ──
+  if (actionType === "assignMany") {
+    const roleInput = getFormString(form, "role");
+    const role: KeywordRole = roleInput === "secondary" ? "secondary" : "primary";
+    const demoteExisting = getFormString(form, "demoteExisting") === "true";
+    const dryRun = getFormString(form, "dryRun") === "true";
+
+    let keywordIds: unknown;
+    let targets: unknown;
+    try {
+      keywordIds = JSON.parse(getFormString(form, "keywordIds"));
+      targets = JSON.parse(getFormString(form, "targets"));
+    } catch {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    if (
+      !Array.isArray(keywordIds) ||
+      !Array.isArray(targets) ||
+      keywordIds.length === 0 ||
+      targets.length === 0 ||
+      keywordIds.length > 500 ||
+      targets.length > 500 ||
+      !keywordIds.every((id) => typeof id === "string") ||
+      !targets.every(
+        (t): t is AssignManyTarget =>
+          !!t &&
+          typeof t === "object" &&
+          typeof (t as { resourceId?: unknown }).resourceId === "string" &&
+          RESOURCE_TYPES.includes((t as { resourceType?: KeywordResourceType }).resourceType as KeywordResourceType),
+      )
+    ) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const { applied, skipped } = await assignMany(db, session.shop, {
+      keywordIds: keywordIds as string[],
+      targets: targets as AssignManyTarget[],
+      role,
+      demoteExisting,
+      dryRun,
+    });
+    return json<ActionResult>({ ok: true, kind: "assigned", applied, skipped, dryRun });
+  }
+
   if (actionType === "deleteKeyword") {
     const id = getFormString(form, "id");
     if (id) await removeAssignment(db, session.shop, id);
@@ -520,7 +580,23 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (!name || name.length > 100) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    const result = await createGroup(db, session.shop, name, getFormString(form, "description"));
+    // Validate the posted locale against the shop's published locales, same as
+    // setKeyword/importCsv — "" (primary) is always accepted. Stops a crafted
+    // ?loc=/form value from creating a group under an unpublished locale that
+    // then has no Locale-Navbar tab (effectively invisible).
+    const localeInput = getFormString(form, "locale");
+    let locale = "";
+    if (localeInput) {
+      const shopLocales = await getCachedShopLocales(admin, session.shop);
+      const isPublishedSecondary = shopLocales.some(
+        (l: any) => !l.primary && l.published && l.locale === localeInput,
+      );
+      if (!isPublishedSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      locale = localeInput;
+    }
+    const result = await createGroup(db, session.shop, name, locale, getFormString(form, "description"));
     if (!result.ok) return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
     return json<ActionResult>({ ok: true, kind: "groupCreated" });
   }
@@ -566,37 +642,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
-  if (actionType === "addToGroup") {
-    const groupId = getFormString(form, "groupId");
-    const keyword = getFormString(form, "keyword").trim();
-    const localeInput = getFormString(form, "locale");
-    if (!groupId || !keyword || keyword.length > MAX_KEYWORD_LENGTH) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-    }
-    // Ownership check (review H1): a client-supplied groupId must never write
-    // into another shop's group — same guard as importCsv below.
-    const targetGroup = await db.seoKeywordGroup.findFirst({
-      where: { id: groupId, shop: session.shop },
-      select: { id: true },
-    });
-    if (!targetGroup) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-    }
-    let locale = "";
-    if (localeInput) {
-      const shopLocales = await getCachedShopLocales(admin, session.shop);
-      const isPublishedSecondary = shopLocales.some(
-        (l: any) => !l.primary && l.published && l.locale === localeInput,
-      );
-      if (!isPublishedSecondary) {
-        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-      }
-      locale = localeInput;
-    }
-    await addKeywordsToGroup(db, session.shop, groupId, [{ keyword, locale }]);
-    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
-  }
-
   // ── CSV import (plan §5.3): keyword[,priority][,intent][,locale] ──
   if (actionType === "importCsv") {
     const groupId = getFormString(form, "groupId");
@@ -623,11 +668,22 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (parsed.rows.length > MAX_CSV_ROWS) {
       return json<ActionResult>({ ok: false, error: "csvTooMany" }, { status: 400 });
     }
+    // Bulk-paste default priority (§2.1): the KeywordPaste box carries a
+    // Select whose value fills in rows that did NOT set an explicit priority
+    // column. An explicit per-row priority always wins; parseKeywordsCsv is
+    // untouched.
+    const defaultPriorityRaw = Number(getFormString(form, "defaultPriority"));
+    const defaultPriority = [1, 2, 3].includes(defaultPriorityRaw) ? defaultPriorityRaw : undefined;
     const { added, alreadyInGroup } = await addKeywordsToGroup(
       db,
       session.shop,
       groupId,
-      parsed.rows.map((r) => ({ keyword: r.keyword, locale: r.locale, priority: r.priority, intent: r.intent })),
+      parsed.rows.map((r) => ({
+        keyword: r.keyword,
+        locale: r.locale,
+        priority: r.priority ?? defaultPriority,
+        intent: r.intent,
+      })),
     );
     return json<ActionResult>({
       ok: true,
@@ -641,13 +697,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
 
-const DENSITY_TONE: Record<DensityBand, "success" | "warning" | "critical" | undefined> = {
-  ok: "success",
-  low: "warning",
-  high: "critical",
-  none: undefined,
-};
-
 /** Editor list route per resource type — target of the row's "open in editor" deep-link. */
 const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
   Product: "/app/products",
@@ -658,8 +707,8 @@ const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
 
 export default function SeoKeywords() {
   const data = useLoaderData<typeof loader>();
-  const { keywords, pickers, localeOptions } = data;
-  const { t } = useI18n();
+  const { keywords, localeOptions } = data;
+  const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
   const k = t.seo.keywordsPage;
@@ -667,18 +716,6 @@ export default function SeoKeywords() {
   const saveFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
 
-  const [type, setType] = useState<KeywordResourceType>("Product");
-  const [itemId, setItemId] = useState("");
-  // Text typed into the item Autocomplete's TextField — separate from itemId
-  // so the field can show a human-readable label while itemId stores the id.
-  const [itemInputValue, setItemInputValue] = useState("");
-  const [keyword, setKeywordInput] = useState("");
-  // "" = primary locale (default). Not reset after save, same as `type`, so
-  // tracking several keywords in a row for the same secondary locale is quick.
-  const [locale, setLocale] = useState("");
-  // Role for the add form (Phase 1): primary is the default; secondaries
-  // supplement it (max 5 keywords per item, enforced server-side).
-  const [role, setRole] = useState<KeywordRole>("primary");
   // Which row's action is in flight — the rowFetcher is shared across rows,
   // so this is what lets us spinner the right button and disable the rest.
   const [pendingRowId, setPendingRowId] = useState<string | null>(null);
@@ -691,9 +728,8 @@ export default function SeoKeywords() {
     if (saveFetcher.state !== "idle" || !saveFetcher.data) return;
     const data = saveFetcher.data;
     if (data.ok && data.kind === "saved") {
-      setKeywordInput("");
-      setItemId("");
-      setItemInputValue("");
+      // The inline "+ Keyword" controls own their own draft state and clear
+      // themselves on this success; the Shell only drops the confirm-flow ref.
       lastSubmitRef.current = null;
       return;
     }
@@ -753,14 +789,24 @@ export default function SeoKeywords() {
     if (rowFetcher.state === "idle") setPendingRowId(null);
   }, [rowFetcher.state]);
 
-  const handleSubmitKeyword = () => {
+  // Per-item inline add (§2.3): the AssignmentsTab's "+ Keyword" control drives
+  // this. Locale is fixed to the active language (the top dimension) — the
+  // per-form Select/Autocomplete of the old add-form is gone. Still routes
+  // through saveFetcher so the primaryExists-swap and cannibalization confirm
+  // effects above keep working unchanged.
+  const handleAddKeyword = (args: {
+    resourceType: KeywordResourceType;
+    resourceId: string;
+    keyword: string;
+    role: KeywordRole;
+  }) => {
     const payload: Record<string, string> = {
       actionType: "setKeyword",
-      resourceType: type,
-      resourceId: itemId,
-      keyword,
-      locale,
-      role,
+      resourceType: args.resourceType,
+      resourceId: args.resourceId,
+      keyword: args.keyword,
+      locale: data.activeLocale,
+      role: args.role,
     };
     lastSubmitRef.current = payload;
     saveFetcher.submit(payload, { method: "post" });
@@ -791,17 +837,19 @@ export default function SeoKeywords() {
   const groupFetcher = useFetcher<ActionResult>();
   const priorityFetcher = useFetcher<ActionResult>();
   const distFetcher = useFetcher<{ success: boolean; taskId?: string; error?: string; code?: string }>();
+  // Bulk assignMany (dry-run + real apply) for the unified assign panel (§4.1).
+  const assignFetcher = useFetcher<ActionResult>();
 
   const [newGroupName, setNewGroupName] = useState("");
-  const [groupKeywordInput, setGroupKeywordInput] = useState("");
-  const [groupKeywordLocale, setGroupKeywordLocale] = useState("");
-  const [csvText, setCsvText] = useState("");
-  const [showDistModal, setShowDistModal] = useState(false);
-  const [distTargetType, setDistTargetType] = useState<KeywordResourceType>("Product");
-  const [distMaxSecondaries, setDistMaxSecondaries] = useState("3");
-  // Optional Product facet filter (plan §5.4 modal) — "" = no filter.
-  // (productType only — the cached Product model has no vendor column.)
-  const [distFilterProductType, setDistFilterProductType] = useState("");
+  // Unified assign panel (Phase 4b): which keyword set is being assigned, and
+  // whether the modal is open. Opened from the three group flows.
+  const [assignPanelOpen, setAssignPanelOpen] = useState(false);
+  const [assignPanelKeywords, setAssignPanelKeywords] = useState<{ keywordId: string; keyword: string }[]>([]);
+  const openAssignPanel = (keywords: { keywordId: string; keyword: string }[]) => {
+    setAssignPanelKeywords(keywords);
+    setAssignPanelOpen(true);
+  };
+  const closeAssignPanel = () => setAssignPanelOpen(false);
   // Group rename + bulk priority (plan §5.1).
   const [renameValue, setRenameValue] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
@@ -814,8 +862,14 @@ export default function SeoKeywords() {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        if (groupId) next.set("group", groupId);
-        else next.delete("group");
+        if (groupId) {
+          next.set("group", groupId);
+          // Group detail lives in the Library tab — a deep group selection
+          // must land there even if the Assignments tab is currently active.
+          next.set("tab", "library");
+        } else {
+          next.delete("group");
+        }
         return next;
       },
       { preventScrollReset: true },
@@ -850,16 +904,36 @@ export default function SeoKeywords() {
   }, [runningDistId]);
 
   // A successful suggest/apply start also needs polling to kick in — the
-  // loader only knows about the task after the next revalidate.
+  // loader only knows about the task after the next revalidate. Starting an AI
+  // distribution also closes the assign panel (its onClose already fires, but
+  // this covers the apply-stage path that has no panel).
   useEffect(() => {
     if (distFetcher.state === "idle" && distFetcher.data?.success) {
-      setShowDistModal(false);
+      setAssignPanelOpen(false);
       revalidator.revalidate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [distFetcher.state, distFetcher.data]);
 
-  const startDistribution = () => {
+  // A real (non-dryRun) bulk assign closes the panel and refreshes counts;
+  // the panel itself shows the applied/skipped banner before the user closes.
+  useEffect(() => {
+    if (assignFetcher.state !== "idle" || !assignFetcher.data) return;
+    const d = assignFetcher.data;
+    if (d.ok && d.kind === "assigned" && !d.dryRun) {
+      revalidator.revalidate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignFetcher.state, assignFetcher.data]);
+
+  // AI distribution over an explicit item selection (§3): the assign panel
+  // hands us the chosen resourceIds + target type. targetType still selects the
+  // cache table for the batch; resourceIds narrow it to exactly those items.
+  const startDistribution = (opts: {
+    resourceIds: string[];
+    targetType: KeywordResourceType;
+    maxSecondaries: string;
+  }) => {
     if (!data.groupDetail) return;
     distFetcher.submit(
       {
@@ -867,11 +941,9 @@ export default function SeoKeywords() {
         contentType: "products",
         stage: "suggest",
         groupId: data.groupDetail.id,
-        targetType: distTargetType,
-        maxSecondaries: distMaxSecondaries,
-        ...(distTargetType === "Product" && distFilterProductType
-          ? { filterProductType: distFilterProductType }
-          : {}),
+        targetType: opts.targetType,
+        maxSecondaries: opts.maxSecondaries,
+        resourceIds: JSON.stringify(opts.resourceIds),
       },
       { method: "post", action: "/api/ai" },
     );
@@ -912,11 +984,6 @@ export default function SeoKeywords() {
     );
   };
 
-  const distCost = useMemo(() => {
-    if (!data.groupDetail) return null;
-    return estimateDistributionCost(data.groupDetail.keywords.length, data.itemCounts[distTargetType] ?? 0);
-  }, [data.groupDetail, data.itemCounts, distTargetType]);
-
   const priorityOptions = [
     { label: k.priority?.high || "1 — high", value: "1" },
     { label: k.priority?.medium || "2 — medium", value: "2" },
@@ -930,15 +997,18 @@ export default function SeoKeywords() {
     error?: "invalid" | "rateLimited" | "blocked";
   }>();
   const [seedInput, setSeedInput] = useState("");
-  const [seedHl, setSeedHl] = useState(data.primaryLocaleCode);
   const [selectedSuggestions, setSelectedSuggestions] = useState<Set<string>>(new Set());
   const [importGroupId, setImportGroupId] = useState("");
+
+  // Research language follows the global active locale (§2.1): no own Select —
+  // primary ("") falls back to the shop's primary Shopify code for the hl param.
+  const researchHl = data.activeLocale || data.primaryLocaleCode;
 
   const runResearch = (expandAlphabet: boolean) => {
     if (!seedInput.trim()) return;
     setSelectedSuggestions(new Set());
     suggestFetcher.submit(
-      { seed: seedInput, hl: seedHl, expandAlphabet: expandAlphabet ? "true" : "false" },
+      { seed: seedInput, hl: researchHl, expandAlphabet: expandAlphabet ? "true" : "false" },
       { method: "post", action: "/api/keyword-suggestions" },
     );
   };
@@ -954,34 +1024,21 @@ export default function SeoKeywords() {
 
   const importSelectedSuggestions = () => {
     if (!importGroupId || selectedSuggestions.size === 0) return;
-    // Reuse the CSV import path — the research locale becomes the keyword
-    // locale when it matches a published secondary; primary otherwise.
-    const isSecondary = localeOptions.some((l) => !l.primary && l.locale.toLowerCase() === seedHl.toLowerCase());
+    // Reuse the CSV import path. The keyword locale is OWNED by the target
+    // group now (§3.1), so the locale column is ignored server-side — but we
+    // still stamp the research locale for backward-compatible files.
+    const isSecondary = localeOptions.some((l) => !l.primary && l.locale.toLowerCase() === researchHl.toLowerCase());
     const csv =
       "keyword,locale\n" +
       Array.from(selectedSuggestions)
-        .map((s) => `"${s.replace(/"/g, '""')}",${isSecondary ? seedHl.toLowerCase() : ""}`)
+        .map((s) => `"${s.replace(/"/g, '""')}",${isSecondary ? researchHl.toLowerCase() : ""}`)
         .join("\n");
     groupFetcher.submit({ actionType: "importCsv", groupId: importGroupId, csv }, { method: "post" });
     setSelectedSuggestions(new Set());
   };
 
-  const hlOptions = useMemo(() => {
-    const codes = new Set<string>([data.primaryLocaleCode.toLowerCase()]);
-    for (const l of localeOptions) {
-      if (!l.primary && l.locale) codes.add(l.locale.toLowerCase());
-    }
-    return Array.from(codes).map((c) => ({ label: c, value: c }));
-  }, [data.primaryLocaleCode, localeOptions]);
-
   // ── Intent classification + filter (plan §7.2) ──
   const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
-  const [intentFilter, setIntentFilter] = useState("all");
-  const filteredKeywords = useMemo(() => {
-    if (intentFilter === "all") return keywords;
-    if (intentFilter === "none") return keywords.filter((r) => !r.intent);
-    return keywords.filter((r) => r.intent === intentFilter);
-  }, [keywords, intentFilter]);
 
   useEffect(() => {
     if (intentFetcher.state === "idle" && intentFetcher.data?.success) {
@@ -993,49 +1050,92 @@ export default function SeoKeywords() {
   const intentLabel = (intent: string | null | undefined): string | null =>
     intent ? (k.intents as Record<string, string> | undefined)?.[intent] ?? intent : null;
 
-  const renderSuggestionGroup = (title: string, list: string[]) =>
-    list.length === 0 ? null : (
-      <BlockStack gap="150" key={title}>
-        <Text as="h4" variant="headingSm">
-          {title}
-        </Text>
-        <InlineStack gap="200" wrap>
-          {list.map((s) => (
-            <Checkbox key={s} label={s} checked={selectedSuggestions.has(s)} onChange={() => toggleSuggestion(s)} />
-          ))}
-        </InlineStack>
-      </BlockStack>
-    );
-
-  const items = pickers[type] ?? [];
-  // Full option list for the current type (Autocomplete filters this client-side
-  // as the merchant types — no "select an item" placeholder entry needed since
-  // an empty text field naturally shows every loaded item).
-  const itemOptions = useMemo(
-    () => items.map((i) => ({ label: i.title || i.id, value: i.id })),
-    [items],
-  );
-  const filteredItemOptions = useMemo(() => {
-    const q = itemInputValue.trim().toLowerCase();
-    if (!q) return itemOptions;
-    return itemOptions.filter((o) => o.label.toLowerCase().includes(q));
-  }, [itemOptions, itemInputValue]);
-  const typeOptions = RESOURCE_TYPES.map((rt) => ({ label: k.types[rt], value: rt }));
-  const localeSelectOptions = useMemo(
-    () =>
-      localeOptions.map((l) => ({
-        label: l.primary ? `${l.name} (${k.localePrimary})` : l.name,
-        value: l.locale,
-      })),
-    [localeOptions, k.localePrimary],
-  );
-
-  const canSave = !!itemId && !!keyword.trim();
-
   const openInEditor = (row: { resourceType: string; resourceId: string }) => {
     const path = KEYWORD_TYPE_PATH[row.resourceType as KeywordResourceType];
     if (!path) return;
     handleNavigate(path, { searchParams: new URLSearchParams({ select: row.resourceId }) });
+  };
+
+  // Group-detail confirm flows lifted out of the (now presentational) LibraryTab
+  // so every stateful/confirm handler stays in the Shell (Phase 1 invariant).
+  const handleDeleteGroup = async () => {
+    const ok = await confirm({
+      title: k.groupDeleteConfirmTitle || "Delete this group?",
+      message:
+        k.groupDeleteConfirmBody ||
+        "Keywords stay tracked; only the group and its memberships are removed.",
+      confirmLabel: k.delete,
+      destructive: true,
+    });
+    if (!ok || !data.groupDetail) return;
+    selectGroup(null);
+    groupFetcher.submit({ actionType: "deleteGroup", groupId: data.groupDetail.id }, { method: "post" });
+  };
+
+  const handleApplyBulkPriority = async () => {
+    if (!data.groupDetail) return;
+    const ok = await confirm({
+      title: k.bulkPriorityConfirmTitle || "Set priority for all keywords?",
+      message: (
+        k.bulkPriorityConfirmBody || "This sets the priority of all {count} keywords in this group."
+      ).replace("{count}", String(data.groupDetail.keywords.length)),
+      confirmLabel: k.bulkPriorityApply || "Apply to all",
+    });
+    if (!ok) return;
+    groupFetcher.submit(
+      { actionType: "setGroupPriority", groupId: data.groupDetail.id, priority: bulkPriority },
+      { method: "post" },
+    );
+  };
+
+  // ── Navbars (Phase 1): Locale-Navbar (top) + tab SubNavBar ──
+  const tab = searchParams.get("tab") ?? "library";
+
+  // Locale-Navbar: primary ("" locale) gets a stable sentinel id; the URL param
+  // value for primary is "" (i.e. no ?loc=).
+  const PRIMARY_LOCALE_ID = "__primary__";
+  // Labels are localized exactly like the content (Inhalte) pages'
+  // UnifiedLanguageBar: the language name via Intl.DisplayNames in the app
+  // locale, plus a "(Hauptsprache)" suffix on the primary. The primary's own
+  // code is "" here, so fall back to primaryLocaleCode for its display name.
+  const primaryLanguageSuffix = t.content?.primaryLanguageSuffix || "Primary";
+  const localeNavItems: SubNavBarItem[] = localeOptions.map((l) => ({
+    id: l.primary ? PRIMARY_LOCALE_ID : l.locale,
+    label: l.primary
+      ? `${getLocalizedLanguageName(data.primaryLocaleCode, appLocale, l.name)} (${primaryLanguageSuffix})`
+      : getLocalizedLanguageName(l.locale, appLocale, l.name),
+  }));
+  const localeActiveId = data.activeLocale === "" ? PRIMARY_LOCALE_ID : data.activeLocale;
+
+  const onLocaleSelect = (item: SubNavBarItem) => {
+    const value = item.id === PRIMARY_LOCALE_ID ? "" : item.id;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) next.set("loc", value);
+        else next.delete("loc");
+        // Groups are locale-specific — a group selection must not survive a
+        // language switch.
+        next.delete("group");
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+  };
+
+  const tabNavItems: SubNavBarItem[] = [
+    { id: "library", label: k.tabLibrary },
+    { id: "assignments", label: k.tabAssignments },
+  ];
+  const onTabSelect = (item: SubNavBarItem) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("tab", item.id);
+        return next;
+      },
+      { preventScrollReset: true },
+    );
   };
 
   return (
@@ -1048,984 +1148,111 @@ export default function SeoKeywords() {
           </BlockStack>
         </Banner>
 
-        {/* Cannibalization conflicts (plan §7.1) */}
-        {data.conflicts.length > 0 && (
-          <Card>
-            <BlockStack gap="200">
-              <Text as="h3" variant="headingMd">
-                {k.conflictsTitle || "Keyword conflicts"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {k.conflictsIntro ||
-                  "The same primary keyword on several items of the same type makes them compete against each other in Google."}
-              </Text>
-              {data.conflicts.map((c) => (
-                <Banner key={`${c.keyword}:${c.resourceType}:${c.locale}`} tone="warning">
-                  <Text as="p" variant="bodyMd">
-                    {(k.conflictItem || '"{keyword}" is primary on {count} {type} items: {items}')
-                      .replace("{keyword}", c.keyword)
-                      .replace("{count}", String(c.itemTitles.length))
-                      .replace("{type}", k.types[c.resourceType as KeywordResourceType] || c.resourceType)
-                      .replace("{items}", c.itemTitles.join(", "))}
-                  </Text>
-                </Banner>
-              ))}
-            </BlockStack>
-          </Card>
-        )}
-
-        {/* Add keyword */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {k.addTitle}
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {k.intro}
-            </Text>
-            <InlineStack gap="200" blockAlign="end" wrap>
-              <div style={{ minWidth: "140px" }}>
-                <Select
-                  label={k.typeLabel}
-                  options={typeOptions}
-                  value={type}
-                  onChange={(v) => {
-                    setType(v as KeywordResourceType);
-                    setItemId("");
-                    setItemInputValue("");
-                  }}
-                />
-              </div>
-              <div style={{ flex: "1 1 240px" }}>
-                <Autocomplete
-                  options={filteredItemOptions}
-                  selected={itemId ? [itemId] : []}
-                  onSelect={(selected) => {
-                    const id = selected[0] ?? "";
-                    setItemId(id);
-                    const match = itemOptions.find((o) => o.value === id);
-                    setItemInputValue(match ? match.label : "");
-                  }}
-                  textField={
-                    <Autocomplete.TextField
-                      label={k.itemLabel}
-                      autoComplete="off"
-                      placeholder={k.selectItem}
-                      value={itemInputValue}
-                      onChange={(value) => {
-                        setItemInputValue(value);
-                        // Typing invalidates the previously selected id until a
-                        // new option is chosen from the (re-filtered) list.
-                        if (itemId) setItemId("");
-                      }}
-                    />
-                  }
-                />
-              </div>
-              <div style={{ flex: "1 1 200px" }}>
-                <TextField
-                  label={k.keywordLabel}
-                  autoComplete="off"
-                  placeholder={k.keywordPlaceholder}
-                  value={keyword}
-                  onChange={setKeywordInput}
-                />
-              </div>
-              <div style={{ minWidth: "160px" }}>
-                <Select
-                  label={k.localeLabel}
-                  options={localeSelectOptions}
-                  value={locale}
-                  onChange={setLocale}
-                />
-              </div>
-              <div style={{ minWidth: "150px" }}>
-                <Select
-                  label={k.roleLabel || "Role"}
-                  options={[
-                    { label: k.role?.primary || "Primary", value: "primary" },
-                    { label: k.role?.secondary || "Secondary", value: "secondary" },
-                  ]}
-                  value={role}
-                  onChange={(v) => setRole(v as KeywordRole)}
-                />
-              </div>
+        {/* Locale-Navbar (top): language is the outermost dimension (§2).
+            Rendered as Polaris buttons to match the locale bar on the content
+            (Inhalte) pages — active locale = primary variant. */}
+        <div
+          role="navigation"
+          aria-label={k.localeNavLabel}
+          style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}
+        >
+          {[...localeNavItems]
+            .sort((a, b) => {
+              if (a.id === PRIMARY_LOCALE_ID) return -1;
+              if (b.id === PRIMARY_LOCALE_ID) return 1;
+              return a.label.localeCompare(b.label);
+            })
+            .map((item) => (
               <Button
-                variant="primary"
-                disabled={!canSave}
-                loading={saveFetcher.state !== "idle"}
-                onClick={handleSubmitKeyword}
+                key={item.id}
+                size="slim"
+                variant={item.id === localeActiveId ? "primary" : undefined}
+                onClick={() => onLocaleSelect(item)}
               >
-                {k.addButton}
+                {item.label}
               </Button>
-            </InlineStack>
-            {saveFetcher.data && !saveFetcher.data.ok && saveFetcher.data.error === "tooMany" && (
-              <Banner tone="warning">
-                {k.tooManyKeywords ||
-                  "This item already tracks the maximum number of keywords for this locale."}
-              </Banner>
-            )}
-            {items.length >= PICKER_CAP && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {k.pickerCapped.replace("{cap}", String(PICKER_CAP))}
-              </Text>
-            )}
-          </BlockStack>
-        </Card>
+            ))}
+        </div>
+        {/* Tab SubNavBar: Bibliothek / Zuordnungen. Help icon pinned far right. */}
+        <SubNavBar
+          ariaLabel={k.tabNavLabel}
+          items={tabNavItems}
+          activeId={tab}
+          onSelect={onTabSelect}
+          trailing={<HelpTooltip helpKey="keywordsLibraryTabs" position="below" />}
+        />
 
-        {/* Tracked keywords */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="end" wrap>
-              <Text as="h3" variant="headingMd">
-                {k.listTitle}
-              </Text>
-              <InlineStack gap="200" blockAlign="end" wrap>
-                <div style={{ minWidth: "170px" }}>
-                  <Select
-                    label={k.intentFilterLabel || "Intent"}
-                    options={[
-                      { label: k.intentFilterAll || "All intents", value: "all" },
-                      { label: k.intentFilterNone || "Unclassified", value: "none" },
-                      ...(["informational", "commercial", "transactional", "navigational"] as const).map((i) => ({
-                        label: intentLabel(i) ?? i,
-                        value: i,
-                      })),
-                    ]}
-                    value={intentFilter}
-                    onChange={setIntentFilter}
-                  />
-                </div>
-                {data.isPro && data.unclassifiedCount > 0 && (
-                  <Button
-                    loading={intentFetcher.state !== "idle"}
-                    onClick={() =>
-                      intentFetcher.submit(
-                        { action: "classifyKeywordIntents", contentType: "products" },
-                        { method: "post", action: "/api/ai" },
-                      )
-                    }
-                  >
-                    {(k.classifyButton || "Classify intent ({count} open)").replace(
-                      "{count}",
-                      String(data.unclassifiedCount),
-                    )}
-                  </Button>
-                )}
-              </InlineStack>
-            </InlineStack>
-            {intentFetcher.state === "idle" && intentFetcher.data?.success && (
-              <Banner tone="success">
-                {(k.classifyDone || "{count} keyword(s) classified, {remaining} remaining.")
-                  .replace("{count}", String(intentFetcher.data.classified ?? 0))
-                  .replace("{remaining}", String(intentFetcher.data.remaining ?? 0))}
-              </Banner>
-            )}
-            {rowFetcher.data && !rowFetcher.data.ok && <Banner tone="critical">{k.errorGeneric}</Banner>}
-
-            {filteredKeywords.length === 0 ? (
-              <Text as="p" tone="subdued">
-                {k.noKeywords}
-              </Text>
-            ) : (
-              <BlockStack gap="200">
-                <IndexTable
-                  itemCount={filteredKeywords.length}
-                  selectable={false}
-                  headings={[
-                    { title: k.colItem },
-                    { title: k.colKeyword },
-                    { title: k.colRole || "Role" },
-                    { title: k.colLocale },
-                    { title: k.colPriority || "Priority" },
-                    { title: k.colScore },
-                    { title: k.colDensity },
-                    { title: k.colPresence },
-                    { title: k.colGscPosition },
-                    { title: "" },
-                  ]}
-                >
-                  {filteredKeywords.map((row, index) => (
-                    <IndexTable.Row id={row.id} key={row.id} position={index}>
-                      <IndexTable.Cell>
-                        <div style={{ maxWidth: "240px" }}>
-                          <Text as="span" variant="bodyMd" truncate>
-                            {row.itemMissing ? k.itemMissing : row.itemTitle || row.resourceId}
-                          </Text>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {" "}
-                            {k.types[row.resourceType as KeywordResourceType] || row.resourceType}
-                          </Text>
-                        </div>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <InlineStack gap="100" blockAlign="center" wrap={false}>
-                          <Text as="span" variant="bodyMd">{row.keyword}</Text>
-                          {row.intent && <Badge>{intentLabel(row.intent) ?? row.intent}</Badge>}
-                        </InlineStack>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Badge tone={row.role === "primary" ? "info" : undefined}>
-                          {row.role === "primary"
-                            ? k.role?.primary || "Primary"
-                            : k.role?.secondary || "Secondary"}
-                        </Badge>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Badge>{row.localeDisplay || "–"}</Badge>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <div style={{ minWidth: "110px" }}>
-                          <Select
-                            label={k.colPriority || "Priority"}
-                            labelHidden
-                            options={priorityOptions}
-                            value={String(row.priority)}
-                            disabled={priorityFetcher.state !== "idle"}
-                            onChange={(v) =>
-                              priorityFetcher.submit(
-                                { actionType: "setPriority", keywordId: row.keywordId, priority: v },
-                                { method: "post" },
-                              )
-                            }
-                          />
-                        </div>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        {row.score == null ? (
-                          // Secondaries carry no 0-100 score — it is
-                          // presence-weighted for ONE target keyword and would
-                          // dilute across several (§3.1).
-                          <Text as="span" variant="bodyMd" tone="subdued">
-                            –
-                          </Text>
-                        ) : (
-                          <Badge tone={scoreTone(row.score) as any}>{String(row.score)}</Badge>
-                        )}
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Badge tone={DENSITY_TONE[row.densityBand as DensityBand]}>
-                          {`${k.density[row.densityBand]} (${row.densityPct}%)`}
-                        </Badge>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <InlineStack gap="100" wrap>
-                          {(["title", "h1", "metaDescription", "seoTitle", "body"] as const).map((key) => (
-                            <Badge key={key} tone={row.presence[key] ? "success" : undefined}>
-                              {k.presence[key]}
-                            </Badge>
-                          ))}
-                        </InlineStack>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Text as="span" variant="bodyMd" tone={row.gscPosition == null ? "subdued" : undefined}>
-                          {row.gscPosition == null ? "–" : row.gscPosition.toFixed(1)}
-                        </Text>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <InlineStack gap="200" align="end" wrap={false}>
-                          <Button
-                            variant="plain"
-                            onClick={() => openInEditor(row)}
-                            disabled={row.itemMissing}
-                          >
-                            {k.openInEditor}
-                          </Button>
-                          {row.role === "secondary" && (
-                            <Button
-                              variant="plain"
-                              loading={rowFetcher.state !== "idle" && pendingRowId === row.id}
-                              disabled={rowFetcher.state !== "idle" && pendingRowId !== row.id}
-                              onClick={() => handleMakePrimary(row)}
-                            >
-                              {k.makePrimary || "Make primary"}
-                            </Button>
-                          )}
-                          <Button
-                            variant="plain"
-                            tone="critical"
-                            loading={rowFetcher.state !== "idle" && pendingRowId === row.id}
-                            disabled={rowFetcher.state !== "idle" && pendingRowId !== row.id}
-                            onClick={() => handleDeleteKeyword(row)}
-                          >
-                            {k.delete}
-                          </Button>
-                        </InlineStack>
-                      </IndexTable.Cell>
-                    </IndexTable.Row>
-                  ))}
-                </IndexTable>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {k.gscHint}
-                </Text>
-              </BlockStack>
-            )}
-          </BlockStack>
-        </Card>
-
-        {/* ── Keyword groups (plan §5.1) ── */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {k.groupsTitle || "Keyword groups"}
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {k.groupsIntro ||
-                "Groups are management containers: import keyword lists, then distribute them onto items with AI."}
-            </Text>
-            <InlineStack gap="200" blockAlign="end" wrap>
-              <div style={{ flex: "1 1 240px", maxWidth: "360px" }}>
-                <TextField
-                  label={k.groupNameLabel || "New group"}
-                  autoComplete="off"
-                  placeholder={k.groupNamePlaceholder || "e.g. Vases 2026"}
-                  value={newGroupName}
-                  onChange={setNewGroupName}
-                  maxLength={100}
-                />
-              </div>
-              <Button
-                loading={groupFetcher.state !== "idle"}
-                disabled={!newGroupName.trim()}
-                onClick={() => {
-                  groupFetcher.submit({ actionType: "createGroup", name: newGroupName }, { method: "post" });
-                  setNewGroupName("");
-                }}
-              >
-                {k.groupCreate || "Create group"}
-              </Button>
-            </InlineStack>
-            {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "duplicateName" && (
-              <Banner tone="warning">{k.groupDuplicateName || "A group with this name already exists."}</Banner>
-            )}
-            {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "invalid" && (
-              <Banner tone="critical">{k.errorGeneric}</Banner>
-            )}
-            {data.groups.length === 0 ? (
-              <Text as="p" tone="subdued">
-                {k.noGroups || "No groups yet."}
-              </Text>
-            ) : (
-              <InlineStack gap="200" wrap>
-                {data.groups.map((g) => (
-                  <Button
-                    key={g.id}
-                    pressed={data.groupDetail?.id === g.id}
-                    onClick={() => selectGroup(data.groupDetail?.id === g.id ? null : g.id)}
-                  >
-                    {`${g.name} (${g.keywordCount})`}
-                  </Button>
-                ))}
-              </InlineStack>
-            )}
-          </BlockStack>
-        </Card>
-
-        {/* ── Keyword research (plan §6) — free autocomplete suggestions ── */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">
-              {k.researchTitle || "Keyword research"}
-            </Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {k.researchIntro ||
-                "Get free long-tail suggestions from Google Autocomplete for a seed keyword, then import them into a group."}
-            </Text>
-            {/* Integrated §6.1 spike verdict: the server probes reachability
-                in the background; a blocked egress IP disables the panel. */}
-            {data.researchAvailability.status === "blocked" && (
-              <Banner tone="warning">
-                {k.researchBlocked ||
-                  "Google is currently not answering suggestion requests from this server. Try again later."}
-                {data.researchAvailability.checkedAt
-                  ? ` ${(k.researchCheckedAt || "Last checked: {time}").replace(
-                      "{time}",
-                      new Date(data.researchAvailability.checkedAt).toLocaleString(),
-                    )}`
-                  : ""}
-              </Banner>
-            )}
-            <InlineStack gap="200" blockAlign="end" wrap>
-              <div style={{ flex: "1 1 220px", maxWidth: "340px" }}>
-                <TextField
-                  label={k.researchSeedLabel || "Seed keyword"}
-                  autoComplete="off"
-                  placeholder={k.keywordPlaceholder}
-                  value={seedInput}
-                  onChange={setSeedInput}
-                />
-              </div>
-              <div style={{ minWidth: "110px" }}>
-                <Select label={k.researchLangLabel || "Language"} options={hlOptions} value={seedHl} onChange={setSeedHl} />
-              </div>
-              <Button
-                loading={suggestFetcher.state !== "idle"}
-                disabled={!seedInput.trim() || data.researchAvailability.status === "blocked"}
-                onClick={() => runResearch(false)}
-              >
-                {k.researchButton || "Get suggestions"}
-              </Button>
-              {suggestFetcher.data?.ok && (
-                <Button variant="plain" loading={suggestFetcher.state !== "idle"} onClick={() => runResearch(true)}>
-                  {k.researchMore || "Load alphabet expansion (a–z)"}
-                </Button>
-              )}
-            </InlineStack>
-
-            {suggestFetcher.state === "idle" && suggestFetcher.data && !suggestFetcher.data.ok && (
-              <Banner tone={suggestFetcher.data.error === "invalid" ? "critical" : "warning"}>
-                {suggestFetcher.data.error === "rateLimited"
-                  ? k.researchRateLimited || "Please wait a moment — at most 3 searches per minute."
-                  : suggestFetcher.data.error === "blocked"
-                    ? k.researchBlocked ||
-                      "Google is currently not answering suggestion requests from this server. Try again later."
-                    : k.errorGeneric}
-              </Banner>
-            )}
-
-            {suggestFetcher.state === "idle" && suggestFetcher.data?.ok && suggestFetcher.data.groups && (
-              <BlockStack gap="300">
-                {suggestFetcher.data.groups.direct.length === 0 &&
-                suggestFetcher.data.groups.questions.length === 0 &&
-                suggestFetcher.data.groups.alphabet.length === 0 ? (
-                  <Text as="p" tone="subdued">
-                    {k.researchNoResults || "No suggestions found for this seed."}
-                  </Text>
-                ) : (
-                  <>
-                    {renderSuggestionGroup(k.researchDirect || "Direct suggestions", suggestFetcher.data.groups.direct)}
-                    {renderSuggestionGroup(k.researchQuestions || "Questions", suggestFetcher.data.groups.questions)}
-                    {renderSuggestionGroup(
-                      k.researchAlphabet || "Alphabet expansion",
-                      suggestFetcher.data.groups.alphabet,
-                    )}
-                    <InlineStack gap="200" blockAlign="end" wrap>
-                      <div style={{ minWidth: "220px" }}>
-                        <Select
-                          label={k.researchImportGroup || "Import into group"}
-                          options={[
-                            { label: k.researchImportGroupNone || "Choose a group…", value: "" },
-                            ...data.groups.map((g) => ({ label: g.name, value: g.id })),
-                          ]}
-                          value={importGroupId}
-                          onChange={setImportGroupId}
-                        />
-                      </div>
-                      <Button
-                        variant="primary"
-                        loading={groupFetcher.state !== "idle"}
-                        disabled={!importGroupId || selectedSuggestions.size === 0}
-                        onClick={importSelectedSuggestions}
-                      >
-                        {(k.researchImportButton || "Import {count} selected").replace(
-                          "{count}",
-                          String(selectedSuggestions.size),
-                        )}
-                      </Button>
-                    </InlineStack>
-                  </>
-                )}
-              </BlockStack>
-            )}
-          </BlockStack>
-        </Card>
-
-        {/* ── Group detail: keywords, CSV import, AI distribution ── */}
-        {data.groupDetail && (
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack align="space-between" blockAlign="center">
-                {isRenaming ? (
-                  <InlineStack gap="200" blockAlign="end" wrap={false}>
-                    <TextField
-                      label={k.groupRenameLabel || "New name"}
-                      labelHidden
-                      autoComplete="off"
-                      value={renameValue}
-                      onChange={setRenameValue}
-                      maxLength={100}
-                    />
-                    <Button
-                      size="slim"
-                      loading={groupFetcher.state !== "idle"}
-                      disabled={!renameValue.trim()}
-                      onClick={() => {
-                        if (!data.groupDetail) return;
-                        groupFetcher.submit(
-                          { actionType: "renameGroup", groupId: data.groupDetail.id, name: renameValue },
-                          { method: "post" },
-                        );
-                        setIsRenaming(false);
-                      }}
-                    >
-                      {k.groupRenameSave || "Save"}
-                    </Button>
-                    <Button size="slim" variant="plain" onClick={() => setIsRenaming(false)}>
-                      {k.distModalCancel || "Cancel"}
-                    </Button>
-                  </InlineStack>
-                ) : (
-                  <InlineStack gap="200" blockAlign="center">
-                    <Text as="h3" variant="headingMd">
-                      {data.groupDetail.name}
-                    </Text>
-                    <Button
-                      size="micro"
-                      variant="plain"
-                      onClick={() => {
-                        setRenameValue(data.groupDetail?.name ?? "");
-                        setIsRenaming(true);
-                      }}
-                    >
-                      {k.groupRename || "Rename"}
-                    </Button>
-                  </InlineStack>
-                )}
-                <InlineStack gap="200">
-                  <Button
-                    variant="primary"
-                    disabled={!data.isPro || !!data.runningDistribution || data.groupDetail.keywords.length === 0}
-                    onClick={() => setShowDistModal(true)}
-                  >
-                    {k.distributeButton || "Distribute onto items"}
-                  </Button>
-                  <Button
-                    tone="critical"
-                    variant="plain"
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: k.groupDeleteConfirmTitle || "Delete this group?",
-                        message:
-                          k.groupDeleteConfirmBody ||
-                          "Keywords stay tracked; only the group and its memberships are removed.",
-                        confirmLabel: k.delete,
-                        destructive: true,
-                      });
-                      if (!ok || !data.groupDetail) return;
-                      selectGroup(null);
-                      groupFetcher.submit(
-                        { actionType: "deleteGroup", groupId: data.groupDetail.id },
-                        { method: "post" },
-                      );
-                    }}
-                  >
-                    {k.groupDelete || "Delete group"}
-                  </Button>
-                </InlineStack>
-              </InlineStack>
-              {!data.isPro && (
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {k.distributeProHint || "AI distribution requires the Pro plan."}
-                </Text>
-              )}
-
-              {/* Running distribution progress */}
-              {data.runningDistribution && (
-                <Banner tone="info">
-                  <BlockStack gap="150">
-                    <Text as="p" variant="bodyMd">
-                      {(data.runningDistribution.fieldType === "apply"
-                        ? k.distApplyRunning || "Applying accepted assignments… ({progress}%)"
-                        : k.distSuggestRunning || "AI distribution is running… ({progress}%)"
-                      ).replace("{progress}", String(data.runningDistribution.progress ?? 0))}
-                    </Text>
-                    <ProgressBar progress={data.runningDistribution.progress ?? 0} size="small" />
-                  </BlockStack>
-                </Banner>
-              )}
-              {distFetcher.data && !distFetcher.data.success && (
-                <Banner tone="critical">
-                  {distFetcher.data.code === "ALREADY_RUNNING"
-                    ? k.distAlreadyRunning || "A distribution is already running — check the Tasks tab."
-                    : distFetcher.data.error || k.errorGeneric}
-                </Banner>
-              )}
-
-              {/* Group keywords */}
-              {data.groupDetail.keywords.length === 0 ? (
-                <Text as="p" tone="subdued">
-                  {k.groupNoKeywords || "No keywords in this group yet — add one below or import a CSV."}
-                </Text>
-              ) : (
-                <IndexTable
-                  itemCount={data.groupDetail.keywords.length}
-                  selectable={false}
-                  headings={[
-                    { title: k.colKeyword },
-                    { title: k.colLocale },
-                    { title: k.colPriority || "Priority" },
-                    { title: k.colAssignments || "Assignments" },
-                    { title: "" },
-                  ]}
-                >
-                  {data.groupDetail.keywords.map((gk, index) => (
-                    <IndexTable.Row id={gk.keywordId} key={gk.keywordId} position={index}>
-                      <IndexTable.Cell>
-                        <InlineStack gap="100" blockAlign="center" wrap={false}>
-                          <Text as="span" variant="bodyMd">
-                            {gk.keyword}
-                          </Text>
-                          {gk.intent && <Badge>{intentLabel(gk.intent) ?? gk.intent}</Badge>}
-                        </InlineStack>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Badge>{gk.locale || localeOptions[0]?.name || "–"}</Badge>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <div style={{ minWidth: "110px" }}>
-                          <Select
-                            label={k.colPriority || "Priority"}
-                            labelHidden
-                            options={priorityOptions}
-                            value={String(gk.priority)}
-                            disabled={priorityFetcher.state !== "idle"}
-                            onChange={(v) =>
-                              priorityFetcher.submit(
-                                { actionType: "setPriority", keywordId: gk.keywordId, priority: v },
-                                { method: "post" },
-                              )
-                            }
-                          />
-                        </div>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Text as="span" variant="bodySm">
-                          {gk.assignmentCount}
-                        </Text>
-                      </IndexTable.Cell>
-                      <IndexTable.Cell>
-                        <Button
-                          variant="plain"
-                          tone="critical"
-                          disabled={groupFetcher.state !== "idle"}
-                          onClick={() =>
-                            data.groupDetail &&
-                            groupFetcher.submit(
-                              {
-                                actionType: "removeFromGroup",
-                                groupId: data.groupDetail.id,
-                                keywordId: gk.keywordId,
-                              },
-                              { method: "post" },
-                            )
-                          }
-                        >
-                          {k.groupRemoveKeyword || "Remove"}
-                        </Button>
-                      </IndexTable.Cell>
-                    </IndexTable.Row>
-                  ))}
-                </IndexTable>
-              )}
-
-              {/* Bulk priority (plan §5.1 group bulk actions) */}
-              {data.groupDetail.keywords.length > 1 && (
-                <InlineStack gap="200" blockAlign="end" wrap>
-                  <div style={{ minWidth: "150px" }}>
-                    <Select
-                      label={k.bulkPriorityLabel || "Set priority for ALL"}
-                      options={priorityOptions}
-                      value={bulkPriority}
-                      onChange={setBulkPriority}
-                    />
-                  </div>
-                  <Button
-                    loading={groupFetcher.state !== "idle"}
-                    onClick={async () => {
-                      if (!data.groupDetail) return;
-                      const ok = await confirm({
-                        title: k.bulkPriorityConfirmTitle || "Set priority for all keywords?",
-                        message: (
-                          k.bulkPriorityConfirmBody ||
-                          "This sets the priority of all {count} keywords in this group."
-                        ).replace("{count}", String(data.groupDetail.keywords.length)),
-                        confirmLabel: k.bulkPriorityApply || "Apply to all",
-                      });
-                      if (!ok) return;
-                      groupFetcher.submit(
-                        { actionType: "setGroupPriority", groupId: data.groupDetail.id, priority: bulkPriority },
-                        { method: "post" },
-                      );
-                    }}
-                  >
-                    {k.bulkPriorityApply || "Apply to all"}
-                  </Button>
-                </InlineStack>
-              )}
-
-              {/* Add single keyword to group */}
-              <InlineStack gap="200" blockAlign="end" wrap>
-                <div style={{ flex: "1 1 200px", maxWidth: "320px" }}>
-                  <TextField
-                    label={k.groupAddKeywordLabel || "Add keyword"}
-                    autoComplete="off"
-                    placeholder={k.keywordPlaceholder}
-                    value={groupKeywordInput}
-                    onChange={setGroupKeywordInput}
-                  />
-                </div>
-                <div style={{ minWidth: "150px" }}>
-                  <Select
-                    label={k.localeLabel}
-                    options={localeSelectOptions}
-                    value={groupKeywordLocale}
-                    onChange={setGroupKeywordLocale}
-                  />
-                </div>
-                <Button
-                  loading={groupFetcher.state !== "idle"}
-                  disabled={!groupKeywordInput.trim()}
-                  onClick={() => {
-                    if (!data.groupDetail) return;
-                    groupFetcher.submit(
-                      {
-                        actionType: "addToGroup",
-                        groupId: data.groupDetail.id,
-                        keyword: groupKeywordInput,
-                        locale: groupKeywordLocale,
-                      },
-                      { method: "post" },
-                    );
-                    setGroupKeywordInput("");
-                  }}
-                >
-                  {k.groupAddKeyword || "Add"}
-                </Button>
-              </InlineStack>
-
-              {/* CSV import (plan §5.3) */}
-              <BlockStack gap="150">
-                <TextField
-                  label={k.csvLabel || "CSV import (keyword[, priority][, intent][, locale])"}
-                  autoComplete="off"
-                  multiline={4}
-                  placeholder={k.csvPlaceholder || "keyword,priority\ngreen ceramic vase,1\nhandmade vase,2"}
-                  value={csvText}
-                  onChange={setCsvText}
-                  helpText={(k.csvHint || "Up to {max} rows per import.").replace("{max}", "2000")}
-                />
-                <InlineStack gap="200">
-                  <Button
-                    loading={groupFetcher.state !== "idle"}
-                    disabled={!csvText.trim()}
-                    onClick={() => {
-                      if (!data.groupDetail) return;
-                      groupFetcher.submit(
-                        { actionType: "importCsv", groupId: data.groupDetail.id, csv: csvText },
-                        { method: "post" },
-                      );
-                      setCsvText("");
-                    }}
-                  >
-                    {k.csvImport || "Import CSV"}
-                  </Button>
-                </InlineStack>
-                {groupFetcher.data?.ok && groupFetcher.data.kind === "csvImported" && (
-                  <Banner tone={groupFetcher.data.csvErrors.length ? "warning" : "success"}>
-                    <BlockStack gap="100">
-                      <Text as="p" variant="bodyMd">
-                        {(k.csvResult || "{added} imported, {existing} already in the group.")
-                          .replace("{added}", String(groupFetcher.data.added))
-                          .replace("{existing}", String(groupFetcher.data.alreadyInGroup))}
-                      </Text>
-                      {groupFetcher.data.csvErrors.map((e) => (
-                        <Text key={`${e.row}:${e.keyword}`} as="p" variant="bodySm">
-                          {(k.csvErrorRow || 'Row {row}: "{keyword}" — {error}')
-                            .replace("{row}", String(e.row))
-                            .replace("{keyword}", e.keyword)
-                            .replace("{error}", k.csvErrors?.[e.error] ?? e.error)}
-                        </Text>
-                      ))}
-                    </BlockStack>
-                  </Banner>
-                )}
-                {groupFetcher.data && !groupFetcher.data.ok && groupFetcher.data.error === "csvTooMany" && (
-                  <Banner tone="critical">
-                    {(k.csvTooMany || "A single import is limited to {max} rows.").replace("{max}", "2000")}
-                  </Banner>
-                )}
-              </BlockStack>
-
-              {/* Distribution preview (plan §5.4 step 4 — never auto-applied) */}
-              {data.distributionPreview && (
-                <BlockStack gap="200">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h4" variant="headingSm">
-                      {k.distPreviewTitle || "Distribution suggestions"}
-                    </Text>
-                    <Button
-                      variant="plain"
-                      onClick={() => {
-                        const next: Record<string, "accept" | "secondaryOnly" | "reject"> = {};
-                        for (const s of data.distributionPreview?.suggestions ?? []) {
-                          next[s.keyword] = s.primaryItemId ? "accept" : "reject";
-                        }
-                        setDecisions(next);
-                      }}
-                    >
-                      {k.distAcceptAll || "Accept all"}
-                    </Button>
-                  </InlineStack>
-                  {data.distributionPreview.failedBatches > 0 && (
-                    <Banner tone="warning">
-                      {(k.distFailedBatches ||
-                        "{failed} of {total} AI calls failed — their items received no suggestions.")
-                        .replace("{failed}", String(data.distributionPreview.failedBatches))
-                        .replace("{total}", String(data.distributionPreview.batches))}
-                    </Banner>
-                  )}
-                  <IndexTable
-                    itemCount={data.distributionPreview.suggestions.length}
-                    selectable={false}
-                    headings={[
-                      { title: k.distColDecision || "Decision" },
-                      { title: k.colKeyword },
-                      { title: k.distColPrimary || "Primary suggestion" },
-                      { title: k.distColSecondaries || "Secondaries" },
-                      { title: k.distColConfidence || "Confidence" },
-                    ]}
-                  >
-                    {data.distributionPreview.suggestions.map((s, index) => {
-                      const titles = data.distributionPreview?.itemTitles ?? {};
-                      return (
-                        <IndexTable.Row id={s.keyword} key={s.keyword} position={index}>
-                          <IndexTable.Cell>
-                            <div style={{ minWidth: "140px" }}>
-                              <Select
-                                label={k.distColDecision || "Decision"}
-                                labelHidden
-                                disabled={!s.primaryItemId && s.secondaryItemIds.length === 0}
-                                options={[
-                                  { label: k.distDecisionAccept || "Accept", value: "accept" },
-                                  { label: k.distDecisionSecondary || "As secondary only", value: "secondaryOnly" },
-                                  { label: k.distDecisionReject || "Reject", value: "reject" },
-                                ]}
-                                value={decisions[s.keyword] ?? "reject"}
-                                onChange={(v) =>
-                                  setDecisions((prev) => ({
-                                    ...prev,
-                                    [s.keyword]: v as "accept" | "secondaryOnly" | "reject",
-                                  }))
-                                }
-                              />
-                            </div>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodyMd">
-                              {s.keyword}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodySm" tone={s.primaryItemId ? undefined : "subdued"}>
-                              {s.primaryItemId
-                                ? titles[s.primaryItemId] || s.primaryItemId
-                                : k.distNoMatch || "no match"}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {s.secondaryItemIds.map((id) => titles[id] || id).join(", ") || "–"}
-                            </Text>
-                          </IndexTable.Cell>
-                          <IndexTable.Cell>
-                            <Badge tone={s.confidence >= 0.6 ? "success" : undefined}>
-                              {`${Math.round(s.confidence * 100)}%`}
-                            </Badge>
-                          </IndexTable.Cell>
-                        </IndexTable.Row>
-                      );
-                    })}
-                  </IndexTable>
-                  <InlineStack gap="300" blockAlign="center" wrap>
-                    <Checkbox
-                      label={k.distDemoteExisting || "Replace existing primary keywords (demote them to secondary)"}
-                      checked={demoteExisting}
-                      onChange={setDemoteExisting}
-                    />
-                    <Button
-                      variant="primary"
-                      loading={distFetcher.state !== "idle"}
-                      disabled={
-                        !!data.runningDistribution ||
-                        !Object.values(decisions).some((d) => d !== "reject")
-                      }
-                      onClick={applyDistribution}
-                    >
-                      {k.distApply || "Apply accepted"}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-              )}
-            </BlockStack>
-          </Card>
+        {tab === "assignments" ? (
+          <AssignmentsTab
+            k={k}
+            activeLocale={data.activeLocale}
+            conflicts={data.conflicts}
+            keywords={keywords}
+            isPro={data.isPro}
+            unclassifiedCount={data.unclassifiedCount}
+            intentLabel={intentLabel}
+            saveFetcher={saveFetcher}
+            rowFetcher={rowFetcher}
+            intentFetcher={intentFetcher}
+            pendingRowId={pendingRowId}
+            handleAddKeyword={handleAddKeyword}
+            handleMakePrimary={handleMakePrimary}
+            handleDeleteKeyword={handleDeleteKeyword}
+            openInEditor={openInEditor}
+          />
+        ) : (
+          <LibraryTab
+            k={k}
+            groups={data.groups}
+            allCount={data.allCount}
+            ungroupedCount={data.ungroupedCount}
+            groupDetail={data.groupDetail}
+            isPro={data.isPro}
+            runningDistribution={data.runningDistribution}
+            distributionPreview={data.distributionPreview}
+            researchAvailability={data.researchAvailability}
+            productTypes={data.productTypes}
+            localeOptions={localeOptions}
+            priorityOptions={priorityOptions}
+            intentLabel={intentLabel}
+            selectGroup={selectGroup}
+            activeLocale={data.activeLocale}
+            newGroupName={newGroupName}
+            setNewGroupName={setNewGroupName}
+            groupFetcher={groupFetcher}
+            seedInput={seedInput}
+            setSeedInput={setSeedInput}
+            suggestFetcher={suggestFetcher}
+            runResearch={runResearch}
+            selectedSuggestions={selectedSuggestions}
+            toggleSuggestion={toggleSuggestion}
+            importGroupId={importGroupId}
+            setImportGroupId={setImportGroupId}
+            importSelectedSuggestions={importSelectedSuggestions}
+            isRenaming={isRenaming}
+            setIsRenaming={setIsRenaming}
+            renameValue={renameValue}
+            setRenameValue={setRenameValue}
+            handleDeleteGroup={handleDeleteGroup}
+            handleApplyBulkPriority={handleApplyBulkPriority}
+            bulkPriority={bulkPriority}
+            setBulkPriority={setBulkPriority}
+            priorityFetcher={priorityFetcher}
+            distFetcher={distFetcher}
+            decisions={decisions}
+            setDecisions={setDecisions}
+            demoteExisting={demoteExisting}
+            setDemoteExisting={setDemoteExisting}
+            applyDistribution={applyDistribution}
+            assignPanelOpen={assignPanelOpen}
+            assignPanelKeywords={assignPanelKeywords}
+            openAssignPanel={openAssignPanel}
+            closeAssignPanel={closeAssignPanel}
+            assignFetcher={assignFetcher}
+            startDistribution={startDistribution}
+          />
         )}
       </BlockStack>
-
-      {/* Distribution modal (plan §5.4): target + rules + cost preview */}
-      <Modal
-        open={showDistModal}
-        onClose={() => setShowDistModal(false)}
-        title={k.distModalTitle || "Distribute keywords onto items"}
-        primaryAction={{
-          content: k.distModalStart || "Start distribution",
-          loading: distFetcher.state !== "idle",
-          onAction: startDistribution,
-        }}
-        secondaryActions={[{ content: k.distModalCancel || "Cancel", onAction: () => setShowDistModal(false) }]}
-      >
-        <Modal.Section>
-          <BlockStack gap="300">
-            <Select
-              label={k.distModalTarget || "Target type"}
-              options={RESOURCE_TYPES.map((rt) => ({
-                label: `${k.types[rt]} (${data.itemCounts[rt] ?? 0})`,
-                value: rt,
-              }))}
-              value={distTargetType}
-              onChange={(v) => setDistTargetType(v as KeywordResourceType)}
-            />
-            <Select
-              label={k.distModalMaxSecondaries || "Max secondaries per item"}
-              options={["0", "1", "2", "3", "4"].map((v) => ({ label: v, value: v }))}
-              value={distMaxSecondaries}
-              onChange={setDistMaxSecondaries}
-            />
-            {distTargetType === "Product" && data.productTypes.length > 0 && (
-              <Select
-                label={k.distModalFilterType || "Filter: product type"}
-                options={[
-                  { label: k.distModalFilterAll || "All", value: "" },
-                  ...data.productTypes.map((p) => ({ label: p, value: p })),
-                ]}
-                value={distFilterProductType}
-                onChange={setDistFilterProductType}
-                helpText={
-                  data.productTypes.length >= 100
-                    ? k.distModalFilterCapped || "Only the first 100 product types are listed."
-                    : undefined
-                }
-              />
-            )}
-            {distTargetType === "Product" && distFilterProductType && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {k.distModalFilterHint ||
-                  "The cost estimate below assumes ALL items of this type — with a filter the actual cost is lower."}
-              </Text>
-            )}
-            {distCost && (
-              <Text as="p" variant="bodySm" tone={distCost.batches > 30 ? "caution" : "subdued"}>
-                {(k.distCostPreview || "~{batches} AI call(s), estimated ~${usd}.")
-                  .replace("{batches}", String(distCost.batches))
-                  .replace("{usd}", distCost.usd.toFixed(2))}
-              </Text>
-            )}
-            <Text as="p" variant="bodySm" tone="subdued">
-              {k.distModalHint ||
-                "Nothing is assigned automatically — you review every suggestion before it is applied."}
-            </Text>
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
     </SeoSectionLayout>
   );
 }

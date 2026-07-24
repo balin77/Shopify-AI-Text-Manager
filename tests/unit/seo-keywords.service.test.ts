@@ -4,6 +4,8 @@ import {
   analyzeMultiKeyword,
   normalizeKeyword,
   assignKeyword,
+  assignMany,
+  planItemAssignments,
   removeAssignment,
   listAssignments,
   MAX_KEYWORDS_PER_ITEM,
@@ -500,6 +502,334 @@ describe("persistence helpers (keyword + assignment)", () => {
     expect(result.map((r) => r.role)).toEqual(["primary", "secondary"]);
     expect(result[1].gscPosition).toBe(3.2);
     expect(result[1].priority).toBe(1);
+  });
+});
+
+describe("assignMany / planItemAssignments", () => {
+  const SHOP = "s.myshopify.com";
+  const P1 = "gid://shopify/Product/1";
+
+  // ── planItemAssignments (pure) ──
+
+  it("planItemAssignments skips the add that would exceed the 5-limit (cumulative)", () => {
+    const siblings = [
+      { keywordId: "s1", role: "secondary" as const },
+      { keywordId: "s2", role: "secondary" as const },
+      { keywordId: "s3", role: "secondary" as const },
+    ];
+    const keywords = [
+      { keywordId: "a", role: "secondary" as const },
+      { keywordId: "b", role: "secondary" as const },
+      { keywordId: "c", role: "secondary" as const },
+    ];
+    const plan = planItemAssignments({ resourceId: P1, keywords, siblings, demoteExisting: false });
+    // 3 existing + a (→4) + b (→5) apply; c would be the 6th → limitReached.
+    expect(plan.applies.map((a) => a.keywordId)).toEqual(["a", "b"]);
+    expect(plan.skipped).toEqual([{ keywordId: "c", resourceId: P1, reason: "limitReached" }]);
+  });
+
+  it("planItemAssignments skips a new primary as primaryExists when a different primary exists (no demote)", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "new", role: "primary" }],
+      siblings: [{ keywordId: "old", role: "primary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([]);
+    expect(plan.skipped).toEqual([{ keywordId: "new", resourceId: P1, reason: "primaryExists" }]);
+  });
+
+  it("planItemAssignments demotes the old primary when demoteExisting flips it", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "new", role: "primary" }],
+      siblings: [{ keywordId: "old", role: "primary" }],
+      demoteExisting: true,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "new", role: "primary", demote: true }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  it("planItemAssignments skips a keyword already present with the same role as duplicate", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "secondary" }],
+      siblings: [{ keywordId: "a", role: "secondary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([]);
+    expect(plan.skipped).toEqual([{ keywordId: "a", resourceId: P1, reason: "duplicate" }]);
+  });
+
+  it("planItemAssignments promotes an existing secondary to primary (no count change, no different primary)", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "primary" }],
+      siblings: [{ keywordId: "a", role: "secondary" }],
+      demoteExisting: false,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "a", role: "primary", demote: false }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  it("planItemAssignments promotion demotes a different existing primary with demoteExisting", () => {
+    const plan = planItemAssignments({
+      resourceId: P1,
+      keywords: [{ keywordId: "a", role: "primary" }],
+      siblings: [
+        { keywordId: "a", role: "secondary" },
+        { keywordId: "old", role: "primary" },
+      ],
+      demoteExisting: true,
+    });
+    expect(plan.applies).toEqual([{ keywordId: "a", role: "primary", demote: true }]);
+    expect(plan.skipped).toEqual([]);
+  });
+
+  // ── assignMany ──
+
+  it("assignMany dryRun returns the predicted applied count + skips WITHOUT writing", async () => {
+    // Six keywords, one empty-sibling item, secondary role → 5 apply, 6th limitReached.
+    const ids = ["k0", "k1", "k2", "k3", "k4", "k5"];
+    const keywordFindMany = vi.fn(async (_args: any) =>
+      ids.map((id) => ({ id, keyword: id, locale: "" })),
+    );
+    const assignmentFindMany = vi.fn(async (_args: any) => []);
+    const upsert = vi.fn(async (_args: any) => ({}));
+    const $transaction = vi.fn(async (fn: any) => fn({}));
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: assignmentFindMany, upsert },
+      $transaction,
+    } as any;
+
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ids,
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+      dryRun: true,
+    });
+    expect(result.applied).toBe(5);
+    expect(result.skipped).toEqual([{ keywordId: "k5", resourceId: P1, reason: "limitReached" }]);
+    // No writes at all in a dry run.
+    expect(upsert).not.toHaveBeenCalled();
+    expect($transaction).not.toHaveBeenCalled();
+  });
+
+  it("assignMany real path counts applied and folds a tooMany return into skipped", async () => {
+    const ids = ["kwA", "kwB"];
+    const keywordFindMany = vi.fn(async (_args: any) => [
+      { id: "kwA", keyword: "a", locale: "" },
+      { id: "kwB", keyword: "b", locale: "" },
+    ]);
+    // Top-level lookup: no existing assignments → planner plans BOTH.
+    const topAssignmentFindMany = vi.fn(async (_args: any) => []);
+
+    // Inside each assignKeyword transaction: kwA sees no siblings (applies),
+    // kwB races into a full item (5 siblings) → tooMany, folded to limitReached.
+    const fiveSiblings = Array.from({ length: MAX_KEYWORDS_PER_ITEM }, (_, i) => ({
+      id: `x${i}`,
+      keywordId: `kwOther${i}`,
+      role: "secondary",
+      keyword: { id: `kwOther${i}`, keyword: `kw ${i}`, locale: "" },
+    }));
+    const txUpsertKw = vi
+      .fn()
+      .mockResolvedValueOnce({ id: "kwA", keyword: "a", locale: "" })
+      .mockResolvedValueOnce({ id: "kwB", keyword: "b", locale: "" });
+    const txAssignmentFindMany = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(fiveSiblings);
+    const txAssignmentUpsert = vi.fn(async (_args: any) => ({}));
+    const tx = {
+      seoKeyword: { upsert: txUpsertKw },
+      seoKeywordAssignment: {
+        findMany: txAssignmentFindMany,
+        upsert: txAssignmentUpsert,
+        update: vi.fn(async (_args: any) => ({})),
+      },
+    };
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: topAssignmentFindMany },
+      $transaction: vi.fn(async (fn: any) => fn(tx)),
+    } as any;
+
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ids,
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+    });
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual([{ keywordId: "kwB", resourceId: P1, reason: "limitReached" }]);
+    // kwA was actually written; kwB never reached the upsert (tooMany short-circuit).
+    expect(txAssignmentUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("assignMany drops unknown/foreign keyword ids before planning", async () => {
+    const keywordFindMany = vi.fn(async (_args: any) => [{ id: "known", keyword: "a", locale: "" }]);
+    const assignmentFindMany = vi.fn(async (_args: any) => []);
+    const db = {
+      seoKeyword: { findMany: keywordFindMany },
+      seoKeywordAssignment: { findMany: assignmentFindMany },
+    } as any;
+    const result = await assignMany(db, SHOP, {
+      keywordIds: ["known", "foreign"],
+      targets: [{ resourceType: "Product", resourceId: P1 }],
+      role: "secondary",
+      dryRun: true,
+    });
+    // Only the known keyword is planned.
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual([]);
+  });
+});
+
+describe("group locale (Phase 0)", () => {
+  const SHOP = "s.myshopify.com";
+
+  it("createGroup uses the shop_name_locale composite key and writes locale in create data", async () => {
+    const { createGroup } = await import("~/services/seo/keywords.service");
+    const findUnique = vi.fn(async (_args: any): Promise<any> => null);
+    const create = vi.fn(async (_args: any) => ({ id: "g1" }));
+    const db = { seoKeywordGroup: { findUnique, create } } as any;
+
+    const result = await createGroup(db, SHOP, "  Summer  ", "fr", "  desc  ");
+    expect(result).toEqual({ ok: true, id: "g1" });
+    expect(findUnique.mock.calls[0][0].where.shop_name_locale).toEqual({
+      shop: SHOP,
+      name: "Summer",
+      locale: "fr",
+    });
+    expect(create.mock.calls[0][0].data).toMatchObject({ shop: SHOP, name: "Summer", locale: "fr", description: "desc" });
+  });
+
+  it("createGroup defaults locale to the primary ('') bucket", async () => {
+    const { createGroup } = await import("~/services/seo/keywords.service");
+    const findUnique = vi.fn(async (_args: any): Promise<any> => null);
+    const create = vi.fn(async (_args: any) => ({ id: "g2" }));
+    const db = { seoKeywordGroup: { findUnique, create } } as any;
+
+    await createGroup(db, SHOP, "Default");
+    expect(findUnique.mock.calls[0][0].where.shop_name_locale).toEqual({ shop: SHOP, name: "Default", locale: "" });
+    expect(create.mock.calls[0][0].data.locale).toBe("");
+  });
+
+  it("listGroups filters on { shop, locale } and returns locale in the rows", async () => {
+    const { listGroups } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "g1", name: "Alpha", locale: "fr", description: null, _count: { memberships: 3 } },
+    ]);
+    const db = { seoKeywordGroup: { findMany } } as any;
+
+    const rows = await listGroups(db, SHOP, "fr");
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr" });
+    expect(rows).toEqual([{ id: "g1", name: "Alpha", locale: "fr", description: null, keywordCount: 3 }]);
+  });
+
+  it("addKeywordsToGroup ignores entry.locale and stamps the group's locale onto created keywords", async () => {
+    const { addKeywordsToGroup } = await import("~/services/seo/keywords.service");
+    const createMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const db = {
+      seoKeywordGroup: { findFirst: vi.fn(async (_args: any) => ({ locale: "de" })) },
+      seoKeyword: {
+        findMany: vi.fn(async (_args: any) => []), // nothing exists yet, then still nothing after create in this mock
+        createMany,
+      },
+      seoKeywordGroupMembership: {
+        findMany: vi.fn(async (_args: any) => []),
+        createMany: vi.fn(async (_args: any) => ({ count: 0 })),
+      },
+    } as any;
+
+    await addKeywordsToGroup(db, SHOP, "g1", [{ keyword: "Widget", locale: "fr" }]);
+    // The group's locale (de) wins over the entry's locale (fr).
+    expect(createMany.mock.calls[0][0].data[0]).toMatchObject({ shop: SHOP, keyword: "widget", locale: "de" });
+  });
+
+  it("addKeywordsToGroup returns {added:0, alreadyInGroup:0} for a missing/foreign group", async () => {
+    const { addKeywordsToGroup } = await import("~/services/seo/keywords.service");
+    const createMany = vi.fn(async (_args: any) => ({ count: 0 }));
+    const db = {
+      seoKeywordGroup: { findFirst: vi.fn(async (_args: any): Promise<any> => null) },
+      seoKeyword: { findMany: vi.fn(async (_args: any) => []), createMany },
+      seoKeywordGroupMembership: { findMany: vi.fn(async (_args: any) => []), createMany: vi.fn() },
+    } as any;
+
+    const result = await addKeywordsToGroup(db, SHOP, "foreign", [{ keyword: "widget" }]);
+    expect(result).toEqual({ added: 0, alreadyInGroup: 0 });
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it("deleteGroup deletes member keywords with groups:{none} and NO assignments condition (§3.2 ownership)", async () => {
+    const { deleteGroup } = await import("~/services/seo/keywords.service");
+    const deleteMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const tx = {
+      seoKeywordGroup: {
+        findFirst: vi.fn(async (_args: any) => ({ id: "g1" })),
+        delete: vi.fn(async (_args: any) => ({})),
+      },
+      seoKeywordGroupMembership: {
+        findMany: vi.fn(async (_args: any) => [{ keywordId: "kw1" }, { keywordId: "kw2" }]),
+      },
+      seoKeyword: { deleteMany },
+    };
+    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+
+    await deleteGroup(db, SHOP, "g1");
+    const where = deleteMany.mock.calls[0][0].where;
+    expect(where).toEqual({ id: { in: ["kw1", "kw2"] }, shop: SHOP, groups: { none: {} } });
+    expect(where).not.toHaveProperty("assignments");
+  });
+
+  it("countUngrouped passes { shop, locale, groups: { none: {} } }", async () => {
+    const { countUngrouped } = await import("~/services/seo/keywords.service");
+    const count = vi.fn(async (_args: any) => 7);
+    const db = { seoKeyword: { count } } as any;
+
+    expect(await countUngrouped(db, SHOP, "fr")).toBe(7);
+    expect(count.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr", groups: { none: {} } });
+  });
+
+  it("listUngrouped passes { shop, locale, groups: { none: {} } } and maps + sorts rows", async () => {
+    const { listUngrouped } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+    ]);
+    const db = { seoKeyword: { findMany } } as any;
+
+    const rows = await listUngrouped(db, SHOP);
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "", groups: { none: {} } });
+    // Same sort as getGroupKeywords: priority asc, then keyword asc.
+    expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
+  });
+
+  it("countAllKeywords passes { shop, locale }", async () => {
+    const { countAllKeywords } = await import("~/services/seo/keywords.service");
+    const count = vi.fn(async (_args: any) => 312);
+    const db = { seoKeyword: { count } } as any;
+
+    expect(await countAllKeywords(db, SHOP, "fr")).toBe(312);
+    expect(count.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "fr" });
+  });
+
+  it("listAllKeywords passes { shop, locale } and maps + sorts rows", async () => {
+    const { listAllKeywords } = await import("~/services/seo/keywords.service");
+    const findMany = vi.fn(async (_args: any) => [
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+    ]);
+    const db = { seoKeyword: { findMany } } as any;
+
+    const rows = await listAllKeywords(db, SHOP);
+    // No groups filter — "Alle" is every keyword of the locale.
+    expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "" });
+    // Same sort as getGroupKeywords: priority asc, then keyword asc.
+    expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
   });
 });
 
