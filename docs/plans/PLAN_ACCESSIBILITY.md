@@ -1,6 +1,12 @@
 # Barrierefreiheit & Website-Qualität — Plan
 
-**Status:** Umgesetzt (2026-07-22) — Phasen 1–6 implementiert. Offen bleiben die Punkte, die eine echte PSI-Antwort bzw. einen echten Shop brauchen: der §11.3-Spike (Alt-Text-Trefferquote an echten Daten; §7 ist defensiv gebaut und zeigt „nicht zuordenbar" statt eines toten Buttons), die §5.1-Laufzeitmessung gegen `PSI_TIMEOUT_MS` und der §3.3-Blick, ob `agentic-browsing` ungefragt in `categories` auftaucht.
+**Status:** Umgesetzt (2026-07-22) — Phasen 1–6 implementiert.
+
+**Empirisch geklärt an einer echten Antwort (2026-07-24, LH 13.4.0, mobil):**
+- **§3.3 `agentic-browsing`: entschieden — NEIN.** Die Antwort enthält exakt `performance`, `accessibility`, `best-practices`; kein `agentic-browsing`. Google liefert die Kategorie also **nicht** ungefragt in `lighthouseResult.categories` mit. Keine Kachel, kein Nachziehen nötig.
+- **§11.3 Alt-Text-Spike: entschieden — Lighthouse trägt nicht.** `image-alt` besteht (score=1, 0 items) OBWOHL das Produkt keine Alt-Texte hat, weil Shopify-Themes `alt=""` ausgeben und axe-core das als „dekorativ" durchwinkt. Der Lighthouse-`image-alt`-Trigger feuert auf Shopify-Storefronts praktisch nie. **Konsequenz (umgesetzt):** §7 hängt nicht mehr am Lighthouse-Trigger, sondern an ContentPilots eigener Alt-Text-Erkennung — zwei Warnungen im Barrierefreiheit-Tab (fehlende Haupt-Alt-Texte; fehlende Foreign-Locale-Übersetzungen), katalogweit aus `ProductImage`/`ProductImageAltTranslation`. Der alte Lighthouse-Brückenschlag bleibt als harmloser Fallback bestehen.
+
+Offen bleibt nur noch die **§5.1-Laufzeitmessung** gegen `PSI_TIMEOUT_MS` (Anzeige „Scandauer" ist dafür in der UI eingebaut).
 **Baut auf:** der bestehenden Ladezeit-Section ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx), [pagespeed.service.ts](../../app/services/seo/pagespeed.service.ts)) und dem Alt-Text-Pfad ([alt-text.action.ts](../../app/actions/content/alt-text.action.ts)).
 **Section-Contract:** siehe [SEO_SECTION_CONTRACT.md](../architecture/SEO_SECTION_CONTRACT.md) — dieser Plan führt **keine** neue Section ein, sondern erweitert eine bestehende. Die Contract-Punkte zu Descriptor, `analyze()` und Dashboard-Findings entfallen damit (§11.1).
 
@@ -165,7 +171,9 @@ Sie leistet genau das, was die Tabs allein nicht können: Der Merchant sieht **a
 - Google hat die Kategorie mit **Lighthouse 13.3 (Mai 2026)** aus dem Experimentellen in die Standardkonfiguration übernommen; auf pagespeed.web.dev erscheint sie als fünfte Kachel mit einem Bestanden-Zähler („3/3"), **nicht** als Score. Geprüft werden derzeit ein sauberer Accessibility-Tree, ein stabiles Layout und eine gültige `llms.txt` im Domain-Root. Google führt sie ausdrücklich als „under development" — Audits und Bewertung werden sich ändern.
 - Der **`category`-Parameter der PSI-API v5 kennt sie nicht.** Die Referenz listet exakt vier zulässige Werte: `accessibility`, `best-practices`, `performance`, `seo`. Sie lässt sich also nicht anfordern.
 
-**Konsequenz: nicht einplanen.** Ob PSI sie ungefragt in `lighthouseResult.categories` mitliefert (sie steckt in der Standardkonfiguration, und die API-Doku hinkt Lighthouse-Releases regelmäßig hinterher), kostet in Phase 1 einen Blick in eine echte Antwort — die wird für den Parser ohnehin angeschaut. Taucht der Schlüssel dort auf, ist die Kachel eine kleine Ergänzung und jederzeit nachziehbar; taucht er nicht auf, war das der ganze Aufwand. Was **nicht** passieren darf: ein Umbau, der sich auf eine Kategorie stützt, die Google selbst als in Entwicklung führt.
+**Konsequenz: nicht einplanen.** Ob PSI sie ungefragt in `lighthouseResult.categories` mitliefert (sie steckt in der Standardkonfiguration, und die API-Doku hinkt Lighthouse-Releases regelmäßig hinterher), kostet einen Blick in eine echte Antwort.
+
+**Nachgeprüft am 2026-07-24 (LH 13.4.0, mobil): NEIN.** Die Antwort enthält nur `performance`, `accessibility`, `best-practices` — `agentic-browsing` taucht nicht auf. Damit ist der Punkt erledigt: kein Ring, keine Kachel, kein weiterer Aufwand. Was **nicht** passieren darf, war ein Umbau, der sich auf eine Kategorie stützt, die Google selbst als in Entwicklung führt — das ist damit gegenstandslos.
 
 ### 3.4 Tab 1 „Ladezeit" — der heutige Inhalt, unverändert in der Sache
 
@@ -425,9 +433,15 @@ Verworfen wurde außerdem, Barrierefreiheit als `AuditType` in `analyzeStore` zu
 
 **Plan-Gates insgesamt** werden separat neu überdacht; die Section bleibt ungegatet.
 
-### 11.3 Alt-Text-Match — Spike vor Phase 1 (offen)
+### 11.3 Alt-Text-Match — Spike — **entschieden 2026-07-24: Lighthouse trägt nicht, §7 umgebaut**
 
-An einem echten Shop messen, welcher Anteil der `image-alt`-Befunde sich auf eine `ProductImage`-Zeile abbilden lässt (§7). Unter grob einem Drittel Trefferquote ist §7 kein tragender Nutzen und die Phasen 5/6 sind neu zu bewerten.
+Ursprüngliche Frage: welcher Anteil der `image-alt`-Befunde sich auf eine `ProductImage`-Zeile abbilden lässt. **Der Spike ist an der Quelle ins Leere gelaufen: Es gibt keine `image-alt`-Befunde zum Abbilden.** An einem echten Shop mit Produktbildern OHNE Alt-Text meldet Lighthouse (und pagespeed.web.dev) **nichts** — `image-alt` besteht (score=1, 0 items), weil Shopify-Themes immer ein `alt`-Attribut ausgeben und ein leeres `alt=""` von axe-core als „dekoratives Bild" **bestanden** gewertet wird. „Kein Alt-Text im Admin" ≠ „fehlendes `alt`-Attribut im HTML". Der Lighthouse-`image-alt`-Trigger feuert auf Shopify-Storefronts also praktisch nie.
+
+**Konsequenz (umgesetzt):** §7 wird vom Lighthouse-Trigger gelöst und an ContentPilots **eigene** Alt-Text-Erkennung gehängt (die sieht das leere `alt=""`, das Lighthouse ignoriert). Umgesetzt als zwei Warnungen im Barrierefreiheit-Tab, katalogweit aus der DB:
+- **Hauptsprache:** Produktbilder mit leerem/fehlendem `ProductImage.altText`.
+- **Foreign Locales:** je aktiver Fremdsprache Bilder mit vorhandenem Haupt-Alt-Text, aber ohne `ProductImageAltTranslation` (marketId `""`).
+
+Der alte Lighthouse-gekoppelte Brückenschlag (§7-Button in den `image-alt`-Befunden) bleibt als harmloser Fallback bestehen — er greift, falls doch je ein `image-alt`-Befund auftaucht.
 
 ### 11.4 Kein Lighthouse-SEO — **entschieden 2026-07-22**
 
@@ -442,7 +456,7 @@ Weder Ring noch Tab noch Anforderung der Kategorie. Lighthouse prüft technische
 ## 12. Bewusst nicht in diesem Plan
 
 - **Die Lighthouse-Kategorie SEO — vollständig, samt Score** (§11.4). Sie überschneidet sich fast vollständig mit [bulk-meta](../../app/routes/app.seo.bulk-meta.tsx), [hreflang](../../app/routes/app.seo.hreflang.tsx), [redirects](../../app/routes/app.seo.redirects.tsx) und dem eigenen Score in [seo-score.ts](../../app/utils/seo-score.ts) — und diese Werkzeuge sind gründlicher als Googles Schnellprüfung einer einzelnen Seite. Der `structured-data`-Audit dort ist zudem ein reiner Handprüfungs-Hinweis ohne Validierung. Die Kategorie wird gar nicht erst angefordert: kein Ring, kein Tab, keine gespeicherte Zahl.
-- **„Agentic browsing"** (Lighthouse 13.3, Mai 2026). Über den `category`-Parameter der PSI-API v5 nicht anforderbar und von Google selbst als „under development" geführt (§3.3). In Phase 1 wird nur beiläufig geprüft, ob sie ungefragt in der Antwort steht.
+- **„Agentic browsing"** (Lighthouse 13.3, Mai 2026). Über den `category`-Parameter der PSI-API v5 nicht anforderbar und von Google selbst als „under development" geführt (§3.3). **Am 2026-07-24 an einer echten LH-13.4.0-Antwort geprüft: taucht nicht ungefragt in `categories` auf → endgültig aus dem Plan.**
 - **GitHub-Anbindung und KI-Analyse von Theme-Dateien.** Siehe §2 — Scope-Bewilligung und Werkzeug-Konkurrenz, nicht zurückgestellt sondern verworfen.
 - **Eigene axe-core-Ausführung** (statt PSI). Würde einen Headless-Browser auf Railway bedeuten — eine ganz andere Betriebsklasse als ein HTTP-Call.
 - **Mehr-Seiten-Scan** (mehrere Templates in einem Rutsch). Fiel mit dem Task weg (§9). Falls er später gewünscht wird, ist er ein eigenes Vorhaben mit eigener Budget-Rechnung — und er würde dann Ladezeit **und** Qualität gemeinsam betreffen, nicht nur die neuen Tabs.
