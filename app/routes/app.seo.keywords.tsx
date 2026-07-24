@@ -18,6 +18,7 @@ import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
 import { HelpTooltip } from "../components/HelpTooltip";
+import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { LibraryTab } from "../components/seo/keywords/LibraryTab";
 import { AssignmentsTab } from "../components/seo/keywords/AssignmentsTab";
 import {
@@ -707,7 +708,7 @@ const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
 export default function SeoKeywords() {
   const data = useLoaderData<typeof loader>();
   const { keywords, localeOptions } = data;
-  const { t } = useI18n();
+  const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
   const k = t.seo.keywordsPage;
@@ -1093,9 +1094,16 @@ export default function SeoKeywords() {
   // Locale-Navbar: primary ("" locale) gets a stable sentinel id; the URL param
   // value for primary is "" (i.e. no ?loc=).
   const PRIMARY_LOCALE_ID = "__primary__";
+  // Labels are localized exactly like the content (Inhalte) pages'
+  // UnifiedLanguageBar: the language name via Intl.DisplayNames in the app
+  // locale, plus a "(Hauptsprache)" suffix on the primary. The primary's own
+  // code is "" here, so fall back to primaryLocaleCode for its display name.
+  const primaryLanguageSuffix = t.content?.primaryLanguageSuffix || "Primary";
   const localeNavItems: SubNavBarItem[] = localeOptions.map((l) => ({
     id: l.primary ? PRIMARY_LOCALE_ID : l.locale,
-    label: l.primary ? l.name || k.localePrimaryTab : l.name,
+    label: l.primary
+      ? `${getLocalizedLanguageName(data.primaryLocaleCode, appLocale, l.name)} (${primaryLanguageSuffix})`
+      : getLocalizedLanguageName(l.locale, appLocale, l.name),
   }));
   const localeActiveId = data.activeLocale === "" ? PRIMARY_LOCALE_ID : data.activeLocale;
 
