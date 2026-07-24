@@ -1605,6 +1605,16 @@ export const en: Translation = {
         altTextUnmatched: "This image could not be matched to any product image (e.g. a theme asset), so it can't be fixed directly from here.",
         itemsTruncated: "Showing {shown} of {total} affected elements.",
         findingsTruncated: "Showing {shown} of {total} findings.",
+        altAudit: {
+          heading: "Alt text on your product images",
+          intro: "The automated test above never flags missing alt text: Shopify themes always emit an (often empty) alt attribute, which passes the check. So we check it here directly against your product images.",
+          primaryWarning: "{missing} of {total} product images have no alt text in the primary language ({locale}).",
+          foreignWarning: "These languages are missing alt-text translations (only images that already have a primary alt text):",
+          foreignLine: "{name}: {missing} image(s) without a translation",
+          allGood: "All {total} product images have an alt text in the primary language.",
+          noImages: "No product images have been synced for this shop yet.",
+          manageAction: "Manage alt texts",
+        },
       },
       bestPractices: {
         intro: "Additional information — this category does not feed into any score and is partly outside your control. Items like HTTPS or console errors often originate from Shopify, your theme, or third-party apps.",

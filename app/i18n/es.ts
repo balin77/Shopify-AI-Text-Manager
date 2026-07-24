@@ -1604,6 +1604,16 @@ export const es: Translation = {
         altTextUnmatched: "Esta imagen no se pudo asociar a ninguna imagen de producto (p. ej. un recurso del tema), por lo que no se puede corregir directamente desde aquí.",
         itemsTruncated: "Se muestran {shown} de {total} elementos afectados.",
         findingsTruncated: "Se muestran {shown} de {total} hallazgos.",
+        altAudit: {
+          heading: "Texto alternativo de tus imágenes de producto",
+          intro: "La prueba automática de arriba nunca detecta la falta de texto alternativo: los temas de Shopify siempre emiten un atributo alt (a menudo vacío), que pasa la comprobación. Por eso lo verificamos aquí directamente en tus imágenes de producto.",
+          primaryWarning: "{missing} de {total} imágenes de producto no tienen texto alternativo en el idioma principal ({locale}).",
+          foreignWarning: "En estos idiomas faltan traducciones del texto alternativo (solo imágenes que ya tienen un texto alternativo principal):",
+          foreignLine: "{name}: {missing} imagen(es) sin traducción",
+          allGood: "Todas las {total} imágenes de producto tienen texto alternativo en el idioma principal.",
+          noImages: "Aún no se ha sincronizado ninguna imagen de producto para esta tienda.",
+          manageAction: "Gestionar textos alternativos",
+        },
       },
       bestPractices: {
         intro: "Información adicional — esta categoría no influye en ninguna puntuación y en parte queda fuera de tu control. Puntos como HTTPS o los errores de consola suelen depender de Shopify, de tu tema o de apps de terceros.",

@@ -1602,6 +1602,16 @@ export const de = {
         altTextUnmatched: "Dieses Bild konnte keinem Produktbild zugeordnet werden (z. B. ein Theme-Asset) und ist deshalb hier nicht direkt behebbar.",
         itemsTruncated: "{shown} von {total} betroffenen Elementen angezeigt.",
         findingsTruncated: "{shown} von {total} Befunden angezeigt.",
+        altAudit: {
+          heading: "Alt-Texte deiner Produktbilder",
+          intro: "Fehlende Alt-Texte findet der automatische Test oben nicht: Shopify-Themes geben immer ein (ggf. leeres) alt-Attribut aus, das die Prüfung bestehen lässt. Deshalb prüfen wir es hier direkt an deinen Produktbildern.",
+          primaryWarning: "{missing} von {total} Produktbildern haben keinen Alt-Text in der Hauptsprache ({locale}).",
+          foreignWarning: "In diesen Sprachen fehlen Alt-Text-Übersetzungen (nur Bilder mit vorhandenem Haupt-Alt-Text):",
+          foreignLine: "{name}: {missing} Bild(er) ohne Übersetzung",
+          allGood: "Alle {total} Produktbilder haben einen Alt-Text in der Hauptsprache.",
+          noImages: "Für diesen Shop sind noch keine Produktbilder synchronisiert.",
+          manageAction: "Alt-Texte verwalten",
+        },
       },
       bestPractices: {
         intro: "Zusatzinformationen — diese Kategorie fließt in keine Bewertung ein und liegt teils außerhalb deines Einflusses. Punkte wie HTTPS oder Konsolenfehler liegen häufig bei Shopify, deinem Theme oder Dritt-Apps.",

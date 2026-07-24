@@ -70,6 +70,7 @@ import type {
   QualityIssue,
 } from "../services/seo/pagespeed.types";
 import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
 import { buildAltImageMatches, type AltImageMatch } from "../services/seo/alt-image-matches";
 
@@ -109,6 +110,61 @@ async function getShopHost(admin: any, fallbackShop: string): Promise<string> {
   }
 }
 
+/**
+ * Alt-text coverage audit (accessibility plan §7, app-native replacement for
+ * the Lighthouse `image-alt` trigger). Lighthouse never flags Shopify product
+ * images: themes always emit an `alt` attribute (empty `alt=""` when unset),
+ * and axe-core PASSES empty alt as "decorative" — so the Lighthouse bridge
+ * essentially never fires. This warns from OUR own data instead: images with no
+ * primary alt text, and images whose alt text is not translated into each
+ * active foreign locale.
+ */
+type AltTextAudit = {
+  totalImages: number;
+  /** Product images with no primary-language alt text. */
+  missingPrimary: number;
+  primaryLocale: string;
+  /** Per foreign locale: images that HAVE a primary alt but lack that locale's translation. */
+  foreign: Array<{ locale: string; name: string; missing: number }>;
+};
+
+async function computeAltTextAudit(
+  db: any,
+  admin: any,
+  shop: string,
+): Promise<AltTextAudit> {
+  const locales = await getCachedShopLocales(admin, shop).catch(() => []);
+  const primaryLocale = locales.find((l: any) => l.primary)?.locale || "en";
+  const foreignLocales = locales.filter((l: any) => l.published && !l.primary);
+
+  const shopScope = { product: { shop } };
+  // "Has a primary alt to translate": non-null AND non-empty.
+  const hasPrimaryWhere = { ...shopScope, altText: { not: null }, NOT: { altText: "" } };
+
+  const [totalImages, missingPrimary, foreignMissing] = await Promise.all([
+    db.productImage.count({ where: shopScope }),
+    db.productImage.count({ where: { ...shopScope, OR: [{ altText: null }, { altText: "" }] } }),
+    Promise.all(
+      foreignLocales.map((l: any) =>
+        db.productImage.count({
+          where: { ...hasPrimaryWhere, altTextTranslations: { none: { locale: l.locale, marketId: "" } } },
+        }),
+      ),
+    ),
+  ]);
+
+  return {
+    totalImages,
+    missingPrimary,
+    primaryLocale,
+    foreign: foreignLocales.map((l: any, i: number) => ({
+      locale: l.locale,
+      name: l.name || l.locale,
+      missing: foreignMissing[i] ?? 0,
+    })),
+  };
+}
+
 /** Picker cap per resource type — mirrors the pattern in app.seo.keywords.tsx. */
 const PICKER_CAP = 100;
 /** History rows requested from the server / shown in the table. */
@@ -140,7 +196,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // its result, so it joins the parallel batch instead of blocking it — the
   // loader's latency is then the slowest single query, not the network hop
   // plus the queries.
-  const [domain, products, collections, pages, history, rum, runsToday, plan] = await Promise.all([
+  const [domain, products, collections, pages, history, rum, runsToday, plan, altTextAudit] = await Promise.all([
     getShopHost(admin, shop),
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
@@ -169,6 +225,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // inviting a click the server would reject.
     countPageSpeedRunsToday(db, shop),
     getShopPlan(db, shop),
+    // App-native alt-text coverage — replaces the Lighthouse image-alt trigger
+    // (which never fires on Shopify storefronts). Best-effort: a failure must
+    // not sink the whole page, so it degrades to null.
+    computeAltTextAudit(db, admin, shop).catch(() => null),
   ]);
 
   // Theme-editor deep link for enabling the RUM app embed — house pattern from
@@ -197,6 +257,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     runsToday,
     dailyLimit: getDailyPageSpeedRunsLimit(plan),
     activeAudit,
+    altTextAudit,
   });
 };
 
@@ -1884,7 +1945,7 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit } =
+  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit, altTextAudit } =
     useLoaderData<typeof loader>();
   const { t } = useI18n();
   const p = t.seo.performancePage;
@@ -2964,6 +3025,62 @@ export default function SeoPerformance() {
                         <Banner tone="info">
                           <Text as="p" variant="bodyMd">{p.a11y.disclaimer}</Text>
                         </Banner>
+                        {/* App-native alt-text coverage (plan §7): warns from our
+                            own data because Lighthouse never flags missing alt on
+                            Shopify (empty alt="" passes axe-core). Two axes:
+                            primary-language gaps and per-foreign-locale gaps. */}
+                        {altTextAudit && (
+                          <BlockStack gap="200">
+                            <Text as="h3" variant="headingSm" tone="subdued">{p.a11y.altAudit.heading}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">{p.a11y.altAudit.intro}</Text>
+                            {altTextAudit.totalImages === 0 ? (
+                              <Text as="p" variant="bodySm" tone="subdued">{p.a11y.altAudit.noImages}</Text>
+                            ) : (
+                              <BlockStack gap="300">
+                                {altTextAudit.missingPrimary > 0 ? (
+                                  <Banner tone="warning">
+                                    <Text as="p" variant="bodyMd">
+                                      {p.a11y.altAudit.primaryWarning
+                                        .replace("{missing}", String(altTextAudit.missingPrimary))
+                                        .replace("{total}", String(altTextAudit.totalImages))
+                                        .replace("{locale}", altTextAudit.primaryLocale)}
+                                    </Text>
+                                  </Banner>
+                                ) : (
+                                  <Banner tone="success">
+                                    <Text as="p" variant="bodyMd">
+                                      {p.a11y.altAudit.allGood.replace("{total}", String(altTextAudit.totalImages))}
+                                    </Text>
+                                  </Banner>
+                                )}
+                                {altTextAudit.foreign.some((f) => f.missing > 0) && (
+                                  <Banner tone="warning">
+                                    <BlockStack gap="100">
+                                      <Text as="p" variant="bodyMd">{p.a11y.altAudit.foreignWarning}</Text>
+                                      <BlockStack gap="050">
+                                        {altTextAudit.foreign
+                                          .filter((f) => f.missing > 0)
+                                          .map((f) => (
+                                            <Text as="p" key={f.locale} variant="bodySm">
+                                              {p.a11y.altAudit.foreignLine
+                                                .replace("{name}", f.name)
+                                                .replace("{missing}", String(f.missing))}
+                                            </Text>
+                                          ))}
+                                      </BlockStack>
+                                    </BlockStack>
+                                  </Banner>
+                                )}
+                                <InlineStack>
+                                  <Button url="/app/products" variant="plain">
+                                    {p.a11y.altAudit.manageAction}
+                                  </Button>
+                                </InlineStack>
+                              </BlockStack>
+                            )}
+                            <Divider />
+                          </BlockStack>
+                        )}
                         <QualityFindings
                           issues={a11yAutomated}
                           manualIssues={a11yManual}
