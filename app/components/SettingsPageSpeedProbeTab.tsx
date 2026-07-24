@@ -5,7 +5,7 @@
  * unparsed PageSpeed Insights response for one storefront path + device and
  * downloads it as a file, plus shows the top-level category keys inline. It
  * exists to answer one open question: does Google ship an `agentic-browsing`
- * category we never requested? See docs/plans/PLAN_ACCESSIBILITY.md §3.3.
+ * category we never requested? See docs/architecture/SEO_SPEED_AND_QUALITY.md.
  *
  * Posts to the `debugRawPsi` intent of /app/seo/performance via useFetcher
  * (NOT a raw fetch): /app/seo/performance is a UI route, so a plain fetch is a
