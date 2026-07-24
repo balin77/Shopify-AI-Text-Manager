@@ -131,6 +131,22 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<Response> {
   // productType only: the cached Product model has NO vendor column, so the
   // plan's vendor facet is not implementable from the cache.
   const filterProductType = getFormString(formData, "filterProductType");
+  // Optional explicit item selection from the assign panel (§3): when present,
+  // distribution runs over EXACTLY these items (of `targetType`) instead of the
+  // whole type. Ids that span other types are irrelevant here — targetType
+  // still selects the cache table, and loadTargetItems intersects on id.
+  let resourceIds: string[] | undefined;
+  const rawResourceIds = getFormString(formData, "resourceIds");
+  if (rawResourceIds) {
+    try {
+      const parsed = JSON.parse(rawResourceIds);
+      if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string") && parsed.length > 0) {
+        resourceIds = parsed;
+      }
+    } catch {
+      // Malformed selection — fall back to the whole-type path.
+    }
+  }
 
   if (!groupId || !RESOURCE_TYPES.includes(targetType)) {
     return json({ success: false, error: "Invalid distribution parameters." }, { status: 400 });
@@ -151,6 +167,7 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<Response> {
 
   const items = await loadTargetItems(db, session.shop, targetType, {
     productType: filterProductType,
+    resourceIds,
   });
   if (items.length === 0) {
     return json({ success: false, error: "No target items found for this distribution." }, { status: 400 });
@@ -347,14 +364,18 @@ async function loadTargetItems(
   db: PrismaClient,
   shop: string,
   targetType: KeywordResourceType,
-  filters: { productType?: string },
+  filters: { productType?: string; resourceIds?: string[] },
 ): Promise<DistributionItem[]> {
+  // An explicit item selection (assign panel, §3) intersects on id; absent it,
+  // the whole-type path is unchanged.
+  const idFilter = filters.resourceIds?.length ? { id: { in: filters.resourceIds } } : {};
   switch (targetType) {
     case "Product": {
       const rows = await db.product.findMany({
         where: {
           shop,
           ...(filters.productType ? { productType: filters.productType } : {}),
+          ...idFilter,
         },
         select: { id: true, title: true, seoTitle: true, descriptionHtml: true },
         orderBy: { title: "asc" },
@@ -367,7 +388,7 @@ async function loadTargetItems(
     }
     case "Collection": {
       const rows = await db.collection.findMany({
-        where: { shop },
+        where: { shop, ...idFilter },
         select: { id: true, title: true, seoTitle: true, descriptionHtml: true },
         orderBy: { title: "asc" },
       });
@@ -379,7 +400,7 @@ async function loadTargetItems(
     }
     case "Article": {
       const rows = await db.article.findMany({
-        where: { shop },
+        where: { shop, ...idFilter },
         select: { id: true, title: true, seoTitle: true, body: true },
         orderBy: { title: "asc" },
       });
@@ -391,7 +412,7 @@ async function loadTargetItems(
     }
     case "Page": {
       const rows = await db.page.findMany({
-        where: { shop },
+        where: { shop, ...idFilter },
         select: { id: true, title: true, seoTitle: true, body: true },
         orderBy: { title: "asc" },
       });
