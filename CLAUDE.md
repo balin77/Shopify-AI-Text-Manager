@@ -22,7 +22,7 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
 - [app/actions/](app/actions/)
   - [unified-content.actions.ts](app/actions/unified-content.actions.ts) — **the** entry point for product/collection/page/blog/article actions (`handleUnifiedContentActions`)
   - [content/](app/actions/content/) — content updates, alt-text, translation
-  - [product/](app/actions/product/) — product-specific bulk paths (note: `translation-bulk.actions.ts` has a `handleTranslateAll` but the products page does NOT use it)
+  - [product/](app/actions/product/) — product-specific update paths (`update.actions.ts`, `shared/action-context.ts`). Translate-all for products runs through `translateAllContent()` in [shopify-content.service.ts](src/services/shopify-content.service.ts), NOT a product-local bulk handler.
   - [templates/](app/actions/templates/) — theme templates: generate, load, translate, update
 - [app/services/](app/services/) — Shopify GraphQL, AI, sync, image ops
 - [app/hooks/](app/hooks/) — data loading + editor state
@@ -34,7 +34,7 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
 ## Architecture invariants
 
 - **Unified action handler.** Products, collections, pages, blogs, articles all route their actions through `handleUnifiedContentActions` in [unified-content.actions.ts](app/actions/unified-content.actions.ts). Do not add parallel handlers.
-- **Translations write to Shopify AND the local DB.** Foreign values go to Shopify via `translationsRegister` (or the unstable CookieBanner endpoint) AND to Prisma (`ContentTranslation`, `ThemeTranslation`, etc.). A save is only successful if Shopify **echoes back** the keys — `userErrors` alone is not enough. Historic bug pattern: silent no-op when Shopify accepted the call but stored nothing.
+- **Translations write to Shopify AND the local DB.** Foreign values go to Shopify via `translationsRegister` (or the unstable CookieBanner endpoint) AND to Prisma (`ContentTranslation`, `ThemeTranslation`, etc.). A save is only successful if Shopify **echoes back** the keys — `userErrors` alone is not enough. Historic bug pattern: silent no-op when Shopify accepted the call but stored nothing. Conversely, always write the DB row **even when Shopify returns no digest** — `translationsRegister` requires a digest but Prisma does not (fields like `product_type` may lack one in some contexts).
 - **Delete on Shopify must check the echo too.** `translationsRemove` can silently no-op. If Shopify does not confirm removal, do NOT delete the local DB row — otherwise state diverges.
 - **Reload only refreshes known IDs.** Per-resource reload (e.g. `syncSingleProduct`) does not discover newly created Shopify resources. New resources appear only via full `syncAll*` runs.
 - **UiDataLoader owns editor state.** [useUiDataLoader.ts](app/hooks/useUiDataLoader.ts) owns five cache refs (`deletedTranslationKeysRef`, `localTranslationsRef`, `savedPrimaryValuesRef`, `originalLoadedValuesRef`, `originalTemplateValuesRef`) plus a `resolve()` priority chain (foreign: deleted → localOverride → itemTranslation → fallback → empty; primary: savedPrimaryCache → itemField → fallback). **Items are read-only** — never mutate `item.translations` or item properties; go through the overlay refs. `resolve()` reads them.
