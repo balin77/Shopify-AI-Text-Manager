@@ -2295,6 +2295,17 @@ export const en: Translation = {
         "If the same primary keyword is used more than once, a warning appears at the top",
       ],
     },
+    keywordsAssignModal: {
+      title: "Assign keywords",
+      summary:
+        "At the top you pick the content to assign onto. The distribution mode then controls how the keywords are spread: in AI mode the AI automatically assigns one primary and up to N secondary keywords per item; in manual mode all selected keywords are assigned to every selected item.",
+      tips: [
+        "First select the target content (products, collections, pages, blog articles)",
+        "AI mode (Pro): one primary + up to N secondary keywords per item, automatically",
+        "Manual: all keywords as primary or secondary onto every selected item",
+        "“Demote existing” makes the new keyword primary and demotes an existing primary to secondary",
+      ],
+    },
 
     // Settings - AI API Access
     apiKey: {

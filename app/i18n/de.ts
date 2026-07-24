@@ -2292,6 +2292,17 @@ export const de = {
         "Wird dasselbe primäre Keyword mehrfach vergeben, warnt ein Hinweis oben",
       ],
     },
+    keywordsAssignModal: {
+      title: "Keywords zuordnen",
+      summary:
+        "Oben wählst du die Inhalte, auf die zugewiesen wird. Danach bestimmt der Verteilmodus, wie die Keywords verteilt werden: Im KI-Modus vergibt die KI pro Inhalt automatisch ein primäres und bis zu N sekundäre Keywords. Im manuellen Modus werden alle ausgewählten Keywords allen gewählten Inhalten zugewiesen.",
+      tips: [
+        "Zuerst die Ziel-Inhalte (Produkte, Kollektionen, Seiten, Blogartikel) auswählen",
+        "KI-Modus (Pro): automatisch ein primäres + bis zu N sekundäre Keywords je Inhalt",
+        "Manuell: alle Keywords als primär oder sekundär auf jeden gewählten Inhalt",
+        "„Bestehende herabstufen“ macht das neue Keyword primär und stuft ein vorhandenes primäres zu sekundär herab",
+      ],
+    },
 
     // Settings - AI API Access
     apiKey: {

@@ -34,6 +34,7 @@ import type { ActionResult } from "../../../routes/app.seo.keywords";
 import type { KeywordResourceType, KeywordRole } from "../../../services/seo/keywords.service";
 import { estimateDistributionCost } from "../../../services/seo/keyword-distribution.shared";
 import { ItemPicker, type SelectedPickerItem } from "./ItemPicker";
+import { HelpTooltip } from "../../HelpTooltip";
 
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 
@@ -251,9 +252,12 @@ export function AssignPanel({
 
           {/* Verteilmodus */}
           <BlockStack gap="200">
-            <Text as="h4" variant="headingSm">
-              {k.assign.modeLabel}
-            </Text>
+            <InlineStack gap="100" blockAlign="center">
+              <Text as="h4" variant="headingSm">
+                {k.assign.modeLabel}
+              </Text>
+              <HelpTooltip helpKey="keywordsAssignModal" position="below" />
+            </InlineStack>
             <InlineStack gap="300" blockAlign="center" wrap={false}>
               <RadioButton
                 label={k.assign.aiMode}

@@ -2294,6 +2294,17 @@ export const es: Translation = {
         "Si la misma palabra clave principal se usa más de una vez, aparece un aviso arriba",
       ],
     },
+    keywordsAssignModal: {
+      title: "Asignar palabras clave",
+      summary:
+        "Arriba eliges el contenido al que asignar. El modo de distribución determina cómo se reparten las palabras clave: en modo IA, la IA asigna automáticamente una palabra clave principal y hasta N secundarias por contenido; en modo manual, todas las palabras clave seleccionadas se asignan a cada contenido elegido.",
+      tips: [
+        "Primero selecciona el contenido de destino (productos, colecciones, páginas, artículos de blog)",
+        "Modo IA (Pro): una principal + hasta N secundarias por contenido, de forma automática",
+        "Manual: todas las palabras clave como principal o secundaria en cada contenido elegido",
+        "«Degradar existente» convierte la nueva palabra clave en principal y degrada la principal actual a secundaria",
+      ],
+    },
 
     // Settings - AI API Access
     apiKey: {
