@@ -56,9 +56,22 @@
  *     natural "this changed" signal to key off.
  *   - The run is merchant-triggered and infrequent (a manual button, not a
  *     cron), and the match loop itself is LLM-free — so the "cost" of
- *     ephemeral is N synonym calls once per manual run, not once per page
- *     view or per scheduled sweep. Capped at MAX_SYNONYM_TARGETS per run to
- *     bound that cost further (see below).
+ *     ephemeral is a handful of BATCHED synonym requests once per manual run
+ *     (SYNONYM_BATCH_SIZE terms each, capped at MAX_SYNONYM_TARGETS targets),
+ *     not one request per target and not once per page view or scheduled
+ *     sweep.
+ *
+ * ── Rejection feedback (merchant "Ablehnen") ────────────────────────────────
+ * A rejected suggestion is suppressed on TWO levels:
+ *   1. Deterministic, per (source, target) pair: a `dismissed` row with
+ *      `dismissedUntil: null` is never revived by a later run (step 5 above) —
+ *      this is the actual guarantee that the same suggestion isn't re-made.
+ *   2. As an AI input: the anchor texts rejected for a target are passed into
+ *      the next run's synonym prompt as "already rejected, do not repeat", and
+ *      any that come back anyway are filtered out. Rejections deliberately
+ *      only suppress SYNONYM anchors, never the target's own title/keyword
+ *      anchors — a merchant who rejects a link from article A must still be
+ *      offered the same product from page B.
  *   - If usage data later shows merchants re-running this often enough that
  *     synonym cost dominates, the fix is a cache keyed by (title, locale) —
  *     but that is speculative today, so it is not built (contract: don't
@@ -78,13 +91,23 @@ export const MAX_SUGGESTIONS_PER_SOURCE = 3;
 /** §4.1 "Cap": at most this many `pending` suggestions open per shop at once. */
 export const MAX_PENDING_PER_SHOP = 200;
 /**
- * Bounds the number of target items that get a synonym LLM call in one run
- * (§4.3 "roughly 1 call per target item" — capped so a shop with thousands of
- * products/collections can't turn one button click into thousands of AI
- * calls). Targets beyond this cap still match on title/keywords, just
- * without synonyms.
+ * Bounds the number of target items enriched with AI synonyms in one run
+ * (capped so a shop with thousands of products/collections can't turn one
+ * button click into an unbounded amount of AI work). Targets beyond this cap
+ * still match on title/keywords, just without synonyms.
  */
 export const MAX_SYNONYM_TARGETS = 200;
+/**
+ * Terms per synonym AI request. The plan's §4.3 sketch ("roughly 1 call per
+ * target item") turned out to be the dominant cost of a run — 200 targets =
+ * 200 requests for a few words each. Synonym lists are tiny, so they batch:
+ * with 25 terms per request the same 200 targets cost 8 requests instead of
+ * 200 (~96% fewer), with no change to the match algorithm (which is LLM-free).
+ * Kept small enough that one malformed response only costs one chunk's
+ * synonyms (the batch degrades to "no synonyms", never to a mis-aligned
+ * mapping — see AIService.generateSynonymsBatch).
+ */
+export const SYNONYM_BATCH_SIZE = 25;
 /** §4.3 heartbeat cadence. */
 export const HEARTBEAT_EVERY_SOURCES = 20;
 
@@ -369,6 +392,10 @@ export function insertLinkIntoHtml(sourceHtml: string, anchorText: string, href:
 export interface InternalLinksSummary {
   targetsConsidered: number;
   targetsWithSynonyms: number;
+  /** How many AI requests the synonym stage actually issued (one per batch of
+   *  SYNONYM_BATCH_SIZE targets, not one per target). Surfaced in the Task
+   *  result so the AI cost of a run is visible without reading logs. */
+  synonymRequests: number;
   sourcesScanned: number;
   created: number;
   updated: number;
@@ -409,12 +436,40 @@ function suggestionKey(row: { fromResourceType: string; fromResourceId: string; 
 
 export interface RunInternalLinksDeps {
   db: PrismaClient;
-  /** Optional — omitted (e.g. no AI key configured) means targets match on
-   *  title/keywords only, no synonyms. Matches AIService.generateSynonyms's
-   *  shape without importing the AI service into this DB-cache-first module. */
-  synonymProvider?: (term: string, locale: string) => Promise<string[]>;
+  /**
+   * Optional — omitted (e.g. no AI key configured) means targets match on
+   * title/keywords only, no synonyms. BATCH shape: one call per chunk of up to
+   * SYNONYM_BATCH_SIZE terms, returning one synonym list per term in the SAME
+   * order (`avoid[i]` = anchor texts already rejected for `terms[i]`). Matches
+   * AIService.generateSynonymsBatch without importing the AI service into this
+   * DB-cache-first module.
+   */
+  synonymProvider?: (terms: string[], locale: string, avoid: string[][]) => Promise<string[][]>;
   onProgress?: (processed: number, total: number) => void | Promise<void>;
   heartbeatEvery?: number;
+}
+
+/** Anchor texts the merchant has rejected per target item, keyed
+ *  `<resourceType>:<resourceId>` — the "don't propose this again" signal fed
+ *  into the next run's synonym prompts. Exported for the unit test. */
+export function rejectedAnchorsByTarget(
+  rows: Array<{ toResourceType: string; toResourceId: string; anchorText: string; status: string; dismissedUntil: Date | null }>,
+  now: Date,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.status !== "dismissed") continue;
+    // A lapsed 90-day ignore is no longer a rejection (the run revives it), so
+    // it must not suppress anything either.
+    if (row.dismissedUntil && row.dismissedUntil <= now) continue;
+    const anchor = (row.anchorText || "").trim();
+    if (!anchor) continue;
+    const key = `${row.toResourceType}:${row.toResourceId}`;
+    const list = map.get(key) ?? [];
+    if (!list.some((a) => a.toLocaleLowerCase() === anchor.toLocaleLowerCase())) list.push(anchor);
+    map.set(key, list);
+  }
+  return map;
 }
 
 /**
@@ -462,21 +517,56 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
     } satisfies TargetItem;
   });
 
-  // ── Synonyms (§4.4 — ephemeral, capped) ───────────────────────────────
+  // ── Existing suggestions (rejection feedback + dismissed-future guard +
+  //    pending budget) ─────────────────────────────────────────────────────
+  // Loaded BEFORE the synonym stage on purpose: the merchant's rejections are
+  // an input to it (see rejectedAnchorsByTarget), not just a persistence-time
+  // guard. One query serves all three uses.
+  const existingRows = await db.seoInternalLinkSuggestion.findMany({
+    where: { shop },
+    select: {
+      fromResourceType: true,
+      fromResourceId: true,
+      toResourceType: true,
+      toResourceId: true,
+      anchorText: true,
+      locale: true,
+      status: true,
+      dismissedUntil: true,
+    },
+    take: 5000,
+  });
+  const now = new Date();
+  const rejectedAnchors = rejectedAnchorsByTarget(existingRows, now);
+
+  // ── Synonyms (§4.4 — ephemeral, capped, BATCHED) ───────────────────────
   let targetsWithSynonyms = 0;
+  let synonymRequests = 0;
   if (synonymProvider) {
-    for (const target of targets.slice(0, MAX_SYNONYM_TARGETS)) {
-      const seed = target.anchors.find((a) => a.kind === "primary")?.text || target.title;
+    const synonymTargets = targets.slice(0, MAX_SYNONYM_TARGETS);
+    for (let i = 0; i < synonymTargets.length; i += SYNONYM_BATCH_SIZE) {
+      const chunk = synonymTargets.slice(i, i + SYNONYM_BATCH_SIZE);
+      const terms = chunk.map((t) => t.anchors.find((a) => a.kind === "primary")?.text || t.title);
+      const avoid = chunk.map((t) => rejectedAnchors.get(`${t.resourceType}:${t.resourceId}`) ?? []);
+      let lists: string[][];
       try {
-        const synonyms = await synonymProvider(seed, "");
-        if (synonyms.length > 0) {
-          target.anchors.push(...buildAnchorCandidates({ title: "", synonyms }).filter((a) => a.kind === "synonym"));
-          targetsWithSynonyms++;
-        }
+        synonymRequests++;
+        lists = await synonymProvider(terms, "", avoid);
       } catch {
-        // Best-effort — a single failed synonym call must not abort the run;
-        // that target simply matches on title/keywords only.
+        // Best-effort — a failed synonym batch must not abort the run; those
+        // targets simply match on title/keywords only.
+        continue;
       }
+      if (!Array.isArray(lists) || lists.length !== chunk.length) continue; // never risk a mis-aligned mapping
+      chunk.forEach((target, idx) => {
+        // The prompt asks the model to skip rejected wordings; this is the
+        // guarantee that it did (a model hint is never the enforcement point).
+        const blocked = new Set((avoid[idx] ?? []).map((a) => a.toLocaleLowerCase()));
+        const synonyms = (lists[idx] ?? []).filter((s) => !blocked.has(s.trim().toLocaleLowerCase()));
+        if (synonyms.length === 0) return;
+        target.anchors.push(...buildAnchorCandidates({ title: "", synonyms }).filter((a) => a.kind === "synonym"));
+        targetsWithSynonyms++;
+      });
     }
   }
 
@@ -505,24 +595,11 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
     ...pages.map((p) => ({ resourceType: "Page" as const, resourceId: p.id, html: p.body || "" })),
   ];
 
-  // ── Existing suggestions (dismissed-future guard + pending budget) ─────
-  const existingRows = await db.seoInternalLinkSuggestion.findMany({
-    where: { shop },
-    select: {
-      fromResourceType: true,
-      fromResourceId: true,
-      toResourceType: true,
-      toResourceId: true,
-      locale: true,
-      status: true,
-      dismissedUntil: true,
-    },
-    take: 5000,
-  });
-  const existingByKey = new Map(existingRows.map((r) => [suggestionKey(r), r]));
+  const existingByKey = new Map<string, { status: string; dismissedUntil: Date | null }>(
+    existingRows.map((r) => [suggestionKey(r), { status: r.status, dismissedUntil: r.dismissedUntil }]),
+  );
   let pendingCount = existingRows.filter((r) => r.status === "pending").length;
 
-  const now = new Date();
   let created = 0;
   let updated = 0;
   let cappedByPendingLimit = false;
@@ -581,7 +658,7 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
           });
           pendingCount++;
           created++;
-          existingByKey.set(candidateKey, { ...whereKey, status: "pending", dismissedUntil: null });
+          existingByKey.set(candidateKey, { status: "pending", dismissedUntil: null });
         } catch (err: unknown) {
           // §8: `existingRows` is capped at 5000 with no orderBy — beyond
           // that a dismissed-future row can fall outside the loaded window,
@@ -596,11 +673,11 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
             select: { status: true, dismissedUntil: true },
           });
           if (row?.status === "dismissed" && (!row.dismissedUntil || row.dismissedUntil > now)) {
-            existingByKey.set(candidateKey, { ...whereKey, status: row.status, dismissedUntil: row.dismissedUntil });
+            existingByKey.set(candidateKey, { status: row.status, dismissedUntil: row.dismissedUntil });
             continue; // never resurrect a dismissed-future/permanent row via this path either
           }
           if (row?.status === "accepted") {
-            existingByKey.set(candidateKey, { ...whereKey, status: "accepted", dismissedUntil: row.dismissedUntil ?? null });
+            existingByKey.set(candidateKey, { status: "accepted", dismissedUntil: row.dismissedUntil ?? null });
             continue;
           }
           await db.seoInternalLinkSuggestion.update({
@@ -608,7 +685,7 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
             data: { anchorText: match.anchorText, confidence: match.confidence, status: "pending", dismissedUntil: null },
           });
           updated++;
-          existingByKey.set(candidateKey, { ...whereKey, status: "pending", dismissedUntil: null });
+          existingByKey.set(candidateKey, { status: "pending", dismissedUntil: null });
         }
       } else {
         // Existing "pending" row, or a "dismissed" row whose dismissedUntil
@@ -654,6 +731,7 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
   return {
     targetsConsidered: targets.length,
     targetsWithSynonyms,
+    synonymRequests,
     sourcesScanned: sources.length,
     created,
     updated,

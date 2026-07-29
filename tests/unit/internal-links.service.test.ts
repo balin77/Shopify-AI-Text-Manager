@@ -7,8 +7,10 @@ import {
   keywordsByResource,
   targetUrlPath,
   runInternalLinkSuggestions,
+  rejectedAnchorsByTarget,
   MAX_SUGGESTIONS_PER_SOURCE,
   MAX_PENDING_PER_SHOP,
+  SYNONYM_BATCH_SIZE,
   type TargetItem,
   type AssignmentLike,
 } from "~/services/seo/internal-links.service";
@@ -246,6 +248,7 @@ function makeDb(opts: {
     locale: string;
     status: string;
     dismissedUntil: Date | null;
+    anchorText?: string;
   }>;
   /** Rows that exist in the "DB" but are NOT returned by the bulk
    *  `findMany` — simulates a row beyond the unbounded 5000-row
@@ -531,5 +534,165 @@ describe("runInternalLinkSuggestions (DB orchestration)", () => {
     });
     const summary = await runInternalLinkSuggestions(SHOP, { db });
     expect(summary.created).toBe(0);
+  });
+});
+
+// ── Synonym batching + rejection feedback ───────────────────────────────────
+
+describe("rejectedAnchorsByTarget", () => {
+  const NOW = new Date("2026-07-01T00:00:00Z");
+
+  it("collects permanently-rejected anchors per target, case-insensitively de-duped", () => {
+    const map = rejectedAnchorsByTarget(
+      [
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "Vasi", status: "dismissed", dismissedUntil: null },
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "vasi", status: "dismissed", dismissedUntil: null },
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "Blumenvase", status: "dismissed", dismissedUntil: null },
+        { toResourceType: "Collection", toResourceId: "C1", anchorText: "Töpfe", status: "dismissed", dismissedUntil: null },
+      ],
+      NOW,
+    );
+    expect(map.get("Product:P1")).toEqual(["Vasi", "Blumenvase"]);
+    expect(map.get("Collection:C1")).toEqual(["Töpfe"]);
+  });
+
+  it("ignores pending/accepted rows and lapsed dismissals (a lapsed row is revived, so it must not suppress anything)", () => {
+    const map = rejectedAnchorsByTarget(
+      [
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "pending", status: "pending", dismissedUntil: null },
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "accepted", status: "accepted", dismissedUntil: null },
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "lapsed", status: "dismissed", dismissedUntil: new Date("2026-06-01T00:00:00Z") },
+        { toResourceType: "Product", toResourceId: "P1", anchorText: "future", status: "dismissed", dismissedUntil: new Date("2026-08-01T00:00:00Z") },
+      ],
+      NOW,
+    );
+    expect(map.get("Product:P1")).toEqual(["future"]);
+  });
+});
+
+describe("runInternalLinkSuggestions — synonym stage (batched)", () => {
+  it(`sends one request per ${SYNONYM_BATCH_SIZE} targets instead of one per target`, async () => {
+    const products = Array.from({ length: SYNONYM_BATCH_SIZE + 3 }, (_i, i) => ({
+      id: `gid-P${i}`,
+      handle: `handle-${i}`,
+      title: `Product Title ${i}`,
+    }));
+    const db = makeDb({ products, articles: [{ id: "gid-A1", body: "<p>Nothing matches here.</p>" }] });
+
+    const calls: string[][] = [];
+    const summary = await runInternalLinkSuggestions(SHOP, {
+      db,
+      synonymProvider: async (terms) => {
+        calls.push(terms);
+        return terms.map(() => []);
+      },
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toHaveLength(SYNONYM_BATCH_SIZE);
+    expect(calls[1]).toHaveLength(3);
+    // Positional contract: term i of a chunk is that chunk's target i.
+    expect(calls[0][0]).toBe("Product Title 0");
+    expect(calls[1][2]).toBe(`Product Title ${SYNONYM_BATCH_SIZE + 2}`);
+    expect(summary.synonymRequests).toBe(2);
+  });
+
+  it("passes the target's rejected anchors along and drops them if the model returns them anyway", async () => {
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+      // Rejected for THIS target (from a different source) — must not be
+      // proposed again as a synonym anchor.
+      existingSuggestions: [
+        {
+          id: "s1",
+          fromResourceType: "Page",
+          fromResourceId: "gid-X",
+          toResourceType: "Product",
+          toResourceId: "gid-P1",
+          locale: "",
+          status: "dismissed",
+          dismissedUntil: null,
+          anchorText: "Vasi",
+        },
+      ],
+      articles: [{ id: "gid-A1", body: "<p>Unsere Vasi stehen im Regal.</p>" }],
+    });
+
+    const avoidSeen: string[][][] = [];
+    const summary = await runInternalLinkSuggestions(SHOP, {
+      db,
+      synonymProvider: async (terms, _locale, avoid) => {
+        avoidSeen.push(avoid);
+        return terms.map(() => ["Vasi"]); // model ignores the instruction
+      },
+    });
+
+    expect(avoidSeen[0]).toEqual([["Vasi"]]);
+    // The only mention in the source is the rejected wording → no suggestion.
+    expect(summary.created).toBe(0);
+    expect(summary.targetsWithSynonyms).toBe(0);
+  });
+
+  it("still uses the synonyms that were not rejected", async () => {
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+      existingSuggestions: [
+        {
+          id: "s1",
+          fromResourceType: "Page",
+          fromResourceId: "gid-X",
+          toResourceType: "Product",
+          toResourceId: "gid-P1",
+          locale: "",
+          status: "dismissed",
+          dismissedUntil: null,
+          anchorText: "Vasi",
+        },
+      ],
+      articles: [{ id: "gid-A1", body: "<p>Diese Blumenvase ist handgemacht.</p>" }],
+    });
+
+    const summary = await runInternalLinkSuggestions(SHOP, {
+      db,
+      synonymProvider: async (terms) => terms.map(() => ["Vasi", "Blumenvase"]),
+    });
+
+    expect(summary.targetsWithSynonyms).toBe(1);
+    expect(summary.created).toBe(1);
+    expect(db._suggestions.find((s: any) => s.fromResourceId === "gid-A1")?.anchorText).toBe("Blumenvase");
+  });
+
+  it("survives a throwing synonym batch and a mis-aligned response (matching continues on title/keyword anchors)", async () => {
+    const makeShop = () =>
+      makeDb({
+        products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+        articles: [{ id: "gid-A1", body: "<p>The Green Ceramic Vase is lovely.</p>" }],
+      });
+
+    const thrown = await runInternalLinkSuggestions(SHOP, {
+      db: makeShop(),
+      synonymProvider: async () => {
+        throw new Error("provider down");
+      },
+    });
+    expect(thrown.created).toBe(1); // title anchor still matched
+    expect(thrown.targetsWithSynonyms).toBe(0);
+
+    const misaligned = await runInternalLinkSuggestions(SHOP, {
+      db: makeShop(),
+      synonymProvider: async () => [["a"], ["b"]], // 2 lists for 1 term
+    });
+    expect(misaligned.created).toBe(1);
+    expect(misaligned.targetsWithSynonyms).toBe(0);
+  });
+
+  it("makes no AI request at all when no synonym provider is wired (no AI key)", async () => {
+    const db = makeDb({
+      products: [{ id: "gid-P1", handle: "green-vase", title: "Green Ceramic Vase" }],
+      articles: [{ id: "gid-A1", body: "<p>The Green Ceramic Vase is lovely.</p>" }],
+    });
+    const summary = await runInternalLinkSuggestions(SHOP, { db });
+    expect(summary.synonymRequests).toBe(0);
+    expect(summary.created).toBe(1);
   });
 });

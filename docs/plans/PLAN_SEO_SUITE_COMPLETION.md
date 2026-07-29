@@ -289,13 +289,16 @@ Auf Merchant-Trigger (Button; wöchentliche Automatik später):
 ### 4.2 UI
 
 Eigene Section `{ id: "internalLinks", path: "/app/seo/internal-links", kind: "tool", planGate: "pro" }` + Karte auf dem Dashboard („X Verlinkungs-Vorschläge offen") als Einstieg. Tabelle:
-- Von (Deep-Link Editor) · Erwähnter Text · Nach (Deep-Link) · Confidence · Aktionen: **Akzeptieren** / **Ablehnen** / **90 Tage ignorieren**; Filter nach Quell-/Ziel-Typ.
+- Von (Deep-Link Editor) · Erwähnter Text · Nach (Deep-Link) · Confidence · Aktionen: **Akzeptieren** / **Ablehnen**; Filter nach Quell-/Ziel-Typ.
+- **Umgesetzt abweichend von der Skizze (Stand 2026-07):** „90 Tage ignorieren" ist entfallen — Ablehnen ist immer permanent. Stattdessen schaltet die Operationsleiste zwischen **zwei Listen** um (`?view=open` / `?view=rejected`): abgelehnte Vorschläge bleiben einsehbar, können nachträglich doch akzeptiert oder zurück in die offene Liste geschoben werden. Beide Listen sind **serverseitig paginiert** (20 pro Seite, Typ-Filter im `WHERE`), weil die Abgelehnt-Liste im Gegensatz zur offenen Liste keinen Cap hat. Jede Zeile ist ein Kasten mit festem Spalten-Grid, damit Pfeil, Typ-Badges und Titel über die ganze Liste hinweg vertikal fluchten.
 - **Akzeptieren** setzt den Link cheerio-basiert in `descriptionHtml`/`body` (erster Match im Text-Knoten wird zu `<a href="/products/<handle>">`), zeigt **Vorher/Nachher-Diff im Modal** und speichert erst nach Bestätigung über den bestehenden Save-Pfad (`handleUnifiedContentActions`-Route — KEIN paralleler Save-Handler, Architektur-Invariante). Kein Regex-Insert: HTML-Zerstörungsrisiko.
 
 ### 4.3 Task + Kosten
 
 - Neuer Task-Typ **`seoInternalLinks`** in `LONG_RUNNING_TASK_TYPES`; Single-flight; Heartbeat pro 20 Quellen.
-- Synonym-Calls über `AIQueueService.enqueue()` (Contract §8) — grob 1 Call pro Ziel-Item, einmalig, danach gecached; Match-Loop selbst ist LLM-frei.
+- Synonym-Calls über `AIQueueService.enqueue()` (Contract §8); Match-Loop selbst ist LLM-frei.
+- **Umgesetzt abweichend von der Skizze (Stand 2026-07):** „1 Call pro Ziel-Item" war der dominierende Kostenposten eines Laufs (bis zu 200 Requests für je ein paar Wörter). Die Calls sind jetzt **gebündelt**: `AIService.generateSynonymsBatch()` verarbeitet `SYNONYM_BATCH_SIZE` (25) Begriffe pro Request → 200 Ziel-Items = **8 statt 200 Requests**. Eine fehlerhafte/kurze Antwort degradiert auf „keine Synonyme für dieses Bündel" (nie auf eine verschobene Zuordnung), der Lauf läuft weiter. `Task.result.synonymRequests` weist die tatsächliche Request-Zahl aus.
+- **Ablehnungs-Feedback:** Die für ein Ziel-Item abgelehnten Anchor-Texte gehen als „already rejected, do not repeat" in den nächsten Synonym-Prompt und werden aus der Antwort herausgefiltert. Die harte Garantie, dass ein abgelehnter Vorschlag nicht wiederkommt, bleibt die DB-Regel (§4.1 Schritt 5) — Ablehnungen unterdrücken nur **Synonym**-Anchor, nie Titel/Keyword-Anchor desselben Ziels (sonst würde eine Ablehnung in Artikel A denselben Link in Seite B mitverbieten).
 - Pro-Gate.
 
 ### 4.4 Offen für die Umsetzung

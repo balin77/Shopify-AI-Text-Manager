@@ -4,8 +4,22 @@
  *
  * "Vorschläge generieren" kicks off the detached "seoInternalLinks" Task
  * through the shared /api/ai route (same fire-and-forget + poll pattern as
- * the crawl section's "Jetzt scannen"). Reject / "90 Tage ignorieren" are
- * synchronous actions on THIS route.
+ * the crawl section's "Jetzt scannen").
+ *
+ * TWO LISTS, one route: the operations bar switches between `view=open`
+ * (status "pending") and `view=rejected` (status "dismissed") via the URL, so
+ * the loader — not the client — decides what is listed, counted and paged.
+ * Both views are server-paginated (PAGE_SIZE per page, type filters applied in
+ * SQL) because the rejected list grows without a cap, unlike the pending list
+ * (MAX_PENDING_PER_SHOP). A rejected suggestion can still be accepted later
+ * from its list, or moved back to "open" ("restore").
+ *
+ * Rejecting is permanent (`dismissedUntil: null` → never revived by a later
+ * run, and the anchor is fed into the next run's synonym prompt as a
+ * do-not-repeat — see internal-links.service.ts's header). There is
+ * deliberately no "ignore for 90 days" action; rows that still carry a future
+ * `dismissedUntil` from that removed action simply show up in the rejected
+ * list until it lapses.
  *
  * Accept is a two-step flow:
  *   1. "previewAccept" (this route's action) computes the cheerio-based
@@ -24,7 +38,7 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -32,10 +46,12 @@ import {
   Text,
   Badge,
   Button,
+  ButtonGroup,
   Banner,
   Select,
   Modal,
 } from "@shopify/polaris";
+import { ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -59,6 +75,15 @@ const RESOURCE_ROUTE: Record<string, { path: string; fieldKey: "description" | "
 
 const FILTER_TYPES = ["Product", "Collection", "Article", "Page"] as const;
 type FilterType = (typeof FILTER_TYPES)[number];
+
+/** Suggestions per page (both views). Server-side — see the header note. */
+export const PAGE_SIZE = 20;
+
+const VIEWS = ["open", "rejected"] as const;
+type View = (typeof VIEWS)[number];
+
+/** URL `view` -> the DB status that view lists. */
+const VIEW_STATUS: Record<View, string> = { open: "pending", rejected: "dismissed" };
 
 interface SuggestionRow {
   id: string;
@@ -130,6 +155,14 @@ async function resolveTitles(
   return map;
 }
 
+function parseView(raw: string | null): View {
+  return VIEWS.includes(raw as View) ? (raw as View) : "open";
+}
+
+function parseTypeFilter(raw: string | null): FilterType | null {
+  return FILTER_TYPES.includes(raw as FilterType) ? (raw as FilterType) : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -137,25 +170,67 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const plan = await loadPlan(db, shop);
   if (!meetsPlan(plan, "pro")) {
-    return json({ gated: true, running: false, lastRun: null as string | null, primaryLocale: "", rows: EXAMPLE_ROWS });
+    return json({
+      gated: true,
+      running: false,
+      lastRun: null as string | null,
+      primaryLocale: "",
+      view: "open" as View,
+      fromFilter: "all",
+      toFilter: "all",
+      page: 1,
+      pageSize: PAGE_SIZE,
+      total: EXAMPLE_ROWS.length,
+      openCount: EXAMPLE_ROWS.length,
+      rejectedCount: 0,
+      rows: EXAMPLE_ROWS,
+    });
   }
+
+  const url = new URL(request.url);
+  const view = parseView(url.searchParams.get("view"));
+  const fromFilter = parseTypeFilter(url.searchParams.get("from"));
+  const toFilter = parseTypeFilter(url.searchParams.get("to"));
+
+  // Filters live in the WHERE clause, not in the client — otherwise page 1 of
+  // a filtered list would only contain whatever survived filtering out of the
+  // first unfiltered page.
+  const where = {
+    shop,
+    status: VIEW_STATUS[view],
+    ...(fromFilter ? { fromResourceType: fromFilter } : {}),
+    ...(toFilter ? { toResourceType: toFilter } : {}),
+  };
 
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
 
-  const [runningTask, lastTask, suggestions] = await Promise.all([
+  const [runningTask, lastTask, total, openCount, rejectedCount] = await Promise.all([
     db.task.findFirst({ where: { shop, type: "seoInternalLinks", status: "running" }, select: { id: true } }),
     db.task.findFirst({
       where: { shop, type: "seoInternalLinks", status: { in: ["completed", "failed"] } },
       orderBy: { completedAt: "desc" },
       select: { completedAt: true },
     }),
-    db.seoInternalLinkSuggestion.findMany({
-      where: { shop, status: "pending" },
-      orderBy: { confidence: "desc" },
-      take: 200,
-    }),
+    db.seoInternalLinkSuggestion.count({ where }),
+    db.seoInternalLinkSuggestion.count({ where: { shop, status: "pending" } }),
+    db.seoInternalLinkSuggestion.count({ where: { shop, status: "dismissed" } }),
   ]);
+
+  // Clamp instead of 404ing: a page that existed before a reject/accept (or
+  // before a filter change) must not leave the merchant on an empty list.
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const requestedPage = Number.parseInt(url.searchParams.get("page") || "1", 10);
+  const page = Math.min(Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1), totalPages);
+
+  const suggestions = await db.seoInternalLinkSuggestion.findMany({
+    where,
+    // Rejected rows are most useful newest-first (what did I just turn down?);
+    // open ones highest-confidence-first. `id` breaks ties so paging is stable.
+    orderBy: view === "rejected" ? [{ updatedAt: "desc" }, { id: "asc" }] : [{ confidence: "desc" }, { id: "asc" }],
+    skip: (page - 1) * PAGE_SIZE,
+    take: PAGE_SIZE,
+  });
 
   const idsByType: Record<FilterType, Set<string>> = {
     Product: new Set(),
@@ -186,6 +261,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     running: !!runningTask,
     lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
     primaryLocale,
+    view,
+    fromFilter: fromFilter ?? "all",
+    toFilter: toFilter ?? "all",
+    page,
+    pageSize: PAGE_SIZE,
+    total,
+    openCount,
+    rejectedCount,
     rows,
   });
 };
@@ -206,6 +289,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (actionType === "reject") {
+    // Permanent: `dismissedUntil: null` is never revived by a later run, and
+    // the anchor is passed into the next run's synonym prompt as a
+    // do-not-repeat (internal-links.service.ts, rejectedAnchorsByTarget).
     await db.seoInternalLinkSuggestion.update({
       where: { id: suggestion.id },
       data: { status: "dismissed", dismissedUntil: null },
@@ -213,11 +299,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: true });
   }
 
-  if (actionType === "ignore90") {
-    const dismissedUntil = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+  if (actionType === "restore") {
+    // Back to the open list. Clearing `dismissedUntil` keeps the row a normal
+    // pending suggestion (and drops it out of the rejection feedback).
     await db.seoInternalLinkSuggestion.update({
       where: { id: suggestion.id },
-      data: { status: "dismissed", dismissedUntil },
+      data: { status: "pending", dismissedUntil: null },
     });
     return json({ success: true });
   }
@@ -225,7 +312,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "markAccepted") {
     await db.seoInternalLinkSuggestion.update({
       where: { id: suggestion.id },
-      data: { status: "accepted" },
+      data: { status: "accepted", dismissedUntil: null },
     });
     return json({ success: true });
   }
@@ -297,6 +384,23 @@ function formatDate(iso: string | null): string {
   }
 }
 
+/**
+ * Fixed column grid for a suggestion's three lines. Every line uses the SAME
+ * template, so the arrow, the type badges and the titles line up vertically
+ * down the whole list — a plain InlineStack per line drifts as soon as one row
+ * says "Kollektion" and the next says "Produkt".
+ */
+const ROW_GRID: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1.25rem 7.5rem minmax(0, 1fr)",
+  alignItems: "center",
+  // Grid blockifies its items, so without this a Badge (inline-flex) would
+  // stretch to the full 7.5rem column instead of hugging its label.
+  justifyItems: "start",
+  columnGap: "0.5rem",
+  rowGap: "0.125rem",
+};
+
 export default function SeoInternalLinks() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
@@ -326,9 +430,6 @@ export default function SeoInternalLinks() {
   const [generateStarted, setGenerateStarted] = useState(false);
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const generateStartedAtRef = useRef(0);
-
-  const [fromFilter, setFromFilter] = useState<string>("all");
-  const [toFilter, setToFilter] = useState<string>("all");
 
   const [previewRow, setPreviewRow] = useState<SuggestionRow | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -369,7 +470,18 @@ export default function SeoInternalLinks() {
     generateFetcher.submit(formData, { method: "post", action: "/api/ai" });
   };
 
-  const submitRowAction = (row: SuggestionRow, actionType: "reject" | "ignore90") => {
+  // View / filter / page all live in the URL so the loader owns paging.
+  // `handleNavigate` (not raw navigate) keeps the Shopify session params — it
+  // MERGES over the current query string, so "no filter" has to be an explicit
+  // value ("all", which the loader parses as no filter) rather than a delete.
+  const goTo = (params: Record<string, string>) => {
+    handleNavigate("/app/seo/internal-links", {
+      searchParams: new URLSearchParams(params),
+      replace: true,
+    });
+  };
+
+  const submitRowAction = (row: SuggestionRow, actionType: "reject" | "restore") => {
     const formData = new FormData();
     formData.append("actionType", actionType);
     formData.append("suggestionId", row.id);
@@ -440,8 +552,73 @@ export default function SeoInternalLinks() {
     if (path) handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
   };
 
-  const rows = data.rows.filter(
-    (r) => (fromFilter === "all" || r.fromResourceType === fromFilter) && (toFilter === "all" || r.toResourceType === toFilter),
+  const rejectedView = data.view === "rejected";
+  const rows = data.rows;
+  const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+  const firstOnPage = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
+  const lastOnPage = Math.min(data.page * data.pageSize, data.total);
+
+  const suggestionRow = (row: SuggestionRow) => (
+    <div
+      key={row.id}
+      style={{
+        border: "1px solid var(--p-color-border-secondary)",
+        borderRadius: 8,
+        padding: "0.75rem",
+        background: "var(--p-color-bg-surface)",
+      }}
+    >
+      <InlineStack gap="300" align="space-between" blockAlign="start" wrap>
+        <div style={{ ...ROW_GRID, flex: "1 1 22rem" }}>
+          {/* Line 1 — source */}
+          <span />
+          <Badge>{typeLabel(row.fromResourceType)}</Badge>
+          <div style={{ maxWidth: "100%" }}>
+            <Button variant="plain" onClick={() => openInEditor(row.fromResourceType, row.fromResourceId)}>
+              {row.fromTitle}
+            </Button>
+          </div>
+
+          {/* Line 2 — the mentioned text, aligned under the titles */}
+          <span />
+          <Text as="span" variant="bodySm" tone="subdued" truncate>
+            {c.colAnchor}
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {`„${row.anchorText}“`}
+          </Text>
+
+          {/* Line 3 — target */}
+          <Text as="span" variant="bodySm" tone="subdued">
+            →
+          </Text>
+          <Badge tone="info">{typeLabel(row.toResourceType)}</Badge>
+          <div style={{ maxWidth: "100%" }}>
+            <Button variant="plain" onClick={() => openInEditor(row.toResourceType, row.toResourceId)}>
+              {row.toTitle}
+            </Button>
+          </div>
+        </div>
+
+        <InlineStack gap="200" blockAlign="center">
+          <Badge tone={row.confidence >= 0.8 ? "success" : row.confidence >= 0.6 ? "attention" : undefined}>
+            {`${Math.round(row.confidence * 100)}%`}
+          </Badge>
+          <Button size="slim" variant="primary" onClick={() => openPreview(row)}>
+            {c.accept}
+          </Button>
+          {rejectedView ? (
+            <Button size="slim" onClick={() => submitRowAction(row, "restore")} disabled={rowFetcher.state !== "idle"}>
+              {c.restore}
+            </Button>
+          ) : (
+            <Button size="slim" tone="critical" onClick={() => submitRowAction(row, "reject")} disabled={rowFetcher.state !== "idle"}>
+              {c.reject}
+            </Button>
+          )}
+        </InlineStack>
+      </InlineStack>
+    </div>
   );
 
   const body = (
@@ -452,18 +629,34 @@ export default function SeoInternalLinks() {
 
       <Card>
         <BlockStack gap="300">
-          <InlineStack align="space-between" blockAlign="center">
-            <Text as="p" variant="bodySm" tone="subdued">
-              {data.lastRun ? c.lastGenerated.replace("{time}", formatDate(data.lastRun)) : c.neverGenerated}
-            </Text>
-            <Button
-              variant="primary"
-              onClick={handleGenerate}
-              disabled={data.gated || generating || generateFetcher.state !== "idle"}
-              loading={generateFetcher.state !== "idle"}
-            >
-              {c.generateButton}
-            </Button>
+          <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+            <ButtonGroup variant="segmented">
+              <Button
+                pressed={!rejectedView}
+                onClick={() => goTo({ view: "open", page: "1" })}
+              >
+                {c.viewOpen.replace("{count}", String(data.openCount))}
+              </Button>
+              <Button
+                pressed={rejectedView}
+                onClick={() => goTo({ view: "rejected", page: "1" })}
+              >
+                {c.viewRejected.replace("{count}", String(data.rejectedCount))}
+              </Button>
+            </ButtonGroup>
+            <InlineStack gap="300" blockAlign="center" wrap>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {data.lastRun ? c.lastGenerated.replace("{time}", formatDate(data.lastRun)) : c.neverGenerated}
+              </Text>
+              <Button
+                variant="primary"
+                onClick={handleGenerate}
+                disabled={data.gated || generating || generateFetcher.state !== "idle"}
+                loading={generateFetcher.state !== "idle"}
+              >
+                {c.generateButton}
+              </Button>
+            </InlineStack>
           </InlineStack>
 
           {banner && (
@@ -477,66 +670,61 @@ export default function SeoInternalLinks() {
 
       <Card>
         <BlockStack gap="300">
+          {rejectedView && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {c.rejectedHint}
+            </Text>
+          )}
+
           <InlineStack gap="300" wrap>
             <div style={{ minWidth: 180 }}>
               <Select
                 label={c.filterFromLabel}
                 options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
-                value={fromFilter}
-                onChange={setFromFilter}
+                value={data.fromFilter}
+                onChange={(value) => goTo({ from: value, page: "1" })}
               />
             </div>
             <div style={{ minWidth: 180 }}>
               <Select
                 label={c.filterToLabel}
                 options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
-                value={toFilter}
-                onChange={setToFilter}
+                value={data.toFilter}
+                onChange={(value) => goTo({ to: value, page: "1" })}
               />
             </div>
           </InlineStack>
 
           {rows.length === 0 ? (
-            <Text as="p" tone="subdued">{c.empty}</Text>
+            <Text as="p" tone="subdued">{rejectedView ? c.emptyRejected : c.empty}</Text>
           ) : (
-            <BlockStack gap="200">
-              {rows.map((row) => (
-                <InlineStack key={row.id} gap="300" align="space-between" blockAlign="center" wrap>
-                  <BlockStack gap="050">
-                    <InlineStack gap="150" blockAlign="center">
-                      <Badge>{typeLabel(row.fromResourceType)}</Badge>
-                      <Button variant="plain" size="slim" onClick={() => openInEditor(row.fromResourceType, row.fromResourceId)}>
-                        {row.fromTitle}
-                      </Button>
-                    </InlineStack>
-                    <Text as="span" variant="bodySm" tone="subdued">
-                      {c.colAnchor}: "{row.anchorText}"
-                    </Text>
-                    <InlineStack gap="150" blockAlign="center">
-                      <Text as="span" variant="bodySm">→</Text>
-                      <Badge tone="info">{typeLabel(row.toResourceType)}</Badge>
-                      <Button variant="plain" size="slim" onClick={() => openInEditor(row.toResourceType, row.toResourceId)}>
-                        {row.toTitle}
-                      </Button>
-                    </InlineStack>
-                  </BlockStack>
-                  <InlineStack gap="200" blockAlign="center">
-                    <Badge tone={row.confidence >= 0.8 ? "success" : row.confidence >= 0.6 ? "attention" : undefined}>
-                      {`${Math.round(row.confidence * 100)}%`}
-                    </Badge>
-                    <Button size="slim" variant="primary" onClick={() => openPreview(row)}>
-                      {c.accept}
-                    </Button>
-                    <Button size="slim" onClick={() => submitRowAction(row, "ignore90")} disabled={rowFetcher.state !== "idle"}>
-                      {c.ignore90Days}
-                    </Button>
-                    <Button size="slim" tone="critical" onClick={() => submitRowAction(row, "reject")} disabled={rowFetcher.state !== "idle"}>
-                      {c.reject}
-                    </Button>
-                  </InlineStack>
-                </InlineStack>
-              ))}
-            </BlockStack>
+            <BlockStack gap="200">{rows.map(suggestionRow)}</BlockStack>
+          )}
+
+          {totalPages > 1 && (
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {c.paginationRange
+                  .replace("{start}", String(firstOnPage))
+                  .replace("{end}", String(lastOnPage))
+                  .replace("{total}", String(data.total))}
+              </Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Button
+                  icon={ChevronLeftIcon}
+                  accessibilityLabel={c.paginationPrevious}
+                  disabled={data.page <= 1}
+                  onClick={() => goTo({ page: String(data.page - 1) })}
+                />
+                <Text as="span" variant="bodySm">{`${data.page} / ${totalPages}`}</Text>
+                <Button
+                  icon={ChevronRightIcon}
+                  accessibilityLabel={c.paginationNext}
+                  disabled={data.page >= totalPages}
+                  onClick={() => goTo({ page: String(data.page + 1) })}
+                />
+              </InlineStack>
+            </InlineStack>
           )}
         </BlockStack>
       </Card>
@@ -599,7 +787,7 @@ export default function SeoInternalLinks() {
                 {EXAMPLE_ROWS.map((row) => (
                   <InlineStack key={row.id} gap="300" align="space-between" blockAlign="center" wrap>
                     <Text as="span" variant="bodySm">
-                      {row.fromTitle} → "{row.anchorText}" → {row.toTitle}
+                      {row.fromTitle} → „{row.anchorText}“ → {row.toTitle}
                     </Text>
                     <Badge>{`${Math.round(row.confidence * 100)}%`}</Badge>
                   </InlineStack>

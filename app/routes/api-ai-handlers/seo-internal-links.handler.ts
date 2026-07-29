@@ -10,12 +10,13 @@
  * work and persists SeoInternalLinkSuggestion rows the
  * app.seo.internal-links.tsx route reads back.
  *
- * Unlike seoCrawl/seoJsonLdAudit this DOES call AI (one synonym call per
- * target item, capped — see internal-links.service.ts's header) via
- * AIService, which auto-wires AIQueueService.enqueue() when constructed with
- * a taskId (contract §8 pattern 4) — so it is NOT in api.ai.tsx's
- * NON_AI_ACTIONS and goes through the normal "shop must have an AI key" gate
- * before this handler is even reached.
+ * Unlike seoCrawl/seoJsonLdAudit this DOES call AI (synonym batches — one
+ * request per SYNONYM_BATCH_SIZE target items, capped; see
+ * internal-links.service.ts's header) via AIService, which auto-wires
+ * AIQueueService.enqueue() when constructed with a taskId (contract §8
+ * pattern 4) — so it is NOT in api.ai.tsx's NON_AI_ACTIONS and goes through
+ * the normal "shop must have an AI key" gate before this handler is even
+ * reached.
  */
 
 import { json } from "@remix-run/node";
@@ -98,8 +99,11 @@ async function runSeoInternalLinksTask(taskId: string, args: RunArgs): Promise<v
       db,
       // Wired through AIService (queued via AIQueueService.enqueue — contract
       // §8 pattern 4) rather than calling the queue directly; the DB-cache-
-      // first service module itself stays AI-provider-agnostic.
-      synonymProvider: (term, locale) => aiService.generateSynonyms(term, locale),
+      // first service module itself stays AI-provider-agnostic. BATCHED: one
+      // request per SYNONYM_BATCH_SIZE targets, with the anchors the merchant
+      // already rejected for each target passed along so they aren't proposed
+      // again.
+      synonymProvider: (terms, locale, avoid) => aiService.generateSynonymsBatch(terms, locale, { avoid }),
       heartbeatEvery: HEARTBEAT_EVERY_SOURCES,
       onProgress: async (processed, total) => {
         await db.task

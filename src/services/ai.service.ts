@@ -1032,38 +1032,89 @@ Respond in JSON format: ["title1", "title2", ...]`;
   }
 
   /**
-   * Up to `maxCount` synonyms / close alternative phrases for a product or
-   * collection's title / primary keyword — extra anchor candidates for the
-   * internal-linking matcher (PLAN_SEO_SUITE_COMPLETION.md §4.1/§4.3,
-   * internal-links.service.ts). One call per target item; the result is used
-   * once and never persisted (§4.4 "ephemeral-per-run" decision — see that
-   * service's header comment), so this is a plain raw-JSON call rather than a
-   * structured helper with its own prompt-tuning history. Never throws —
-   * matching is still useful with zero synonyms, so a parse/provider failure
-   * degrades to an empty list instead of failing the whole run.
+   * Up to `maxCount` synonyms / close alternative phrases per term for a batch
+   * of product/collection titles or primary keywords — extra anchor candidates
+   * for the internal-linking matcher (PLAN_SEO_SUITE_COMPLETION.md §4.1/§4.3,
+   * internal-links.service.ts).
+   *
+   * BATCHED ON PURPOSE: the first implementation issued one request per target
+   * item, so a single "Vorschläge generieren" click cost up to
+   * MAX_SYNONYM_TARGETS (200) tiny AI requests. The matcher only needs a short
+   * word list per term, so N terms fit in ONE prompt — the caller chunks its
+   * targets (SYNONYM_BATCH_SIZE) and this returns one synonym list per term,
+   * positionally aligned with `terms`.
+   *
+   * `avoid[i]` are anchor texts the merchant already rejected for `terms[i]`
+   * (dismissed SeoInternalLinkSuggestion rows) — passed into the prompt so the
+   * model stops re-proposing wordings that were turned down. The caller ALSO
+   * filters them out of the result, so this is a cost/quality hint, not the
+   * guarantee (the guarantee is the caller's + the DB's, never the model's).
+   *
+   * Results are used once and never persisted (§4.4 "ephemeral-per-run"
+   * decision — see internal-links.service.ts's header). Never throws, and
+   * never returns a mis-aligned array: any provider/parse/length problem
+   * degrades to empty lists for that batch (matching still works on
+   * title/keyword anchors) instead of failing the whole run or silently
+   * pairing synonyms with the wrong target.
    */
-  async generateSynonyms(term: string, locale: string, maxCount = 3): Promise<string[]> {
-    const sanitizedTerm = sanitizePromptInput(term, { maxLength: 200 });
-    if (!sanitizedTerm) return [];
+  async generateSynonymsBatch(
+    terms: string[],
+    locale: string,
+    options: { maxCount?: number; avoid?: string[][] } = {},
+  ): Promise<string[][]> {
+    const { maxCount = 3, avoid = [] } = options;
+    const empty = terms.map(() => [] as string[]);
+    if (terms.length === 0) return [];
+
+    const sanitizedTerms = terms.map((term) => sanitizePromptInput(term, { maxLength: 200 }));
+    if (sanitizedTerms.every((t) => !t)) return empty;
 
     const language = localeName(locale) || 'English';
-    const prompt = `List up to ${maxCount} short synonyms or close alternative phrases a shopper might realistically use instead of "${sanitizedTerm}" in ${language}, for finding mentions of this same product/topic in other text (blog articles, page content). Single words or short phrases only — no full sentences.
+    const numbered = sanitizedTerms
+      .map((term, i) => {
+        const rejected = (avoid[i] ?? [])
+          .map((a) => sanitizePromptInput(a, { maxLength: 200 }))
+          .filter(Boolean)
+          .slice(0, 10);
+        const suffix = rejected.length > 0 ? ` — already rejected, do not repeat: ${rejected.map((r) => `"${r}"`).join(', ')}` : '';
+        return `${i + 1}. "${term || '(empty)'}"${suffix}`;
+      })
+      .join('\n');
 
-Respond with ONLY a JSON array of strings, no explanation. Example: ["synonym one", "synonym two"]. If you can't think of any good ones, respond with [].`;
+    const prompt = `For each numbered term below, list up to ${maxCount} short synonyms or close alternative phrases a shopper might realistically use instead of it in ${language}, for finding mentions of that same product/topic in other text (blog articles, page content). Single words or short phrases only — no full sentences.
+
+Terms:
+${numbered}
+
+Requirements:
+- Output language: ${language}
+- Return ONLY a JSON array of arrays of strings, in the same order, with exactly ${terms.length} entries — one inner array per numbered term
+- Use an empty inner array [] for a term you have no good synonym for
+- Never repeat a term's own wording, and never repeat a wording listed as already rejected for that term
+
+Respond in JSON format: [["synonym one", "synonym two"], [], ...]`;
 
     try {
       const responseText = await this.askAI(prompt);
       const parsed: unknown = this.parseJSONResponse(responseText);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
-        .map((s) => s.trim())
-        .slice(0, maxCount);
+      if (!Array.isArray(parsed) || parsed.length !== terms.length) {
+        loggers.ai('warn', '[AI-SERVICE] generateSynonymsBatch: unexpected response shape — continuing with zero synonyms', {
+          expected: terms.length,
+          got: Array.isArray(parsed) ? parsed.length : typeof parsed,
+        });
+        return empty;
+      }
+      return parsed.map((entry) =>
+        (Array.isArray(entry) ? entry : [])
+          .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+          .map((s) => s.trim())
+          .slice(0, maxCount),
+      );
     } catch (err) {
-      loggers.ai('warn', '[AI-SERVICE] generateSynonyms failed — continuing with zero synonyms', {
+      loggers.ai('warn', '[AI-SERVICE] generateSynonymsBatch failed — continuing with zero synonyms', {
         error: err instanceof Error ? err.message : String(err),
       });
-      return [];
+      return empty;
     }
   }
 
