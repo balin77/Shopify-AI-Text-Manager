@@ -53,17 +53,32 @@ const REDIRECT_MAX_HOPS = 3;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB stream cap
 const BOT_BLOCK_THRESHOLD = 3; // consecutive 403/429 -> abort
-/** Cap on how long we'll honour a `Retry-After` before giving up on the page —
- *  a host asking for minutes is not something a foreground crawl can wait out. */
-const RETRY_AFTER_MAX_MS = 15_000;
+/** Cap on how long we'll honour a `Retry-After` before giving up on the page.
+ *  The wait holds a concurrency slot, so a generous cap starves the whole
+ *  queue — five pages asking for 15s each would idle the crawler completely. */
+const RETRY_AFTER_MAX_MS = 5_000;
 /** Fallback pause before the single 429 retry when no `Retry-After` was sent. */
 const RATE_LIMIT_BACKOFF_MS = 2_000;
 /** Bytes of a non-HTML block page read purely to identify the blocker. */
 const BLOCK_BODY_SNIFF_BYTES = 8 * 1024;
-/** Request spacing: the starting floor, and the ceiling the adaptive backoff
- *  escalates to after repeated 429s (doubling each time). */
+/** Request spacing: the starting floor, the ceiling the adaptive backoff
+ *  escalates to after repeated 429s (doubling each time), and how many clean
+ *  responses in a row it takes to halve the spacing back down again. The
+ *  ceiling is deliberately modest — spacing is global, so 1s already caps the
+ *  crawler at one request per second no matter how many slots are free. */
 const BASE_SPACING_MS = 200;
-const MAX_SPACING_MS = 2_000;
+const MAX_SPACING_MS = 1_000;
+export const SPACING_DECAY_AFTER_OK = 25;
+
+/** Brake harder after a 429 — saturating, never unbounded. */
+export function escalateSpacingMs(current: number): number {
+  return Math.min(MAX_SPACING_MS, Math.max(BASE_SPACING_MS, current) * 2);
+}
+
+/** Release the brake after a clean streak, back down to the base floor. */
+export function decaySpacingMs(current: number): number {
+  return Math.max(BASE_SPACING_MS, Math.round(current / 2));
+}
 /** Safety bound on in-memory edges — a pathological site (or a crawl bug)
  *  must not grow unbounded memory; not in the plan text, defensive only. */
 const MAX_EDGES_TRACKED = 100_000;
@@ -254,6 +269,27 @@ interface HeaderLike {
   get(name: string): string | null;
 }
 
+/** Total budget for the nameserver lookup behind `detectMerchantCloudflare`. */
+const DNS_LOOKUP_BUDGET_MS = 3_000;
+
+/** Rejects if `p` hasn't settled within `ms`. The underlying promise is left
+ *  to finish on its own — nothing downstream reads it after a timeout. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** Headers only Shopify's own origin sets. Their presence proves the request
  *  reached Shopify — i.e. whatever refused us was Shopify, not something in
  *  front of it. `x-dc` and `shopify-complexity-score` are what current
@@ -339,10 +375,16 @@ export function diagnoseBlock(
  * the NS records — not the response headers — are the reliable discriminator.
  * Returns null when the lookup fails, so an inconclusive answer is never
  * reported as a confident one.
+ *
+ * The whole thing is bounded by `DNS_LOOKUP_BUDGET_MS`. It runs after the
+ * crawl loop, when the progress heartbeat has already stopped, so an
+ * unbounded resolver stall would present to the merchant as a frozen crawl —
+ * an attribution nicety must never be able to do that.
  */
 export async function detectMerchantCloudflare(
   domain: string,
   resolveNsImpl?: (host: string) => Promise<string[]>,
+  budgetMs: number = DNS_LOOKUP_BUDGET_MS,
 ): Promise<boolean | null> {
   const resolveNs =
     resolveNsImpl ??
@@ -351,17 +393,21 @@ export async function detectMerchantCloudflare(
       return promises.resolveNs(host);
     });
 
+  const deadline = Date.now() + budgetMs;
+
   // NS records live on the registrable domain, not on `shop.example.com` —
   // walk up until a lookup answers.
   const labels = domain.split(".").filter(Boolean);
   for (let i = 0; i + 2 <= labels.length; i++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
     const candidate = labels.slice(i).join(".");
     try {
-      const servers = await resolveNs(candidate);
+      const servers = await withTimeout(resolveNs(candidate), remaining);
       if (!servers || servers.length === 0) continue;
       return servers.some((s) => s.toLowerCase().endsWith(".ns.cloudflare.com"));
     } catch {
-      /* try the next-shorter name */
+      /* timed out or NXDOMAIN — try the next-shorter name */
     }
   }
   return null;
@@ -898,6 +944,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   /** Tally of blockers seen, so the summary can name the most frequent one. */
   const blockSourceCounts = new Map<BlockSource, number>();
   let spacingMs = BASE_SPACING_MS;
+  let consecutiveOk = 0;
   let outstanding = 0;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
@@ -936,7 +983,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       // going too fast for this host. Widen the spacing for every remaining
       // request rather than burning through the queue collecting more 429s.
       if (outcome.status === 429 && spacingMs < MAX_SPACING_MS) {
-        spacingMs = Math.min(MAX_SPACING_MS, spacingMs * 2);
+        spacingMs = escalateSpacingMs(spacingMs);
         semaphore.setMinSpacing(spacingMs);
       }
 
@@ -946,8 +993,19 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
         // a DNS lookup, neither of which belongs in the request loop.
         abortedError = "bot_blocked";
       }
+      consecutiveOk = 0;
     } else {
       consecutiveBlocked = 0;
+      consecutiveOk += 1;
+      // Release the brake again. The escalation above is a gear change, not a
+      // permanent setting: without this, one 429 burst early in a crawl left
+      // every remaining request seconds apart for the rest of the run, which
+      // reads as "stuck at 80%" rather than "throttled".
+      if (spacingMs > BASE_SPACING_MS && consecutiveOk >= SPACING_DECAY_AFTER_OK) {
+        consecutiveOk = 0;
+        spacingMs = decaySpacingMs(spacingMs);
+        semaphore.setMinSpacing(spacingMs);
+      }
     }
 
     if (url === rootUrl && !abortedError) {

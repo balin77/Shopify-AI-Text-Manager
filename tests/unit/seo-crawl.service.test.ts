@@ -9,6 +9,9 @@ import {
   diagnoseBlock,
   detectMerchantCloudflare,
   attributeBlockSource,
+  escalateSpacingMs,
+  decaySpacingMs,
+  SPACING_DECAY_AFTER_OK,
   parseRetryAfter,
   dominantBlockSource,
   parseCrawlError,
@@ -305,6 +308,15 @@ describe("detectMerchantCloudflare / attributeBlockSource", () => {
     expect(await detectMerchantCloudflare("example.com", ns)).toBeNull();
   });
 
+  it("gives up on a stalled resolver instead of hanging the crawl", async () => {
+    // Regression: this lookup runs after the progress heartbeat has stopped,
+    // so an unbounded resolver stall showed up as a frozen crawl.
+    const started = Date.now();
+    const ns = () => new Promise<string[]>(() => {}); // never settles
+    expect(await detectMerchantCloudflare("shop.example.com", ns, 150)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("attributes a Cloudflare verdict by ownership", () => {
     expect(attributeBlockSource("cloudflare_challenge", true)).toBe("cloudflare_challenge");
     expect(attributeBlockSource("cloudflare_challenge", false)).toBe("shopify_security");
@@ -319,6 +331,36 @@ describe("detectMerchantCloudflare / attributeBlockSource", () => {
   });
 });
 
+describe("adaptive request spacing", () => {
+  it("escalates toward the ceiling and saturates there", () => {
+    let s = 200;
+    s = escalateSpacingMs(s);
+    expect(s).toBe(400);
+    s = escalateSpacingMs(s);
+    expect(s).toBe(800);
+    s = escalateSpacingMs(s);
+    expect(s).toBe(1000);
+    // Regression guard: unbounded growth would throttle the crawl to a halt.
+    expect(escalateSpacingMs(s)).toBe(1000);
+  });
+
+  it("decays back to the base floor after a clean streak", () => {
+    // Regression: the backoff had no decay, so one early 429 burst left every
+    // remaining request spaced out for the whole run — the crawl looked hung.
+    let s = 1000;
+    const seen: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      s = decaySpacingMs(s);
+      seen.push(s);
+    }
+    expect(seen).toEqual([500, 250, 200, 200, 200, 200]);
+  });
+
+  it("keeps the decay threshold small enough to recover within a normal crawl", () => {
+    expect(SPACING_DECAY_AFTER_OK).toBeLessThanOrEqual(50);
+  });
+});
+
 describe("rateLimitRetryDelayMs", () => {
   it("uses the default backoff when no Retry-After was sent", () => {
     expect(rateLimitRetryDelayMs(null)).toBe(2000);
@@ -329,6 +371,10 @@ describe("rateLimitRetryDelayMs", () => {
   });
   it("gives up instead of waiting out a long Retry-After", () => {
     expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 300, server: null })).toBeNull();
+    // The wait holds a concurrency slot, so the cap has to stay tight —
+    // 5 slots × a long wait idles the crawler completely.
+    expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 10, server: null })).toBeNull();
+    expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 5, server: null })).toBe(5000);
   });
 });
 
