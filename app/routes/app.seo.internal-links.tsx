@@ -21,38 +21,25 @@
  * `dismissedUntil` from that removed action simply show up in the rejected
  * list until it lapses.
  *
- * Accept is a two-step flow, and BOTH steps run whichever button was used:
- * "Prüfen" stops between them to show the before/after modal (where the
- * merchant can then confirm or reject), "Annehmen" chains straight through.
- *   1. "previewAccept" (this route's action) computes the cheerio-based
- *      insertion server-side (internal-links.service.ts's
- *      `insertLinkIntoHtml`) against the CURRENT DB content and returns
- *      before/after HTML — nothing is written yet.
- *   2. On confirm, the client submits the new HTML straight to the real
- *      per-resource-type editor route's `action` (`/app/products`,
- *      `/app/collections`, `/app/blog`, `/app/pages` — same
- *      `handleUnifiedContentActions` those routes already use for every
- *      other save). This is the ONLY write path — there is no parallel save
- *      handler here (CLAUDE.md architecture invariant). Only once that save
- *      succeeds does the client mark the suggestion "accepted"
- *      (`markAccepted`, also on this route).
+ * Accepting is a two-step flow and the merchant picks how much of it to see:
+ * "Prüfen" runs only step 1 and shows the before/after modal (confirm or reject
+ * from there), "Annehmen" runs both in one go.
+ *   1. `previewAccept` computes the cheerio-based insertion against the CURRENT
+ *      DB content and returns before/after HTML — nothing is written yet.
+ *   2. `accept` recomputes it and saves through `handleUnifiedContentActions`,
+ *      the same entry point the editor routes use (CLAUDE.md invariant: one
+ *      write path), then marks the suggestion accepted.
  *
- * Row actions run on raw fetch, NOT useFetcher: a fetcher has a single slot, so
- * a second accept would cancel the first and leave its row spinning forever.
- * Several suggestions can therefore be applied at the same time, each row
- * locking only itself.
+ * Both live in the /api/seo-internal-links RESOURCE route, not in this file:
+ * the page fires them with raw fetch so several rows can run at once, and with
+ * `v3_singleFetch` a raw POST to a page route comes back as an HTML document
+ * whose JSON body cannot be read. See that route's header.
  *
  * "Alle annehmen" / "Alle ablehnen" do the same to the whole listed set
- * (filters included, all pages) in ONE request:
- *   - rejectAll is a single updateMany.
- *   - acceptAll runs the two steps above server-side — same
- *     `handleUnifiedContentActions` entry point, just called in-process. It is
- *     capped at BULK_ACCEPT_LIMIT per request and applies suggestions grouped
- *     by source item (see groupSuggestionsBySource) so links into the same item
- *     never race each other.
+ * (filters included, all pages) in ONE request — see the same file.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
@@ -73,52 +60,21 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
-import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
-import { insertLinkIntoHtml, targetUrlPath, groupSuggestionsBySource } from "../services/seo/internal-links.service";
-
-// resourceType -> the real editor route + field key that resourceType saves
-// through (contentConfig field key from content-fields.config.tsx). The
-// SAME map as crawl.tsx's TYPE_PATH / the dashboard's TYPE_PATH, extended
-// with the field the Accept flow writes.
-const RESOURCE_ROUTE: Record<string, { path: string; fieldKey: "description" | "body" }> = {
-  Product: { path: "/app/products", fieldKey: "description" },
-  Collection: { path: "/app/collections", fieldKey: "description" },
-  Article: { path: "/app/blog", fieldKey: "body" },
-  Page: { path: "/app/pages", fieldKey: "body" },
-};
-
-const FILTER_TYPES = ["Product", "Collection", "Article", "Page"] as const;
-type FilterType = (typeof FILTER_TYPES)[number];
+import { RESOURCE_ROUTE, INTERNAL_LINKS_API, BULK_ACCEPT_LIMIT } from "../services/seo/internal-links-routes";
+import {
+  FILTER_TYPES,
+  parseView,
+  parseTypeFilter,
+  suggestionWhere,
+  type FilterType,
+  type View,
+} from "../services/seo/internal-links-query";
 
 /** Suggestions per page (both views). Server-side — see the header note. */
 export const PAGE_SIZE = 20;
-
-/**
- * "Alle annehmen" applies at most this many suggestions per click. Each one is
- * a full editor save (Shopify mutation + stale-translation purge), so the whole
- * pending list — up to MAX_PENDING_PER_SHOP = 200 — would run far past any
- * sensible request duration. The response reports what is left so the merchant
- * can simply click again; "Alle ablehnen" has no such cap because it is a
- * single UPDATE.
- */
-export const BULK_ACCEPT_LIMIT = 25;
-
-/**
- * How many source items "Alle annehmen" applies at the same time. Suggestions
- * that share a source item are NEVER parallel (see acceptAll) — each insertion
- * is computed from the content the previous one wrote, so racing them would
- * silently drop a link.
- */
-const BULK_ACCEPT_CONCURRENCY = 3;
-
-const VIEWS = ["open", "rejected"] as const;
-type View = (typeof VIEWS)[number];
-
-/** URL `view` -> the DB status that view lists. */
-const VIEW_STATUS: Record<View, string> = { open: "pending", rejected: "dismissed" };
 
 interface SuggestionRow {
   id: string;
@@ -132,16 +88,15 @@ interface SuggestionRow {
   confidence: number;
 }
 
-/** Everything this route's action (and the editor route's save) can answer. */
+/** What /api/seo-internal-links answers, across all of its actionTypes. */
 interface ActionResult {
   success: boolean;
   error?: string;
+  /** "STALE" — the anchor text is gone from the current content. */
   code?: string;
+  /** previewAccept */
   before?: string;
   after?: string;
-  savePath?: string;
-  fieldKey?: "description" | "body";
-  itemId?: string;
   /** rejectAll */
   rejected?: number;
   /** acceptAll */
@@ -206,28 +161,6 @@ async function resolveTitles(
   for (const a of articles as Array<{ id: string; title: string; handle: string }>) map.set(`Article:${a.id}`, { title: a.title, handle: a.handle });
   for (const p of pages as Array<{ id: string; title: string; handle: string }>) map.set(`Page:${p.id}`, { title: p.title, handle: p.handle });
   return map;
-}
-
-function parseView(raw: string | null): View {
-  return VIEWS.includes(raw as View) ? (raw as View) : "open";
-}
-
-function parseTypeFilter(raw: string | null): FilterType | null {
-  return FILTER_TYPES.includes(raw as FilterType) ? (raw as FilterType) : null;
-}
-
-/**
- * The listed set: view + type filters, in SQL. The bulk actions reuse it so
- * "alle" means exactly the suggestions the merchant is looking at — never the
- * whole table. Filters must not live in the client (see the loader).
- */
-function suggestionWhere(shop: string, view: View, fromFilter: FilterType | null, toFilter: FilterType | null) {
-  return {
-    shop,
-    status: VIEW_STATUS[view],
-    ...(fromFilter ? { fromResourceType: fromFilter } : {}),
-    ...(toFilter ? { toResourceType: toFilter } : {}),
-  };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -335,265 +268,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-/** A suggestion row as the action handles it (Prisma model, kept loose here). */
-type SuggestionRecord = {
-  id: string;
-  fromResourceType: string;
-  fromResourceId: string;
-  toResourceType: string;
-  toResourceId: string;
-  anchorText: string;
-};
-
-/**
- * Where the accepted link would go: the source's CURRENT content with the
- * anchor linked. Always read fresh from the DB (not the content captured at
- * suggestion time), so an edit made since the scan is detected as STALE instead
- * of being silently overwritten. Shared by the preview and by "Alle annehmen",
- * which is why it also returns everything the save needs.
- */
-async function computeInsertion(
-  db: any,
-  shop: string,
-  suggestion: SuggestionRecord,
-): Promise<
-  | { ok: true; before: string; after: string; savePath: string; fieldKey: "description" | "body"; itemId: string }
-  | { ok: false; code: "UNSUPPORTED" | "STALE" | "SOURCE_MISSING" | "TARGET_MISSING"; error: string }
-> {
-  const fromRoute = RESOURCE_ROUTE[suggestion.fromResourceType];
-  if (!fromRoute) {
-    return { ok: false, code: "UNSUPPORTED", error: "Unsupported source resource type" };
-  }
-
-  let currentHtml: string | null = null;
-  if (suggestion.fromResourceType === "Product") {
-    const row = await db.product.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
-    currentHtml = row?.descriptionHtml ?? null;
-  } else if (suggestion.fromResourceType === "Collection") {
-    const row = await db.collection.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
-    currentHtml = row?.descriptionHtml ?? null;
-  } else if (suggestion.fromResourceType === "Article") {
-    const row = await db.article.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
-    currentHtml = row?.body ?? null;
-  } else if (suggestion.fromResourceType === "Page") {
-    const row = await db.page.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
-    currentHtml = row?.body ?? null;
-  }
-
-  if (currentHtml === null) {
-    return { ok: false, code: "SOURCE_MISSING", error: "Source content not found" };
-  }
-
-  let targetHandle: string | null = null;
-  if (suggestion.toResourceType === "Product") {
-    targetHandle = (await db.product.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
-  } else if (suggestion.toResourceType === "Collection") {
-    targetHandle = (await db.collection.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
-  }
-  if (!targetHandle) {
-    return { ok: false, code: "TARGET_MISSING", error: "Target content not found" };
-  }
-
-  const href = targetUrlPath({ resourceType: suggestion.toResourceType as "Product" | "Collection", handle: targetHandle });
-  const result = insertLinkIntoHtml(currentHtml, suggestion.anchorText, href);
-  if (!result.inserted) {
-    return { ok: false, code: "STALE", error: "Anchor text not found in current content" };
-  }
-
-  return {
-    ok: true,
-    before: currentHtml,
-    after: result.html,
-    savePath: fromRoute.path,
-    fieldKey: fromRoute.fieldKey,
-    itemId: suggestion.fromResourceId,
-  };
-}
-
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
-  const { db } = await import("../db.server");
-  const shop = session.shop;
-  const formData = await request.formData();
-  const actionType = getFormString(formData, "actionType");
-  const suggestionId = getFormString(formData, "suggestionId");
-
-  // This action is POST-reachable independently of the loader's gate, so it
-  // has to check the plan itself — every path below writes to the shop.
-  const plan = await loadPlan(db, shop);
-  if (!meetsPlan(plan, "pro")) {
-    return json({ success: false, error: "This feature requires the Pro plan" }, { status: 403 });
-  }
-
-  // ── Bulk actions (no suggestionId — they act on the listed set) ────────────
-  if (actionType === "rejectAll" || actionType === "acceptAll") {
-    const where = suggestionWhere(
-      shop,
-      parseView(getFormString(formData, "view")),
-      parseTypeFilter(getFormString(formData, "from")),
-      parseTypeFilter(getFormString(formData, "to")),
-    );
-
-    if (actionType === "rejectAll") {
-      // One statement for the whole filtered view — same semantics as rejecting
-      // each row by hand (permanent, feeds the next run's do-not-repeat list).
-      const { count } = await db.seoInternalLinkSuggestion.updateMany({
-        where,
-        data: { status: "dismissed", dismissedUntil: null },
-      });
-      return json({ success: true, rejected: count });
-    }
-
-    const batch = await db.seoInternalLinkSuggestion.findMany({
-      where,
-      orderBy: [{ confidence: "desc" }, { id: "asc" }],
-      take: BULK_ACCEPT_LIMIT,
-    });
-    if (batch.length === 0) {
-      return json({ success: true, accepted: 0, failed: 0, remaining: 0 });
-    }
-
-    // The save goes through the very same handler the editor routes use — there
-    // is no second write path (CLAUDE.md architecture invariant), this just
-    // calls it server-side instead of over HTTP.
-    const [{ handleUnifiedContentActions }, configs, aiSettings, aiInstructions, shopLocales] = await Promise.all([
-      import("../actions/unified-content.actions"),
-      import("../config/content-fields.config"),
-      db.aISettings.findUnique({ where: { shop } }),
-      db.aIInstructions.findUnique({ where: { shop } }),
-      getCachedShopLocales(admin, shop).catch(() => []),
-    ]);
-    const configByType: Record<string, any> = {
-      Product: configs.PRODUCTS_CONFIG,
-      Collection: configs.COLLECTIONS_CONFIG,
-      Article: configs.BLOGS_CONFIG,
-      Page: configs.PAGES_CONFIG,
-    };
-    const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
-
-    const acceptOne = async (suggestion: SuggestionRecord): Promise<boolean> => {
-      try {
-        const insertion = await computeInsertion(db, shop, suggestion);
-        if (!insertion.ok) return false;
-
-        const contentConfig = configByType[suggestion.fromResourceType];
-        if (!contentConfig) return false;
-
-        const saveForm = new FormData();
-        saveForm.set("action", "updateContent");
-        saveForm.set("itemId", insertion.itemId);
-        saveForm.set("locale", primaryLocale);
-        saveForm.set("primaryLocale", primaryLocale);
-        saveForm.set(insertion.fieldKey, insertion.after);
-        saveForm.set("changedFields", JSON.stringify([insertion.fieldKey]));
-
-        const response = await handleUnifiedContentActions({
-          admin,
-          session,
-          formData: saveForm,
-          contentConfig,
-          db,
-          aiSettings,
-          aiInstructions,
-        });
-        const body = (await response.json().catch(() => null)) as { success?: boolean } | null;
-        return !!body?.success;
-      } catch {
-        return false;
-      }
-    };
-
-    // Suggestions that share a source item run in order (each insertion builds
-    // on the content the previous save wrote); different source items run
-    // concurrently, bounded so a batch doesn't hammer Shopify's rate limit.
-    const queue = groupSuggestionsBySource(batch as SuggestionRecord[]);
-    const acceptedIds: string[] = [];
-    let failed = 0;
-
-    const worker = async () => {
-      for (;;) {
-        const group = queue.shift();
-        if (!group) return;
-        for (const suggestion of group) {
-          if (await acceptOne(suggestion)) acceptedIds.push(suggestion.id);
-          else failed++;
-        }
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(BULK_ACCEPT_CONCURRENCY, queue.length) }, () => worker()),
-    );
-
-    if (acceptedIds.length > 0) {
-      await db.seoInternalLinkSuggestion.updateMany({
-        where: { shop, id: { in: acceptedIds } },
-        data: { status: "accepted", dismissedUntil: null },
-      });
-    }
-
-    // Failures stay in the list, so `remaining` includes them — the client only
-    // suggests another round when there is more left than just this run's
-    // failures (a suggestion whose anchor text is gone never succeeds).
-    const remaining = await db.seoInternalLinkSuggestion.count({ where });
-    return json({ success: true, accepted: acceptedIds.length, failed, remaining });
-  }
-
-  const suggestion = suggestionId
-    ? await db.seoInternalLinkSuggestion.findFirst({ where: { id: suggestionId, shop } })
-    : null;
-  if (!suggestion) {
-    return json({ success: false, error: "Suggestion not found" }, { status: 404 });
-  }
-
-  if (actionType === "reject") {
-    // Permanent: `dismissedUntil: null` is never revived by a later run, and
-    // the anchor is passed into the next run's synonym prompt as a
-    // do-not-repeat (internal-links.service.ts, rejectedAnchorsByTarget).
-    await db.seoInternalLinkSuggestion.update({
-      where: { id: suggestion.id },
-      data: { status: "dismissed", dismissedUntil: null },
-    });
-    return json({ success: true });
-  }
-
-  if (actionType === "restore") {
-    // Back to the open list. Clearing `dismissedUntil` keeps the row a normal
-    // pending suggestion (and drops it out of the rejection feedback).
-    await db.seoInternalLinkSuggestion.update({
-      where: { id: suggestion.id },
-      data: { status: "pending", dismissedUntil: null },
-    });
-    return json({ success: true });
-  }
-
-  if (actionType === "markAccepted") {
-    await db.seoInternalLinkSuggestion.update({
-      where: { id: suggestion.id },
-      data: { status: "accepted", dismissedUntil: null },
-    });
-    return json({ success: true });
-  }
-
-  if (actionType === "previewAccept") {
-    const insertion = await computeInsertion(db, shop, suggestion);
-    if (!insertion.ok) {
-      const status = insertion.code === "STALE" ? 409 : insertion.code === "UNSUPPORTED" ? 400 : 404;
-      return json({ success: false, code: insertion.code, error: insertion.error }, { status });
-    }
-
-    return json({
-      success: true,
-      before: insertion.before,
-      after: insertion.after,
-      savePath: insertion.savePath,
-      fieldKey: insertion.fieldKey,
-      itemId: insertion.itemId,
-    });
-  }
-
-  return json({ success: false, error: `Unknown actionType: ${actionType}` }, { status: 400 });
-};
-
 function formatDate(iso: string | null): string {
   if (!iso) return "";
   try {
@@ -635,7 +309,7 @@ export default function SeoInternalLinks() {
   const generateFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
   // The preview MODAL is the only single-slot flow left on a fetcher — it blocks
   // the UI while it is open, so it can never overlap with itself. Everything the
-  // rows do (accept, reject, restore) runs on raw fetch instead, see postSelf.
+  // rows do (accept, reject, restore) runs on raw fetch instead, see `post`.
   const previewFetcher = useFetcher<ActionResult>();
 
   const [generateStarted, setGenerateStarted] = useState(false);
@@ -702,33 +376,19 @@ export default function SeoInternalLinks() {
   };
 
   // ── Requests ───────────────────────────────────────────────────────────────
-  // Row actions use raw fetch rather than useFetcher on purpose: a fetcher has
-  // ONE slot, so starting a second accept while the first is running replaces
-  // the in-flight request and the first row's spinner never clears. A fetch per
-  // click gives every row its own lifecycle, which is what makes accepting
-  // several suggestions in parallel work at all.
-  const postSelf = async (fields: Record<string, string>): Promise<ActionResult | null> => {
+  // Raw fetch rather than useFetcher on purpose: a fetcher has ONE slot, so
+  // starting a second accept while the first is running replaces the in-flight
+  // request and the first row's spinner never clears. A fetch per click gives
+  // every row its own lifecycle, which is what makes accepting several
+  // suggestions in parallel work at all.
+  //
+  // It goes to the /api resource route, NOT to this page's own action: with
+  // `v3_singleFetch` a raw POST to a page route is a document request, so the
+  // response would be HTML and its JSON unreadable.
+  const post = async (fields: Record<string, string>): Promise<ActionResult | null> => {
     const formData = new FormData();
     for (const [key, value] of Object.entries(fields)) formData.set(key, value);
-    // Post to this very route (the search string carries view/filters/session).
-    const resp = await fetch(window.location.pathname + window.location.search, {
-      method: "POST",
-      body: formData,
-    });
-    return (await resp.json().catch(() => null)) as ActionResult | null;
-  };
-
-  // The save itself goes to the real editor route — the ONE write path.
-  const postSave = async (preview: ActionResult): Promise<ActionResult | null> => {
-    if (!preview.savePath || !preview.fieldKey || !preview.itemId) return null;
-    const formData = new FormData();
-    formData.set("action", "updateContent");
-    formData.set("itemId", preview.itemId);
-    formData.set("locale", data.primaryLocale);
-    formData.set("primaryLocale", data.primaryLocale);
-    formData.set(preview.fieldKey, preview.after || "");
-    formData.set("changedFields", JSON.stringify([preview.fieldKey]));
-    const resp = await fetch(preview.savePath, { method: "POST", body: formData });
+    const resp = await fetch(INTERNAL_LINKS_API, { method: "POST", body: formData });
     return (await resp.json().catch(() => null)) as ActionResult | null;
   };
 
@@ -741,13 +401,17 @@ export default function SeoInternalLinks() {
   const reportSuccess = (message: string) =>
     setBanner((prev) => (prev?.tone === "critical" ? prev : { tone: "success", message }));
 
+  // A vanished anchor is the one failure with a real explanation for the
+  // merchant ("regenerate"), so it keeps its own message in both flows.
   const previewErrorMessage = (result: ActionResult | null) =>
     result?.code === "STALE" ? c.previewStaleError : result?.error || c.previewLoadError;
+  const acceptErrorMessage = (result: ActionResult | null) =>
+    result?.code === "STALE" ? c.previewStaleError : result?.error || c.acceptSaveError;
 
   const submitRowAction = async (row: SuggestionRow, actionType: "reject" | "restore") => {
     setBusy(row.id, true);
     try {
-      const result = await postSelf({ actionType, suggestionId: row.id });
+      const result = await post({ actionType, suggestionId: row.id });
       if (result?.success) reportSuccess(actionType === "reject" ? c.rejectSuccess : c.restoreSuccess);
       else reportError(result?.error || c.actionError);
     } catch {
@@ -758,22 +422,14 @@ export default function SeoInternalLinks() {
     }
   };
 
-  /** "Annehmen" in the list: preview + save + markAccepted, no modal. */
+  /** "Annehmen" in the list — one request; the endpoint inserts, saves and
+   *  marks the suggestion accepted (see api.seo-internal-links). */
   const acceptSuggestion = async (row: SuggestionRow) => {
     setBusy(row.id, true);
     try {
-      const preview = await postSelf({ actionType: "previewAccept", suggestionId: row.id });
-      if (!preview?.success) {
-        reportError(previewErrorMessage(preview));
-        return;
-      }
-      const saved = await postSave(preview);
-      if (!saved?.success) {
-        reportError(saved?.error || c.acceptSaveError);
-        return;
-      }
-      await postSelf({ actionType: "markAccepted", suggestionId: row.id });
-      reportSuccess(c.acceptSuccess);
+      const result = await post({ actionType: "accept", suggestionId: row.id });
+      if (result?.success) reportSuccess(c.acceptSuccess);
+      else reportError(acceptErrorMessage(result));
     } catch {
       reportError(c.acceptSaveError);
     } finally {
@@ -788,7 +444,7 @@ export default function SeoInternalLinks() {
     const formData = new FormData();
     formData.append("actionType", "previewAccept");
     formData.append("suggestionId", row.id);
-    previewFetcher.submit(formData, { method: "post" });
+    previewFetcher.submit(formData, { method: "post", action: INTERNAL_LINKS_API });
   };
 
   useEffect(() => {
@@ -797,21 +453,20 @@ export default function SeoInternalLinks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFetcher.state, previewFetcher.data]);
 
-  /** Confirm button of the preview modal — same two steps as acceptSuggestion,
-   *  but it reports failures inside the modal instead of closing it. */
+  /** Confirm button of the preview modal — the same `accept` call the list's
+   *  button makes, but failures are reported inside the modal (which stays
+   *  open) instead of in the page banner. */
   const confirmAccept = async () => {
-    const preview = previewFetcher.data;
     const row = previewRow;
-    if (!row || !preview?.success) return;
+    if (!row || !previewFetcher.data?.success) return;
 
     setConfirming(true);
     try {
-      const saved = await postSave(preview);
-      if (!saved?.success) {
-        setPreviewError(saved?.error || c.acceptSaveError);
+      const result = await post({ actionType: "accept", suggestionId: row.id });
+      if (!result?.success) {
+        setPreviewError(acceptErrorMessage(result));
         return;
       }
-      await postSelf({ actionType: "markAccepted", suggestionId: row.id });
       reportSuccess(c.acceptSuccess);
       setPreviewRow(null);
     } catch {
@@ -839,7 +494,7 @@ export default function SeoInternalLinks() {
     setBulkRunning(kind);
     setBanner(null);
     try {
-      const result = await postSelf({
+      const result = await post({
         actionType: kind === "accept" ? "acceptAll" : "rejectAll",
         view: data.view,
         from: data.fromFilter,
