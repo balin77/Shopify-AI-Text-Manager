@@ -244,6 +244,14 @@ export const es: Translation = {
     sortTooltip: "Ordenar entradas",
     filterTooltip: "Filtrar tipos",
     filterTitle: "Tipos visibles",
+    // Insignia al pasar el cursor en la lista. Las claves son los valores
+    // ProductStatus de Shopify, así el lookup no necesita tabla de mapeo.
+    productStatusLabels: {
+      ACTIVE: "Activo",
+      DRAFT: "Borrador",
+      UNLISTED: "No listado",
+      ARCHIVED: "Archivado",
+    },
     errorLoadingThemeContent: "Error al cargar el contenido del tema",
     error: "Error",
     success: "¡Éxito!",

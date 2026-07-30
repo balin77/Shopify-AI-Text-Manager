@@ -55,7 +55,16 @@
  * no inventory/`availableForSale` column (confirmed against
  * json-ld-audit.service.ts's header comment, which hit the same gap).
  *
- * ── UNLISTED vs sitemap.xml (MEASURED against a live shop) ─────────────────
+ * ── UNLISTED vs sitemap.xml (DOCUMENTED by Shopify + measured) ─────────────
+ * Shopify documents both halves of this outright, so it is a platform
+ * invariant and not a quirk of one shop —
+ * https://shopify.dev/docs/apps/build/product-merchandising/unlisted-products
+ * says an unlisted product "Won't be listed in `sitemap.xml`" and that
+ * `<meta name="robots" content="noindex,nofollow">` "are added on the online
+ * store product details page". The measurement below was run BEFORE that page
+ * was found and independently agrees with it; both are kept because the
+ * measurement is what proves the app's own cache lines up with the platform.
+ *
  * Question: does an UNLISTED product need an `seo.hidden` exclusion, i.e. is
  * there an "unlistedProduct" suggestion reason worth adding? Answer: NO. It is
  * already out of the sitemap and already noindex, so the exclusion would be a

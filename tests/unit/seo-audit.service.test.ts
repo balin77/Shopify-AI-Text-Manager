@@ -166,8 +166,12 @@ describe("analyzeStore", () => {
       seoTitleEffectiveLimit: 60,
       plan: "pro",
     });
-    const filters = capture.productArgs.map((a) => JSON.stringify(a.where));
-    expect(new Set(filters).size).toBe(1);
+    // Compare the parsed status sets, not JSON.stringify of the whole where —
+    // stringify depends on key insertion order, so a harmless reordering of the
+    // literal would fail this with a baffling message.
+    const statusSets = capture.productArgs.map((a) => [...a.where.status.in].sort().join(","));
+    expect(new Set(statusSets).size).toBe(1);
+    expect(capture.productArgs.every((a) => a.where.shop === "shop.myshopify.com")).toBe(true);
   });
 
   it("exports AUDITABLE_PRODUCT_STATUSES as the single source for that filter", () => {
@@ -528,6 +532,59 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
     expect(headDrift?.action).toBe("deepLink");
     expect(headDrift?.count).toBeGreaterThanOrEqual(1);
     expect(headDrift?.items.some((i) => i.id === "gid-PG1")).toBe(true);
+  });
+
+  it("blames the FAILING page in the serverErrors bucket, not the page linking to it", async () => {
+    // A 4xx is the linking page's fault (bad href); a 5xx is the target's own
+    // failure. Reusing the brokenLinks logic here would flag a perfectly
+    // healthy page as the problem.
+    const pages = [
+      {
+        url: "https://shop.com/products/healthy",
+        title: "Healthy",
+        statusCode: 200,
+        resourceType: "product",
+        resourceId: "gid-OK",
+        locale: "",
+        inboundCount: 3,
+      },
+      {
+        url: "https://shop.com/collections/slow",
+        title: null,
+        statusCode: 500,
+        resourceType: "collection",
+        resourceId: "gid-SLOW",
+        locale: "",
+        inboundCount: 1,
+      },
+      {
+        // Unresolvable (no DB resource) — must still be counted, just not
+        // offered as a deep-linkable item.
+        url: "https://shop.com/collections/all",
+        title: null,
+        statusCode: 500,
+        resourceType: "unknown",
+        resourceId: null,
+        locale: "",
+        inboundCount: 1,
+      },
+    ];
+    const db = makeDbWithCrawl("completed", pages, []);
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+
+    const serverErrors = audit.problems.find((p) => p.code === "serverErrors");
+    expect(serverErrors?.action).toBe("deepLink");
+    expect(serverErrors?.count).toBe(2);
+    expect(serverErrors?.items).toHaveLength(1);
+    expect(serverErrors?.items[0]).toMatchObject({ type: "collection", id: "gid-SLOW" });
+    // The healthy page that links to the failing one is never listed.
+    expect(serverErrors?.items.some((i) => i.id === "gid-OK")).toBe(false);
   });
 
   it("does not count a broken (404) resolved page as headDrift, even though its (null) crawled title differs from the DB title (§ fix 5)", async () => {

@@ -242,6 +242,14 @@ export const de = {
     sortTooltip: "Einträge sortieren",
     filterTooltip: "Typen filtern",
     filterTitle: "Angezeigte Typen",
+    // Hover-Badge in der Eintragsliste. Keys sind die rohen Shopify-
+    // ProductStatus-Werte, damit der Lookup ohne Mapping-Tabelle auskommt.
+    productStatusLabels: {
+      ACTIVE: "Aktiv",
+      DRAFT: "Entwurf",
+      UNLISTED: "Nicht gelistet",
+      ARCHIVED: "Archiviert",
+    },
     errorLoadingThemeContent: "Fehler beim Laden des Theme-Inhalts",
     error: "Fehler",
     success: "Erfolg!",

@@ -658,6 +658,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             reloadAllTooltip: t.content?.reloadAllTooltip,
             filterTooltip: t.content?.filterTooltip,
             filterTitle: t.content?.filterTitle,
+            statusLabels: t.content?.productStatusLabels,
           }}
           />
           </div>

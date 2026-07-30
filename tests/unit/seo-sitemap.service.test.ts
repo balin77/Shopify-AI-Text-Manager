@@ -500,6 +500,24 @@ describe("searchExclusionCandidates — alreadyOutOfSitemap", () => {
       expect(PRODUCT_STATUSES as readonly string[]).toContain(s);
     }
   });
+
+  // The route can't import the service's PRODUCT_STATUSES (that would pull
+  // cheerio into the client bundle), so it keeps a hand-written mirror. A
+  // mirror with no guard is a mirror that drifts: the filter would silently
+  // stop offering a status the service still supports. The route is read as
+  // TEXT rather than imported because importing a Remix route drags in Polaris
+  // and the whole loader graph for what is a one-array assertion.
+  it("keeps the route's PRODUCT_STATUS_OPTIONS mirror in sync with PRODUCT_STATUSES", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/routes/app.seo.sitemap.tsx", "utf8");
+    const match = src.match(/const PRODUCT_STATUS_OPTIONS = \[([^\]]*)\]/);
+    expect(match, "PRODUCT_STATUS_OPTIONS not found — did it get renamed?").toBeTruthy();
+    const mirrored = match![1]
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+    expect(mirrored).toEqual([...PRODUCT_STATUSES]);
+  });
 });
 
 describe("ensureManualExclusion", () => {

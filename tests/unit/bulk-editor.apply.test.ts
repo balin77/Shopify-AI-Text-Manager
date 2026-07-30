@@ -694,9 +694,13 @@ describe("applyBulkDiff — stale-foreign-translation invalidation (Phase 4b)", 
  * UNLISTED is a settable ProductStatus from API 2025-10 on (it appears in the
  * `ProductInput` that `productUpdate` takes), so the gate must let it through
  * — while still rejecting anything that is not a real status, per CELL rather
- * than failing the whole row. These tests are the contract that keeps the gate
- * and BulkCell.tsx's option list from drifting apart: if one side gains or
- * loses a status without the other, one of these breaks.
+ * than failing the whole row.
+ *
+ * Scope note: these tests pin the SERVER gate only. BulkCell.tsx's option list
+ * has to match it, but that is a JSX literal in a component the repo has no
+ * test setup for, so nothing here fails if the two drift — the pairing is held
+ * by the comments on both sides, not by a test. Do not read the cases below as
+ * that guarantee.
  */
 describe("applyBulkDiff — product status gate", () => {
   const sentStatus = (calls: RecordedCall[]): unknown => {
@@ -764,5 +768,93 @@ describe("applyBulkDiff — product status gate", () => {
     };
     expect(input.title).toBe("New title");
     expect(input.status).toBeUndefined();
+  });
+});
+
+/**
+ * Schema-level GraphQL errors must fail the cell, not pass silently.
+ *
+ * `ShopifyApiGateway.graphql` logs non-throttle GraphQL errors and still
+ * resolves `{ ok: true }`, and a bad enum/variable never populates
+ * `userErrors` — it comes back as a top-level `errors` array with `data: null`.
+ * Before `persistProductBase` checked that, such a response looked like a
+ * success: the local cache was written with a value Shopify never stored and
+ * the foreign-translation invalidation deleted translations for a primary
+ * change that never landed (the CLAUDE.md false-success pattern). This is
+ * reachable via `status` — the one base field whose value can be invalid at the
+ * schema level, e.g. UNLISTED against a pre-2025-10 SHOPIFY_API_VERSION.
+ */
+describe("applyBulkDiff — top-level GraphQL errors on productUpdate", () => {
+  const schemaError = {
+    respond: (query: string) =>
+      query.includes("productUpdate(")
+        ? {
+            errors: [
+              { message: "Variable $input of type ProductInput! was provided invalid value for status" },
+            ],
+            data: null,
+          }
+        : undefined,
+  };
+
+  it("reports a cell failure instead of a silent success", async () => {
+    const { admin } = mockAdmin(schemaError);
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.status", "UNLISTED")],
+    );
+
+    expect(result.failures.length).toBeGreaterThan(0);
+    expect(result.failures[0].message).toContain("invalid value");
+    expect(result.saved).toBe(0);
+  });
+
+  it("does NOT write the local cache when Shopify stored nothing", async () => {
+    const { admin } = mockAdmin(schemaError);
+    const db = mockDb();
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.status", "UNLISTED"), entry("field.title", "New title")],
+    );
+
+    expect(db.product.update).not.toHaveBeenCalled();
+  });
+
+  it("does NOT invalidate foreign translations for a primary change that never landed", async () => {
+    const { admin, calls } = mockAdmin(schemaError);
+    const db = mockDb();
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "title", locale: "de" }] as never);
+
+    await applyBulkDiff(
+      {
+        db: db as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([]),
+        foreignLocales: ["de"],
+      },
+      [entry("field.title", "New title")],
+    );
+
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.query.includes("translationsRemove("))).toBe(false);
+  });
+
+  it("still fails the cell when the payload is missing entirely", async () => {
+    const { admin } = mockAdmin({
+      respond: (query: string) => (query.includes("productUpdate(") ? { data: {} } : undefined),
+    });
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.title", "New title")],
+    );
+
+    expect(result.failures.length).toBeGreaterThan(0);
+    expect(db.product.update).not.toHaveBeenCalled();
   });
 });

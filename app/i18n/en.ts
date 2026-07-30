@@ -245,6 +245,14 @@ export const en: Translation = {
     sortTooltip: "Sort entries",
     filterTooltip: "Filter types",
     filterTitle: "Visible types",
+    // Hover badge in the item list. Keys are the raw Shopify ProductStatus
+    // values so the lookup needs no mapping table.
+    productStatusLabels: {
+      ACTIVE: "Active",
+      DRAFT: "Draft",
+      UNLISTED: "Unlisted",
+      ARCHIVED: "Archived",
+    },
     errorLoadingThemeContent: "Error loading theme content",
     error: "Error",
     success: "Success!",

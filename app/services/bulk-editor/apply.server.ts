@@ -92,15 +92,23 @@ interface ApplyContext {
  *  writable status, not just a readable one. The docs' only restriction —
  *  "can't be changed from unlisted in older versions" — is scoped to
  *  pre-2025-10 versions, where UNLISTED is translated to active and is not part
- *  of the enum. Source:
- *  https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
+ *  of the enum. Sources:
+ *  https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus and
+ *  https://shopify.dev/docs/apps/build/product-merchandising/unlisted-products,
+ *  which states plainly: "You can query and SET the unlisted status through the
+ *  new `unlisted` enum in `ProductStatus`."
  *
  *  The app defaults to 2025-10 but `SHOPIFY_API_VERSION` can pin an older one
- *  (shopify.server.ts). This set is intentionally NOT version-aware: on an
- *  older version Shopify rejects the enum value outright, which surfaces as a
- *  normal per-cell `BulkFailure` — never a silent no-op. Keep in sync with the
- *  option list in BulkCell.tsx; offering a status the gate rejects (or gating
- *  one the UI never offers) is the failure mode this pairing exists to avoid. */
+ *  (shopify.server.ts), where UNLISTED is not part of the enum. This set is
+ *  intentionally NOT version-aware: Shopify then rejects the value as a
+ *  SCHEMA-level error, which `persistProductBase` turns into a per-cell
+ *  `BulkFailure` via its top-level `data.errors` check. That check is what
+ *  makes the non-version-aware set safe — before it existed, such a rejection
+ *  resolved as a silent success. Do not remove one without the other.
+ *
+ *  Keep in sync with the option list in BulkCell.tsx; offering a status the
+ *  gate rejects (or gating one the UI never offers) is the failure mode this
+ *  pairing exists to avoid. */
 const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"]);
 
 // Moved to columns.shared.ts (estimateCalls needs it client-side); re-exported
@@ -414,8 +422,23 @@ async function persistProductBaseFields(
     );
     const data = (await response.json()) as {
       data?: { productUpdate?: { userErrors?: { field?: string[] | string; message: string }[] } };
+      errors?: { message?: string }[];
     };
-    const userErrors = data.data?.productUpdate?.userErrors ?? [];
+    // A SCHEMA-level GraphQL error (unknown enum value, wrong variable type)
+    // comes back as HTTP 200 with a top-level `errors` array and `data: null`
+    // — it never reaches `userErrors`. ShopifyApiGateway deliberately
+    // logs-and-continues on non-throttle GraphQL errors and still resolves
+    // `{ ok: true }`, so without this check the mutation reads as a success:
+    // the DB cache below would be written with a value Shopify never stored,
+    // and `invalidateStaleForeignTranslations` would delete foreign
+    // translations for a primary change that never landed. That is exactly the
+    // false-success pattern CLAUDE.md exists to prevent. Reachable in practice
+    // via `status`: it is the only base field whose value can be invalid at the
+    // schema level (e.g. UNLISTED against a pre-2025-10 `SHOPIFY_API_VERSION`).
+    const gqlErrors = data.errors ?? [];
+    if (gqlErrors.length > 0) throw new Error(gqlErrors[0]?.message || "GraphQL error");
+    if (!data.data?.productUpdate) throw new Error("productUpdate returned no payload");
+    const userErrors = data.data.productUpdate.userErrors ?? [];
     if (userErrors.length > 0) throw new Error(userErrors[0].message);
 
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };

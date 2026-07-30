@@ -53,8 +53,20 @@ async function enqueueProductForIndexNow(db: any, shop: string, productId: strin
     const { getEnabledConfig, enqueueResource } = await import("../services/seo/index-now.service");
     const config = await getEnabledConfig(db, shop);
     if (!config) return;
-    const prod = await db.product.findUnique({ where: { id: productId }, select: { handle: true } });
-    if (prod?.handle) await enqueueResource(db, shop, shop, "product", prod.handle, config);
+    const prod = await db.product.findUnique({
+      where: { id: productId },
+      select: { handle: true, status: true },
+    });
+    // ACTIVE only — mirrors `collectStoreUrls` in index-now.service.ts, which
+    // gates the bulk "submit the whole catalog" path the same way. Without this
+    // the incremental path contradicted the bulk one: a DRAFT product, or an
+    // UNLISTED one (served `noindex,nofollow` and absent from sitemap.xml),
+    // would still be pushed to Bing/Yandex on every products/update webhook —
+    // asking an engine to crawl a URL it is simultaneously told not to index,
+    // and publishing a link the merchant chose to keep unlisted.
+    if (prod?.handle && prod.status === "ACTIVE") {
+      await enqueueResource(db, shop, shop, "product", prod.handle, config);
+    }
   } catch { /* ignore */ }
 }
 

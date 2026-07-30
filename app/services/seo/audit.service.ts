@@ -658,8 +658,9 @@ export async function analyzeStore(
 
   // ---- Collections ------------------------------------------------------
   // NOTE (finding #6): Collection has no `published`/status column in
-  // schema.prisma (unlike Product's "ACTIVE"/"DRAFT"/"ARCHIVED"), so there is
-  // nothing to filter on here — every cached row is audited, as before.
+  // schema.prisma (unlike Product, whose status is one of the four values in
+  // AUDITABLE_PRODUCT_STATUSES' doc block above), so there is nothing to filter
+  // on here — every cached row is audited, as before.
   if (wants("collection")) {
     const [count, collections] = await Promise.all([
       db.collection.count({ where: { shop } }),

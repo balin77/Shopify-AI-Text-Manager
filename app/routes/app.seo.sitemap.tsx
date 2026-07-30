@@ -637,8 +637,19 @@ export default function SeoSitemap() {
                       <BlockStack gap="050">
                         <InlineStack gap="150" blockAlign="center">
                           <Text as="span" variant="bodyMd" fontWeight="medium">{hit.title}</Text>
+                          {/* Same tone mapping as UnifiedItemList's status
+                              badge — UNLISTED is caution, not "info": the
+                              product IS live, it just needs a direct link. */}
                           {hit.status && (
-                            <Badge tone={hit.status === "ACTIVE" ? "success" : "info"}>
+                            <Badge
+                              tone={
+                                hit.status === "ACTIVE"
+                                  ? "success"
+                                  : hit.status === "UNLISTED"
+                                    ? "attention"
+                                    : "info"
+                              }
+                            >
                               {c[`productStatus_${hit.status}`] || hit.status}
                             </Badge>
                           )}

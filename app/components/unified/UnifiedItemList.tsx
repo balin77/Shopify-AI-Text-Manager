@@ -173,6 +173,11 @@ interface UnifiedItemListProps {
     filterTooltip?: string;
     /** Title inside the type-filter popover */
     filterTitle?: string;
+    /** Labels for the hover status badge, keyed by the raw Shopify
+     *  ProductStatus (ACTIVE / DRAFT / UNLISTED / ARCHIVED). Optional and
+     *  looked up leniently: a caller that passes nothing, or a status with no
+     *  entry, still renders the raw enum rather than an empty badge. */
+    statusLabels?: Record<string, string | undefined>;
   };
 }
 
@@ -388,6 +393,20 @@ export function UnifiedItemList({
     setCurrentPage(1);
   };
 
+  /** Badge tone for a product status. Uppercases first, exactly like
+   *  `getStatusColor` below — the stripe and the badge must not disagree
+   *  because one normalized the case and the other didn't. */
+  const statusTone = (status: string): "success" | "attention" | "info" => {
+    switch (status.toUpperCase()) {
+      case "ACTIVE":
+        return "success";
+      case "UNLISTED":
+        return "attention";
+      default:
+        return "info";
+    }
+  };
+
   // Get status color for stripe
   const getStatusColor = (status?: string) => {
     if (!status) return "#babfc3";
@@ -529,8 +548,13 @@ export function UnifiedItemList({
                   borderRadius: "8px",
                 }}
               >
-                <Badge tone={item.status === "ACTIVE" ? "success" : "info"}>
-                  {item.status}
+                {/* Translated where a label exists, raw enum otherwise — the
+                    badge must never render empty just because a status has no
+                    translation yet. UNLISTED gets the same caution tone as its
+                    stripe: the product IS live, it just needs a direct link,
+                    so "info" (which reads like DRAFT/ARCHIVED) understates it. */}
+                <Badge tone={statusTone(item.status)}>
+                  {t.statusLabels?.[item.status.toUpperCase()] || item.status}
                 </Badge>
               </div>
             )}
