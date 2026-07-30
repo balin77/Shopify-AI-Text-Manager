@@ -105,10 +105,6 @@ export const en: Translation = {
       singular: "Product",
       plural: "Products",
     },
-    status: {
-      active: "ACTIVE",
-      draft: "DRAFT",
-    },
     formatting: {
       bold: "Bold",
       italic: "Italic",

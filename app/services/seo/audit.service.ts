@@ -43,10 +43,11 @@ export const MAX_AUDIT_ITEMS_PER_TYPE = 1000;
  *  cheapest.
  *
  *  Two consequences, both intended:
- *   - Unlisted products join the store-wide duplicate SEO title/description
- *     groups. A duplicate shared with a noindex page is not a duplicate Google
- *     can see today, but it becomes one the moment the product is published, so
- *     flagging it early is the useful behavior.
+ *   - Unlisted products are scored but do NOT join the store-wide duplicate SEO
+ *     title/description groups — see `isExcludedFromDuplicateGroups`. Including
+ *     them was tried and reverted: the staging-copy workflow makes a shared
+ *     title with the ACTIVE original the normal case, so it flagged healthy
+ *     ACTIVE pages and sent them to Fix-with-AI.
  *   - `totalScanned`/`totalAvailable`/`averageScore` step once for shops that
  *     own unlisted products, so the SeoScoreSnapshot trend shows a
  *     discontinuity at the first audit after this change. Older snapshots are
@@ -157,6 +158,21 @@ const FINDING_TO_BUCKET: Record<string, string> = {
 /** Normalize a value for cross-item duplicate comparison (trim + lowercase). */
 function normalizeForDuplicateCheck(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+/** Product statuses that are audited but must NOT form store-wide duplicate
+ *  SEO title/description groups. See the call site for the full reasoning:
+ *  an unlisted page is served noindex,nofollow and appears in no SERP, so it
+ *  cannot duplicate anything — while the staging-copy workflow that produces
+ *  unlisted products makes a title/meta collision with a healthy ACTIVE
+ *  product the NORMAL case rather than a defect worth reporting.
+ *
+ *  Kept as a named predicate so the rule is stated once and stays greppable
+ *  next to AUDITABLE_PRODUCT_STATUSES, which deliberately does the opposite
+ *  (includes UNLISTED). The two are not in conflict: score them, don't
+ *  cross-reference them. */
+function isExcludedFromDuplicateGroups(status: string | null | undefined): boolean {
+  return (status ?? "").toUpperCase() === "UNLISTED";
 }
 
 /** Append `id` to the group keyed by `key` in `map` — empty keys are never grouped. */
@@ -536,6 +552,9 @@ export async function analyzeStore(
           seoDescription: true,
           featuredImageUrl: true,
           featuredImageAlt: true,
+          // Only needed to keep unlisted products out of the store-wide
+          // duplicate groups below — they are scored like any other row.
+          status: true,
         },
         orderBy: { lastSyncedAt: "desc" },
         take,
@@ -639,18 +658,33 @@ export async function analyzeStore(
       // For foreign locale, the effective (translated) values are what the
       // storefront serves for that locale — that's the correct duplicate
       // surface.
-      addToDuplicateGroup(
-        seoTitleGroups,
-        normalizeForDuplicateCheck(
-          nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
-        ),
-        p.id,
-      );
-      addToDuplicateGroup(
-        seoDescriptionGroups,
-        normalizeForDuplicateCheck(effectiveMetaDescription),
-        p.id,
-      );
+      //
+      // UNLISTED products are SCORED (above) but do NOT join the duplicate
+      // groups. Duplicate detection asks "do two pages compete in the same
+      // SERP", and an unlisted page is in no SERP at all — Shopify serves it
+      // noindex,nofollow and omits it from sitemap.xml. Including them was
+      // actively harmful rather than merely noisy: the common way a product
+      // becomes unlisted is a staging copy of an existing ACTIVE product,
+      // which shares its title and meta by construction. That tagged the
+      // healthy ACTIVE ORIGINAL with duplicateSeoTitle and fed it to
+      // Fix-with-AI, spending AI credits rewriting a page with no duplicate
+      // Google can see. The finding is not lost, only deferred to when it
+      // becomes true: publishing the product flips it to ACTIVE, and the next
+      // audit then groups it normally.
+      if (!isExcludedFromDuplicateGroups(p.status)) {
+        addToDuplicateGroup(
+          seoTitleGroups,
+          normalizeForDuplicateCheck(
+            nonEmpty(effectiveSeoTitle) ? effectiveSeoTitle : effectiveTitle,
+          ),
+          p.id,
+        );
+        addToDuplicateGroup(
+          seoDescriptionGroups,
+          normalizeForDuplicateCheck(effectiveMetaDescription),
+          p.id,
+        );
+      }
     }
     finalizeStat(stat);
     if (stat.count > 0) byType.push(stat);

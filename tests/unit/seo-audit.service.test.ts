@@ -179,6 +179,77 @@ describe("analyzeStore", () => {
   });
 });
 
+/**
+ * Unlisted products are audited but must not FORM duplicate groups.
+ *
+ * The staging-copy workflow (duplicate an ACTIVE product, keep the copy
+ * unlisted until launch) makes a shared SEO title the NORMAL case, not a
+ * defect. Grouping them tagged the healthy ACTIVE original with
+ * duplicateSeoTitle and fed it to Fix-with-AI — AI credits spent rewriting a
+ * page whose only "duplicate" is invisible to Google (unlisted pages are
+ * served noindex,nofollow and are absent from sitemap.xml).
+ */
+describe("analyzeStore — unlisted products and duplicate groups", () => {
+  const base = { descriptionHtml: A(200), seoDescription: U(140, "D-"), featuredImageUrl: null, featuredImageAlt: null };
+  const makeDb2 = (products: any[]) =>
+    ({
+      product: { count: async () => products.length, findMany: async () => products },
+      productImage: { groupBy: async () => [] },
+      collection: { count: async () => 0, findMany: async () => [] },
+      article: { count: async () => 0, findMany: async () => [] },
+      page: { count: async () => 0, findMany: async () => [] },
+    }) as any;
+
+  const run = async (products: any[]) =>
+    analyzeStore("shop.myshopify.com", { db: makeDb2(products), seoTitleEffectiveLimit: 60, plan: "pro" });
+
+  const dupCount = (audit: any) =>
+    Object.fromEntries(audit.problems.map((p: any) => [p.code, p.count])).duplicateSeoTitle;
+
+  it("does NOT flag an ACTIVE product whose title an UNLISTED staging copy shares", async () => {
+    const audit = await run([
+      { id: "gid-A", title: U(40, "TA-"), seoTitle: "Shared SEO Title", status: "ACTIVE", ...base },
+      { id: "gid-U", title: U(40, "TU-"), seoTitle: "Shared SEO Title", status: "UNLISTED", ...base },
+    ]);
+    expect(dupCount(audit)).toBeUndefined();
+  });
+
+  it("still flags two ACTIVE products sharing a title — the real finding is intact", async () => {
+    const audit = await run([
+      { id: "gid-A1", title: U(40, "TA1-"), seoTitle: "Shared SEO Title", status: "ACTIVE", ...base },
+      { id: "gid-A2", title: U(40, "TA2-"), seoTitle: "Shared SEO Title", status: "ACTIVE", ...base },
+    ]);
+    expect(dupCount(audit)).toBe(2);
+  });
+
+  it("does not flag two UNLISTED products sharing a title either — neither is in any SERP", async () => {
+    const audit = await run([
+      { id: "gid-U1", title: U(40, "TU1-"), seoTitle: "Shared SEO Title", status: "UNLISTED", ...base },
+      { id: "gid-U2", title: U(40, "TU2-"), seoTitle: "Shared SEO Title", status: "UNLISTED", ...base },
+    ]);
+    expect(dupCount(audit)).toBeUndefined();
+  });
+
+  it("still SCORES the unlisted product — excluded from grouping, not from the audit", async () => {
+    const audit = await run([
+      { id: "gid-A", title: U(40, "TA-"), seoTitle: "Shared SEO Title", status: "ACTIVE", ...base },
+      { id: "gid-U", title: U(40, "TU-"), seoTitle: "", status: "UNLISTED", ...base },
+    ]);
+    expect(audit.totalScanned).toBe(2);
+    // The unlisted row still produces its own findings.
+    const bucket = audit.problems.find((p: any) => p.code === "seoTitleMissing");
+    expect(bucket?.items.map((i: any) => i.id)).toContain("gid-U");
+  });
+
+  it("treats a lowercase status the same — the guard normalizes case", async () => {
+    const audit = await run([
+      { id: "gid-A", title: U(40, "TA-"), seoTitle: "Shared SEO Title", status: "ACTIVE", ...base },
+      { id: "gid-U", title: U(40, "TU-"), seoTitle: "Shared SEO Title", status: "unlisted", ...base },
+    ]);
+    expect(dupCount(audit)).toBeUndefined();
+  });
+});
+
 describe("analyzeStore — duplicate SEO title/description detection", () => {
   function makeDupDb() {
     const products = [

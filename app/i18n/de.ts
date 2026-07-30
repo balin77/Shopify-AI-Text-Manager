@@ -102,10 +102,6 @@ export const de = {
       singular: "Produkt",
       plural: "Produkte",
     },
-    status: {
-      active: "AKTIV",
-      draft: "ENTWURF",
-    },
     formatting: {
       bold: "Fett",
       italic: "Kursiv",
