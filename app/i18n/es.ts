@@ -1578,6 +1578,7 @@ export const es: Translation = {
       rejectedHint: "Las sugerencias rechazadas no se volverán a proponer en futuros análisis. Aun así puedes aceptarlas aquí o devolverlas a la lista de abiertas.",
       empty: "No hay sugerencias abiertas. Haz clic en «Generar sugerencias» para analizar tu contenido.",
       emptyRejected: "No hay sugerencias rechazadas.",
+      accept: "Aceptar",
       rejectSuccess: "Sugerencia rechazada.",
       actionError: "La acción falló. Inténtalo de nuevo.",
       paginationRange: "{start}–{end} de {total}",

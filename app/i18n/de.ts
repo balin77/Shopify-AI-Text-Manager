@@ -1578,6 +1578,7 @@ export const de = {
       rejectedHint: "Abgelehnte Vorschläge werden bei künftigen Scans nicht erneut vorgeschlagen. Du kannst sie hier trotzdem noch akzeptieren oder zurück zu den offenen Vorschlägen schieben.",
       empty: "Keine offenen Vorschläge. Klicke auf „Vorschläge generieren“, um deinen Content zu scannen.",
       emptyRejected: "Keine abgelehnten Vorschläge.",
+      accept: "Annehmen",
       rejectSuccess: "Vorschlag abgelehnt.",
       actionError: "Aktion fehlgeschlagen. Bitte erneut versuchen.",
       paginationRange: "{start}–{end} von {total}",

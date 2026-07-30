@@ -21,9 +21,9 @@
  * `dismissedUntil` from that removed action simply show up in the rejected
  * list until it lapses.
  *
- * Accept is a two-step flow — which is why the row button says "Prüfen" and not
- * "Akzeptieren": it only opens the preview, and the merchant can still accept OR
- * reject from inside the modal.
+ * Accept is a two-step flow, and BOTH steps run whichever button was used:
+ * "Prüfen" stops between them to show the before/after modal (where the
+ * merchant can then confirm or reject), "Annehmen" chains straight through.
  *   1. "previewAccept" (this route's action) computes the cheerio-based
  *      insertion server-side (internal-links.service.ts's
  *      `insertLinkIntoHtml`) against the CURRENT DB content and returns
@@ -52,6 +52,7 @@ import {
   Banner,
   Select,
   Modal,
+  type ComplexAction,
 } from "@shopify/polaris";
 import { ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
@@ -433,7 +434,13 @@ export default function SeoInternalLinks() {
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const generateStartedAtRef = useRef(0);
 
+  // The suggestion currently being accepted, and HOW: "modal" shows the
+  // before/after preview and waits for a confirmation, "direct" is the list's
+  // "Annehmen" shortcut — same two server round-trips (previewAccept → save),
+  // just without the modal in between. Both need `previewRow`, because the save
+  // and the markAccepted call are driven off it.
   const [previewRow, setPreviewRow] = useState<SuggestionRow | null>(null);
+  const [previewMode, setPreviewMode] = useState<"modal" | "direct">("modal");
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -500,9 +507,11 @@ export default function SeoInternalLinks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowFetcher.state, rowFetcher.data]);
 
-  const openPreview = (row: SuggestionRow) => {
+  const openPreview = (row: SuggestionRow, mode: "modal" | "direct") => {
     setPreviewRow(row);
+    setPreviewMode(mode);
     setPreviewError(null);
+    setBanner(null);
     const formData = new FormData();
     formData.append("actionType", "previewAccept");
     formData.append("suggestionId", row.id);
@@ -512,10 +521,21 @@ export default function SeoInternalLinks() {
   useEffect(() => {
     if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
     if (!previewFetcher.data.success) {
-      setPreviewError(
-        previewFetcher.data.code === "STALE" ? c.previewStaleError : previewFetcher.data.error || c.previewLoadError,
-      );
+      const message =
+        previewFetcher.data.code === "STALE" ? c.previewStaleError : previewFetcher.data.error || c.previewLoadError;
+      // Without a modal there is nowhere to show an inline error — surface it in
+      // the page banner and drop the pending row instead.
+      if (previewMode === "direct") {
+        setBanner({ tone: "critical", message });
+        setPreviewRow(null);
+      } else {
+        setPreviewError(message);
+      }
+      return;
     }
+    // Direct accept: the preview was only ever a means to compute the insertion,
+    // so chain straight into the save the modal's confirm button would trigger.
+    if (previewMode === "direct") confirmAccept();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFetcher.state, previewFetcher.data]);
 
@@ -543,6 +563,9 @@ export default function SeoInternalLinks() {
       rowFetcher.submit(formData, { method: "post" });
       setBanner({ tone: "success", message: c.acceptSuccess });
       setPreviewRow(null);
+    } else if (previewMode === "direct") {
+      setBanner({ tone: "critical", message: saveFetcher.data.error || c.acceptSaveError });
+      setPreviewRow(null);
     } else {
       setPreviewError(saveFetcher.data.error || c.acceptSaveError);
     }
@@ -566,6 +589,15 @@ export default function SeoInternalLinks() {
 
   const rejectedView = data.view === "rejected";
   const rows = data.rows;
+  // A direct accept runs two requests back to back; lock every row action for
+  // its duration (a second click would submit against a half-applied state) and
+  // spin only the button that started it.
+  const acceptingRowId = previewMode === "direct" && previewRow ? previewRow.id : null;
+  const rowBusy =
+    rowFetcher.state !== "idle" ||
+    saveFetcher.state !== "idle" ||
+    previewFetcher.state !== "idle" ||
+    acceptingRowId !== null;
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
   const firstOnPage = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
   const lastOnPage = Math.min(data.page * data.pageSize, data.total);
@@ -612,22 +644,34 @@ export default function SeoInternalLinks() {
           </div>
         </div>
 
+        {/* Same three roles, same order and same button styles as the modal
+            footer (neutral · critical · primary), so the modal reads as a
+            zoomed-in version of the row rather than a different set of choices. */}
         <InlineStack gap="200" blockAlign="center">
           <Badge tone={row.confidence >= 0.8 ? "success" : row.confidence >= 0.6 ? "attention" : undefined}>
             {`${Math.round(row.confidence * 100)}%`}
           </Badge>
-          <Button size="slim" variant="primary" onClick={() => openPreview(row)}>
+          <Button size="slim" onClick={() => openPreview(row, "modal")} disabled={rowBusy}>
             {c.review}
           </Button>
           {rejectedView ? (
-            <Button size="slim" onClick={() => submitRowAction(row, "restore")} disabled={rowFetcher.state !== "idle"}>
+            <Button size="slim" onClick={() => submitRowAction(row, "restore")} disabled={rowBusy}>
               {c.restore}
             </Button>
           ) : (
-            <Button size="slim" tone="critical" onClick={() => submitRowAction(row, "reject")} disabled={rowFetcher.state !== "idle"}>
+            <Button size="slim" tone="critical" onClick={() => submitRowAction(row, "reject")} disabled={rowBusy}>
               {c.reject}
             </Button>
           )}
+          <Button
+            size="slim"
+            variant="primary"
+            onClick={() => openPreview(row, "direct")}
+            disabled={rowBusy}
+            loading={acceptingRowId === row.id}
+          >
+            {c.accept}
+          </Button>
         </InlineStack>
       </InlineStack>
     </div>
@@ -746,9 +790,21 @@ export default function SeoInternalLinks() {
   const previewLoading = previewFetcher.state !== "idle";
   const previewData = previewFetcher.data;
 
+  // Polaris renders a `destructive: true` modal action as a FILLED red button,
+  // while the list's reject button is the outlined `tone="critical"` one. That
+  // outlined look is the one we keep in both places, so pass `tone` straight
+  // through: buttonFrom() spreads any extra prop onto the underlying Button,
+  // ComplexAction just doesn't type it (hence the assertion).
+  const rejectAction = {
+    content: c.reject,
+    tone: "critical",
+    disabled: rowFetcher.state !== "idle" || saveFetcher.state !== "idle",
+    onAction: rejectFromPreview,
+  } as ComplexAction;
+
   const modal = (
     <Modal
-      open={!!previewRow}
+      open={!!previewRow && previewMode === "modal"}
       onClose={() => setPreviewRow(null)}
       title={c.previewModalTitle}
       primaryAction={{
@@ -757,18 +813,12 @@ export default function SeoInternalLinks() {
         loading: saveFetcher.state !== "idle",
         onAction: confirmAccept,
       }}
+      // Order mirrors the list row: neutral, reject, confirm.
       secondaryActions={[
+        { content: c.previewCancel, onAction: () => setPreviewRow(null) },
         // Already-rejected rows only get "close" here — the row itself offers
         // "restore", which is the meaningful action in that view.
-        ...(rejectedView
-          ? []
-          : [{
-              content: c.reject,
-              destructive: true,
-              disabled: rowFetcher.state !== "idle" || saveFetcher.state !== "idle",
-              onAction: rejectFromPreview,
-            }]),
-        { content: c.previewCancel, onAction: () => setPreviewRow(null) },
+        ...(rejectedView ? [] : [rejectAction]),
       ]}
     >
       <Modal.Section>

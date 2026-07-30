@@ -1579,6 +1579,7 @@ export const en: Translation = {
       rejectedHint: "Rejected suggestions won't be proposed again by future scans. You can still accept them here, or move them back to the open list.",
       empty: "No open suggestions. Click \"Generate suggestions\" to scan your content.",
       emptyRejected: "No rejected suggestions.",
+      accept: "Accept",
       rejectSuccess: "Suggestion rejected.",
       actionError: "Action failed. Please try again.",
       paginationRange: "{start}–{end} of {total}",
