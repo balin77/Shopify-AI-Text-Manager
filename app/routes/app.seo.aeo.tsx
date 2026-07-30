@@ -105,7 +105,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 };
 
 /** Impact buckets, most actionable first. */
-const IMPACT_ORDER: RobotsRuleImpact[] = ["content", "duplicate", "operational"];
+const IMPACT_ORDER: RobotsRuleImpact[] = ["content", "unknown", "duplicate", "operational"];
 
 const VERDICT_TONE = {
   blocked: "critical",

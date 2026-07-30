@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildLlmsTxt,
   auditRobotsTxt,
+  classifyDisallowPath,
   groupCrawlerStatuses,
   AI_CRAWLERS,
   wrapLlmsTxtForTheme,
@@ -40,6 +41,27 @@ Disallow: /cdn/wpm/*.js
 Disallow: /recommendations/products
 Disallow: /*/recommendations/products
 Disallow: /search
+`;
+
+/**
+ * The rules a real 2026 store additionally ships that the first version of the
+ * classifier mis-filed as "real content" — app-proxy endpoints, tracking
+ * params, hash-suffixed duplicate product URLs, `*filter*&*filter*` facets.
+ * Verbatim from a live store, so the regression is pinned to reality.
+ */
+const SHOPIFY_2026_EXTRA_RULES = `User-agent: *
+Disallow: /a/downloads/-/*
+Disallow: */collections/*filter*&*filter*
+Disallow: /*/*?*ls=*&ls=*
+Disallow: /*/*?*ls%3D*%3Fls%3D*
+Disallow: /*/*?*ls%3d*%3fls%3d*
+Disallow: /sf_private_access_tokens
+Disallow: /products/*-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]-remote
+Disallow: /*/products/*-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]-remote
+Disallow: /collections/*/products/*-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]-remote
+Disallow: /*/collections/*/products/*-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]-remote
+Disallow: /*?*oseid=*
+Disallow: /password
 `;
 
 describe("buildLlmsTxt", () => {
@@ -184,10 +206,49 @@ describe("auditRobotsTxt", () => {
       });
     });
 
-    it("classifies an unrecognised path as content (conservative)", () => {
+    it("classifies an unrecognised plain path as content (a real custom route)", () => {
       const s = gptbot("User-agent: *\nDisallow: /lookbook\n");
       expect(s.verdict).toBe("restricted");
       expect(s.rules[0].reason).toBe("unknown");
+    });
+
+    it("files an unrecognised wildcard pattern under unknown, without raising the verdict", () => {
+      const s = gptbot("User-agent: *\nDisallow: /*_shopify_weird*\n");
+      expect(s.rules[0]).toMatchObject({ impact: "unknown", reason: "technicalPattern" });
+      expect(s.contentRestricted).toBe(false);
+      expect(s.verdict).toBe("standard");
+    });
+
+    it("does not flag any of a real 2026 store's extra default rules as content", () => {
+      const s = gptbot(SHOPIFY_2026_EXTRA_RULES);
+      const content = s.rules.filter((r) => r.impact === "content");
+      expect(content).toEqual([]);
+      expect(s.verdict).toBe("standard");
+    });
+
+    it.each([
+      ["/a/downloads/-/*", "operational", "appProxy"],
+      ["*/collections/*filter*&*filter*", "duplicate", "faceted"],
+      ["/*/*?*ls=*&ls=*", "operational", "tracking"],
+      ["/*/*?*ls%3D*%3Fls%3D*", "operational", "tracking"],
+      ["/sf_private_access_tokens", "operational", "internal"],
+      ["/*?*oseid=*", "operational", "tracking"],
+      ["/password", "operational", "password"],
+      [
+        "/collections/*/products/*-[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]-remote",
+        "duplicate",
+        "hashedDuplicate",
+      ],
+    ])("classifies %s as %s/%s", (path, impact, reason) => {
+      expect(classifyDisallowPath(path)).toEqual({ path, impact, reason });
+    });
+
+    it("still treats a genuinely blocked collection as content", () => {
+      // Guard against the loosened `filter` matcher swallowing real collections.
+      expect(classifyDisallowPath("/collections/water-filters")).toMatchObject({
+        impact: "content",
+        reason: "storefront",
+      });
     });
 
     it("keeps faceted collection URLs out of the content bucket", () => {

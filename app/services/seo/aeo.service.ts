@@ -212,11 +212,15 @@ export function parseRobots(txt: string): RobotsGroup[] {
  *  - `duplicate` — faceted/sorted/searched variants of pages that exist
  *    elsewhere (`/collections/*sort_by*`, `/search`). Deliberate crawl-budget
  *    hygiene, also Shopify default — no real content is lost.
- *  - `content` — hides pages an AI answer could have cited (products,
- *    collections, blogs, pages) or an unrecognised path we can't vouch for.
- *    This is the only bucket a merchant usually needs to act on.
+ *  - `content` — hides pages an AI answer could have cited: a storefront route,
+ *    or a plain wildcard-free path (i.e. a real custom route) we don't
+ *    recognise. This is the only bucket that drives a warning.
+ *  - `unknown` — an unrecognised *pattern* (contains `*`, a query param or a
+ *    `[a-f0-9]` character class). Shopify keeps adding such rules, so treating
+ *    them as content produced pure noise; they are listed for review but don't
+ *    raise the verdict.
  */
-export type RobotsRuleImpact = "operational" | "duplicate" | "content";
+export type RobotsRuleImpact = "operational" | "duplicate" | "content" | "unknown";
 
 export interface RobotsRuleAssessment {
   /** The raw `Disallow` path as written in robots.txt. */
@@ -229,43 +233,64 @@ export interface RobotsRuleAssessment {
 export type RobotsRuleReason =
   | "checkout"
   | "account"
+  | "password"
   | "admin"
   | "internal"
+  | "appProxy"
   | "preview"
+  | "tracking"
   | "faceted"
+  | "hashedDuplicate"
   | "search"
   | "pagination"
   | "queryParams"
   | "storefront"
   | "sitewide"
+  | "technicalPattern"
   | "unknown";
 
 /**
  * Ordered classification table — first match wins, so the narrow operational /
  * duplicate patterns must come before the broad storefront check below (e.g.
- * `/collections/*sort_by*` is faceting, not a blocked collection).
+ * `/collections/*sort_by*` is faceting, not a blocked collection, and
+ * `/products/*-[a-f0-9]…-remote` is a generated duplicate, not a product).
  */
 const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: RobotsRuleReason }> = [
   // Operational — transactional or internal, never citable.
   { re: /(^|\/)(checkouts?|carts?|thank_you)(\/|$|\?|\*)/, impact: "operational", reason: "checkout" },
+  { re: /(^|\/)password(\/|$|\?|\*)/, impact: "operational", reason: "password" },
   {
-    re: /(^|\/)(account|accounts|orders?|customer_authentication|password|challenge|login|logout)(\/|$|\?|\*)/,
+    re: /(^|\/)(account|accounts|orders?|customer_authentication|challenge|login|logout)(\/|$|\?|\*)/,
     impact: "operational",
     reason: "account",
   },
   { re: /^\/admin(\/|$|\?|\*)/, impact: "operational", reason: "admin" },
+  // `/a/…` is Shopify's app-proxy prefix (e.g. `/a/downloads/-/*` for Digital
+  // Downloads) — app-owned endpoints, never storefront content.
+  { re: /^\/a\//, impact: "operational", reason: "appProxy" },
   {
-    re: /(^|\/)(apps|services|tools|recommendations|cdn|wpm|\.well-known|apple-app-site-association|localization|browsing_context_suggestions)(\/|$|\?|\.|\*)/,
+    re: /(^|\/)(apps|services|tools|recommendations|cdn|wpm|\.well-known|apple-app-site-association|localization|browsing_context_suggestions|sf_private_access_tokens|policies\.json)(\/|$|\?|\.|\*)/,
     impact: "operational",
     reason: "internal",
   },
   {
-    re: /(design_theme_id|preview_theme_id|preview_script_id|_ab=|oseid=|shpxid=|preview_key)/,
+    re: /(design_theme_id|preview_theme_id|preview_script_id|preview_key)/,
     impact: "operational",
     reason: "preview",
   },
+  // Link-source / A-B / email tracking parameters, plain and percent-encoded.
+  { re: /(_ab=|oseid=|shpxid=|[?&*]ls(=|%3d))/i, impact: "operational", reason: "tracking" },
   // Duplicate — same content reachable under a canonical URL.
-  { re: /(sort_by|filter[._]|constraint|%2b|\+)/i, impact: "duplicate", reason: "faceted" },
+  // A literal `[a-f0-9]` character class only ever appears in Shopify's
+  // generated rules for hash-suffixed duplicate URLs (`…-<hash>-remote`).
+  { re: /\[a-f0-9\]/i, impact: "duplicate", reason: "hashedDuplicate" },
+  // `filter` only counts as faceting next to a wildcard/separator, so a real
+  // collection like `/collections/water-filters` is not swallowed by it.
+  {
+    re: /(sort_by|constraint|%2b|\+|[*.&?_=]filter|filter[*.&?_=])/i,
+    impact: "duplicate",
+    reason: "faceted",
+  },
   { re: /(^|\/)search(\/|$|\?|\*)|[?&*]q=/, impact: "duplicate", reason: "search" },
   { re: /(page=|\/page\/)/, impact: "duplicate", reason: "pagination" },
   { re: /^\/\*\?\*?$/, impact: "duplicate", reason: "queryParams" },
@@ -275,9 +300,16 @@ const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: Robot
 const STOREFRONT_RE = /^\/(?:\*\/)?(?:products|collections|blogs|pages|articles|policies)(\/|$|\?|\*)/;
 
 /**
- * Classify a single `Disallow` path. Pure, and deliberately conservative: an
- * unrecognised path counts as `content`, because we'd rather over-report a
- * custom route than quietly tell a merchant everything is fine.
+ * A `Disallow` that carries wildcards, query parameters or a character class is
+ * a *pattern* aimed at generated URLs, not a hand-written route. Shopify adds
+ * new ones over time, so an unrecognised pattern is filed under `unknown` (shown
+ * for review, no warning) while an unrecognised **plain** path — a real custom
+ * route like `/lookbook` — still counts as blocked content.
+ */
+const TECHNICAL_PATTERN_RE = /[*?&=[\]]/;
+
+/**
+ * Classify a single `Disallow` path. Pure.
  */
 export function classifyDisallowPath(path: string): RobotsRuleAssessment {
   const raw = path.trim();
@@ -287,6 +319,7 @@ export function classifyDisallowPath(path: string): RobotsRuleAssessment {
     if (re.test(p)) return { path: raw, impact, reason };
   }
   if (STOREFRONT_RE.test(p)) return { path: raw, impact: "content", reason: "storefront" };
+  if (TECHNICAL_PATTERN_RE.test(p)) return { path: raw, impact: "unknown", reason: "technicalPattern" };
   return { path: raw, impact: "content", reason: "unknown" };
 }
 
