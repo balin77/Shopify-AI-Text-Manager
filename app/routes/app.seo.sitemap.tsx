@@ -125,14 +125,14 @@ const EXAMPLE_ANALYSIS: SitemapAnalysis = {
     },
     {
       id: "example-2",
-      resourceType: "product",
+      resourceType: "page",
       resourceId: "example",
-      reason: "archivedProduct",
+      reason: "thinContent",
       status: "suggested",
       appliedAt: null,
-      title: "Auslaufmodell XY",
-      handle: "auslaufmodell-xy",
-      caution: false,
+      title: "Versand & Rückgabe",
+      handle: "versand-rueckgabe",
+      caution: true,
     },
   ],
 };
@@ -659,22 +659,30 @@ export default function SeoSitemap() {
                           )}
                         </InlineStack>
                         <Text as="span" variant="bodySm" tone="subdued">/{hit.handle}</Text>
-                        {/* A DRAFT/UNLISTED product is already absent from
-                            sitemap.xml (measured — see sitemap.service.ts), so
-                            excluding it writes a metafield that changes
-                            nothing. Say so rather than hide the button: the
-                            merchant may be pre-staging a product they are
-                            about to publish. */}
-                        {hit.alreadyOutOfSitemap && (
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {c.alreadyOutOfSitemap}
-                          </Text>
-                        )}
                       </BlockStack>
                     </InlineStack>
 
                     <InlineStack gap="150" blockAlign="center" wrap={false}>
-                      {hit.existingStatus !== "applied" && (
+                      {/* Any non-ACTIVE product is already absent from
+                          sitemap.xml — DRAFT, UNLISTED and (since 2026-07-30)
+                          ARCHIVED were each measured, see sitemap.service.ts.
+                          Excluding one would write a metafield that changes
+                          nothing while reporting "Aktion erfolgreich" and
+                          filing the row under "Angewendet". No button at all
+                          beats a button that lies. It takes the action slot so
+                          the state is where the eye already looks — the same
+                          treatment the already-applied case gets. */}
+                      {hit.alreadyOutOfSitemap && hit.existingStatus !== "applied" ? (
+                        <Tooltip content={c.alreadyOutOfSitemap}>
+                          {/* warning, not info: this replaces an action the
+                              merchant came here to take, so it has to catch
+                              the eye. Not critical — nothing is broken, the
+                              state is simply already what they wanted. It can
+                              never collide with the yellow cautionBadge, which
+                              only applies to pages. */}
+                          <Badge tone="warning">{c.alreadyOutOfSitemapBadge}</Badge>
+                        </Tooltip>
+                      ) : hit.existingStatus !== "applied" ? (
                         <Button
                           size="slim"
                           onClick={() => askManualExclude(hit)}
@@ -683,7 +691,7 @@ export default function SeoSitemap() {
                         >
                           {c.apply}
                         </Button>
-                      )}
+                      ) : null}
                       <Tooltip content={c.openInEditor}>
                         <Button
                           variant="plain"

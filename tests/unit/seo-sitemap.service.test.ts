@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   findThinContentPages,
-  findArchivedProducts,
   findEmptyCollections,
   computeExclusionSuggestions,
   upsertExclusionSuggestions,
@@ -20,7 +19,6 @@ import {
   PRODUCT_STATUSES,
   STATUSES_ALREADY_OUT_OF_SITEMAP,
   type ThinPageRow,
-  type ArchivedProductRow,
   type CollectionRow,
 } from "~/services/seo/sitemap.service";
 
@@ -68,31 +66,19 @@ describe("findThinContentPages", () => {
   });
 });
 
-describe("findArchivedProducts", () => {
-  function product(overrides: Partial<ArchivedProductRow> = {}): ArchivedProductRow {
-    return { id: "gid-p1", title: "Product", handle: "product", status: "ARCHIVED", ...overrides };
-  }
+// `findArchivedProducts` and its tests were removed on 2026-07-30: ARCHIVED
+// products were measured to be absent from sitemap.xml already, so the rule
+// suggested an exclusion that could not change anything. What replaces the
+// coverage is the STATUSES_ALREADY_OUT_OF_SITEMAP assertion below plus the
+// retired-reason filtering in `analyze()`.
 
-  it("flags an archived product", () => {
-    const result = findArchivedProducts([product()]);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ resourceType: "product", reason: "archivedProduct" });
+describe("STATUSES_ALREADY_OUT_OF_SITEMAP", () => {
+  it("holds exactly the statuses measured to be absent from sitemap.xml", () => {
+    expect([...STATUSES_ALREADY_OUT_OF_SITEMAP].sort()).toEqual(["ARCHIVED", "DRAFT", "UNLISTED"]);
   });
 
-  it("does not flag an active product", () => {
-    expect(findArchivedProducts([product({ status: "ACTIVE" })])).toEqual([]);
-  });
-
-  it("does not flag a draft product", () => {
-    expect(findArchivedProducts([product({ status: "DRAFT" })])).toEqual([]);
-  });
-
-  it("re-filters even if the caller passed an unfiltered list", () => {
-    const result = findArchivedProducts([
-      product({ id: "a", status: "ACTIVE" }),
-      product({ id: "b", status: "ARCHIVED" }),
-    ]);
-    expect(result.map((r) => r.resourceId)).toEqual(["b"]);
+  it("does not contain ACTIVE — the one status that IS in the sitemap", () => {
+    expect(STATUSES_ALREADY_OUT_OF_SITEMAP).not.toContain("ACTIVE");
   });
 });
 
@@ -127,7 +113,9 @@ describe("findEmptyCollections", () => {
 
 function makeSuggestionDb(opts: {
   pages?: ThinPageRow[];
-  archivedProducts?: ArchivedProductRow[];
+  /** Still accepted so the "never suggests an archived product" test can
+   *  hand the stub products and prove they are ignored. */
+  archivedProducts?: { id: string; title: string; handle: string; status: string }[];
   collections?: CollectionRow[];
   latestSnapshotId?: string | null;
   collectionCrawlPages?: { resourceId: string; wordCount: number }[];
@@ -206,16 +194,23 @@ describe("computeExclusionSuggestions", () => {
     expect(result.filter((r) => r.reason === "emptyCollection")).toEqual([]);
   });
 
-  it("combines all three rule sets", async () => {
+  it("combines both remaining rule sets", async () => {
     const { db } = makeSuggestionDb({
       pages: [{ id: "gid-p1", title: "Thin", handle: "thin", body: "short" }],
-      archivedProducts: [{ id: "gid-prod1", title: "Old", handle: "old", status: "ARCHIVED" }],
       collections: [{ id: "gid-c1", title: "Empty", handle: "empty" }],
       latestSnapshotId: "snap-1",
       collectionCrawlPages: [{ resourceId: "gid-c1", wordCount: 3 }],
     });
     const result = await computeExclusionSuggestions("shop.myshopify.com", { db });
-    expect(result.map((r) => r.reason).sort()).toEqual(["archivedProduct", "emptyCollection", "thinContent"]);
+    expect(result.map((r) => r.reason).sort()).toEqual(["emptyCollection", "thinContent"]);
+  });
+
+  it("never suggests an archived product any more — Shopify already excludes those", async () => {
+    const { db } = makeSuggestionDb({
+      archivedProducts: [{ id: "gid-prod1", title: "Old", handle: "old", status: "ARCHIVED" }],
+    });
+    const result = await computeExclusionSuggestions("shop.myshopify.com", { db });
+    expect(result).toEqual([]);
   });
 });
 
@@ -232,10 +227,10 @@ describe("upsertExclusionSuggestions", () => {
 
   it("is idempotent — a candidate that already has ANY row (suggested/applied/reverted) is skipped, never re-created", async () => {
     const { db, created } = makeSuggestionDb({
-      existingExclusions: [{ resourceType: "product", resourceId: "gid-prod1" }],
+      existingExclusions: [{ resourceType: "page", resourceId: "gid-prod1" }],
     });
     const summary = await upsertExclusionSuggestions(db, "shop.myshopify.com", [
-      { resourceType: "product", resourceId: "gid-prod1", reason: "archivedProduct", title: "P", handle: "p" },
+      { resourceType: "page", resourceId: "gid-prod1", reason: "thinContent", title: "P", handle: "p" },
     ]);
     expect(summary).toEqual({ created: 0, skipped: 1 });
     expect(created).toEqual([]);
@@ -485,8 +480,11 @@ describe("searchExclusionCandidates — alreadyOutOfSitemap", () => {
     expect(await flagFor("ACTIVE")).toBe(false);
   });
 
-  it("does NOT flag ARCHIVED — never measured, so the no-op claim would be a guess", async () => {
-    expect(await flagFor("ARCHIVED")).toBe(false);
+  // Was the inverse until 2026-07-30, when ARCHIVED stopped being a guess:
+  // archiving one live ACTIVE product dropped it out of the products sitemap
+  // (42 -> 41 entries, URL 200 -> 404). Figures in sitemap.service.ts's header.
+  it("flags ARCHIVED (measured: leaves the sitemap when a product is archived)", async () => {
+    expect(await flagFor("ARCHIVED")).toBe(true);
   });
 
   it("is false for types with no status at all, never undefined", async () => {

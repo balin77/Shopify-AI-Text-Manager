@@ -1690,7 +1690,8 @@ export const en: Translation = {
       revertCta: "Yes, put it back",
 
       // Caution hint for legal / service pages
-      alreadyOutOfSitemap: "Its status already keeps it out of the sitemap",
+      alreadyOutOfSitemap: "Shopify never puts draft, unlisted or archived products into the sitemap in the first place — excluding this would have no effect.",
+      alreadyOutOfSitemapBadge: "Not in the sitemap",
       noEffectTitle: "This won't change anything",
       noEffectBody: "Shopify already leaves draft and unlisted products out of sitemap.xml on its own, and it serves unlisted products with noindex on top of that. Excluding one here only writes the metafield without changing the outcome. It's only worth doing if you're about to publish the product and want it to stay excluded afterwards.",
       cautionBadge: "Please check",

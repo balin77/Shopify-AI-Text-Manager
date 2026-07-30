@@ -1689,7 +1689,8 @@ export const de = {
       revertCta: "Ja, wieder aufnehmen",
 
       // Vorsicht-Hinweis bei Pflicht-/Serviceseiten
-      alreadyOutOfSitemap: "Steht durch seinen Status ohnehin nicht in der Sitemap",
+      alreadyOutOfSitemap: "Entwürfe, nicht gelistete und archivierte Produkte nimmt Shopify gar nicht erst in die Sitemap auf — ein Ausschluss hätte hier keine Wirkung.",
+      alreadyOutOfSitemapBadge: "Nicht in der Sitemap",
       noEffectTitle: "Das ändert nichts",
       noEffectBody: "Produkte mit Status „Entwurf“ oder „Nicht gelistet“ nimmt Shopify von sich aus nicht in die sitemap.xml auf, und nicht gelistete Produkte liefert Shopify zusätzlich mit noindex aus. Ein Ausschluss setzt hier also nur das Metafeld, ohne etwas am Ergebnis zu ändern. Sinnvoll ist er nur, wenn du das Produkt bald veröffentlichen willst und es dann ausgeschlossen bleiben soll.",
       cautionBadge: "Bitte prüfen",

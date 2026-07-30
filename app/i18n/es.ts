@@ -1689,7 +1689,8 @@ export const es: Translation = {
       revertCta: "Sí, volver a incluir",
 
       // Aviso para páginas legales o de servicio
-      alreadyOutOfSitemap: "Su estado ya lo mantiene fuera del sitemap",
+      alreadyOutOfSitemap: "Shopify no incluye borradores ni productos no listados o archivados en el sitemap — excluirlo aquí no tendría ningún efecto.",
+      alreadyOutOfSitemapBadge: "Fuera del sitemap",
       noEffectTitle: "Esto no cambiará nada",
       noEffectBody: "Shopify ya deja los productos en borrador y no listados fuera de sitemap.xml por su cuenta, y además sirve los productos no listados con noindex. Excluir uno aquí solo escribe el metacampo sin cambiar el resultado. Solo vale la pena si vas a publicar el producto pronto y quieres que siga excluido después.",
       cautionBadge: "Revísalo",

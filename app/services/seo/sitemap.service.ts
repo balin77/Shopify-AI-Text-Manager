@@ -99,15 +99,30 @@
  *   - The manual picker instead LABELS these products (see
  *     STATUSES_ALREADY_OUT_OF_SITEMAP / `ExclusionSearchHit.alreadyOutOfSitemap`).
  *
- * ── Still NOT measured: does ARCHIVED need its exclusion either? ───────────
- * DRAFT came out of the same measurement as UNLISTED (absent), which makes it
- * likely that ARCHIVED is absent from the sitemap too — and if so, the
- * "archivedProduct" suggestion above is itself a no-op and should be dropped.
- * This was NOT verified: of the shops reachable here, only two own an archived
- * product and BOTH answer 404 on `/sitemap.xml` (no live online store), which
- * is a FAILED test, not evidence of absence. Left in place unchanged rather
- * than removed on a guess. To settle it, one archived product in a shop with a
- * public storefront is enough.
+ * ── MEASURED 2026-07-30: ARCHIVED is absent too, so its rule was dropped ───
+ * The earlier note here said ARCHIVED was unverified because no reachable shop
+ * had both an archived product and a live storefront. That was settled by
+ * archiving one ACTIVE product in a live shop and watching the sitemap:
+ *
+ *     before (ACTIVE)    sitemap_products_1.xml: 42 <loc>, handle present
+ *     after  (ARCHIVED)  sitemap_products_1.xml: 41 <loc>, handle absent
+ *                        product URL: 200 -> 404
+ *
+ * Roughly one minute apart — Shopify regenerates the sitemap in near-real-time
+ * (its own sitemapindex comment says as much), so no cache caveat applies. The
+ * before/after control matters: without proving the handle was IN the sitemap
+ * while ACTIVE, its later absence would prove nothing.
+ *
+ * Consequence: the "archivedProduct" SUGGESTION was a no-op — it recommended
+ * excluding something Shopify already excludes — and has been removed, along
+ * with `findArchivedProducts`. Two rules remain: emptyCollection, thinContent.
+ * ARCHIVED joined STATUSES_ALREADY_OUT_OF_SITEMAP, so the picker labels those
+ * products instead of offering a button that would change nothing.
+ *
+ * `"archivedProduct"` is kept in RETIRED_EXCLUSION_REASONS rather than being
+ * forgotten: rows created by the old rule still sit in shops' databases, and
+ * `analyze()` must not keep showing suggestions for a rule that no longer
+ * exists.
  */
 
 import * as cheerio from "cheerio";
@@ -151,7 +166,15 @@ const SITEMAP_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // ── Exclusion-suggestion rules (pure — unit-tested without a DB) ───────────
 
-export type SitemapExclusionReason = "emptyCollection" | "thinContent" | "archivedProduct" | "manual";
+export type SitemapExclusionReason = "emptyCollection" | "thinContent" | "manual";
+
+/** Reasons whose rule no longer exists. Rows carrying them were written by an
+ *  earlier version and are still in merchants' databases; `analyze()` hides
+ *  their SUGGESTED rows so the list can't recommend a rule we retired.
+ *
+ *  Rows that reached "applied"/"reverted" are NOT hidden: those record a real
+ *  metafield write and the merchant must still be able to revert it. */
+export const RETIRED_EXCLUSION_REASONS: readonly string[] = ["archivedProduct"];
 /** `blog` is absent on purpose: the app caches no Blog model (Article carries a
  *  denormalized `blogTitle` only), so a blog can't be offered from the DB
  *  cache the way §3 requires. Products/collections/pages/articles cover what
@@ -192,28 +215,10 @@ export function findThinContentPages(
   return out;
 }
 
-export interface ArchivedProductRow {
-  id: string;
-  title: string;
-  handle: string;
-  status: string;
-}
-
-/** Archived products (see header comment for why "out-of-stock" is dropped —
- *  no inventory data in the DB cache). Callers typically already filter the
- *  query to `status: "ARCHIVED"`; this also re-checks so the pure function is
- *  safe against a caller passing an unfiltered list. */
-export function findArchivedProducts(products: ArchivedProductRow[]): SitemapExclusionCandidate[] {
-  return products
-    .filter((p) => p.status === "ARCHIVED")
-    .map((p) => ({
-      resourceType: "product" as const,
-      resourceId: p.id,
-      reason: "archivedProduct" as const,
-      title: p.title,
-      handle: p.handle,
-    }));
-}
+// `findArchivedProducts` lived here. Removed 2026-07-30: measurement showed
+// Shopify already keeps ARCHIVED products out of the sitemap, so the rule
+// recommended an exclusion that could not change anything. See this file's
+// header for the before/after figures.
 
 /**
  * Handle/title fragments marking a Page that should normally STAY visible,
@@ -304,9 +309,12 @@ export interface ComputeSuggestionsDeps {
 
 /**
  * DB-cache-first candidate sweep (SEO_SECTION_CONTRACT.md §3): reads
- * Page/Product/Collection (capped at MAX_AUDIT_ITEMS_PER_TYPE, same cap
+ * Page/Collection (capped at MAX_AUDIT_ITEMS_PER_TYPE, same cap
  * audit.service.ts uses) plus, for the empty-collection proxy, the latest
  * completed/capped crawl snapshot's SeoCrawlPage rows. No live Shopify call.
+ *
+ * Products are no longer read at all: the only product rule was
+ * "archivedProduct", and it turned out to be a no-op (see the header).
  */
 export async function computeExclusionSuggestions(
   shop: string,
@@ -314,15 +322,10 @@ export async function computeExclusionSuggestions(
 ): Promise<SitemapExclusionCandidate[]> {
   const { db } = deps;
 
-  const [pages, archivedProducts, collections, latestSnapshot] = await Promise.all([
+  const [pages, collections, latestSnapshot] = await Promise.all([
     db.page.findMany({
       where: { shop },
       select: { id: true, title: true, handle: true, body: true },
-      take: MAX_AUDIT_ITEMS_PER_TYPE,
-    }),
-    db.product.findMany({
-      where: { shop, status: "ARCHIVED" },
-      select: { id: true, title: true, handle: true, status: true },
       take: MAX_AUDIT_ITEMS_PER_TYPE,
     }),
     db.collection.findMany({
@@ -351,7 +354,6 @@ export async function computeExclusionSuggestions(
   return [
     ...findEmptyCollections(collections, crawledWordCountById),
     ...findThinContentPages(pages),
-    ...findArchivedProducts(archivedProducts),
   ];
 }
 
@@ -450,13 +452,10 @@ export type ProductStatusFilter = (typeof PRODUCT_STATUSES)[number] | "all";
  *  the products sub-sitemap held exactly the shop's 41 ACTIVE products — all 3
  *  UNLISTED and all 3 DRAFT products were absent.
  *
- *  ARCHIVED is deliberately NOT listed, even though it is very likely absent
- *  too: no shop reachable from this environment has both an archived product
- *  and a live storefront, so it was never measured. The existing
- *  "archivedProduct" SUGGESTION rests on the same unmeasured assumption — see
- *  the header. Guessing here would put a false "this already has no effect"
- *  claim in front of the merchant, which is worse than staying quiet. */
-export const STATUSES_ALREADY_OUT_OF_SITEMAP: readonly string[] = ["DRAFT", "UNLISTED"];
+ *  ARCHIVED was added on 2026-07-30 after the same test was run for it
+ *  directly — archive one ACTIVE product, watch its entry leave the sitemap.
+ *  Figures in the header. It is no longer a guess. */
+export const STATUSES_ALREADY_OUT_OF_SITEMAP: readonly string[] = ["DRAFT", "UNLISTED", "ARCHIVED"];
 
 export interface ExclusionSearchResult {
   hits: ExclusionSearchHit[];
@@ -1085,6 +1084,10 @@ export async function analyze(shop: string, deps: SitemapAnalyzeDeps): Promise<S
   await upsertExclusionSuggestions(db, shop, candidates);
 
   const [exclusionRows, latestSnapshot, sitemapInfo] = await Promise.all([
+    // A retired rule's leftover SUGGESTED rows are filtered out below rather
+    // than deleted: this app never migrates merchant data for a UI-only
+    // change, and a row that is merely hidden can be recovered if a rule ever
+    // comes back.
     db.seoSitemapExclusion.findMany({ where: { shop }, orderBy: { createdAt: "desc" }, take: 500 }),
     db.seoCrawlSnapshot.findFirst({
       where: { shop, status: { in: ["completed", "capped"] } },
@@ -1095,7 +1098,15 @@ export async function analyze(shop: string, deps: SitemapAnalyzeDeps): Promise<S
   ]);
 
   const titleMap = await resolveExclusionTitles(db, shop, exclusionRows);
-  const exclusions: SitemapExclusionRow[] = exclusionRows.map((r) => {
+  const exclusions: SitemapExclusionRow[] = exclusionRows
+    .filter(
+      (r) =>
+        // Suggestions from a rule that no longer exists must not keep being
+        // offered. Rows that were actually APPLIED stay visible regardless —
+        // they hold a real metafield the merchant needs to be able to revert.
+        r.status !== "suggested" || !RETIRED_EXCLUSION_REASONS.includes(r.reason ?? ""),
+    )
+    .map((r) => {
     const resolved = titleMap.get(`${r.resourceType}::${r.resourceId}`);
     const resourceType = r.resourceType as SitemapExclusionResourceType;
     const title = resolved?.title ?? r.resourceId;
