@@ -2274,6 +2274,8 @@ export const de = {
       llmsStale: "veraltet",
       llmsStaleHint: "Deine llms.txt im Theme weicht vom aktuellen Stand deines Katalogs ab — seit der letzten Erzeugung haben sich Produkte oder Kollektionen geändert. Erzeuge sie neu, damit KI-Crawler den aktuellen Stand sehen.",
       llmsContents: "Aktueller Stand: {products} Produkte, {collections} Kollektionen. Aufgenommen werden die zuletzt synchronisierten Einträge, maximal 50 pro Typ.",
+      llmsAutoLabel: "llms.txt automatisch aktuell halten",
+      llmsAutoDisabled: "Aus — die Datei ändert sich nur, wenn du oben auf „llms.txt aktualisieren“ klickst.",
       llmsAutoOn: "Automatische Aktualisierung ist aktiv: Solange du in der App arbeitest, prüfen wir etwa halbstündlich im Hintergrund, ob sich dein Katalog geändert hat, und schreiben die Datei nur bei einer echten Abweichung neu.",
       llmsAutoAfterFirst: "Sobald die Datei einmal erzeugt ist, halten wir sie automatisch aktuell — etwa halbstündlich im Hintergrund, solange du in der App arbeitest. Von selbst angelegt wird sie nicht.",
       llmsAutoOff: "Automatische Aktualisierung ist derzeit deaktiviert, weil das Schreiben von Theme-Dateien ausgeschaltet ist.",

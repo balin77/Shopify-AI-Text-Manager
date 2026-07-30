@@ -2274,6 +2274,8 @@ export const es: Translation = {
       llmsStale: "desactualizado",
       llmsStaleHint: "El llms.txt de tu tema ya no coincide con tu catálogo: han cambiado productos o colecciones desde la última generación. Vuelve a generarlo para que los rastreadores de IA vean el estado actual.",
       llmsContents: "Estado actual: {products} productos, {collections} colecciones. Se incluyen los elementos sincronizados más recientemente, hasta 50 por tipo.",
+      llmsAutoLabel: "Mantener llms.txt actualizado automáticamente",
+      llmsAutoDisabled: "Desactivado: el archivo solo cambia cuando pulsas \"Actualizar llms.txt\" arriba.",
       llmsAutoOn: "La actualización automática está activa: mientras trabajas en la app comprobamos en segundo plano cada media hora aproximadamente si tu catálogo ha cambiado, y solo reescribimos el archivo si hay una diferencia real.",
       llmsAutoAfterFirst: "Una vez creado el archivo lo mantenemos actualizado automáticamente, cada media hora aproximadamente en segundo plano mientras trabajas en la app. Nunca se crea por sí solo.",
       llmsAutoOff: "La actualización automática está desactivada porque la escritura de archivos del tema está apagada.",

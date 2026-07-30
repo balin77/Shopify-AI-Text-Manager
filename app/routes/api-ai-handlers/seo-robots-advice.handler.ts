@@ -39,7 +39,14 @@ export async function handleSeoRobotsAdvice(ctx: AIActionContext): Promise<Respo
   // Re-audit server-side rather than trusting a client-supplied rule list: the
   // paths coming back drive a theme write later on.
   const { name, domain } = await getShopIdentity(admin, session.shop);
-  const analysis = await analyzeAeo(admin, session.shop, { db, shopName: name, domain });
+  const analysis = await analyzeAeo(admin, session.shop, {
+    db,
+    shopName: name,
+    domain,
+    // Irrelevant here (we only read the robots half), but passed through
+    // faithfully rather than guessed.
+    autoUpdate: (settings as { llmsTxtAutoUpdate?: boolean } | null)?.llmsTxtAutoUpdate ?? true,
+  });
   if (!analysis.robotsAuditAvailable) {
     return json({ success: false, error: "robots_unavailable" }, { status: 400 });
   }

@@ -36,6 +36,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { ToggleSwitch } from "../components/ToggleSwitch";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
@@ -50,19 +51,23 @@ import {
   type RobotsRuleImpact,
 } from "../services/seo/aeo.service";
 
-async function loadPlan(db: any, shop: string): Promise<Plan> {
+async function loadSettings(db: any, shop: string): Promise<{ plan: Plan; autoUpdate: boolean }> {
   const settings = await db.aISettings.findUnique({
     where: { shop },
-    select: { subscriptionPlan: true },
+    select: { subscriptionPlan: true, llmsTxtAutoUpdate: true },
   });
-  return (settings?.subscriptionPlan || "free") as Plan;
+  return {
+    plan: (settings?.subscriptionPlan || "free") as Plan,
+    // A shop with no settings row yet inherits the column default.
+    autoUpdate: settings?.llmsTxtAutoUpdate ?? true,
+  };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
-  const plan = await loadPlan(db, session.shop);
+  const { plan, autoUpdate } = await loadSettings(db, session.shop);
   if (!meetsPlan(plan, "basic")) {
     return json({
       gated: true,
@@ -82,12 +87,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       llmsPreview: "",
       llmsUrl: "",
       themeWrites: false,
+      llmsAutoUpdate: true,
       themesUrl: "",
     });
   }
 
   const { name, domain } = await getShopIdentity(admin, session.shop);
-  const analysis = await analyzeAeo(admin, session.shop, { db, shopName: name, domain });
+  const analysis = await analyzeAeo(admin, session.shop, {
+    db,
+    shopName: name,
+    domain,
+    autoUpdate,
+  });
   return json({
     gated: false,
     ...analysis,
@@ -101,12 +112,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
-  const plan = await loadPlan(db, session.shop);
+  const { plan } = await loadSettings(db, session.shop);
   if (!meetsPlan(plan, "basic")) {
     return json<ActionResult>({ ok: false, error: "gated" }, { status: 403 });
   }
 
   const form = await request.formData();
+
+  // Storing the preference is not a theme write, so it deliberately does NOT
+  // sit behind AEO_THEME_WRITES — a merchant can set it up before the approval
+  // lands, and the background pass checks both.
+  if (getFormString(form, "actionType") === "setLlmsAutoUpdate") {
+    const enabled = getFormString(form, "enabled") === "true";
+    await db.aISettings.upsert({
+      where: { shop: session.shop },
+      update: { llmsTxtAutoUpdate: enabled },
+      create: { shop: session.shop, llmsTxtAutoUpdate: enabled },
+    });
+    return json<ActionResult>({ ok: true });
+  }
   if (getFormString(form, "actionType") === "generateLlms") {
     // Server-side gate. Hiding the button is not enough — this action is
     // POST-reachable directly, and without the Shopify approval every
@@ -293,6 +317,7 @@ export default function SeoAeo() {
   const a = t.seo.aeoPage;
   const fetcher = useFetcher<ActionResult>();
   const robotsFetcher = useFetcher<ActionResult>();
+  const autoFetcher = useFetcher<ActionResult>();
   const [step, setStep] = useState<AeoStep>("robots");
 
   const robotsBadge = !data.robotsAuditAvailable ? (
@@ -592,17 +617,46 @@ export default function SeoAeo() {
                   <Banner tone="warning">{a.llmsStaleHint}</Banner>
                 )}
 
-                {/* The background refresh has no settings of its own, but it is
-                    invisible without this line — a merchant would reasonably
-                    assume the file only ever changes when they press the
-                    button. */}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {data.themeWrites
-                    ? data.llmsTxtExists
-                      ? a.llmsAutoOn
-                      : a.llmsAutoAfterFirst
-                    : a.llmsAutoOff}
-                </Text>
+                {/* Lives here rather than in Settings: it only makes sense next
+                    to the up-to-date/stale badge that motivates it, and it
+                    matches how IndexNow is switched on in its own section. */}
+                <Box
+                  padding="300"
+                  background="bg-surface-secondary"
+                  borderWidth="025"
+                  borderColor="border"
+                  borderRadius="200"
+                >
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <ToggleSwitch
+                      id="llms-auto-update"
+                      checked={data.llmsAutoUpdate}
+                      disabled={autoFetcher.state !== "idle"}
+                      onChange={(next) =>
+                        autoFetcher.submit(
+                          { actionType: "setLlmsAutoUpdate", enabled: String(next) },
+                          { method: "post" },
+                        )
+                      }
+                    />
+                    <BlockStack gap="050">
+                      <label htmlFor="llms-auto-update">
+                        <Text as="span" variant="bodyMd" fontWeight="medium">
+                          {a.llmsAutoLabel}
+                        </Text>
+                      </label>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {!data.llmsAutoUpdate
+                          ? a.llmsAutoDisabled
+                          : !data.themeWrites
+                            ? a.llmsAutoOff
+                            : data.llmsTxtExists
+                              ? a.llmsAutoOn
+                              : a.llmsAutoAfterFirst}
+                      </Text>
+                    </BlockStack>
+                  </InlineStack>
+                </Box>
 
                 {data.llmsPreview && (
                   <Box

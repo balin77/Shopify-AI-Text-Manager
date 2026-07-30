@@ -60,6 +60,13 @@ model AISettings {
   // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
   selectedThemeId String?
 
+  // Keep templates/llms.txt.liquid in step with the catalog automatically
+  // (SEO → AI search, step 2). The background pass only ever UPDATES a file the
+  // merchant already generated — it never creates one — and writes only when
+  // the rebuilt content actually differs, so the default is on: an out-of-date
+  // llms.txt is worse than no llms.txt. Also requires AEO_THEME_WRITES.
+  llmsTxtAutoUpdate Boolean @default(true)
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()

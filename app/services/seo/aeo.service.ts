@@ -751,6 +751,10 @@ export async function buildLlmsTxtForShop(
   domain: string,
 ): Promise<BuiltLlmsTxt> {
   const [products, collections] = await Promise.all([
+    // ACTIVE only, and this one must stay that way: llms.txt is a published
+    // file that hands crawlers a list of URLs. Listing unlisted products there
+    // would publish exactly the direct links the status exists to keep
+    // unlisted — the same reasoning as index-now.service.ts.
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { title: true, handle: true, seoDescription: true, descriptionHtml: true },
@@ -843,9 +847,17 @@ export async function refreshLlmsTxtIfStale(
   admin: AdminApiContext,
   db: any,
   shop: string,
-): Promise<"disabled" | "absent" | "unchanged" | "updated" | "failed"> {
+): Promise<"disabled" | "opted_out" | "absent" | "unchanged" | "updated" | "failed"> {
   if (!themeWritesEnabled()) return "disabled";
   try {
+    // Cheapest check first — a shop that switched this off costs one indexed
+    // lookup per cycle and no Shopify calls at all.
+    const settings = await db.aISettings.findUnique({
+      where: { shop },
+      select: { llmsTxtAutoUpdate: true },
+    });
+    if (settings && settings.llmsTxtAutoUpdate === false) return "opted_out";
+
     const themeId = await getMainThemeId(admin);
     if (!themeId) return "failed";
 
@@ -1015,6 +1027,8 @@ export interface AeoAnalysis {
   llmsUrl: string;
   /** `AEO_THEME_WRITES` — false hides/blocks every theme-writing action. */
   themeWrites: boolean;
+  /** Merchant switch for the periodic llms.txt refresh (`AISettings`). */
+  llmsAutoUpdate: boolean;
   blockedCrawlers: string[];
   /** AI crawlers with a non-empty `Disallow` rule that doesn't block the whole
    *  site (see `RobotsCrawlerStatus.partiallyBlocked`). Additive field — older
@@ -1039,7 +1053,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 export async function analyzeAeo(
   admin: AdminApiContext,
   shop: string,
-  llms: { db: any; shopName: string; domain: string },
+  llms: { db: any; shopName: string; domain: string; autoUpdate: boolean },
 ): Promise<AeoAnalysis> {
   let llmsTxtExists = false;
   let llmsTxtUpToDate = false;
@@ -1093,6 +1107,7 @@ export async function analyzeAeo(
     llmsPreview,
     llmsUrl: `${baseUrl(llms.domain || shop)}/llms.txt`,
     themeWrites: themeWritesEnabled(),
+    llmsAutoUpdate: llms.autoUpdate,
     blockedCrawlers,
     partiallyBlockedCrawlers,
     restrictedCrawlers,
