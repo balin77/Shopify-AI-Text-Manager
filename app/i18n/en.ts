@@ -1693,8 +1693,8 @@ export const en: Translation = {
       manualIntro: "The recommendations above only cover three rules. Here you can take any product, collection, page or blog post out of the sitemap deliberately — same effect, equally reversible.",
       manualTypeLabel: "Content type",
       manualSearchLabel: "Search",
-      manualSearchPlaceholder: "Title or handle — leave empty for the first matches",
-      manualSearchButton: "Search",
+      manualSearchPlaceholder: "Filter by title or handle",
+      manualLoading: "Loading …",
       manualNoResults: "No matches.",
 
       // Decision guidance

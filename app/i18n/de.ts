@@ -1692,8 +1692,8 @@ export const de = {
       manualIntro: "Die Empfehlungen oben decken nur drei Regeln ab. Hier kannst du jedes Produkt, jede Kollektion, Seite oder jeden Blogbeitrag gezielt aus der Sitemap nehmen — mit derselben Wirkung und ebenso umkehrbar.",
       manualTypeLabel: "Inhaltstyp",
       manualSearchLabel: "Suche",
-      manualSearchPlaceholder: "Titel oder Handle — leer lassen für die ersten Treffer",
-      manualSearchButton: "Suchen",
+      manualSearchPlaceholder: "Nach Titel oder Handle filtern",
+      manualLoading: "Wird geladen …",
       manualNoResults: "Keine Treffer.",
 
       // Entscheidungshilfe

@@ -26,8 +26,10 @@ import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
 import {
   Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List,
-  Collapsible, Select, TextField,
+  Collapsible, TextField, Thumbnail, Tooltip, Icon,
 } from "@shopify/polaris";
+import { EditIcon, ImageIcon, SearchIcon } from "@shopify/polaris-icons";
+import { SubNavBar } from "../components/nav/SubNavBar";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -65,6 +67,14 @@ const TYPE_PATH: Record<SitemapExclusionResourceType, string> = {
  *  EXCLUDABLE_RESOURCE_TYPES — the component must not pull sitemap.service.ts
  *  (and with it cheerio) into the client bundle. */
 const MANUAL_TYPE_OPTIONS: SitemapExclusionResourceType[] = ["product", "collection", "page", "article"];
+
+/** Emoji markers, matching how SubNavBar carries icons elsewhere. */
+const TYPE_ICON: Record<SitemapExclusionResourceType, string> = {
+  product: "📦",
+  collection: "🗂️",
+  page: "📄",
+  article: "📝",
+};
 
 const SHOP_DOMAIN_QUERY = `#graphql
   query seoSitemapShopDomain {
@@ -169,7 +179,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const resourceType = parseResourceType(getFormString(formData, "resourceType"));
     if (!resourceType) return json({ success: false, error: "Unknown resourceType" }, { status: 400 });
     const hits = await searchExclusionCandidates(db, shop, resourceType, getFormString(formData, "query"));
-    return json({ success: true, hits });
+    // Echo the type back so the client can discard a response that arrived
+    // after the user already switched tabs.
+    return json({ success: true, resourceType, hits });
   }
 
   // Exclude an arbitrary resource: create (or reuse) the row, then run it
@@ -223,7 +235,7 @@ export default function SeoSitemap() {
   // Manual picker
   const [manualType, setManualType] = useState<SitemapExclusionResourceType>("product");
   const [manualQuery, setManualQuery] = useState("");
-  const searchFetcher = useFetcher<{ success: boolean; hits?: ExclusionSearchHit[] }>();
+  const searchFetcher = useFetcher<{ success: boolean; resourceType?: string; hits?: ExclusionSearchHit[] }>();
 
   useEffect(() => {
     if (rowFetcher.state !== "idle" || !rowFetcher.data) return;
@@ -256,13 +268,53 @@ export default function SeoSitemap() {
     rowFetcher.submit(formData, { method: "post" });
   };
 
-  const runSearch = () => {
+  // The picker loads on mount and on every tab switch, and re-queries as you
+  // type — no search button to press. The debounce keeps a fast typist from
+  // firing one request per keystroke; a tab switch is not debounced, since
+  // that's a deliberate single action.
+  const searchRef = useRef(searchFetcher);
+  searchRef.current = searchFetcher;
+  // Effects run regardless of which branch renders, so the gated (Free/Basic)
+  // view would otherwise fire a POST the action answers with 403.
+  const pickerActive = !data.gated;
+  useEffect(() => {
+    if (!pickerActive) return;
+    const send = () => {
+      const formData = new FormData();
+      formData.append("actionType", "search");
+      formData.append("resourceType", manualType);
+      formData.append("query", manualQuery);
+      searchRef.current.submit(formData, { method: "post" });
+    };
+    if (!manualQuery) {
+      send();
+      return;
+    }
+    const timer = setTimeout(send, 300);
+    return () => clearTimeout(timer);
+  }, [manualType, manualQuery, pickerActive]);
+
+  // Results only count while they belong to the active tab — the fetcher keeps
+  // the previous payload during the next request, which would otherwise show
+  // products under the "Kollektionen" tab for a moment. null = still loading.
+  const hits =
+    searchFetcher.data?.hits && searchFetcher.data.resourceType === manualType
+      ? searchFetcher.data.hits
+      : null;
+
+  // A successful exclude must refresh the picker too, not just the lists
+  // above — otherwise the row keeps offering "Ausschließen" for something
+  // that is already applied.
+  const lastActionData = rowFetcher.data;
+  useEffect(() => {
+    if (!pickerActive || rowFetcher.state !== "idle" || !lastActionData?.success) return;
     const formData = new FormData();
     formData.append("actionType", "search");
     formData.append("resourceType", manualType);
     formData.append("query", manualQuery);
-    searchFetcher.submit(formData, { method: "post" });
-  };
+    searchRef.current.submit(formData, { method: "post" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowFetcher.state, lastActionData]);
 
   const confirmRowAction = () => {
     if (!confirm) return;
@@ -455,61 +507,92 @@ export default function SeoSitemap() {
         <BlockStack gap="300">
           <Text as="h3" variant="headingMd">{c.manualTitle}</Text>
           <Text as="p" tone="subdued" variant="bodySm">{c.manualIntro}</Text>
-          <InlineStack gap="200" blockAlign="end" wrap>
-            <div style={{ minWidth: 180 }}>
-              <Select
-                label={c.manualTypeLabel}
-                options={MANUAL_TYPE_OPTIONS.map((v) => ({ label: typeLabel(v), value: v }))}
-                value={manualType}
-                onChange={(v) => setManualType(v as SitemapExclusionResourceType)}
-              />
-            </div>
-            <div style={{ flex: "1 1 240px", minWidth: 240 }}>
-              <TextField
-                label={c.manualSearchLabel}
-                value={manualQuery}
-                onChange={setManualQuery}
-                placeholder={c.manualSearchPlaceholder}
-                autoComplete="off"
-              />
-            </div>
-            <Button onClick={runSearch} loading={searchFetcher.state !== "idle"}>
-              {c.manualSearchButton}
-            </Button>
-          </InlineStack>
 
-          {searchFetcher.data?.hits && (
-            searchFetcher.data.hits.length === 0 ? (
-              <Text as="p" tone="subdued">{c.manualNoResults}</Text>
-            ) : (
-              <BlockStack gap="200">
-                {searchFetcher.data.hits.map((hit) => (
-                  <InlineStack key={hit.resourceId} gap="300" align="space-between" blockAlign="center" wrap>
-                    <BlockStack gap="050">
-                      <InlineStack gap="150" blockAlign="center">
-                        <Badge>{typeLabel(hit.resourceType)}</Badge>
-                        <Text as="span" variant="bodyMd">{hit.title}</Text>
-                        {hit.caution && <Badge tone="warning">{c.cautionBadge}</Badge>}
-                      </InlineStack>
-                      <Text as="span" variant="bodySm" tone="subdued">/{hit.handle}</Text>
-                    </BlockStack>
-                    {hit.existingStatus === "applied" ? (
-                      <Badge tone="success">{statusLabel("applied")}</Badge>
-                    ) : (
-                      <Button
-                        size="slim"
-                        tone={hit.caution ? "critical" : undefined}
-                        onClick={() => askManualExclude(hit)}
-                        disabled={rowFetcher.state !== "idle"}
-                        loading={pendingId === hit.resourceId && rowFetcher.state !== "idle"}
-                      >
-                        {c.apply}
-                      </Button>
-                    )}
+          {/* Same shared component the "Inhalte" tab uses for its type level,
+              so the two read as one system. level3 = flat sub-tabs, which is
+              the right weight for a switcher nested inside a card. */}
+          <SubNavBar
+            variant="level3"
+            ariaLabel={c.manualTypeLabel}
+            items={MANUAL_TYPE_OPTIONS.map((v) => ({ id: v, label: typeLabel(v), icon: TYPE_ICON[v] }))}
+            activeId={manualType}
+            onSelect={(item) => setManualType(item.id as SitemapExclusionResourceType)}
+          />
+
+          <TextField
+            label={c.manualSearchLabel}
+            labelHidden
+            value={manualQuery}
+            onChange={setManualQuery}
+            placeholder={c.manualSearchPlaceholder}
+            autoComplete="off"
+            clearButton
+            onClearButtonClick={() => setManualQuery("")}
+            prefix={<Icon source={SearchIcon} tone="subdued" />}
+          />
+
+          {/* `hits` is only rendered when it belongs to the active tab —
+              otherwise switching types would briefly show the previous type's
+              results under the new tab. */}
+          {hits === null ? (
+            <Text as="p" tone="subdued">{c.manualLoading}</Text>
+          ) : hits.length === 0 ? (
+            <Text as="p" tone="subdued">{c.manualNoResults}</Text>
+          ) : (
+            <BlockStack gap="100">
+              {hits.map((hit) => (
+                <div
+                  key={hit.resourceId}
+                  style={{
+                    borderTop: "1px solid var(--p-color-border-secondary)",
+                    paddingTop: "0.5rem",
+                  }}
+                >
+                  <InlineStack gap="300" align="space-between" blockAlign="center" wrap={false}>
+                    <InlineStack gap="300" blockAlign="center">
+                      <Thumbnail
+                        size="small"
+                        source={hit.imageUrl || ImageIcon}
+                        alt=""
+                      />
+                      <BlockStack gap="050">
+                        <InlineStack gap="150" blockAlign="center">
+                          <Text as="span" variant="bodyMd" fontWeight="medium">{hit.title}</Text>
+                          {hit.caution && <Badge tone="warning">{c.cautionBadge}</Badge>}
+                          {hit.existingStatus === "applied" && (
+                            <Badge tone="success">{statusLabel("applied")}</Badge>
+                          )}
+                        </InlineStack>
+                        <Text as="span" variant="bodySm" tone="subdued">/{hit.handle}</Text>
+                      </BlockStack>
+                    </InlineStack>
+
+                    <InlineStack gap="150" blockAlign="center" wrap={false}>
+                      {hit.existingStatus !== "applied" && (
+                        <Button
+                          size="slim"
+                          tone={hit.caution ? "critical" : undefined}
+                          onClick={() => askManualExclude(hit)}
+                          disabled={rowFetcher.state !== "idle"}
+                          loading={pendingId === hit.resourceId && rowFetcher.state !== "idle"}
+                        >
+                          {c.apply}
+                        </Button>
+                      )}
+                      <Tooltip content={c.openInEditor}>
+                        <Button
+                          variant="plain"
+                          size="slim"
+                          icon={EditIcon}
+                          accessibilityLabel={c.openInEditor}
+                          onClick={() => openInEditor(hit.resourceType, hit.resourceId)}
+                        />
+                      </Tooltip>
+                    </InlineStack>
                   </InlineStack>
-                ))}
-              </BlockStack>
-            )
+                </div>
+              ))}
+            </BlockStack>
           )}
         </BlockStack>
       </Card>

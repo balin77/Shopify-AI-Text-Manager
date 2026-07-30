@@ -345,6 +345,11 @@ export interface ExclusionSearchHit {
   /** `isLikelyPolicyPage`. Computed here rather than in the route component so
    *  the client bundle never has to import this module (it pulls in cheerio). */
   caution: boolean;
+  /** Featured image for the picker thumbnail, null when the model has none
+   *  (Page carries no image at all). The column differs per model —
+   *  `featuredImageUrl` on Product, `imageUrl` on Collection/Article — so it is
+   *  normalized here rather than in the UI. */
+  imageUrl: string | null;
 }
 
 /**
@@ -368,27 +373,46 @@ export async function searchExclusionCandidates(
         ],
       }
     : {};
-  const args = {
+  const common = {
     where: { shop, ...filter },
-    select: { id: true, title: true, handle: true },
     orderBy: { title: "asc" as const },
     take: MANUAL_SEARCH_LIMIT,
   };
 
-  let rows: { id: string; title: string; handle: string }[];
+  let rows: { id: string; title: string; handle: string; imageUrl: string | null }[];
   switch (resourceType) {
-    case "product":
-      rows = await db.product.findMany(args);
+    case "product": {
+      const found = await db.product.findMany({
+        ...common,
+        select: { id: true, title: true, handle: true, featuredImageUrl: true },
+      });
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.featuredImageUrl }));
       break;
-    case "collection":
-      rows = await db.collection.findMany(args);
+    }
+    case "collection": {
+      const found = await db.collection.findMany({
+        ...common,
+        select: { id: true, title: true, handle: true, imageUrl: true },
+      });
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl }));
       break;
-    case "page":
-      rows = await db.page.findMany(args);
+    }
+    case "page": {
+      const found = await db.page.findMany({
+        ...common,
+        select: { id: true, title: true, handle: true },
+      });
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: null }));
       break;
-    case "article":
-      rows = await db.article.findMany(args);
+    }
+    case "article": {
+      const found = await db.article.findMany({
+        ...common,
+        select: { id: true, title: true, handle: true, imageUrl: true },
+      });
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl }));
       break;
+    }
     default:
       return [];
   }
@@ -407,6 +431,7 @@ export async function searchExclusionCandidates(
     handle: r.handle,
     existingStatus: statusById.get(r.id) ?? null,
     caution: isLikelyPolicyPage(resourceType, r.handle, r.title),
+    imageUrl: r.imageUrl,
   }));
 }
 

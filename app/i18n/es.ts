@@ -1692,8 +1692,8 @@ export const es: Translation = {
       manualIntro: "Las recomendaciones de arriba solo cubren tres reglas. Aquí puedes sacar del sitemap cualquier producto, colección, página o entrada de blog de forma deliberada — mismo efecto, igual de reversible.",
       manualTypeLabel: "Tipo de contenido",
       manualSearchLabel: "Buscar",
-      manualSearchPlaceholder: "Título o handle — déjalo vacío para los primeros resultados",
-      manualSearchButton: "Buscar",
+      manualSearchPlaceholder: "Filtrar por título o handle",
+      manualLoading: "Cargando …",
       manualNoResults: "Sin resultados.",
 
       // Guía de decisión

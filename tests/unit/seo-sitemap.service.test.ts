@@ -238,8 +238,9 @@ describe("upsertExclusionSuggestions", () => {
 // ── Manual exclusion (picker search + row creation) ────────────────────────
 
 function makeManualDb(opts: {
-  products?: { id: string; title: string; handle: string }[];
-  articles?: { id: string; title: string; handle: string }[];
+  products?: { id: string; title: string; handle: string; featuredImageUrl?: string | null }[];
+  articles?: { id: string; title: string; handle: string; imageUrl?: string | null }[];
+  pages?: { id: string; title: string; handle: string }[];
   exclusions?: { resourceType: string; resourceId: string; status: string }[];
 }) {
   const created: any[] = [];
@@ -253,7 +254,10 @@ function makeManualDb(opts: {
       findFirst: async ({ where }: any) => (opts.articles ?? []).find((a) => a.id === where.id) ?? null,
     },
     collection: { findMany: async () => [], findFirst: async () => null },
-    page: { findMany: async () => [], findFirst: async () => null },
+    page: {
+      findMany: async () => opts.pages ?? [],
+      findFirst: async ({ where }: any) => (opts.pages ?? []).find((p) => p.id === where.id) ?? null,
+    },
     seoSitemapExclusion: {
       findMany: async () => opts.exclusions ?? [],
       findFirst: async ({ where }: any) =>
@@ -295,6 +299,31 @@ describe("searchExclusionCandidates", () => {
     const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "post");
     expect(hits).toHaveLength(1);
     expect(hits[0].resourceType).toBe("article");
+  });
+
+  // The image column differs per model — Product.featuredImageUrl vs
+  // Collection/Article.imageUrl vs none on Page. Normalizing it in the service
+  // is the kind of mapping that breaks silently (thumbnails just go blank).
+  it("normalizes Product.featuredImageUrl into imageUrl", async () => {
+    const { db } = makeManualDb({
+      products: [{ id: "gid-1", title: "A", handle: "a", featuredImageUrl: "https://cdn/x.jpg" }],
+    });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    expect(hits[0].imageUrl).toBe("https://cdn/x.jpg");
+  });
+
+  it("normalizes Article.imageUrl into imageUrl", async () => {
+    const { db } = makeManualDb({
+      articles: [{ id: "gid-a1", title: "Post", handle: "post", imageUrl: "https://cdn/a.jpg" }],
+    });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "");
+    expect(hits[0].imageUrl).toBe("https://cdn/a.jpg");
+  });
+
+  it("yields imageUrl null for pages, which carry no image at all", async () => {
+    const { db } = makeManualDb({ pages: [{ id: "gid-pg1", title: "About", handle: "about" }] });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "page", "");
+    expect(hits[0].imageUrl).toBeNull();
   });
 });
 
