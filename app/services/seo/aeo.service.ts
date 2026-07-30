@@ -95,8 +95,12 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
   const lines: string[] = [];
   lines.push(`# ${oneLine(input.shopName) || "Shop"}`);
   lines.push("");
-  if (input.description) {
-    lines.push(`> ${oneLine(input.description, 250)}`);
+  // Check the FLATTENED value, not the raw one: a whitespace-only shop
+  // description is truthy and would emit a bare `> ` line, while the UI (which
+  // trims) correctly reports the description as missing.
+  const summary = oneLine(input.description, 250);
+  if (summary) {
+    lines.push(`> ${summary}`);
     lines.push("");
   }
 
@@ -723,19 +727,22 @@ const SHOP_IDENTITY_QUERY = `#graphql
   query aeoShopIdentity {
     shop {
       name
+      description
       primaryDomain { host }
     }
   }
 `;
 
 /**
- * Shop display name + primary storefront host, used to build llms.txt. Falls
- * back to the myshopify domain so a failed lookup still produces a usable file.
+ * Shop display name, storefront host and description, used to build llms.txt.
+ * Falls back to the myshopify domain so a failed lookup still produces a usable
+ * file. `description` is empty when the merchant never set one — the caller
+ * surfaces that rather than inventing a summary.
  */
 export async function getShopIdentity(
   admin: AdminApiContext,
   fallbackShop: string,
-): Promise<{ name: string; domain: string }> {
+): Promise<{ name: string; domain: string; description: string }> {
   try {
     const res = await admin.graphql(SHOP_IDENTITY_QUERY);
     const j: any = await res.json();
@@ -743,9 +750,14 @@ export async function getShopIdentity(
     return {
       name: shop?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
       domain: shop?.primaryDomain?.host || fallbackShop,
+      description: (shop?.description || "").trim(),
     };
   } catch {
-    return { name: fallbackShop.replace(/\.myshopify\.com$/, ""), domain: fallbackShop };
+    return {
+      name: fallbackShop.replace(/\.myshopify\.com$/, ""),
+      domain: fallbackShop,
+      description: "",
+    };
   }
 }
 
@@ -811,6 +823,7 @@ export async function buildLlmsTxtForShop(
   shop: string,
   shopName: string,
   domain: string,
+  description = "",
 ): Promise<BuiltLlmsTxt> {
   const [products, collections] = await Promise.all([
     // ACTIVE only, and this one must stay that way: llms.txt is a published
@@ -842,6 +855,7 @@ export async function buildLlmsTxtForShop(
   const content = buildLlmsTxt({
     shopName,
     domain,
+    description,
     products: products.map((p: any) => ({
       title: p.title,
       handle: p.handle,
@@ -867,6 +881,7 @@ export async function generateAndUpsertLlmsTxt(
   shop: string,
   shopName: string,
   domain: string,
+  description: string,
   opts: { skipIfUnchanged?: boolean } = {},
 ): Promise<GenerateLlmsResult> {
   if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled" };
@@ -874,7 +889,7 @@ export async function generateAndUpsertLlmsTxt(
   const themeId = await getMainThemeId(admin);
   if (!themeId) return { ok: false, error: "no_theme" };
 
-  const { content } = await buildLlmsTxtForShop(db, shop, shopName, domain);
+  const { content } = await buildLlmsTxtForShop(db, shop, shopName, domain, description);
   const wrapped = wrapLlmsTxtForTheme(content);
 
   if (opts.skipIfUnchanged) {
@@ -948,8 +963,8 @@ export async function refreshLlmsTxtIfStale(
     const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
     if (!existing || unwrapLlmsTxtFromTheme(existing).trim().length === 0) return "absent";
 
-    const { name, domain } = await getShopIdentity(admin, shop);
-    const { content } = await buildLlmsTxtForShop(db, shop, name, domain);
+    const { name, domain, description } = await getShopIdentity(admin, shop);
+    const { content } = await buildLlmsTxtForShop(db, shop, name, domain, description);
     if (llmsTxtMatches(existing, content)) return "unchanged";
 
     const { userErrors, upserted } = await upsertThemeFile(
@@ -1145,6 +1160,12 @@ export interface AeoAnalysis {
   themeWrites: boolean;
   /** Merchant switch for the periodic llms.txt refresh (`AISettings`). */
   llmsAutoUpdate: boolean;
+  /**
+   * `shop.description` is empty, so the file has no `> summary` line. The
+   * llms.txt convention puts the one-sentence "what is this site" there — the
+   * single most useful line for an LLM — and we deliberately don't invent one.
+   */
+  shopDescriptionMissing: boolean;
   blockedCrawlers: string[];
   /** AI crawlers with a non-empty `Disallow` rule that doesn't block the whole
    *  site (see `RobotsCrawlerStatus.partiallyBlocked`). Additive field — older
@@ -1183,7 +1204,7 @@ export async function auditLiveRobots(
 export async function analyzeAeo(
   admin: AdminApiContext,
   shop: string,
-  llms: { db: any; shopName: string; domain: string; autoUpdate: boolean },
+  llms: { db: any; shopName: string; domain: string; description: string; autoUpdate: boolean },
 ): Promise<AeoAnalysis> {
   let llmsTxtExists = false;
   let llmsTxtUpToDate = false;
@@ -1191,7 +1212,7 @@ export async function analyzeAeo(
   let llmsCollectionCount = 0;
   let llmsPreview = "";
   try {
-    const built = await buildLlmsTxtForShop(llms.db, shop, llms.shopName, llms.domain);
+    const built = await buildLlmsTxtForShop(llms.db, shop, llms.shopName, llms.domain, llms.description);
     llmsProductCount = built.productCount;
     llmsCollectionCount = built.collectionCount;
     llmsPreview = built.content;
@@ -1238,6 +1259,7 @@ export async function analyzeAeo(
     llmsUrl: `${baseUrl(llms.domain || shop)}/llms.txt`,
     themeWrites: themeWritesEnabled(),
     llmsAutoUpdate: llms.autoUpdate,
+    shopDescriptionMissing: llms.description.trim().length === 0,
     blockedCrawlers,
     partiallyBlockedCrawlers,
     restrictedCrawlers,

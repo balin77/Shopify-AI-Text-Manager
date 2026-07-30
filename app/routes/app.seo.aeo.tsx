@@ -88,21 +88,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       llmsUrl: "",
       themeWrites: false,
       llmsAutoUpdate: true,
+      shopDescriptionMissing: false,
       themesUrl: "",
+      shopPrefsUrl: "",
     });
   }
 
-  const { name, domain } = await getShopIdentity(admin, session.shop);
+  const { name, domain, description } = await getShopIdentity(admin, session.shop);
   const analysis = await analyzeAeo(admin, session.shop, {
     db,
     shopName: name,
     domain,
+    description,
     autoUpdate,
   });
   return json({
     gated: false,
     ...analysis,
     themesUrl: `https://${session.shop}/admin/themes`,
+    shopPrefsUrl: `https://${session.shop}/admin/online_store/preferences`,
   });
 };
 
@@ -138,8 +142,8 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
     if (!themeWritesEnabled()) {
       return json<ActionResult>({ ok: false, error: "theme_writes_disabled" }, { status: 403 });
     }
-    const { name, domain } = await getShopIdentity(admin, session.shop);
-    const result = await generateAndUpsertLlmsTxt(admin, db, session.shop, name, domain);
+    const { name, domain, description } = await getShopIdentity(admin, session.shop);
+    const result = await generateAndUpsertLlmsTxt(admin, db, session.shop, name, domain, description);
     return json<ActionResult>(result.ok ? { ok: true } : { ok: false, error: result.error || "failed" });
   }
 
@@ -623,6 +627,22 @@ export default function SeoAeo() {
                   <Banner tone="warning">{a.llmsStaleHint}</Banner>
                 )}
 
+                {/* Without shop.description the file has no `> summary` line —
+                    the one sentence that tells an LLM what this store even is.
+                    We ask the merchant for it rather than inventing one. */}
+                {data.shopDescriptionMissing && (
+                  <Banner tone="warning" title={a.shopDescriptionMissingTitle}>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd">{a.shopDescriptionMissingBody}</Text>
+                      <InlineStack>
+                        <Button url={data.shopPrefsUrl} target="_top">
+                          {a.shopDescriptionOpenSettings}
+                        </Button>
+                      </InlineStack>
+                    </BlockStack>
+                  </Banner>
+                )}
+
                 {/* Lives here rather than in Settings: it only makes sense next
                     to the up-to-date/stale badge that motivates it, and it
                     matches how IndexNow is switched on in its own section. */}
@@ -673,9 +693,19 @@ export default function SeoAeo() {
                     borderRadius="200"
                   >
                     <BlockStack gap="200">
-                      <Text as="h4" variant="headingSm">
-                        {a.llmsPreviewTitle}
-                      </Text>
+                      <InlineStack gap="200" blockAlign="center" align="space-between" wrap>
+                        <Text as="h4" variant="headingSm">
+                          {a.llmsPreviewTitle}
+                        </Text>
+                        {/* The preview is truncated, so the way to read the
+                            whole thing belongs right here, not only in the
+                            button row at the bottom of the card. */}
+                        {data.llmsTxtExists && data.llmsUrl && (
+                          <Button variant="plain" url={data.llmsUrl} target="_blank">
+                            {a.llmsOpenLive}
+                          </Button>
+                        )}
+                      </InlineStack>
                       <Box overflowX="scroll">
                         <pre style={{ margin: 0, fontSize: "0.75rem", lineHeight: 1.5 }}>
                           {previewLines}

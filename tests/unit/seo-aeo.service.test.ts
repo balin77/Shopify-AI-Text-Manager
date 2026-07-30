@@ -335,6 +335,30 @@ describe("auditRobotsTxt", () => {
   });
 });
 
+describe("buildLlmsTxt summary line", () => {
+  const base = { shopName: "Shop", domain: "x.test", products: [], collections: [] };
+
+  it("emits the `>` summary from the shop description", () => {
+    const out = buildLlmsTxt({ ...base, description: "Handmade 3D-printed desk objects." });
+    expect(out).toContain("> Handmade 3D-printed desk objects.");
+  });
+
+  it("omits the line entirely when there is no description", () => {
+    // Better no summary than an invented one — the merchant is asked for it.
+    for (const description of ["", "   ", null, undefined]) {
+      expect(buildLlmsTxt({ ...base, description })).not.toContain(">");
+    }
+  });
+
+  it("flattens and caps a long description", () => {
+    const out = buildLlmsTxt({ ...base, description: "a\nb  c " + "x".repeat(400) });
+    const summary = out.split("\n").find((l) => l.startsWith("> "))!;
+    expect(summary).not.toContain("\n");
+    expect(summary.length).toBeLessThanOrEqual(252);
+    expect(summary).toContain("a b c");
+  });
+});
+
 describe("llmsTxtMatches", () => {
   const fresh = "# Shop\n\n## Products\n- [A](https://x.test/products/a)\n";
 
