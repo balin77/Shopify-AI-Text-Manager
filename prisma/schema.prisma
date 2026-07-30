@@ -67,6 +67,13 @@ model AISettings {
   // llms.txt is worse than no llms.txt. Also requires AEO_THEME_WRITES.
   llmsTxtAutoUpdate Boolean @default(true)
 
+  // When the llms.txt auto-refresh last RAN for this shop (not when it last
+  // wrote — a run that found no difference stamps this too). Drives the daily
+  // shop-independent sweep in seo/llms-auto-refresh.service.ts: it makes the
+  // sweep idempotent across replicas and restarts, and lets a shop refreshed
+  // through the in-app path skip the sweep entirely.
+  llmsTxtLastAutoRunAt DateTime?
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()
@@ -389,7 +396,13 @@ model Product {
   title            String
   descriptionHtml  String? @db.Text
   handle           String
-  status           String // "ACTIVE", "DRAFT", "ARCHIVED"
+  // Shopify ProductStatus, stored verbatim as the sync receives it (no
+  // normalization). FOUR values occur in real data, not three: "ACTIVE",
+  // "DRAFT", "UNLISTED", "ARCHIVED". UNLISTED means "active but reachable only
+  // by direct link" — it exists from API 2025-10 on and DOES appear in
+  // production caches. Code that enumerates statuses must handle it; assuming
+  // three is what made unlisted products invisible to several SEO features.
+  status           String
   productType      String? // Product type for categorization (e.g., "T-Shirt", "Shoes")
   seoTitle         String?
   seoDescription   String? @db.Text

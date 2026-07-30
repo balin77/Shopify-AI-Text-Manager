@@ -7,6 +7,7 @@ import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
+import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { logger } from "./utils/logger.server";
 import { initSentryServer, captureServerError } from "./utils/sentry.server";
 
@@ -28,6 +29,7 @@ process.on('SIGTERM', () => {
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
   GscAutoSyncService.getInstance().stop();
+  LlmsAutoRefreshService.getInstance().stop();
 });
 
 process.on('SIGINT', () => {
@@ -35,6 +37,7 @@ process.on('SIGINT', () => {
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
   GscAutoSyncService.getInstance().stop();
+  LlmsAutoRefreshService.getInstance().stop();
 });
 
 export default async function handleRequest(

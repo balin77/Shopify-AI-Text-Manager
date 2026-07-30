@@ -178,6 +178,7 @@ import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
+import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -209,6 +210,11 @@ const enhancedAuthenticate = {
     // idempotent-start reasoning as ShopReaperService above — it also needs
     // TS imports, here enrichKeywordsFromGsc + planUtils).
     GscAutoSyncService.getInstance().start();
+
+    // Bootstrap the daily llms.txt refresh sweep (same idempotent-start
+    // reasoning). This is the only path that keeps llms.txt fresh for a shop
+    // nobody opens — the in-session refresh needs someone working in the app.
+    LlmsAutoRefreshService.getInstance().start();
 
     return { admin, session };
   }

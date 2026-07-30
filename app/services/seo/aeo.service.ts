@@ -858,6 +858,15 @@ export async function refreshLlmsTxtIfStale(
     });
     if (settings && settings.llmsTxtAutoUpdate === false) return "opted_out";
 
+    // Stamp before doing the work, not after. This is what the daily sweep
+    // (seo/llms-auto-refresh.service.ts) reads to decide a shop is handled, so
+    // an in-app refresh has to count even if the Shopify calls below fail —
+    // otherwise a shop with a persistent API problem is retried by the sweep
+    // on every tick as well.
+    await db.aISettings
+      .update({ where: { shop }, data: { llmsTxtLastAutoRunAt: new Date() } })
+      .catch(() => {});
+
     const themeId = await getMainThemeId(admin);
     if (!themeId) return "failed";
 
