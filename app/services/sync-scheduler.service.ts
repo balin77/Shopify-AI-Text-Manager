@@ -211,6 +211,25 @@ class SyncSchedulerService {
                   error: err instanceof Error ? err.message : String(err),
                 });
               }
+
+              // Keep the theme's llms.txt in step with the catalog. Same low
+              // cadence as the reconcile above, and for the same reason: the
+              // products/collections that feed llms.txt arrive via webhooks,
+              // not via syncAll(), so there is no completion event to hang
+              // this off. It reads the file, compares, and writes only on a
+              // real difference — and does nothing at all while
+              // AEO_THEME_WRITES is off. Failures must not break the cycle.
+              try {
+                const { refreshLlmsTxtIfStale } = await import("./seo/aeo.service");
+                const outcome = await refreshLlmsTxtIfStale(admin, db, shop);
+                if (outcome === "updated") {
+                  logger.debug(`[SyncScheduler] llms.txt refreshed for ${shop}`);
+                }
+              } catch (err) {
+                logger.warn(`[SyncScheduler] llms.txt refresh failed for ${shop}`, {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
             }
           }
         } finally {

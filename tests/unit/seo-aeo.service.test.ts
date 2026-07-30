@@ -1,9 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   buildLlmsTxt,
   auditRobotsTxt,
   classifyDisallowPath,
   groupCrawlerStatuses,
+  llmsTxtMatches,
+  themeWritesEnabled,
   AI_CRAWLERS,
   wrapLlmsTxtForTheme,
   unwrapLlmsTxtFromTheme,
@@ -276,6 +278,57 @@ describe("auditRobotsTxt", () => {
       expect(s.verdict).toBe("blocked");
       expect(s.contentRestricted).toBe(false);
     });
+  });
+});
+
+describe("llmsTxtMatches", () => {
+  const fresh = "# Shop\n\n## Products\n- [A](https://x.test/products/a)\n";
+
+  it("matches the file it just wrote (round-trip through the theme wrapper)", () => {
+    expect(llmsTxtMatches(wrapLlmsTxtForTheme(fresh), fresh)).toBe(true);
+  });
+
+  it("reports a difference once the catalog changed", () => {
+    const stored = wrapLlmsTxtForTheme(fresh);
+    expect(llmsTxtMatches(stored, fresh + "- [B](https://x.test/products/b)\n")).toBe(false);
+  });
+
+  it("still matches when the content carries Liquid that gets defanged on write", () => {
+    // The stored form is defanged, the fresh form is not — comparing them raw
+    // would report "stale" forever and rewrite the theme file on every cycle.
+    const liquidish = "# Shop {{ evil }}\n\n## Products\n- [A](https://x.test/products/a)\n";
+    expect(llmsTxtMatches(wrapLlmsTxtForTheme(liquidish), liquidish)).toBe(true);
+  });
+
+  it("tolerates trailing-whitespace drift", () => {
+    expect(llmsTxtMatches(wrapLlmsTxtForTheme(fresh), fresh + "\n\n")).toBe(true);
+  });
+
+  it("treats a file written before the wrapper existed as comparable", () => {
+    expect(llmsTxtMatches(fresh, fresh)).toBe(true);
+  });
+});
+
+describe("themeWritesEnabled", () => {
+  const original = process.env.AEO_THEME_WRITES;
+  afterEach(() => {
+    if (original === undefined) delete process.env.AEO_THEME_WRITES;
+    else process.env.AEO_THEME_WRITES = original;
+  });
+
+  it("defaults to off when unset — an unset variable must never write", () => {
+    delete process.env.AEO_THEME_WRITES;
+    expect(themeWritesEnabled()).toBe(false);
+  });
+
+  it.each(["on", "true", "1", "ON", " On "])("enables on %s", (v) => {
+    process.env.AEO_THEME_WRITES = v;
+    expect(themeWritesEnabled()).toBe(true);
+  });
+
+  it.each(["off", "false", "0", "", "yes"])("stays off on %s", (v) => {
+    process.env.AEO_THEME_WRITES = v;
+    expect(themeWritesEnabled()).toBe(false);
   });
 });
 

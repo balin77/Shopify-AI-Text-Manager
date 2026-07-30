@@ -7,9 +7,22 @@
  *   to the theme editor (we deliberately don't auto-rewrite robots.txt.liquid).
  */
 
+import { useState, type ReactNode } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, Box, Divider, List } from "@shopify/polaris";
+import {
+  Card,
+  BlockStack,
+  InlineStack,
+  InlineGrid,
+  Text,
+  Badge,
+  Button,
+  Banner,
+  Box,
+  Divider,
+  List,
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -19,18 +32,11 @@ import type { Plan } from "../config/plans";
 import {
   analyzeAeo,
   generateAndUpsertLlmsTxt,
+  getShopIdentity,
+  themeWritesEnabled,
   type RobotsCrawlerGroup,
   type RobotsRuleImpact,
 } from "../services/seo/aeo.service";
-
-const SHOP_INFO_QUERY = `#graphql
-  query seoAeoShopInfo {
-    shop {
-      name
-      primaryDomain { host url }
-    }
-  }
-`;
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -38,20 +44,6 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
     select: { subscriptionPlan: true },
   });
   return (settings?.subscriptionPlan || "free") as Plan;
-}
-
-async function getShopInfo(admin: any, fallbackShop: string): Promise<{ name: string; domain: string }> {
-  try {
-    const res = await admin.graphql(SHOP_INFO_QUERY);
-    const j: any = await res.json();
-    const shop = j?.data?.shop;
-    return {
-      name: shop?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
-      domain: shop?.primaryDomain?.host || fallbackShop,
-    };
-  } catch {
-    return { name: fallbackShop.replace(/\.myshopify\.com$/, ""), domain: fallbackShop };
-  }
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -72,11 +64,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       restrictedCrawlers: [] as string[],
       crawlerGroups: [] as RobotsCrawlerGroup[],
       robotsAuditAvailable: false,
+      llmsTxtUpToDate: false,
+      llmsProductCount: 0,
+      llmsCollectionCount: 0,
+      llmsPreview: "",
+      llmsUrl: "",
+      themeWrites: false,
       themesUrl: "",
     });
   }
 
-  const analysis = await analyzeAeo(admin, session.shop);
+  const { name, domain } = await getShopIdentity(admin, session.shop);
+  const analysis = await analyzeAeo(admin, session.shop, { db, shopName: name, domain });
   return json({
     gated: false,
     ...analysis,
@@ -97,7 +96,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
 
   const form = await request.formData();
   if (getFormString(form, "actionType") === "generateLlms") {
-    const { name, domain } = await getShopInfo(admin, session.shop);
+    // Server-side gate. Hiding the button is not enough — this action is
+    // POST-reachable directly, and without the Shopify approval every
+    // themeFilesUpsert must be refused here.
+    if (!themeWritesEnabled()) {
+      return json<ActionResult>({ ok: false, error: "theme_writes_disabled" }, { status: 403 });
+    }
+    const { name, domain } = await getShopIdentity(admin, session.shop);
     const result = await generateAndUpsertLlmsTxt(admin, db, session.shop, name, domain);
     return json<ActionResult>(result.ok ? { ok: true } : { ok: false, error: result.error || "failed" });
   }
@@ -189,11 +194,106 @@ function CrawlerGroupDetail({ group }: { group: RobotsCrawlerGroup }) {
   );
 }
 
+/**
+ * The two AEO levers are sequential, not a pair: robots.txt decides *whether* a
+ * crawler may read the store at all, llms.txt only helps it understand what it
+ * read. Rendering both as equal cards (the old layout) hid that dependency and
+ * put the optional one first. They're now two selectable steps, access first.
+ */
+type AeoStep = "robots" | "llms";
+
+function StepTile({
+  selected,
+  onSelect,
+  kicker,
+  title,
+  body,
+  badge,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  kicker: string;
+  title: string;
+  body: string;
+  badge: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      style={{
+        display: "block",
+        width: "100%",
+        // The button is the grid item, so it carries the height for the two
+        // tiles to line up when one has more text than the other.
+        height: "100%",
+        textAlign: "left",
+        background: "none",
+        border: "none",
+        padding: 0,
+        font: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      <Box
+        padding="400"
+        borderWidth={selected ? "050" : "025"}
+        borderColor={selected ? "border-emphasis" : "border"}
+        borderRadius="200"
+        background={selected ? "bg-surface-secondary" : "bg-surface"}
+        minHeight="100%"
+      >
+        <BlockStack gap="200">
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="span" variant="bodySm" tone="subdued" fontWeight="medium">
+              {kicker}
+            </Text>
+            {badge}
+          </InlineStack>
+          <Text as="h3" variant="headingMd">
+            {title}
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {body}
+          </Text>
+        </BlockStack>
+      </Box>
+    </button>
+  );
+}
+
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const a = t.seo.aeoPage;
   const fetcher = useFetcher<ActionResult>();
+  const [step, setStep] = useState<AeoStep>("robots");
+
+  const robotsBadge = !data.robotsAuditAvailable ? (
+    <Badge>{a.statusUnknown}</Badge>
+  ) : data.blockedCrawlers.length > 0 ? (
+    <Badge tone="critical">{a.verdictLabel.blocked}</Badge>
+  ) : data.restrictedCrawlers.length > 0 ? (
+    <Badge tone="warning">{a.verdictLabel.restricted}</Badge>
+  ) : (
+    <Badge tone="success">{a.robotsStatusOk}</Badge>
+  );
+
+  // Three states, not two: a file that exists but no longer matches the catalog
+  // is the case the old present/absent badge could not express at all.
+  const llmsStatusBadge = !data.llmsTxtExists ? (
+    <Badge tone="attention">{a.llmsAbsent}</Badge>
+  ) : data.llmsTxtUpToDate ? (
+    <Badge tone="success">{a.llmsUpToDate}</Badge>
+  ) : (
+    <Badge tone="warning">{a.llmsStale}</Badge>
+  );
+
+  const PREVIEW_LINES = 12;
+  const allPreviewLines = data.llmsPreview.split("\n");
+  const previewLines = allPreviewLines.slice(0, PREVIEW_LINES).join("\n");
+  const previewTruncated = allPreviewLines.length > PREVIEW_LINES;
 
   const genMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -202,6 +302,7 @@ export default function SeoAeo() {
       no_theme: a.errorNoTheme,
       upsert_failed: a.errorGeneric,
       gated: a.errorGeneric,
+      theme_writes_disabled: a.themeWritesDisabled,
     };
     return { tone: "critical" as const, msg: map[fetcher.data.error] || a.errorGeneric };
   })();
@@ -219,33 +320,28 @@ export default function SeoAeo() {
 
           {genMsg && <Banner tone={genMsg.tone}>{genMsg.msg}</Banner>}
 
-          {/* llms.txt */}
-          <Card>
-            <BlockStack gap="300">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="h3" variant="headingMd">
-                  {a.llmsTitle}
-                </Text>
-                <Badge tone={data.llmsTxtExists ? "success" : undefined}>
-                  {data.llmsTxtExists ? a.llmsPresent : a.llmsAbsent}
-                </Badge>
-              </InlineStack>
-              <Text as="p" variant="bodyMd" tone="subdued">
-                {a.llmsBody}
-              </Text>
-              <InlineStack gap="200">
-                <Button
-                  variant="primary"
-                  loading={fetcher.state !== "idle"}
-                  onClick={() => fetcher.submit({ actionType: "generateLlms" }, { method: "post" })}
-                >
-                  {data.llmsTxtExists ? a.llmsUpdate : a.llmsGenerate}
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
+          {/* Step selector — access (robots.txt) before orientation (llms.txt). */}
+          <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+            <StepTile
+              selected={step === "robots"}
+              onSelect={() => setStep("robots")}
+              kicker={a.stepAccessKicker}
+              title={a.stepAccessTitle}
+              body={a.stepAccessBody}
+              badge={robotsBadge}
+            />
+            <StepTile
+              selected={step === "llms"}
+              onSelect={() => setStep("llms")}
+              kicker={a.stepGuideKicker}
+              title={a.stepGuideTitle}
+              body={a.stepGuideBody}
+              badge={llmsStatusBadge}
+            />
+          </InlineGrid>
 
           {/* robots.txt AI-crawler audit */}
+          {step === "robots" && (
           <Card>
             <BlockStack gap="400">
               <Text as="h3" variant="headingMd">
@@ -297,6 +393,86 @@ export default function SeoAeo() {
               )}
             </BlockStack>
           </Card>
+          )}
+
+          {/* llms.txt */}
+          {step === "llms" && (
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h3" variant="headingMd">
+                    {a.llmsTitle}
+                  </Text>
+                  {llmsStatusBadge}
+                </InlineStack>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {a.llmsBody}
+                </Text>
+
+                {/* What the file would contain right now — the old card showed
+                    only a present/absent badge, which gave no evidence that the
+                    button had done anything. */}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {a.llmsContents
+                    .replace("{products}", String(data.llmsProductCount))
+                    .replace("{collections}", String(data.llmsCollectionCount))}
+                </Text>
+
+                {data.llmsTxtExists && !data.llmsTxtUpToDate && (
+                  <Banner tone="warning">{a.llmsStaleHint}</Banner>
+                )}
+
+                {data.llmsPreview && (
+                  <Box
+                    padding="300"
+                    background="bg-surface-secondary"
+                    borderWidth="025"
+                    borderColor="border"
+                    borderRadius="200"
+                  >
+                    <BlockStack gap="200">
+                      <Text as="h4" variant="headingSm">
+                        {a.llmsPreviewTitle}
+                      </Text>
+                      <Box overflowX="scroll">
+                        <pre style={{ margin: 0, fontSize: "0.75rem", lineHeight: 1.5 }}>
+                          {previewLines}
+                        </pre>
+                      </Box>
+                      {previewTruncated && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {a.llmsPreviewTruncated}
+                        </Text>
+                      )}
+                    </BlockStack>
+                  </Box>
+                )}
+
+                {/* llms.txt is a 2024 community proposal, not a ratified
+                    standard, and no major provider has confirmed its crawlers
+                    read it. Saying so beats implying parity with robots.txt. */}
+                <Banner tone="info">{a.llmsCaveat}</Banner>
+
+                {!data.themeWrites && <Banner tone="warning">{a.themeWritesDisabled}</Banner>}
+
+                <InlineStack gap="200">
+                  <Button
+                    variant="primary"
+                    disabled={!data.themeWrites}
+                    loading={fetcher.state !== "idle"}
+                    onClick={() => fetcher.submit({ actionType: "generateLlms" }, { method: "post" })}
+                  >
+                    {data.llmsTxtExists ? a.llmsUpdate : a.llmsGenerate}
+                  </Button>
+                  {data.llmsTxtExists && data.llmsUrl && (
+                    <Button url={data.llmsUrl} target="_blank">
+                      {a.llmsOpenLive}
+                    </Button>
+                  )}
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          )}
         </BlockStack>
       )}
     </SeoSectionLayout>

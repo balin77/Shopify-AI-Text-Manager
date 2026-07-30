@@ -137,9 +137,12 @@ const RAW_WRAP_RE = /^\{%-?\s*raw\s*-?%\}\n?([\s\S]*?)\{%-?\s*endraw\s*-?%\}\s*$
  * deliberately NOT reversed by unwrapLlmsTxtFromTheme: the defanged form is
  * the canonical stored form.
  */
+export function defangLiquid(content: string): string {
+  return content.replace(/\{\{/g, "{ {").replace(/\{%/g, "{ %");
+}
+
 export function wrapLlmsTxtForTheme(content: string): string {
-  const defanged = content.replace(/\{\{/g, "{ {").replace(/\{%/g, "{ %");
-  return `{% raw %}\n${defanged}{% endraw %}\n`;
+  return `{% raw %}\n${defangLiquid(content)}{% endraw %}\n`;
 }
 
 /**
@@ -432,7 +435,10 @@ export function groupCrawlerStatuses(statuses: RobotsCrawlerStatus[]): RobotsCra
   const out: RobotsCrawlerGroup[] = [];
   const bySignature = new Map<string, RobotsCrawlerGroup>();
   for (const s of statuses) {
-    const signature = `${s.verdict}|${s.matchedBy}|${s.rules.map((r) => r.path).join(" ")}`;
+    // NUL separator (house idiom, see bulk-editor/translations.server.ts) so a
+    // path can never collide with the joiner. Written as an escape, not a
+    // literal byte, or git classifies this file as binary.
+    const signature = `${s.verdict}\u0000${s.matchedBy}\u0000${s.rules.map((r) => r.path).join("\u0000")}`;
     const existing = bySignature.get(signature);
     if (existing) {
       existing.crawlers.push(s.crawler);
@@ -479,12 +485,68 @@ export async function upsertThemeFile(
   themeId: string,
   filename: string,
   content: string,
-): Promise<{ userErrors: Array<{ field?: string[] | null; message: string }> }> {
+): Promise<{
+  userErrors: Array<{ field?: string[] | null; message: string }>;
+  /** Filenames Shopify echoed back as actually written. */
+  upserted: string[];
+}> {
   const res = await admin.graphql(UPSERT_THEME_FILES, {
     variables: { themeId, files: [{ filename, body: { type: "TEXT", value: content } }] },
   });
   const json: any = await res.json();
-  return { userErrors: json?.data?.themeFilesUpsert?.userErrors ?? [] };
+  return {
+    userErrors: json?.data?.themeFilesUpsert?.userErrors ?? [],
+    upserted: (json?.data?.themeFilesUpsert?.upsertedThemeFiles ?? []).map((f: any) => f?.filename),
+  };
+}
+
+const SHOP_IDENTITY_QUERY = `#graphql
+  query aeoShopIdentity {
+    shop {
+      name
+      primaryDomain { host }
+    }
+  }
+`;
+
+/**
+ * Shop display name + primary storefront host, used to build llms.txt. Falls
+ * back to the myshopify domain so a failed lookup still produces a usable file.
+ */
+export async function getShopIdentity(
+  admin: AdminApiContext,
+  fallbackShop: string,
+): Promise<{ name: string; domain: string }> {
+  try {
+    const res = await admin.graphql(SHOP_IDENTITY_QUERY);
+    const j: any = await res.json();
+    const shop = j?.data?.shop;
+    return {
+      name: shop?.name || fallbackShop.replace(/\.myshopify\.com$/, ""),
+      domain: shop?.primaryDomain?.host || fallbackShop,
+    };
+  } catch {
+    return { name: fallbackShop.replace(/\.myshopify\.com$/, ""), domain: fallbackShop };
+  }
+}
+
+// ── Feature gate ─────────────────────────────────────────────────────────────
+
+/**
+ * Writing theme files (`themeFilesUpsert`) needs a per-operation approval from
+ * Shopify that this app does not hold yet — it is only cleared for direct
+ * storefront text edits. Everything that would write `llms.txt.liquid` or
+ * `robots.txt.liquid` is therefore built but gated behind `AEO_THEME_WRITES`.
+ *
+ * Default **off**: an unset variable must never write. Flip to `on` (or
+ * `true` / `1`) once the approval lands. Read-only analysis is unaffected.
+ *
+ * This has to be enforced server-side in every action — hiding the button is
+ * not a gate, the routes are POST-reachable directly.
+ */
+export function themeWritesEnabled(): boolean {
+  const v = (process.env.AEO_THEME_WRITES || "").trim().toLowerCase();
+  return v === "on" || v === "true" || v === "1";
 }
 
 // ── Orchestration ────────────────────────────────────────────────────────────
@@ -497,20 +559,24 @@ export interface GenerateLlmsResult {
   error?: string;
 }
 
+export interface BuiltLlmsTxt {
+  content: string;
+  productCount: number;
+  collectionCount: number;
+}
+
 /**
- * Build llms.txt from the DB cache and upsert it into the published theme.
- * Returns ok:false (never throws) with a reason the route can map to i18n.
+ * Build the llms.txt this shop *should* have, from the DB cache. Split out of
+ * `generateAndUpsertLlmsTxt` so the read-only analysis can build the same bytes
+ * and compare them against what's in the theme — that comparison is what makes
+ * "up to date / stale" possible without storing a hash anywhere.
  */
-export async function generateAndUpsertLlmsTxt(
-  admin: AdminApiContext,
+export async function buildLlmsTxtForShop(
   db: any,
   shop: string,
   shopName: string,
   domain: string,
-): Promise<GenerateLlmsResult> {
-  const themeId = await getMainThemeId(admin);
-  if (!themeId) return { ok: false, error: "no_theme" };
-
+): Promise<BuiltLlmsTxt> {
   const [products, collections] = await Promise.all([
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
@@ -537,18 +603,116 @@ export async function generateAndUpsertLlmsTxt(
     collections: collections.map((c: any) => ({ title: c.title, handle: c.handle })),
   });
 
-  const { userErrors } = await upsertThemeFile(
+  return { content, productCount: products.length, collectionCount: collections.length };
+}
+
+/**
+ * Build llms.txt from the DB cache and upsert it into the published theme.
+ * Returns ok:false (never throws) with a reason the route can map to i18n.
+ *
+ * `skipIfUnchanged` makes this safe to call from a background loop: it reads the
+ * current file first and returns `ok:true` without writing when the content
+ * already matches, so the periodic refresh doesn't touch the theme every cycle.
+ */
+export async function generateAndUpsertLlmsTxt(
+  admin: AdminApiContext,
+  db: any,
+  shop: string,
+  shopName: string,
+  domain: string,
+  opts: { skipIfUnchanged?: boolean } = {},
+): Promise<GenerateLlmsResult> {
+  if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled" };
+
+  const themeId = await getMainThemeId(admin);
+  if (!themeId) return { ok: false, error: "no_theme" };
+
+  const { content } = await buildLlmsTxtForShop(db, shop, shopName, domain);
+  const wrapped = wrapLlmsTxtForTheme(content);
+
+  if (opts.skipIfUnchanged) {
+    const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
+    if (existing !== null && llmsTxtMatches(existing, content)) return { ok: true };
+  }
+
+  const { userErrors, upserted } = await upsertThemeFile(
     admin,
     themeId,
     LLMS_TEMPLATE_FILENAME,
-    wrapLlmsTxtForTheme(content),
+    wrapped,
   );
   if (userErrors.length > 0) return { ok: false, error: "upsert_failed" };
+  // Same discipline as the translation writes: an empty `userErrors` is not
+  // proof anything was stored — require the filename in the echo.
+  if (!upserted.includes(LLMS_TEMPLATE_FILENAME)) return { ok: false, error: "upsert_failed" };
   return { ok: true };
+}
+
+/**
+ * Does the theme's stored llms.txt already equal what we'd generate now? The
+ * stored form is defanged and `{% raw %}`-wrapped, so unwrap it and compare
+ * against the defanged fresh content. Pure.
+ */
+export function llmsTxtMatches(storedThemeFile: string, freshContent: string): boolean {
+  return unwrapLlmsTxtFromTheme(storedThemeFile).trim() === defangLiquid(freshContent).trim();
+}
+
+/**
+ * Periodic llms.txt refresh, called from the sync scheduler.
+ *
+ * Deliberately conservative on two counts. It only ever *updates* a file that
+ * already exists — creating one is an explicit merchant decision, not something
+ * a background loop should do behind their back. And it writes only when the
+ * content actually differs, so the common case costs one theme read and no
+ * write at all. Never throws: the caller is a scheduler cycle.
+ */
+export async function refreshLlmsTxtIfStale(
+  admin: AdminApiContext,
+  db: any,
+  shop: string,
+): Promise<"disabled" | "absent" | "unchanged" | "updated" | "failed"> {
+  if (!themeWritesEnabled()) return "disabled";
+  try {
+    const themeId = await getMainThemeId(admin);
+    if (!themeId) return "failed";
+
+    const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
+    if (!existing || unwrapLlmsTxtFromTheme(existing).trim().length === 0) return "absent";
+
+    const { name, domain } = await getShopIdentity(admin, shop);
+    const { content } = await buildLlmsTxtForShop(db, shop, name, domain);
+    if (llmsTxtMatches(existing, content)) return "unchanged";
+
+    const { userErrors, upserted } = await upsertThemeFile(
+      admin,
+      themeId,
+      LLMS_TEMPLATE_FILENAME,
+      wrapLlmsTxtForTheme(content),
+    );
+    if (userErrors.length > 0 || !upserted.includes(LLMS_TEMPLATE_FILENAME)) return "failed";
+    return "updated";
+  } catch {
+    return "failed";
+  }
 }
 
 export interface AeoAnalysis {
   llmsTxtExists: boolean;
+  /**
+   * The theme's llms.txt already equals what we'd generate now. Meaningless
+   * when `llmsTxtExists` is false. Derived by rebuilding and comparing, so it
+   * needs no stored hash and can't drift out of sync with the generator.
+   */
+  llmsTxtUpToDate: boolean;
+  /** What the *current* generated file would contain. */
+  llmsProductCount: number;
+  llmsCollectionCount: number;
+  /** First lines of the freshly built file, for the preview panel. */
+  llmsPreview: string;
+  /** Public URL the file is served from, for the merchant to verify. */
+  llmsUrl: string;
+  /** `AEO_THEME_WRITES` — false hides/blocks every theme-writing action. */
+  themeWrites: boolean;
   blockedCrawlers: string[];
   /** AI crawlers with a non-empty `Disallow` rule that doesn't block the whole
    *  site (see `RobotsCrawlerStatus.partiallyBlocked`). Additive field — older
@@ -573,16 +737,27 @@ const FETCH_TIMEOUT_MS = 10_000;
 export async function analyzeAeo(
   admin: AdminApiContext,
   shop: string,
+  llms: { db: any; shopName: string; domain: string },
 ): Promise<AeoAnalysis> {
   let llmsTxtExists = false;
+  let llmsTxtUpToDate = false;
+  let llmsProductCount = 0;
+  let llmsCollectionCount = 0;
+  let llmsPreview = "";
   try {
+    const built = await buildLlmsTxtForShop(llms.db, shop, llms.shopName, llms.domain);
+    llmsProductCount = built.productCount;
+    llmsCollectionCount = built.collectionCount;
+    llmsPreview = built.content;
+
     const themeId = await getMainThemeId(admin);
     if (themeId) {
       const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
       llmsTxtExists = !!existing && unwrapLlmsTxtFromTheme(existing).trim().length > 0;
+      llmsTxtUpToDate = llmsTxtExists && llmsTxtMatches(existing!, built.content);
     }
   } catch {
-    /* leave false */
+    /* leave defaults */
   }
 
   let blockedCrawlers: string[] = [];
@@ -610,6 +785,12 @@ export async function analyzeAeo(
 
   return {
     llmsTxtExists,
+    llmsTxtUpToDate,
+    llmsProductCount,
+    llmsCollectionCount,
+    llmsPreview,
+    llmsUrl: `${baseUrl(llms.domain || shop)}/llms.txt`,
+    themeWrites: themeWritesEnabled(),
     blockedCrawlers,
     partiallyBlockedCrawlers,
     restrictedCrawlers,
