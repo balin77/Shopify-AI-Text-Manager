@@ -331,8 +331,9 @@ export async function upsertExclusionSuggestions(
 
 // ── Manual exclusion: search + create (DB-cache-first, §3) ─────────────────
 
-/** Search-result cap — a picker list, not a browse view. */
-const MANUAL_SEARCH_LIMIT = 25;
+/** Rows per picker page. Matches internal-links.tsx's PAGE_SIZE so the two
+ *  paged lists in this section feel the same. */
+export const MANUAL_PAGE_SIZE = 20;
 
 export interface ExclusionSearchHit {
   resourceType: SitemapExclusionResourceType;
@@ -350,20 +351,46 @@ export interface ExclusionSearchHit {
    *  `featuredImageUrl` on Product, `imageUrl` on Collection/Article — so it is
    *  normalized here rather than in the UI. */
   imageUrl: string | null;
+  /** ACTIVE / DRAFT / ARCHIVED. Products ONLY — no other cached model carries
+   *  a status (verified against prisma/schema.prisma), so it is null for
+   *  collections, pages and articles and the UI hides the column for them
+   *  rather than inventing a value. */
+  status: string | null;
+}
+
+/** Product statuses the picker can filter on. Anything else means "all". */
+export const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "ARCHIVED"] as const;
+export type ProductStatusFilter = (typeof PRODUCT_STATUSES)[number] | "all";
+
+export interface ExclusionSearchResult {
+  hits: ExclusionSearchHit[];
+  /** Matches across ALL pages — a catalog can hold far more than one page. */
+  total: number;
+  /** 1-based, CLAMPED to the available range (see below). */
+  page: number;
+  pageSize: number;
 }
 
 /**
  * Type-ahead over the DB cache for the manual "exclude anything" picker. Reads
  * the same cached models the suggestion sweep uses — no live Admin API call
- * (SEO_SECTION_CONTRACT.md §3). An empty query returns the first
- * MANUAL_SEARCH_LIMIT rows so the picker is useful before typing.
+ * (SEO_SECTION_CONTRACT.md §3). An empty query returns the first page, so the
+ * picker is useful before typing.
+ *
+ * Server-paged: the count and the slice come from the SAME where-clause, so
+ * filtering never pages over a stale total. The requested page is clamped
+ * rather than 404'd — narrowing the query while on page 7 is normal, and
+ * should land on the last page instead of on an error (same treatment
+ * internal-links.tsx gives its list).
  */
 export async function searchExclusionCandidates(
   db: PrismaClient,
   shop: string,
   resourceType: SitemapExclusionResourceType,
   query: string,
-): Promise<ExclusionSearchHit[]> {
+  requestedPage = 1,
+  statusFilter: string = "all",
+): Promise<ExclusionSearchResult> {
   const q = query.trim();
   const filter = q
     ? {
@@ -373,20 +400,38 @@ export async function searchExclusionCandidates(
         ],
       }
     : {};
+  // Only Product has a status column, so the filter is silently ignored for
+  // the other types instead of producing an invalid where-clause.
+  const statusWhere =
+    resourceType === "product" && (PRODUCT_STATUSES as readonly string[]).includes(statusFilter)
+      ? { status: statusFilter }
+      : {};
+  const where = { shop, ...filter, ...statusWhere };
+
+  const total = await countByType(db, resourceType, where);
+  const totalPages = Math.max(1, Math.ceil(total / MANUAL_PAGE_SIZE));
+  const page = Math.min(Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1), totalPages);
+  const empty = { hits: [], total, page, pageSize: MANUAL_PAGE_SIZE };
+  if (total === 0) return empty;
+
   const common = {
-    where: { shop, ...filter },
-    orderBy: { title: "asc" as const },
-    take: MANUAL_SEARCH_LIMIT,
+    where,
+    // Ties on title would otherwise be free to reorder between two queries and
+    // let a row appear on both page 1 and page 2 (or on neither) — id is the
+    // stable tie-breaker.
+    orderBy: [{ title: "asc" as const }, { id: "asc" as const }],
+    skip: (page - 1) * MANUAL_PAGE_SIZE,
+    take: MANUAL_PAGE_SIZE,
   };
 
-  let rows: { id: string; title: string; handle: string; imageUrl: string | null }[];
+  let rows: { id: string; title: string; handle: string; imageUrl: string | null; status: string | null }[];
   switch (resourceType) {
     case "product": {
       const found = await db.product.findMany({
         ...common,
-        select: { id: true, title: true, handle: true, featuredImageUrl: true },
+        select: { id: true, title: true, handle: true, featuredImageUrl: true, status: true },
       });
-      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.featuredImageUrl }));
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.featuredImageUrl, status: r.status }));
       break;
     }
     case "collection": {
@@ -394,7 +439,7 @@ export async function searchExclusionCandidates(
         ...common,
         select: { id: true, title: true, handle: true, imageUrl: true },
       });
-      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl }));
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl, status: null }));
       break;
     }
     case "page": {
@@ -402,7 +447,7 @@ export async function searchExclusionCandidates(
         ...common,
         select: { id: true, title: true, handle: true },
       });
-      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: null }));
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: null, status: null }));
       break;
     }
     case "article": {
@@ -410,13 +455,13 @@ export async function searchExclusionCandidates(
         ...common,
         select: { id: true, title: true, handle: true, imageUrl: true },
       });
-      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl }));
+      rows = found.map((r) => ({ id: r.id, title: r.title, handle: r.handle, imageUrl: r.imageUrl, status: null }));
       break;
     }
     default:
-      return [];
+      return empty;
   }
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return empty;
 
   const existing = await db.seoSitemapExclusion.findMany({
     where: { shop, resourceType, resourceId: { in: rows.map((r) => r.id) } },
@@ -424,15 +469,40 @@ export async function searchExclusionCandidates(
   });
   const statusById = new Map(existing.map((e) => [e.resourceId, e.status]));
 
-  return rows.map((r) => ({
-    resourceType,
-    resourceId: r.id,
-    title: r.title,
-    handle: r.handle,
-    existingStatus: statusById.get(r.id) ?? null,
-    caution: isLikelyPolicyPage(resourceType, r.handle, r.title),
-    imageUrl: r.imageUrl,
-  }));
+  return {
+    hits: rows.map((r) => ({
+      resourceType,
+      resourceId: r.id,
+      title: r.title,
+      handle: r.handle,
+      existingStatus: statusById.get(r.id) ?? null,
+      caution: isLikelyPolicyPage(resourceType, r.handle, r.title),
+      imageUrl: r.imageUrl,
+      status: r.status,
+    })),
+    total,
+    page,
+    pageSize: MANUAL_PAGE_SIZE,
+  };
+}
+
+async function countByType(
+  db: PrismaClient,
+  resourceType: SitemapExclusionResourceType,
+  where: object,
+): Promise<number> {
+  switch (resourceType) {
+    case "product":
+      return db.product.count({ where });
+    case "collection":
+      return db.collection.count({ where });
+    case "page":
+      return db.page.count({ where });
+    case "article":
+      return db.article.count({ where });
+    default:
+      return 0;
+  }
 }
 
 /**

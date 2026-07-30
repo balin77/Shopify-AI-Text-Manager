@@ -26,9 +26,9 @@ import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
 import {
   Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List,
-  Collapsible, TextField, Thumbnail, Tooltip, Icon,
+  Collapsible, TextField, Thumbnail, Tooltip, Icon, Select,
 } from "@shopify/polaris";
-import { EditIcon, ImageIcon, SearchIcon } from "@shopify/polaris-icons";
+import { EditIcon, ImageIcon, SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { SubNavBar } from "../components/nav/SubNavBar";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -67,6 +67,9 @@ const TYPE_PATH: Record<SitemapExclusionResourceType, string> = {
  *  EXCLUDABLE_RESOURCE_TYPES — the component must not pull sitemap.service.ts
  *  (and with it cheerio) into the client bundle. */
 const MANUAL_TYPE_OPTIONS: SitemapExclusionResourceType[] = ["product", "collection", "page", "article"];
+
+/** Mirrors the service's PRODUCT_STATUSES — same client-bundle reason as above. */
+const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "ARCHIVED"];
 
 /** Emoji markers, matching how SubNavBar carries icons elsewhere. */
 const TYPE_ICON: Record<SitemapExclusionResourceType, string> = {
@@ -178,10 +181,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "search") {
     const resourceType = parseResourceType(getFormString(formData, "resourceType"));
     if (!resourceType) return json({ success: false, error: "Unknown resourceType" }, { status: 400 });
-    const hits = await searchExclusionCandidates(db, shop, resourceType, getFormString(formData, "query"));
+    const requestedPage = Number.parseInt(getFormString(formData, "page") || "1", 10);
+    const result = await searchExclusionCandidates(
+      db,
+      shop,
+      resourceType,
+      getFormString(formData, "query"),
+      requestedPage,
+      getFormString(formData, "statusFilter") || "all",
+    );
     // Echo the type back so the client can discard a response that arrived
     // after the user already switched tabs.
-    return json({ success: true, resourceType, hits });
+    return json({ success: true, resourceType, ...result });
   }
 
   // Exclude an arbitrary resource: create (or reuse) the row, then run it
@@ -235,7 +246,36 @@ export default function SeoSitemap() {
   // Manual picker
   const [manualType, setManualType] = useState<SitemapExclusionResourceType>("product");
   const [manualQuery, setManualQuery] = useState("");
-  const searchFetcher = useFetcher<{ success: boolean; resourceType?: string; hits?: ExclusionSearchHit[] }>();
+  const [manualPage, setManualPage] = useState(1);
+  const [manualStatus, setManualStatus] = useState<string>("all");
+  const searchFetcher = useFetcher<{
+    success: boolean;
+    resourceType?: string;
+    hits?: ExclusionSearchHit[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
+  }>();
+
+  // Switching type or editing the filter must go back to page 1 — page 7 of
+  // the old result set is meaningless for the new one. Both setters run in the
+  // same handler, so React batches them into ONE render and the search effect
+  // fires once with the new type/query AND page 1, not twice.
+  const changeManualType = (next: SitemapExclusionResourceType) => {
+    setManualType(next);
+    setManualPage(1);
+    // Only products have a status; carrying a stale "DRAFT" into the pages tab
+    // would silently look like a filter that does nothing.
+    if (next !== "product") setManualStatus("all");
+  };
+  const changeManualQuery = (next: string) => {
+    setManualQuery(next);
+    setManualPage(1);
+  };
+  const changeManualStatus = (next: string) => {
+    setManualStatus(next);
+    setManualPage(1);
+  };
 
   useEffect(() => {
     if (rowFetcher.state !== "idle" || !rowFetcher.data) return;
@@ -284,6 +324,8 @@ export default function SeoSitemap() {
       formData.append("actionType", "search");
       formData.append("resourceType", manualType);
       formData.append("query", manualQuery);
+      formData.append("page", String(manualPage));
+      formData.append("statusFilter", manualStatus);
       searchRef.current.submit(formData, { method: "post" });
     };
     if (!manualQuery) {
@@ -292,15 +334,23 @@ export default function SeoSitemap() {
     }
     const timer = setTimeout(send, 300);
     return () => clearTimeout(timer);
-  }, [manualType, manualQuery, pickerActive]);
+  }, [manualType, manualQuery, manualPage, manualStatus, pickerActive]);
 
   // Results only count while they belong to the active tab — the fetcher keeps
   // the previous payload during the next request, which would otherwise show
   // products under the "Kollektionen" tab for a moment. null = still loading.
-  const hits =
-    searchFetcher.data?.hits && searchFetcher.data.resourceType === manualType
-      ? searchFetcher.data.hits
-      : null;
+  const searchData =
+    searchFetcher.data?.hits && searchFetcher.data.resourceType === manualType ? searchFetcher.data : null;
+  const hits = searchData?.hits ?? null;
+  // Paging reads the SERVER's page, not local state: the service clamps an
+  // out-of-range request, and showing the clamped value is what keeps the
+  // controls honest after a filter narrows the result set.
+  const manualTotal = searchData?.total ?? 0;
+  const manualPageSize = searchData?.pageSize ?? 20;
+  const serverPage = searchData?.page ?? 1;
+  const manualTotalPages = Math.max(1, Math.ceil(manualTotal / manualPageSize));
+  const firstOnPage = manualTotal === 0 ? 0 : (serverPage - 1) * manualPageSize + 1;
+  const lastOnPage = Math.min(serverPage * manualPageSize, manualTotal);
 
   // A successful exclude must refresh the picker too, not just the lists
   // above — otherwise the row keeps offering "Ausschließen" for something
@@ -312,6 +362,8 @@ export default function SeoSitemap() {
     formData.append("actionType", "search");
     formData.append("resourceType", manualType);
     formData.append("query", manualQuery);
+    formData.append("page", String(manualPage));
+    formData.append("statusFilter", manualStatus);
     searchRef.current.submit(formData, { method: "post" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowFetcher.state, lastActionData]);
@@ -516,20 +568,42 @@ export default function SeoSitemap() {
             ariaLabel={c.manualTypeLabel}
             items={MANUAL_TYPE_OPTIONS.map((v) => ({ id: v, label: typeLabel(v), icon: TYPE_ICON[v] }))}
             activeId={manualType}
-            onSelect={(item) => setManualType(item.id as SitemapExclusionResourceType)}
+            onSelect={(item) => changeManualType(item.id as SitemapExclusionResourceType)}
           />
 
-          <TextField
-            label={c.manualSearchLabel}
-            labelHidden
-            value={manualQuery}
-            onChange={setManualQuery}
-            placeholder={c.manualSearchPlaceholder}
-            autoComplete="off"
-            clearButton
-            onClearButtonClick={() => setManualQuery("")}
-            prefix={<Icon source={SearchIcon} tone="subdued" />}
-          />
+          {/* Search + status filter share one row. The field is deliberately
+              not full-width — the filter sits beside it, the way the content
+              list pairs its search with a filter control. */}
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <div style={{ flex: "1 1 220px", minWidth: 200, maxWidth: 380 }}>
+              <TextField
+                label={c.manualSearchLabel}
+                labelHidden
+                value={manualQuery}
+                onChange={changeManualQuery}
+                placeholder={c.manualSearchPlaceholder}
+                autoComplete="off"
+                clearButton
+                onClearButtonClick={() => changeManualQuery("")}
+                prefix={<Icon source={SearchIcon} tone="subdued" />}
+              />
+            </div>
+            {/* Products only — no other cached model has a status column. */}
+            {manualType === "product" && (
+              <div style={{ minWidth: 170 }}>
+                <Select
+                  label={c.statusFilterLabel}
+                  labelHidden
+                  options={[
+                    { label: c.statusFilterAll, value: "all" },
+                    ...PRODUCT_STATUS_OPTIONS.map((v) => ({ label: c[`productStatus_${v}`] || v, value: v })),
+                  ]}
+                  value={manualStatus}
+                  onChange={changeManualStatus}
+                />
+              </div>
+            )}
+          </InlineStack>
 
           {/* `hits` is only rendered when it belongs to the active tab —
               otherwise switching types would briefly show the previous type's
@@ -558,6 +632,11 @@ export default function SeoSitemap() {
                       <BlockStack gap="050">
                         <InlineStack gap="150" blockAlign="center">
                           <Text as="span" variant="bodyMd" fontWeight="medium">{hit.title}</Text>
+                          {hit.status && (
+                            <Badge tone={hit.status === "ACTIVE" ? "success" : "info"}>
+                              {c[`productStatus_${hit.status}`] || hit.status}
+                            </Badge>
+                          )}
                           {hit.caution && <Badge tone="warning">{c.cautionBadge}</Badge>}
                           {hit.existingStatus === "applied" && (
                             <Badge tone="success">{statusLabel("applied")}</Badge>
@@ -593,6 +672,32 @@ export default function SeoSitemap() {
                 </div>
               ))}
             </BlockStack>
+          )}
+
+          {manualTotalPages > 1 && (
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="p" variant="bodySm" tone="subdued">
+                {c.paginationRange
+                  .replace("{start}", String(firstOnPage))
+                  .replace("{end}", String(lastOnPage))
+                  .replace("{total}", String(manualTotal))}
+              </Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Button
+                  icon={ChevronLeftIcon}
+                  accessibilityLabel={c.paginationPrevious}
+                  disabled={serverPage <= 1 || searchFetcher.state !== "idle"}
+                  onClick={() => setManualPage(serverPage - 1)}
+                />
+                <Text as="span" variant="bodySm">{`${serverPage} / ${manualTotalPages}`}</Text>
+                <Button
+                  icon={ChevronRightIcon}
+                  accessibilityLabel={c.paginationNext}
+                  disabled={serverPage >= manualTotalPages || searchFetcher.state !== "idle"}
+                  onClick={() => setManualPage(serverPage + 1)}
+                />
+              </InlineStack>
+            </InlineStack>
           )}
         </BlockStack>
       </Card>

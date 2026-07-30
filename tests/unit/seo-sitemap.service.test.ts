@@ -247,15 +247,18 @@ function makeManualDb(opts: {
   const db: any = {
     product: {
       findMany: async () => opts.products ?? [],
+      count: async () => (opts.products ?? []).length,
       findFirst: async ({ where }: any) => (opts.products ?? []).find((p) => p.id === where.id) ?? null,
     },
     article: {
       findMany: async () => opts.articles ?? [],
+      count: async () => (opts.articles ?? []).length,
       findFirst: async ({ where }: any) => (opts.articles ?? []).find((a) => a.id === where.id) ?? null,
     },
-    collection: { findMany: async () => [], findFirst: async () => null },
+    collection: { findMany: async () => [], count: async () => 0, findFirst: async () => null },
     page: {
       findMany: async () => opts.pages ?? [],
+      count: async () => (opts.pages ?? []).length,
       findFirst: async ({ where }: any) => (opts.pages ?? []).find((p) => p.id === where.id) ?? null,
     },
     seoSitemapExclusion: {
@@ -282,7 +285,7 @@ describe("searchExclusionCandidates", () => {
       ],
       exclusions: [{ resourceType: "product", resourceId: "gid-2", status: "applied" }],
     });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
     expect(hits.map((h) => h.existingStatus)).toEqual([null, "applied"]);
   });
 
@@ -290,13 +293,13 @@ describe("searchExclusionCandidates", () => {
     const { db } = makeManualDb({
       products: [{ id: "gid-1", title: "Widget", handle: "widget" }],
     });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
     expect(hits[0].caution).toBe(false);
   });
 
   it("supports articles", async () => {
     const { db } = makeManualDb({ articles: [{ id: "gid-a1", title: "Post", handle: "post" }] });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "post");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "post");
     expect(hits).toHaveLength(1);
     expect(hits[0].resourceType).toBe("article");
   });
@@ -308,7 +311,7 @@ describe("searchExclusionCandidates", () => {
     const { db } = makeManualDb({
       products: [{ id: "gid-1", title: "A", handle: "a", featuredImageUrl: "https://cdn/x.jpg" }],
     });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
     expect(hits[0].imageUrl).toBe("https://cdn/x.jpg");
   });
 
@@ -316,14 +319,110 @@ describe("searchExclusionCandidates", () => {
     const { db } = makeManualDb({
       articles: [{ id: "gid-a1", title: "Post", handle: "post", imageUrl: "https://cdn/a.jpg" }],
     });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "");
     expect(hits[0].imageUrl).toBe("https://cdn/a.jpg");
   });
 
   it("yields imageUrl null for pages, which carry no image at all", async () => {
     const { db } = makeManualDb({ pages: [{ id: "gid-pg1", title: "About", handle: "about" }] });
-    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "page", "");
+    const { hits } = await searchExclusionCandidates(db, "shop.myshopify.com", "page", "");
     expect(hits[0].imageUrl).toBeNull();
+  });
+});
+
+/** Product-only DB stub that actually honours where.status / skip / take, so
+ *  the paging + filter logic is exercised rather than stubbed away. */
+function makePagingDb(products: { id: string; title: string; handle: string; status: string }[]) {
+  const match = (where: any) =>
+    products.filter((p) => (where?.status ? p.status === where.status : true));
+  return {
+    product: {
+      count: async ({ where }: any) => match(where).length,
+      findMany: async ({ where, skip = 0, take }: any) => match(where).slice(skip, skip + (take ?? 999)),
+      findFirst: async () => null,
+    },
+    collection: { findMany: async () => [], count: async () => 0, findFirst: async () => null },
+    page: { findMany: async () => [], count: async () => 0, findFirst: async () => null },
+    article: { findMany: async () => [], count: async () => 0, findFirst: async () => null },
+    seoSitemapExclusion: { findMany: async () => [], findFirst: async () => null, create: async () => ({}) },
+  } as any;
+}
+
+describe("searchExclusionCandidates — paging", () => {
+  const many = Array.from({ length: 45 }, (_, i) => ({
+    id: `gid-${i}`,
+    title: `P${i}`,
+    handle: `p${i}`,
+    status: "ACTIVE",
+  }));
+
+  it("returns one page and the full total, not the page length", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(many), "s", "product", "", 1);
+    expect(res.hits).toHaveLength(20);
+    expect(res.total).toBe(45);
+    expect(res.page).toBe(1);
+  });
+
+  it("offsets to the requested page", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(many), "s", "product", "", 2);
+    expect(res.hits[0].resourceId).toBe("gid-20");
+  });
+
+  it("returns the short last page", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(many), "s", "product", "", 3);
+    expect(res.hits).toHaveLength(5);
+  });
+
+  it("clamps an out-of-range page to the last one instead of returning nothing", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(many), "s", "product", "", 99);
+    expect(res.page).toBe(3);
+    expect(res.hits).toHaveLength(5);
+  });
+
+  it("clamps a zero/negative page up to 1", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(many), "s", "product", "", 0);
+    expect(res.page).toBe(1);
+  });
+
+  it("reports page 1 with an empty list when nothing matches", async () => {
+    const res = await searchExclusionCandidates(makePagingDb([]), "s", "product", "", 1);
+    expect(res).toMatchObject({ hits: [], total: 0, page: 1 });
+  });
+});
+
+describe("searchExclusionCandidates — status filter", () => {
+  const mixed = [
+    { id: "a", title: "A", handle: "a", status: "ACTIVE" },
+    { id: "d", title: "D", handle: "d", status: "DRAFT" },
+    { id: "r", title: "R", handle: "r", status: "ARCHIVED" },
+  ];
+
+  it("narrows to one status and counts only those", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(mixed), "s", "product", "", 1, "DRAFT");
+    expect(res.total).toBe(1);
+    expect(res.hits[0].resourceId).toBe("d");
+  });
+
+  it("'all' does not filter", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(mixed), "s", "product", "", 1, "all");
+    expect(res.total).toBe(3);
+  });
+
+  it("ignores a bogus status rather than returning nothing", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(mixed), "s", "product", "", 1, "NOPE");
+    expect(res.total).toBe(3);
+  });
+
+  it("carries the product status through to the hit", async () => {
+    const res = await searchExclusionCandidates(makePagingDb(mixed), "s", "product", "", 1, "ACTIVE");
+    expect(res.hits[0].status).toBe("ACTIVE");
+  });
+
+  it("is ignored for types that have no status column", async () => {
+    const { db } = makeManualDb({ pages: [{ id: "gid-pg1", title: "About", handle: "about" }] });
+    const res = await searchExclusionCandidates(db, "s", "page", "", 1, "DRAFT");
+    expect(res.hits).toHaveLength(1);
+    expect(res.hits[0].status).toBeNull();
   });
 });
 
