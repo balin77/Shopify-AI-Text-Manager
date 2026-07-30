@@ -20,11 +20,10 @@ import { logger } from "~/utils/logger.server";
 import { meetsPlan } from "~/utils/planUtils";
 import type { Plan } from "~/config/plans";
 import {
-  analyzeAeo,
+  auditLiveRobots,
   adviseableRules,
   buildRobotsAdvicePrompt,
   parseRobotsAdviceResponse,
-  getShopIdentity,
   ROBOTS_ADVICE_BATCH,
 } from "~/services/seo/aeo.service";
 
@@ -36,22 +35,15 @@ export async function handleSeoRobotsAdvice(ctx: AIActionContext): Promise<Respo
     return json({ success: false, error: "This feature requires the Basic plan or higher." }, { status: 403 });
   }
 
-  // Re-audit server-side rather than trusting a client-supplied rule list: the
-  // paths coming back drive a theme write later on.
-  const { name, domain } = await getShopIdentity(admin, session.shop);
-  const analysis = await analyzeAeo(admin, session.shop, {
-    db,
-    shopName: name,
-    domain,
-    // Irrelevant here (we only read the robots half), but passed through
-    // faithfully rather than guessed.
-    autoUpdate: (settings as { llmsTxtAutoUpdate?: boolean } | null)?.llmsTxtAutoUpdate ?? true,
-  });
-  if (!analysis.robotsAuditAvailable) {
+  // Re-audit server-side rather than trusting a client-supplied rule list.
+  // Only the robots half — `analyzeAeo` would also rebuild llms.txt and read
+  // the theme file, three Admin API calls for data discarded here.
+  const audit = await auditLiveRobots(session.shop);
+  if (!audit.available) {
     return json({ success: false, error: "robots_unavailable" }, { status: 400 });
   }
 
-  const rules = adviseableRules(analysis.crawlerGroups).slice(0, ROBOTS_ADVICE_BATCH);
+  const rules = adviseableRules(audit.crawlerGroups).slice(0, ROBOTS_ADVICE_BATCH);
   if (rules.length === 0) {
     return json({ success: true, advice: [], total: 0 });
   }

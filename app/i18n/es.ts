@@ -2360,6 +2360,7 @@ export const es: Translation = {
       aiFixApplyHint: "Generamos un \"templates/robots.txt.liquid\" gestionado que reproduce sin cambios el robots.txt por defecto de Shopify y omite solo las líneas Disallow seleccionadas. Después volvemos a leer tu robots.txt en vivo y deshacemos el cambio automáticamente si algo más se ha roto.",
       aiFixFailed: "La revisión con IA falló. Inténtalo de nuevo más tarde.",
       robotsRulesRemoved: "Las reglas seleccionadas se eliminaron y tu robots.txt en vivo se verificó correctamente.",
+      robotsNotRemovable: "Al menos una de las reglas seleccionadas no se puede eliminar: es probable que tu robots.txt haya cambiado desde la comprobación. Vuelve a ejecutar la revisión con IA.",
       robotsFileCustomized: "Tu \"templates/robots.txt.liquid\" se ha editado a mano. No lo sobrescribimos, porque perderías tus propias personalizaciones. Elimina las reglas directamente en el editor de código del tema.",
       robotsVerifyFailed: "No se pudo verificar el cambio. Revisa tu robots.txt en el editor de código del tema.",
       robotsVerifyRolledBack: "Tras el cambio, tu robots.txt ya no parecía correcto: restauramos automáticamente la versión anterior. No se modificó nada.",

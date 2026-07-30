@@ -14,9 +14,16 @@
  *   - runs every TICK_INTERVAL_MS (default hourly) — a cheap "anything due?"
  *     query, not a per-shop timer.
  *   - a shop is "due" once llmsTxtLastAutoRunAt is null or older than
- *     STALE_AFTER_MS (default 24h). That column is also what makes the sweep
- *     idempotent: a second Railway replica, or a restart that re-runs the
- *     initial tick, re-reads the stamps and finds nothing due.
+ *     STALE_AFTER_MS (default 24h). That column also keeps a restart cheap: the
+ *     initial tick re-reads the stamps and finds nothing due.
+ *
+ *     It is a guard, NOT a lock. Two replicas whose ticks overlap can select
+ *     the same batch before either stamps, and both would refresh those shops.
+ *     The consequence is a duplicate theme read plus at most a duplicate write
+ *     of identical content, not corruption — refreshLlmsTxtIfStale compares
+ *     before writing and verifies the echo. If that ever needs to be airtight,
+ *     an `updateMany({ where: { shop, llmsTxtLastAutoRunAt: <observed> } })`
+ *     claim-then-work would provide it.
  *   - at most MAX_SHOPS_PER_TICK shops per tick, to spread Admin-API and DB
  *     load rather than sweeping every shop in one burst.
  *   - shops that switched the toggle off, and shops below the "basic" plan the
@@ -202,8 +209,11 @@ export class LlmsAutoRefreshService {
         OR: [{ llmsTxtLastAutoRunAt: null }, { llmsTxtLastAutoRunAt: { lt: cutoff } }],
       },
       select: { shop: true, subscriptionPlan: true, llmsTxtAutoUpdate: true },
-      // Longest-waiting first; nulls are picked up by the OR above.
-      orderBy: { llmsTxtLastAutoRunAt: "asc" },
+      // Longest-waiting first — and never-run shops ARE the longest waiting, so
+      // nulls must sort first. Postgres defaults `ASC` to NULLS LAST, which
+      // parked every new shop behind the stale-but-stamped ones and starved
+      // them whenever the due set exceeded MAX_SHOPS_PER_TICK.
+      orderBy: { llmsTxtLastAutoRunAt: { sort: "asc", nulls: "first" } },
       take: MAX_SHOPS_PER_TICK,
     });
   }

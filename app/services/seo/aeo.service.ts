@@ -18,8 +18,10 @@
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import { meetsPlan } from "../../utils/planUtils";
+import type { Plan } from "../../config/plans";
 import { GET_THEMES, GET_THEME_FILES } from "../../graphql/content.queries";
-import { UPSERT_THEME_FILES } from "../../graphql/content.mutations";
+import { UPSERT_THEME_FILES, DELETE_THEME_FILES } from "../../graphql/content.mutations";
 
 /**
  * AI crawler user-agents to audit in robots.txt (2026). Mix of training and
@@ -260,12 +262,36 @@ export type RobotsRuleReason =
  * `/collections/*sort_by*` is faceting, not a blocked collection, and
  * `/products/*-[a-f0-9]…-remote` is a generated duplicate, not a product).
  */
+/**
+ * Everything before the first meaningful segment: an optional leading star and
+ * an optional shop-scope segment (a star, `:id` or a numeric shop id) that
+ * Shopify prefixes some default rules with, as in `/:id/checkouts`.
+ *
+ * Operational and search patterns MUST be anchored with this. Matching a bare
+ * `(^|\/)keyword` also matches the LAST segment, which quietly filed real
+ * storefront pages as technical: `/pages/services` as an internal endpoint,
+ * `/collections/orders` as a customer-account path. Those are false negatives —
+ * the app would show a green "everything fine" while a citable page was hidden.
+ */
+const PATH_PREFIX = String.raw`^\*?\/(?:(?:\*|:id|\d+)\/)?`;
+
 const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: RobotsRuleReason }> = [
   // Operational — transactional or internal, never citable.
-  { re: /(^|\/)(checkouts?|carts?|thank_you)(\/|$|\?|\*)/, impact: "operational", reason: "checkout" },
-  { re: /(^|\/)password(\/|$|\?|\*)/, impact: "operational", reason: "password" },
   {
-    re: /(^|\/)(account|accounts|orders?|customer_authentication|challenge|login|logout)(\/|$|\?|\*)/,
+    re: new RegExp(PATH_PREFIX + String.raw`(?:checkouts?|carts?|thank_you)(\/|$|\?|\*)`),
+    impact: "operational",
+    reason: "checkout",
+  },
+  {
+    re: new RegExp(PATH_PREFIX + String.raw`password(\/|$|\?|\*)`),
+    impact: "operational",
+    reason: "password",
+  },
+  {
+    re: new RegExp(
+      PATH_PREFIX +
+        String.raw`(?:account|accounts|orders?|customer_authentication|challenge|login|logout)(\/|$|\?|\*)`,
+    ),
     impact: "operational",
     reason: "account",
   },
@@ -274,7 +300,10 @@ const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: Robot
   // Downloads) — app-owned endpoints, never storefront content.
   { re: /^\/a\//, impact: "operational", reason: "appProxy" },
   {
-    re: /(^|\/)(apps|services|tools|recommendations|cdn|wpm|\.well-known|apple-app-site-association|localization|browsing_context_suggestions|sf_private_access_tokens|policies\.json)(\/|$|\?|\.|\*)/,
+    re: new RegExp(
+      PATH_PREFIX +
+        String.raw`(?:apps|services|tools|recommendations|cdn|wpm|\.well-known|apple-app-site-association|localization|browsing_context_suggestions|sf_private_access_tokens|policies\.json)(\/|$|\?|\.|\*)`,
+    ),
     impact: "operational",
     reason: "internal",
   },
@@ -289,17 +318,29 @@ const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: Robot
   // A literal `[a-f0-9]` character class only ever appears in Shopify's
   // generated rules for hash-suffixed duplicate URLs (`…-<hash>-remote`).
   { re: /\[a-f0-9\]/i, impact: "duplicate", reason: "hashedDuplicate" },
-  // `filter` only counts as faceting next to a wildcard/separator, so a real
-  // collection like `/collections/water-filters` is not swallowed by it.
+  // `filter` only counts as faceting next to a wildcard/query separator or as
+  // Shopify's `filter.` param prefix — `_` and `.` in the leading class made
+  // `/pages/filter_guide` look like a facet.
   {
-    re: /(sort_by|constraint|%2b|\+|[*.&?_=]filter|filter[*.&?_=])/i,
+    re: /(sort_by|constraint|%2b|\+|[*&?]filter|filter[*&?=]|filter\.)/i,
     impact: "duplicate",
     reason: "faceted",
   },
-  { re: /(^|\/)search(\/|$|\?|\*)|[?&*]q=/, impact: "duplicate", reason: "search" },
+  {
+    re: new RegExp(`(?:${PATH_PREFIX}search(\\/|$|\\?|\\*))|[?&*]q=`),
+    impact: "duplicate",
+    reason: "search",
+  },
   { re: /(page=|\/page\/)/, impact: "duplicate", reason: "pagination" },
   { re: /^\/\*\?\*?$/, impact: "duplicate", reason: "queryParams" },
 ];
+
+/**
+ * Values that close the whole site. `Disallow: *` is a path pattern matching
+ * every URL per RFC 9309 — treating only `/` as a full block reported it as a
+ * harmless "standard exclusion" and, worse, offered it as a prunable path.
+ */
+const SITEWIDE_DISALLOW = new Set(["/", "/*", "*"]);
 
 /** Storefront routes whose content is exactly what an AI answer would cite. */
 const STOREFRONT_RE = /^\/(?:\*\/)?(?:products|collections|blogs|pages|articles|policies)(\/|$|\?|\*)/;
@@ -319,7 +360,7 @@ const TECHNICAL_PATTERN_RE = /[*?&=[\]]/;
 export function classifyDisallowPath(path: string): RobotsRuleAssessment {
   const raw = path.trim();
   const p = raw.toLowerCase();
-  if (p === "/" || p === "/*") return { path: raw, impact: "content", reason: "sitewide" };
+  if (SITEWIDE_DISALLOW.has(p)) return { path: raw, impact: "content", reason: "sitewide" };
   for (const { re, impact, reason } of RULE_PATTERNS) {
     if (re.test(p)) return { path: raw, impact, reason };
   }
@@ -385,8 +426,12 @@ export function auditRobotsTxt(robotsTxt: string): RobotsCrawlerStatus[] {
       };
     }
 
-    const blocksRoot = group.rules.some((r) => r.type === "disallow" && r.path === "/");
-    const allowsRoot = group.rules.some((r) => r.type === "allow" && r.path === "/");
+    const blocksRoot = group.rules.some(
+      (r) => r.type === "disallow" && SITEWIDE_DISALLOW.has(r.path.trim().toLowerCase()),
+    );
+    const allowsRoot = group.rules.some(
+      (r) => r.type === "allow" && SITEWIDE_DISALLOW.has(r.path.trim().toLowerCase()),
+    );
     const blocked = blocksRoot && !allowsRoot;
 
     // `Disallow:` with an empty value means "allow everything" per the spec —
@@ -483,10 +528,11 @@ export function isRemovableRobotsPath(path: string): boolean {
   if (!p.startsWith("/") && !p.startsWith("*")) return false;
   if (p.includes(ROBOTS_PATH_SEP) || p.includes('"') || p.includes("'")) return false;
   if (/[\r\n{}]/.test(p)) return false;
-  // Removing `/` would un-block a fully blocked crawler by deleting the block
-  // itself — that is a different (and much larger) decision than pruning a
-  // path, so it does not go through this path.
-  return p !== "/";
+  // Removing a site-wide Disallow would un-block a fully blocked crawler by
+  // deleting the block itself — a different (and much larger) decision than
+  // pruning a path, so it does not go through here. `*` and `/*` count too,
+  // not just `/`.
+  return !SITEWIDE_DISALLOW.has(p.toLowerCase());
 }
 
 /**
@@ -703,6 +749,22 @@ export async function getShopIdentity(
   }
 }
 
+export async function deleteThemeFile(
+  admin: AdminApiContext,
+  themeId: string,
+  filename: string,
+): Promise<boolean> {
+  try {
+    const res = await admin.graphql(DELETE_THEME_FILES, { variables: { themeId, files: [filename] } });
+    const json: any = await res.json();
+    const errs = json?.data?.themeFilesDelete?.userErrors ?? [];
+    const deleted = (json?.data?.themeFilesDelete?.deletedThemeFiles ?? []).map((f: any) => f?.filename);
+    return errs.length === 0 && deleted.includes(filename);
+  } catch {
+    return false;
+  }
+}
+
 // ── Feature gate ─────────────────────────────────────────────────────────────
 
 /**
@@ -755,16 +817,24 @@ export async function buildLlmsTxtForShop(
     // file that hands crawlers a list of URLs. Listing unlisted products there
     // would publish exactly the direct links the status exists to keep
     // unlisted — the same reasoning as index-now.service.ts.
+    // Ordered by handle, NOT by lastSyncedAt. That column is restamped on every
+    // webhook-driven resync, so editing any single product reshuffled the whole
+    // section and pushed the 50th item out of the file — the rebuilt content
+    // differed on every pass, and both refresh drivers wrote a new theme
+    // version for a file whose information barely changed. Ties on
+    // lastSyncedAt (batch syncs share a millisecond) additionally made the
+    // selected SET nondeterministic, which reported "stale" forever. Handle is
+    // unique and stable, so the file only changes when the catalog does.
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { title: true, handle: true, seoDescription: true, descriptionHtml: true },
-      orderBy: { lastSyncedAt: "desc" },
+      orderBy: { handle: "asc" },
       take: LLMS_MAX_PER_TYPE,
     }),
     db.collection.findMany({
       where: { shop },
       select: { title: true, handle: true },
-      orderBy: { lastSyncedAt: "desc" },
+      orderBy: { handle: "asc" },
       take: LLMS_MAX_PER_TYPE,
     }),
   ]);
@@ -854,9 +924,14 @@ export async function refreshLlmsTxtIfStale(
     // lookup per cycle and no Shopify calls at all.
     const settings = await db.aISettings.findUnique({
       where: { shop },
-      select: { llmsTxtAutoUpdate: true },
+      select: { llmsTxtAutoUpdate: true, subscriptionPlan: true },
     });
     if (settings && settings.llmsTxtAutoUpdate === false) return "opted_out";
+    // The AEO section is Basic+. Without this a shop that downgrades to Free
+    // keeps having its theme file rewritten on every session — the loader,
+    // action, AI handler and daily sweep all gate, this was the one path that
+    // didn't.
+    if (!meetsPlan((settings?.subscriptionPlan || "free") as Plan, "basic")) return "opted_out";
 
     // Stamp before doing the work, not after. This is what the daily sweep
     // (seo/llms-auto-refresh.service.ts) reads to decide a shop is handled, so
@@ -894,10 +969,18 @@ export type RobotsApplyError =
   | "theme_writes_disabled"
   | "no_theme"
   | "no_paths"
+  /** A requested path isn't one the live robots.txt offers as prunable. */
+  | "not_removable"
   | "file_customized"
   | "upsert_failed"
   | "verify_failed"
   | "verify_failed_rolled_back";
+
+/** How many times the served robots.txt is re-read before declaring failure. */
+const VERIFY_ATTEMPTS = 3;
+const VERIFY_RETRY_DELAY_MS = 1500;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface RobotsApplyResult {
   ok: boolean;
@@ -949,6 +1032,13 @@ export function robotsLooksSane(
   for (const p of beforeDisallows) {
     if (!afterDisallows.has(p) && !removed.has(p)) return false;
   }
+  // The removals must ACTUALLY have happened. Without this the checks above
+  // pass trivially for `after === before`, so an unchanged response — a stale
+  // CDN copy, or a Liquid file that rendered to the old output — was reported
+  // as a successful removal and the rollback never fired.
+  for (const p of removed) {
+    if (beforeDisallows.has(p) && afterDisallows.has(p)) return false;
+  }
   return true;
 }
 
@@ -971,10 +1061,25 @@ export async function applyRobotsRuleRemovals(
 ): Promise<RobotsApplyResult> {
   if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled" };
 
-  const removable = Array.from(new Set(paths.map((p) => p.trim()).filter(isRemovableRobotsPath)));
-  if (removable.length === 0) return { ok: false, error: "no_paths" };
+  const requested = Array.from(new Set(paths.map((p) => p.trim()).filter(isRemovableRobotsPath)));
+  if (requested.length === 0) return { ok: false, error: "no_paths" };
 
   try {
+    const before = await fetchLiveRobots(shop);
+    if (!before) return { ok: false, error: "verify_failed" };
+
+    // Re-derive what is actually prunable from the LIVE robots.txt instead of
+    // trusting the form. `isRemovableRobotsPath` is only a shape check, so
+    // without this a hand-crafted POST could strip `/admin`, `/checkout` or
+    // `/account` — paths the UI never offers. Same discipline the advice
+    // handler already applies; the write path is where it matters.
+    const allowed = new Set(
+      adviseableRules(groupCrawlerStatuses(auditRobotsTxt(before))).map((r) => r.path),
+    );
+    const removable = requested.filter((p) => allowed.has(p));
+    if (removable.length === 0) return { ok: false, error: "not_removable" };
+    if (removable.length !== requested.length) return { ok: false, error: "not_removable" };
+
     const themeId = await getMainThemeId(admin);
     if (!themeId) return { ok: false, error: "no_theme" };
 
@@ -983,9 +1088,6 @@ export async function applyRobotsRuleRemovals(
     if (previous !== null && parseManagedRobotsLiquid(previous) === null) {
       return { ok: false, error: "file_customized" };
     }
-
-    const before = await fetchLiveRobots(shop);
-    if (!before) return { ok: false, error: "verify_failed" };
 
     const { userErrors, upserted } = await upsertThemeFile(
       admin,
@@ -997,23 +1099,28 @@ export async function applyRobotsRuleRemovals(
       return { ok: false, error: "upsert_failed" };
     }
 
-    const after = await fetchLiveRobots(shop);
-    if (after && robotsLooksSane(before, after, removable)) {
-      return { ok: true, removed: removable };
+    // The served robots.txt does not update instantly, so an unchanged first
+    // read means "not propagated yet", not "broken" — retry before judging.
+    for (let attempt = 0; attempt < VERIFY_ATTEMPTS; attempt++) {
+      if (attempt > 0) await sleep(VERIFY_RETRY_DELAY_MS);
+      const after = await fetchLiveRobots(shop);
+      if (after && robotsLooksSane(before, after, removable)) {
+        return { ok: true, removed: removable };
+      }
     }
 
-    // Verification failed — put back exactly what was there. If there was no
-    // file at all we can't delete it here, so fall back to a managed file that
-    // removes nothing, which renders Shopify's defaults unchanged.
-    const rollback = previous ?? buildRobotsLiquid([]);
-    const restored = await upsertThemeFile(admin, themeId, ROBOTS_TEMPLATE_FILENAME, rollback);
-    return {
-      ok: false,
-      error:
-        restored.userErrors.length === 0 && restored.upserted.includes(ROBOTS_TEMPLATE_FILENAME)
-          ? "verify_failed_rolled_back"
-          : "verify_failed",
-    };
+    // Verification failed. Restore exactly what was there — and when there was
+    // no file, DELETE the one we just created. Rewriting our own generator with
+    // an empty removal list (the previous behaviour) reproduces the same
+    // possibly-malformed Liquid and leaves an app-owned template behind, while
+    // reporting "restored" to the merchant.
+    const rolledBack = previous
+      ? await upsertThemeFile(admin, themeId, ROBOTS_TEMPLATE_FILENAME, previous).then(
+          (r) => r.userErrors.length === 0 && r.upserted.includes(ROBOTS_TEMPLATE_FILENAME),
+        )
+      : await deleteThemeFile(admin, themeId, ROBOTS_TEMPLATE_FILENAME);
+
+    return { ok: false, error: rolledBack ? "verify_failed_rolled_back" : "verify_failed" };
   } catch {
     return { ok: false, error: "verify_failed" };
   }
@@ -1053,6 +1160,20 @@ export interface AeoAnalysis {
 
 /** Fetches involved in the AEO audit must not hang the route forever. */
 const FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Just the robots.txt half of the audit. Callers that only need the crawler
+ * groups (the AI advice handler) use this instead of `analyzeAeo`, which would
+ * additionally rebuild llms.txt and make three Admin API calls for data they
+ * throw away.
+ */
+export async function auditLiveRobots(
+  shop: string,
+): Promise<{ available: boolean; crawlerGroups: RobotsCrawlerGroup[] }> {
+  const txt = await fetchLiveRobots(shop);
+  if (txt === null) return { available: false, crawlerGroups: [] };
+  return { available: true, crawlerGroups: groupCrawlerStatuses(auditRobotsTxt(txt)) };
+}
 
 /**
  * Read-only AEO status: does llms.txt exist in the theme, and which AI crawlers

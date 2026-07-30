@@ -252,6 +252,37 @@ describe("auditRobotsTxt", () => {
       expect(classifyDisallowPath(path)).toEqual({ path, impact, reason });
     });
 
+    // Review finding: the operational/duplicate patterns matched ANY segment,
+    // so a storefront page whose last segment happened to be an operational
+    // keyword was filed as "technical" and shown with a green verdict. False
+    // negatives are the dangerous direction — these must stay content.
+    it.each([
+      "/pages/services",
+      "/pages/apps",
+      "/pages/localization",
+      "/pages/filter_guide",
+      "/collections/tools",
+      "/collections/orders",
+      "/collections/carts",
+      "/collections/challenge",
+      "/collections/recommendations",
+      "/collections/cdn",
+      "/blogs/account",
+    ])("keeps %s in the content bucket", (path) => {
+      expect(classifyDisallowPath(path).impact).toBe("content");
+    });
+
+    it("still anchors the real Shopify prefixed rules as operational", () => {
+      for (const [path, reason] of [
+        ["/:id/checkouts", "checkout"],
+        ["/84724678988/orders", "account"],
+        ["/*/recommendations/products", "internal"],
+        ["/*/orders", "account"],
+      ] as const) {
+        expect(classifyDisallowPath(path)).toMatchObject({ impact: "operational", reason });
+      }
+    });
+
     it("still treats a genuinely blocked collection as content", () => {
       // Guard against the loosened `filter` matcher swallowing real collections.
       expect(classifyDisallowPath("/collections/water-filters")).toMatchObject({
@@ -284,6 +315,22 @@ describe("auditRobotsTxt", () => {
       const s = gptbot("User-agent: GPTBot\nDisallow: /\n");
       expect(s.verdict).toBe("blocked");
       expect(s.contentRestricted).toBe(false);
+    });
+
+    // Review finding: only `/` counted as site-wide, so `Disallow: *` — which
+    // matches every URL per RFC 9309 — was reported green AND offered as a
+    // prunable path, i.e. the app would have unblocked a whole site through
+    // the "prune one path" flow.
+    it.each(["/", "/*", "*"])("treats Disallow: %s as a full block", (path) => {
+      const s = gptbot(`User-agent: *\nDisallow: ${path}\n`);
+      expect(s.blocked).toBe(true);
+      expect(s.verdict).toBe("blocked");
+      expect(isRemovableRobotsPath(path)).toBe(false);
+    });
+
+    it.each(["/", "/*", "*"])("never offers Disallow: %s for removal", (path) => {
+      const groups = groupCrawlerStatuses(auditRobotsTxt(`User-agent: *\nDisallow: ${path}\n`));
+      expect(adviseableRules(groups)).toEqual([]);
     });
   });
 });
@@ -417,6 +464,24 @@ describe("robotsLooksSane", () => {
   it("rejects a removal nobody asked for", () => {
     const after = "User-agent: *\n";
     expect(robotsLooksSane(before, after, ["/lookbook"])).toBe(false);
+  });
+
+  // Review finding: the other checks all pass trivially when nothing changed,
+  // so an unpropagated (or unrendered) robots.txt was reported as a successful
+  // removal and the rollback never fired.
+  it("rejects an unchanged robots.txt — the removal must have happened", () => {
+    expect(robotsLooksSane(before, before, ["/lookbook"])).toBe(false);
+  });
+
+  it("rejects a partial removal", () => {
+    const after = "User-agent: *\nDisallow: /lookbook\n";
+    expect(robotsLooksSane(before, after, ["/cart", "/lookbook"])).toBe(false);
+  });
+
+  it("accepts a path that was already absent alongside a real removal", () => {
+    // `/never-there` was never in the file, so it can't be "still present".
+    const after = "User-agent: *\nDisallow: /cart\n";
+    expect(robotsLooksSane(before, after, ["/lookbook", "/never-there"])).toBe(true);
   });
 });
 

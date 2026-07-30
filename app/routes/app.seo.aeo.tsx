@@ -371,7 +371,11 @@ export default function SeoAeo() {
     setAdviceError(null);
     try {
       const fd = new FormData();
-      fd.set("actionType", "seoRobotsAdvice");
+      // /api/ai reads the action from `action` (NOT `actionType`, which is this
+      // route's own convention) and rejects anything without a contentType in
+      // VALID_CONTENT_TYPES before it reaches the switch. Mirrors seoCrawl.
+      fd.set("action", "seoRobotsAdvice");
+      fd.set("contentType", "products");
       const res = await fetch("/api/ai", { method: "POST", body: fd });
       const j = await res.json();
       if (!j?.success) {
@@ -404,6 +408,7 @@ export default function SeoAeo() {
       gated: a.errorGeneric,
       theme_writes_disabled: a.themeWritesDisabled,
       no_paths: a.errorGeneric,
+      not_removable: a.robotsNotRemovable,
       file_customized: a.robotsFileCustomized,
       verify_failed: a.robotsVerifyFailed,
       verify_failed_rolled_back: a.robotsVerifyRolledBack,
@@ -416,6 +421,7 @@ export default function SeoAeo() {
     if (robotsFetcher.data.ok) return { tone: "success" as const, msg: a.robotsRulesRemoved };
     const map: Record<string, string> = {
       theme_writes_disabled: a.themeWritesDisabled,
+      not_removable: a.robotsNotRemovable,
       file_customized: a.robotsFileCustomized,
       verify_failed: a.robotsVerifyFailed,
       verify_failed_rolled_back: a.robotsVerifyRolledBack,

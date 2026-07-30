@@ -2360,6 +2360,7 @@ export const de = {
       aiFixApplyHint: "Wir erzeugen dafür eine verwaltete „templates/robots.txt.liquid“, die Shopifys Standard-robots.txt unverändert übernimmt und nur die ausgewählten Disallow-Zeilen weglässt. Danach lesen wir deine live ausgelieferte robots.txt erneut und machen die Änderung automatisch rückgängig, falls dabei etwas anderes kaputtgegangen ist.",
       aiFixFailed: "Die KI-Prüfung ist fehlgeschlagen. Versuche es später erneut.",
       robotsRulesRemoved: "Die ausgewählten Regeln wurden entfernt und deine live ausgelieferte robots.txt wurde erfolgreich geprüft.",
+      robotsNotRemovable: "Mindestens eine der ausgewählten Regeln lässt sich nicht entfernen — vermutlich hat sich deine robots.txt seit der Prüfung geändert. Führe die KI-Prüfung erneut aus.",
       robotsFileCustomized: "Deine „templates/robots.txt.liquid“ wurde von Hand angepasst. Wir überschreiben sie nicht — sonst wären deine eigenen Anpassungen weg. Entferne die Regeln bitte direkt im Theme-Code-Editor.",
       robotsVerifyFailed: "Die Änderung konnte nicht überprüft werden. Bitte kontrolliere deine robots.txt im Theme-Code-Editor.",
       robotsVerifyRolledBack: "Nach der Änderung sah deine robots.txt nicht mehr korrekt aus — wir haben den vorherigen Stand automatisch wiederhergestellt. Es wurde nichts verändert.",

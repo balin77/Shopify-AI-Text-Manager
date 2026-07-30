@@ -180,6 +180,25 @@ export const UPDATE_SHOP_POLICY = `#graphql
  *       Do NOT remove it — it will be activated once the exemption is granted.
  *       See ENABLE_THEME_PRIMARY_EDIT in app/config/constants.ts for details.
  */
+/**
+ * Delete theme files. Needed to undo a file the app CREATED — an upsert can't
+ * express "put it back to not existing", and leaving a broken generated
+ * template behind is worse than never having written it.
+ */
+export const DELETE_THEME_FILES = `#graphql
+  mutation deleteThemeFiles($themeId: ID!, $files: [String!]!) {
+    themeFilesDelete(themeId: $themeId, files: $files) {
+      deletedThemeFiles {
+        filename
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 export const UPSERT_THEME_FILES = `#graphql
   mutation upsertThemeFiles($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
     themeFilesUpsert(themeId: $themeId, files: $files) {
