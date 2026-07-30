@@ -6,6 +6,13 @@ import {
   groupCrawlerStatuses,
   llmsTxtMatches,
   themeWritesEnabled,
+  buildRobotsLiquid,
+  parseManagedRobotsLiquid,
+  isRemovableRobotsPath,
+  robotsLooksSane,
+  parseRobotsAdviceResponse,
+  adviseableRules,
+  ROBOTS_MANAGED_MARKER,
   AI_CRAWLERS,
   wrapLlmsTxtForTheme,
   unwrapLlmsTxtFromTheme,
@@ -329,6 +336,150 @@ describe("themeWritesEnabled", () => {
   it.each(["off", "false", "0", "", "yes"])("stays off on %s", (v) => {
     process.env.AEO_THEME_WRITES = v;
     expect(themeWritesEnabled()).toBe(false);
+  });
+});
+
+describe("robots.txt override generation", () => {
+  it("reproduces Shopify's defaults and drops only the listed paths", () => {
+    const out = buildRobotsLiquid(["/lookbook", "/collections/archive"]);
+    expect(out).toContain(ROBOTS_MANAGED_MARKER);
+    // Iterating default_groups is what keeps every stock rule (and future
+    // additions) intact — a hand-written rule list would freeze them.
+    expect(out).toContain("robots.default_groups");
+    expect(out).toContain("group.sitemap");
+    expect(out).toContain("cp-removed: /lookbook");
+    expect(out).toContain("cp-removed: /collections/archive");
+    expect(out).toContain("cp_removed contains rule.value");
+    // Only Disallow lines may be dropped.
+    expect(out).toContain("rule.directive == 'Disallow'");
+  });
+
+  it("round-trips through parseManagedRobotsLiquid", () => {
+    const paths = ["/lookbook", "/collections/archive"];
+    expect(parseManagedRobotsLiquid(buildRobotsLiquid(paths))).toEqual(paths);
+  });
+
+  it("returns null for a file we didn't write, so it is never overwritten", () => {
+    expect(parseManagedRobotsLiquid("User-agent: *\nDisallow: /secret\n")).toBeNull();
+    expect(parseManagedRobotsLiquid(null)).toBeNull();
+    expect(parseManagedRobotsLiquid("")).toBeNull();
+  });
+
+  it("drops unsafe paths instead of writing them into the Liquid", () => {
+    const out = buildRobotsLiquid(['/ok', '/bad"quote', "/bad'quote", "/a~|~b", "/", "", "/x\ny"]);
+    expect(parseManagedRobotsLiquid(out)).toEqual(["/ok"]);
+  });
+
+  it("de-duplicates", () => {
+    expect(parseManagedRobotsLiquid(buildRobotsLiquid(["/a", "/a", " /a "]))).toEqual(["/a"]);
+  });
+
+  describe("isRemovableRobotsPath", () => {
+    it.each(["/lookbook", "/collections/x", "*/collections/y"])("accepts %s", (p) => {
+      expect(isRemovableRobotsPath(p)).toBe(true);
+    });
+
+    it("refuses `/` — unblocking a full block is a different decision", () => {
+      expect(isRemovableRobotsPath("/")).toBe(false);
+    });
+
+    it.each(['/a"b', "/a'b", "/a~|~b", "/a\nb", "/a{b}", "relative", "", "/" + "x".repeat(300)])(
+      "refuses %s",
+      (p) => {
+        expect(isRemovableRobotsPath(p)).toBe(false);
+      },
+    );
+  });
+});
+
+describe("robotsLooksSane", () => {
+  const before = "User-agent: *\nDisallow: /cart\nDisallow: /lookbook\n";
+
+  it("accepts exactly the requested removal", () => {
+    const after = "User-agent: *\nDisallow: /cart\n";
+    expect(robotsLooksSane(before, after, ["/lookbook"])).toBe(true);
+  });
+
+  it("rejects an empty or unparseable result", () => {
+    expect(robotsLooksSane(before, "", ["/lookbook"])).toBe(false);
+  });
+
+  it("rejects losing the wildcard record", () => {
+    const after = "User-agent: GPTBot\nDisallow: /cart\n";
+    expect(robotsLooksSane(before, after, ["/lookbook"])).toBe(false);
+  });
+
+  it("rejects a Disallow that appeared out of nowhere", () => {
+    const after = "User-agent: *\nDisallow: /cart\nDisallow: /products\n";
+    expect(robotsLooksSane(before, after, ["/lookbook"])).toBe(false);
+  });
+
+  it("rejects a removal nobody asked for", () => {
+    const after = "User-agent: *\n";
+    expect(robotsLooksSane(before, after, ["/lookbook"])).toBe(false);
+  });
+});
+
+describe("parseRobotsAdviceResponse", () => {
+  const known = new Set(["/lookbook", "/collections/archive"]);
+
+  it("keeps only paths we asked about", () => {
+    const raw = JSON.stringify([
+      { path: "/lookbook", recommendation: "remove", reason: "Echte Inhalte." },
+      { path: "/evil", recommendation: "remove", reason: "Nicht gefragt." },
+    ]);
+    expect(parseRobotsAdviceResponse(raw, known)).toEqual([
+      { path: "/lookbook", recommendation: "remove", reason: "Echte Inhalte." },
+    ]);
+  });
+
+  it("treats anything that isn't an explicit remove as keep", () => {
+    const raw = JSON.stringify([
+      { path: "/lookbook", recommendation: "REMOVE", reason: "x" },
+      { path: "/collections/archive", reason: "y" },
+    ]);
+    expect(parseRobotsAdviceResponse(raw, known).map((a) => a.recommendation)).toEqual([
+      "keep",
+      "keep",
+    ]);
+  });
+
+  it("survives code fences and surrounding prose", () => {
+    const raw = 'Sure!\n```json\n[{"path":"/lookbook","recommendation":"remove","reason":"ok"}]\n```';
+    expect(parseRobotsAdviceResponse(raw, known)).toHaveLength(1);
+  });
+
+  it("returns nothing for garbage instead of throwing", () => {
+    expect(parseRobotsAdviceResponse("not json", known)).toEqual([]);
+    expect(parseRobotsAdviceResponse('{"path":"/lookbook"}', known)).toEqual([]);
+  });
+
+  it("de-duplicates repeated paths", () => {
+    const raw = JSON.stringify([
+      { path: "/lookbook", recommendation: "remove", reason: "first" },
+      { path: "/lookbook", recommendation: "keep", reason: "second" },
+    ]);
+    expect(parseRobotsAdviceResponse(raw, known)).toEqual([
+      { path: "/lookbook", recommendation: "remove", reason: "first" },
+    ]);
+  });
+});
+
+describe("adviseableRules", () => {
+  it("offers only the rules our classifier couldn't settle", () => {
+    const groups = groupCrawlerStatuses(
+      auditRobotsTxt(`${SHOPIFY_DEFAULT_ROBOTS}Disallow: /lookbook\nDisallow: /*_weird*\n`),
+    );
+    expect(adviseableRules(groups).map((r) => r.path).sort()).toEqual(["/*_weird*", "/lookbook"]);
+  });
+
+  it("is empty on a stock robots.txt", () => {
+    expect(adviseableRules(groupCrawlerStatuses(auditRobotsTxt(SHOPIFY_DEFAULT_ROBOTS)))).toEqual([]);
+  });
+
+  it("never offers a full block as a prunable path", () => {
+    const groups = groupCrawlerStatuses(auditRobotsTxt("User-agent: *\nDisallow: /\n"));
+    expect(adviseableRules(groups)).toEqual([]);
   });
 });
 
