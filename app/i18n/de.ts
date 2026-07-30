@@ -1562,7 +1562,7 @@ export const de = {
       colConfidence: "Konfidenz",
       colActions: "Aktionen",
       openInEditor: "Im Editor öffnen",
-      accept: "Akzeptieren",
+      review: "Prüfen",
       reject: "Ablehnen",
       restore: "Wieder öffnen",
       viewOpen: "Offene Vorschläge ({count})",

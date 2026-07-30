@@ -21,7 +21,9 @@
  * `dismissedUntil` from that removed action simply show up in the rejected
  * list until it lapses.
  *
- * Accept is a two-step flow:
+ * Accept is a two-step flow — which is why the row button says "Prüfen" and not
+ * "Akzeptieren": it only opens the preview, and the merchant can still accept OR
+ * reject from inside the modal.
  *   1. "previewAccept" (this route's action) computes the cheerio-based
  *      insertion server-side (internal-links.service.ts's
  *      `insertLinkIntoHtml`) against the CURRENT DB content and returns
@@ -547,6 +549,16 @@ export default function SeoInternalLinks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveFetcher.state, saveFetcher.data]);
 
+  // Reject straight out of the preview modal — the point of the modal is that
+  // the merchant inspects the insertion before deciding, so "no" has to be
+  // reachable from there too, not only from the list row behind it.
+  const rejectFromPreview = () => {
+    if (!previewRow) return;
+    submitRowAction(previewRow, "reject");
+    setBanner({ tone: "success", message: c.rejectSuccess });
+    setPreviewRow(null);
+  };
+
   const openInEditor = (type: FilterType, id: string) => {
     const path = RESOURCE_ROUTE[type]?.path;
     if (path) handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
@@ -605,7 +617,7 @@ export default function SeoInternalLinks() {
             {`${Math.round(row.confidence * 100)}%`}
           </Badge>
           <Button size="slim" variant="primary" onClick={() => openPreview(row)}>
-            {c.accept}
+            {c.review}
           </Button>
           {rejectedView ? (
             <Button size="slim" onClick={() => submitRowAction(row, "restore")} disabled={rowFetcher.state !== "idle"}>
@@ -745,7 +757,19 @@ export default function SeoInternalLinks() {
         loading: saveFetcher.state !== "idle",
         onAction: confirmAccept,
       }}
-      secondaryActions={[{ content: c.previewCancel, onAction: () => setPreviewRow(null) }]}
+      secondaryActions={[
+        // Already-rejected rows only get "close" here — the row itself offers
+        // "restore", which is the meaningful action in that view.
+        ...(rejectedView
+          ? []
+          : [{
+              content: c.reject,
+              destructive: true,
+              disabled: rowFetcher.state !== "idle" || saveFetcher.state !== "idle",
+              onAction: rejectFromPreview,
+            }]),
+        { content: c.previewCancel, onAction: () => setPreviewRow(null) },
+      ]}
     >
       <Modal.Section>
         <BlockStack gap="300">

@@ -1563,7 +1563,7 @@ export const en: Translation = {
       colConfidence: "Confidence",
       colActions: "Actions",
       openInEditor: "Open in editor",
-      accept: "Accept",
+      review: "Review",
       reject: "Reject",
       restore: "Reopen",
       viewOpen: "Open suggestions ({count})",

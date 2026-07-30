@@ -850,8 +850,13 @@ async function updatePrimaryProduct(
 ): Promise<Response> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
-  // Validate that title is not empty for primary locale
-  if (!params.title || !params.title.trim()) {
+  // Validate that title is not emptied for the primary locale — but ONLY when
+  // the client actually sent the field. `undefined` means "not sent = leave as
+  // is" (see the getFormStringOrNull note in handleUpdateProduct), so partial
+  // primary saves that touch a single field — e.g. the SEO internal-links
+  // Accept flow, which writes only descriptionHtml — must not be rejected for a
+  // title they never touched. `""` still means "user cleared it" and is blocked.
+  if (params.title !== undefined && !params.title.trim()) {
     return json(
       {
         success: false,
@@ -861,14 +866,13 @@ async function updatePrimaryProduct(
     );
   }
 
-  // Build mutation input - only include productType if it has a value or was explicitly changed
-  // Sending productType: "" to Shopify CLEARS it, so we must omit it when unchanged
-  const mutationInput: Record<string, unknown> = {
-    id: productId,
-    title: params.title,
-    handle: params.handle,
-    descriptionHtml: params.descriptionHtml,
-  };
+  // Build mutation input — every field is omitted unless the client sent it, so
+  // an unsent field is left untouched on Shopify instead of being cleared.
+  // (productType additionally honours changedFields: sending "" CLEARS it.)
+  const mutationInput: Record<string, unknown> = { id: productId };
+  if (params.title !== undefined) mutationInput.title = params.title;
+  if (params.handle !== undefined) mutationInput.handle = params.handle;
+  if (params.descriptionHtml !== undefined) mutationInput.descriptionHtml = params.descriptionHtml;
 
   // Build the SEO object defensively. Shopify's productUpdate treats `seo` as a
   // unit: sending `seo: { title }` without a description CLEARS the existing
