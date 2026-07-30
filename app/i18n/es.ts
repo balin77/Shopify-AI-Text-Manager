@@ -1556,6 +1556,7 @@ export const es: Translation = {
       orphanCappedHint: "Rastreo incompleto — el análisis de huérfanas no es fiable.",
       emptyBrokenLinks: "No se encontraron enlaces rotos.",
       tileServerErrors: "Errores de servidor",
+      tileSlowest: "Páginas más lentas",
       statusRedirectLoop: "Bucle de redirección",
       tileServerErrorsHint: "Estas páginas no se entregaron.",
       tabServerErrors: "Errores de servidor",

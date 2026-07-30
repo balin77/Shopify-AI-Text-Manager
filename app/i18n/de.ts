@@ -1556,6 +1556,7 @@ export const de = {
       orphanCappedHint: "Crawl unvollständig — Waisen-Analyse nicht verlässlich.",
       emptyBrokenLinks: "Keine kaputten Links gefunden.",
       tileServerErrors: "Serverfehler",
+      tileSlowest: "Langsamste Seiten",
       statusRedirectLoop: "Weiterleitungsschleife",
       tileServerErrorsHint: "Diese Seiten haben nicht ausgeliefert.",
       tabServerErrors: "Serverfehler",

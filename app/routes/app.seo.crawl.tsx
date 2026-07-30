@@ -11,7 +11,7 @@
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -21,7 +21,6 @@ import {
   Badge,
   Button,
   Banner,
-  Tabs,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -52,6 +51,20 @@ const TYPE_PATH: Record<AuditType, string> = {
 };
 
 const UI_ROW_CAP = 100;
+
+/** The report's sections. Ids double as the `?tab=` deep-link values the SEO
+ *  dashboard's problem buckets navigate with — keep them in sync with
+ *  CRAWL_TAB_FOR_PROBLEM in app.seo._index.tsx. */
+const CATEGORY_IDS = [
+  "broken",
+  "serverErrors",
+  "blocked",
+  "orphans",
+  "headDrift",
+  "slowest",
+  "duplicates",
+] as const;
+type CategoryId = (typeof CATEGORY_IDS)[number];
 
 interface SnapshotView {
   id: string;
@@ -427,23 +440,24 @@ export default function SeoCrawl() {
     handleNavigate("/app/seo/redirects", { searchParams: new URLSearchParams({ newFrom: path }) });
   };
 
-  const tabs = [
-    { id: "broken", content: `${c.tabBrokenLinks} (${data.brokenLinks.length})` },
-    { id: "serverErrors", content: `${c.tabServerErrors} (${data.serverErrors.length})` },
-    { id: "orphans", content: `${c.tabOrphans} (${data.orphans.length})` },
-    { id: "headDrift", content: `${c.tabHeadDrift} (${data.headDrift.length})` },
-    { id: "slowest", content: `${c.tabSlowest} (${data.slowest.length})` },
-    { id: "duplicates", content: `${c.tabDuplicates} (${data.duplicates.length})` },
-    { id: "blocked", content: `${c.tabBlocked} (${data.blocked.length})` },
-  ];
-  // Seeded from ?tab= so the dashboard's problem buckets can deep-link to the
-  // section that actually shows them.
+  // The tiles ARE the navigation — clicking one opens its section below, so a
+  // separate tab bar would only repeat the same labels and counts.
   const [searchParams] = useSearchParams();
-  const requestedTab = tabs.findIndex((t) => t.id === searchParams.get("tab"));
-  const [tab, setTab] = useState(requestedTab >= 0 ? requestedTab : 0);
-  // Rendered by id, not by index: inserting a tab used to mean renumbering
-  // every `tab === n` branch below.
-  const activeTab = tabs[tab]?.id ?? "broken";
+  const requested = searchParams.get("tab") as CategoryId | null;
+  const [activeTab, setActiveTab] = useState<CategoryId>(
+    requested && CATEGORY_IDS.includes(requested) ? requested : "broken",
+  );
+
+  // Section heading, since there is no tab bar left to say what is shown.
+  const CATEGORY_LABEL: Record<CategoryId, string> = {
+    broken: c.tabBrokenLinks,
+    serverErrors: c.tabServerErrors,
+    blocked: c.tabBlocked,
+    orphans: c.tabOrphans,
+    headDrift: c.tabHeadDrift,
+    slowest: c.tabSlowest,
+    duplicates: c.tabDuplicates,
+  };
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
@@ -518,28 +532,56 @@ export default function SeoCrawl() {
           )}
 
           {snapshot && (
-            <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 8 }} gap="300">
+            <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
+              {/* The first two are totals, not sections — nothing to open. */}
               <Tile label={c.tilePages} value={snapshot.pagesCrawled} />
               <Tile label={c.tileOk} value={snapshot.pagesOk} />
-              <Tile label={c.tileBroken} value={snapshot.pagesBroken} />
+              <Tile
+                label={c.tileBroken}
+                value={snapshot.pagesBroken}
+                onClick={() => setActiveTab("broken")}
+                selected={activeTab === "broken"}
+              />
               <Tile
                 label={c.tileServerErrors}
                 value={snapshot.pagesServerError}
-                // Short form here — the full explanation is the banner in the tab.
+                // Short form here — the full explanation is the section banner.
                 hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
+                onClick={() => setActiveTab("serverErrors")}
+                selected={activeTab === "serverErrors"}
               />
               <Tile
                 label={c.tileBlocked}
                 value={snapshot.pagesBlocked}
                 hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
+                onClick={() => setActiveTab("blocked")}
+                selected={activeTab === "blocked"}
               />
               <Tile
                 label={c.tileOrphans}
                 value={isCapped ? "—" : snapshot.orphanCount}
                 hint={isCapped ? c.orphanCappedHint : undefined}
+                onClick={() => setActiveTab("orphans")}
+                selected={activeTab === "orphans"}
               />
-              <Tile label={c.tileHeadDrift} value={snapshot.headDriftCount} />
-              <Tile label={c.tileDuplicates} value={data.duplicates.length} />
+              <Tile
+                label={c.tileHeadDrift}
+                value={snapshot.headDriftCount}
+                onClick={() => setActiveTab("headDrift")}
+                selected={activeTab === "headDrift"}
+              />
+              <Tile
+                label={c.tileSlowest}
+                value={data.slowest.length}
+                onClick={() => setActiveTab("slowest")}
+                selected={activeTab === "slowest"}
+              />
+              <Tile
+                label={c.tileDuplicates}
+                value={data.duplicates.length}
+                onClick={() => setActiveTab("duplicates")}
+                selected={activeTab === "duplicates"}
+              />
             </InlineGrid>
           )}
         </BlockStack>
@@ -548,7 +590,7 @@ export default function SeoCrawl() {
       {snapshot && (
         <Card>
           <BlockStack gap="300">
-            <Tabs tabs={tabs} selected={tab} onSelect={setTab} />
+            <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
 
             {activeTab === "broken" && (
               <BlockStack gap="200">
@@ -757,9 +799,43 @@ export default function SeoCrawl() {
   return <SeoSectionLayout sectionId="crawl">{body}</SeoSectionLayout>;
 }
 
-function Tile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
-  return (
-    <Card>
+/** `<button>` reset — same approach as the findings accordion in
+ *  app.seo.performance.tsx, so a card can be a control without looking like
+ *  a browser button. */
+const TILE_BUTTON_STYLE: CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: 0,
+  border: "none",
+  background: "none",
+  textAlign: "left",
+  cursor: "pointer",
+  // <button> would otherwise fall back to the UA font, not Polaris's.
+  font: "inherit",
+  color: "inherit",
+};
+
+/**
+ * A metric tile. With `onClick` it becomes the navigation control for its
+ * section — `aria-pressed` rather than `role="tab"` on purpose: these are
+ * toggle buttons in a grid, and claiming tab semantics would promise
+ * arrow-key navigation that a grid of cards doesn't provide.
+ */
+function Tile({
+  label,
+  value,
+  hint,
+  onClick,
+  selected,
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  onClick?: () => void;
+  selected?: boolean;
+}) {
+  const card = (
+    <Card background={selected ? "bg-surface-selected" : undefined}>
       <BlockStack gap="050">
         <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
         <Text as="span" variant="headingLg">{String(value)}</Text>
@@ -768,5 +844,13 @@ function Tile({ label, value, hint }: { label: string; value: string | number; h
         )}
       </BlockStack>
     </Card>
+  );
+
+  if (!onClick) return card;
+
+  return (
+    <button type="button" onClick={onClick} aria-pressed={selected} style={TILE_BUTTON_STYLE}>
+      {card}
+    </button>
   );
 }

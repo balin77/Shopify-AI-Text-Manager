@@ -1557,6 +1557,7 @@ export const en: Translation = {
       orphanCappedHint: "Crawl incomplete — orphan analysis isn't reliable.",
       emptyBrokenLinks: "No broken links found.",
       tileServerErrors: "Server errors",
+      tileSlowest: "Slowest pages",
       statusRedirectLoop: "Redirect loop",
       tileServerErrorsHint: "These pages failed to serve.",
       tabServerErrors: "Server errors",
