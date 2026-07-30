@@ -26,7 +26,19 @@ export interface SeoSectionDef {
 }
 ```
 
-Die Layout-Route ([app.seo.tsx](../../app/routes/app.seo.tsx)) mappt über `SEO_SECTIONS` → Sub-Nav entsteht automatisch. **Ein neues Feature wird durch einen Array-Eintrag sichtbar** — nicht durch Nav-Code-Änderungen.
+Sections liegen in **Rubriken** (`SEO_RUBRICS`) — die Level-2-Ebene des SEO-Tabs, analog zu `CONTENT_RUBRICS`:
+
+```ts
+export interface SeoRubricDef {
+  id: string;            // "overview" | "analysis" | "rankings" | "linking" | "technical"
+  icon: string;          // Label unter t.seo.rubrics.<id>
+  entries: SeoSectionDef[];
+}
+```
+
+Reihenfolge folgt dem SEO-Workflow von links nach rechts: erst sehen wo man steht (Übersicht, Analyse), dann inhaltlich optimieren (Keywords & Rankings, Verlinkungen), dann ausliefern/indexieren lassen (Technik & Indexierung).
+
+`SEO_SECTIONS` ist die **abgeleitete** flache Liste (`SEO_RUBRICS.flatMap(r => r.entries)`) und wird nie separat gepflegt — sie speist Mobile-Drawer, Plan-Gate-Lookup in `SeoSectionLayout` und das Path-Matching. Die Layout-Route ([app.seo.tsx](../../app/routes/app.seo.tsx)) rendert daraus beide Leisten (Level 2 = Rubriken, Level 3 = Sections der aktiven Rubrik) über die geteilte `SubNavBar` (`variant="level3"` für die untere). **Ein neues Feature wird durch einen Array-Eintrag in der passenden Rubrik sichtbar** — nicht durch Nav-Code-Änderungen. Eine Rubrik zeigt das Schloss nur, wenn **alle** ihre Sections über dem Plan liegen; gemischte Rubriken bleiben offen und das Schloss trägt der einzelne Level-3-Chip.
 
 ### 2. Sections rendern ihre eigenen Ergebnisse — es gibt kein geteiltes Finding-Modell
 
@@ -104,7 +116,7 @@ Jede Operation, die spürbar dauert, läuft als **`Task`** (vorhandenes Modell +
 
 Eine neue Section (bzw. eine bestehende, die substanziell ausgebaut wird) ist erst „fertig", wenn Punkte 1–8 erfüllt sind. **Empfohlene Umsetzungs-Reihenfolge:**
 
-1. **Descriptor** in `SEO_SECTIONS` eintragen.
+1. **Descriptor** in die passende Rubrik in `SEO_RUBRICS` eintragen (+ Label unter `t.seo.sections.<id>`).
 2. **`analyze()`** implementieren + Findings + i18n-Codes.
 3. **Route/Shell** mit `SeoSectionLayout`.
 4. **`fix()` / Aktionen** — Task wenn lang, sonst synchron.

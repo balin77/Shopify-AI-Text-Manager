@@ -1,8 +1,13 @@
 /**
- * SubNavBar — shared Level-2 sub-navigation used by RubricNavigation (the
- * "Inhalte" tab: Katalog / Online Store / Theme / …) and the SEO layout's
- * section bar (Übersicht / Structured Data / …). Presentational only: the
- * consumer owns the item list, active id and navigation.
+ * SubNavBar — shared sub-navigation used by RubricNavigation (the "Inhalte"
+ * tab: Katalog / Online Store / Theme / …) and by the SEO layout for BOTH of
+ * its levels (rubric bar + section bar). Presentational only: the consumer
+ * owns the item list, active id and navigation.
+ *
+ * `variant` picks the level look: "level2" renders raised card-chips, "level3"
+ * renders flat, indented sub-tabs (underline + subdued label) — the same
+ * styling ContentTypeNavigation uses for Level 3 in the "Inhalte" tab, so both
+ * tabs read as the same hierarchy.
  *
  * Keeps the `.rubric-nav` class so the hover style in responsive.css continues
  * to apply. `desktop-only` hides the bar on mobile — the drawer/hamburger
@@ -33,6 +38,8 @@ export interface SubNavBarProps {
   onMeasure?: (height: number) => void;
   /** Optional content pinned to the far right of the bar (e.g. a HelpTooltip). */
   trailing?: ReactNode;
+  /** Visual level: raised card-chips (default) or flat indented sub-tabs. */
+  variant?: "level2" | "level3";
 }
 
 export function SubNavBar({
@@ -43,7 +50,12 @@ export function SubNavBar({
   stickyTop,
   onMeasure,
   trailing,
+  variant = "level2",
 }: SubNavBarProps) {
+  const isL3 = variant === "level3";
+  // Hover styling lives in responsive.css per level: `.rubric-nav` (grey chip
+  // fill) vs `.content-type-nav` (subtle tint for the flat sub-tabs).
+  const levelClass = `desktop-only ${isL3 ? "content-type-nav" : "rubric-nav"}`;
   const navRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,15 +82,23 @@ export function SubNavBar({
   return (
     <div
       ref={navRef}
-      className="desktop-only rubric-nav"
+      className={levelClass}
       role="navigation"
       aria-label={ariaLabel}
       style={{
         borderBottom: "1px solid #e1e3e5",
-        background: "#fafbfb",
-        padding: "0.25rem 1rem",
+        background: isL3 ? "white" : "#fafbfb",
+        // Extra left padding indents L3 chips under the L2 bar so the
+        // hierarchy reads top → down (same offset as ContentTypeNavigation).
+        padding: isL3 ? "0.2rem 1rem 0.2rem 2rem" : "0.25rem 1rem",
         ...(stickyTop != null
-          ? { position: "sticky", top: `${stickyTop}px`, left: 0, right: 0, zIndex: 999 }
+          ? {
+              position: "sticky",
+              top: `${stickyTop}px`,
+              left: 0,
+              right: 0,
+              zIndex: isL3 ? 998 : 999,
+            }
           : {}),
         display: "flex",
         alignItems: "center",
@@ -86,7 +106,7 @@ export function SubNavBar({
       }}
     >
       <div style={{ overflowX: "auto", flex: 1, minWidth: 0 }}>
-      <InlineStack gap="150">
+      <InlineStack gap={isL3 ? "100" : "150"}>
         {items.map((item) => {
           const isActive = item.id === activeId;
           return (
@@ -95,31 +115,57 @@ export function SubNavBar({
               onClick={() => onSelect(item)}
               aria-current={isActive ? "page" : undefined}
               title={item.tooltip}
-              style={{
-                // 2px transparent border on inactive avoids any layout shift
-                // when switching to the 2px green active border.
-                padding: "0.25rem 0.75rem",
-                border: isActive ? "2px solid #008060" : "2px solid #e1e3e5",
-                borderRadius: "6px",
-                background: isActive ? "#f1f8f5" : "white",
-                cursor: item.locked ? "help" : "pointer",
-                transition: "all 0.15s",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.4rem",
-                lineHeight: 1.1,
-              }}
+              style={
+                isL3
+                  ? {
+                      // Flat sub-tab: only the bottom edge marks the active
+                      // state, so the L2 card-chips above stay dominant. The
+                      // 2px transparent border on all sides prevents layout
+                      // shift when that edge turns green.
+                      padding: "0.2rem 0.55rem",
+                      border: "2px solid transparent",
+                      borderBottom: isActive ? "2px solid #008060" : "2px solid transparent",
+                      borderRadius: "4px",
+                      background: isActive ? "#f1f8f5" : "transparent",
+                      cursor: item.locked ? "help" : "pointer",
+                      transition: "all 0.15s",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                      lineHeight: 1.1,
+                      opacity: item.locked ? 0.55 : 1,
+                    }
+                  : {
+                      // 2px transparent border on inactive avoids any layout shift
+                      // when switching to the 2px green active border.
+                      padding: "0.25rem 0.75rem",
+                      border: isActive ? "2px solid #008060" : "2px solid #e1e3e5",
+                      borderRadius: "6px",
+                      background: isActive ? "#f1f8f5" : "white",
+                      cursor: item.locked ? "help" : "pointer",
+                      transition: "all 0.15s",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                      lineHeight: 1.1,
+                    }
+              }
             >
-              {item.icon && <span style={{ fontSize: "1rem" }}>{item.icon}</span>}
+              {item.icon && (
+                <span style={{ fontSize: isL3 ? "0.85rem" : "1rem" }}>{item.icon}</span>
+              )}
               <Text
                 as="span"
                 variant="bodySm"
                 fontWeight={isActive ? "semibold" : "regular"}
+                tone={isL3 && !isActive ? "subdued" : "base"}
               >
                 {item.label}
               </Text>
               {item.locked && (
-                <span style={{ marginLeft: "0.15rem", fontSize: "0.85rem" }}>🔒</span>
+                <span style={{ marginLeft: "0.15rem", fontSize: isL3 ? "0.8rem" : "0.85rem" }}>
+                  🔒
+                </span>
               )}
             </button>
           );

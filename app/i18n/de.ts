@@ -1275,6 +1275,14 @@ export const de = {
     // SEO tab (Level-1) — sub-section labels/headers
     tabTitle: "SEO",
     upgradeForSection: "Upgrade auf {plan}, um diese Funktion zu nutzen.",
+    // Level-2 rubrics of the SEO tab (see SEO_RUBRICS in config/seo-sections.ts)
+    rubrics: {
+      overview: "Übersicht",
+      analysis: "Analyse",
+      rankings: "Keywords & Rankings",
+      linking: "Verlinkungen",
+      technical: "Technik & Indexierung",
+    },
     sections: {
       overview: {
         label: "Übersicht",

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  SEO_RUBRICS,
   SEO_SECTIONS,
+  getActiveSeoRubric,
   getActiveSeoSection,
   isSeoPath,
   isSeoIndexPath,
@@ -51,5 +53,33 @@ describe("descriptor invariants", () => {
     for (const s of SEO_SECTIONS) {
       expect(s.path === "/app/seo" || s.path.startsWith("/app/seo/")).toBe(true);
     }
+  });
+});
+
+describe("rubrics (Level 2)", () => {
+  it("SEO_SECTIONS is exactly the flattened rubric entries", () => {
+    expect(SEO_SECTIONS).toEqual(SEO_RUBRICS.flatMap((r) => r.entries));
+  });
+
+  it("rubric ids are unique and no rubric is empty", () => {
+    const ids = SEO_RUBRICS.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const r of SEO_RUBRICS) {
+      expect(r.entries.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every section belongs to exactly one rubric", () => {
+    for (const s of SEO_SECTIONS) {
+      const owners = SEO_RUBRICS.filter((r) => r.entries.some((e) => e.id === s.id));
+      expect(owners).toHaveLength(1);
+    }
+  });
+
+  it("resolves the rubric owning a pathname", () => {
+    expect(getActiveSeoRubric("/app/seo")?.id).toBe("overview");
+    expect(getActiveSeoRubric("/app/seo/internal-links")?.id).toBe("linking");
+    expect(getActiveSeoRubric("/app/seo/structured-data")?.id).toBe("technical");
+    expect(getActiveSeoRubric("/app/products")).toBeNull();
   });
 });
