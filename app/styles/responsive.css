@@ -15,6 +15,20 @@
   --app-page-padding: 16px;
 }
 
+/* Always reserve the scrollbar track, so content doesn't jump sideways when a
+   view switches between "fits" and "needs scrolling" — e.g. toggling between
+   two panels of different length (SEO → AI search). Without this the scrollbar
+   appears/disappears and every element shifts by its width.
+
+   `stable` reserves the gutter even when no scrollbar is showing. On platforms
+   with overlay scrollbars (macOS default) it costs nothing; browsers without
+   support simply keep today's behaviour. Applied both to the document — which
+   is what the plain routes scroll — and to the inner scroll container used by
+   the .app-page-content pages below. */
+html {
+  scrollbar-gutter: stable;
+}
+
 /* Simple Polaris pages (Tasks, Settings, …) opt into the SAME frame as the
    content editor by wrapping their content in .app-page-content.
 
@@ -67,6 +81,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Visibility Utilities for Mobile/Tablet/Desktop */

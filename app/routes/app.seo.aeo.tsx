@@ -592,6 +592,18 @@ export default function SeoAeo() {
                   <Banner tone="warning">{a.llmsStaleHint}</Banner>
                 )}
 
+                {/* The background refresh has no settings of its own, but it is
+                    invisible without this line — a merchant would reasonably
+                    assume the file only ever changes when they press the
+                    button. */}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {data.themeWrites
+                    ? data.llmsTxtExists
+                      ? a.llmsAutoOn
+                      : a.llmsAutoAfterFirst
+                    : a.llmsAutoOff}
+                </Text>
+
                 {data.llmsPreview && (
                   <Box
                     padding="300"
