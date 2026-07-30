@@ -18,6 +18,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { taskErrorText } from "~/utils/task-error-text";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 
@@ -487,7 +488,7 @@ export default function TasksPage() {
                     {task.error && (
                       <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
                         <Text as="p" variant="bodySm" tone="critical">
-                          {task.error}
+                          {taskErrorText(task.error, t)}
                         </Text>
                       </div>
                     )}

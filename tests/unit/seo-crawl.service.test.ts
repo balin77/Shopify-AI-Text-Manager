@@ -12,6 +12,8 @@ import {
   escalateSpacingMs,
   decaySpacingMs,
   SPACING_DECAY_AFTER_OK,
+  BASE_SPACING_MS,
+  MAX_SPACING_MS,
   parseRetryAfter,
   dominantBlockSource,
   parseCrawlError,
@@ -333,27 +335,31 @@ describe("detectMerchantCloudflare / attributeBlockSource", () => {
 
 describe("adaptive request spacing", () => {
   it("escalates toward the ceiling and saturates there", () => {
-    let s = 200;
-    s = escalateSpacingMs(s);
-    expect(s).toBe(400);
-    s = escalateSpacingMs(s);
-    expect(s).toBe(800);
-    s = escalateSpacingMs(s);
-    expect(s).toBe(1000);
+    let s = BASE_SPACING_MS;
+    for (let i = 0; i < 10; i++) s = escalateSpacingMs(s);
     // Regression guard: unbounded growth would throttle the crawl to a halt.
-    expect(escalateSpacingMs(s)).toBe(1000);
+    expect(s).toBe(MAX_SPACING_MS);
+    expect(escalateSpacingMs(s)).toBe(MAX_SPACING_MS);
+  });
+
+  it("actually widens the spacing on the way up", () => {
+    expect(escalateSpacingMs(BASE_SPACING_MS)).toBeGreaterThan(BASE_SPACING_MS);
+    expect(escalateSpacingMs(BASE_SPACING_MS)).toBeLessThanOrEqual(MAX_SPACING_MS);
   });
 
   it("decays back to the base floor after a clean streak", () => {
     // Regression: the backoff had no decay, so one early 429 burst left every
     // remaining request spaced out for the whole run — the crawl looked hung.
-    let s = 1000;
-    const seen: number[] = [];
-    for (let i = 0; i < 6; i++) {
-      s = decaySpacingMs(s);
-      seen.push(s);
-    }
-    expect(seen).toEqual([500, 250, 200, 200, 200, 200]);
+    let s = MAX_SPACING_MS;
+    for (let i = 0; i < 10; i++) s = decaySpacingMs(s);
+    expect(s).toBe(BASE_SPACING_MS);
+    expect(decaySpacingMs(s)).toBe(BASE_SPACING_MS);
+  });
+
+  it("keeps the crawler gentle by default — the storefront edge counts per IP", () => {
+    // Shopify's protection tripped after ~12 requests from one address, so the
+    // defaults must stay conservative.
+    expect(BASE_SPACING_MS).toBeGreaterThanOrEqual(500);
   });
 
   it("keeps the decay threshold small enough to recover within a normal crawl", () => {
@@ -631,6 +637,7 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     expect(summary.status).toBe("completed");
@@ -675,32 +682,37 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     expect(summary.status).toBe("failed");
     expect(summary.error).toBe("storefront_password");
   });
 
-  it("detects a bot firewall (>=3 consecutive 403/429) and aborts with bot_blocked", async () => {
+  /** Enough blocked links to exhaust every cool-down and reach the abort. */
+  const BLOCKED_PATHS = Array.from({ length: 20 }, (_, i) => `b${i}`);
+  /** The in-service threshold isn't exported; 3 is its documented value and
+   *  this assertion only needs "more than one run of blocks was tolerated". */
+  const BOT_BLOCK_THRESHOLD_FOR_TEST = 3;
+
+  it("exhausts its cool-downs against a persistent bot shield, then aborts with bot_blocked", async () => {
     server.use(
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
       http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
       http.get(`${BASE}/`, () =>
-        HttpResponse.html(
-          html("Home", `<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a><a href="/d">d</a>`),
+        HttpResponse.html(html("Home", BLOCKED_PATHS.map((p) => `<a href="/${p}">${p}</a>`).join(""))),
+      ),
+      // Every response blocked (not mixed with an "ok"): completion order isn't
+      // guaranteed to match discovery order, so mixing in a 200 would make the
+      // "N CONSECUTIVE" threshold non-deterministic. retry-after: 0 keeps the
+      // single 429 retry from adding real wall-clock time.
+      ...BLOCKED_PATHS.map((p, i) =>
+        http.get(`${BASE}/${p}`, () =>
+          i % 2 === 0
+            ? new HttpResponse("blocked", { status: 403 })
+            : new HttpResponse("blocked", { status: 429, headers: { "retry-after": "0" } }),
         ),
       ),
-      // All four blocked (not mixed with an "ok" response): under 5-parallel
-      // concurrency, completion order isn't guaranteed to match discovery
-      // order, so mixing in a 200 would make the "3 CONSECUTIVE" threshold
-      // non-deterministic to test. Every response being 403/429 makes the
-      // outcome deterministic regardless of interleaving.
-      http.get(`${BASE}/a`, () => new HttpResponse("blocked", { status: 403 })),
-      http.get(`${BASE}/b`, () => new HttpResponse("blocked", { status: 403 })),
-      // retry-after: 0 keeps the (new) single 429 retry from adding real
-      // wall-clock time to the test; the page is still blocked on retry.
-      http.get(`${BASE}/c`, () => new HttpResponse("blocked", { status: 429, headers: { "retry-after": "0" } })),
-      http.get(`${BASE}/d`, () => new HttpResponse("blocked", { status: 403 })),
     );
 
     const db = makeDb();
@@ -712,12 +724,18 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
+      coolDownMs: 5,
     });
 
     expect(summary.status).toBe("failed");
     expect(parseCrawlError(summary.error ?? null).code).toBe("bot_blocked");
     // msw sends no identifying headers, so the blocker stays unattributed.
     expect(summary.blockedBy).toBe("unknown");
+    // It must have paused and retried rather than giving up on the first run
+    // of blocks — the shield lapses on its own, so aborting immediately loses
+    // crawls that a pause would have rescued.
+    expect(summary.pagesBlocked).toBeGreaterThan(BOT_BLOCK_THRESHOLD_FOR_TEST);
 
     // The firewall-refused pages must NOT be reported as broken links — that
     // was the false-positive report merchants saw behind a Cloudflare-style
@@ -727,14 +745,64 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     expect(db.__created.brokenLinks).toHaveLength(0);
   });
 
+  it("survives a burst of blocks by cooling down, and finishes the crawl", async () => {
+    // The real failure this models: Shopify's storefront shield trips after a
+    // handful of requests from one IP, then lapses. Aborting on the first run
+    // of blocks threw away crawls that a short pause would have completed.
+    let blockedSoFar = 0;
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", BLOCKED_PATHS.map((p) => `<a href="/${p}">${p}</a>`).join(""))),
+      ),
+      ...BLOCKED_PATHS.map((p) =>
+        http.get(`${BASE}/${p}`, () => {
+          // The shield lapses after the first few requests.
+          if (blockedSoFar < 4) {
+            blockedSoFar += 1;
+            return new HttpResponse("Verifying your connection...", {
+              status: 429,
+              headers: { "retry-after": "0", "cf-mitigated": "challenge" },
+            });
+          }
+          return HttpResponse.html(html(`${p} – Acme`, `<h1>${p}</h1><p>hello</p>`));
+        }),
+      ),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-cooldown", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      coolDownMs: 5,
+    });
+
+    expect(summary.status).toBe("completed");
+    expect(summary.error).toBeUndefined();
+    // The pages that were blocked early are still counted as blocked, but the
+    // rest of the site got crawled instead of the whole run being discarded.
+    expect(summary.pagesBlocked).toBeGreaterThan(0);
+    expect(summary.pagesOk).toBeGreaterThan(summary.pagesBlocked);
+    // "Verifying your connection" is Shopify's interstitial, not a merchant's
+    // Cloudflare rule — no DNS lookup needed to tell them apart.
+    expect(summary.blockedBy).toBe("shopify_security");
+  });
+
   it("attributes a Cloudflare challenge to Shopify when the domain isn't on Cloudflare nameservers", async () => {
     server.use(
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
       http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
       http.get(`${BASE}/`, () =>
-        HttpResponse.html(html("Home", `<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a>`)),
+        HttpResponse.html(html("Home", BLOCKED_PATHS.map((p) => `<a href="/${p}">${p}</a>`).join(""))),
       ),
-      ...["a", "b", "c"].map((p) =>
+      ...BLOCKED_PATHS.map((p) =>
         http.get(
           `${BASE}/${p}`,
           () => new HttpResponse("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
@@ -751,6 +819,8 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
+      coolDownMs: 5,
       // Google Cloud DNS, like the real store that surfaced this: Cloudflare
       // answered, but it is Shopify's Cloudflare, not the merchant's.
       resolveNsImpl: async () => ["ns-cloud-a1.googledomains.com"],
@@ -770,9 +840,9 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
       http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
       http.get(`${BASE}/`, () =>
-        HttpResponse.html(html("Home", `<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a>`)),
+        HttpResponse.html(html("Home", BLOCKED_PATHS.map((p) => `<a href="/${p}">${p}</a>`).join(""))),
       ),
-      ...["a", "b", "c"].map((p) =>
+      ...BLOCKED_PATHS.map((p) =>
         http.get(
           `${BASE}/${p}`,
           () => new HttpResponse("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
@@ -789,6 +859,8 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
+      coolDownMs: 5,
       resolveNsImpl: async () => ["kim.ns.cloudflare.com", "walt.ns.cloudflare.com"],
     });
 
@@ -819,6 +891,7 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     // Below the 3-consecutive threshold, so the crawl completes normally.
@@ -862,6 +935,7 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     expect(attempts).toBe(2);
@@ -908,6 +982,7 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     expect(summary.status).toBe("completed");
@@ -965,6 +1040,7 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       shopName: "Acme",
       appUrl: "https://app.example.com",
       maxPages: 100,
+      spacingMs: 0,
     });
 
     expect(summary.status).toBe("completed");

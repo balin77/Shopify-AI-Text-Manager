@@ -38,6 +38,7 @@ import {
   parseCrawlError,
 } from "../services/seo/crawl.service";
 import type { BlockSource } from "../services/seo/crawl.service";
+import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
 const TYPE_PATH: Record<AuditType, string> = {
   product: "/app/products",
@@ -402,18 +403,7 @@ export default function SeoCrawl() {
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
 
-  // Attribution for a bot block, when the response headers identified one.
-  // The keys mirror `BlockSource` in crawl.service.ts.
-  const BLOCK_SOURCE_KEY: Record<string, string> = {
-    cloudflare_challenge: "blockedByCloudflareChallenge",
-    cloudflare_waf: "blockedByCloudflareWaf",
-    cloudflare_unattributed: "blockedByCloudflareUnattributed",
-    shopify_rate_limit: "blockedByShopifyRateLimit",
-    shopify_security: "blockedByShopifySecurity",
-    rate_limit: "blockedByRateLimit",
-    unknown: "blockedByUnknown",
-  };
-  const blockSourceText = snapshot?.blockedBy ? c[BLOCK_SOURCE_KEY[snapshot.blockedBy]] : null;
+  const blockSourceText = snapshot?.blockedBy ? c[BLOCK_SOURCE_TEXT_KEY[snapshot.blockedBy]] : null;
 
   const body = (
     <BlockStack gap="400">

@@ -11,8 +11,12 @@
  * Seeds `/` and `/sitemap.xml`, BFS same-origin (normalizing
  * `<shop>.myshopify.com` → the primary domain) to depth 5, respecting
  * robots.txt (via the shared `parseRobots`, aeo.service.ts). A `Semaphore`
- * (app/utils/semaphore.ts) caps 5 parallel requests with ~200ms spacing so
- * the crawl itself never becomes a self-inflicted load spike on the store.
+ * (app/utils/semaphore.ts) caps the parallel requests and enforces a spacing
+ * floor so the crawl never becomes a self-inflicted load spike on the store.
+ * Both are deliberately conservative (see CRAWL_CONCURRENCY / BASE_SPACING_MS):
+ * Shopify's storefront shield counts requests per IP and the whole crawl runs
+ * from one server address, so an aggressive crawl gets challenged and returns
+ * nothing at all.
  *
  * The link GRAPH is not persisted (§2 — would be ~200k rows on a 2000-page
  * crawl): inbound/outbound counts are aggregated in-memory, and only broken
@@ -52,7 +56,19 @@ export const CRAWL_BFS_MAX_DEPTH = 5;
 const REDIRECT_MAX_HOPS = 3;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB stream cap
-const BOT_BLOCK_THRESHOLD = 3; // consecutive 403/429 -> abort
+/** Consecutive 403/429 before the crawler backs all the way off. */
+const BOT_BLOCK_THRESHOLD = 3;
+/** How long everything pauses when that threshold is hit. Shopify's storefront
+ *  protection ("Verifying your connection", 429) trips on a low request count
+ *  from a single IP and then applies to the whole domain, so the only way
+ *  through is to stop entirely and let it lapse. */
+export const BLOCK_COOLDOWN_MS = 30_000;
+/** Cool-downs before the crawl gives up. Three failed pauses means the shield
+ *  is not going to lift within a crawl, and reporting that beats grinding. */
+const MAX_COOLDOWNS = 3;
+/** Parallel requests. Deliberately low: the storefront edge counts requests
+ *  per IP, and the whole crawl runs from one server address. */
+const CRAWL_CONCURRENCY = 2;
 /** Cap on how long we'll honour a `Retry-After` before giving up on the page.
  *  The wait holds a concurrency slot, so a generous cap starves the whole
  *  queue — five pages asking for 15s each would idle the crawler completely. */
@@ -66,18 +82,18 @@ const BLOCK_BODY_SNIFF_BYTES = 8 * 1024;
  *  responses in a row it takes to halve the spacing back down again. The
  *  ceiling is deliberately modest — spacing is global, so 1s already caps the
  *  crawler at one request per second no matter how many slots are free. */
-const BASE_SPACING_MS = 200;
-const MAX_SPACING_MS = 1_000;
+export const BASE_SPACING_MS = 500;
+export const MAX_SPACING_MS = 2_000;
 export const SPACING_DECAY_AFTER_OK = 25;
 
 /** Brake harder after a 429 — saturating, never unbounded. */
-export function escalateSpacingMs(current: number): number {
-  return Math.min(MAX_SPACING_MS, Math.max(BASE_SPACING_MS, current) * 2);
+export function escalateSpacingMs(current: number, base = BASE_SPACING_MS, max = MAX_SPACING_MS): number {
+  return Math.min(max, Math.max(base, current) * 2);
 }
 
 /** Release the brake after a clean streak, back down to the base floor. */
-export function decaySpacingMs(current: number): number {
-  return Math.max(BASE_SPACING_MS, Math.round(current / 2));
+export function decaySpacingMs(current: number, base = BASE_SPACING_MS): number {
+  return Math.max(base, Math.round(current / 2));
 }
 /** Safety bound on in-memory edges — a pathological site (or a crawl bug)
  *  must not grow unbounded memory; not in the plan text, defensive only. */
@@ -347,11 +363,18 @@ export function diagnoseBlock(
   const isShopifyEdge = SHOPIFY_EDGE_HEADERS.some((h) => headers.get(h));
   if (isShopifyEdge) return out(statusCode === 429 ? "shopify_rate_limit" : "shopify_security");
 
+  const snippet = (body || "").slice(0, 4000).toLowerCase();
+
+  // Shopify's own interstitial, served through Shopify's Cloudflare with
+  // `cf-mitigated: challenge` and no origin headers (the request never reached
+  // Shopify). The page title is the only thing that distinguishes it from a
+  // merchant's own Cloudflare block — and it's decisive, so it outranks both.
+  if (snippet.includes("verifying your connection")) return out("shopify_security");
+
   // Cloudflare managed challenge / JS challenge.
   if (headers.get("cf-mitigated")) return out("cloudflare_challenge");
 
   // Cloudflare's interstitial block page.
-  const snippet = (body || "").slice(0, 4000).toLowerCase();
   if (
     snippet.includes("attention required!") ||
     snippet.includes("cloudflare ray id") ||
@@ -830,6 +853,11 @@ export interface RunCrawlDeps {
   fetchImpl?: typeof fetch;
   /** Injectable NS lookup for `detectMerchantCloudflare` (tests). */
   resolveNsImpl?: (host: string) => Promise<string[]>;
+  /** Pause after a run of blocks before resuming. Tests shorten it. */
+  coolDownMs?: number;
+  /** Overrides both the spacing floor and ceiling for the run. Tests set 0 to
+   *  take real wall-clock throttling out of the picture. */
+  spacingMs?: number;
   maxPages?: number;
   onProgress?: (pagesCrawled: number, totalDiscovered: number) => void | Promise<void>;
   /** Heartbeat cadence in pages (§3.5: every 25). */
@@ -886,6 +914,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     appUrl,
     fetchImpl = fetch,
     resolveNsImpl,
+    coolDownMs = BLOCK_COOLDOWN_MS,
+    spacingMs: spacingOverride,
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
     onProgress,
     heartbeatEvery = 25,
@@ -943,15 +973,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   let abortedError: string | null = null;
   /** Tally of blockers seen, so the summary can name the most frequent one. */
   const blockSourceCounts = new Map<BlockSource, number>();
-  let spacingMs = BASE_SPACING_MS;
+  const baseSpacing = spacingOverride ?? BASE_SPACING_MS;
+  const maxSpacing = spacingOverride ?? MAX_SPACING_MS;
+  let spacingMs = baseSpacing;
   let consecutiveOk = 0;
+  /** While in the future, every worker parks before issuing a request. */
+  let coolDownUntil = 0;
+  let coolDownsUsed = 0;
   let outstanding = 0;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
   });
 
-  const semaphore = new Semaphore(5, BASE_SPACING_MS);
+  const semaphore = new Semaphore(CRAWL_CONCURRENCY, baseSpacing);
 
   const recordEdge = (from: string, to: string, anchor: string | null) => {
     if (from === to) return; // self-links don't count as inbound (§3.1)
@@ -970,7 +1005,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     }
   };
 
+  /** Parks the caller until any active cool-down has elapsed. Sliced so an
+   *  abort raised by another worker ends the wait early. */
+  const awaitCoolDown = async () => {
+    for (;;) {
+      if (abortedError) return;
+      const remaining = coolDownUntil - Date.now();
+      if (remaining <= 0) return;
+      await sleep(Math.min(remaining, 500));
+    }
+  };
+
   const fetchAndProcess = async (url: string, depth: number): Promise<void> => {
+    if (abortedError) return;
+    await awaitCoolDown();
     if (abortedError) return;
     const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain]);
     pagesCompleted += 1;
@@ -982,16 +1030,27 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       // Adaptive backoff: a 429 that survived its retry means we're still
       // going too fast for this host. Widen the spacing for every remaining
       // request rather than burning through the queue collecting more 429s.
-      if (outcome.status === 429 && spacingMs < MAX_SPACING_MS) {
-        spacingMs = escalateSpacingMs(spacingMs);
+      if (outcome.status === 429 && spacingMs < maxSpacing) {
+        spacingMs = escalateSpacingMs(spacingMs, baseSpacing, maxSpacing);
         semaphore.setMinSpacing(spacingMs);
       }
 
       consecutiveBlocked += 1;
       if (consecutiveBlocked >= BOT_BLOCK_THRESHOLD && !abortedError) {
-        // Attribution is appended after the run — it needs the full tally and
-        // a DNS lookup, neither of which belongs in the request loop.
-        abortedError = "bot_blocked";
+        consecutiveBlocked = 0;
+        coolDownsUsed += 1;
+        if (coolDownsUsed > MAX_COOLDOWNS) {
+          // Attribution is appended after the run — it needs the full tally
+          // and a DNS lookup, neither belongs in the request loop.
+          abortedError = "bot_blocked";
+        } else {
+          // Stop entirely for a while instead of aborting. The shield lapses
+          // on its own; crawling through it never works, and a slow crawl
+          // beats no crawl at all.
+          coolDownUntil = Date.now() + coolDownMs;
+          spacingMs = maxSpacing;
+          semaphore.setMinSpacing(spacingMs);
+        }
       }
       consecutiveOk = 0;
     } else {
@@ -1001,9 +1060,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       // permanent setting: without this, one 429 burst early in a crawl left
       // every remaining request seconds apart for the rest of the run, which
       // reads as "stuck at 80%" rather than "throttled".
-      if (spacingMs > BASE_SPACING_MS && consecutiveOk >= SPACING_DECAY_AFTER_OK) {
+      if (spacingMs > baseSpacing && consecutiveOk >= SPACING_DECAY_AFTER_OK) {
         consecutiveOk = 0;
-        spacingMs = decaySpacingMs(spacingMs);
+        spacingMs = decaySpacingMs(spacingMs, baseSpacing);
         semaphore.setMinSpacing(spacingMs);
       }
     }

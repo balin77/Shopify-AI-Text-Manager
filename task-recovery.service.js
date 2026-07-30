@@ -273,7 +273,10 @@ export class TaskRecoveryService {
           where: { id: { in: rows.map((r) => r.id) }, status: { in: NON_TERMINAL } },
           data: {
             status: 'failed',
-            error: 'Task timed out - no progress within the stuck threshold',
+            // Machine code, not prose: this runs outside any request, so there
+            // is no merchant locale here. The UI translates it via
+            // app/utils/task-error-text.ts (`taskTimedOut`).
+            error: 'task_timed_out',
             completedAt: new Date(),
           },
         });
