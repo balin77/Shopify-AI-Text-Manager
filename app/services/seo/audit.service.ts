@@ -384,8 +384,11 @@ async function buildCrawlProblemBuckets(
   const buckets: AuditProblemBucket[] = [];
 
   // --- brokenLinks: the FROM page of each broken edge is the affected item.
+  // 403/429 targets are bot-firewall artifacts, not broken links (see
+  // `isBotBlockStatus` in crawl.service.ts). New crawls never persist them;
+  // the filter keeps snapshots written before that split out of the bucket.
   const brokenLinks = await db.seoCrawlBrokenLink.findMany({
-    where: { shop, snapshotId: snapshot.id },
+    where: { shop, snapshotId: snapshot.id, statusCode: { notIn: [403, 429] } },
     select: { fromUrl: true },
   });
   const brokenAffected = new Map<string, { type: AuditType; id: string; title: string }>();

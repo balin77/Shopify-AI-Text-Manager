@@ -1524,6 +1524,7 @@ export const de = {
       tilePages: "Seiten gesamt",
       tileOk: "OK",
       tileBroken: "Kaputte Links",
+      tileBlocked: "Geblockt",
       tileOrphans: "Waisen",
       tileHeadDrift: "Head-Drift",
       tileDuplicates: "Doppelte Titel",
@@ -1532,6 +1533,7 @@ export const de = {
       tabHeadDrift: "Head-Drift",
       tabSlowest: "Langsamste Seiten",
       tabDuplicates: "Doppelte Titel",
+      tabBlocked: "Von Firewall geblockt",
       colFrom: "Von",
       colTo: "Nach",
       colStatus: "Status",
@@ -1546,6 +1548,23 @@ export const de = {
       getLinkSuggestions: "Verlinkungs-Vorschlag holen",
       orphanCappedHint: "Crawl unvollständig — Waisen-Analyse nicht verlässlich.",
       emptyBrokenLinks: "Keine kaputten Links gefunden.",
+      emptyBlocked: "Keine geblockten Seiten — die Firewall hat den Crawler durchgelassen.",
+      blockedByCloudflareChallenge:
+        "Erkannt: Cloudflare-Bot-Challenge. Lege in Cloudflare unter „Security → WAF → Tools\" eine Ausnahme für den User-Agent „ContentPilotSEO\" an.",
+      blockedByCloudflareWaf:
+        "Erkannt: Cloudflare-WAF-Regel. Eine deiner Firewall-Regeln lehnt den Crawler ab — nimm den User-Agent „ContentPilotSEO\" davon aus.",
+      blockedByShopifyRateLimit:
+        "Erkannt: Shopifys eigenes Rate-Limit (keine Firewall von dir). Der Crawl war zu schnell — starte ihn später erneut, er drosselt sich inzwischen automatisch.",
+      blockedByShopifySecurity:
+        "Erkannt: Shopifys eigener Bot-Schutz (keine Firewall von dir). Das passiert bei hoher Last auf der Storefront — versuche es später erneut.",
+      blockedByRateLimit:
+        "Erkannt: Rate-Limiting (der Server hat „Retry-After\" geschickt). Kein Bot-Bann — der Crawl war schlicht zu schnell.",
+      blockedByUnknown:
+        "Der Blocker konnte nicht eindeutig bestimmt werden. Prüfe vorgelagerte Dienste (CDN, WAF, Proxy) auf Bot-Regeln.",
+      blockedHint:
+        "403/429 bedeutet: eine Bot-Firewall hat den Crawler abgewiesen. Diese Seiten sind NICHT kaputt — echte Besucher und der Googlebot erreichen sie.",
+      blockedBanner:
+        "{count} Seiten wurden von einer Bot-Firewall abgewiesen (403/429) und deshalb nicht als kaputte Links gezählt. Erlaube den User-Agent „ContentPilotSEO\" (z. B. in Cloudflare) und scanne erneut, damit der Report vollständig ist.",
       emptyOrphans: "Keine Waisen-Seiten gefunden.",
       emptyHeadDrift: "Keine Abweichungen gefunden.",
       emptyDuplicates: "Keine doppelten Titel gefunden.",
@@ -1571,6 +1590,7 @@ export const de = {
       colActions: "Aktionen",
       openInEditor: "Im Editor öffnen",
       review: "Prüfen",
+      accept: "Annehmen",
       reject: "Ablehnen",
       restore: "Wieder öffnen",
       viewOpen: "Offene Vorschläge ({count})",
@@ -1578,7 +1598,6 @@ export const de = {
       rejectedHint: "Abgelehnte Vorschläge werden bei künftigen Scans nicht erneut vorgeschlagen. Du kannst sie hier trotzdem noch akzeptieren oder zurück zu den offenen Vorschlägen schieben.",
       empty: "Keine offenen Vorschläge. Klicke auf „Vorschläge generieren“, um deinen Content zu scannen.",
       emptyRejected: "Keine abgelehnten Vorschläge.",
-      accept: "Annehmen",
       rejectSuccess: "Vorschlag abgelehnt.",
       actionError: "Aktion fehlgeschlagen. Bitte erneut versuchen.",
       paginationRange: "{start}–{end} von {total}",

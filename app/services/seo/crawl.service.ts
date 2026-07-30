@@ -53,6 +53,17 @@ const REDIRECT_MAX_HOPS = 3;
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2MB stream cap
 const BOT_BLOCK_THRESHOLD = 3; // consecutive 403/429 -> abort
+/** Cap on how long we'll honour a `Retry-After` before giving up on the page —
+ *  a host asking for minutes is not something a foreground crawl can wait out. */
+const RETRY_AFTER_MAX_MS = 15_000;
+/** Fallback pause before the single 429 retry when no `Retry-After` was sent. */
+const RATE_LIMIT_BACKOFF_MS = 2_000;
+/** Bytes of a non-HTML block page read purely to identify the blocker. */
+const BLOCK_BODY_SNIFF_BYTES = 8 * 1024;
+/** Request spacing: the starting floor, and the ceiling the adaptive backoff
+ *  escalates to after repeated 429s (doubling each time). */
+const BASE_SPACING_MS = 200;
+const MAX_SPACING_MS = 2_000;
 /** Safety bound on in-memory edges — a pathological site (or a crawl bug)
  *  must not grow unbounded memory; not in the plan text, defensive only. */
 const MAX_EDGES_TRACKED = 100_000;
@@ -213,10 +224,138 @@ export function isAllowedByRobots(groups: RobotsGroup[], pathname: string, userA
 
 // ── Broken-link classification (§3.1, pure + unit-tested) ──────────────────
 
+// ── Block diagnosis (who refused us — pure + unit-tested) ──────────────────
+
+/** Who turned the crawler away. Best-effort, derived from response headers +
+ *  the block page's body. */
+export type BlockSource =
+  | "cloudflare_challenge"
+  | "cloudflare_waf"
+  | "shopify_rate_limit"
+  | "shopify_security"
+  | "rate_limit"
+  | "unknown";
+
+export interface BlockDiagnosis {
+  source: BlockSource;
+  /** Parsed `Retry-After` in seconds (delta-seconds or HTTP-date), if sent. */
+  retryAfterSec: number | null;
+  /** Raw `server:` header — the only clue left when `source` is "unknown". */
+  server: string | null;
+}
+
+/** Minimal `Headers`-shaped input so this stays testable without a Response. */
+interface HeaderLike {
+  get(name: string): string | null;
+}
+
+/** Shopify's storefront edge stamps these; a merchant-side WAF in front of it
+ *  answers before Shopify ever sees the request, so their absence on a 403/429
+ *  points away from Shopify. */
+const SHOPIFY_EDGE_HEADERS = [
+  "x-shopid",
+  "x-shardid",
+  "x-sorting-hat-shopid",
+  "x-sorting-hat-podid",
+  "x-storefront-renderer-rendered",
+  "x-shopify-stage",
+];
+
+/** `Retry-After` is either delta-seconds or an HTTP-date (RFC 9110). */
+export function parseRetryAfter(raw: string | null, nowMs: number): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const secs = parseInt(trimmed, 10);
+    return Number.isFinite(secs) ? secs : null;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (Number.isNaN(dateMs)) return null;
+  return Math.max(0, Math.round((dateMs - nowMs) / 1000));
+}
+
+/**
+ * Names the blocker behind a 403/429, or null when the status isn't a block.
+ *
+ * Order matters: Shopify storefronts are themselves served through Cloudflare,
+ * so a `cf-ray` header proves nothing on its own — only an explicit
+ * `cf-mitigated` (challenge) or a Cloudflare block page in the body indicates
+ * a merchant-configured firewall. Shopify's own edge markers are checked
+ * before the generic rate-limit fallback so "we crawl too fast" doesn't get
+ * misreported as "your firewall blocks us".
+ */
+export function diagnoseBlock(
+  statusCode: number,
+  headers: HeaderLike,
+  body: string | null,
+  nowMs: number = Date.now(),
+): BlockDiagnosis | null {
+  if (!isBotBlockStatus(statusCode)) return null;
+
+  const retryAfterSec = parseRetryAfter(headers.get("retry-after"), nowMs);
+  const server = headers.get("server");
+  const out = (source: BlockSource): BlockDiagnosis => ({ source, retryAfterSec, server });
+
+  // Cloudflare managed challenge / JS challenge — unambiguous, merchant-side.
+  if (headers.get("cf-mitigated")) return out("cloudflare_challenge");
+
+  const isShopifyEdge = SHOPIFY_EDGE_HEADERS.some((h) => headers.get(h));
+  if (isShopifyEdge) return out(statusCode === 429 ? "shopify_rate_limit" : "shopify_security");
+
+  // Cloudflare's interstitial block page (no x-shopify-* markers on it).
+  const snippet = (body || "").slice(0, 4000).toLowerCase();
+  if (
+    snippet.includes("attention required!") ||
+    snippet.includes("cloudflare ray id") ||
+    snippet.includes("cf-error-details") ||
+    (snippet.includes("cloudflare") && snippet.includes("blocked"))
+  ) {
+    return out("cloudflare_waf");
+  }
+
+  if (retryAfterSec !== null) return out("rate_limit");
+  return out("unknown");
+}
+
+/** The most frequently seen blocker, ties broken by insertion order. */
+export function dominantBlockSource(counts: Map<BlockSource, number>): BlockSource | null {
+  let best: BlockSource | null = null;
+  let bestCount = 0;
+  for (const [source, count] of counts) {
+    if (count > bestCount) {
+      best = source;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * `SeoCrawlSnapshot.error` carries the bot-block attribution appended as
+ * `bot_blocked:<source>` so the UI can name the blocker without a schema
+ * change. Both forms parse — rows written before the attribution existed are
+ * plain `bot_blocked`.
+ */
+export function parseCrawlError(error: string | null): { code: string | null; blockedBy: BlockSource | null } {
+  if (!error) return { code: null, blockedBy: null };
+  const [code, source] = error.split(":");
+  return { code, blockedBy: (source as BlockSource) || null };
+}
+
+/** 403 (WAF/bot rule) and 429 (rate limit) mean "a bot filter refused us", NOT
+ *  "the target is gone" — a real visitor and Googlebot still reach the page.
+ *  Reporting those as broken links produced a list full of false positives
+ *  whenever a Cloudflare-style bot shield was in front of the storefront. */
+export function isBotBlockStatus(statusCode: number): boolean {
+  return statusCode === 403 || statusCode === 429;
+}
+
 /** `statusCode` semantics: 0 = timeout/network error, -1 = redirect loop /
- *  chain longer than REDIRECT_MAX_HOPS, else the real HTTP status. */
-export function classifyLinkStatus(statusCode: number): "ok" | "broken" {
+ *  chain longer than REDIRECT_MAX_HOPS, else the real HTTP status.
+ *  "blocked" is reported separately from "broken" — see `isBotBlockStatus`. */
+export function classifyLinkStatus(statusCode: number): "ok" | "broken" | "blocked" {
   if (statusCode === 0 || statusCode === -1) return "broken";
+  if (isBotBlockStatus(statusCode)) return "blocked";
   if (statusCode >= 400) return "broken";
   return "ok";
 }
@@ -311,6 +450,8 @@ interface FetchOutcome {
   /** Every URL visited in the redirect chain, including the start URL — used
    *  for the password-redirect check on the root seed. */
   hops: string[];
+  /** Non-null only on a 403/429 — who refused us (see `diagnoseBlock`). */
+  block: BlockDiagnosis | null;
 }
 
 async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
@@ -368,7 +509,15 @@ async function fetchOnceWithRedirects(
       });
     } catch {
       clearTimeout(timer);
-      return { status: 0, finalUrl: currentUrl, contentType: "", body: null, responseMs: Date.now() - started, hops };
+      return {
+        status: 0,
+        finalUrl: currentUrl,
+        contentType: "",
+        body: null,
+        responseMs: Date.now() - started,
+        hops,
+        block: null,
+      };
     }
     clearTimeout(timer);
 
@@ -382,13 +531,22 @@ async function fetchOnceWithRedirects(
           body: null,
           responseMs: Date.now() - started,
           hops,
+          block: null,
         };
       }
       let next: string;
       try {
         next = new URL(location, currentUrl).toString();
       } catch {
-        return { status: -1, finalUrl: currentUrl, contentType: "", body: null, responseMs: Date.now() - started, hops };
+        return {
+          status: -1,
+          finalUrl: currentUrl,
+          contentType: "",
+          body: null,
+          responseMs: Date.now() - started,
+          hops,
+          block: null,
+        };
       }
       // Redirect-SSRF guard (§ security fix): the initial links are
       // same-origin-gated by `normalizeCrawlUrl`, but a Location header is
@@ -405,11 +563,20 @@ async function fetchOnceWithRedirects(
           body: null,
           responseMs: Date.now() - started,
           hops,
+          block: null,
         };
       }
       if (hop === REDIRECT_MAX_HOPS) {
         hops.push(next);
-        return { status: -1, finalUrl: next, contentType: "", body: null, responseMs: Date.now() - started, hops };
+        return {
+          status: -1,
+          finalUrl: next,
+          contentType: "",
+          body: null,
+          responseMs: Date.now() - started,
+          hops,
+          block: null,
+        };
       }
       currentUrl = next;
       hops.push(next);
@@ -422,18 +589,54 @@ async function fetchOnceWithRedirects(
     // the body of an image/PDF/etc, and never traverse links out of it.
     if (contentType.toLowerCase().includes("text/html")) {
       body = await readBodyCapped(res, MAX_BODY_BYTES);
+    } else if (isBotBlockStatus(res.status)) {
+      // A block page is worth a small read even when it isn't served as HTML —
+      // it's what tells a Cloudflare interstitial apart from a bare 403. Never
+      // parsed as content (the cheerio path is 2xx-only).
+      body = await readBodyCapped(res, BLOCK_BODY_SNIFF_BYTES);
     }
-    return { status: res.status, finalUrl: currentUrl, contentType, body, responseMs: Date.now() - started, hops };
+    return {
+      status: res.status,
+      finalUrl: currentUrl,
+      contentType,
+      body,
+      responseMs: Date.now() - started,
+      hops,
+      block: diagnoseBlock(res.status, res.headers, body),
+    };
   }
   // Unreachable (loop always returns), kept for type-completeness.
-  return { status: -1, finalUrl: currentUrl, contentType: "", body: null, responseMs: Date.now() - started, hops };
+  return {
+    status: -1,
+    finalUrl: currentUrl,
+    contentType: "",
+    body: null,
+    responseMs: Date.now() - started,
+    hops,
+    block: null,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** No retry on 4xx (§3.3); one retry with a small backoff on 5xx/timeout. */
+/** How long to wait before the single 429 retry, or null when the host asked
+ *  for longer than a foreground crawl can wait. Exported for the unit tests. */
+export function rateLimitRetryDelayMs(block: BlockDiagnosis | null): number | null {
+  const askedSec = block?.retryAfterSec;
+  if (askedSec == null) return RATE_LIMIT_BACKOFF_MS;
+  const askedMs = askedSec * 1000;
+  return askedMs > RETRY_AFTER_MAX_MS ? null : Math.max(askedMs, 0);
+}
+
+/**
+ * One retry with a small backoff on 5xx/timeout (§3.3), and — new — one retry
+ * on 429 that honours `Retry-After`. A rate limit is a "come back later", not
+ * a verdict on the page: retrying it once is what keeps an over-eager crawl
+ * from reporting a perfectly healthy storefront as unreachable. 403 is still
+ * never retried — a WAF rule won't change its mind within a crawl.
+ */
 async function fetchWithRetry(
   fetchImpl: typeof fetch,
   url: string,
@@ -442,6 +645,14 @@ async function fetchWithRetry(
   aliasHosts: string[],
 ): Promise<FetchOutcome> {
   const first = await fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
+
+  if (first.status === 429) {
+    const waitMs = rateLimitRetryDelayMs(first.block);
+    if (waitMs === null) return first;
+    await sleep(waitMs);
+    return fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
+  }
+
   const shouldRetry = first.status === 0 || (first.status >= 500 && first.status < 600);
   if (!shouldRetry) return first;
   await sleep(500);
@@ -523,6 +734,14 @@ export interface CrawlSummary {
   totalDiscovered: number;
   pagesOk: number;
   pagesBroken: number;
+  /** Pages a bot firewall refused (403/429) — deliberately NOT counted as
+   *  broken, and never persisted as SeoCrawlBrokenLink rows. */
+  pagesBlocked: number;
+  /** The blocker behind the majority of `pagesBlocked`, best-effort from the
+   *  response headers. Only surfaced to the UI when the crawl aborted (it is
+   *  encoded into `error` as `bot_blocked:<source>`); on a completed crawl the
+   *  handful of blocked pages is listed without attribution. */
+  blockedBy: BlockSource | null;
   orphanCount: number;
   headDriftCount: number;
 }
@@ -573,6 +792,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       totalDiscovered: 0,
       pagesOk: 0,
       pagesBroken: 0,
+      pagesBlocked: 0,
+      blockedBy: null,
       orphanCount: 0,
       headDriftCount: 0,
     };
@@ -610,13 +831,16 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   let capped = false;
   let consecutiveBlocked = 0;
   let abortedError: string | null = null;
+  /** Tally of blockers seen, so the summary can name the most frequent one. */
+  const blockSourceCounts = new Map<BlockSource, number>();
+  let spacingMs = BASE_SPACING_MS;
   let outstanding = 0;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
   });
 
-  const semaphore = new Semaphore(5, 200);
+  const semaphore = new Semaphore(5, BASE_SPACING_MS);
 
   const recordEdge = (from: string, to: string, anchor: string | null) => {
     if (from === to) return; // self-links don't count as inbound (§3.1)
@@ -640,10 +864,21 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain]);
     pagesCompleted += 1;
 
-    if (outcome.status === 403 || outcome.status === 429) {
+    if (isBotBlockStatus(outcome.status)) {
+      const source = outcome.block?.source ?? "unknown";
+      blockSourceCounts.set(source, (blockSourceCounts.get(source) ?? 0) + 1);
+
+      // Adaptive backoff: a 429 that survived its retry means we're still
+      // going too fast for this host. Widen the spacing for every remaining
+      // request rather than burning through the queue collecting more 429s.
+      if (outcome.status === 429 && spacingMs < MAX_SPACING_MS) {
+        spacingMs = Math.min(MAX_SPACING_MS, spacingMs * 2);
+        semaphore.setMinSpacing(spacingMs);
+      }
+
       consecutiveBlocked += 1;
       if (consecutiveBlocked >= BOT_BLOCK_THRESHOLD && !abortedError) {
-        abortedError = "bot_blocked";
+        abortedError = `bot_blocked:${dominantBlockSource(blockSourceCounts) ?? "unknown"}`;
       }
     } else {
       consecutiveBlocked = 0;
@@ -759,6 +994,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   let pagesOk = 0;
   let pagesBroken = 0;
+  let pagesBlocked = 0;
   const persistablePages: {
     shop: string;
     snapshotId: string;
@@ -783,6 +1019,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   for (const [url, page] of pages) {
     const cls = classifyLinkStatus(page.statusCode);
     if (cls === "ok") pagesOk += 1;
+    else if (cls === "blocked") pagesBlocked += 1;
     else pagesBroken += 1;
 
     const resolved = resolvedByUrl.get(url) ?? null;
@@ -828,6 +1065,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   const orphanCount = persistablePages.filter((p) => p.resourceId && p.inboundCount === 0).length;
   const headDrift = await computeHeadDrift(db, shop, headDriftCandidates, shopName, Infinity);
 
+  // Only genuinely broken targets become SeoCrawlBrokenLink rows — a 403/429
+  // target is a firewall artifact and would otherwise flood the list with
+  // false positives (and feed the dashboard's "brokenLinks" problem bucket).
   const brokenLinkRows = edges
     .filter((e) => {
       const target = pages.get(e.to);
@@ -861,6 +1101,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     totalDiscovered: discovered.size,
     pagesOk,
     pagesBroken,
+    pagesBlocked,
+    blockedBy: dominantBlockSource(blockSourceCounts),
     orphanCount,
     headDriftCount: headDrift.count,
   };

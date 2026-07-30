@@ -5,6 +5,12 @@ import {
   normalizeCrawlUrl,
   isDenylistedPath,
   classifyLinkStatus,
+  isBotBlockStatus,
+  diagnoseBlock,
+  parseRetryAfter,
+  dominantBlockSource,
+  parseCrawlError,
+  rateLimitRetryDelayMs,
   normalizeHeadTitle,
   decodeHtmlEntities,
   isAllowedByRobots,
@@ -173,6 +179,119 @@ describe("classifyLinkStatus", () => {
     expect(classifyLinkStatus(200)).toBe("ok");
     expect(classifyLinkStatus(301)).toBe("ok");
     expect(classifyLinkStatus(304)).toBe("ok");
+  });
+  it("classifies 403/429 as blocked, not broken (bot firewall, page is fine)", () => {
+    expect(classifyLinkStatus(403)).toBe("blocked");
+    expect(classifyLinkStatus(429)).toBe("blocked");
+    expect(isBotBlockStatus(403)).toBe(true);
+    expect(isBotBlockStatus(429)).toBe(true);
+    expect(isBotBlockStatus(404)).toBe(false);
+    expect(isBotBlockStatus(200)).toBe(false);
+  });
+});
+
+// ── Block diagnosis: who refused the crawler ────────────────────────────────
+
+/** Minimal case-insensitive Headers stand-in. */
+function hdrs(map: Record<string, string>) {
+  const lower = new Map(Object.entries(map).map(([k, v]) => [k.toLowerCase(), v]));
+  return { get: (name: string) => lower.get(name.toLowerCase()) ?? null };
+}
+
+describe("parseRetryAfter", () => {
+  const now = Date.parse("2026-07-30T12:00:00Z");
+  it("parses delta-seconds", () => {
+    expect(parseRetryAfter("120", now)).toBe(120);
+    expect(parseRetryAfter("  5 ", now)).toBe(5);
+  });
+  it("parses an HTTP-date into seconds from now", () => {
+    expect(parseRetryAfter("Thu, 30 Jul 2026 12:00:30 GMT", now)).toBe(30);
+  });
+  it("clamps a past HTTP-date to 0 rather than going negative", () => {
+    expect(parseRetryAfter("Thu, 30 Jul 2026 11:59:00 GMT", now)).toBe(0);
+  });
+  it("returns null for a missing or unparsable value", () => {
+    expect(parseRetryAfter(null, now)).toBeNull();
+    expect(parseRetryAfter("soon", now)).toBeNull();
+  });
+});
+
+describe("diagnoseBlock", () => {
+  it("returns null for a status that isn't a block", () => {
+    expect(diagnoseBlock(200, hdrs({}), null)).toBeNull();
+    expect(diagnoseBlock(404, hdrs({}), null)).toBeNull();
+  });
+
+  it("names a Cloudflare challenge from cf-mitigated", () => {
+    expect(diagnoseBlock(403, hdrs({ "cf-mitigated": "challenge", "cf-ray": "abc" }), null)?.source).toBe(
+      "cloudflare_challenge",
+    );
+  });
+
+  it("does NOT blame Cloudflare on cf-ray alone — Shopify itself sits behind Cloudflare", () => {
+    const d = diagnoseBlock(429, hdrs({ "cf-ray": "abc", server: "cloudflare", "x-shopid": "123" }), null);
+    expect(d?.source).toBe("shopify_rate_limit");
+  });
+
+  it("distinguishes Shopify's rate limit (429) from its bot protection (403)", () => {
+    expect(diagnoseBlock(429, hdrs({ "x-sorting-hat-shopid": "9" }), null)?.source).toBe("shopify_rate_limit");
+    expect(diagnoseBlock(403, hdrs({ "x-storefront-renderer-rendered": "1" }), null)?.source).toBe(
+      "shopify_security",
+    );
+  });
+
+  it("detects a Cloudflare block page from the body when no Shopify markers are present", () => {
+    const body = "<html><head><title>Attention Required! | Cloudflare</title></head></html>";
+    expect(diagnoseBlock(403, hdrs({ "cf-ray": "abc" }), body)?.source).toBe("cloudflare_waf");
+  });
+
+  it("falls back to plain rate_limit when only Retry-After identifies the response", () => {
+    const d = diagnoseBlock(429, hdrs({ "retry-after": "30", server: "nginx" }), null);
+    expect(d?.source).toBe("rate_limit");
+    expect(d?.retryAfterSec).toBe(30);
+    expect(d?.server).toBe("nginx");
+  });
+
+  it("reports unknown when nothing identifies the blocker", () => {
+    expect(diagnoseBlock(403, hdrs({}), null)?.source).toBe("unknown");
+  });
+});
+
+describe("rateLimitRetryDelayMs", () => {
+  it("uses the default backoff when no Retry-After was sent", () => {
+    expect(rateLimitRetryDelayMs(null)).toBe(2000);
+    expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: null, server: null })).toBe(2000);
+  });
+  it("honours a short Retry-After", () => {
+    expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 3, server: null })).toBe(3000);
+  });
+  it("gives up instead of waiting out a long Retry-After", () => {
+    expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 300, server: null })).toBeNull();
+  });
+});
+
+describe("dominantBlockSource / parseCrawlError", () => {
+  it("picks the most frequent blocker", () => {
+    const counts = new Map<any, number>([
+      ["rate_limit", 1],
+      ["shopify_rate_limit", 4],
+      ["unknown", 2],
+    ]);
+    expect(dominantBlockSource(counts)).toBe("shopify_rate_limit");
+  });
+  it("returns null for an empty tally", () => {
+    expect(dominantBlockSource(new Map())).toBeNull();
+  });
+  it("round-trips the attributed error code", () => {
+    expect(parseCrawlError("bot_blocked:cloudflare_waf")).toEqual({
+      code: "bot_blocked",
+      blockedBy: "cloudflare_waf",
+    });
+  });
+  it("still parses a legacy error written before attribution existed", () => {
+    expect(parseCrawlError("bot_blocked")).toEqual({ code: "bot_blocked", blockedBy: null });
+    expect(parseCrawlError("storefront_password").code).toBe("storefront_password");
+    expect(parseCrawlError(null)).toEqual({ code: null, blockedBy: null });
   });
 });
 
@@ -470,7 +589,9 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       // outcome deterministic regardless of interleaving.
       http.get(`${BASE}/a`, () => new HttpResponse("blocked", { status: 403 })),
       http.get(`${BASE}/b`, () => new HttpResponse("blocked", { status: 403 })),
-      http.get(`${BASE}/c`, () => new HttpResponse("blocked", { status: 429 })),
+      // retry-after: 0 keeps the (new) single 429 retry from adding real
+      // wall-clock time to the test; the page is still blocked on retry.
+      http.get(`${BASE}/c`, () => new HttpResponse("blocked", { status: 429, headers: { "retry-after": "0" } })),
       http.get(`${BASE}/d`, () => new HttpResponse("blocked", { status: 403 })),
     );
 
@@ -486,7 +607,94 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     });
 
     expect(summary.status).toBe("failed");
-    expect(summary.error).toBe("bot_blocked");
+    expect(parseCrawlError(summary.error ?? null).code).toBe("bot_blocked");
+    // msw sends no identifying headers, so the blocker stays unattributed.
+    expect(summary.blockedBy).toBe("unknown");
+
+    // The firewall-refused pages must NOT be reported as broken links — that
+    // was the false-positive report merchants saw behind a Cloudflare-style
+    // bot shield.
+    expect(summary.pagesBroken).toBe(0);
+    expect(summary.pagesBlocked).toBeGreaterThanOrEqual(1);
+    expect(db.__created.brokenLinks).toHaveLength(0);
+  });
+
+  it("counts a single 403/429 target as blocked, not as a broken link", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", `<a href="/rate-limited">Limited</a><a href="/gone">Gone</a>`)),
+      ),
+      http.get(
+        `${BASE}/rate-limited`,
+        () => new HttpResponse("slow down", { status: 429, headers: { "retry-after": "0" } }),
+      ),
+      http.get(`${BASE}/gone`, () => new HttpResponse("not found", { status: 404 })),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-blocked", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+    });
+
+    // Below the 3-consecutive threshold, so the crawl completes normally.
+    expect(summary.status).toBe("completed");
+    expect(summary.pagesBlocked).toBe(1);
+    expect(summary.pagesBroken).toBe(1);
+
+    // Only the genuine 404 became a broken-link row.
+    expect(db.__created.brokenLinks).toHaveLength(1);
+    expect(db.__created.brokenLinks[0].toUrl).toContain("/gone");
+    expect(db.__created.brokenLinks[0].statusCode).toBe(404);
+
+    // The blocked page is still recorded as a crawled page, with its status.
+    const limited = db.__created.pages.find((p: any) => p.url.includes("/rate-limited"));
+    expect(limited?.statusCode).toBe(429);
+  });
+
+  it("retries a 429 once (honouring Retry-After) and keeps the page when the retry succeeds", async () => {
+    let attempts = 0;
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home", `<a href="/flaky">Flaky</a>`))),
+      http.get(`${BASE}/flaky`, () => {
+        attempts += 1;
+        // Rate-limited on the first hit, fine on the retry — the common shape
+        // of "our crawl was briefly too fast", not "this page is unreachable".
+        if (attempts === 1) {
+          return new HttpResponse("slow down", { status: 429, headers: { "retry-after": "0" } });
+        }
+        return HttpResponse.html(html("Flaky – Acme", "<h1>Flaky</h1><p>hello</p>"));
+      }),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-retry", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+    });
+
+    expect(attempts).toBe(2);
+    expect(summary.status).toBe("completed");
+    expect(summary.pagesBlocked).toBe(0);
+    expect(summary.pagesBroken).toBe(0);
+
+    const flaky = db.__created.pages.find((p: any) => p.url.includes("/flaky"));
+    expect(flaky?.statusCode).toBe(200);
+    expect(flaky?.title).toContain("Flaky");
   });
 
   it("does not follow a redirect to a cross-origin or private/link-local host (redirect-SSRF guard)", async () => {

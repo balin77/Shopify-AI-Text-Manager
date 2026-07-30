@@ -30,7 +30,14 @@ import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import type { AuditType } from "../services/seo/audit.service";
-import { computeHeadDrift, groupDuplicateTitles } from "../services/seo/crawl.service";
+import {
+  computeHeadDrift,
+  groupDuplicateTitles,
+  isBotBlockStatus,
+  classifyLinkStatus,
+  parseCrawlError,
+} from "../services/seo/crawl.service";
+import type { BlockSource } from "../services/seo/crawl.service";
 
 const TYPE_PATH: Record<AuditType, string> = {
   product: "/app/products",
@@ -47,12 +54,23 @@ interface SnapshotView {
   finishedAt: string | null;
   status: string;
   error: string | null;
+  /** `error` without the `:<blockedBy>` suffix — see `parseCrawlError`. */
+  errorCode: string | null;
+  /** Who refused the crawler, when the run aborted on a bot block. */
+  blockedBy: BlockSource | null;
   pagesCrawled: number;
   totalDiscovered: number;
   pagesOk: number;
   pagesBroken: number;
+  /** Derived from the crawl pages, not stored on the snapshot row. */
+  pagesBlocked: number;
   orphanCount: number;
   headDriftCount: number;
+}
+
+interface BlockedRow {
+  url: string;
+  statusCode: number;
 }
 
 interface BrokenLinkRow {
@@ -120,10 +138,13 @@ const EXAMPLE_SNAPSHOT: SnapshotView = {
   finishedAt: new Date().toISOString(),
   status: "completed",
   error: null,
+  errorCode: null,
+  blockedBy: null,
   pagesCrawled: 412,
   totalDiscovered: 412,
   pagesOk: 398,
   pagesBroken: 6,
+  pagesBlocked: 0,
   orphanCount: 3,
   headDriftCount: 5,
 };
@@ -140,6 +161,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: false,
       snapshot: EXAMPLE_SNAPSHOT,
       brokenLinks: [] as BrokenLinkRow[],
+      blocked: [] as BlockedRow[],
       orphans: [] as OrphanRow[],
       headDrift: [] as HeadDriftRow[],
       slowest: [] as SlowRow[],
@@ -158,26 +180,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: !!runningTask,
       snapshot: null,
       brokenLinks: [] as BrokenLinkRow[],
+      blocked: [] as BlockedRow[],
       orphans: [] as OrphanRow[],
       headDrift: [] as HeadDriftRow[],
       slowest: [] as SlowRow[],
       duplicates: [] as DuplicateGroupRow[],
     });
   }
-
-  const snapshot: SnapshotView = {
-    id: snapshotRow.id,
-    startedAt: snapshotRow.startedAt.toISOString(),
-    finishedAt: snapshotRow.finishedAt ? snapshotRow.finishedAt.toISOString() : null,
-    status: snapshotRow.status,
-    error: snapshotRow.error,
-    pagesCrawled: snapshotRow.pagesCrawled,
-    totalDiscovered: snapshotRow.totalDiscovered,
-    pagesOk: snapshotRow.pagesOk,
-    pagesBroken: snapshotRow.pagesBroken,
-    orphanCount: snapshotRow.orphanCount,
-    headDriftCount: snapshotRow.headDriftCount,
-  };
 
   const pages = await db.seoCrawlPage.findMany({
     where: { shop, snapshotId: snapshotRow.id },
@@ -194,8 +203,40 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   const pageByUrl = new Map(pages.map((p) => [p.url, p]));
 
+  // ok/broken/blocked are recomputed from the persisted pages rather than read
+  // off the snapshot row, so snapshots written before 403/429 got their own
+  // bucket stop reporting firewall blocks as broken.
+  const blocked: BlockedRow[] = pages
+    .filter((p) => isBotBlockStatus(p.statusCode))
+    .slice(0, UI_ROW_CAP)
+    .map((p) => ({ url: p.url, statusCode: p.statusCode }));
+  const blockedTotal = pages.filter((p) => isBotBlockStatus(p.statusCode)).length;
+  const brokenTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "broken").length;
+  const okTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "ok").length;
+
+  const parsedError = parseCrawlError(snapshotRow.error);
+
+  const snapshot: SnapshotView = {
+    id: snapshotRow.id,
+    startedAt: snapshotRow.startedAt.toISOString(),
+    finishedAt: snapshotRow.finishedAt ? snapshotRow.finishedAt.toISOString() : null,
+    status: snapshotRow.status,
+    error: snapshotRow.error,
+    errorCode: parsedError.code,
+    blockedBy: parsedError.blockedBy,
+    pagesCrawled: snapshotRow.pagesCrawled,
+    totalDiscovered: snapshotRow.totalDiscovered,
+    pagesOk: pages.length > 0 ? okTotal : snapshotRow.pagesOk,
+    pagesBroken: pages.length > 0 ? brokenTotal : snapshotRow.pagesBroken,
+    pagesBlocked: blockedTotal,
+    orphanCount: snapshotRow.orphanCount,
+    headDriftCount: snapshotRow.headDriftCount,
+  };
+
   const brokenLinkRows = await db.seoCrawlBrokenLink.findMany({
-    where: { shop, snapshotId: snapshotRow.id },
+    // 403/429 rows only exist in snapshots written before the split; they are
+    // firewall artifacts, not broken links.
+    where: { shop, snapshotId: snapshotRow.id, statusCode: { notIn: [403, 429] } },
     select: { fromUrl: true, toUrl: true, statusCode: true, anchor: true },
     take: UI_ROW_CAP,
   });
@@ -271,6 +312,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     running: !!runningTask,
     snapshot,
     brokenLinks,
+    blocked,
     orphans,
     headDrift,
     slowest,
@@ -354,10 +396,23 @@ export default function SeoCrawl() {
     { id: "headDrift", content: `${c.tabHeadDrift} (${data.headDrift.length})` },
     { id: "slowest", content: `${c.tabSlowest} (${data.slowest.length})` },
     { id: "duplicates", content: `${c.tabDuplicates} (${data.duplicates.length})` },
+    { id: "blocked", content: `${c.tabBlocked} (${data.blocked.length})` },
   ];
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
+
+  // Attribution for a bot block, when the response headers identified one.
+  // The keys mirror `BlockSource` in crawl.service.ts.
+  const BLOCK_SOURCE_KEY: Record<string, string> = {
+    cloudflare_challenge: "blockedByCloudflareChallenge",
+    cloudflare_waf: "blockedByCloudflareWaf",
+    shopify_rate_limit: "blockedByShopifyRateLimit",
+    shopify_security: "blockedByShopifySecurity",
+    rate_limit: "blockedByRateLimit",
+    unknown: "blockedByUnknown",
+  };
+  const blockSourceText = snapshot?.blockedBy ? c[BLOCK_SOURCE_KEY[snapshot.blockedBy]] : null;
 
   const body = (
     <BlockStack gap="400">
@@ -400,11 +455,18 @@ export default function SeoCrawl() {
 
           {snapshot?.status === "failed" && !scanInProgress && (
             <Banner tone="critical">
-              {snapshot.error === "storefront_password"
-                ? c.errorStorefrontPassword
-                : snapshot.error === "bot_blocked"
-                  ? c.errorBotBlocked
-                  : c.errorGeneric}
+              <BlockStack gap="100">
+                <Text as="p" variant="bodyMd">
+                  {snapshot.errorCode === "storefront_password"
+                    ? c.errorStorefrontPassword
+                    : snapshot.errorCode === "bot_blocked"
+                      ? c.errorBotBlocked
+                      : c.errorGeneric}
+                </Text>
+                {snapshot.errorCode === "bot_blocked" && blockSourceText && (
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">{blockSourceText}</Text>
+                )}
+              </BlockStack>
             </Banner>
           )}
           {isCapped && !scanInProgress && (
@@ -415,11 +477,20 @@ export default function SeoCrawl() {
             </Banner>
           )}
 
+          {snapshot && snapshot.pagesBlocked > 0 && !scanInProgress && (
+            <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
+          )}
+
           {snapshot && (
-            <InlineGrid columns={{ xs: 2, sm: 3, md: 6 }} gap="300">
+            <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 7 }} gap="300">
               <Tile label={c.tilePages} value={snapshot.pagesCrawled} />
               <Tile label={c.tileOk} value={snapshot.pagesOk} />
               <Tile label={c.tileBroken} value={snapshot.pagesBroken} />
+              <Tile
+                label={c.tileBlocked}
+                value={snapshot.pagesBlocked}
+                hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
+              />
               <Tile
                 label={c.tileOrphans}
                 value={isCapped ? "—" : snapshot.orphanCount}
@@ -542,6 +613,27 @@ export default function SeoCrawl() {
                       ))}
                     </BlockStack>
                   ))
+                )}
+              </BlockStack>
+            )}
+
+            {tab === 5 && (
+              <BlockStack gap="200">
+                {data.blocked.length === 0 ? (
+                  <Text as="p" tone="subdued">{c.emptyBlocked}</Text>
+                ) : (
+                  <>
+                    <Text as="p" variant="bodySm" tone="subdued">{c.blockedHint}</Text>
+                    {blockSourceText && (
+                      <Text as="p" variant="bodySm" fontWeight="semibold">{blockSourceText}</Text>
+                    )}
+                    {data.blocked.map((b) => (
+                      <InlineStack key={b.url} gap="300" align="space-between" blockAlign="center" wrap>
+                        <Text as="span" variant="bodySm" truncate>{b.url}</Text>
+                        <Badge tone="warning">{String(b.statusCode)}</Badge>
+                      </InlineStack>
+                    ))}
+                  </>
                 )}
               </BlockStack>
             )}

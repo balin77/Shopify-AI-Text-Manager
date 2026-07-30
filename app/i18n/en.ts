@@ -1525,6 +1525,7 @@ export const en: Translation = {
       tilePages: "Total pages",
       tileOk: "OK",
       tileBroken: "Broken links",
+      tileBlocked: "Blocked",
       tileOrphans: "Orphans",
       tileHeadDrift: "Head drift",
       tileDuplicates: "Duplicate titles",
@@ -1533,6 +1534,7 @@ export const en: Translation = {
       tabHeadDrift: "Head drift",
       tabSlowest: "Slowest pages",
       tabDuplicates: "Duplicate titles",
+      tabBlocked: "Blocked by firewall",
       colFrom: "From",
       colTo: "To",
       colStatus: "Status",
@@ -1547,6 +1549,23 @@ export const en: Translation = {
       getLinkSuggestions: "Get link suggestions",
       orphanCappedHint: "Crawl incomplete — orphan analysis isn't reliable.",
       emptyBrokenLinks: "No broken links found.",
+      emptyBlocked: "No blocked pages — the firewall let the crawler through.",
+      blockedByCloudflareChallenge:
+        "Detected: Cloudflare bot challenge. Add an exception for the user agent \"ContentPilotSEO\" under \"Security → WAF → Tools\" in Cloudflare.",
+      blockedByCloudflareWaf:
+        "Detected: Cloudflare WAF rule. One of your firewall rules rejects the crawler — exempt the user agent \"ContentPilotSEO\".",
+      blockedByShopifyRateLimit:
+        "Detected: Shopify's own rate limit (not a firewall of yours). The crawl was too fast — run it again later; it now throttles itself automatically.",
+      blockedByShopifySecurity:
+        "Detected: Shopify's own bot protection (not a firewall of yours). This happens under high storefront load — try again later.",
+      blockedByRateLimit:
+        "Detected: rate limiting (the server sent \"Retry-After\"). Not a bot ban — the crawl was simply too fast.",
+      blockedByUnknown:
+        "The blocker could not be identified. Check any upstream services (CDN, WAF, proxy) for bot rules.",
+      blockedHint:
+        "403/429 means a bot firewall turned the crawler away. These pages are NOT broken — real visitors and Googlebot reach them fine.",
+      blockedBanner:
+        "{count} pages were turned away by a bot firewall (403/429) and are therefore not counted as broken links. Allow the user agent \"ContentPilotSEO\" (e.g. in Cloudflare) and re-scan for a complete report.",
       emptyOrphans: "No orphan pages found.",
       emptyHeadDrift: "No drift found.",
       emptyDuplicates: "No duplicate titles found.",
@@ -1572,6 +1591,7 @@ export const en: Translation = {
       colActions: "Actions",
       openInEditor: "Open in editor",
       review: "Review",
+      accept: "Accept",
       reject: "Reject",
       restore: "Reopen",
       viewOpen: "Open suggestions ({count})",
@@ -1579,7 +1599,6 @@ export const en: Translation = {
       rejectedHint: "Rejected suggestions won't be proposed again by future scans. You can still accept them here, or move them back to the open list.",
       empty: "No open suggestions. Click \"Generate suggestions\" to scan your content.",
       emptyRejected: "No rejected suggestions.",
-      accept: "Accept",
       rejectSuccess: "Suggestion rejected.",
       actionError: "Action failed. Please try again.",
       paginationRange: "{start}–{end} of {total}",

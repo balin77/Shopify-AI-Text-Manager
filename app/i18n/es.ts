@@ -1524,6 +1524,7 @@ export const es: Translation = {
       tilePages: "Páginas totales",
       tileOk: "OK",
       tileBroken: "Enlaces rotos",
+      tileBlocked: "Bloqueadas",
       tileOrphans: "Huérfanas",
       tileHeadDrift: "Head-drift",
       tileDuplicates: "Títulos duplicados",
@@ -1532,6 +1533,7 @@ export const es: Translation = {
       tabHeadDrift: "Head-drift",
       tabSlowest: "Páginas más lentas",
       tabDuplicates: "Títulos duplicados",
+      tabBlocked: "Bloqueadas por el firewall",
       colFrom: "Desde",
       colTo: "Hasta",
       colStatus: "Estado",
@@ -1546,6 +1548,23 @@ export const es: Translation = {
       getLinkSuggestions: "Obtener sugerencias de enlace",
       orphanCappedHint: "Rastreo incompleto — el análisis de huérfanas no es fiable.",
       emptyBrokenLinks: "No se encontraron enlaces rotos.",
+      emptyBlocked: "No hay páginas bloqueadas — el firewall dejó pasar al rastreador.",
+      blockedByCloudflareChallenge:
+        "Detectado: desafío de bots de Cloudflare. Añade una excepción para el agente de usuario «ContentPilotSEO» en «Security → WAF → Tools» de Cloudflare.",
+      blockedByCloudflareWaf:
+        "Detectado: regla WAF de Cloudflare. Una de tus reglas de firewall rechaza al rastreador — exceptúa el agente de usuario «ContentPilotSEO».",
+      blockedByShopifyRateLimit:
+        "Detectado: el propio límite de velocidad de Shopify (no es un firewall tuyo). El rastreo fue demasiado rápido — vuelve a lanzarlo más tarde; ahora se autolimita.",
+      blockedByShopifySecurity:
+        "Detectado: la propia protección antibots de Shopify (no es un firewall tuyo). Ocurre con mucha carga en la tienda — inténtalo más tarde.",
+      blockedByRateLimit:
+        "Detectado: limitación de velocidad (el servidor envió «Retry-After»). No es un bloqueo de bots — el rastreo fue simplemente demasiado rápido.",
+      blockedByUnknown:
+        "No se pudo identificar al bloqueador. Revisa los servicios intermedios (CDN, WAF, proxy) en busca de reglas antibots.",
+      blockedHint:
+        "403/429 significa que un firewall de bots rechazó al rastreador. Estas páginas NO están rotas — los visitantes reales y Googlebot llegan sin problema.",
+      blockedBanner:
+        "{count} páginas fueron rechazadas por un firewall de bots (403/429), por lo que no se cuentan como enlaces rotos. Permite el agente de usuario «ContentPilotSEO» (p. ej. en Cloudflare) y vuelve a escanear para obtener un informe completo.",
       emptyOrphans: "No se encontraron páginas huérfanas.",
       emptyHeadDrift: "No se encontraron discrepancias.",
       emptyDuplicates: "No se encontraron títulos duplicados.",
@@ -1571,6 +1590,7 @@ export const es: Translation = {
       colActions: "Acciones",
       openInEditor: "Abrir en el editor",
       review: "Revisar",
+      accept: "Aceptar",
       reject: "Rechazar",
       restore: "Reabrir",
       viewOpen: "Sugerencias abiertas ({count})",
@@ -1578,7 +1598,6 @@ export const es: Translation = {
       rejectedHint: "Las sugerencias rechazadas no se volverán a proponer en futuros análisis. Aun así puedes aceptarlas aquí o devolverlas a la lista de abiertas.",
       empty: "No hay sugerencias abiertas. Haz clic en «Generar sugerencias» para analizar tu contenido.",
       emptyRejected: "No hay sugerencias rechazadas.",
-      accept: "Aceptar",
       rejectSuccess: "Sugerencia rechazada.",
       actionError: "La acción falló. Inténtalo de nuevo.",
       paginationRange: "{start}–{end} de {total}",

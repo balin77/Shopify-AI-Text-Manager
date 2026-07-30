@@ -21,8 +21,20 @@ export class Semaphore {
 
   constructor(
     private readonly maxConcurrent: number,
-    private readonly minSpacingMs: number = 0,
+    private minSpacingMs: number = 0,
   ) {}
+
+  /** Raise (or lower) the spacing floor mid-run. The crawler uses this to back
+   *  off globally after a 429 instead of hammering an already rate-limited
+   *  host with the remaining queue. Already-granted slots are unaffected; the
+   *  new floor applies from the next grant on. */
+  setMinSpacing(ms: number): void {
+    this.minSpacingMs = Math.max(0, ms);
+  }
+
+  getMinSpacing(): number {
+    return this.minSpacingMs;
+  }
 
   /** Run `fn` once a slot is free (respecting the min-spacing floor), returning its result. */
   async run<T>(fn: () => Promise<T>): Promise<T> {
