@@ -1180,6 +1180,7 @@ export const es: Translation = {
     partialSummary: "{processed} de {total} guardados, {failed} fallidos",
     taskFailedGeneric: "Tarea fallida — por favor inténtalo de nuevo.",
     taskCompleted: "Tarea completada para \"{title}\"",
+    crawlCompleted: "Rastreo del sitio finalizado",
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",
@@ -1556,7 +1557,9 @@ export const es: Translation = {
       blockedByShopifyRateLimit:
         "Detectado: el propio límite de velocidad de Shopify (no es un firewall tuyo). El rastreo fue demasiado rápido — vuelve a lanzarlo más tarde; ahora se autolimita.",
       blockedByShopifySecurity:
-        "Detectado: la propia protección antibots de Shopify (no es un firewall tuyo). Ocurre con mucha carga en la tienda — inténtalo más tarde.",
+        "Detectado: la propia protección antibots de Shopify. Toda tienda Shopify funciona detrás del Cloudflare de Shopify — no tienes acceso ni nada que configurar. Espera un poco y vuelve a lanzar el rastreo.",
+      blockedByCloudflareUnattributed:
+        "Cloudflare rechazó al rastreador. No pudimos determinar si fue la protección antibots de Shopify o una instancia de Cloudflare tuya (falló la consulta DNS). Solo puedes añadir una excepción si tú mismo enrutas tu dominio por Cloudflare.",
       blockedByRateLimit:
         "Detectado: limitación de velocidad (el servidor envió «Retry-After»). No es un bloqueo de bots — el rastreo fue simplemente demasiado rápido.",
       blockedByUnknown:

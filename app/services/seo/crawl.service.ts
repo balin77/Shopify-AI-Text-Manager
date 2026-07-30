@@ -231,6 +231,11 @@ export function isAllowedByRobots(groups: RobotsGroup[], pathname: string, userA
 export type BlockSource =
   | "cloudflare_challenge"
   | "cloudflare_waf"
+  /** A Cloudflare block whose owner we couldn't establish — see
+   *  `detectMerchantCloudflare`. Every Shopify storefront is served through
+   *  Shopify's OWN Cloudflare, so "Cloudflare answered" says nothing about
+   *  whether the merchant can configure it. */
+  | "cloudflare_unattributed"
   | "shopify_rate_limit"
   | "shopify_security"
   | "rate_limit"
@@ -249,10 +254,16 @@ interface HeaderLike {
   get(name: string): string | null;
 }
 
-/** Shopify's storefront edge stamps these; a merchant-side WAF in front of it
- *  answers before Shopify ever sees the request, so their absence on a 403/429
- *  points away from Shopify. */
+/** Headers only Shopify's own origin sets. Their presence proves the request
+ *  reached Shopify — i.e. whatever refused us was Shopify, not something in
+ *  front of it. `x-dc` and `shopify-complexity-score` are what current
+ *  storefronts actually send; the `x-sorting-hat-*` / `x-shopid` family is
+ *  older but still turns up on some responses. Deliberately NOT included:
+ *  `x-request-id`, which half the internet sets. */
 const SHOPIFY_EDGE_HEADERS = [
+  "x-dc",
+  "shopify-complexity-score",
+  "shopify-complexity-score-v2",
   "x-shopid",
   "x-shardid",
   "x-sorting-hat-shopid",
@@ -277,12 +288,13 @@ export function parseRetryAfter(raw: string | null, nowMs: number): number | nul
 /**
  * Names the blocker behind a 403/429, or null when the status isn't a block.
  *
- * Order matters: Shopify storefronts are themselves served through Cloudflare,
- * so a `cf-ray` header proves nothing on its own — only an explicit
- * `cf-mitigated` (challenge) or a Cloudflare block page in the body indicates
- * a merchant-configured firewall. Shopify's own edge markers are checked
- * before the generic rate-limit fallback so "we crawl too fast" doesn't get
- * misreported as "your firewall blocks us".
+ * Order matters. Shopify origin markers are checked FIRST: if they're present
+ * the request reached Shopify, so Shopify itself made the decision and nothing
+ * in front of it did. Only then do the Cloudflare signals count — and even a
+ * definite Cloudflare verdict is left unattributed here, because every Shopify
+ * storefront is served through Shopify's own Cloudflare. `attributeBlockSource`
+ * resolves the owner afterwards from the domain's nameservers; a bare `cf-ray`
+ * never counts as evidence at all.
  */
 export function diagnoseBlock(
   statusCode: number,
@@ -296,13 +308,13 @@ export function diagnoseBlock(
   const server = headers.get("server");
   const out = (source: BlockSource): BlockDiagnosis => ({ source, retryAfterSec, server });
 
-  // Cloudflare managed challenge / JS challenge — unambiguous, merchant-side.
-  if (headers.get("cf-mitigated")) return out("cloudflare_challenge");
-
   const isShopifyEdge = SHOPIFY_EDGE_HEADERS.some((h) => headers.get(h));
   if (isShopifyEdge) return out(statusCode === 429 ? "shopify_rate_limit" : "shopify_security");
 
-  // Cloudflare's interstitial block page (no x-shopify-* markers on it).
+  // Cloudflare managed challenge / JS challenge.
+  if (headers.get("cf-mitigated")) return out("cloudflare_challenge");
+
+  // Cloudflare's interstitial block page.
   const snippet = (body || "").slice(0, 4000).toLowerCase();
   if (
     snippet.includes("attention required!") ||
@@ -315,6 +327,55 @@ export function diagnoseBlock(
 
   if (retryAfterSec !== null) return out("rate_limit");
   return out("unknown");
+}
+
+/**
+ * Resolves WHO owns the Cloudflare that refused us, which is the difference
+ * between "add an exception in your dashboard" and "you have no dashboard".
+ *
+ * A merchant only controls Cloudflare if they proxy the domain through their
+ * own account, which forces `*.ns.cloudflare.com` nameservers. Shopify's own
+ * edge sits behind whatever nameservers the merchant's registrar provides, so
+ * the NS records — not the response headers — are the reliable discriminator.
+ * Returns null when the lookup fails, so an inconclusive answer is never
+ * reported as a confident one.
+ */
+export async function detectMerchantCloudflare(
+  domain: string,
+  resolveNsImpl?: (host: string) => Promise<string[]>,
+): Promise<boolean | null> {
+  const resolveNs =
+    resolveNsImpl ??
+    (async (host: string) => {
+      const { promises } = await import("dns");
+      return promises.resolveNs(host);
+    });
+
+  // NS records live on the registrable domain, not on `shop.example.com` —
+  // walk up until a lookup answers.
+  const labels = domain.split(".").filter(Boolean);
+  for (let i = 0; i + 2 <= labels.length; i++) {
+    const candidate = labels.slice(i).join(".");
+    try {
+      const servers = await resolveNs(candidate);
+      if (!servers || servers.length === 0) continue;
+      return servers.some((s) => s.toLowerCase().endsWith(".ns.cloudflare.com"));
+    } catch {
+      /* try the next-shorter name */
+    }
+  }
+  return null;
+}
+
+/**
+ * Turns a Cloudflare verdict into an owner-aware one. Anything that isn't a
+ * Cloudflare verdict passes through untouched.
+ */
+export function attributeBlockSource(source: BlockSource, merchantCloudflare: boolean | null): BlockSource {
+  if (source !== "cloudflare_challenge" && source !== "cloudflare_waf") return source;
+  if (merchantCloudflare === true) return source; // the merchant really can fix this
+  if (merchantCloudflare === false) return "shopify_security"; // Shopify's own shield
+  return "cloudflare_unattributed";
 }
 
 /** The most frequently seen blocker, ties broken by insertion order. */
@@ -721,6 +782,8 @@ export interface RunCrawlDeps {
   /** Used to build the crawler's User-Agent (bot info URL). */
   appUrl: string;
   fetchImpl?: typeof fetch;
+  /** Injectable NS lookup for `detectMerchantCloudflare` (tests). */
+  resolveNsImpl?: (host: string) => Promise<string[]>;
   maxPages?: number;
   onProgress?: (pagesCrawled: number, totalDiscovered: number) => void | Promise<void>;
   /** Heartbeat cadence in pages (§3.5: every 25). */
@@ -776,6 +839,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     shopName,
     appUrl,
     fetchImpl = fetch,
+    resolveNsImpl,
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
     onProgress,
     heartbeatEvery = 25,
@@ -878,7 +942,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
       consecutiveBlocked += 1;
       if (consecutiveBlocked >= BOT_BLOCK_THRESHOLD && !abortedError) {
-        abortedError = `bot_blocked:${dominantBlockSource(blockSourceCounts) ?? "unknown"}`;
+        // Attribution is appended after the run — it needs the full tally and
+        // a DNS lookup, neither of which belongs in the request loop.
+        abortedError = "bot_blocked";
       }
     } else {
       consecutiveBlocked = 0;
@@ -1094,15 +1160,24 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   const status: CrawlSummary["status"] = abortedError ? "failed" : capped ? "capped" : "completed";
 
+  // Attribute the blocker. The DNS lookup only runs when a Cloudflare verdict
+  // actually needs an owner — a clean crawl never pays for it.
+  let blockedBy = dominantBlockSource(blockSourceCounts);
+  if (blockedBy === "cloudflare_challenge" || blockedBy === "cloudflare_waf") {
+    const merchantCloudflare = await detectMerchantCloudflare(primaryDomain, resolveNsImpl);
+    blockedBy = attributeBlockSource(blockedBy, merchantCloudflare);
+  }
+  const error = abortedError === "bot_blocked" && blockedBy ? `bot_blocked:${blockedBy}` : abortedError;
+
   return {
     status,
-    error: abortedError ?? undefined,
+    error: error ?? undefined,
     pagesCrawled: pagesCompleted,
     totalDiscovered: discovered.size,
     pagesOk,
     pagesBroken,
     pagesBlocked,
-    blockedBy: dominantBlockSource(blockSourceCounts),
+    blockedBy,
     orphanCount,
     headDriftCount: headDrift.count,
   };

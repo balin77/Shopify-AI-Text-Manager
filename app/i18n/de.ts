@@ -1178,6 +1178,7 @@ export const de = {
     partialSummary: "{processed} von {total} gespeichert, {failed} fehlgeschlagen",
     taskFailedGeneric: "Aufgabe fehlgeschlagen — bitte erneut versuchen.",
     taskCompleted: "Aufgabe abgeschlossen für \"{title}\"",
+    crawlCompleted: "Website-Crawl abgeschlossen",
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
@@ -1556,7 +1557,9 @@ export const de = {
       blockedByShopifyRateLimit:
         "Erkannt: Shopifys eigenes Rate-Limit (keine Firewall von dir). Der Crawl war zu schnell — starte ihn später erneut, er drosselt sich inzwischen automatisch.",
       blockedByShopifySecurity:
-        "Erkannt: Shopifys eigener Bot-Schutz (keine Firewall von dir). Das passiert bei hoher Last auf der Storefront — versuche es später erneut.",
+        "Erkannt: Shopifys eigener Bot-Schutz. Jeder Shopify-Shop läuft hinter Shopifys Cloudflare — darauf hast du keinen Zugriff und musst auch nichts konfigurieren. Warte etwas und starte den Crawl erneut.",
+      blockedByCloudflareUnattributed:
+        "Cloudflare hat den Crawler abgewiesen. Ob das Shopifys eigener Bot-Schutz war oder eine Cloudflare-Instanz von dir, ließ sich nicht feststellen (die DNS-Abfrage schlug fehl). Nur wenn du deine Domain selbst über Cloudflare proxyst, kannst du dort eine Ausnahme anlegen.",
       blockedByRateLimit:
         "Erkannt: Rate-Limiting (der Server hat „Retry-After\" geschickt). Kein Bot-Bann — der Crawl war schlicht zu schnell.",
       blockedByUnknown:

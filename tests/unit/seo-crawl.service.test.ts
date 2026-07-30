@@ -7,6 +7,8 @@ import {
   classifyLinkStatus,
   isBotBlockStatus,
   diagnoseBlock,
+  detectMerchantCloudflare,
+  attributeBlockSource,
   parseRetryAfter,
   dominantBlockSource,
   parseCrawlError,
@@ -222,7 +224,7 @@ describe("diagnoseBlock", () => {
     expect(diagnoseBlock(404, hdrs({}), null)).toBeNull();
   });
 
-  it("names a Cloudflare challenge from cf-mitigated", () => {
+  it("names a Cloudflare challenge from cf-mitigated (owner resolved separately)", () => {
     expect(diagnoseBlock(403, hdrs({ "cf-mitigated": "challenge", "cf-ray": "abc" }), null)?.source).toBe(
       "cloudflare_challenge",
     );
@@ -231,6 +233,21 @@ describe("diagnoseBlock", () => {
   it("does NOT blame Cloudflare on cf-ray alone — Shopify itself sits behind Cloudflare", () => {
     const d = diagnoseBlock(429, hdrs({ "cf-ray": "abc", server: "cloudflare", "x-shopid": "123" }), null);
     expect(d?.source).toBe("shopify_rate_limit");
+  });
+
+  it("recognises the headers current Shopify storefronts actually send", () => {
+    // Regression: the original list only had x-shopid / x-sorting-hat-*, which
+    // live storefronts no longer send — so every block fell through to
+    // Cloudflare and merchants were told to open a dashboard they don't have.
+    expect(diagnoseBlock(429, hdrs({ "x-dc": "gcp-europe-west1" }), null)?.source).toBe("shopify_rate_limit");
+    expect(diagnoseBlock(403, hdrs({ "shopify-complexity-score": "926" }), null)?.source).toBe(
+      "shopify_security",
+    );
+  });
+
+  it("lets Shopify origin markers win over a Cloudflare signal — the request reached the origin", () => {
+    const d = diagnoseBlock(403, hdrs({ "cf-mitigated": "challenge", "x-dc": "gcp-europe-west1" }), null);
+    expect(d?.source).toBe("shopify_security");
   });
 
   it("distinguishes Shopify's rate limit (429) from its bot protection (403)", () => {
@@ -254,6 +271,51 @@ describe("diagnoseBlock", () => {
 
   it("reports unknown when nothing identifies the blocker", () => {
     expect(diagnoseBlock(403, hdrs({}), null)?.source).toBe("unknown");
+  });
+});
+
+describe("detectMerchantCloudflare / attributeBlockSource", () => {
+  it("recognises a merchant-owned Cloudflare from the nameservers", async () => {
+    const ns = async () => ["kim.ns.cloudflare.com", "walt.ns.cloudflare.com"];
+    expect(await detectMerchantCloudflare("shop.example.com", ns)).toBe(true);
+  });
+
+  it("reports false for a Shopify store on ordinary nameservers", async () => {
+    // The real patis-universe.com case: Cloudflare answers the request, but it
+    // is Shopify's Cloudflare — the merchant has no dashboard to configure.
+    const ns = async () => ["ns-cloud-a1.googledomains.com", "ns-cloud-a2.googledomains.com"];
+    expect(await detectMerchantCloudflare("patis-universe.com", ns)).toBe(false);
+  });
+
+  it("walks up to the registrable domain when the subdomain has no NS records", async () => {
+    const seen: string[] = [];
+    const ns = async (host: string) => {
+      seen.push(host);
+      if (host !== "example.com") throw new Error("NODATA");
+      return ["kim.ns.cloudflare.com"];
+    };
+    expect(await detectMerchantCloudflare("shop.eu.example.com", ns)).toBe(true);
+    expect(seen).toEqual(["shop.eu.example.com", "eu.example.com", "example.com"]);
+  });
+
+  it("returns null when the lookup fails, never a confident answer", async () => {
+    const ns = async () => {
+      throw new Error("ENOTFOUND");
+    };
+    expect(await detectMerchantCloudflare("example.com", ns)).toBeNull();
+  });
+
+  it("attributes a Cloudflare verdict by ownership", () => {
+    expect(attributeBlockSource("cloudflare_challenge", true)).toBe("cloudflare_challenge");
+    expect(attributeBlockSource("cloudflare_challenge", false)).toBe("shopify_security");
+    expect(attributeBlockSource("cloudflare_waf", false)).toBe("shopify_security");
+    expect(attributeBlockSource("cloudflare_challenge", null)).toBe("cloudflare_unattributed");
+  });
+
+  it("leaves non-Cloudflare verdicts untouched", () => {
+    expect(attributeBlockSource("shopify_rate_limit", true)).toBe("shopify_rate_limit");
+    expect(attributeBlockSource("rate_limit", null)).toBe("rate_limit");
+    expect(attributeBlockSource("unknown", false)).toBe("unknown");
   });
 });
 
@@ -617,6 +679,75 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     expect(summary.pagesBroken).toBe(0);
     expect(summary.pagesBlocked).toBeGreaterThanOrEqual(1);
     expect(db.__created.brokenLinks).toHaveLength(0);
+  });
+
+  it("attributes a Cloudflare challenge to Shopify when the domain isn't on Cloudflare nameservers", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", `<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a>`)),
+      ),
+      ...["a", "b", "c"].map((p) =>
+        http.get(
+          `${BASE}/${p}`,
+          () => new HttpResponse("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
+        ),
+      ),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-attr", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      // Google Cloud DNS, like the real store that surfaced this: Cloudflare
+      // answered, but it is Shopify's Cloudflare, not the merchant's.
+      resolveNsImpl: async () => ["ns-cloud-a1.googledomains.com"],
+    });
+
+    expect(summary.status).toBe("failed");
+    expect(summary.blockedBy).toBe("shopify_security");
+    expect(summary.error).toBe("bot_blocked:shopify_security");
+    expect(parseCrawlError(summary.error ?? null)).toEqual({
+      code: "bot_blocked",
+      blockedBy: "shopify_security",
+    });
+  });
+
+  it("keeps the Cloudflare attribution when the merchant really is on Cloudflare", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", `<a href="/a">a</a><a href="/b">b</a><a href="/c">c</a>`)),
+      ),
+      ...["a", "b", "c"].map((p) =>
+        http.get(
+          `${BASE}/${p}`,
+          () => new HttpResponse("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
+        ),
+      ),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-attr-cf", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      resolveNsImpl: async () => ["kim.ns.cloudflare.com", "walt.ns.cloudflare.com"],
+    });
+
+    expect(summary.blockedBy).toBe("cloudflare_challenge");
+    expect(summary.error).toBe("bot_blocked:cloudflare_challenge");
   });
 
   it("counts a single 403/429 target as blocked, not as a broken link", async () => {

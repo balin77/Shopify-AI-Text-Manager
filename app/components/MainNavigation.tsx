@@ -81,8 +81,32 @@ export function MainNavigation() {
         if (task.type === "altTextTemplateApply") {
           return t.tasks?.altTextTemplateApplied?.replace("{title}", resourceTitle) || `Alt-text templates applied to "${resourceTitle}"`;
         }
+        // The crawl is site-wide and carries no resourceTitle — the generic
+        // message would render as `Task completed for ""`.
+        if (task.type === "seoCrawl") {
+          return t.tasks?.crawlCompleted || "Website crawl finished";
+        }
         return t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
       })();
+
+      // Task.error holds a machine code for some task types (the crawl writes
+      // `bot_blocked:<blocker>`); those must never reach the merchant raw.
+      const readableError = (raw: string | null | undefined): string | null => {
+        if (!raw) return null;
+        const crawlTexts = (t.seo as any)?.crawlPage ?? {};
+        switch (raw.split(":")[0]) {
+          case "bot_blocked":
+            return crawlTexts.errorBotBlocked || null;
+          case "storefront_password":
+            return crawlTexts.errorStorefrontPassword || null;
+          case "invalid_domain":
+          case "crawl_failed":
+            return crawlTexts.errorGeneric || null;
+          default:
+            return raw; // other task types store a human-readable message here
+        }
+      };
+      const taskErrorText = readableError(task.error);
 
       const total = typeof task.total === "number" ? task.total : null;
       const processed = typeof task.processed === "number" ? task.processed : null;
@@ -95,7 +119,7 @@ export function MainNavigation() {
       if (task.status === "failed") {
         tone = "critical";
         title = t.tasks?.failedTitle || "✗ Failed";
-        const detail = task.error || t.tasks?.taskFailedGeneric || "Task failed — please retry.";
+        const detail = taskErrorText || t.tasks?.taskFailedGeneric || "Task failed — please retry.";
         message = `${baseMessage}: ${detail}`;
       } else if (total != null && processed != null && processed < total) {
         tone = "warning";
@@ -104,12 +128,12 @@ export function MainNavigation() {
           .replace("{processed}", String(processed))
           .replace("{total}", String(total))
           .replace("{failed}", String(failed));
-        message = `${baseMessage} — ${summary}${task.error ? `: ${task.error}` : ""}`;
-      } else if (task.error) {
+        message = `${baseMessage} — ${summary}${taskErrorText ? `: ${taskErrorText}` : ""}`;
+      } else if (taskErrorText) {
         // Completed with a soft error recorded — surface as warning.
         tone = "warning";
         title = t.tasks?.partialTitle || "⚠ Partially saved";
-        message = `${baseMessage} — ${task.error}`;
+        message = `${baseMessage} — ${taskErrorText}`;
       }
 
       if (isMountedRef.current) {

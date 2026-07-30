@@ -407,6 +407,7 @@ export default function SeoCrawl() {
   const BLOCK_SOURCE_KEY: Record<string, string> = {
     cloudflare_challenge: "blockedByCloudflareChallenge",
     cloudflare_waf: "blockedByCloudflareWaf",
+    cloudflare_unattributed: "blockedByCloudflareUnattributed",
     shopify_rate_limit: "blockedByShopifyRateLimit",
     shopify_security: "blockedByShopifySecurity",
     rate_limit: "blockedByRateLimit",
