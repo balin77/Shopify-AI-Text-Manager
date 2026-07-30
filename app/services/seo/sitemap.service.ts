@@ -97,8 +97,13 @@ const SITEMAP_CACHE_TTL_MS = 60 * 60 * 1000;
 
 // ── Exclusion-suggestion rules (pure — unit-tested without a DB) ───────────
 
-export type SitemapExclusionReason = "emptyCollection" | "thinContent" | "archivedProduct";
-export type SitemapExclusionResourceType = "product" | "collection" | "page";
+export type SitemapExclusionReason = "emptyCollection" | "thinContent" | "archivedProduct" | "manual";
+/** `blog` is absent on purpose: the app caches no Blog model (Article carries a
+ *  denormalized `blogTitle` only), so a blog can't be offered from the DB
+ *  cache the way §3 requires. Products/collections/pages/articles cover what
+ *  `seo.hidden` is actually used for. */
+export type SitemapExclusionResourceType = "product" | "collection" | "page" | "article";
+export const EXCLUDABLE_RESOURCE_TYPES: SitemapExclusionResourceType[] = ["product", "collection", "page", "article"];
 
 export interface SitemapExclusionCandidate {
   resourceType: SitemapExclusionResourceType;
@@ -324,6 +329,137 @@ export async function upsertExclusionSuggestions(
   return { created, skipped };
 }
 
+// ── Manual exclusion: search + create (DB-cache-first, §3) ─────────────────
+
+/** Search-result cap — a picker list, not a browse view. */
+const MANUAL_SEARCH_LIMIT = 25;
+
+export interface ExclusionSearchHit {
+  resourceType: SitemapExclusionResourceType;
+  resourceId: string;
+  title: string;
+  handle: string;
+  /** An exclusion row already exists — the UI shows its state instead of an
+   *  exclude button, so the same resource can't be queued twice. */
+  existingStatus: string | null;
+  /** `isLikelyPolicyPage`. Computed here rather than in the route component so
+   *  the client bundle never has to import this module (it pulls in cheerio). */
+  caution: boolean;
+}
+
+/**
+ * Type-ahead over the DB cache for the manual "exclude anything" picker. Reads
+ * the same cached models the suggestion sweep uses — no live Admin API call
+ * (SEO_SECTION_CONTRACT.md §3). An empty query returns the first
+ * MANUAL_SEARCH_LIMIT rows so the picker is useful before typing.
+ */
+export async function searchExclusionCandidates(
+  db: PrismaClient,
+  shop: string,
+  resourceType: SitemapExclusionResourceType,
+  query: string,
+): Promise<ExclusionSearchHit[]> {
+  const q = query.trim();
+  const filter = q
+    ? {
+        OR: [
+          { title: { contains: q, mode: "insensitive" as const } },
+          { handle: { contains: q, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+  const args = {
+    where: { shop, ...filter },
+    select: { id: true, title: true, handle: true },
+    orderBy: { title: "asc" as const },
+    take: MANUAL_SEARCH_LIMIT,
+  };
+
+  let rows: { id: string; title: string; handle: string }[];
+  switch (resourceType) {
+    case "product":
+      rows = await db.product.findMany(args);
+      break;
+    case "collection":
+      rows = await db.collection.findMany(args);
+      break;
+    case "page":
+      rows = await db.page.findMany(args);
+      break;
+    case "article":
+      rows = await db.article.findMany(args);
+      break;
+    default:
+      return [];
+  }
+  if (rows.length === 0) return [];
+
+  const existing = await db.seoSitemapExclusion.findMany({
+    where: { shop, resourceType, resourceId: { in: rows.map((r) => r.id) } },
+    select: { resourceId: true, status: true },
+  });
+  const statusById = new Map(existing.map((e) => [e.resourceId, e.status]));
+
+  return rows.map((r) => ({
+    resourceType,
+    resourceId: r.id,
+    title: r.title,
+    handle: r.handle,
+    existingStatus: statusById.get(r.id) ?? null,
+    caution: isLikelyPolicyPage(resourceType, r.handle, r.title),
+  }));
+}
+
+/**
+ * Row for a manually chosen resource, ready for `applyExclusion`. Reuses an
+ * existing row when there is one (the unique key forbids a second) — including
+ * a previously reverted one, which is exactly the "exclude it again" case.
+ * Returns null when the resource isn't in the DB cache, so a forged
+ * `resourceId` from the client can never reach `metafieldsSet`.
+ */
+export async function ensureManualExclusion(
+  db: PrismaClient,
+  shop: string,
+  resourceType: SitemapExclusionResourceType,
+  resourceId: string,
+): Promise<{ id: string; status: string } | null> {
+  const exists = await resourceExistsInCache(db, shop, resourceType, resourceId);
+  if (!exists) return null;
+
+  const existing = await db.seoSitemapExclusion.findFirst({
+    where: { shop, resourceType, resourceId },
+    select: { id: true, status: true },
+  });
+  if (existing) return existing;
+
+  const created = await db.seoSitemapExclusion.create({
+    data: { shop, resourceType, resourceId, reason: "manual", status: "suggested" },
+    select: { id: true, status: true },
+  });
+  return created;
+}
+
+async function resourceExistsInCache(
+  db: PrismaClient,
+  shop: string,
+  resourceType: SitemapExclusionResourceType,
+  resourceId: string,
+): Promise<boolean> {
+  const where = { shop, id: resourceId };
+  switch (resourceType) {
+    case "product":
+      return !!(await db.product.findFirst({ where, select: { id: true } }));
+    case "collection":
+      return !!(await db.collection.findFirst({ where, select: { id: true } }));
+    case "page":
+      return !!(await db.page.findFirst({ where, select: { id: true } }));
+    case "article":
+      return !!(await db.article.findFirst({ where, select: { id: true } }));
+    default:
+      return false;
+  }
+}
+
 // ── Live sitemap fetch (the ONE allowed live call, §6.2/§6.3) ──────────────
 
 export interface SitemapFetchResult {
@@ -338,26 +474,81 @@ export interface SitemapFetchResult {
   /** URLs kept for the broken-links crossmatch, capped at MAX_SITEMAP_URLS. */
   urls: string[];
   ok: boolean;
+  /** Why the fetch failed, so the UI can give an actionable hint instead of
+   *  "please try again later" — which is wrong advice for the most common
+   *  cause (a password-protected storefront never serves sitemap.xml at all).
+   *  Undefined when `ok`. */
+  failureReason?: SitemapFailureReason;
+  /** HTTP status behind a `failureReason: "http"`, for the UI/logs. */
+  httpStatus?: number;
 }
 
-async function fetchXml(fetchImpl: typeof fetch, url: string): Promise<string | null> {
+/**
+ * `password`  — storefront is password-protected; the fetch was redirected to
+ *               /password. Shopify serves no sitemap in this state at all.
+ * `http`      — reached the storefront, got a non-2xx (see `httpStatus`).
+ * `timeout`   — no response within REQUEST_TIMEOUT_MS.
+ * `network`   — DNS/TLS/connection failure — typically a domain that doesn't
+ *               resolve, or a shop whose primary domain isn't live yet.
+ * `notSitemap`— got a 200, but the body isn't a <urlset>/<sitemapindex> (an
+ *               HTML error/parking page is the usual culprit).
+ * `budget`    — a sitemap INDEX whose sub-sitemaps blew the fetch budget.
+ */
+export type SitemapFailureReason = "password" | "http" | "timeout" | "network" | "notSitemap" | "budget";
+
+/** Identifies the app to the storefront. A UA-less request is a plausible
+ *  trigger for bot protection; crawl.service.ts sends one for the same reason
+ *  (`crawlUserAgent`) — kept as a local constant rather than an import so this
+ *  section doesn't depend on the crawler module. */
+const SITEMAP_USER_AGENT = "ContentPilotSEO/1.0 (+https://contentpilot.app/bot)";
+
+interface XmlFetchOutcome {
+  xml: string | null;
+  /** 0 = network error, -1 = timeout. */
+  status: number;
+  /** Post-redirect URL — how the password redirect is detected. */
+  finalUrl: string;
+}
+
+async function fetchXml(fetchImpl: typeof fetch, url: string): Promise<XmlFetchOutcome> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetchImpl(url, {
-        headers: { Accept: "application/xml, text/xml" },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) return null;
-    return await res.text();
-  } catch {
-    return null;
+    res = await fetchImpl(url, {
+      headers: { Accept: "application/xml, text/xml", "User-Agent": SITEMAP_USER_AGENT },
+      signal: controller.signal,
+    });
+  } catch (err) {
+    return { xml: null, status: controller.signal.aborted ? -1 : 0, finalUrl: url };
+  } finally {
+    clearTimeout(timer);
   }
+
+  const finalUrl = res.url || url;
+  if (!res.ok) return { xml: null, status: res.status, finalUrl };
+  try {
+    return { xml: await res.text(), status: res.status, finalUrl };
+  } catch {
+    return { xml: null, status: res.status, finalUrl };
+  }
+}
+
+/** Did the storefront bounce us to its password gate? */
+function isPasswordRedirect(finalUrl: string): boolean {
+  try {
+    return new URL(finalUrl).pathname.toLowerCase().startsWith("/password");
+  } catch {
+    return false;
+  }
+}
+
+/** Map a failed root fetch to its reason. */
+function classifyRootFailure(outcome: XmlFetchOutcome): SitemapFailureReason {
+  if (isPasswordRedirect(outcome.finalUrl)) return "password";
+  if (outcome.status === -1) return "timeout";
+  if (outcome.status === 0) return "network";
+  return "http";
 }
 
 /**
@@ -369,14 +560,29 @@ async function fetchXml(fetchImpl: typeof fetch, url: string): Promise<string | 
  */
 export async function fetchSitemapInfo(fetchImpl: typeof fetch, primaryDomain: string): Promise<SitemapFetchResult> {
   const sitemapUrl = `https://${primaryDomain}/sitemap.xml`;
-  const rootXml = await fetchXml(fetchImpl, sitemapUrl);
-  if (!rootXml) return { sitemapUrl, entryCount: 0, urls: [], ok: false };
+  const root = await fetchXml(fetchImpl, sitemapUrl);
+  if (!root.xml) {
+    const failureReason = classifyRootFailure(root);
+    return {
+      sitemapUrl,
+      entryCount: 0,
+      urls: [],
+      ok: false,
+      failureReason,
+      ...(failureReason === "http" ? { httpStatus: root.status } : {}),
+    };
+  }
+  // A 200 that lands on /password is the password gate serving its HTML page —
+  // status alone would look like success.
+  if (isPasswordRedirect(root.finalUrl)) {
+    return { sitemapUrl, entryCount: 0, urls: [], ok: false, failureReason: "password" };
+  }
 
   let $: cheerio.CheerioAPI;
   try {
-    $ = cheerio.load(rootXml, { xmlMode: true });
+    $ = cheerio.load(root.xml, { xmlMode: true });
   } catch {
-    return { sitemapUrl, entryCount: 0, urls: [], ok: false };
+    return { sitemapUrl, entryCount: 0, urls: [], ok: false, failureReason: "notSitemap" };
   }
 
   const subSitemapLocs: string[] = [];
@@ -385,6 +591,13 @@ export async function fetchSitemapInfo(fetchImpl: typeof fetch, primaryDomain: s
     if (loc) subSitemapLocs.push(loc);
   });
   const isIndex = $("sitemapindex").length > 0 || subSitemapLocs.length > 0;
+
+  // cheerio in xmlMode parses an HTML error/parking page happily and simply
+  // finds no sitemap nodes — without this check that would report a valid but
+  // empty sitemap ("Einträge: 0") instead of a fetch problem.
+  if (!isIndex && $("urlset").length === 0) {
+    return { sitemapUrl, entryCount: 0, urls: [], ok: false, failureReason: "notSitemap" };
+  }
 
   if (!isIndex) {
     let entryCount = 0;
@@ -410,16 +623,16 @@ export async function fetchSitemapInfo(fetchImpl: typeof fetch, primaryDomain: s
   );
   const raced = await Promise.race([fetchAll, budget]);
   if (raced === budgetExceeded) {
-    return { sitemapUrl, entryCount: 0, urls: [], ok: false };
+    return { sitemapUrl, entryCount: 0, urls: [], ok: false, failureReason: "budget" };
   }
 
   let entryCount = 0;
   const urls: string[] = [];
-  for (const subXml of raced) {
-    if (!subXml) continue;
+  for (const sub of raced) {
+    if (!sub.xml) continue;
     let $sub: cheerio.CheerioAPI;
     try {
-      $sub = cheerio.load(subXml, { xmlMode: true });
+      $sub = cheerio.load(sub.xml, { xmlMode: true });
     } catch {
       continue;
     }
@@ -612,6 +825,12 @@ export interface SitemapAnalysis {
   sitemapUrl: string | null;
   entryCount: number | null;
   sitemapFetchError: boolean;
+  /** Set whenever `sitemapFetchError` — drives the actionable hint. */
+  sitemapFailureReason: SitemapFailureReason | null;
+  sitemapHttpStatus: number | null;
+  /** Always present, even on a failed fetch, so the UI can link the URL it
+   *  tried — half the diagnosis is seeing which domain was probed. */
+  attemptedSitemapUrl: string;
   exclusions: SitemapExclusionRow[];
   /** Broken-links-in-sitemap tile is only meaningful (and only rendered)
    *  when a crawl snapshot exists — §6.2. */
@@ -630,27 +849,33 @@ async function resolveExclusionTitles(
   shop: string,
   rows: { resourceType: string; resourceId: string }[],
 ): Promise<Map<string, { title: string; handle: string }>> {
-  const idsByType: Record<string, string[]> = { product: [], collection: [], page: [] };
+  const idsByType: Record<string, string[]> = { product: [], collection: [], page: [], article: [] };
   for (const r of rows) {
     if (idsByType[r.resourceType]) idsByType[r.resourceType].push(r.resourceId);
   }
+  const select = { id: true, title: true, handle: true };
 
-  const [products, collections, pages] = await Promise.all([
+  const [products, collections, pages, articles] = await Promise.all([
     idsByType.product.length
-      ? db.product.findMany({ where: { shop, id: { in: idsByType.product } }, select: { id: true, title: true, handle: true } })
+      ? db.product.findMany({ where: { shop, id: { in: idsByType.product } }, select })
       : Promise.resolve([]),
     idsByType.collection.length
-      ? db.collection.findMany({ where: { shop, id: { in: idsByType.collection } }, select: { id: true, title: true, handle: true } })
+      ? db.collection.findMany({ where: { shop, id: { in: idsByType.collection } }, select })
       : Promise.resolve([]),
     idsByType.page.length
-      ? db.page.findMany({ where: { shop, id: { in: idsByType.page } }, select: { id: true, title: true, handle: true } })
+      ? db.page.findMany({ where: { shop, id: { in: idsByType.page } }, select })
+      : Promise.resolve([]),
+    idsByType.article.length
+      ? db.article.findMany({ where: { shop, id: { in: idsByType.article } }, select })
       : Promise.resolve([]),
   ]);
 
   const map = new Map<string, { title: string; handle: string }>();
-  for (const p of products as { id: string; title: string; handle: string }[]) map.set(`product::${p.id}`, { title: p.title, handle: p.handle });
-  for (const c of collections as { id: string; title: string; handle: string }[]) map.set(`collection::${c.id}`, { title: c.title, handle: c.handle });
-  for (const pg of pages as { id: string; title: string; handle: string }[]) map.set(`page::${pg.id}`, { title: pg.title, handle: pg.handle });
+  type Row = { id: string; title: string; handle: string };
+  for (const p of products as Row[]) map.set(`product::${p.id}`, { title: p.title, handle: p.handle });
+  for (const c of collections as Row[]) map.set(`collection::${c.id}`, { title: c.title, handle: c.handle });
+  for (const pg of pages as Row[]) map.set(`page::${pg.id}`, { title: pg.title, handle: pg.handle });
+  for (const a of articles as Row[]) map.set(`article::${a.id}`, { title: a.title, handle: a.handle });
   return map;
 }
 
@@ -709,6 +934,9 @@ export async function analyze(shop: string, deps: SitemapAnalyzeDeps): Promise<S
     sitemapUrl: sitemapInfo.ok ? sitemapInfo.sitemapUrl : null,
     entryCount: sitemapInfo.ok ? sitemapInfo.entryCount : null,
     sitemapFetchError: !sitemapInfo.ok,
+    sitemapFailureReason: sitemapInfo.ok ? null : sitemapInfo.failureReason ?? null,
+    sitemapHttpStatus: sitemapInfo.httpStatus ?? null,
+    attemptedSitemapUrl: sitemapInfo.sitemapUrl,
     exclusions,
     hasCrawlSnapshot: !!latestSnapshot,
     brokenInSitemap,

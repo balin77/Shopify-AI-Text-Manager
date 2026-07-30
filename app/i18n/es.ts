@@ -1652,6 +1652,8 @@ export const es: Translation = {
       reason_emptyCollection: "Colección vacía (según el último rastreo)",
       reason_thinContent: "Contenido escaso (pocas palabras)",
       reason_archivedProduct: "Producto archivado",
+      reason_manual: "Elegido manualmente",
+      reasonHelp_manual: "Has seleccionado este contenido tú mismo — no hay ninguna recomendación automática detrás.",
       reasonHelp_emptyCollection: "La página de la colección casi no tenía texto en el último rastreo (≤ 20 palabras) — típico de una cuadrícula de productos vacía.",
       reasonHelp_thinContent: "El texto de la página tiene menos de 150 palabras (sin HTML). Solo cuenta las palabras — no se valora el contenido en sí.",
       reasonHelp_archivedProduct: "El producto está marcado como «Archivado» en Shopify y ya no es accesible por ningún canal de venta.",
@@ -1675,8 +1677,28 @@ export const es: Translation = {
       cautionTitle: "Parece una página legal o de servicio",
       cautionBody: "Aviso legal, privacidad, términos, devoluciones, envío o contacto son cortas por naturaleza — la sugerencia se basa solo en el número de palabras. Son señales de confianza y normalmente deberían seguir siendo indexables. Exclúyelas solo si es una decisión consciente.",
 
+      // Diagnóstico de la descarga del sitemap
+      fetchError_password: "Tu tienda está protegida con contraseña. Mientras la contraseña esté activa, Shopify no sirve ningún sitemap.xml y Google no puede indexar la tienda. Quita la protección en Canales de venta → Tienda online → Preferencias.",
+      fetchError_http: "La tienda respondió a la petición con el estado HTTP {status}. Comprueba si la dirección de abajo se abre en tu navegador.",
+      fetchError_timeout: "La tienda no respondió en 10 segundos. Suele ser temporal — inténtalo más tarde.",
+      fetchError_network: "No se pudo acceder al dominio (DNS o conexión). Comprueba que el dominio principal de tu tienda esté bien configurado y activo.",
+      fetchError_notSitemap: "La dirección devolvió algo que no es XML de sitemap válido (por ejemplo, una página HTML de error). Ábrela en tu navegador para ver qué se sirve ahí.",
+      fetchError_budget: "Tu sitemap se compone de muchos sub-sitemaps y la descarga tardó demasiado. Las entradas no se cuentan — las funciones de exclusión de abajo siguen funcionando.",
+      fetchError_unknown: "No se pudo determinar el motivo. Abre la dirección de abajo en tu navegador para comprobar qué se sirve.",
+      fetchErrorAttempted: "Dirección solicitada",
+
+      // Exclusión manual
+      manualTitle: "Excluir cualquier contenido",
+      manualIntro: "Las recomendaciones de arriba solo cubren tres reglas. Aquí puedes sacar del sitemap cualquier producto, colección, página o entrada de blog de forma deliberada — mismo efecto, igual de reversible.",
+      manualTypeLabel: "Tipo de contenido",
+      manualSearchLabel: "Buscar",
+      manualSearchPlaceholder: "Título o handle — déjalo vacío para los primeros resultados",
+      manualSearchButton: "Buscar",
+      manualNoResults: "Sin resultados.",
+
       // Guía de decisión
-      guidanceTitle: "Cuándo excluir — y cuándo no",
+      guidanceShow: "Cuándo excluir — y cuándo no",
+      guidanceHide: "Ocultar la guía",
       guidanceYesTitle: "Vale la pena excluir",
       guidanceYes1: "Colecciones vacías de forma permanente (p. ej. una temporada pasada que no volverá).",
       guidanceYes2: "Productos archivados o descatalogados de forma permanente sin sucesor.",

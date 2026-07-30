@@ -8,6 +8,8 @@ import {
   fetchSitemapInfo,
   crossmatchBrokenSitemapLinks,
   isLikelyPolicyPage,
+  searchExclusionCandidates,
+  ensureManualExclusion,
   applyExclusion,
   revertExclusion,
   THIN_CONTENT_MIN_WORDS,
@@ -233,13 +235,110 @@ describe("upsertExclusionSuggestions", () => {
   });
 });
 
+// ── Manual exclusion (picker search + row creation) ────────────────────────
+
+function makeManualDb(opts: {
+  products?: { id: string; title: string; handle: string }[];
+  articles?: { id: string; title: string; handle: string }[];
+  exclusions?: { resourceType: string; resourceId: string; status: string }[];
+}) {
+  const created: any[] = [];
+  const db: any = {
+    product: {
+      findMany: async () => opts.products ?? [],
+      findFirst: async ({ where }: any) => (opts.products ?? []).find((p) => p.id === where.id) ?? null,
+    },
+    article: {
+      findMany: async () => opts.articles ?? [],
+      findFirst: async ({ where }: any) => (opts.articles ?? []).find((a) => a.id === where.id) ?? null,
+    },
+    collection: { findMany: async () => [], findFirst: async () => null },
+    page: { findMany: async () => [], findFirst: async () => null },
+    seoSitemapExclusion: {
+      findMany: async () => opts.exclusions ?? [],
+      findFirst: async ({ where }: any) =>
+        (opts.exclusions ?? []).find(
+          (e) => e.resourceType === where.resourceType && e.resourceId === where.resourceId,
+        ) ?? null,
+      create: async ({ data }: any) => {
+        created.push(data);
+        return { id: "new-row", status: data.status };
+      },
+    },
+  };
+  return { db, created };
+}
+
+describe("searchExclusionCandidates", () => {
+  it("marks hits that already have an exclusion row", async () => {
+    const { db } = makeManualDb({
+      products: [
+        { id: "gid-1", title: "A", handle: "a" },
+        { id: "gid-2", title: "B", handle: "b" },
+      ],
+      exclusions: [{ resourceType: "product", resourceId: "gid-2", status: "applied" }],
+    });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    expect(hits.map((h) => h.existingStatus)).toEqual([null, "applied"]);
+  });
+
+  it("carries the policy-page caution flag so the client never imports the service", async () => {
+    const { db } = makeManualDb({
+      products: [{ id: "gid-1", title: "Widget", handle: "widget" }],
+    });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "product", "");
+    expect(hits[0].caution).toBe(false);
+  });
+
+  it("supports articles", async () => {
+    const { db } = makeManualDb({ articles: [{ id: "gid-a1", title: "Post", handle: "post" }] });
+    const hits = await searchExclusionCandidates(db, "shop.myshopify.com", "article", "post");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].resourceType).toBe("article");
+  });
+});
+
+describe("ensureManualExclusion", () => {
+  it("creates a row with reason 'manual' for a cached resource", async () => {
+    const { db, created } = makeManualDb({ products: [{ id: "gid-1", title: "A", handle: "a" }] });
+    const row = await ensureManualExclusion(db, "shop.myshopify.com", "product", "gid-1");
+    expect(row).toMatchObject({ id: "new-row" });
+    expect(created[0]).toMatchObject({ resourceType: "product", resourceId: "gid-1", reason: "manual" });
+  });
+
+  it("reuses an existing row instead of violating the unique key — including a reverted one", async () => {
+    const { db, created } = makeManualDb({
+      products: [{ id: "gid-1", title: "A", handle: "a" }],
+      exclusions: [{ resourceType: "product", resourceId: "gid-1", status: "reverted" }],
+    });
+    const row = await ensureManualExclusion(db, "shop.myshopify.com", "product", "gid-1");
+    expect(row).toMatchObject({ status: "reverted" });
+    expect(created).toEqual([]);
+  });
+
+  it("returns null for an id that isn't in this shop's cache — a forged POST never reaches Shopify", async () => {
+    const { db, created } = makeManualDb({ products: [{ id: "gid-1", title: "A", handle: "a" }] });
+    const row = await ensureManualExclusion(db, "shop.myshopify.com", "product", "gid-someone-elses");
+    expect(row).toBeNull();
+    expect(created).toEqual([]);
+  });
+});
+
 // ── Sitemap XML parsing (injectable fetch, no msw needed) ──────────────────
 
-function fakeFetch(responses: Record<string, { status: number; body: string }>): typeof fetch {
+function fakeFetch(
+  responses: Record<string, { status: number; body: string; finalUrl?: string }>,
+): typeof fetch {
   return (async (url: string) => {
     const r = responses[url];
-    if (!r) return { ok: false, status: 404, text: async () => "" } as unknown as Response;
-    return { ok: r.status >= 200 && r.status < 300, status: r.status, text: async () => r.body } as unknown as Response;
+    if (!r) return { ok: false, status: 404, url, text: async () => "" } as unknown as Response;
+    return {
+      ok: r.status >= 200 && r.status < 300,
+      status: r.status,
+      // `Response.url` is the post-redirect URL — how the password gate is detected.
+      url: r.finalUrl ?? url,
+      text: async () => r.body,
+    } as unknown as Response;
   }) as typeof fetch;
 }
 
@@ -305,6 +404,59 @@ describe("fetchSitemapInfo", () => {
     expect(result.ok).toBe(false);
     expect(result.entryCount).toBe(0);
     expect(result.urls).toEqual([]);
+  });
+
+  it("reports no failureReason on success", async () => {
+    const fetchImpl = fakeFetch({ "https://shop.example.com/sitemap.xml": { status: 200, body: URLSET_XML } });
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect(result.failureReason).toBeUndefined();
+  });
+
+  it("classifies a password-gate redirect — even though it answers 200", async () => {
+    const fetchImpl = fakeFetch({
+      "https://shop.example.com/sitemap.xml": {
+        status: 200,
+        body: "<html><body>Opening soon</body></html>",
+        finalUrl: "https://shop.example.com/password",
+      },
+    });
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect(result.ok).toBe(false);
+    expect(result.failureReason).toBe("password");
+  });
+
+  it("classifies a non-2xx and keeps the status for the UI", async () => {
+    const fetchImpl = fakeFetch({ "https://shop.example.com/sitemap.xml": { status: 503, body: "" } });
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect(result.failureReason).toBe("http");
+    expect(result.httpStatus).toBe(503);
+  });
+
+  it("classifies a connection failure as network", async () => {
+    const fetchImpl = (async () => {
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch;
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect(result.failureReason).toBe("network");
+  });
+
+  it("classifies a 200 HTML page as notSitemap instead of reporting 0 entries", async () => {
+    const fetchImpl = fakeFetch({
+      "https://shop.example.com/sitemap.xml": { status: 200, body: "<html><body><h1>404</h1></body></html>" },
+    });
+    const result = await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect(result.ok).toBe(false);
+    expect(result.failureReason).toBe("notSitemap");
+  });
+
+  it("sends a User-Agent — a UA-less request is a plausible bot-protection trigger", async () => {
+    const seen: RequestInit[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      seen.push(init);
+      return { ok: true, status: 200, url: _url, text: async () => URLSET_XML } as unknown as Response;
+    }) as unknown as typeof fetch;
+    await fetchSitemapInfo(fetchImpl, "shop.example.com");
+    expect((seen[0].headers as Record<string, string>)["User-Agent"]).toContain("ContentPilotSEO");
   });
 
   it("treats an empty response body as a fetch failure (ok:false)", async () => {

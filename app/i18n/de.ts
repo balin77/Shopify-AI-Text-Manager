@@ -1652,6 +1652,8 @@ export const de = {
       reason_emptyCollection: "Leere Kollektion (laut letztem Crawl)",
       reason_thinContent: "Dünner Inhalt (wenig Text)",
       reason_archivedProduct: "Archiviertes Produkt",
+      reason_manual: "Manuell ausgewählt",
+      reasonHelp_manual: "Du hast diesen Inhalt selbst ausgewählt — es liegt keine automatische Empfehlung zugrunde.",
       reasonHelp_emptyCollection: "Die Kollektionsseite hatte beim letzten Website-Crawl fast keinen Text (≤ 20 Wörter) — typisch für ein leeres Produktraster.",
       reasonHelp_thinContent: "Der Seitentext hat unter 150 Wörter (HTML entfernt). Reine Wortzahl — der Inhalt wird nicht inhaltlich bewertet.",
       reasonHelp_archivedProduct: "Das Produkt steht in Shopify auf „Archiviert“ und ist damit über keinen Verkaufskanal mehr erreichbar.",
@@ -1675,8 +1677,28 @@ export const de = {
       cautionTitle: "Sieht nach einer Pflicht- oder Serviceseite aus",
       cautionBody: "Impressum, Datenschutz, AGB, Widerruf, Versand oder Kontakt sind naturgemäß kurz — der Vorschlag beruht allein auf der Wortzahl. Solche Seiten sind Vertrauenssignale und sollten in der Regel indexierbar bleiben. Schließe sie nur aus, wenn du das bewusst willst.",
 
+      // Fehlerdiagnose beim Sitemap-Abruf
+      fetchError_password: "Dein Shop ist passwortgeschützt. Solange das Passwort aktiv ist, liefert Shopify gar keine sitemap.xml aus und Google kann den Shop nicht indexieren. Entferne den Passwortschutz unter Vertriebskanäle → Online Store → Einstellungen.",
+      fetchError_http: "Der Shop hat den Abruf mit HTTP-Status {status} beantwortet. Prüfe, ob die unten genannte Adresse im Browser erreichbar ist.",
+      fetchError_timeout: "Der Shop hat nicht innerhalb von 10 Sekunden geantwortet. Meist vorübergehend — versuche es später erneut.",
+      fetchError_network: "Die Domain war nicht erreichbar (DNS oder Verbindung). Prüfe, ob die Primärdomain deines Shops korrekt gesetzt und live ist.",
+      fetchError_notSitemap: "Unter der Adresse kam kein gültiges Sitemap-XML zurück, sondern etwas anderes (z. B. eine HTML-Fehlerseite). Öffne die Adresse unten im Browser, um zu sehen, was dort ausgeliefert wird.",
+      fetchError_budget: "Deine Sitemap besteht aus vielen Unter-Sitemaps und der Abruf hat zu lange gedauert. Die Einträge werden dann nicht gezählt — die Ausschluss-Funktionen unten funktionieren trotzdem.",
+      fetchError_unknown: "Der Grund konnte nicht bestimmt werden. Öffne die Adresse unten im Browser, um zu prüfen, was ausgeliefert wird.",
+      fetchErrorAttempted: "Abgerufene Adresse",
+
+      // Manuell ausschließen
+      manualTitle: "Beliebigen Inhalt ausschließen",
+      manualIntro: "Die Empfehlungen oben decken nur drei Regeln ab. Hier kannst du jedes Produkt, jede Kollektion, Seite oder jeden Blogbeitrag gezielt aus der Sitemap nehmen — mit derselben Wirkung und ebenso umkehrbar.",
+      manualTypeLabel: "Inhaltstyp",
+      manualSearchLabel: "Suche",
+      manualSearchPlaceholder: "Titel oder Handle — leer lassen für die ersten Treffer",
+      manualSearchButton: "Suchen",
+      manualNoResults: "Keine Treffer.",
+
       // Entscheidungshilfe
-      guidanceTitle: "Wann ausschließen — und wann besser nicht",
+      guidanceShow: "Wann ausschließen — und wann besser nicht",
+      guidanceHide: "Hinweise ausblenden",
       guidanceYesTitle: "Sinnvoll auszuschließen",
       guidanceYes1: "Dauerhaft leere Kollektionen (z. B. eine abgelaufene Saison-Kollektion, die nicht wiederkommt).",
       guidanceYes2: "Archivierte oder dauerhaft ausgelistete Produkte, für die es keinen Nachfolger gibt.",

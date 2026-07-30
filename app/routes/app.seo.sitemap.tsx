@@ -24,7 +24,10 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List } from "@shopify/polaris";
+import {
+  Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List,
+  Collapsible, Select, TextField,
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -36,16 +39,32 @@ import {
   analyze,
   applyExclusion,
   revertExclusion,
+  searchExclusionCandidates,
+  ensureManualExclusion,
+  EXCLUDABLE_RESOURCE_TYPES,
   type SitemapAnalysis,
   type SitemapExclusionRow,
   type SitemapExclusionResourceType,
+  type ExclusionSearchHit,
 } from "../services/seo/sitemap.service";
+
+function parseResourceType(raw: string): SitemapExclusionResourceType | null {
+  return (EXCLUDABLE_RESOURCE_TYPES as string[]).includes(raw)
+    ? (raw as SitemapExclusionResourceType)
+    : null;
+}
 
 const TYPE_PATH: Record<SitemapExclusionResourceType, string> = {
   product: "/app/products",
   collection: "/app/collections",
   page: "/app/pages",
+  article: "/app/blog",
 };
+
+/** Picker options. Kept as a local literal rather than importing the service's
+ *  EXCLUDABLE_RESOURCE_TYPES — the component must not pull sitemap.service.ts
+ *  (and with it cheerio) into the client bundle. */
+const MANUAL_TYPE_OPTIONS: SitemapExclusionResourceType[] = ["product", "collection", "page", "article"];
 
 const SHOP_DOMAIN_QUERY = `#graphql
   query seoSitemapShopDomain {
@@ -72,8 +91,11 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
 // the upgrade card (same pattern as crawl.tsx §3.7 / internal-links.tsx).
 const EXAMPLE_ANALYSIS: SitemapAnalysis = {
   sitemapUrl: "https://example-shop.com/sitemap.xml",
+  attemptedSitemapUrl: "https://example-shop.com/sitemap.xml",
   entryCount: 248,
   sitemapFetchError: false,
+  sitemapFailureReason: null,
+  sitemapHttpStatus: null,
   hasCrawlSnapshot: false,
   brokenInSitemap: [],
   exclusions: [
@@ -141,6 +163,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ success: result.ok, error: result.error });
   }
 
+  // Type-ahead for the manual picker. Read-only, so it returns hits rather
+  // than the usual {success} envelope.
+  if (actionType === "search") {
+    const resourceType = parseResourceType(getFormString(formData, "resourceType"));
+    if (!resourceType) return json({ success: false, error: "Unknown resourceType" }, { status: 400 });
+    const hits = await searchExclusionCandidates(db, shop, resourceType, getFormString(formData, "query"));
+    return json({ success: true, hits });
+  }
+
+  // Exclude an arbitrary resource: create (or reuse) the row, then run it
+  // through the SAME echo-verified applyExclusion as a suggestion — there is
+  // no second write path. `ensureManualExclusion` returns null for an id that
+  // isn't in this shop's cache, so a forged POST can't reach metafieldsSet.
+  if (actionType === "excludeManual") {
+    const resourceType = parseResourceType(getFormString(formData, "resourceType"));
+    const resourceId = getFormString(formData, "resourceId");
+    if (!resourceType || !resourceId) {
+      return json({ success: false, error: "Unknown resource" }, { status: 400 });
+    }
+    const row = await ensureManualExclusion(db, shop, resourceType, resourceId);
+    if (!row) return json({ success: false, error: "not_found" }, { status: 404 });
+    const result = await applyExclusion(admin, db, shop, row.id);
+    return json({ success: result.ok, error: result.error });
+  }
+
   return json({ success: false, error: `Unknown actionType: ${actionType}` }, { status: 400 });
 };
 
@@ -158,10 +205,25 @@ export default function SeoSitemap() {
 
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   // Neither direction writes without an explicit confirmation: both flip a
   // metafield that changes what Google may index, and the row label alone
-  // ("Grund: Dünner Inhalt") never made the consequence visible.
-  const [confirm, setConfirm] = useState<{ row: SitemapExclusionRow; mode: "apply" | "revert" } | null>(null);
+  // ("Grund: Dünner Inhalt") never made the consequence visible. Normalized to
+  // what the dialog renders, so a suggestion row and a manually picked search
+  // hit share one modal.
+  const [confirm, setConfirm] = useState<{
+    mode: "apply" | "revert";
+    key: string;
+    title: string;
+    reason: string | null;
+    caution: boolean;
+    submit: () => void;
+  } | null>(null);
+
+  // Manual picker
+  const [manualType, setManualType] = useState<SitemapExclusionResourceType>("product");
+  const [manualQuery, setManualQuery] = useState("");
+  const searchFetcher = useFetcher<{ success: boolean; hits?: ExclusionSearchHit[] }>();
 
   useEffect(() => {
     if (rowFetcher.state !== "idle" || !rowFetcher.data) return;
@@ -184,12 +246,50 @@ export default function SeoSitemap() {
     rowFetcher.submit(formData, { method: "post" });
   };
 
+  const submitManualExclude = (hit: ExclusionSearchHit) => {
+    setBanner(null);
+    setPendingId(hit.resourceId);
+    const formData = new FormData();
+    formData.append("actionType", "excludeManual");
+    formData.append("resourceType", hit.resourceType);
+    formData.append("resourceId", hit.resourceId);
+    rowFetcher.submit(formData, { method: "post" });
+  };
+
+  const runSearch = () => {
+    const formData = new FormData();
+    formData.append("actionType", "search");
+    formData.append("resourceType", manualType);
+    formData.append("query", manualQuery);
+    searchFetcher.submit(formData, { method: "post" });
+  };
+
   const confirmRowAction = () => {
     if (!confirm) return;
-    const { row, mode } = confirm;
+    const submit = confirm.submit;
     setConfirm(null);
-    submitRowAction(row.id, mode);
+    submit();
   };
+
+  const askExclusionRow = (row: SitemapExclusionRow, mode: "apply" | "revert") =>
+    setConfirm({
+      mode,
+      key: row.id,
+      title: row.title,
+      reason: row.reason,
+      caution: row.caution,
+      submit: () => submitRowAction(row.id, mode),
+    });
+
+  const askManualExclude = (hit: ExclusionSearchHit) =>
+    setConfirm({
+      mode: "apply",
+      key: hit.resourceId,
+      title: hit.title,
+      reason: "manual",
+      caution: hit.caution,
+      submit: () => submitManualExclude(hit),
+    });
 
   const openInEditor = (type: SitemapExclusionResourceType, id: string) => {
     const path = TYPE_PATH[type];
@@ -205,17 +305,87 @@ export default function SeoSitemap() {
   const suggested = analysis.exclusions.filter((e) => e.status === "suggested");
   const decided = analysis.exclusions.filter((e) => e.status !== "suggested");
 
+  // The guidance lives inside the intro banner, collapsed by default — it's
+  // reference material you read once, not something worth a permanent card.
+  const intro = (
+    <Banner tone="info" title={c.introTitle}>
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd">{c.introBody}</Text>
+        <div>
+          <Button
+            variant="plain"
+            disclosure={helpOpen ? "up" : "down"}
+            onClick={() => setHelpOpen((v) => !v)}
+            ariaExpanded={helpOpen}
+            ariaControls="sitemap-guidance"
+          >
+            {helpOpen ? c.guidanceHide : c.guidanceShow}
+          </Button>
+        </div>
+        <Collapsible open={helpOpen} id="sitemap-guidance" transition={{ duration: "150ms", timingFunction: "ease-in-out" }}>
+          <BlockStack gap="300">
+            <BlockStack gap="100">
+              <Text as="h4" variant="headingSm">{c.guidanceYesTitle}</Text>
+              <List type="bullet">
+                <List.Item>{c.guidanceYes1}</List.Item>
+                <List.Item>{c.guidanceYes2}</List.Item>
+                <List.Item>{c.guidanceYes3}</List.Item>
+                <List.Item>{c.guidanceYes4}</List.Item>
+              </List>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="h4" variant="headingSm">{c.guidanceNoTitle}</Text>
+              <List type="bullet">
+                <List.Item>{c.guidanceNo1}</List.Item>
+                <List.Item>{c.guidanceNo2}</List.Item>
+                <List.Item>{c.guidanceNo3}</List.Item>
+                <List.Item>{c.guidanceNo4}</List.Item>
+              </List>
+            </BlockStack>
+            <BlockStack gap="100">
+              <Text as="h4" variant="headingSm">{c.guidanceBetterTitle}</Text>
+              <List type="bullet">
+                <List.Item>{c.guidanceBetter1}</List.Item>
+                <List.Item>{c.guidanceBetter2}</List.Item>
+                <List.Item>{c.guidanceBetter3}</List.Item>
+              </List>
+            </BlockStack>
+          </BlockStack>
+        </Collapsible>
+      </BlockStack>
+    </Banner>
+  );
+
+  // "Try again later" is the wrong advice for the most common cause, so the
+  // banner names the actual reason and what to do about it.
+  const fetchErrorBanner = (
+    <Banner tone="warning" title={c.sitemapFetchError}>
+      <BlockStack gap="150">
+        <Text as="p" variant="bodyMd">
+          {analysis.sitemapFailureReason
+            ? (c[`fetchError_${analysis.sitemapFailureReason}`] || c.fetchError_unknown)
+                .replace("{status}", String(analysis.sitemapHttpStatus ?? ""))
+            : c.fetchError_unknown}
+        </Text>
+        <Text as="p" variant="bodySm" tone="subdued">
+          {c.fetchErrorAttempted}:{" "}
+          <a href={analysis.attemptedSitemapUrl} target="_blank" rel="noreferrer">
+            {analysis.attemptedSitemapUrl}
+          </a>
+        </Text>
+      </BlockStack>
+    </Banner>
+  );
+
   const body = (
     <BlockStack gap="400">
-      <Banner tone="info" title={c.introTitle}>
-        <Text as="p" variant="bodyMd">{c.introBody}</Text>
-      </Banner>
+      {intro}
 
       <Card>
         <BlockStack gap="200">
           <Text as="h3" variant="headingMd">{c.sitemapCardTitle}</Text>
           {analysis.sitemapFetchError ? (
-            <Banner tone="warning">{c.sitemapFetchError}</Banner>
+            fetchErrorBanner
           ) : (
             <InlineStack gap="400" wrap>
               <Text as="p" variant="bodyMd">
@@ -266,7 +436,7 @@ export default function SeoSitemap() {
                     size="slim"
                     variant="primary"
                     tone={row.caution ? "critical" : undefined}
-                    onClick={() => setConfirm({ row, mode: "apply" })}
+                    onClick={() => askExclusionRow(row, "apply")}
                     disabled={rowFetcher.state !== "idle"}
                     loading={pendingId === row.id && rowFetcher.state !== "idle"}
                   >
@@ -279,35 +449,68 @@ export default function SeoSitemap() {
         </BlockStack>
       </Card>
 
+      {/* Manual picker — the recommendations only ever surface three rules;
+          anything else the merchant wants hidden is chosen here. */}
       <Card>
         <BlockStack gap="300">
-          <Text as="h3" variant="headingMd">{c.guidanceTitle}</Text>
-          <BlockStack gap="100">
-            <Text as="h4" variant="headingSm">{c.guidanceYesTitle}</Text>
-            <List type="bullet">
-              <List.Item>{c.guidanceYes1}</List.Item>
-              <List.Item>{c.guidanceYes2}</List.Item>
-              <List.Item>{c.guidanceYes3}</List.Item>
-              <List.Item>{c.guidanceYes4}</List.Item>
-            </List>
-          </BlockStack>
-          <BlockStack gap="100">
-            <Text as="h4" variant="headingSm">{c.guidanceNoTitle}</Text>
-            <List type="bullet">
-              <List.Item>{c.guidanceNo1}</List.Item>
-              <List.Item>{c.guidanceNo2}</List.Item>
-              <List.Item>{c.guidanceNo3}</List.Item>
-              <List.Item>{c.guidanceNo4}</List.Item>
-            </List>
-          </BlockStack>
-          <BlockStack gap="100">
-            <Text as="h4" variant="headingSm">{c.guidanceBetterTitle}</Text>
-            <List type="bullet">
-              <List.Item>{c.guidanceBetter1}</List.Item>
-              <List.Item>{c.guidanceBetter2}</List.Item>
-              <List.Item>{c.guidanceBetter3}</List.Item>
-            </List>
-          </BlockStack>
+          <Text as="h3" variant="headingMd">{c.manualTitle}</Text>
+          <Text as="p" tone="subdued" variant="bodySm">{c.manualIntro}</Text>
+          <InlineStack gap="200" blockAlign="end" wrap>
+            <div style={{ minWidth: 180 }}>
+              <Select
+                label={c.manualTypeLabel}
+                options={MANUAL_TYPE_OPTIONS.map((v) => ({ label: typeLabel(v), value: v }))}
+                value={manualType}
+                onChange={(v) => setManualType(v as SitemapExclusionResourceType)}
+              />
+            </div>
+            <div style={{ flex: "1 1 240px", minWidth: 240 }}>
+              <TextField
+                label={c.manualSearchLabel}
+                value={manualQuery}
+                onChange={setManualQuery}
+                placeholder={c.manualSearchPlaceholder}
+                autoComplete="off"
+              />
+            </div>
+            <Button onClick={runSearch} loading={searchFetcher.state !== "idle"}>
+              {c.manualSearchButton}
+            </Button>
+          </InlineStack>
+
+          {searchFetcher.data?.hits && (
+            searchFetcher.data.hits.length === 0 ? (
+              <Text as="p" tone="subdued">{c.manualNoResults}</Text>
+            ) : (
+              <BlockStack gap="200">
+                {searchFetcher.data.hits.map((hit) => (
+                  <InlineStack key={hit.resourceId} gap="300" align="space-between" blockAlign="center" wrap>
+                    <BlockStack gap="050">
+                      <InlineStack gap="150" blockAlign="center">
+                        <Badge>{typeLabel(hit.resourceType)}</Badge>
+                        <Text as="span" variant="bodyMd">{hit.title}</Text>
+                        {hit.caution && <Badge tone="warning">{c.cautionBadge}</Badge>}
+                      </InlineStack>
+                      <Text as="span" variant="bodySm" tone="subdued">/{hit.handle}</Text>
+                    </BlockStack>
+                    {hit.existingStatus === "applied" ? (
+                      <Badge tone="success">{statusLabel("applied")}</Badge>
+                    ) : (
+                      <Button
+                        size="slim"
+                        tone={hit.caution ? "critical" : undefined}
+                        onClick={() => askManualExclude(hit)}
+                        disabled={rowFetcher.state !== "idle"}
+                        loading={pendingId === hit.resourceId && rowFetcher.state !== "idle"}
+                      >
+                        {c.apply}
+                      </Button>
+                    )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            )
+          )}
         </BlockStack>
       </Card>
 
@@ -329,7 +532,7 @@ export default function SeoSitemap() {
                   <Button
                     key={`a-${row.id}`}
                     size="slim"
-                    onClick={() => setConfirm({ row, mode: "revert" })}
+                    onClick={() => askExclusionRow(row, "revert")}
                     disabled={rowFetcher.state !== "idle"}
                     loading={pendingId === row.id && rowFetcher.state !== "idle"}
                   >
@@ -385,17 +588,17 @@ export default function SeoSitemap() {
           <BlockStack gap="300">
             {confirm.mode === "revert" ? (
               <Text as="p" variant="bodyMd">
-                {c.revertConfirmIntro.replace("{title}", confirm.row.title)}
+                {c.revertConfirmIntro.replace("{title}", confirm.title)}
               </Text>
             ) : (
               <>
-                {confirm.row.caution && (
+                {confirm.caution && (
                   <Banner tone="warning" title={c.cautionTitle}>
                     <Text as="p" variant="bodyMd">{c.cautionBody}</Text>
                   </Banner>
                 )}
                 <Text as="p" variant="bodyMd">
-                  {c.confirmIntro.replace("{title}", confirm.row.title)}
+                  {c.confirmIntro.replace("{title}", confirm.title)}
                 </Text>
                 <List type="bullet">
                   <List.Item>{c.confirmEffect1}</List.Item>
@@ -404,10 +607,10 @@ export default function SeoSitemap() {
                 </List>
                 <BlockStack gap="050">
                   <Text as="span" variant="bodySm" tone="subdued">
-                    {c.confirmReasonLabel}: {reasonLabel(confirm.row.reason)}
+                    {c.confirmReasonLabel}: {reasonLabel(confirm.reason)}
                   </Text>
                   <Text as="span" variant="bodySm" tone="subdued">
-                    {reasonHelp(confirm.row.reason)}
+                    {reasonHelp(confirm.reason)}
                   </Text>
                 </BlockStack>
                 <Text as="p" variant="bodySm" tone="subdued">{c.confirmReversible}</Text>

@@ -1653,6 +1653,8 @@ export const en: Translation = {
       reason_emptyCollection: "Empty collection (per last crawl)",
       reason_thinContent: "Thin content (low word count)",
       reason_archivedProduct: "Archived product",
+      reason_manual: "Chosen manually",
+      reasonHelp_manual: "You picked this content yourself — there's no automatic recommendation behind it.",
       reasonHelp_emptyCollection: "The collection page had almost no text in the last site crawl (≤ 20 words) — typical for an empty product grid.",
       reasonHelp_thinContent: "The page text is under 150 words (HTML stripped). Word count only — the content itself isn't judged.",
       reasonHelp_archivedProduct: "The product is set to \"Archived\" in Shopify and is therefore no longer reachable through any sales channel.",
@@ -1676,8 +1678,28 @@ export const en: Translation = {
       cautionTitle: "Looks like a legal or service page",
       cautionBody: "Privacy, terms, refund, shipping, imprint or contact pages are short by nature — this suggestion is based on word count alone. They're trust signals and should usually stay indexable. Only exclude them if that's a deliberate choice.",
 
+      // Sitemap fetch diagnostics
+      fetchError_password: "Your store is password-protected. While the password is active Shopify serves no sitemap.xml at all and Google can't index the store. Remove the password under Sales channels → Online Store → Preferences.",
+      fetchError_http: "The store answered the request with HTTP status {status}. Check whether the address below opens in your browser.",
+      fetchError_timeout: "The store didn't respond within 10 seconds. Usually temporary — try again later.",
+      fetchError_network: "The domain couldn't be reached (DNS or connection). Check that your store's primary domain is set correctly and live.",
+      fetchError_notSitemap: "The address returned something other than valid sitemap XML (an HTML error page, for instance). Open the address below in your browser to see what's served there.",
+      fetchError_budget: "Your sitemap consists of many sub-sitemaps and the fetch took too long. Entries then aren't counted — the exclusion features below still work.",
+      fetchError_unknown: "The reason couldn't be determined. Open the address below in your browser to check what's served.",
+      fetchErrorAttempted: "Address requested",
+
+      // Manual exclusion
+      manualTitle: "Exclude any content",
+      manualIntro: "The recommendations above only cover three rules. Here you can take any product, collection, page or blog post out of the sitemap deliberately — same effect, equally reversible.",
+      manualTypeLabel: "Content type",
+      manualSearchLabel: "Search",
+      manualSearchPlaceholder: "Title or handle — leave empty for the first matches",
+      manualSearchButton: "Search",
+      manualNoResults: "No matches.",
+
       // Decision guidance
-      guidanceTitle: "When to exclude — and when not to",
+      guidanceShow: "When to exclude — and when not to",
+      guidanceHide: "Hide guidance",
       guidanceYesTitle: "Worth excluding",
       guidanceYes1: "Permanently empty collections (e.g. a past season that isn't coming back).",
       guidanceYes2: "Archived or permanently discontinued products with no successor.",
