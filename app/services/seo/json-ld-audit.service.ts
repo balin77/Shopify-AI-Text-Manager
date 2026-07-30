@@ -119,6 +119,11 @@ export async function runJsonLdAudit(
 
   // ---- Fetch everything up front (three DB-cache reads, no live calls) ----
   const [productCount, products] = await Promise.all([
+    // ACTIVE only — deliberately NOT extended to UNLISTED the way
+    // audit.service.ts was (AUDITABLE_PRODUCT_STATUSES). Structured data earns
+    // its keep through rich results, and Shopify serves unlisted product pages
+    // `noindex,nofollow` (measured — see sitemap.service.ts's header), so a
+    // JSON-LD gap on one of them has no search-facing consequence to report.
     db.product.count({ where: { shop, status: "ACTIVE" } }),
     db.product.findMany({
       where: { shop, status: "ACTIVE" },

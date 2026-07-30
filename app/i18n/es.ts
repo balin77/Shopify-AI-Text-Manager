@@ -1674,9 +1674,12 @@ export const es: Translation = {
       revertCta: "Sí, volver a incluir",
 
       // Aviso para páginas legales o de servicio
+      alreadyOutOfSitemap: "Su estado ya lo mantiene fuera del sitemap",
+      noEffectTitle: "Esto no cambiará nada",
+      noEffectBody: "Shopify ya deja los productos en borrador y no listados fuera de sitemap.xml por su cuenta, y además sirve los productos no listados con noindex. Excluir uno aquí solo escribe el metacampo sin cambiar el resultado. Solo vale la pena si vas a publicar el producto pronto y quieres que siga excluido después.",
       cautionBadge: "Revísalo",
-      cautionTitle: "Parece una página legal o de servicio",
-      cautionBody: "Aviso legal, privacidad, términos, devoluciones, envío o contacto son cortas por naturaleza — la sugerencia se basa solo en el número de palabras. Son señales de confianza y normalmente deberían seguir siendo indexables. Exclúyelas solo si es una decisión consciente.",
+      cautionTitle: "Una página que normalmente debería seguir visible",
+      cautionBody: "Las páginas legales (aviso legal, privacidad, términos, devoluciones, envío) y las de confianza (sobre nosotros, equipo, FAQ, contacto) son cortas por naturaleza — la sugerencia se basa solo en el número de palabras. Google las lee como señales de calidad y confianza, suelen tener backlinks y normalmente deberían seguir siendo indexables. Exclúyelas solo si es una decisión consciente.",
 
       // Diagnóstico de la descarga del sitemap
       fetchError_password: "Tu tienda está protegida con contraseña. Mientras la contraseña esté activa, Shopify no sirve ningún sitemap.xml y Google no puede indexar la tienda. Quita la protección en Canales de venta → Tienda online → Preferencias.",
@@ -1700,6 +1703,7 @@ export const es: Translation = {
       productStatus_ACTIVE: "Activo",
       productStatus_DRAFT: "Borrador",
       productStatus_ARCHIVED: "Archivado",
+      productStatus_UNLISTED: "No listado",
       paginationRange: "{start}–{end} de {total}",
       paginationPrevious: "Página anterior",
       paginationNext: "Página siguiente",
@@ -2431,6 +2435,7 @@ export const es: Translation = {
       active: "Activo",
       draft: "Borrador",
       archived: "Archivado",
+      unlisted: "No listado",
     },
     chooseColumns: "Elegir columnas",
     columnPicker: {

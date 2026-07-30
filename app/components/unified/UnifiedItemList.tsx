@@ -395,6 +395,11 @@ export function UnifiedItemList({
     switch (status.toUpperCase()) {
       case "ACTIVE":
         return "#00a047"; // Success green
+      case "UNLISTED":
+        // A real Shopify status: the product IS live, it just needs a direct
+        // link. Given its own amber rather than falling through to the default
+        // gray, which read as "not published" — the opposite of the truth.
+        return "#b98900"; // Polaris caution/amber
       case "DRAFT":
         return "#8c9196"; // Gray
       case "ARCHIVED":

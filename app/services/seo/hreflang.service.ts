@@ -122,7 +122,14 @@ export async function analyzeHreflang(
     pageCount,
     pages,
   ] = await Promise.all([
-    // Products: only ACTIVE products are storefront-publishable.
+    // Products: ACTIVE only — deliberately NOT extended to UNLISTED the way
+    // audit.service.ts was (AUDITABLE_PRODUCT_STATUSES). hreflang annotations
+    // exist to tell a search engine which localized URL to serve for a page it
+    // indexes; Shopify serves unlisted product pages `noindex,nofollow` and
+    // omits them from sitemap.xml (measured — see sitemap.service.ts's header),
+    // so there is no indexed page for an alternate to point at. Auditing
+    // hreflang coverage for them would report a defect that is correct to leave
+    // as it is. DRAFT/ARCHIVED are not storefront-reachable at all.
     db.product.count({ where: { shop, status: "ACTIVE" } }),
     db.product.findMany({
       where: { shop, status: "ACTIVE" },

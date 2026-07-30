@@ -1674,9 +1674,12 @@ export const de = {
       revertCta: "Ja, wieder aufnehmen",
 
       // Vorsicht-Hinweis bei Pflicht-/Serviceseiten
+      alreadyOutOfSitemap: "Steht durch seinen Status ohnehin nicht in der Sitemap",
+      noEffectTitle: "Das ändert nichts",
+      noEffectBody: "Produkte mit Status „Entwurf“ oder „Nicht gelistet“ nimmt Shopify von sich aus nicht in die sitemap.xml auf, und nicht gelistete Produkte liefert Shopify zusätzlich mit noindex aus. Ein Ausschluss setzt hier also nur das Metafeld, ohne etwas am Ergebnis zu ändern. Sinnvoll ist er nur, wenn du das Produkt bald veröffentlichen willst und es dann ausgeschlossen bleiben soll.",
       cautionBadge: "Bitte prüfen",
-      cautionTitle: "Sieht nach einer Pflicht- oder Serviceseite aus",
-      cautionBody: "Impressum, Datenschutz, AGB, Widerruf, Versand oder Kontakt sind naturgemäß kurz — der Vorschlag beruht allein auf der Wortzahl. Solche Seiten sind Vertrauenssignale und sollten in der Regel indexierbar bleiben. Schließe sie nur aus, wenn du das bewusst willst.",
+      cautionTitle: "Seite, die normalerweise sichtbar bleiben sollte",
+      cautionBody: "Rechtsseiten (Impressum, Datenschutz, AGB, Widerruf, Versand) und Vertrauensseiten (Über uns, Team, FAQ, Kontakt) sind naturgemäß kurz — der Vorschlag beruht allein auf der Wortzahl. Google liest sie als Qualitäts- und Vertrauenssignal, sie tragen oft Backlinks und sollten in der Regel indexierbar bleiben. Schließe sie nur aus, wenn du das bewusst willst.",
 
       // Fehlerdiagnose beim Sitemap-Abruf
       fetchError_password: "Dein Shop ist passwortgeschützt. Solange das Passwort aktiv ist, liefert Shopify gar keine sitemap.xml aus und Google kann den Shop nicht indexieren. Entferne den Passwortschutz unter Vertriebskanäle → Online Store → Einstellungen.",
@@ -1700,6 +1703,7 @@ export const de = {
       productStatus_ACTIVE: "Aktiv",
       productStatus_DRAFT: "Entwurf",
       productStatus_ARCHIVED: "Archiviert",
+      productStatus_UNLISTED: "Nicht gelistet",
       paginationRange: "{start}–{end} von {total}",
       paginationPrevious: "Vorherige Seite",
       paginationNext: "Nächste Seite",
@@ -2431,6 +2435,7 @@ export const de = {
       active: "Aktiv",
       draft: "Entwurf",
       archived: "Archiviert",
+      unlisted: "Nicht gelistet",
     },
     chooseColumns: "Spalten wählen",
     columnPicker: {

@@ -28,6 +28,7 @@ export interface BulkCellStatusOptions {
   active: string;
   draft: string;
   archived: string;
+  unlisted: string;
 }
 
 interface BulkCellProps {
@@ -113,7 +114,19 @@ export function BulkCell({
     // it "" — show a placeholder row instead of silently defaulting the
     // display to ACTIVE (which would cause a no-op click to write ACTIVE
     // where the DB had "").
-    const hasStatus = value === "ACTIVE" || value === "DRAFT" || value === "ARCHIVED";
+    // UNLISTED is a real Shopify status (confirmed against live shop data) and
+    // IS settable: the 2025-10 ProductStatus enum lists UNLISTED and the docs
+    // name `ProductInput` (the input `productUpdate` takes, which is what
+    // apply.server.ts sends) among the inputs that accept it. The docs' one
+    // restriction — "can't be changed from unlisted in older versions" — is
+    // scoped to pre-2025-10 versions, where the value is translated to active
+    // and is not part of the enum at all. The app pins 2025-10 by default
+    // (shopify.server.ts), so it is offered as a normal choice here; the
+    // matching server-side gate is PRODUCT_STATUSES in apply.server.ts, which
+    // must list exactly these four values. Source:
+    // https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
+    const hasStatus =
+      value === "ACTIVE" || value === "DRAFT" || value === "UNLISTED" || value === "ARCHIVED";
     return (
       <Select
         label=""
@@ -122,6 +135,7 @@ export function BulkCell({
           ...(hasStatus ? [] : [{ label: "—", value: "", disabled: true } as const]),
           { label: statusOptions.active, value: "ACTIVE" },
           { label: statusOptions.draft, value: "DRAFT" },
+          { label: statusOptions.unlisted, value: "UNLISTED" },
           { label: statusOptions.archived, value: "ARCHIVED" },
         ]}
         value={hasStatus ? value : ""}

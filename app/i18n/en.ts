@@ -1675,9 +1675,12 @@ export const en: Translation = {
       revertCta: "Yes, put it back",
 
       // Caution hint for legal / service pages
+      alreadyOutOfSitemap: "Its status already keeps it out of the sitemap",
+      noEffectTitle: "This won't change anything",
+      noEffectBody: "Shopify already leaves draft and unlisted products out of sitemap.xml on its own, and it serves unlisted products with noindex on top of that. Excluding one here only writes the metafield without changing the outcome. It's only worth doing if you're about to publish the product and want it to stay excluded afterwards.",
       cautionBadge: "Please check",
-      cautionTitle: "Looks like a legal or service page",
-      cautionBody: "Privacy, terms, refund, shipping, imprint or contact pages are short by nature — this suggestion is based on word count alone. They're trust signals and should usually stay indexable. Only exclude them if that's a deliberate choice.",
+      cautionTitle: "A page that should normally stay visible",
+      cautionBody: "Legal pages (privacy, terms, refund, shipping, imprint) and trust pages (about us, team, FAQ, contact) are short by nature — this suggestion is based on word count alone. Google reads them as quality and trust signals, they often carry backlinks, and they should usually stay indexable. Only exclude them if that's a deliberate choice.",
 
       // Sitemap fetch diagnostics
       fetchError_password: "Your store is password-protected. While the password is active Shopify serves no sitemap.xml at all and Google can't index the store. Remove the password under Sales channels → Online Store → Preferences.",
@@ -1701,6 +1704,7 @@ export const en: Translation = {
       productStatus_ACTIVE: "Active",
       productStatus_DRAFT: "Draft",
       productStatus_ARCHIVED: "Archived",
+      productStatus_UNLISTED: "Unlisted",
       paginationRange: "{start}–{end} of {total}",
       paginationPrevious: "Previous page",
       paginationNext: "Next page",
@@ -2432,6 +2436,7 @@ export const en: Translation = {
       active: "Active",
       draft: "Draft",
       archived: "Archived",
+      unlisted: "Unlisted",
     },
     chooseColumns: "Choose columns",
     columnPicker: {

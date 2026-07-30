@@ -237,6 +237,12 @@ export async function drainQueue(db: PrismaClient, shop: string, host: string): 
 /** Collect storefront URLs from the DB cache (products/collections/pages). */
 export async function collectStoreUrls(db: PrismaClient, shop: string, host: string): Promise<string[]> {
   const [products, collections, pages] = await Promise.all([
+    // ACTIVE only, and this one must stay that way: IndexNow actively ASKS a
+    // search engine to crawl each URL. Unlisted product pages are served
+    // `noindex,nofollow` and are absent from sitemap.xml (measured — see
+    // sitemap.service.ts's header), so submitting them would push URLs the
+    // merchant chose to keep unlisted and that the engine is being told not to
+    // index — pointless at best, quota-wasting and spam-shaped at worst.
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { handle: true },

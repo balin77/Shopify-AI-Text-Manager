@@ -6,6 +6,7 @@ import {
   getLatestAuditSnapshot,
   getAuditTrend,
   MAX_SNAPSHOTS_PER_SHOP,
+  AUDITABLE_PRODUCT_STATUSES,
   type AuditAggregate,
 } from "~/services/seo/audit.service";
 
@@ -137,7 +138,13 @@ describe("analyzeStore", () => {
     expect(audit.totalScanned).toBe(4); // 3 products + 1 collection
   });
 
-  it("only queries ACTIVE products (finding #6 — DRAFT/ARCHIVED aren't storefront-visible)", async () => {
+  // Was "only queries ACTIVE products (finding #6)". UNLISTED products are
+  // publicly reachable by direct link (verified against a live shop), so their
+  // copy is worth auditing; DRAFT/ARCHIVED are not reachable at all and stay
+  // excluded. Asserted as an exact set so that adding a status to
+  // AUDITABLE_PRODUCT_STATUSES is a deliberate act with a failing test behind
+  // it, not a silent widening of what gets audited.
+  it("queries exactly ACTIVE + UNLISTED products — never DRAFT or ARCHIVED", async () => {
     const capture = { productArgs: [] as any[] };
     await analyzeStore("shop.myshopify.com", {
       db: makeDb(capture),
@@ -146,8 +153,25 @@ describe("analyzeStore", () => {
     });
     expect(capture.productArgs.length).toBeGreaterThan(0);
     for (const args of capture.productArgs) {
-      expect(args.where.status).toBe("ACTIVE");
+      expect([...args.where.status.in].sort()).toEqual(["ACTIVE", "UNLISTED"]);
     }
+  });
+
+  it("keeps the count and the findMany on the SAME status filter", async () => {
+    // A mismatch here would report totalAvailable from one population and score
+    // another, which shows up as a permanently "capped" audit.
+    const capture = { productArgs: [] as any[] };
+    await analyzeStore("shop.myshopify.com", {
+      db: makeDb(capture),
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    const filters = capture.productArgs.map((a) => JSON.stringify(a.where));
+    expect(new Set(filters).size).toBe(1);
+  });
+
+  it("exports AUDITABLE_PRODUCT_STATUSES as the single source for that filter", () => {
+    expect([...AUDITABLE_PRODUCT_STATUSES].sort()).toEqual(["ACTIVE", "UNLISTED"]);
   });
 });
 

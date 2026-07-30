@@ -687,3 +687,82 @@ describe("applyBulkDiff — stale-foreign-translation invalidation (Phase 4b)", 
     expect(calls.some((c) => c.query.includes("translationsRemove("))).toBe(false);
   });
 });
+
+/**
+ * Product-status gate (PRODUCT_STATUSES in apply.server.ts).
+ *
+ * UNLISTED is a settable ProductStatus from API 2025-10 on (it appears in the
+ * `ProductInput` that `productUpdate` takes), so the gate must let it through
+ * — while still rejecting anything that is not a real status, per CELL rather
+ * than failing the whole row. These tests are the contract that keeps the gate
+ * and BulkCell.tsx's option list from drifting apart: if one side gains or
+ * loses a status without the other, one of these breaks.
+ */
+describe("applyBulkDiff — product status gate", () => {
+  const sentStatus = (calls: RecordedCall[]): unknown => {
+    const call = calls.find((c) => c.query.includes("productUpdate("));
+    return (call?.variables?.input as { status?: unknown } | undefined)?.status;
+  };
+
+  for (const status of ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"]) {
+    it(`passes ${status} through to productUpdate`, async () => {
+      const { admin, calls } = mockAdmin();
+      const db = mockDb();
+
+      const result = await applyBulkDiff(
+        { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+        [entry("field.status", status)],
+      );
+
+      expect(result.failures).toEqual([]);
+      expect(result.saved).toBe(1);
+      expect(sentStatus(calls)).toBe(status);
+    });
+  }
+
+  it("normalizes case and surrounding whitespace before gating", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.status", "  unlisted  ")],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(sentStatus(calls)).toBe("UNLISTED");
+  });
+
+  it("rejects an unknown status as a per-cell failure and never sends it", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.status", "HIDDEN")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe("field.status");
+    expect(result.failures[0].message).toContain("UNLISTED");
+    expect(calls.some((c) => c.query.includes("productUpdate("))).toBe(false);
+  });
+
+  it("drops only the bad status cell and still saves the other fields in the row", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry("field.status", "NOPE"), entry("field.title", "New title")],
+    );
+
+    expect(result.failures.map((f) => f.columnId)).toEqual(["field.status"]);
+    const input = calls.find((c) => c.query.includes("productUpdate("))?.variables?.input as {
+      title?: string;
+      status?: unknown;
+    };
+    expect(input.title).toBe("New title");
+    expect(input.status).toBeUndefined();
+  });
+});

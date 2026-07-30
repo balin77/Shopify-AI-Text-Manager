@@ -85,7 +85,23 @@ interface ApplyContext {
   foreignLocales?: string[];
 }
 
-const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "ARCHIVED"]);
+/** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
+ *
+ *  UNLISTED is included deliberately: the 2025-10 ProductStatus enum lists it
+ *  and the docs name `ProductInput` among the inputs that accept it, so it is a
+ *  writable status, not just a readable one. The docs' only restriction —
+ *  "can't be changed from unlisted in older versions" — is scoped to
+ *  pre-2025-10 versions, where UNLISTED is translated to active and is not part
+ *  of the enum. Source:
+ *  https://shopify.dev/docs/api/admin-graphql/2025-10/enums/ProductStatus
+ *
+ *  The app defaults to 2025-10 but `SHOPIFY_API_VERSION` can pin an older one
+ *  (shopify.server.ts). This set is intentionally NOT version-aware: on an
+ *  older version Shopify rejects the enum value outright, which surfaces as a
+ *  normal per-cell `BulkFailure` — never a silent no-op. Keep in sync with the
+ *  option list in BulkCell.tsx; offering a status the gate rejects (or gating
+ *  one the UI never offers) is the failure mode this pairing exists to avoid. */
+const PRODUCT_STATUSES = new Set(["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"]);
 
 // Moved to columns.shared.ts (estimateCalls needs it client-side); re-exported
 // here so existing imports keep working.
@@ -322,7 +338,11 @@ async function persistProductBaseFields(
     const s = fields.status.trim().toUpperCase();
     if (!PRODUCT_STATUSES.has(s)) {
       failures.push(
-        failureOf(group, `Invalid status "${fields.status}" — expected ACTIVE, DRAFT or ARCHIVED.`, "field.status"),
+        failureOf(
+          group,
+          `Invalid status "${fields.status}" — expected ACTIVE, DRAFT, UNLISTED or ARCHIVED.`,
+          "field.status",
+        ),
       );
       delete fields.status;
     } else {

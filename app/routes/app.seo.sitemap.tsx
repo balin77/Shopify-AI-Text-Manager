@@ -69,7 +69,7 @@ const TYPE_PATH: Record<SitemapExclusionResourceType, string> = {
 const MANUAL_TYPE_OPTIONS: SitemapExclusionResourceType[] = ["product", "collection", "page", "article"];
 
 /** Mirrors the service's PRODUCT_STATUSES — same client-bundle reason as above. */
-const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "ARCHIVED"];
+const PRODUCT_STATUS_OPTIONS = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"];
 
 /** Emoji markers, matching how SubNavBar carries icons elsewhere. */
 const TYPE_ICON: Record<SitemapExclusionResourceType, string> = {
@@ -240,6 +240,11 @@ export default function SeoSitemap() {
     title: string;
     reason: string | null;
     caution: boolean;
+    /** The resource's product status already keeps it out of sitemap.xml, so
+     *  this apply would be a no-op — shown in the dialog so the merchant is
+     *  told BEFORE the metafield write, not after. Suggestion rows never set
+     *  it (they are only ever raised for statuses this does not cover). */
+    noEffect?: boolean;
     submit: () => void;
   } | null>(null);
 
@@ -392,6 +397,7 @@ export default function SeoSitemap() {
       title: hit.title,
       reason: "manual",
       caution: hit.caution,
+      noEffect: hit.alreadyOutOfSitemap,
       submit: () => submitManualExclude(hit),
     });
 
@@ -539,7 +545,6 @@ export default function SeoSitemap() {
                   <Button
                     size="slim"
                     variant="primary"
-                    tone={row.caution ? "critical" : undefined}
                     onClick={() => askExclusionRow(row, "apply")}
                     disabled={rowFetcher.state !== "idle"}
                     loading={pendingId === row.id && rowFetcher.state !== "idle"}
@@ -643,6 +648,17 @@ export default function SeoSitemap() {
                           )}
                         </InlineStack>
                         <Text as="span" variant="bodySm" tone="subdued">/{hit.handle}</Text>
+                        {/* A DRAFT/UNLISTED product is already absent from
+                            sitemap.xml (measured — see sitemap.service.ts), so
+                            excluding it writes a metafield that changes
+                            nothing. Say so rather than hide the button: the
+                            merchant may be pre-staging a product they are
+                            about to publish. */}
+                        {hit.alreadyOutOfSitemap && (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {c.alreadyOutOfSitemap}
+                          </Text>
+                        )}
                       </BlockStack>
                     </InlineStack>
 
@@ -650,7 +666,6 @@ export default function SeoSitemap() {
                       {hit.existingStatus !== "applied" && (
                         <Button
                           size="slim"
-                          tone={hit.caution ? "critical" : undefined}
                           onClick={() => askManualExclude(hit)}
                           disabled={rowFetcher.state !== "idle"}
                           loading={pendingId === hit.resourceId && rowFetcher.state !== "idle"}
@@ -757,7 +772,7 @@ export default function SeoSitemap() {
 
   // Spells out the actual effect of the metafield write (out of sitemap +
   // noindex + still reachable + reversible) before anything is sent, and
-  // repeats the caution for legal/service pages where the row's only evidence
+  // repeats the caution for keep-visible pages where the row's only evidence
   // is a word count.
   const confirmModal = (
     <Modal
@@ -783,6 +798,11 @@ export default function SeoSitemap() {
                 {confirm.caution && (
                   <Banner tone="warning" title={c.cautionTitle}>
                     <Text as="p" variant="bodyMd">{c.cautionBody}</Text>
+                  </Banner>
+                )}
+                {confirm.noEffect && (
+                  <Banner tone="info" title={c.noEffectTitle}>
+                    <Text as="p" variant="bodyMd">{c.noEffectBody}</Text>
                   </Banner>
                 )}
                 <Text as="p" variant="bodyMd">

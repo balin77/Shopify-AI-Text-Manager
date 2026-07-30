@@ -198,6 +198,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // plus the queries.
   const [domain, products, collections, pages, history, rum, runsToday, plan, altTextAudit] = await Promise.all([
     getShopHost(admin, shop),
+    // ACTIVE only: this picks representative storefront URLs to measure page
+    // speed for. Unlisted products get near-zero real traffic by design, so
+    // spending a scarce daily PageSpeed run on one would misrepresent the
+    // storefront the merchant's customers actually load.
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, title: true, handle: true },

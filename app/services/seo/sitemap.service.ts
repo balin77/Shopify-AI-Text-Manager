@@ -54,6 +54,51 @@
  * archived products" to just `status === "ARCHIVED"` — `ProductVariant` has
  * no inventory/`availableForSale` column (confirmed against
  * json-ld-audit.service.ts's header comment, which hit the same gap).
+ *
+ * ── UNLISTED vs sitemap.xml (MEASURED against a live shop) ─────────────────
+ * Question: does an UNLISTED product need an `seo.hidden` exclusion, i.e. is
+ * there an "unlistedProduct" suggestion reason worth adding? Answer: NO. It is
+ * already out of the sitemap and already noindex, so the exclusion would be a
+ * pure no-op.
+ *
+ * Method (a real shop with 3 unlisted products; storefront public, so the
+ * `failureReason: "password"` / 404 pitfall that makes an absent sitemap
+ * meaningless did not apply — the sitemap fetched with HTTP 200):
+ *   - `sitemap_products_1.xml` held exactly 41 product `<loc>` entries, which
+ *     matched the 41 cached ACTIVE products one-for-one. All 3 UNLISTED and all
+ *     3 DRAFT products were absent. No cache drift in either direction (no
+ *     sitemap URL missing from the cache, none of the cached ACTIVE set
+ *     missing from the sitemap), so the comparison is not explained by a stale
+ *     sync.
+ *   - An unlisted product page answered HTTP 200 (publicly reachable by direct
+ *     link, as the status intends) and carried
+ *     `<meta name="robots" content="noindex,nofollow">` plus a self-referencing
+ *     canonical. A control ACTIVE product page carried the canonical but NO
+ *     robots meta. No `X-Robots-Tag` header on either.
+ *   - Confounds excluded: this app emits no robots meta anywhere (nothing in
+ *     extensions/), and no `seo.hidden` metafield exists on any cached product
+ *     of that shop — so the noindex is Shopify's own behavior for the status,
+ *     not a leftover exclusion. Consistent with Shopify's own documentation of
+ *     UNLISTED ("doesn't show up in search, collections, or product
+ *     recommendations").
+ *
+ * Consequences, both implemented:
+ *   - No `unlistedProduct` reason was added to `SitemapExclusionReason`. A
+ *     suggestion whose apply step provably changes nothing is worse than no
+ *     suggestion: it spends the merchant's attention and a metafield write to
+ *     reach the state they were already in.
+ *   - The manual picker instead LABELS these products (see
+ *     STATUSES_ALREADY_OUT_OF_SITEMAP / `ExclusionSearchHit.alreadyOutOfSitemap`).
+ *
+ * ── Still NOT measured: does ARCHIVED need its exclusion either? ───────────
+ * DRAFT came out of the same measurement as UNLISTED (absent), which makes it
+ * likely that ARCHIVED is absent from the sitemap too — and if so, the
+ * "archivedProduct" suggestion above is itself a no-op and should be dropped.
+ * This was NOT verified: of the shops reachable here, only two own an archived
+ * product and BOTH answer 404 on `/sitemap.xml` (no live online store), which
+ * is a FAILED test, not evidence of absence. Left in place unchanged rather
+ * than removed on a guess. To settle it, one archived product in a shop with a
+ * public storefront is enough.
  */
 
 import * as cheerio from "cheerio";
@@ -162,42 +207,59 @@ export function findArchivedProducts(products: ArchivedProductRow[]): SitemapExc
 }
 
 /**
- * Handle/title fragments that mark a Page as legally-required or service
- * content (Impressum, Datenschutz, AGB, Widerruf, Versand, Kontakt, …) in the
- * three UI languages. Such pages are ALWAYS short — they trip
- * `findThinContentPages` on word count alone — but they are trust signals that
- * should normally stay indexable. We do NOT filter them out of the suggestion
- * list (the merchant may genuinely want an Impressum out of the index); the
- * UI flags them so the decision is a conscious one instead of a reflex click.
- * Substring match on the lowercased handle+title, so `datenschutzerklaerung`
- * and `privacy-policy` both hit.
+ * Handle/title fragments marking a Page that should normally STAY visible,
+ * across the three UI languages. Two groups, one rule:
+ *
+ *  - legally required (Impressum, Datenschutz, AGB, Widerruf, Versand, …)
+ *  - trust pages (Über uns, Team, FAQ, Hilfe, Kontakt)
+ *
+ * Both are short by nature, so both trip `findThinContentPages` on word count
+ * alone, and both are worth more to a shop than their word count suggests —
+ * "Über uns" in particular is an E-E-A-T signal that often carries backlinks.
+ * The first version only covered the legal group, which left exactly those
+ * trust pages sitting in the list with no warning at all.
+ *
+ * We do NOT filter these out of the suggestions (a merchant may genuinely want
+ * an Impressum out of the index); the UI flags them so it's a conscious call
+ * rather than a reflex click. Substring match on the lowercased handle+title,
+ * so `datenschutzerklaerung` and `privacy-policy` both hit.
+ *
+ * Deliberately NOT included: a bare "über" — it would swallow "Übergrößen" and
+ * similar. The joined/hyphenated forms below cover the real handles instead.
  */
-const POLICY_PAGE_FRAGMENTS = [
-  // de
+const KEEP_VISIBLE_PAGE_FRAGMENTS = [
+  // de — legal
   "impressum", "datenschutz", "agb", "widerruf", "versand", "zahlung",
   "liefer", "ruckgabe", "rückgabe", "kontakt", "haftung",
-  // en
+  // de — trust
+  "über uns", "ueber uns", "über-uns", "ueber-uns", "uber-uns",
+  "team", "hilfe", "häufige fragen", "haufige fragen",
+  // en — legal
   "privacy", "terms", "legal", "imprint", "refund", "return", "shipping",
   "delivery", "payment", "contact", "disclaimer", "cookie", "policy", "policies",
-  // es
+  // en — trust
+  "about", "faq", "help", "support",
+  // es — legal
   "aviso-legal", "privacidad", "terminos", "términos", "envio", "envío",
   "contacto", "devolucion", "devolución", "pago",
+  // es — trust
+  "nosotros", "quienes somos", "quiénes somos", "ayuda", "preguntas",
 ];
 
 /**
- * Heuristic: does this row look like a legally-required / service page whose
- * short length is expected rather than a defect? Pages only — a short product
- * or collection carries no such expectation. Pure, so it is unit-testable and
- * usable from both `analyze()` and tests.
+ * Heuristic: does this row look like a page whose shortness is expected rather
+ * than a defect, and that a shop normally wants to keep indexable? Pages only
+ * — a short product or collection carries no such expectation. Pure, so it is
+ * unit-testable and usable from both `analyze()` and tests.
  */
-export function isLikelyPolicyPage(
+export function isLikelyKeepVisiblePage(
   resourceType: SitemapExclusionResourceType,
   handle: string,
   title: string,
 ): boolean {
   if (resourceType !== "page") return false;
   const haystack = `${handle} ${title}`.toLowerCase();
-  return POLICY_PAGE_FRAGMENTS.some((f) => haystack.includes(f));
+  return KEEP_VISIBLE_PAGE_FRAGMENTS.some((f) => haystack.includes(f));
 }
 
 export interface CollectionRow {
@@ -343,7 +405,7 @@ export interface ExclusionSearchHit {
   /** An exclusion row already exists — the UI shows its state instead of an
    *  exclude button, so the same resource can't be queued twice. */
   existingStatus: string | null;
-  /** `isLikelyPolicyPage`. Computed here rather than in the route component so
+  /** `isLikelyKeepVisiblePage`. Computed here rather than in the route component so
    *  the client bundle never has to import this module (it pulls in cheerio). */
   caution: boolean;
   /** Featured image for the picker thumbnail, null when the model has none
@@ -351,16 +413,41 @@ export interface ExclusionSearchHit {
    *  `featuredImageUrl` on Product, `imageUrl` on Collection/Article — so it is
    *  normalized here rather than in the UI. */
   imageUrl: string | null;
-  /** ACTIVE / DRAFT / ARCHIVED. Products ONLY — no other cached model carries
+  /** ACTIVE / DRAFT / ARCHIVED / UNLISTED. Products ONLY — no other cached model carries
    *  a status (verified against prisma/schema.prisma), so it is null for
    *  collections, pages and articles and the UI hides the column for them
    *  rather than inventing a value. */
   status: string | null;
+  /** The product's status already keeps it out of `sitemap.xml`
+   *  (STATUSES_ALREADY_OUT_OF_SITEMAP), so excluding it would be a no-op. The
+   *  picker still allows it — the merchant may be pre-staging a product they
+   *  intend to publish — but says so instead of implying an effect. Always
+   *  false for non-product types, which carry no status. */
+  alreadyOutOfSitemap: boolean;
 }
 
 /** Product statuses the picker can filter on. Anything else means "all". */
-export const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "ARCHIVED"] as const;
+/** Shopify's ProductStatus as it actually reaches the cache. UNLISTED is real
+ *  — verified against live data, not just the enum docs — and was missing from
+ *  the first version of this filter, which made unlisted products unfilterable
+ *  even though their badge rendered the raw value. */
+export const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"] as const;
 export type ProductStatusFilter = (typeof PRODUCT_STATUSES)[number] | "all";
+
+/** Product statuses MEASURED to be absent from Shopify's `sitemap.xml`, so an
+ *  `seo.hidden` exclusion on them would change nothing.
+ *
+ *  Measured (see the "unlisted" section of this file's header for the method):
+ *  the products sub-sitemap held exactly the shop's 41 ACTIVE products — all 3
+ *  UNLISTED and all 3 DRAFT products were absent.
+ *
+ *  ARCHIVED is deliberately NOT listed, even though it is very likely absent
+ *  too: no shop reachable from this environment has both an archived product
+ *  and a live storefront, so it was never measured. The existing
+ *  "archivedProduct" SUGGESTION rests on the same unmeasured assumption — see
+ *  the header. Guessing here would put a false "this already has no effect"
+ *  claim in front of the merchant, which is worse than staying quiet. */
+export const STATUSES_ALREADY_OUT_OF_SITEMAP: readonly string[] = ["DRAFT", "UNLISTED"];
 
 export interface ExclusionSearchResult {
   hits: ExclusionSearchHit[];
@@ -476,9 +563,10 @@ export async function searchExclusionCandidates(
       title: r.title,
       handle: r.handle,
       existingStatus: statusById.get(r.id) ?? null,
-      caution: isLikelyPolicyPage(resourceType, r.handle, r.title),
+      caution: isLikelyKeepVisiblePage(resourceType, r.handle, r.title),
       imageUrl: r.imageUrl,
       status: r.status,
+      alreadyOutOfSitemap: r.status !== null && STATUSES_ALREADY_OUT_OF_SITEMAP.includes(r.status),
     })),
     total,
     page,
@@ -911,7 +999,7 @@ export interface SitemapExclusionRow {
   appliedAt: string | null;
   title: string;
   handle: string;
-  /** `isLikelyPolicyPage` — the UI shows a "check this first" warning instead
+  /** `isLikelyKeepVisiblePage` — the UI shows a "check this first" warning instead
    *  of a plain apply button. Never hides the row. */
   caution: boolean;
 }
@@ -1012,7 +1100,7 @@ export async function analyze(shop: string, deps: SitemapAnalyzeDeps): Promise<S
       appliedAt: r.appliedAt ? r.appliedAt.toISOString() : null,
       title,
       handle,
-      caution: isLikelyPolicyPage(resourceType, handle, title),
+      caution: isLikelyKeepVisiblePage(resourceType, handle, title),
     };
   });
 

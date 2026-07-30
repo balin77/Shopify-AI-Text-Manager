@@ -7,7 +7,7 @@ import {
   upsertExclusionSuggestions,
   fetchSitemapInfo,
   crossmatchBrokenSitemapLinks,
-  isLikelyPolicyPage,
+  isLikelyKeepVisiblePage,
   searchExclusionCandidates,
   ensureManualExclusion,
   applyExclusion,
@@ -17,6 +17,8 @@ import {
   SEO_HIDDEN_NAMESPACE,
   SEO_HIDDEN_KEY,
   SEO_HIDDEN_METAFIELD_TYPE,
+  PRODUCT_STATUSES,
+  STATUSES_ALREADY_OUT_OF_SITEMAP,
   type ThinPageRow,
   type ArchivedProductRow,
   type CollectionRow,
@@ -151,26 +153,46 @@ function makeSuggestionDb(opts: {
   return { db, created };
 }
 
-describe("isLikelyPolicyPage", () => {
-  it("flags legal/service pages by handle in de/en/es", () => {
-    expect(isLikelyPolicyPage("page", "impressum", "Impressum")).toBe(true);
-    expect(isLikelyPolicyPage("page", "datenschutzerklaerung", "Datenschutz")).toBe(true);
-    expect(isLikelyPolicyPage("page", "privacy-policy", "Privacy Policy")).toBe(true);
-    expect(isLikelyPolicyPage("page", "aviso-legal", "Aviso legal")).toBe(true);
+describe("isLikelyKeepVisiblePage", () => {
+  it("flags legally required pages by handle in de/en/es", () => {
+    expect(isLikelyKeepVisiblePage("page", "impressum", "Impressum")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "datenschutzerklaerung", "Datenschutz")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "privacy-policy", "Privacy Policy")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "aviso-legal", "Aviso legal")).toBe(true);
+  });
+
+  // The first version covered only the legal group, which left exactly these
+  // sitting in the suggestions with no warning at all.
+  it("flags trust pages too — they are short by nature but worth keeping indexed", () => {
+    expect(isLikelyKeepVisiblePage("page", "ueber-uns", "Über Uns")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "about-us", "About us")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "unser-team", "Unser Team")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "faq", "FAQ")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "sobre-nosotros", "Sobre nosotros")).toBe(true);
+  });
+
+  it("matches the umlaut-less handle and the umlaut title alike", () => {
+    expect(isLikelyKeepVisiblePage("page", "uber-uns", "")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "p-9911", "Über uns")).toBe(true);
   });
 
   it("matches on the title when the handle is opaque", () => {
-    expect(isLikelyPolicyPage("page", "p-4711", "Widerrufsbelehrung")).toBe(true);
+    expect(isLikelyKeepVisiblePage("page", "p-4711", "Widerrufsbelehrung")).toBe(true);
   });
 
   it("does not flag ordinary pages", () => {
-    expect(isLikelyPolicyPage("page", "sommer-lookbook", "Sommer Lookbook")).toBe(false);
-    expect(isLikelyPolicyPage("page", "team", "Unser Team")).toBe(false);
+    expect(isLikelyKeepVisiblePage("page", "sommer-lookbook", "Sommer Lookbook")).toBe(false);
+    expect(isLikelyKeepVisiblePage("page", "gewinnspiel", "Gewinnspiel")).toBe(false);
+  });
+
+  // Why the list carries "über uns"/"über-uns" instead of a bare "über".
+  it("does not let a bare umlaut prefix swallow unrelated pages", () => {
+    expect(isLikelyKeepVisiblePage("page", "uebergroessen", "Übergrößen")).toBe(false);
   });
 
   it("only applies to pages — a short product or collection carries no such expectation", () => {
-    expect(isLikelyPolicyPage("product", "shipping-box", "Shipping Box")).toBe(false);
-    expect(isLikelyPolicyPage("collection", "returns", "Returns")).toBe(false);
+    expect(isLikelyKeepVisiblePage("product", "shipping-box", "Shipping Box")).toBe(false);
+    expect(isLikelyKeepVisiblePage("collection", "returns", "Returns")).toBe(false);
   });
 });
 
@@ -423,6 +445,60 @@ describe("searchExclusionCandidates — status filter", () => {
     const res = await searchExclusionCandidates(db, "s", "page", "", 1, "DRAFT");
     expect(res.hits).toHaveLength(1);
     expect(res.hits[0].status).toBeNull();
+  });
+
+  it("offers UNLISTED as a filter — it is a real cached status, not just enum trivia", async () => {
+    const withUnlisted = [...mixed, { id: "u", title: "U", handle: "u", status: "UNLISTED" }];
+    const res = await searchExclusionCandidates(makePagingDb(withUnlisted), "s", "product", "", 1, "UNLISTED");
+    expect(res.total).toBe(1);
+    expect(res.hits[0].resourceId).toBe("u");
+  });
+});
+
+/** `alreadyOutOfSitemap` tells the picker to say "excluding this changes
+ *  nothing" for statuses MEASURED to be absent from Shopify's sitemap.xml.
+ *  Getting this wrong in either direction is a merchant-facing lie, so the
+ *  per-status expectations are pinned individually — including ARCHIVED, whose
+ *  absence was never measured and must therefore NOT be claimed. */
+describe("searchExclusionCandidates — alreadyOutOfSitemap", () => {
+  const allStatuses = [
+    { id: "a", title: "A", handle: "a", status: "ACTIVE" },
+    { id: "d", title: "D", handle: "d", status: "DRAFT" },
+    { id: "u", title: "U", handle: "u", status: "UNLISTED" },
+    { id: "r", title: "R", handle: "r", status: "ARCHIVED" },
+  ];
+
+  const flagFor = async (status: string) => {
+    const res = await searchExclusionCandidates(makePagingDb(allStatuses), "s", "product", "", 1, status);
+    return res.hits[0].alreadyOutOfSitemap;
+  };
+
+  it("flags UNLISTED (measured: absent from the products sitemap)", async () => {
+    expect(await flagFor("UNLISTED")).toBe(true);
+  });
+
+  it("flags DRAFT (measured: absent from the products sitemap)", async () => {
+    expect(await flagFor("DRAFT")).toBe(true);
+  });
+
+  it("does NOT flag ACTIVE — those are exactly the URLs the sitemap contains", async () => {
+    expect(await flagFor("ACTIVE")).toBe(false);
+  });
+
+  it("does NOT flag ARCHIVED — never measured, so the no-op claim would be a guess", async () => {
+    expect(await flagFor("ARCHIVED")).toBe(false);
+  });
+
+  it("is false for types with no status at all, never undefined", async () => {
+    const { db } = makeManualDb({ pages: [{ id: "gid-pg1", title: "About", handle: "about" }] });
+    const res = await searchExclusionCandidates(db, "s", "page", "", 1);
+    expect(res.hits[0].alreadyOutOfSitemap).toBe(false);
+  });
+
+  it("keeps STATUSES_ALREADY_OUT_OF_SITEMAP a subset of the pickable statuses", async () => {
+    for (const s of STATUSES_ALREADY_OUT_OF_SITEMAP) {
+      expect(PRODUCT_STATUSES as readonly string[]).toContain(s);
+    }
   });
 });
 

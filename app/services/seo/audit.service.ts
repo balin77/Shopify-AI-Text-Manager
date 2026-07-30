@@ -22,6 +22,44 @@ export type AuditType = "product" | "collection" | "article" | "page";
 /** Per-type cap. Keeps the largest shops bounded; reported via `capped`. */
 export const MAX_AUDIT_ITEMS_PER_TYPE = 1000;
 
+/** Product statuses the SEO audit covers.
+ *
+ *  DRAFT and ARCHIVED products are not reachable on the storefront at all, so
+ *  auditing their copy would only produce findings the merchant cannot act on.
+ *  UNLISTED is included: such a product is "active but needs a direct link"
+ *  (Shopify's own wording) and IS publicly reachable — verified against a live
+ *  shop, where all three unlisted products answered HTTP 200.
+ *
+ *  Note what this does NOT claim. The same live check found that Shopify serves
+ *  unlisted product pages with `<meta name="robots" content="noindex,nofollow">`
+ *  and keeps them out of `sitemap.xml` entirely (see the "unlisted" section in
+ *  sitemap.service.ts's header for the full measurement), so these pages cannot
+ *  rank — including them here is deliberately NOT a "they might rank" argument.
+ *  They are audited because the audit's findings are content-quality findings
+ *  that still matter for a page real people open from a shared link: a missing
+ *  meta description is also the social/link preview, missing alt text is an
+ *  accessibility defect regardless of crawlers, and an unlisted product is one
+ *  admin click away from ACTIVE — which is exactly when fixing its copy is
+ *  cheapest.
+ *
+ *  Two consequences, both intended:
+ *   - Unlisted products join the store-wide duplicate SEO title/description
+ *     groups. A duplicate shared with a noindex page is not a duplicate Google
+ *     can see today, but it becomes one the moment the product is published, so
+ *     flagging it early is the useful behavior.
+ *   - `totalScanned`/`totalAvailable`/`averageScore` step once for shops that
+ *     own unlisted products, so the SeoScoreSnapshot trend shows a
+ *     discontinuity at the first audit after this change. Older snapshots are
+ *     left untouched (they recorded what was true when written); every snapshot
+ *     from here on is consistent again.
+ *
+ *  Deliberately NOT mirrored by the other SEO services — each one was assessed
+ *  separately and each has its own reason to stay ACTIVE-only (see
+ *  hreflang.service.ts, index-now.service.ts, internal-links.service.ts,
+ *  json-ld-audit.service.ts, aeo.service.ts). Do not "unify" them without
+ *  re-reading those reasons. */
+export const AUDITABLE_PRODUCT_STATUSES = ["ACTIVE", "UNLISTED"] as const;
+
 export interface AuditItemRow {
   id: string; // Shopify GID — used for the editor deep-link (?select=<GID>)
   type: AuditType;
@@ -487,11 +525,9 @@ export async function analyzeStore(
   // ---- Products (+ alt coverage via groupBy) ----------------------------
   if (wants("product")) {
     const [count, products] = await Promise.all([
-      // Only ACTIVE products are storefront-publishable — DRAFT/ARCHIVED ones
-      // can't rank and shouldn't be audited. Mirrors hreflang.service.ts.
-      db.product.count({ where: { shop, status: "ACTIVE" } }),
+      db.product.count({ where: { shop, status: { in: [...AUDITABLE_PRODUCT_STATUSES] } } }),
       db.product.findMany({
-        where: { shop, status: "ACTIVE" },
+        where: { shop, status: { in: [...AUDITABLE_PRODUCT_STATUSES] } },
         select: {
           id: true,
           title: true,

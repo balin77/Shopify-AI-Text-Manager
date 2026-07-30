@@ -507,6 +507,11 @@ export async function runInternalLinkSuggestions(shop: string, deps: RunInternal
 
   // ── Targets ────────────────────────────────────────────────────────────
   const [products, collections, assignments] = await Promise.all([
+    // Link TARGETS — ACTIVE only, and this one must stay that way: suggesting a
+    // link to an unlisted product would surface a deliberately unlisted URL on
+    // indexed pages, which overrides the merchant's intent for that status.
+    // It would also carry no ranking benefit, since Shopify serves those pages
+    // `noindex,nofollow` (measured — see sitemap.service.ts's header).
     db.product.findMany({
       where: { shop, status: "ACTIVE" },
       select: { id: true, handle: true, title: true },
