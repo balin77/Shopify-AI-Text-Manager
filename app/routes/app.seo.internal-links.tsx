@@ -36,6 +36,20 @@
  *      handler here (CLAUDE.md architecture invariant). Only once that save
  *      succeeds does the client mark the suggestion "accepted"
  *      (`markAccepted`, also on this route).
+ *
+ * Row actions run on raw fetch, NOT useFetcher: a fetcher has a single slot, so
+ * a second accept would cancel the first and leave its row spinning forever.
+ * Several suggestions can therefore be applied at the same time, each row
+ * locking only itself.
+ *
+ * "Alle annehmen" / "Alle ablehnen" do the same to the whole listed set
+ * (filters included, all pages) in ONE request:
+ *   - rejectAll is a single updateMany.
+ *   - acceptAll runs the two steps above server-side — same
+ *     `handleUnifiedContentActions` entry point, just called in-process. It is
+ *     capped at BULK_ACCEPT_LIMIT per request and applies suggestions grouped
+ *     by source item (see groupSuggestionsBySource) so links into the same item
+ *     never race each other.
  */
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
@@ -63,7 +77,7 @@ import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
-import { insertLinkIntoHtml, targetUrlPath } from "../services/seo/internal-links.service";
+import { insertLinkIntoHtml, targetUrlPath, groupSuggestionsBySource } from "../services/seo/internal-links.service";
 
 // resourceType -> the real editor route + field key that resourceType saves
 // through (contentConfig field key from content-fields.config.tsx). The
@@ -82,6 +96,24 @@ type FilterType = (typeof FILTER_TYPES)[number];
 /** Suggestions per page (both views). Server-side — see the header note. */
 export const PAGE_SIZE = 20;
 
+/**
+ * "Alle annehmen" applies at most this many suggestions per click. Each one is
+ * a full editor save (Shopify mutation + stale-translation purge), so the whole
+ * pending list — up to MAX_PENDING_PER_SHOP = 200 — would run far past any
+ * sensible request duration. The response reports what is left so the merchant
+ * can simply click again; "Alle ablehnen" has no such cap because it is a
+ * single UPDATE.
+ */
+export const BULK_ACCEPT_LIMIT = 25;
+
+/**
+ * How many source items "Alle annehmen" applies at the same time. Suggestions
+ * that share a source item are NEVER parallel (see acceptAll) — each insertion
+ * is computed from the content the previous one wrote, so racing them would
+ * silently drop a link.
+ */
+const BULK_ACCEPT_CONCURRENCY = 3;
+
 const VIEWS = ["open", "rejected"] as const;
 type View = (typeof VIEWS)[number];
 
@@ -98,6 +130,24 @@ interface SuggestionRow {
   toResourceId: string;
   toTitle: string;
   confidence: number;
+}
+
+/** Everything this route's action (and the editor route's save) can answer. */
+interface ActionResult {
+  success: boolean;
+  error?: string;
+  code?: string;
+  before?: string;
+  after?: string;
+  savePath?: string;
+  fieldKey?: "description" | "body";
+  itemId?: string;
+  /** rejectAll */
+  rejected?: number;
+  /** acceptAll */
+  accepted?: number;
+  failed?: number;
+  remaining?: number;
 }
 
 const EXAMPLE_ROWS: SuggestionRow[] = [
@@ -166,6 +216,20 @@ function parseTypeFilter(raw: string | null): FilterType | null {
   return FILTER_TYPES.includes(raw as FilterType) ? (raw as FilterType) : null;
 }
 
+/**
+ * The listed set: view + type filters, in SQL. The bulk actions reuse it so
+ * "alle" means exactly the suggestions the merchant is looking at — never the
+ * whole table. Filters must not live in the client (see the loader).
+ */
+function suggestionWhere(shop: string, view: View, fromFilter: FilterType | null, toFilter: FilterType | null) {
+  return {
+    shop,
+    status: VIEW_STATUS[view],
+    ...(fromFilter ? { fromResourceType: fromFilter } : {}),
+    ...(toFilter ? { toResourceType: toFilter } : {}),
+  };
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -198,12 +262,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Filters live in the WHERE clause, not in the client — otherwise page 1 of
   // a filtered list would only contain whatever survived filtering out of the
   // first unfiltered page.
-  const where = {
-    shop,
-    status: VIEW_STATUS[view],
-    ...(fromFilter ? { fromResourceType: fromFilter } : {}),
-    ...(toFilter ? { toResourceType: toFilter } : {}),
-  };
+  const where = suggestionWhere(shop, view, fromFilter, toFilter);
 
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
@@ -276,13 +335,208 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
+/** A suggestion row as the action handles it (Prisma model, kept loose here). */
+type SuggestionRecord = {
+  id: string;
+  fromResourceType: string;
+  fromResourceId: string;
+  toResourceType: string;
+  toResourceId: string;
+  anchorText: string;
+};
+
+/**
+ * Where the accepted link would go: the source's CURRENT content with the
+ * anchor linked. Always read fresh from the DB (not the content captured at
+ * suggestion time), so an edit made since the scan is detected as STALE instead
+ * of being silently overwritten. Shared by the preview and by "Alle annehmen",
+ * which is why it also returns everything the save needs.
+ */
+async function computeInsertion(
+  db: any,
+  shop: string,
+  suggestion: SuggestionRecord,
+): Promise<
+  | { ok: true; before: string; after: string; savePath: string; fieldKey: "description" | "body"; itemId: string }
+  | { ok: false; code: "UNSUPPORTED" | "STALE" | "SOURCE_MISSING" | "TARGET_MISSING"; error: string }
+> {
+  const fromRoute = RESOURCE_ROUTE[suggestion.fromResourceType];
+  if (!fromRoute) {
+    return { ok: false, code: "UNSUPPORTED", error: "Unsupported source resource type" };
+  }
+
+  let currentHtml: string | null = null;
+  if (suggestion.fromResourceType === "Product") {
+    const row = await db.product.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
+    currentHtml = row?.descriptionHtml ?? null;
+  } else if (suggestion.fromResourceType === "Collection") {
+    const row = await db.collection.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
+    currentHtml = row?.descriptionHtml ?? null;
+  } else if (suggestion.fromResourceType === "Article") {
+    const row = await db.article.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
+    currentHtml = row?.body ?? null;
+  } else if (suggestion.fromResourceType === "Page") {
+    const row = await db.page.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
+    currentHtml = row?.body ?? null;
+  }
+
+  if (currentHtml === null) {
+    return { ok: false, code: "SOURCE_MISSING", error: "Source content not found" };
+  }
+
+  let targetHandle: string | null = null;
+  if (suggestion.toResourceType === "Product") {
+    targetHandle = (await db.product.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
+  } else if (suggestion.toResourceType === "Collection") {
+    targetHandle = (await db.collection.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
+  }
+  if (!targetHandle) {
+    return { ok: false, code: "TARGET_MISSING", error: "Target content not found" };
+  }
+
+  const href = targetUrlPath({ resourceType: suggestion.toResourceType as "Product" | "Collection", handle: targetHandle });
+  const result = insertLinkIntoHtml(currentHtml, suggestion.anchorText, href);
+  if (!result.inserted) {
+    return { ok: false, code: "STALE", error: "Anchor text not found in current content" };
+  }
+
+  return {
+    ok: true,
+    before: currentHtml,
+    after: result.html,
+    savePath: fromRoute.path,
+    fieldKey: fromRoute.fieldKey,
+    itemId: suggestion.fromResourceId,
+  };
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
   const formData = await request.formData();
   const actionType = getFormString(formData, "actionType");
   const suggestionId = getFormString(formData, "suggestionId");
+
+  // This action is POST-reachable independently of the loader's gate, so it
+  // has to check the plan itself — every path below writes to the shop.
+  const plan = await loadPlan(db, shop);
+  if (!meetsPlan(plan, "pro")) {
+    return json({ success: false, error: "This feature requires the Pro plan" }, { status: 403 });
+  }
+
+  // ── Bulk actions (no suggestionId — they act on the listed set) ────────────
+  if (actionType === "rejectAll" || actionType === "acceptAll") {
+    const where = suggestionWhere(
+      shop,
+      parseView(getFormString(formData, "view")),
+      parseTypeFilter(getFormString(formData, "from")),
+      parseTypeFilter(getFormString(formData, "to")),
+    );
+
+    if (actionType === "rejectAll") {
+      // One statement for the whole filtered view — same semantics as rejecting
+      // each row by hand (permanent, feeds the next run's do-not-repeat list).
+      const { count } = await db.seoInternalLinkSuggestion.updateMany({
+        where,
+        data: { status: "dismissed", dismissedUntil: null },
+      });
+      return json({ success: true, rejected: count });
+    }
+
+    const batch = await db.seoInternalLinkSuggestion.findMany({
+      where,
+      orderBy: [{ confidence: "desc" }, { id: "asc" }],
+      take: BULK_ACCEPT_LIMIT,
+    });
+    if (batch.length === 0) {
+      return json({ success: true, accepted: 0, failed: 0, remaining: 0 });
+    }
+
+    // The save goes through the very same handler the editor routes use — there
+    // is no second write path (CLAUDE.md architecture invariant), this just
+    // calls it server-side instead of over HTTP.
+    const [{ handleUnifiedContentActions }, configs, aiSettings, aiInstructions, shopLocales] = await Promise.all([
+      import("../actions/unified-content.actions"),
+      import("../config/content-fields.config"),
+      db.aISettings.findUnique({ where: { shop } }),
+      db.aIInstructions.findUnique({ where: { shop } }),
+      getCachedShopLocales(admin, shop).catch(() => []),
+    ]);
+    const configByType: Record<string, any> = {
+      Product: configs.PRODUCTS_CONFIG,
+      Collection: configs.COLLECTIONS_CONFIG,
+      Article: configs.BLOGS_CONFIG,
+      Page: configs.PAGES_CONFIG,
+    };
+    const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+
+    const acceptOne = async (suggestion: SuggestionRecord): Promise<boolean> => {
+      try {
+        const insertion = await computeInsertion(db, shop, suggestion);
+        if (!insertion.ok) return false;
+
+        const contentConfig = configByType[suggestion.fromResourceType];
+        if (!contentConfig) return false;
+
+        const saveForm = new FormData();
+        saveForm.set("action", "updateContent");
+        saveForm.set("itemId", insertion.itemId);
+        saveForm.set("locale", primaryLocale);
+        saveForm.set("primaryLocale", primaryLocale);
+        saveForm.set(insertion.fieldKey, insertion.after);
+        saveForm.set("changedFields", JSON.stringify([insertion.fieldKey]));
+
+        const response = await handleUnifiedContentActions({
+          admin,
+          session,
+          formData: saveForm,
+          contentConfig,
+          db,
+          aiSettings,
+          aiInstructions,
+        });
+        const body = (await response.json().catch(() => null)) as { success?: boolean } | null;
+        return !!body?.success;
+      } catch {
+        return false;
+      }
+    };
+
+    // Suggestions that share a source item run in order (each insertion builds
+    // on the content the previous save wrote); different source items run
+    // concurrently, bounded so a batch doesn't hammer Shopify's rate limit.
+    const queue = groupSuggestionsBySource(batch as SuggestionRecord[]);
+    const acceptedIds: string[] = [];
+    let failed = 0;
+
+    const worker = async () => {
+      for (;;) {
+        const group = queue.shift();
+        if (!group) return;
+        for (const suggestion of group) {
+          if (await acceptOne(suggestion)) acceptedIds.push(suggestion.id);
+          else failed++;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_ACCEPT_CONCURRENCY, queue.length) }, () => worker()),
+    );
+
+    if (acceptedIds.length > 0) {
+      await db.seoInternalLinkSuggestion.updateMany({
+        where: { shop, id: { in: acceptedIds } },
+        data: { status: "accepted", dismissedUntil: null },
+      });
+    }
+
+    // Failures stay in the list, so `remaining` includes them — the client only
+    // suggests another round when there is more left than just this run's
+    // failures (a suggestion whose anchor text is gone never succeeds).
+    const remaining = await db.seoInternalLinkSuggestion.count({ where });
+    return json({ success: true, accepted: acceptedIds.length, failed, remaining });
+  }
 
   const suggestion = suggestionId
     ? await db.seoInternalLinkSuggestion.findFirst({ where: { id: suggestionId, shop } })
@@ -321,57 +575,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (actionType === "previewAccept") {
-    const fromRoute = RESOURCE_ROUTE[suggestion.fromResourceType];
-    if (!fromRoute) {
-      return json({ success: false, error: "Unsupported source resource type" }, { status: 400 });
-    }
-
-    // Current content — always read fresh (not the value at suggestion-
-    // generation time), so a stale suggestion is detected instead of
-    // silently overwriting an edit made since.
-    let currentHtml: string | null = null;
-    if (suggestion.fromResourceType === "Product") {
-      const row = await db.product.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
-      currentHtml = row?.descriptionHtml ?? null;
-    } else if (suggestion.fromResourceType === "Collection") {
-      const row = await db.collection.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { descriptionHtml: true } });
-      currentHtml = row?.descriptionHtml ?? null;
-    } else if (suggestion.fromResourceType === "Article") {
-      const row = await db.article.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
-      currentHtml = row?.body ?? null;
-    } else if (suggestion.fromResourceType === "Page") {
-      const row = await db.page.findFirst({ where: { id: suggestion.fromResourceId, shop }, select: { body: true } });
-      currentHtml = row?.body ?? null;
-    }
-
-    if (currentHtml === null) {
-      return json({ success: false, error: "Source content not found" }, { status: 404 });
-    }
-
-    let targetHandle: string | null = null;
-    if (suggestion.toResourceType === "Product") {
-      targetHandle = (await db.product.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
-    } else if (suggestion.toResourceType === "Collection") {
-      targetHandle = (await db.collection.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
-    }
-    if (!targetHandle) {
-      return json({ success: false, error: "Target content not found" }, { status: 404 });
-    }
-
-    const href = targetUrlPath({ resourceType: suggestion.toResourceType as "Product" | "Collection", handle: targetHandle });
-    const result = insertLinkIntoHtml(currentHtml, suggestion.anchorText, href);
-
-    if (!result.inserted) {
-      return json({ success: false, code: "STALE", error: "Anchor text not found in current content" }, { status: 409 });
+    const insertion = await computeInsertion(db, shop, suggestion);
+    if (!insertion.ok) {
+      const status = insertion.code === "STALE" ? 409 : insertion.code === "UNSUPPORTED" ? 400 : 404;
+      return json({ success: false, code: insertion.code, error: insertion.error }, { status });
     }
 
     return json({
       success: true,
-      before: currentHtml,
-      after: result.html,
-      savePath: fromRoute.path,
-      fieldKey: fromRoute.fieldKey,
-      itemId: suggestion.fromResourceId,
+      before: insertion.before,
+      after: insertion.after,
+      savePath: insertion.savePath,
+      fieldKey: insertion.fieldKey,
+      itemId: insertion.itemId,
     });
   }
 
@@ -417,31 +633,26 @@ export default function SeoInternalLinks() {
   };
 
   const generateFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
-  const rowFetcher = useFetcher<{ success: boolean; error?: string }>();
-  const previewFetcher = useFetcher<{
-    success: boolean;
-    error?: string;
-    code?: string;
-    before?: string;
-    after?: string;
-    savePath?: string;
-    fieldKey?: "description" | "body";
-    itemId?: string;
-  }>();
-  const saveFetcher = useFetcher<{ success: boolean; error?: string }>();
+  // The preview MODAL is the only single-slot flow left on a fetcher — it blocks
+  // the UI while it is open, so it can never overlap with itself. Everything the
+  // rows do (accept, reject, restore) runs on raw fetch instead, see postSelf.
+  const previewFetcher = useFetcher<ActionResult>();
 
   const [generateStarted, setGenerateStarted] = useState(false);
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const generateStartedAtRef = useRef(0);
 
-  // The suggestion currently being accepted, and HOW: "modal" shows the
-  // before/after preview and waits for a confirmation, "direct" is the list's
-  // "Annehmen" shortcut — same two server round-trips (previewAccept → save),
-  // just without the modal in between. Both need `previewRow`, because the save
-  // and the markAccepted call are driven off it.
+  // Suggestion shown in the before/after modal ("Prüfen"), plus its inline error
+  // and the in-flight state of its confirm button.
   const [previewRow, setPreviewRow] = useState<SuggestionRow | null>(null);
-  const [previewMode, setPreviewMode] = useState<"modal" | "direct">("modal");
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  // Ids of the rows with a request in flight — an array, not a single id,
+  // because several rows may be accepting/rejecting at the same time.
+  const [busyIds, setBusyIds] = useState<string[]>([]);
+  const [bulkRunning, setBulkRunning] = useState<"accept" | "reject" | null>(null);
+  const [bulkConfirm, setBulkConfirm] = useState<"accept" | "reject" | null>(null);
 
   useEffect(() => {
     if (generateFetcher.state !== "idle" || !generateFetcher.data) return;
@@ -490,28 +701,90 @@ export default function SeoInternalLinks() {
     });
   };
 
-  const submitRowAction = (row: SuggestionRow, actionType: "reject" | "restore") => {
+  // ── Requests ───────────────────────────────────────────────────────────────
+  // Row actions use raw fetch rather than useFetcher on purpose: a fetcher has
+  // ONE slot, so starting a second accept while the first is running replaces
+  // the in-flight request and the first row's spinner never clears. A fetch per
+  // click gives every row its own lifecycle, which is what makes accepting
+  // several suggestions in parallel work at all.
+  const postSelf = async (fields: Record<string, string>): Promise<ActionResult | null> => {
     const formData = new FormData();
-    formData.append("actionType", actionType);
-    formData.append("suggestionId", row.id);
-    rowFetcher.submit(formData, { method: "post" });
+    for (const [key, value] of Object.entries(fields)) formData.set(key, value);
+    // Post to this very route (the search string carries view/filters/session).
+    const resp = await fetch(window.location.pathname + window.location.search, {
+      method: "POST",
+      body: formData,
+    });
+    return (await resp.json().catch(() => null)) as ActionResult | null;
   };
 
-  useEffect(() => {
-    if (rowFetcher.state !== "idle" || !rowFetcher.data) return;
-    if (rowFetcher.data.success) {
-      revalidatorRef.current.revalidate();
-    } else {
-      setBanner({ tone: "critical", message: rowFetcher.data.error || c.actionError });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowFetcher.state, rowFetcher.data]);
+  // The save itself goes to the real editor route — the ONE write path.
+  const postSave = async (preview: ActionResult): Promise<ActionResult | null> => {
+    if (!preview.savePath || !preview.fieldKey || !preview.itemId) return null;
+    const formData = new FormData();
+    formData.set("action", "updateContent");
+    formData.set("itemId", preview.itemId);
+    formData.set("locale", data.primaryLocale);
+    formData.set("primaryLocale", data.primaryLocale);
+    formData.set(preview.fieldKey, preview.after || "");
+    formData.set("changedFields", JSON.stringify([preview.fieldKey]));
+    const resp = await fetch(preview.savePath, { method: "POST", body: formData });
+    return (await resp.json().catch(() => null)) as ActionResult | null;
+  };
 
-  const openPreview = (row: SuggestionRow, mode: "modal" | "direct") => {
+  const setBusy = (id: string, busy: boolean) =>
+    setBusyIds((prev) => (busy ? [...prev, id] : prev.filter((entry) => entry !== id)));
+
+  // With parallel rows the banner has several writers, so a later success must
+  // not hide an error the merchant hasn't read yet.
+  const reportError = (message: string) => setBanner({ tone: "critical", message });
+  const reportSuccess = (message: string) =>
+    setBanner((prev) => (prev?.tone === "critical" ? prev : { tone: "success", message }));
+
+  const previewErrorMessage = (result: ActionResult | null) =>
+    result?.code === "STALE" ? c.previewStaleError : result?.error || c.previewLoadError;
+
+  const submitRowAction = async (row: SuggestionRow, actionType: "reject" | "restore") => {
+    setBusy(row.id, true);
+    try {
+      const result = await postSelf({ actionType, suggestionId: row.id });
+      if (result?.success) reportSuccess(actionType === "reject" ? c.rejectSuccess : c.restoreSuccess);
+      else reportError(result?.error || c.actionError);
+    } catch {
+      reportError(c.actionError);
+    } finally {
+      setBusy(row.id, false);
+      revalidatorRef.current.revalidate();
+    }
+  };
+
+  /** "Annehmen" in the list: preview + save + markAccepted, no modal. */
+  const acceptSuggestion = async (row: SuggestionRow) => {
+    setBusy(row.id, true);
+    try {
+      const preview = await postSelf({ actionType: "previewAccept", suggestionId: row.id });
+      if (!preview?.success) {
+        reportError(previewErrorMessage(preview));
+        return;
+      }
+      const saved = await postSave(preview);
+      if (!saved?.success) {
+        reportError(saved?.error || c.acceptSaveError);
+        return;
+      }
+      await postSelf({ actionType: "markAccepted", suggestionId: row.id });
+      reportSuccess(c.acceptSuccess);
+    } catch {
+      reportError(c.acceptSaveError);
+    } finally {
+      setBusy(row.id, false);
+      revalidatorRef.current.revalidate();
+    }
+  };
+
+  const openPreview = (row: SuggestionRow) => {
     setPreviewRow(row);
-    setPreviewMode(mode);
     setPreviewError(null);
-    setBanner(null);
     const formData = new FormData();
     formData.append("actionType", "previewAccept");
     formData.append("suggestionId", row.id);
@@ -520,66 +793,82 @@ export default function SeoInternalLinks() {
 
   useEffect(() => {
     if (previewFetcher.state !== "idle" || !previewFetcher.data) return;
-    if (!previewFetcher.data.success) {
-      const message =
-        previewFetcher.data.code === "STALE" ? c.previewStaleError : previewFetcher.data.error || c.previewLoadError;
-      // Without a modal there is nowhere to show an inline error — surface it in
-      // the page banner and drop the pending row instead.
-      if (previewMode === "direct") {
-        setBanner({ tone: "critical", message });
-        setPreviewRow(null);
-      } else {
-        setPreviewError(message);
-      }
-      return;
-    }
-    // Direct accept: the preview was only ever a means to compute the insertion,
-    // so chain straight into the save the modal's confirm button would trigger.
-    if (previewMode === "direct") confirmAccept();
+    if (!previewFetcher.data.success) setPreviewError(previewErrorMessage(previewFetcher.data));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewFetcher.state, previewFetcher.data]);
 
-  const confirmAccept = () => {
+  /** Confirm button of the preview modal — same two steps as acceptSuggestion,
+   *  but it reports failures inside the modal instead of closing it. */
+  const confirmAccept = async () => {
     const preview = previewFetcher.data;
-    if (!previewRow || !preview?.success || !preview.savePath || !preview.fieldKey || !preview.itemId) return;
+    const row = previewRow;
+    if (!row || !preview?.success) return;
 
-    const formData = new FormData();
-    formData.append("action", "updateContent");
-    formData.append("itemId", preview.itemId);
-    formData.append("locale", data.primaryLocale);
-    formData.append("primaryLocale", data.primaryLocale);
-    formData.append(preview.fieldKey, preview.after || "");
-    formData.append("changedFields", JSON.stringify([preview.fieldKey]));
-
-    saveFetcher.submit(formData, { method: "post", action: preview.savePath });
-  };
-
-  useEffect(() => {
-    if (saveFetcher.state !== "idle" || !saveFetcher.data || !previewRow) return;
-    if (saveFetcher.data.success) {
-      const formData = new FormData();
-      formData.append("actionType", "markAccepted");
-      formData.append("suggestionId", previewRow.id);
-      rowFetcher.submit(formData, { method: "post" });
-      setBanner({ tone: "success", message: c.acceptSuccess });
+    setConfirming(true);
+    try {
+      const saved = await postSave(preview);
+      if (!saved?.success) {
+        setPreviewError(saved?.error || c.acceptSaveError);
+        return;
+      }
+      await postSelf({ actionType: "markAccepted", suggestionId: row.id });
+      reportSuccess(c.acceptSuccess);
       setPreviewRow(null);
-    } else if (previewMode === "direct") {
-      setBanner({ tone: "critical", message: saveFetcher.data.error || c.acceptSaveError });
-      setPreviewRow(null);
-    } else {
-      setPreviewError(saveFetcher.data.error || c.acceptSaveError);
+    } catch {
+      setPreviewError(c.acceptSaveError);
+    } finally {
+      setConfirming(false);
+      revalidatorRef.current.revalidate();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveFetcher.state, saveFetcher.data]);
+  };
 
   // Reject straight out of the preview modal — the point of the modal is that
   // the merchant inspects the insertion before deciding, so "no" has to be
   // reachable from there too, not only from the list row behind it.
   const rejectFromPreview = () => {
-    if (!previewRow) return;
-    submitRowAction(previewRow, "reject");
-    setBanner({ tone: "success", message: c.rejectSuccess });
+    const row = previewRow;
+    if (!row) return;
     setPreviewRow(null);
+    void submitRowAction(row, "reject");
+  };
+
+  /** "Alle annehmen" / "Alle ablehnen": ONE request that does the whole listed
+   *  set server-side (accept is capped per run — see BULK_ACCEPT_LIMIT). */
+  const runBulk = async (kind: "accept" | "reject") => {
+    setBulkConfirm(null);
+    setBulkRunning(kind);
+    setBanner(null);
+    try {
+      const result = await postSelf({
+        actionType: kind === "accept" ? "acceptAll" : "rejectAll",
+        view: data.view,
+        from: data.fromFilter,
+        to: data.toFilter,
+      });
+      if (!result?.success) {
+        reportError(result?.error || c.actionError);
+        return;
+      }
+      if (kind === "reject") {
+        setBanner({ tone: "success", message: c.bulkRejectResult.replace("{count}", String(result.rejected ?? 0)) });
+        return;
+      }
+      const accepted = result.accepted ?? 0;
+      const failed = result.failed ?? 0;
+      const remaining = result.remaining ?? 0;
+      let message = c.bulkAcceptResult.replace("{accepted}", String(accepted));
+      if (failed > 0) message += c.bulkAcceptFailed.replace("{failed}", String(failed));
+      // Only invite another round when there is more left than the failures of
+      // this run — a suggestion whose anchor text is gone never succeeds, so
+      // "click again" would be an endless loop.
+      if (remaining > failed) message += c.bulkAcceptRemaining.replace("{remaining}", String(remaining));
+      setBanner({ tone: failed > 0 ? "critical" : "success", message });
+    } catch {
+      reportError(c.actionError);
+    } finally {
+      setBulkRunning(null);
+      revalidatorRef.current.revalidate();
+    }
   };
 
   const openInEditor = (type: FilterType, id: string) => {
@@ -589,15 +878,19 @@ export default function SeoInternalLinks() {
 
   const rejectedView = data.view === "rejected";
   const rows = data.rows;
-  // A direct accept runs two requests back to back; lock every row action for
-  // its duration (a second click would submit against a half-applied state) and
-  // spin only the button that started it.
-  const acceptingRowId = previewMode === "direct" && previewRow ? previewRow.id : null;
-  const rowBusy =
-    rowFetcher.state !== "idle" ||
-    saveFetcher.state !== "idle" ||
-    previewFetcher.state !== "idle" ||
-    acceptingRowId !== null;
+  // Only the row that was clicked locks up — other rows stay clickable so
+  // several suggestions can be applied at once. A bulk run locks everything,
+  // since it is rewriting the very list underneath.
+  //
+  // Exception: rows that write into the SAME source item lock each other. Both
+  // would compute their insertion from the content as it is now, so the save
+  // that lands second would drop the first link (the server-side bulk accept
+  // avoids this by grouping — see groupSuggestionsBySource).
+  const sourceKey = (row: SuggestionRow) => `${row.fromResourceType}:${row.fromResourceId}`;
+  const busySources = new Set(rows.filter((row) => busyIds.includes(row.id)).map(sourceKey));
+  const rowBusy = (row: SuggestionRow) =>
+    busyIds.includes(row.id) || busySources.has(sourceKey(row)) || bulkRunning !== null;
+  const bulkBusy = bulkRunning !== null || busyIds.length > 0 || generating;
   const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
   const firstOnPage = data.total === 0 ? 0 : (data.page - 1) * data.pageSize + 1;
   const lastOnPage = Math.min(data.page * data.pageSize, data.total);
@@ -651,24 +944,24 @@ export default function SeoInternalLinks() {
           <Badge tone={row.confidence >= 0.8 ? "success" : row.confidence >= 0.6 ? "attention" : undefined}>
             {`${Math.round(row.confidence * 100)}%`}
           </Badge>
-          <Button size="slim" onClick={() => openPreview(row, "modal")} disabled={rowBusy}>
+          <Button size="slim" onClick={() => openPreview(row)} disabled={rowBusy(row)}>
             {c.review}
           </Button>
           {rejectedView ? (
-            <Button size="slim" onClick={() => submitRowAction(row, "restore")} disabled={rowBusy}>
+            <Button size="slim" onClick={() => void submitRowAction(row, "restore")} disabled={rowBusy(row)}>
               {c.restore}
             </Button>
           ) : (
-            <Button size="slim" tone="critical" onClick={() => submitRowAction(row, "reject")} disabled={rowBusy}>
+            <Button size="slim" tone="critical" onClick={() => void submitRowAction(row, "reject")} disabled={rowBusy(row)}>
               {c.reject}
             </Button>
           )}
           <Button
             size="slim"
             variant="primary"
-            onClick={() => openPreview(row, "direct")}
-            disabled={rowBusy}
-            loading={acceptingRowId === row.id}
+            onClick={() => void acceptSuggestion(row)}
+            disabled={rowBusy(row)}
+            loading={busyIds.includes(row.id)}
           >
             {c.accept}
           </Button>
@@ -732,23 +1025,50 @@ export default function SeoInternalLinks() {
             </Text>
           )}
 
-          <InlineStack gap="300" wrap>
-            <div style={{ minWidth: 180 }}>
-              <Select
-                label={c.filterFromLabel}
-                options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
-                value={data.fromFilter}
-                onChange={(value) => goTo({ from: value, page: "1" })}
-              />
-            </div>
-            <div style={{ minWidth: 180 }}>
-              <Select
-                label={c.filterToLabel}
-                options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
-                value={data.toFilter}
-                onChange={(value) => goTo({ to: value, page: "1" })}
-              />
-            </div>
+          {/* Filters and the bulk actions share one row: both act on exactly
+              the same set — everything the filters currently select, across all
+              pages, not just the page on screen. Hence the {count} in the
+              labels, which is the filtered total. */}
+          <InlineStack gap="300" align="space-between" blockAlign="end" wrap>
+            <InlineStack gap="300" wrap>
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label={c.filterFromLabel}
+                  options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
+                  value={data.fromFilter}
+                  onChange={(value) => goTo({ from: value, page: "1" })}
+                />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label={c.filterToLabel}
+                  options={[{ label: c.filterAll, value: "all" }, ...FILTER_TYPES.map((ft) => ({ label: typeLabel(ft), value: ft }))]}
+                  value={data.toFilter}
+                  onChange={(value) => goTo({ to: value, page: "1" })}
+                />
+              </div>
+            </InlineStack>
+
+            {!rejectedView && (
+              <InlineStack gap="200" blockAlign="center">
+                <Button
+                  tone="critical"
+                  onClick={() => setBulkConfirm("reject")}
+                  disabled={bulkBusy || data.total === 0}
+                  loading={bulkRunning === "reject"}
+                >
+                  {c.bulkReject.replace("{count}", String(data.total))}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => setBulkConfirm("accept")}
+                  disabled={bulkBusy || data.total === 0}
+                  loading={bulkRunning === "accept"}
+                >
+                  {c.bulkAccept.replace("{count}", String(data.total))}
+                </Button>
+              </InlineStack>
+            )}
           </InlineStack>
 
           {rows.length === 0 ? (
@@ -798,20 +1118,20 @@ export default function SeoInternalLinks() {
   const rejectAction = {
     content: c.reject,
     tone: "critical",
-    disabled: rowFetcher.state !== "idle" || saveFetcher.state !== "idle",
+    disabled: confirming,
     onAction: rejectFromPreview,
   } as ComplexAction;
 
   const modal = (
     <Modal
-      open={!!previewRow && previewMode === "modal"}
+      open={!!previewRow}
       onClose={() => setPreviewRow(null)}
       title={c.previewModalTitle}
       primaryAction={{
         content: c.previewConfirm,
         disabled: previewLoading || !previewData?.success,
-        loading: saveFetcher.state !== "idle",
-        onAction: confirmAccept,
+        loading: confirming,
+        onAction: () => void confirmAccept(),
       }}
       // Order mirrors the list row: neutral, reject, confirm.
       secondaryActions={[
@@ -849,6 +1169,30 @@ export default function SeoInternalLinks() {
     </Modal>
   );
 
+  // Both bulk actions rewrite the merchant's live content (or throw suggestions
+  // away permanently), so neither fires straight off the button.
+  const bulkModal = (
+    <Modal
+      open={bulkConfirm !== null}
+      onClose={() => setBulkConfirm(null)}
+      title={bulkConfirm === "accept" ? c.bulkAcceptConfirmTitle : c.bulkRejectConfirmTitle}
+      primaryAction={{
+        content: bulkConfirm === "accept" ? c.accept : c.reject,
+        ...(bulkConfirm === "reject" ? { tone: "critical" } : {}),
+        onAction: () => void runBulk(bulkConfirm === "accept" ? "accept" : "reject"),
+      } as ComplexAction}
+      secondaryActions={[{ content: c.previewCancel, onAction: () => setBulkConfirm(null) }]}
+    >
+      <Modal.Section>
+        <Text as="p" variant="bodyMd">
+          {(bulkConfirm === "accept" ? c.bulkAcceptConfirmBody : c.bulkRejectConfirmBody)
+            .replace("{count}", String(data.total))
+            .replace("{limit}", String(BULK_ACCEPT_LIMIT))}
+        </Text>
+      </Modal.Section>
+    </Modal>
+  );
+
   if (data.gated) {
     return (
       <SeoSectionLayout
@@ -880,6 +1224,7 @@ export default function SeoInternalLinks() {
     <SeoSectionLayout sectionId="internalLinks">
       {body}
       {modal}
+      {bulkModal}
     </SeoSectionLayout>
   );
 }

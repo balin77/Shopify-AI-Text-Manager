@@ -8,6 +8,7 @@ import {
   targetUrlPath,
   runInternalLinkSuggestions,
   rejectedAnchorsByTarget,
+  groupSuggestionsBySource,
   MAX_SUGGESTIONS_PER_SOURCE,
   MAX_PENDING_PER_SHOP,
   SYNONYM_BATCH_SIZE,
@@ -567,6 +568,42 @@ describe("rejectedAnchorsByTarget", () => {
       NOW,
     );
     expect(map.get("Product:P1")).toEqual(["future"]);
+  });
+});
+
+describe("groupSuggestionsBySource (bulk accept ordering)", () => {
+  const row = (id: string, fromResourceType: string, fromResourceId: string) => ({
+    id,
+    fromResourceType,
+    fromResourceId,
+  });
+
+  it("puts suggestions that share a source item into one group, in list order", () => {
+    // Two links into the same product must be applied sequentially — the second
+    // insertion runs against the HTML the first one saved.
+    const groups = groupSuggestionsBySource([
+      row("a", "Product", "P1"),
+      row("b", "Article", "A1"),
+      row("c", "Product", "P1"),
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0].map((r) => r.id)).toEqual(["a", "c"]);
+    expect(groups[1].map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("keeps same-id items of different types apart and preserves group order", () => {
+    const groups = groupSuggestionsBySource([
+      row("a", "Product", "X"),
+      row("b", "Collection", "X"),
+      row("c", "Page", "X"),
+    ]);
+
+    expect(groups.map((g) => g.map((r) => r.id))).toEqual([["a"], ["b"], ["c"]]);
+  });
+
+  it("returns no groups for an empty batch", () => {
+    expect(groupSuggestionsBySource([])).toEqual([]);
   });
 });
 

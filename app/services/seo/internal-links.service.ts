@@ -473,6 +473,30 @@ export function rejectedAnchorsByTarget(
 }
 
 /**
+ * Buckets suggestions by their SOURCE item, preserving the given order both
+ * between and inside buckets.
+ *
+ * "Alle annehmen" applies buckets concurrently but each bucket strictly in
+ * order: two suggestions that link out of the same product/article are applied
+ * one after the other, because the second insertion has to run against the HTML
+ * the first one saved. Applying them in parallel would compute both from the
+ * same original content, and whichever save lands last would silently drop the
+ * other link.
+ */
+export function groupSuggestionsBySource<T extends { fromResourceType: string; fromResourceId: string }>(
+  suggestions: T[],
+): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const suggestion of suggestions) {
+    const key = `${suggestion.fromResourceType}:${suggestion.fromResourceId}`;
+    const group = groups.get(key);
+    if (group) group.push(suggestion);
+    else groups.set(key, [suggestion]);
+  }
+  return Array.from(groups.values());
+}
+
+/**
  * The full merchant-triggered run (§4.1–§4.3): load targets + sources from
  * the DB cache, optionally enrich targets with AI synonyms, match, and
  * upsert suggestions. This is the ONLY function in this module that touches
