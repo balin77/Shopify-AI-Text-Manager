@@ -2,12 +2,45 @@ import { describe, it, expect } from "vitest";
 import {
   buildLlmsTxt,
   auditRobotsTxt,
+  groupCrawlerStatuses,
   AI_CRAWLERS,
   wrapLlmsTxtForTheme,
   unwrapLlmsTxtFromTheme,
 } from "~/services/seo/aeo.service";
 
 /** Phase 7 AEO pure logic: llms.txt generation + robots.txt AI-crawler audit. */
+
+/**
+ * Abridged stock Shopify robots.txt. Every line here is a correct exclusion —
+ * the audit must NOT report any of it as a problem, which is exactly what the
+ * old "any Disallow ⇒ partially blocked" logic got wrong.
+ */
+const SHOPIFY_DEFAULT_ROBOTS = `User-agent: *
+Disallow: /admin
+Disallow: /cart
+Disallow: /orders
+Disallow: /checkouts/
+Disallow: /checkout
+Disallow: /:id/checkouts
+Disallow: /:id/orders
+Disallow: /carts
+Disallow: /account
+Disallow: /collections/*sort_by*
+Disallow: /*/collections/*sort_by*
+Disallow: /collections/*+*
+Disallow: /collections/*%2B*
+Disallow: /blogs/*+*
+Disallow: /*/blogs/*+*
+Disallow: /*design_theme_id*
+Disallow: /*preview_theme_id*
+Disallow: /*preview_script_id*
+Disallow: /apple-app-site-association
+Disallow: /.well-known/shopify/monitoring
+Disallow: /cdn/wpm/*.js
+Disallow: /recommendations/products
+Disallow: /*/recommendations/products
+Disallow: /search
+`;
 
 describe("buildLlmsTxt", () => {
   it("renders name, summary, products and collections with absolute URLs", () => {
@@ -124,6 +157,82 @@ describe("auditRobotsTxt", () => {
       expect(partialFor("")).toEqual([]);
       expect(partialFor("User-agent: *\nAllow: /\n")).toEqual([]);
     });
+  });
+
+  describe("rule classification", () => {
+    const gptbot = (txt: string) => auditRobotsTxt(txt).find((s) => s.crawler === "GPTBot")!;
+
+    it("treats Shopify's stock exclusions as standard, not a content restriction", () => {
+      const s = gptbot(SHOPIFY_DEFAULT_ROBOTS);
+      expect(s.blocked).toBe(false);
+      expect(s.contentRestricted).toBe(false);
+      expect(s.verdict).toBe("standard");
+      // still "partially blocked" in the legacy sense — that's why the new
+      // field exists: the legacy flag alone produced a false alarm here.
+      expect(s.partiallyBlocked).toBe(true);
+      expect(s.rules.every((r) => r.impact !== "content")).toBe(true);
+    });
+
+    it("flags a disallowed storefront path as a content restriction", () => {
+      const s = gptbot(`${SHOPIFY_DEFAULT_ROBOTS}Disallow: /products\n`);
+      expect(s.contentRestricted).toBe(true);
+      expect(s.verdict).toBe("restricted");
+      expect(s.rules.find((r) => r.path === "/products")).toEqual({
+        path: "/products",
+        impact: "content",
+        reason: "storefront",
+      });
+    });
+
+    it("classifies an unrecognised path as content (conservative)", () => {
+      const s = gptbot("User-agent: *\nDisallow: /lookbook\n");
+      expect(s.verdict).toBe("restricted");
+      expect(s.rules[0].reason).toBe("unknown");
+    });
+
+    it("keeps faceted collection URLs out of the content bucket", () => {
+      const s = gptbot("User-agent: *\nDisallow: /collections/*sort_by*\nDisallow: /collections/*+*\n");
+      expect(s.contentRestricted).toBe(false);
+      expect(s.rules.map((r) => r.impact)).toEqual(["duplicate", "duplicate"]);
+    });
+
+    it("records whether the crawler matched its own group or the wildcard", () => {
+      const txt = "User-agent: *\nDisallow: /cart\n\nUser-agent: GPTBot\nDisallow: /products\n";
+      const statuses = auditRobotsTxt(txt);
+      expect(statuses.find((s) => s.crawler === "GPTBot")!.matchedBy).toBe("explicit");
+      expect(statuses.find((s) => s.crawler === "ClaudeBot")!.matchedBy).toBe("wildcard");
+      expect(auditRobotsTxt("")[0].matchedBy).toBe("none");
+    });
+
+    it("drops a Disallow that an exact-path Allow overrides", () => {
+      const s = gptbot("User-agent: *\nDisallow: /blogs\nAllow: /blogs\n");
+      expect(s.rules).toEqual([]);
+      expect(s.verdict).toBe("allowed");
+    });
+
+    it("a full block classifies as sitewide and is not content-restricted", () => {
+      const s = gptbot("User-agent: GPTBot\nDisallow: /\n");
+      expect(s.verdict).toBe("blocked");
+      expect(s.contentRestricted).toBe(false);
+    });
+  });
+});
+
+describe("groupCrawlerStatuses", () => {
+  it("collapses crawlers that share a rule set into one group", () => {
+    const groups = groupCrawlerStatuses(auditRobotsTxt(SHOPIFY_DEFAULT_ROBOTS));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].crawlers.sort()).toEqual([...AI_CRAWLERS].sort());
+    expect(groups[0].matchedBy).toBe("wildcard");
+  });
+
+  it("splits a crawler with its own rules and sorts the worst verdict first", () => {
+    const txt = "User-agent: *\nDisallow: /cart\n\nUser-agent: GPTBot\nDisallow: /\n";
+    const groups = groupCrawlerStatuses(auditRobotsTxt(txt));
+    expect(groups).toHaveLength(2);
+    expect(groups[0].verdict).toBe("blocked");
+    expect(groups[0].crawlers).toEqual(["GPTBot"]);
+    expect(groups[1].verdict).toBe("standard");
   });
 });
 

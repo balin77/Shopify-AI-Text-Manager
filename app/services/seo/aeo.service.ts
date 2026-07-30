@@ -204,6 +204,95 @@ export function parseRobots(txt: string): RobotsGroup[] {
   return groups;
 }
 
+/**
+ * How much a single `Disallow` rule actually costs us in AI search:
+ *  - `operational` — the path never holds citable content (checkout, cart,
+ *    account, admin, theme previews, internal endpoints). Shopify ships most of
+ *    these by default; blocking them is correct and needs no merchant action.
+ *  - `duplicate` — faceted/sorted/searched variants of pages that exist
+ *    elsewhere (`/collections/*sort_by*`, `/search`). Deliberate crawl-budget
+ *    hygiene, also Shopify default — no real content is lost.
+ *  - `content` — hides pages an AI answer could have cited (products,
+ *    collections, blogs, pages) or an unrecognised path we can't vouch for.
+ *    This is the only bucket a merchant usually needs to act on.
+ */
+export type RobotsRuleImpact = "operational" | "duplicate" | "content";
+
+export interface RobotsRuleAssessment {
+  /** The raw `Disallow` path as written in robots.txt. */
+  path: string;
+  impact: RobotsRuleImpact;
+  /** Stable i18n key explaining *why* it landed in that bucket. */
+  reason: RobotsRuleReason;
+}
+
+export type RobotsRuleReason =
+  | "checkout"
+  | "account"
+  | "admin"
+  | "internal"
+  | "preview"
+  | "faceted"
+  | "search"
+  | "pagination"
+  | "queryParams"
+  | "storefront"
+  | "sitewide"
+  | "unknown";
+
+/**
+ * Ordered classification table — first match wins, so the narrow operational /
+ * duplicate patterns must come before the broad storefront check below (e.g.
+ * `/collections/*sort_by*` is faceting, not a blocked collection).
+ */
+const RULE_PATTERNS: Array<{ re: RegExp; impact: RobotsRuleImpact; reason: RobotsRuleReason }> = [
+  // Operational — transactional or internal, never citable.
+  { re: /(^|\/)(checkouts?|carts?|thank_you)(\/|$|\?|\*)/, impact: "operational", reason: "checkout" },
+  {
+    re: /(^|\/)(account|accounts|orders?|customer_authentication|password|challenge|login|logout)(\/|$|\?|\*)/,
+    impact: "operational",
+    reason: "account",
+  },
+  { re: /^\/admin(\/|$|\?|\*)/, impact: "operational", reason: "admin" },
+  {
+    re: /(^|\/)(apps|services|tools|recommendations|cdn|wpm|\.well-known|apple-app-site-association|localization|browsing_context_suggestions)(\/|$|\?|\.|\*)/,
+    impact: "operational",
+    reason: "internal",
+  },
+  {
+    re: /(design_theme_id|preview_theme_id|preview_script_id|_ab=|oseid=|shpxid=|preview_key)/,
+    impact: "operational",
+    reason: "preview",
+  },
+  // Duplicate — same content reachable under a canonical URL.
+  { re: /(sort_by|filter[._]|constraint|%2b|\+)/i, impact: "duplicate", reason: "faceted" },
+  { re: /(^|\/)search(\/|$|\?|\*)|[?&*]q=/, impact: "duplicate", reason: "search" },
+  { re: /(page=|\/page\/)/, impact: "duplicate", reason: "pagination" },
+  { re: /^\/\*\?\*?$/, impact: "duplicate", reason: "queryParams" },
+];
+
+/** Storefront routes whose content is exactly what an AI answer would cite. */
+const STOREFRONT_RE = /^\/(?:\*\/)?(?:products|collections|blogs|pages|articles|policies)(\/|$|\?|\*)/;
+
+/**
+ * Classify a single `Disallow` path. Pure, and deliberately conservative: an
+ * unrecognised path counts as `content`, because we'd rather over-report a
+ * custom route than quietly tell a merchant everything is fine.
+ */
+export function classifyDisallowPath(path: string): RobotsRuleAssessment {
+  const raw = path.trim();
+  const p = raw.toLowerCase();
+  if (p === "/" || p === "/*") return { path: raw, impact: "content", reason: "sitewide" };
+  for (const { re, impact, reason } of RULE_PATTERNS) {
+    if (re.test(p)) return { path: raw, impact, reason };
+  }
+  if (STOREFRONT_RE.test(p)) return { path: raw, impact: "content", reason: "storefront" };
+  return { path: raw, impact: "content", reason: "unknown" };
+}
+
+/** Coarse per-crawler verdict for the UI. */
+export type RobotsVerdict = "allowed" | "standard" | "restricted" | "blocked";
+
 export interface RobotsCrawlerStatus {
   crawler: string;
   /** Fully blocked: `Disallow: /` (no overriding `Allow: /`) — kept as-is for
@@ -211,39 +300,123 @@ export interface RobotsCrawlerStatus {
   blocked: boolean;
   /**
    * Some `Disallow` rule applies to this crawler's group (or the `*` fallback)
-   * but the site isn't fully blocked — e.g. `Disallow: /products/`. This still
-   * hides real storefront content from the crawler, just not everything, so it
-   * is surfaced separately rather than folded into `blocked`.
+   * but the site isn't fully blocked — e.g. `Disallow: /products/`. Note this
+   * is true even for harmless Shopify defaults; use `contentRestricted` for the
+   * "merchant should look at this" signal.
    */
   partiallyBlocked: boolean;
+  /** Which record decided this crawler's access. */
+  matchedBy: "explicit" | "wildcard" | "none";
+  /** Every applying `Disallow`, classified. Empty when no group matches. */
+  rules: RobotsRuleAssessment[];
+  /** At least one applying `Disallow` hides real content (and not fully blocked). */
+  contentRestricted: boolean;
+  verdict: RobotsVerdict;
 }
 
 /**
- * Audit live robots.txt content for AI crawlers that are blocked, distinguishing
- * a full block (a matching `User-agent` group — or the `*` fallback — with
- * `Disallow: /` and no overriding `Allow: /`) from a partial block (some other
- * non-empty `Disallow` rule in that group, e.g. `Disallow: /products/`, which
- * still hides storefront content from the crawler). Pure.
+ * Audit live robots.txt content for AI crawlers, per crawler and per rule.
+ *
+ * A full block (`Disallow: /` with no overriding `Allow: /`) is still reported
+ * via `blocked`. Everything else is broken down rule by rule so the merchant
+ * sees *which* paths are closed and whether that actually matters — a store on
+ * Shopify's stock robots.txt has ~30 `Disallow` lines that are all correct, and
+ * reporting those as "partially blocked" is noise. Pure.
  */
 export function auditRobotsTxt(robotsTxt: string): RobotsCrawlerStatus[] {
   const groups = parseRobots(robotsTxt || "");
-  const groupFor = (crawler: string): RobotsGroup | null => {
+  const matchFor = (crawler: string): { group: RobotsGroup | null; matchedBy: RobotsCrawlerStatus["matchedBy"] } => {
     const c = crawler.toLowerCase();
     const exact = groups.find((g) => g.agents.includes(c));
-    if (exact) return exact;
-    return groups.find((g) => g.agents.includes("*")) ?? null;
+    if (exact) return { group: exact, matchedBy: "explicit" };
+    const wildcard = groups.find((g) => g.agents.includes("*"));
+    return wildcard ? { group: wildcard, matchedBy: "wildcard" } : { group: null, matchedBy: "none" };
   };
-  const statusFor = (g: RobotsGroup | null): { blocked: boolean; partiallyBlocked: boolean } => {
-    if (!g) return { blocked: false, partiallyBlocked: false };
-    const blocksRoot = g.rules.some((r) => r.type === "disallow" && r.path === "/");
-    const allowsRoot = g.rules.some((r) => r.type === "allow" && r.path === "/");
-    if (blocksRoot && !allowsRoot) return { blocked: true, partiallyBlocked: false };
+
+  return AI_CRAWLERS.map((crawler) => {
+    const { group, matchedBy } = matchFor(crawler);
+    if (!group) {
+      return {
+        crawler,
+        blocked: false,
+        partiallyBlocked: false,
+        matchedBy,
+        rules: [],
+        contentRestricted: false,
+        verdict: "allowed" as const,
+      };
+    }
+
+    const blocksRoot = group.rules.some((r) => r.type === "disallow" && r.path === "/");
+    const allowsRoot = group.rules.some((r) => r.type === "allow" && r.path === "/");
+    const blocked = blocksRoot && !allowsRoot;
+
     // `Disallow:` with an empty value means "allow everything" per the spec —
-    // only a non-empty path is a real (partial) restriction.
-    const hasPartialDisallow = g.rules.some((r) => r.type === "disallow" && r.path.trim() !== "");
-    return { blocked: false, partiallyBlocked: hasPartialDisallow };
-  };
-  return AI_CRAWLERS.map((crawler) => ({ crawler, ...statusFor(groupFor(crawler)) }));
+    // only a non-empty path is a real restriction.
+    const disallows = group.rules.filter((r) => r.type === "disallow" && r.path.trim() !== "");
+    // An `Allow` for the same path un-does the `Disallow` (most-specific-wins is
+    // an approximation here, but an exact-path Allow is unambiguous).
+    const allowed = new Set(group.rules.filter((r) => r.type === "allow").map((r) => r.path.trim()));
+    const rules = disallows
+      .filter((r) => !allowed.has(r.path.trim()))
+      .map((r) => classifyDisallowPath(r.path));
+
+    const contentRestricted = !blocked && rules.some((r) => r.impact === "content");
+    const verdict: RobotsVerdict = blocked
+      ? "blocked"
+      : contentRestricted
+        ? "restricted"
+        : rules.length > 0
+          ? "standard"
+          : "allowed";
+
+    return {
+      crawler,
+      blocked,
+      partiallyBlocked: !blocked && rules.length > 0,
+      matchedBy,
+      rules,
+      contentRestricted,
+      verdict,
+    };
+  });
+}
+
+export interface RobotsCrawlerGroup {
+  /** Crawlers that share an identical verdict + rule set. */
+  crawlers: string[];
+  matchedBy: RobotsCrawlerStatus["matchedBy"];
+  verdict: RobotsVerdict;
+  rules: RobotsRuleAssessment[];
+}
+
+/**
+ * Collapse per-crawler statuses into distinct rule sets. On a stock store all
+ * 14 crawlers fall through to the same `User-agent: *` record, so the UI should
+ * render one explained block, not fourteen identical ones. Pure.
+ */
+export function groupCrawlerStatuses(statuses: RobotsCrawlerStatus[]): RobotsCrawlerGroup[] {
+  const out: RobotsCrawlerGroup[] = [];
+  const bySignature = new Map<string, RobotsCrawlerGroup>();
+  for (const s of statuses) {
+    const signature = `${s.verdict}|${s.matchedBy}|${s.rules.map((r) => r.path).join(" ")}`;
+    const existing = bySignature.get(signature);
+    if (existing) {
+      existing.crawlers.push(s.crawler);
+      continue;
+    }
+    const group: RobotsCrawlerGroup = {
+      crawlers: [s.crawler],
+      matchedBy: s.matchedBy,
+      verdict: s.verdict,
+      rules: s.rules,
+    };
+    bySignature.set(signature, group);
+    out.push(group);
+  }
+  // Worst verdict first so the merchant reads the actionable block at the top.
+  const order: Record<RobotsVerdict, number> = { blocked: 0, restricted: 1, standard: 2, allowed: 3 };
+  return out.sort((a, b) => order[a.verdict] - order[b.verdict]);
 }
 
 // ── Theme file I/O (Admin GraphQL) ───────────────────────────────────────────
@@ -348,6 +521,11 @@ export interface AeoAnalysis {
    *  site (see `RobotsCrawlerStatus.partiallyBlocked`). Additive field — older
    *  consumers that only read `blockedCrawlers` are unaffected. */
   partiallyBlockedCrawlers: string[];
+  /** Subset of `partiallyBlockedCrawlers` whose blocked paths hide real content
+   *  — i.e. the ones actually worth a merchant's attention. */
+  restrictedCrawlers: string[];
+  /** Distinct rule sets across all AI crawlers, worst verdict first. */
+  crawlerGroups: RobotsCrawlerGroup[];
   robotsAuditAvailable: boolean;
 }
 
@@ -376,6 +554,8 @@ export async function analyzeAeo(
 
   let blockedCrawlers: string[] = [];
   let partiallyBlockedCrawlers: string[] = [];
+  let restrictedCrawlers: string[] = [];
+  let crawlerGroups: RobotsCrawlerGroup[] = [];
   let robotsAuditAvailable = false;
   try {
     const res = await fetch(`https://${shop}/robots.txt`, {
@@ -387,11 +567,20 @@ export async function analyzeAeo(
       const statuses = auditRobotsTxt(txt);
       blockedCrawlers = statuses.filter((s) => s.blocked).map((s) => s.crawler);
       partiallyBlockedCrawlers = statuses.filter((s) => s.partiallyBlocked).map((s) => s.crawler);
+      restrictedCrawlers = statuses.filter((s) => s.contentRestricted).map((s) => s.crawler);
+      crawlerGroups = groupCrawlerStatuses(statuses);
       robotsAuditAvailable = true;
     }
   } catch {
     /* audit unavailable */
   }
 
-  return { llmsTxtExists, blockedCrawlers, partiallyBlockedCrawlers, robotsAuditAvailable };
+  return {
+    llmsTxtExists,
+    blockedCrawlers,
+    partiallyBlockedCrawlers,
+    restrictedCrawlers,
+    crawlerGroups,
+    robotsAuditAvailable,
+  };
 }

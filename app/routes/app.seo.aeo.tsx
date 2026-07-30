@@ -9,14 +9,19 @@
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, Box, Divider, List } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
-import { analyzeAeo, generateAndUpsertLlmsTxt } from "../services/seo/aeo.service";
+import {
+  analyzeAeo,
+  generateAndUpsertLlmsTxt,
+  type RobotsCrawlerGroup,
+  type RobotsRuleImpact,
+} from "../services/seo/aeo.service";
 
 const SHOP_INFO_QUERY = `#graphql
   query seoAeoShopInfo {
@@ -64,6 +69,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       // calls, so a field missing here (like this one previously) silently
       // disappears from `useLoaderData`'s type in the non-gated branch too.
       partiallyBlockedCrawlers: [] as string[],
+      restrictedCrawlers: [] as string[],
+      crawlerGroups: [] as RobotsCrawlerGroup[],
       robotsAuditAvailable: false,
       themesUrl: "",
     });
@@ -96,6 +103,91 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<Response>
   }
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
+
+/** Impact buckets, most actionable first. */
+const IMPACT_ORDER: RobotsRuleImpact[] = ["content", "duplicate", "operational"];
+
+const VERDICT_TONE = {
+  blocked: "critical",
+  restricted: "warning",
+  standard: "success",
+  allowed: "success",
+} as const;
+
+/**
+ * One explained block per distinct rule set. Crawlers that share a rule set are
+ * collapsed by `groupCrawlerStatuses`, so a stock store renders a single block
+ * covering all 14 bots instead of repeating the same list fourteen times.
+ */
+function CrawlerGroupDetail({ group }: { group: RobotsCrawlerGroup }) {
+  const { t } = useI18n();
+  const a = t.seo.aeoPage;
+
+  const byImpact = IMPACT_ORDER.map((impact) => ({
+    impact,
+    rules: group.rules.filter((r) => r.impact === impact),
+  })).filter((b) => b.rules.length > 0);
+
+  return (
+    <Box
+      padding="300"
+      borderWidth="025"
+      borderColor="border"
+      borderRadius="200"
+      background={group.verdict === "standard" || group.verdict === "allowed" ? "bg-surface" : "bg-surface-secondary"}
+    >
+      <BlockStack gap="300">
+        <InlineStack gap="200" blockAlign="center" wrap>
+          <Badge tone={VERDICT_TONE[group.verdict]}>{a.verdictLabel[group.verdict]}</Badge>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {group.matchedBy === "explicit"
+              ? a.robotsSourceExplicit
+              : group.matchedBy === "wildcard"
+                ? a.robotsSourceWildcard
+                : a.robotsSourceNone}
+          </Text>
+        </InlineStack>
+
+        <InlineStack gap="100" wrap>
+          {group.crawlers.map((c) => (
+            <Badge key={c}>{c}</Badge>
+          ))}
+        </InlineStack>
+
+        {byImpact.length === 0 ? (
+          <Text as="p" variant="bodySm" tone="subdued">
+            {a.robotsNoRules}
+          </Text>
+        ) : (
+          byImpact.map((bucket, i) => (
+            <BlockStack key={bucket.impact} gap="150">
+              {i > 0 && <Divider />}
+              <Text as="h4" variant="headingSm">
+                {a.impactTitle[bucket.impact]}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {a.impactHint[bucket.impact]}
+              </Text>
+              <List type="bullet">
+                {bucket.rules.map((r, j) => (
+                  <List.Item key={`${r.path}-${j}`}>
+                    <Text as="span" variant="bodySm" fontWeight="medium">
+                      {r.path}
+                    </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {" "}
+                      — {a.robotsReason[r.reason]}
+                    </Text>
+                  </List.Item>
+                ))}
+              </List>
+            </BlockStack>
+          ))
+        )}
+      </BlockStack>
+    </Box>
+  );
+}
 
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
@@ -155,7 +247,7 @@ export default function SeoAeo() {
 
           {/* robots.txt AI-crawler audit */}
           <Card>
-            <BlockStack gap="300">
+            <BlockStack gap="400">
               <Text as="h3" variant="headingMd">
                 {a.robotsTitle}
               </Text>
@@ -163,49 +255,44 @@ export default function SeoAeo() {
                 <Text as="p" tone="subdued">
                   {a.robotsUnavailable}
                 </Text>
-              ) : data.blockedCrawlers.length === 0 && data.partiallyBlockedCrawlers.length === 0 ? (
-                <Banner tone="success">{a.robotsAllAllowed}</Banner>
               ) : (
-                <BlockStack gap="200">
-                  {data.blockedCrawlers.length > 0 && (
-                    <>
-                      <Banner tone="warning">{a.robotsBlocked}</Banner>
-                      <InlineStack gap="100" wrap>
-                        {data.blockedCrawlers.map((c) => (
-                          <Badge key={c} tone="critical">
-                            {c}
-                          </Badge>
-                        ))}
-                      </InlineStack>
-                    </>
+                <BlockStack gap="400">
+                  {/* One verdict for the whole audit. A stock Shopify robots.txt
+                      disallows ~30 paths (checkout, cart, faceted collections …)
+                      — all correct — so "some path is disallowed" is not a
+                      finding. Only a full block or a *content* path is. */}
+                  {data.blockedCrawlers.length > 0 ? (
+                    <Banner tone="critical" title={a.verdictBlockedTitle}>
+                      {a.verdictBlockedBody}
+                    </Banner>
+                  ) : data.restrictedCrawlers.length > 0 ? (
+                    <Banner tone="warning" title={a.verdictRestrictedTitle}>
+                      {a.verdictRestrictedBody}
+                    </Banner>
+                  ) : data.partiallyBlockedCrawlers.length > 0 ? (
+                    <Banner tone="success" title={a.verdictStandardTitle}>
+                      {a.verdictStandardBody}
+                    </Banner>
+                  ) : (
+                    <Banner tone="success">{a.robotsAllAllowed}</Banner>
                   )}
-                  {/* Distinct from a full block (plan §C2 follow-up): some path is
-                      disallowed for these crawlers, but the site isn't fully
-                      blocked — still worth a look, so it gets its own
-                      warning-tone section instead of being folded into the
-                      fully-blocked list above. */}
-                  {data.partiallyBlockedCrawlers.length > 0 && (
-                    <>
-                      <Banner tone="warning" title={a.partiallyBlockedTitle}>
-                        {a.partiallyBlockedBody}
-                      </Banner>
-                      <InlineStack gap="100" wrap>
-                        {data.partiallyBlockedCrawlers.map((c) => (
-                          <Badge key={c} tone="attention">
-                            {c}
-                          </Badge>
-                        ))}
+
+                  {data.crawlerGroups.map((group, i) => (
+                    <CrawlerGroupDetail key={i} group={group} />
+                  ))}
+
+                  {(data.blockedCrawlers.length > 0 || data.restrictedCrawlers.length > 0) && (
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {a.robotsFixHint}
+                      </Text>
+                      <InlineStack>
+                        <Button url={data.themesUrl} target="_top">
+                          {a.robotsOpenThemes}
+                        </Button>
                       </InlineStack>
-                    </>
+                    </BlockStack>
                   )}
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {a.robotsFixHint}
-                  </Text>
-                  <InlineStack>
-                    <Button url={data.themesUrl} target="_top">
-                      {a.robotsOpenThemes}
-                    </Button>
-                  </InlineStack>
                 </BlockStack>
               )}
             </BlockStack>
