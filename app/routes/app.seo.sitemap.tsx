@@ -24,7 +24,7 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -37,6 +37,7 @@ import {
   applyExclusion,
   revertExclusion,
   type SitemapAnalysis,
+  type SitemapExclusionRow,
   type SitemapExclusionResourceType,
 } from "../services/seo/sitemap.service";
 
@@ -85,6 +86,7 @@ const EXAMPLE_ANALYSIS: SitemapAnalysis = {
       appliedAt: null,
       title: "Sommer 2023 (leer)",
       handle: "sommer-2023",
+      caution: false,
     },
     {
       id: "example-2",
@@ -95,6 +97,7 @@ const EXAMPLE_ANALYSIS: SitemapAnalysis = {
       appliedAt: null,
       title: "Auslaufmodell XY",
       handle: "auslaufmodell-xy",
+      caution: false,
     },
   ],
 };
@@ -155,6 +158,10 @@ export default function SeoSitemap() {
 
   const [banner, setBanner] = useState<{ tone: "critical" | "success"; message: string } | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  // Neither direction writes without an explicit confirmation: both flip a
+  // metafield that changes what Google may index, and the row label alone
+  // ("Grund: Dünner Inhalt") never made the consequence visible.
+  const [confirm, setConfirm] = useState<{ row: SitemapExclusionRow; mode: "apply" | "revert" } | null>(null);
 
   useEffect(() => {
     if (rowFetcher.state !== "idle" || !rowFetcher.data) return;
@@ -177,6 +184,13 @@ export default function SeoSitemap() {
     rowFetcher.submit(formData, { method: "post" });
   };
 
+  const confirmRowAction = () => {
+    if (!confirm) return;
+    const { row, mode } = confirm;
+    setConfirm(null);
+    submitRowAction(row.id, mode);
+  };
+
   const openInEditor = (type: SitemapExclusionResourceType, id: string) => {
     const path = TYPE_PATH[type];
     if (path) handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
@@ -184,6 +198,7 @@ export default function SeoSitemap() {
 
   const typeLabel = (type: SitemapExclusionResourceType): string => resourceTypeLabel[type] || type;
   const reasonLabel = (reason: string | null): string => (reason ? c[`reason_${reason}`] || reason : "");
+  const reasonHelp = (reason: string | null): string => (reason ? c[`reasonHelp_${reason}`] || "" : "");
   const statusLabel = (status: string): string => c[`status_${status}`] || status;
 
   const analysis = data.analysis;
@@ -226,7 +241,7 @@ export default function SeoSitemap() {
           {suggested.length === 0 ? (
             <Text as="p" tone="subdued">{c.empty}</Text>
           ) : (
-            <BlockStack gap="200">
+            <BlockStack gap="300">
               {suggested.map((row) => (
                 <InlineStack key={row.id} gap="300" align="space-between" blockAlign="center" wrap>
                   <BlockStack gap="050">
@@ -235,15 +250,23 @@ export default function SeoSitemap() {
                       <Button variant="plain" size="slim" onClick={() => openInEditor(row.resourceType, row.resourceId)}>
                         {row.title}
                       </Button>
+                      {row.caution && <Badge tone="warning">{c.cautionBadge}</Badge>}
                     </InlineStack>
                     <Text as="span" variant="bodySm" tone="subdued">
                       {c.colReason}: {reasonLabel(row.reason)}
+                      {reasonHelp(row.reason) ? ` — ${reasonHelp(row.reason)}` : ""}
                     </Text>
+                    {row.caution && (
+                      <Text as="span" variant="bodySm" tone="caution">
+                        {c.cautionTitle}
+                      </Text>
+                    )}
                   </BlockStack>
                   <Button
                     size="slim"
                     variant="primary"
-                    onClick={() => submitRowAction(row.id, "apply")}
+                    tone={row.caution ? "critical" : undefined}
+                    onClick={() => setConfirm({ row, mode: "apply" })}
                     disabled={rowFetcher.state !== "idle"}
                     loading={pendingId === row.id && rowFetcher.state !== "idle"}
                   >
@@ -253,6 +276,38 @@ export default function SeoSitemap() {
               ))}
             </BlockStack>
           )}
+        </BlockStack>
+      </Card>
+
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingMd">{c.guidanceTitle}</Text>
+          <BlockStack gap="100">
+            <Text as="h4" variant="headingSm">{c.guidanceYesTitle}</Text>
+            <List type="bullet">
+              <List.Item>{c.guidanceYes1}</List.Item>
+              <List.Item>{c.guidanceYes2}</List.Item>
+              <List.Item>{c.guidanceYes3}</List.Item>
+              <List.Item>{c.guidanceYes4}</List.Item>
+            </List>
+          </BlockStack>
+          <BlockStack gap="100">
+            <Text as="h4" variant="headingSm">{c.guidanceNoTitle}</Text>
+            <List type="bullet">
+              <List.Item>{c.guidanceNo1}</List.Item>
+              <List.Item>{c.guidanceNo2}</List.Item>
+              <List.Item>{c.guidanceNo3}</List.Item>
+              <List.Item>{c.guidanceNo4}</List.Item>
+            </List>
+          </BlockStack>
+          <BlockStack gap="100">
+            <Text as="h4" variant="headingSm">{c.guidanceBetterTitle}</Text>
+            <List type="bullet">
+              <List.Item>{c.guidanceBetter1}</List.Item>
+              <List.Item>{c.guidanceBetter2}</List.Item>
+              <List.Item>{c.guidanceBetter3}</List.Item>
+            </List>
+          </BlockStack>
         </BlockStack>
       </Card>
 
@@ -274,8 +329,7 @@ export default function SeoSitemap() {
                   <Button
                     key={`a-${row.id}`}
                     size="slim"
-                    tone="critical"
-                    onClick={() => submitRowAction(row.id, "revert")}
+                    onClick={() => setConfirm({ row, mode: "revert" })}
                     disabled={rowFetcher.state !== "idle"}
                     loading={pendingId === row.id && rowFetcher.state !== "idle"}
                   >
@@ -310,6 +364,61 @@ export default function SeoSitemap() {
     </BlockStack>
   );
 
+  // Spells out the actual effect of the metafield write (out of sitemap +
+  // noindex + still reachable + reversible) before anything is sent, and
+  // repeats the caution for legal/service pages where the row's only evidence
+  // is a word count.
+  const confirmModal = (
+    <Modal
+      open={!!confirm}
+      onClose={() => setConfirm(null)}
+      title={confirm?.mode === "revert" ? c.revertConfirmTitle : c.confirmTitle}
+      primaryAction={{
+        content: confirm?.mode === "revert" ? c.revertCta : c.confirmCta,
+        destructive: confirm?.mode === "apply",
+        onAction: confirmRowAction,
+      }}
+      secondaryActions={[{ content: c.confirmCancel, onAction: () => setConfirm(null) }]}
+    >
+      <Modal.Section>
+        {confirm && (
+          <BlockStack gap="300">
+            {confirm.mode === "revert" ? (
+              <Text as="p" variant="bodyMd">
+                {c.revertConfirmIntro.replace("{title}", confirm.row.title)}
+              </Text>
+            ) : (
+              <>
+                {confirm.row.caution && (
+                  <Banner tone="warning" title={c.cautionTitle}>
+                    <Text as="p" variant="bodyMd">{c.cautionBody}</Text>
+                  </Banner>
+                )}
+                <Text as="p" variant="bodyMd">
+                  {c.confirmIntro.replace("{title}", confirm.row.title)}
+                </Text>
+                <List type="bullet">
+                  <List.Item>{c.confirmEffect1}</List.Item>
+                  <List.Item>{c.confirmEffect2}</List.Item>
+                  <List.Item>{c.confirmEffect3}</List.Item>
+                </List>
+                <BlockStack gap="050">
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {c.confirmReasonLabel}: {reasonLabel(confirm.row.reason)}
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {reasonHelp(confirm.row.reason)}
+                  </Text>
+                </BlockStack>
+                <Text as="p" variant="bodySm" tone="subdued">{c.confirmReversible}</Text>
+              </>
+            )}
+          </BlockStack>
+        )}
+      </Modal.Section>
+    </Modal>
+  );
+
   if (data.gated) {
     return (
       <SeoSectionLayout
@@ -337,5 +446,10 @@ export default function SeoSitemap() {
     );
   }
 
-  return <SeoSectionLayout sectionId="sitemap">{body}</SeoSectionLayout>;
+  return (
+    <SeoSectionLayout sectionId="sitemap">
+      {body}
+      {confirmModal}
+    </SeoSectionLayout>
+  );
 }

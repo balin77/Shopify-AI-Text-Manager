@@ -156,6 +156,45 @@ export function findArchivedProducts(products: ArchivedProductRow[]): SitemapExc
     }));
 }
 
+/**
+ * Handle/title fragments that mark a Page as legally-required or service
+ * content (Impressum, Datenschutz, AGB, Widerruf, Versand, Kontakt, …) in the
+ * three UI languages. Such pages are ALWAYS short — they trip
+ * `findThinContentPages` on word count alone — but they are trust signals that
+ * should normally stay indexable. We do NOT filter them out of the suggestion
+ * list (the merchant may genuinely want an Impressum out of the index); the
+ * UI flags them so the decision is a conscious one instead of a reflex click.
+ * Substring match on the lowercased handle+title, so `datenschutzerklaerung`
+ * and `privacy-policy` both hit.
+ */
+const POLICY_PAGE_FRAGMENTS = [
+  // de
+  "impressum", "datenschutz", "agb", "widerruf", "versand", "zahlung",
+  "liefer", "ruckgabe", "rückgabe", "kontakt", "haftung",
+  // en
+  "privacy", "terms", "legal", "imprint", "refund", "return", "shipping",
+  "delivery", "payment", "contact", "disclaimer", "cookie", "policy", "policies",
+  // es
+  "aviso-legal", "privacidad", "terminos", "términos", "envio", "envío",
+  "contacto", "devolucion", "devolución", "pago",
+];
+
+/**
+ * Heuristic: does this row look like a legally-required / service page whose
+ * short length is expected rather than a defect? Pages only — a short product
+ * or collection carries no such expectation. Pure, so it is unit-testable and
+ * usable from both `analyze()` and tests.
+ */
+export function isLikelyPolicyPage(
+  resourceType: SitemapExclusionResourceType,
+  handle: string,
+  title: string,
+): boolean {
+  if (resourceType !== "page") return false;
+  const haystack = `${handle} ${title}`.toLowerCase();
+  return POLICY_PAGE_FRAGMENTS.some((f) => haystack.includes(f));
+}
+
 export interface CollectionRow {
   id: string;
   title: string;
@@ -564,6 +603,9 @@ export interface SitemapExclusionRow {
   appliedAt: string | null;
   title: string;
   handle: string;
+  /** `isLikelyPolicyPage` — the UI shows a "check this first" warning instead
+   *  of a plain apply button. Never hides the row. */
+  caution: boolean;
 }
 
 export interface SitemapAnalysis {
@@ -638,15 +680,19 @@ export async function analyze(shop: string, deps: SitemapAnalyzeDeps): Promise<S
   const titleMap = await resolveExclusionTitles(db, shop, exclusionRows);
   const exclusions: SitemapExclusionRow[] = exclusionRows.map((r) => {
     const resolved = titleMap.get(`${r.resourceType}::${r.resourceId}`);
+    const resourceType = r.resourceType as SitemapExclusionResourceType;
+    const title = resolved?.title ?? r.resourceId;
+    const handle = resolved?.handle ?? "";
     return {
       id: r.id,
-      resourceType: r.resourceType as SitemapExclusionResourceType,
+      resourceType,
       resourceId: r.resourceId,
       reason: r.reason,
       status: r.status,
       appliedAt: r.appliedAt ? r.appliedAt.toISOString() : null,
-      title: resolved?.title ?? r.resourceId,
-      handle: resolved?.handle ?? "",
+      title,
+      handle,
+      caution: isLikelyPolicyPage(resourceType, handle, title),
     };
   });
 

@@ -7,6 +7,7 @@ import {
   upsertExclusionSuggestions,
   fetchSitemapInfo,
   crossmatchBrokenSitemapLinks,
+  isLikelyPolicyPage,
   applyExclusion,
   revertExclusion,
   THIN_CONTENT_MIN_WORDS,
@@ -147,6 +148,29 @@ function makeSuggestionDb(opts: {
   } as any;
   return { db, created };
 }
+
+describe("isLikelyPolicyPage", () => {
+  it("flags legal/service pages by handle in de/en/es", () => {
+    expect(isLikelyPolicyPage("page", "impressum", "Impressum")).toBe(true);
+    expect(isLikelyPolicyPage("page", "datenschutzerklaerung", "Datenschutz")).toBe(true);
+    expect(isLikelyPolicyPage("page", "privacy-policy", "Privacy Policy")).toBe(true);
+    expect(isLikelyPolicyPage("page", "aviso-legal", "Aviso legal")).toBe(true);
+  });
+
+  it("matches on the title when the handle is opaque", () => {
+    expect(isLikelyPolicyPage("page", "p-4711", "Widerrufsbelehrung")).toBe(true);
+  });
+
+  it("does not flag ordinary pages", () => {
+    expect(isLikelyPolicyPage("page", "sommer-lookbook", "Sommer Lookbook")).toBe(false);
+    expect(isLikelyPolicyPage("page", "team", "Unser Team")).toBe(false);
+  });
+
+  it("only applies to pages — a short product or collection carries no such expectation", () => {
+    expect(isLikelyPolicyPage("product", "shipping-box", "Shipping Box")).toBe(false);
+    expect(isLikelyPolicyPage("collection", "returns", "Returns")).toBe(false);
+  });
+});
 
 describe("computeExclusionSuggestions", () => {
   it("yields no emptyCollection candidates without a crawl snapshot", async () => {
