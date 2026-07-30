@@ -480,15 +480,34 @@ export function isBotBlockStatus(statusCode: number): boolean {
   return statusCode === 403 || statusCode === 429;
 }
 
-/** `statusCode` semantics: 0 = timeout/network error, -1 = redirect loop /
- *  chain longer than REDIRECT_MAX_HOPS, else the real HTTP status.
- *  "blocked" is reported separately from "broken" — see `isBotBlockStatus`. */
-export function classifyLinkStatus(statusCode: number): "ok" | "broken" | "blocked" {
-  if (statusCode === 0 || statusCode === -1) return "broken";
+/**
+ * `statusCode` semantics: 0 = timeout/network error, -1 = redirect loop /
+ * chain longer than REDIRECT_MAX_HOPS, else the real HTTP status.
+ *
+ * Four outcomes, because they need four different reactions from the merchant:
+ * - "broken"       4xx and redirect loops — the LINK is wrong, fix the link.
+ * - "server_error" 5xx and timeouts — the merchant's own PAGE failed. Usually
+ *                  a slow render: Shopify aborts a storefront render at around
+ *                  3s and returns 500, so this and `SLOW_PAGE_WARN_MS` describe
+ *                  the same failure at two different stages.
+ * - "blocked"      403/429 from a bot shield — see `isBotBlockStatus`.
+ * - "ok"           2xx/3xx.
+ */
+export type LinkStatusClass = "ok" | "broken" | "server_error" | "blocked";
+
+export function classifyLinkStatus(statusCode: number): LinkStatusClass {
+  if (statusCode === -1) return "broken"; // redirect loop — a link/redirect config fault
+  if (statusCode === 0) return "server_error"; // timed out or unreachable
   if (isBotBlockStatus(statusCode)) return "blocked";
+  if (statusCode >= 500) return "server_error";
   if (statusCode >= 400) return "broken";
   return "ok";
 }
+
+// `SLOW_PAGE_WARN_MS` lives in crawl.shared.ts — the crawl report renders it in
+// component scope, and importing it from here would drag this module (and
+// url-resolver.server) into the client bundle.
+export { SLOW_PAGE_WARN_MS } from "./crawl.shared";
 
 // ── Head-drift normalization (§3.1, pure + unit-tested) ─────────────────────
 
@@ -870,7 +889,11 @@ export interface CrawlSummary {
   pagesCrawled: number;
   totalDiscovered: number;
   pagesOk: number;
+  /** 4xx / redirect loops only — server failures are counted separately. */
   pagesBroken: number;
+  /** Pages of the merchant's own shop that failed (5xx / timeout). Not stored
+   *  on the snapshot row; the UI recomputes it from the persisted pages. */
+  pagesServerError: number;
   /** Pages a bot firewall refused (403/429) — deliberately NOT counted as
    *  broken, and never persisted as SeoCrawlBrokenLink rows. */
   pagesBlocked: number;
@@ -932,6 +955,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       totalDiscovered: 0,
       pagesOk: 0,
       pagesBroken: 0,
+      pagesServerError: 0,
       pagesBlocked: 0,
       blockedBy: null,
       orphanCount: 0,
@@ -1043,6 +1067,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
           // Attribution is appended after the run — it needs the full tally
           // and a DNS lookup, neither belongs in the request loop.
           abortedError = "bot_blocked";
+          // Release the brakes so the already-queued tasks fall through their
+          // abort check immediately instead of trickling out at MAX_SPACING_MS.
+          coolDownUntil = 0;
+          semaphore.setMinSpacing(0);
         } else {
           // Stop entirely for a while instead of aborting. The shield lapses
           // on its own; crawling through it never works, and a slow crawl
@@ -1121,7 +1149,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   const spawn = (url: string, depth: number) => {
     outstanding += 1;
     void semaphore
-      .run(() => fetchAndProcess(url, depth))
+      // `run` waits for a slot AND the spacing floor before the callback's own
+      // abort check can fire. With hundreds of URLs already queued and the
+      // spacing pinned to MAX_SPACING_MS by the last cool-down, draining them
+      // as no-ops added tens of minutes of silence after the abort — long
+      // enough for the stuck-task reaper to step in. Bail before queueing.
+      .run(() => (abortedError ? Promise.resolve() : fetchAndProcess(url, depth)))
       .finally(() => {
         outstanding -= 1;
         if (outstanding === 0) resolveDone();
@@ -1177,6 +1210,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   let pagesOk = 0;
   let pagesBroken = 0;
+  let pagesServerError = 0;
   let pagesBlocked = 0;
   const persistablePages: {
     shop: string;
@@ -1203,6 +1237,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     const cls = classifyLinkStatus(page.statusCode);
     if (cls === "ok") pagesOk += 1;
     else if (cls === "blocked") pagesBlocked += 1;
+    else if (cls === "server_error") pagesServerError += 1;
     else pagesBroken += 1;
 
     const resolved = resolvedByUrl.get(url) ?? null;
@@ -1279,8 +1314,11 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   // Attribute the blocker. The DNS lookup only runs when a Cloudflare verdict
   // actually needs an owner — a clean crawl never pays for it.
+  // Only when the attribution is actually consumed: it is folded into `error`
+  // below, and `error` is only set on an abort. A completed crawl that saw one
+  // stray Cloudflare 403 was paying a DNS round-trip for a value nothing reads.
   let blockedBy = dominantBlockSource(blockSourceCounts);
-  if (blockedBy === "cloudflare_challenge" || blockedBy === "cloudflare_waf") {
+  if (abortedError === "bot_blocked" && (blockedBy === "cloudflare_challenge" || blockedBy === "cloudflare_waf")) {
     const merchantCloudflare = await detectMerchantCloudflare(primaryDomain, resolveNsImpl);
     blockedBy = attributeBlockSource(blockedBy, merchantCloudflare);
   }
@@ -1293,6 +1331,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     totalDiscovered: discovered.size,
     pagesOk,
     pagesBroken,
+    pagesServerError,
     pagesBlocked,
     blockedBy,
     orphanCount,

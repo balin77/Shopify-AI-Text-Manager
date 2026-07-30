@@ -4,8 +4,12 @@
  * `p-limit` is not in the repo and pulling it in for a single 5-parallel
  * crawler queue is overkill — this is the ~15-line semaphore the plan asks
  * for instead. Caps how many callbacks run at once AND enforces a minimum
- * spacing between two callbacks starting on the SAME slot, so a burst of N
- * queued requests doesn't hammer the storefront the instant a slot frees up.
+ * spacing between any two grants, so a burst of N queued requests doesn't
+ * hammer the storefront the instant a slot frees up.
+ *
+ * The spacing floor is GLOBAL, not per slot: `lastGrantAt` is one field, so
+ * `new Semaphore(2, 500)` yields two requests per second, not four. Raising
+ * the concurrency buys nothing unless the callbacks outlast the floor.
  */
 export class Semaphore {
   private active = 0;

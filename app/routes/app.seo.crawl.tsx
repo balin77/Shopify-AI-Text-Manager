@@ -10,7 +10,7 @@
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
 import {
   Card,
@@ -37,6 +37,10 @@ import {
   classifyLinkStatus,
   parseCrawlError,
 } from "../services/seo/crawl.service";
+// Client-safe module on purpose: the component renders this threshold, and
+// importing it from crawl.service would pull url-resolver.server into the
+// client bundle and break the production build.
+import { SLOW_PAGE_WARN_MS } from "../services/seo/crawl.shared";
 import type { BlockSource } from "../services/seo/crawl.service";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
@@ -63,7 +67,8 @@ interface SnapshotView {
   totalDiscovered: number;
   pagesOk: number;
   pagesBroken: number;
-  /** Derived from the crawl pages, not stored on the snapshot row. */
+  /** Both derived from the crawl pages, not stored on the snapshot row. */
+  pagesServerError: number;
   pagesBlocked: number;
   orphanCount: number;
   headDriftCount: number;
@@ -72,6 +77,14 @@ interface SnapshotView {
 interface BlockedRow {
   url: string;
   statusCode: number;
+}
+
+interface ServerErrorRow {
+  url: string;
+  statusCode: number;
+  responseMs: number;
+  resourceType: AuditType | null;
+  resourceId: string | null;
 }
 
 interface BrokenLinkRow {
@@ -145,6 +158,7 @@ const EXAMPLE_SNAPSHOT: SnapshotView = {
   totalDiscovered: 412,
   pagesOk: 398,
   pagesBroken: 6,
+  pagesServerError: 0,
   pagesBlocked: 0,
   orphanCount: 3,
   headDriftCount: 5,
@@ -162,6 +176,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: false,
       snapshot: EXAMPLE_SNAPSHOT,
       brokenLinks: [] as BrokenLinkRow[],
+      serverErrors: [] as ServerErrorRow[],
       blocked: [] as BlockedRow[],
       orphans: [] as OrphanRow[],
       headDrift: [] as HeadDriftRow[],
@@ -181,6 +196,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: !!runningTask,
       snapshot: null,
       brokenLinks: [] as BrokenLinkRow[],
+      serverErrors: [] as ServerErrorRow[],
       blocked: [] as BlockedRow[],
       orphans: [] as OrphanRow[],
       headDrift: [] as HeadDriftRow[],
@@ -215,6 +231,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const brokenTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "broken").length;
   const okTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "ok").length;
 
+  // Server errors are page-level, NOT edge-level: a 500 means this page of the
+  // shop failed, whether or not anything links to it. Reading them off the
+  // crawled pages also surfaces the sitemap-only ones, which the broken-link
+  // rows (built from link edges) can never show.
+  const serverErrorPages = pages.filter((p) => classifyLinkStatus(p.statusCode) === "server_error");
+  const serverErrors: ServerErrorRow[] = serverErrorPages.slice(0, UI_ROW_CAP).map((p) => ({
+    url: p.url,
+    statusCode: p.statusCode,
+    responseMs: p.responseMs,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceId: p.resourceId ?? null,
+  }));
+
   const parsedError = parseCrawlError(snapshotRow.error);
 
   const snapshot: SnapshotView = {
@@ -229,15 +258,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totalDiscovered: snapshotRow.totalDiscovered,
     pagesOk: pages.length > 0 ? okTotal : snapshotRow.pagesOk,
     pagesBroken: pages.length > 0 ? brokenTotal : snapshotRow.pagesBroken,
+    pagesServerError: serverErrorPages.length,
     pagesBlocked: blockedTotal,
     orphanCount: snapshotRow.orphanCount,
     headDriftCount: snapshotRow.headDriftCount,
   };
 
   const brokenLinkRows = await db.seoCrawlBrokenLink.findMany({
-    // 403/429 rows only exist in snapshots written before the split; they are
-    // firewall artifacts, not broken links.
-    where: { shop, snapshotId: snapshotRow.id, statusCode: { notIn: [403, 429] } },
+    // Only genuine 4xx link faults. 403/429 (firewall) and 5xx/timeout (the
+    // target page failed, not the link) have their own sections; rows for them
+    // only exist in snapshots written before those splits.
+    where: { shop, snapshotId: snapshotRow.id, statusCode: { notIn: [403, 429, 0], lt: 500 } },
     select: { fromUrl: true, toUrl: true, statusCode: true, anchor: true },
     take: UI_ROW_CAP,
   });
@@ -298,7 +329,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   });
 
-  const slowest: SlowRow[] = [...pages]
+  // Only pages that actually served content. A timeout records responseMs =
+  // REQUEST_TIMEOUT_MS (10s), so failures would otherwise occupy the top of
+  // the "slowest pages" list and trip its warning banner — while already being
+  // reported, correctly, under server errors.
+  const slowest: SlowRow[] = pages
+    .filter((p) => classifyLinkStatus(p.statusCode) === "ok")
     .sort((a, b) => b.responseMs - a.responseMs)
     .slice(0, 20)
     .map((p) => ({ url: p.url, responseMs: p.responseMs, statusCode: p.statusCode }));
@@ -313,6 +349,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     running: !!runningTask,
     snapshot,
     brokenLinks,
+    serverErrors,
     blocked,
     orphans,
     headDrift,
@@ -390,15 +427,23 @@ export default function SeoCrawl() {
     handleNavigate("/app/seo/redirects", { searchParams: new URLSearchParams({ newFrom: path }) });
   };
 
-  const [tab, setTab] = useState(0);
   const tabs = [
     { id: "broken", content: `${c.tabBrokenLinks} (${data.brokenLinks.length})` },
+    { id: "serverErrors", content: `${c.tabServerErrors} (${data.serverErrors.length})` },
     { id: "orphans", content: `${c.tabOrphans} (${data.orphans.length})` },
     { id: "headDrift", content: `${c.tabHeadDrift} (${data.headDrift.length})` },
     { id: "slowest", content: `${c.tabSlowest} (${data.slowest.length})` },
     { id: "duplicates", content: `${c.tabDuplicates} (${data.duplicates.length})` },
     { id: "blocked", content: `${c.tabBlocked} (${data.blocked.length})` },
   ];
+  // Seeded from ?tab= so the dashboard's problem buckets can deep-link to the
+  // section that actually shows them.
+  const [searchParams] = useSearchParams();
+  const requestedTab = tabs.findIndex((t) => t.id === searchParams.get("tab"));
+  const [tab, setTab] = useState(requestedTab >= 0 ? requestedTab : 0);
+  // Rendered by id, not by index: inserting a tab used to mean renumbering
+  // every `tab === n` branch below.
+  const activeTab = tabs[tab]?.id ?? "broken";
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
@@ -473,10 +518,16 @@ export default function SeoCrawl() {
           )}
 
           {snapshot && (
-            <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 7 }} gap="300">
+            <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 8 }} gap="300">
               <Tile label={c.tilePages} value={snapshot.pagesCrawled} />
               <Tile label={c.tileOk} value={snapshot.pagesOk} />
               <Tile label={c.tileBroken} value={snapshot.pagesBroken} />
+              <Tile
+                label={c.tileServerErrors}
+                value={snapshot.pagesServerError}
+                // Short form here — the full explanation is the banner in the tab.
+                hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
+              />
               <Tile
                 label={c.tileBlocked}
                 value={snapshot.pagesBlocked}
@@ -499,7 +550,7 @@ export default function SeoCrawl() {
           <BlockStack gap="300">
             <Tabs tabs={tabs} selected={tab} onSelect={setTab} />
 
-            {tab === 0 && (
+            {activeTab === "broken" && (
               <BlockStack gap="200">
                 {data.brokenLinks.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyBrokenLinks}</Text>
@@ -514,7 +565,10 @@ export default function SeoCrawl() {
                         )}
                       </BlockStack>
                       <InlineStack gap="200" blockAlign="center">
-                        <Badge tone="critical">{String(bl.statusCode)}</Badge>
+                        <Badge tone="critical">
+                          {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
+                          {bl.statusCode === -1 ? c.statusRedirectLoop : String(bl.statusCode)}
+                        </Badge>
                         {bl.fromResourceType && bl.fromResourceId && (
                           <Button
                             size="slim"
@@ -534,7 +588,41 @@ export default function SeoCrawl() {
               </BlockStack>
             )}
 
-            {tab === 1 && (
+            {activeTab === "serverErrors" && (
+              <BlockStack gap="200">
+                {data.serverErrors.length === 0 ? (
+                  <Text as="p" tone="subdued">{c.emptyServerErrors}</Text>
+                ) : (
+                  <>
+                    <Banner tone="critical">{c.serverErrorsHint}</Banner>
+                    {data.serverErrors.map((e) => (
+                      <InlineStack key={e.url} gap="300" align="space-between" blockAlign="center" wrap>
+                        <BlockStack gap="050">
+                          <Text as="span" variant="bodySm">{e.url}</Text>
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {e.statusCode === 0
+                              ? c.serverErrorTimeout
+                              : c.serverErrorStatus.replace("{status}", String(e.statusCode))}
+                            {e.responseMs > 0 ? ` · ${e.responseMs} ms` : ""}
+                          </Text>
+                        </BlockStack>
+                        {e.resourceType && e.resourceId && (
+                          <Button
+                            size="slim"
+                            variant="plain"
+                            onClick={() => openInEditor(e.resourceType as AuditType, e.resourceId as string)}
+                          >
+                            {c.openInEditor}
+                          </Button>
+                        )}
+                      </InlineStack>
+                    ))}
+                  </>
+                )}
+              </BlockStack>
+            )}
+
+            {activeTab === "orphans" && (
               <BlockStack gap="200">
                 {isCapped ? (
                   <Banner tone="warning">{c.orphanCappedHint}</Banner>
@@ -553,7 +641,7 @@ export default function SeoCrawl() {
               </BlockStack>
             )}
 
-            {tab === 2 && (
+            {activeTab === "headDrift" && (
               <BlockStack gap="200">
                 {data.headDrift.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyHeadDrift}</Text>
@@ -573,17 +661,24 @@ export default function SeoCrawl() {
               </BlockStack>
             )}
 
-            {tab === 3 && (
+            {activeTab === "slowest" && (
               <BlockStack gap="200">
                 {data.slowest.length === 0 ? (
-                  <Text as="p" tone="subdued">{c.emptyBrokenLinks}</Text>
+                  <Text as="p" tone="subdued">{c.emptySlowest}</Text>
                 ) : (
                   <>
                     <Text as="p" variant="bodySm" tone="subdued">{c.performanceHint}</Text>
+                    {data.slowest.some((s) => s.responseMs >= SLOW_PAGE_WARN_MS) && (
+                      <Banner tone="warning">
+                        {c.slowPageWarning.replace("{threshold}", String(SLOW_PAGE_WARN_MS))}
+                      </Banner>
+                    )}
                     {data.slowest.map((s) => (
                       <InlineStack key={s.url} gap="300" align="space-between" blockAlign="center" wrap>
                         <Text as="span" variant="bodySm" truncate>{s.url}</Text>
-                        <Badge>{`${s.responseMs} ms`}</Badge>
+                        <Badge tone={s.responseMs >= SLOW_PAGE_WARN_MS ? "warning" : undefined}>
+                          {`${s.responseMs} ms`}
+                        </Badge>
                       </InlineStack>
                     ))}
                   </>
@@ -591,7 +686,7 @@ export default function SeoCrawl() {
               </BlockStack>
             )}
 
-            {tab === 4 && (
+            {activeTab === "duplicates" && (
               <BlockStack gap="200">
                 {data.duplicates.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyDuplicates}</Text>
@@ -608,7 +703,7 @@ export default function SeoCrawl() {
               </BlockStack>
             )}
 
-            {tab === 5 && (
+            {activeTab === "blocked" && (
               <BlockStack gap="200">
                 {data.blocked.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyBlocked}</Text>

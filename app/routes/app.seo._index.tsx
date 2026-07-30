@@ -53,6 +53,15 @@ import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
 // FIXABLE_CODE_TO_FIELD in api-ai-handlers/seo-bulk-fix.handler.ts.
+/** Crawl-derived problem bucket → the tab id that actually shows it on
+ *  /app/seo/crawl. Ids must match the `tabs` array in app.seo.crawl.tsx. */
+const CRAWL_TAB_FOR_PROBLEM: Record<string, string> = {
+  brokenLinks: "broken",
+  serverErrors: "serverErrors",
+  orphanPages: "orphans",
+  headDrift: "headDrift",
+};
+
 const AI_FIXABLE_PROBLEM_CODES = new Set([
   "seoTitleMissing",
   "seoTitleTooLong",
@@ -685,7 +694,17 @@ export default function SeoDashboard() {
                           {d.affectedItems.replace("{count}", String(p.count))}
                         </Badge>
                         {p.action === "deepLink" ? (
-                          <Button size="slim" onClick={() => handleNavigate("/app/seo/crawl")}>
+                          <Button
+                            size="slim"
+                            onClick={() =>
+                              handleNavigate("/app/seo/crawl", {
+                                // Without this every crawl bucket landed on the
+                                // first tab, so "pages returning a server error"
+                                // opened on "no broken links found".
+                                searchParams: new URLSearchParams({ tab: CRAWL_TAB_FOR_PROBLEM[p.code] ?? "broken" }),
+                              })
+                            }
+                          >
                             {d.viewInCrawlTab}
                           </Button>
                         ) : (

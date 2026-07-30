@@ -15,7 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
-import { computeHeadDrift } from "./crawl.service";
+import { computeHeadDrift, classifyLinkStatus } from "./crawl.service";
 
 export type AuditType = "product" | "collection" | "article" | "page";
 
@@ -442,7 +442,11 @@ async function buildCrawlProblemBuckets(
   // `isBotBlockStatus` in crawl.service.ts). New crawls never persist them;
   // the filter keeps snapshots written before that split out of the bucket.
   const brokenLinks = await db.seoCrawlBrokenLink.findMany({
-    where: { shop, snapshotId: snapshot.id, statusCode: { notIn: [403, 429] } },
+    // Same clause as the crawl page. Without `lt: 500` / `0`, snapshots written
+    // before the server-error split fed their 5xx and timeout rows into BOTH
+    // this bucket and `serverErrors` below — one failing page counted twice,
+    // and the dashboard disagreeing with the crawl report on the same snapshot.
+    where: { shop, snapshotId: snapshot.id, statusCode: { notIn: [403, 429, 0], lt: 500 } },
     select: { fromUrl: true },
   });
   const brokenAffected = new Map<string, { type: AuditType; id: string; title: string }>();
@@ -459,6 +463,29 @@ async function buildCrawlProblemBuckets(
       code: "brokenLinks",
       count: brokenAffected.size,
       items: Array.from(brokenAffected.values()).slice(0, MAX_PROBLEM_BUCKET_ITEMS),
+      action: "deepLink",
+    });
+  }
+
+  // --- serverErrors: unlike a broken link, the affected item is the page that
+  // FAILED, not the one linking to it. Blaming the linking page (as the
+  // brokenLinks bucket rightly does for a 4xx) would point the merchant at a
+  // perfectly healthy page. Built from the crawled pages, so a failing page
+  // with no inbound link still shows up. `count` is the true total; `items`
+  // only carries the pages that resolve to an editable resource.
+  const serverErrorPages = pages.filter((p) => classifyLinkStatus(p.statusCode) === "server_error");
+  if (serverErrorPages.length > 0) {
+    buckets.push({
+      code: "serverErrors",
+      count: serverErrorPages.length,
+      items: serverErrorPages
+        .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown")
+        .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
+        .map((p) => ({
+          type: p.resourceType as AuditType,
+          id: p.resourceId as string,
+          title: p.title || p.url,
+        })),
       action: "deepLink",
     });
   }

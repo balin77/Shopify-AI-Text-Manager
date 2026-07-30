@@ -172,14 +172,18 @@ describe("classifyLinkStatus", () => {
     expect(classifyLinkStatus(404)).toBe("broken");
     expect(classifyLinkStatus(410)).toBe("broken");
   });
-  it("classifies 5xx as broken", () => {
-    expect(classifyLinkStatus(500)).toBe("broken");
-    expect(classifyLinkStatus(502)).toBe("broken");
+  it("classifies 5xx as a server error, not a broken link", () => {
+    // A 5xx means the merchant's own page failed — a different problem from a
+    // link pointing at something that doesn't exist, and a different fix.
+    expect(classifyLinkStatus(500)).toBe("server_error");
+    expect(classifyLinkStatus(502)).toBe("server_error");
   });
-  it("classifies 0 (timeout) as broken", () => {
-    expect(classifyLinkStatus(0)).toBe("broken");
+  it("classifies 0 (timeout / unreachable) as a server error", () => {
+    expect(classifyLinkStatus(0)).toBe("server_error");
   });
   it("classifies -1 (redirect loop / too many hops) as broken", () => {
+    // A redirect loop is a link/redirect configuration fault, not the page
+    // failing to render.
     expect(classifyLinkStatus(-1)).toBe("broken");
   });
   it("classifies 2xx/3xx as ok", () => {
@@ -749,7 +753,12 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     // The real failure this models: Shopify's storefront shield trips after a
     // handful of requests from one IP, then lapses. Aborting on the first run
     // of blocks threw away crawls that a short pause would have completed.
-    let blockedSoFar = 0;
+    // Budget the shield by PAGE, not by request: a 429 costs two server hits
+    // because `fetchWithRetry` retries it once. Counting requests here meant
+    // only two pages were ever blocked, `consecutiveBlocked` peaked at 2, and
+    // this test passed without executing a single line of the cool-down branch.
+    const blockedPaths = new Set(BLOCKED_PATHS.slice(0, BOT_BLOCK_THRESHOLD_FOR_TEST + 1));
+    let coolDownObserved = false;
     server.use(
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
       http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
@@ -758,14 +767,15 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       ),
       ...BLOCKED_PATHS.map((p) =>
         http.get(`${BASE}/${p}`, () => {
-          // The shield lapses after the first few requests.
-          if (blockedSoFar < 4) {
-            blockedSoFar += 1;
+          // The shield covers the first few pages, then lapses — the real
+          // behaviour a cool-down is meant to ride out.
+          if (blockedPaths.has(p)) {
             return new HttpResponse("Verifying your connection...", {
               status: 429,
               headers: { "retry-after": "0", "cf-mitigated": "challenge" },
             });
           }
+          coolDownObserved = true; // reached only after the blocked run
           return HttpResponse.html(html(`${p} – Acme`, `<h1>${p}</h1><p>hello</p>`));
         }),
       ),
@@ -786,6 +796,10 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
 
     expect(summary.status).toBe("completed");
     expect(summary.error).toBeUndefined();
+    // The blocked run must have been long enough to actually enter the
+    // cool-down branch, otherwise this test proves nothing about it.
+    expect(summary.pagesBlocked).toBeGreaterThanOrEqual(BOT_BLOCK_THRESHOLD_FOR_TEST);
+    expect(coolDownObserved).toBe(true);
     // The pages that were blocked early are still counted as blocked, but the
     // rest of the site got crawled instead of the whole run being discarded.
     expect(summary.pagesBlocked).toBeGreaterThan(0);
@@ -793,6 +807,48 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     // "Verifying your connection" is Shopify's interstitial, not a merchant's
     // Cloudflare rule — no DNS lookup needed to tell them apart.
     expect(summary.blockedBy).toBe("shopify_security");
+  });
+
+  it("stops promptly on abort instead of draining the queue at the throttled rate", async () => {
+    // Regression: the abort check lived inside the semaphore callback, so it
+    // only ran AFTER the slot and the spacing floor had been waited out. Every
+    // URL discovered before the abort — up to the 2000-page cap — still had to
+    // trickle through as a no-op at the spacing the last cool-down had just
+    // pinned to its maximum, adding tens of minutes of silence with no
+    // heartbeat. This is the one test that uses a real spacing floor.
+    const MANY = Array.from({ length: 60 }, (_, i) => `q${i}`);
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", MANY.map((p) => `<a href="/${p}">${p}</a>`).join(""))),
+      ),
+      // 403 rather than 429: never retried, so each page costs exactly one hit.
+      ...MANY.map((p) => http.get(`${BASE}/${p}`, () => new HttpResponse("blocked", { status: 403 }))),
+    );
+
+    const db = makeDb();
+    const started = Date.now();
+    const summary = await runCrawl("snap-abort-drain", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      coolDownMs: 1,
+      spacingMs: 100,
+    });
+    const elapsed = Date.now() - started;
+
+    expect(summary.status).toBe("failed");
+    expect(parseCrawlError(summary.error ?? null).code).toBe("bot_blocked");
+    // ~12 blocked pages reach the abort (~1.2s at the 100ms floor). The ~48
+    // still queued must NOT each cost another 100ms — that alone would be
+    // ~4.8s on top.
+    expect(elapsed).toBeLessThan(3000);
+    expect(summary.pagesCrawled).toBeLessThan(MANY.length);
   });
 
   it("attributes a Cloudflare challenge to Shopify when the domain isn't on Cloudflare nameservers", async () => {
@@ -866,6 +922,52 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
 
     expect(summary.blockedBy).toBe("cloudflare_challenge");
     expect(summary.error).toBe("bot_blocked:cloudflare_challenge");
+  });
+
+  it("reports a 5xx page as a server error, separate from broken links", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () =>
+        // Sitemap-only: nothing links to /orphan-500, so an edge-based report
+        // could never surface it.
+        HttpResponse.xml(
+          `<?xml version="1.0"?><urlset><url><loc>${BASE}/</loc></url><url><loc>${BASE}/orphan-500</loc></url></urlset>`,
+        ),
+      ),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home", `<a href="/gone">Gone</a><a href="/boom">Boom</a>`)),
+      ),
+      http.get(`${BASE}/gone`, () => new HttpResponse("not found", { status: 404 })),
+      http.get(`${BASE}/boom`, () => new HttpResponse("kaboom", { status: 500 })),
+      http.get(`${BASE}/orphan-500`, () => new HttpResponse("kaboom", { status: 503 })),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-5xx", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+    });
+
+    expect(summary.status).toBe("completed");
+    expect(summary.pagesServerError).toBe(2); // /boom + /orphan-500
+    expect(summary.pagesBroken).toBe(1); // only the 404
+
+    // Only the 404 becomes a broken-link row; the 500 is the page's own
+    // failure, reported per page rather than per link.
+    expect(db.__created.brokenLinks).toHaveLength(1);
+    expect(db.__created.brokenLinks[0].toUrl).toContain("/gone");
+
+    // Both failing pages are persisted, including the one nothing links to.
+    const boom = db.__created.pages.find((p: any) => p.url.includes("/boom"));
+    const orphan = db.__created.pages.find((p: any) => p.url.includes("/orphan-500"));
+    expect(boom?.statusCode).toBe(500);
+    expect(orphan?.statusCode).toBe(503);
   });
 
   it("counts a single 403/429 target as blocked, not as a broken link", async () => {
