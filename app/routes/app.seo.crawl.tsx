@@ -11,7 +11,7 @@
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Card,
   BlockStack,
@@ -21,7 +21,9 @@ import {
   Badge,
   Button,
   Banner,
+  Tooltip,
 } from "@shopify/polaris";
+import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -718,15 +720,17 @@ export default function SeoCrawl() {
                 ) : (
                   <>
                     <CapNotice shown={data.allPages.length} total={data.totals.allPages} template={c.rowCapHint} />
-                    {data.allPages.map((p) => (
-                      <PageRowLine
-                        key={p.url}
-                        page={p}
-                        openLabel={c.openInEditor}
-                        onOpen={openInEditor}
-                        redirectLoopLabel={c.statusRedirectLoop}
-                      />
-                    ))}
+                    <ReportGrid columns={PAGE_COLUMNS}>
+                      {data.allPages.map((p) => (
+                        <PageRowLine
+                          key={p.url}
+                          page={p}
+                          openLabel={c.openInEditor}
+                          onOpen={openInEditor}
+                          redirectLoopLabel={c.statusRedirectLoop}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
@@ -740,22 +744,24 @@ export default function SeoCrawl() {
                   <>
                     <Text as="p" variant="bodySm" tone="subdued">{c.okPagesHint}</Text>
                     <CapNotice shown={data.okPages.length} total={data.totals.okPages} template={c.rowCapHint} />
-                    {data.okPages.map((p) => (
-                      <PageRowLine
-                        key={p.url}
-                        page={p}
-                        openLabel={c.openInEditor}
-                        onOpen={openInEditor}
-                        redirectLoopLabel={c.statusRedirectLoop}
-                      />
-                    ))}
+                    <ReportGrid columns={PAGE_COLUMNS}>
+                      {data.okPages.map((p) => (
+                        <PageRowLine
+                          key={p.url}
+                          page={p}
+                          openLabel={c.openInEditor}
+                          onOpen={openInEditor}
+                          redirectLoopLabel={c.statusRedirectLoop}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
             )}
 
             {activeTab === "broken" && (
-              <BlockStack gap="300">
+              <BlockStack gap="200">
                 {data.brokenPages.length === 0 && data.brokenLinks.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyBrokenLinks}</Text>
                 ) : (
@@ -766,85 +772,106 @@ export default function SeoCrawl() {
                       total={data.totals.brokenPages}
                       template={c.rowCapHint}
                     />
-                    {data.brokenPages.map((p) => (
-                      <BlockStack key={p.url} gap="100">
-                        <InlineStack gap="300" align="space-between" blockAlign="center" wrap>
-                          <Text as="span" variant="bodySm">{p.url}</Text>
-                          <InlineStack gap="200" blockAlign="center">
+                    <ReportGrid columns={STATUS_COLUMNS}>
+                      {data.brokenPages.map((p, pageIndex) => [
+                        <ReportRow
+                          key={p.url}
+                          spacedAbove={pageIndex > 0}
+                          cells={[
+                            <Text as="span" variant="bodySm">{p.url}</Text>,
                             <Badge tone="critical">
                               {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
                               {p.statusCode === -1 ? c.statusRedirectLoop : String(p.statusCode)}
-                            </Badge>
+                            </Badge>,
                             <Button size="slim" variant="plain" onClick={() => createRedirect(p.url)}>
                               {c.createRedirect}
-                            </Button>
-                          </InlineStack>
-                        </InlineStack>
-                        {p.sourceTotal === 0 ? (
-                          <Text as="span" variant="bodySm" tone="subdued">{c.brokenNoSource}</Text>
-                        ) : (
-                          <BlockStack gap="050">
-                            {p.sources.map((s, i) => (
-                              <InlineStack key={`${s.fromUrl}:${i}`} gap="200" align="space-between" blockAlign="center" wrap>
+                            </Button>,
+                          ]}
+                        />,
+                        // The link sources are rows of the same grid, so their
+                        // editor icons line up with the actions above them.
+                        p.sourceTotal === 0 ? (
+                          <ReportRow
+                            key={`${p.url}:nosource`}
+                            cells={[
+                              <Indent>
+                                <Text as="span" variant="bodySm" tone="subdued">{c.brokenNoSource}</Text>
+                              </Indent>,
+                              null,
+                              null,
+                            ]}
+                          />
+                        ) : null,
+                        ...p.sources.map((s, i) => (
+                          <ReportRow
+                            key={`${p.url}:${s.fromUrl}:${i}`}
+                            cells={[
+                              <Indent>
                                 <Text as="span" variant="bodySm" tone="subdued">
                                   {c.brokenLinkedFrom}: {s.fromUrl}
                                   {s.anchor ? ` · ${c.colAnchor}: ${s.anchor}` : ""}
                                 </Text>
-                                {s.fromResourceType && s.fromResourceId && (
-                                  <Button
-                                    size="slim"
-                                    variant="plain"
-                                    onClick={() =>
-                                      openInEditor(s.fromResourceType as AuditType, s.fromResourceId as string)
-                                    }
-                                  >
-                                    {c.openInEditor}
-                                  </Button>
-                                )}
-                              </InlineStack>
-                            ))}
-                            {p.sourceTotal > p.sources.length && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {c.moreSources.replace("{count}", String(p.sourceTotal - p.sources.length))}
-                              </Text>
-                            )}
-                          </BlockStack>
-                        )}
-                      </BlockStack>
-                    ))}
-                    {/* Only edges whose target page row is missing — everything
-                        else is already listed above, with its sources. */}
-                    {data.brokenLinks.map((bl, i) => (
-                      <InlineStack key={i} gap="300" align="space-between" blockAlign="center" wrap>
-                        <BlockStack gap="050">
-                          <Text as="span" variant="bodySm" tone="subdued">{c.colFrom}: {bl.fromUrl}</Text>
-                          <Text as="span" variant="bodySm">{c.colTo}: {bl.toUrl}</Text>
-                          {bl.anchor && (
-                            <Text as="span" variant="bodySm" tone="subdued">{c.colAnchor}: {bl.anchor}</Text>
-                          )}
-                        </BlockStack>
-                        <InlineStack gap="200" blockAlign="center">
-                          <Badge tone="critical">
-                            {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
-                            {bl.statusCode === -1 ? c.statusRedirectLoop : String(bl.statusCode)}
-                          </Badge>
-                          {bl.fromResourceType && bl.fromResourceId && (
-                            <Button
-                              size="slim"
-                              variant="plain"
-                              onClick={() =>
-                                openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)
-                              }
-                            >
-                              {c.openInEditor}
-                            </Button>
-                          )}
-                          <Button size="slim" variant="plain" onClick={() => createRedirect(bl.toUrl)}>
-                            {c.createRedirect}
-                          </Button>
-                        </InlineStack>
-                      </InlineStack>
-                    ))}
+                              </Indent>,
+                              null,
+                              s.fromResourceType && s.fromResourceId ? (
+                                <EditAction
+                                  label={c.openInEditor}
+                                  onClick={() =>
+                                    openInEditor(s.fromResourceType as AuditType, s.fromResourceId as string)
+                                  }
+                                />
+                              ) : null,
+                            ]}
+                          />
+                        )),
+                        p.sourceTotal > p.sources.length ? (
+                          <ReportRow
+                            key={`${p.url}:more`}
+                            cells={[
+                              <Indent>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {c.moreSources.replace("{count}", String(p.sourceTotal - p.sources.length))}
+                                </Text>
+                              </Indent>,
+                              null,
+                              null,
+                            ]}
+                          />
+                        ) : null,
+                      ])}
+                      {/* Only edges whose target page row is missing — everything
+                          else is already listed above, with its sources. */}
+                      {data.brokenLinks.map((bl, i) => (
+                        <ReportRow
+                          key={`edge:${i}`}
+                          cells={[
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodySm" tone="subdued">{c.colFrom}: {bl.fromUrl}</Text>
+                              <Text as="span" variant="bodySm">{c.colTo}: {bl.toUrl}</Text>
+                              {bl.anchor && (
+                                <Text as="span" variant="bodySm" tone="subdued">{c.colAnchor}: {bl.anchor}</Text>
+                              )}
+                            </BlockStack>,
+                            <Badge tone="critical">
+                              {bl.statusCode === -1 ? c.statusRedirectLoop : String(bl.statusCode)}
+                            </Badge>,
+                            <InlineStack gap="200" blockAlign="center" wrap={false}>
+                              {bl.fromResourceType && bl.fromResourceId && (
+                                <EditAction
+                                  label={c.openInEditor}
+                                  onClick={() =>
+                                    openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)
+                                  }
+                                />
+                              )}
+                              <Button size="slim" variant="plain" onClick={() => createRedirect(bl.toUrl)}>
+                                {c.createRedirect}
+                              </Button>
+                            </InlineStack>,
+                          ]}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
@@ -857,28 +884,30 @@ export default function SeoCrawl() {
                 ) : (
                   <>
                     <Banner tone="critical">{c.serverErrorsHint}</Banner>
-                    {data.serverErrors.map((e) => (
-                      <InlineStack key={e.url} gap="300" align="space-between" blockAlign="center" wrap>
-                        <BlockStack gap="050">
-                          <Text as="span" variant="bodySm">{e.url}</Text>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {e.statusCode === 0
-                              ? c.serverErrorTimeout
-                              : c.serverErrorStatus.replace("{status}", String(e.statusCode))}
-                            {e.responseMs > 0 ? ` · ${e.responseMs} ms` : ""}
-                          </Text>
-                        </BlockStack>
-                        {e.resourceType && e.resourceId && (
-                          <Button
-                            size="slim"
-                            variant="plain"
-                            onClick={() => openInEditor(e.resourceType as AuditType, e.resourceId as string)}
-                          >
-                            {c.openInEditor}
-                          </Button>
-                        )}
-                      </InlineStack>
-                    ))}
+                    <ReportGrid columns={ACTION_COLUMNS}>
+                      {data.serverErrors.map((e) => (
+                        <ReportRow
+                          key={e.url}
+                          cells={[
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodySm">{e.url}</Text>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {e.statusCode === 0
+                                  ? c.serverErrorTimeout
+                                  : c.serverErrorStatus.replace("{status}", String(e.statusCode))}
+                                {e.responseMs > 0 ? ` · ${e.responseMs} ms` : ""}
+                              </Text>
+                            </BlockStack>,
+                            e.resourceType && e.resourceId ? (
+                              <EditAction
+                                label={c.openInEditor}
+                                onClick={() => openInEditor(e.resourceType as AuditType, e.resourceId as string)}
+                              />
+                            ) : null,
+                          ]}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
@@ -891,14 +920,20 @@ export default function SeoCrawl() {
                 ) : data.orphans.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyOrphans}</Text>
                 ) : (
-                  data.orphans.map((o) => (
-                    <InlineStack key={o.url} gap="300" align="space-between" blockAlign="center" wrap>
-                      <Text as="span" variant="bodySm" truncate>{o.title || o.url}</Text>
-                      <Button size="slim" variant="plain" onClick={() => openInEditor(o.resourceType, o.resourceId)}>
-                        {c.openInEditor}
-                      </Button>
-                    </InlineStack>
-                  ))
+                  <ReportGrid columns={ACTION_COLUMNS}>
+                    {data.orphans.map((o) => (
+                      <ReportRow
+                        key={o.url}
+                        cells={[
+                          <Text as="span" variant="bodySm">{o.title || o.url}</Text>,
+                          <EditAction
+                            label={c.openInEditor}
+                            onClick={() => openInEditor(o.resourceType, o.resourceId)}
+                          />,
+                        ]}
+                      />
+                    ))}
+                  </ReportGrid>
                 )}
               </BlockStack>
             )}
@@ -908,17 +943,23 @@ export default function SeoCrawl() {
                 {data.headDrift.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyHeadDrift}</Text>
                 ) : (
-                  data.headDrift.map((h) => (
-                    <InlineStack key={`${h.resourceType}:${h.resourceId}`} gap="300" align="space-between" blockAlign="center" wrap>
-                      <BlockStack gap="050">
-                        <Text as="span" variant="bodySm" tone="subdued">{c.colCrawledTitle}: {h.crawledTitle || "—"}</Text>
-                        <Text as="span" variant="bodySm">{c.colDbTitle}: {h.dbTitle || "—"}</Text>
-                      </BlockStack>
-                      <Button size="slim" variant="plain" onClick={() => openInEditor(h.resourceType, h.resourceId)}>
-                        {c.openInEditor}
-                      </Button>
-                    </InlineStack>
-                  ))
+                  <ReportGrid columns={ACTION_COLUMNS}>
+                    {data.headDrift.map((h) => (
+                      <ReportRow
+                        key={`${h.resourceType}:${h.resourceId}`}
+                        cells={[
+                          <BlockStack gap="050">
+                            <Text as="span" variant="bodySm" tone="subdued">{c.colCrawledTitle}: {h.crawledTitle || "—"}</Text>
+                            <Text as="span" variant="bodySm">{c.colDbTitle}: {h.dbTitle || "—"}</Text>
+                          </BlockStack>,
+                          <EditAction
+                            label={c.openInEditor}
+                            onClick={() => openInEditor(h.resourceType, h.resourceId)}
+                          />,
+                        ]}
+                      />
+                    ))}
+                  </ReportGrid>
                 )}
               </BlockStack>
             )}
@@ -935,14 +976,19 @@ export default function SeoCrawl() {
                         {c.slowPageWarning.replace("{threshold}", String(SLOW_PAGE_WARN_MS))}
                       </Banner>
                     )}
-                    {data.slowest.map((s) => (
-                      <InlineStack key={s.url} gap="300" align="space-between" blockAlign="center" wrap>
-                        <Text as="span" variant="bodySm" truncate>{s.url}</Text>
-                        <Badge tone={s.responseMs >= SLOW_PAGE_WARN_MS ? "warning" : undefined}>
-                          {`${s.responseMs} ms`}
-                        </Badge>
-                      </InlineStack>
-                    ))}
+                    <ReportGrid columns={ACTION_COLUMNS}>
+                      {data.slowest.map((s) => (
+                        <ReportRow
+                          key={s.url}
+                          cells={[
+                            <Text as="span" variant="bodySm">{s.url}</Text>,
+                            <Badge tone={s.responseMs >= SLOW_PAGE_WARN_MS ? "warning" : undefined}>
+                              {`${s.responseMs} ms`}
+                            </Badge>,
+                          ]}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
@@ -975,12 +1021,17 @@ export default function SeoCrawl() {
                     {blockSourceText && (
                       <Text as="p" variant="bodySm" fontWeight="semibold">{blockSourceText}</Text>
                     )}
-                    {data.blocked.map((b) => (
-                      <InlineStack key={b.url} gap="300" align="space-between" blockAlign="center" wrap>
-                        <Text as="span" variant="bodySm" truncate>{b.url}</Text>
-                        <Badge tone="warning">{String(b.statusCode)}</Badge>
-                      </InlineStack>
-                    ))}
+                    <ReportGrid columns={ACTION_COLUMNS}>
+                      {data.blocked.map((b) => (
+                        <ReportRow
+                          key={b.url}
+                          cells={[
+                            <Text as="span" variant="bodySm">{b.url}</Text>,
+                            <Badge tone="warning">{String(b.statusCode)}</Badge>,
+                          ]}
+                        />
+                      ))}
+                    </ReportGrid>
                   </>
                 )}
               </BlockStack>
@@ -1030,8 +1081,77 @@ function CapNotice({ shown, total, template }: { shown: number; total: number; t
   );
 }
 
-/** One crawled page: URL (falling back to its title), HTTP status, server time
- *  and — when the URL resolved to a shop resource — the editor link. */
+// ── Report row layout ──────────────────────────────────────────────────────
+// Rows used to be an InlineStack with `align="space-between"`, so a row
+// without an editor link pushed its badge to the right edge while a row with
+// one didn't — the status column zig-zagged down the list. Each section is now
+// ONE css grid and every row contributes one cell per column, empty cells
+// included, so the columns are defined by the section rather than by whatever
+// each row happens to carry.
+
+/** url · response time · status · action */
+const PAGE_COLUMNS = "minmax(0, 1fr) auto auto auto";
+/** url · status · action */
+const STATUS_COLUMNS = "minmax(0, 1fr) auto auto";
+/** url · one trailing column (badge or action, depending on the section) */
+const ACTION_COLUMNS = "minmax(0, 1fr) auto";
+
+const REPORT_GRID_STYLE: CSSProperties = {
+  display: "grid",
+  columnGap: "var(--p-space-400)",
+  rowGap: "var(--p-space-200)",
+  alignItems: "center",
+};
+/** URLs are long and unbreakable — the first column takes the slack. */
+const MAIN_CELL_STYLE: CSSProperties = { minWidth: 0, overflowWrap: "anywhere" };
+const TRAILING_CELL_STYLE: CSSProperties = { justifySelf: "end" };
+const INDENT_STYLE: CSSProperties = { paddingInlineStart: "var(--p-space-500)" };
+const GROUP_SPACING_STYLE: CSSProperties = { marginBlockStart: "var(--p-space-300)" };
+
+function ReportGrid({ columns, children }: { columns: string; children: ReactNode }) {
+  return <div style={{ ...REPORT_GRID_STYLE, gridTemplateColumns: columns }}>{children}</div>;
+}
+
+/** One row of a `ReportGrid`. Renders a plain fragment on purpose: the cells
+ *  have to be direct children of the grid to participate in its columns.
+ *  `spacedAbove` separates groups (a broken page from the previous page's
+ *  link sources) — the grid's uniform rowGap alone can't tell them apart. */
+function ReportRow({ cells, spacedAbove }: { cells: ReactNode[]; spacedAbove?: boolean }) {
+  return (
+    <>
+      {cells.map((cell, i) => (
+        <div
+          key={i}
+          style={{
+            ...(i === 0 ? MAIN_CELL_STYLE : TRAILING_CELL_STYLE),
+            ...(spacedAbove ? GROUP_SPACING_STYLE : null),
+          }}
+        >
+          {cell}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** Sub-rows (a broken page's link sources) stay in the same grid — indenting
+ *  the text, not the row, keeps their action column aligned. */
+function Indent({ children }: { children: ReactNode }) {
+  return <div style={INDENT_STYLE}>{children}</div>;
+}
+
+/** The editor link, as the icon-with-tooltip used across the SEO section
+ *  (see app.seo.sitemap.tsx / app.seo._index.tsx). */
+function EditAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Tooltip content={label}>
+      <Button variant="plain" size="slim" icon={EditIcon} accessibilityLabel={label} onClick={onClick} />
+    </Tooltip>
+  );
+}
+
+/** One crawled page: URL (plus its title), HTTP status, server time and — when
+ *  the URL resolved to a shop resource — the editor icon. */
 function PageRowLine({
   page,
   openLabel,
@@ -1049,31 +1169,24 @@ function PageRowLine({
   // crawl.shared.ts.
   const tone = page.statusClass === "ok" ? "success" : page.statusClass === "blocked" ? "warning" : "critical";
   return (
-    <InlineStack gap="300" align="space-between" blockAlign="center" wrap>
-      <BlockStack gap="050">
-        <Text as="span" variant="bodySm">{page.url}</Text>
-        {page.title && (
-          <Text as="span" variant="bodySm" tone="subdued">{page.title}</Text>
-        )}
-      </BlockStack>
-      <InlineStack gap="200" blockAlign="center">
-        {page.responseMs > 0 && (
+    <ReportRow
+      cells={[
+        <BlockStack gap="050">
+          <Text as="span" variant="bodySm">{page.url}</Text>
+          {page.title && <Text as="span" variant="bodySm" tone="subdued">{page.title}</Text>}
+        </BlockStack>,
+        page.responseMs > 0 ? (
           <Text as="span" variant="bodySm" tone="subdued">{`${page.responseMs} ms`}</Text>
-        )}
-        <Badge tone={tone}>
-          {page.statusCode === -1 ? redirectLoopLabel : String(page.statusCode)}
-        </Badge>
-        {page.resourceType && page.resourceId && (
-          <Button
-            size="slim"
-            variant="plain"
+        ) : null,
+        <Badge tone={tone}>{page.statusCode === -1 ? redirectLoopLabel : String(page.statusCode)}</Badge>,
+        page.resourceType && page.resourceId ? (
+          <EditAction
+            label={openLabel}
             onClick={() => onOpen(page.resourceType as AuditType, page.resourceId as string)}
-          >
-            {openLabel}
-          </Button>
-        )}
-      </InlineStack>
-    </InlineStack>
+          />
+        ) : null,
+      ]}
+    />
   );
 }
 
