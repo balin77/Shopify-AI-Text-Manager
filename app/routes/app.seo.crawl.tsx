@@ -554,8 +554,10 @@ export default function SeoCrawl() {
   // separate tab bar would only repeat the same labels and counts.
   const [searchParams] = useSearchParams();
   const requested = searchParams.get("tab") as CategoryId | null;
+  // Defaults to the first tile — the overview — not to a problem bucket. A
+  // `?tab=` deep link from the SEO dashboard still wins.
   const [activeTab, setActiveTab] = useState<CategoryId>(
-    requested && CATEGORY_IDS.includes(requested) ? requested : "broken",
+    requested && CATEGORY_IDS.includes(requested) ? requested : "allPages",
   );
 
   // Section heading, since there is no tab bar left to say what is shown.
