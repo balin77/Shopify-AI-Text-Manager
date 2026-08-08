@@ -669,6 +669,62 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     expect(blueShoePage?.resourceId).toBe("gid://shopify/Product/1");
   });
 
+  it("expands a sitemap INDEX into pages instead of crawling the sub-sitemaps as pages", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      // Shopify's /sitemap.xml is always an index. Collecting every <loc>
+      // seeded these XML files as if they were pages: nothing was discovered
+      // from them (no <a href>), and the 404 one was reported as a broken page
+      // of the shop.
+      http.get(`${BASE}/sitemap.xml`, () =>
+        HttpResponse.xml(
+          `<?xml version="1.0"?><sitemapindex>
+             <sitemap><loc>${BASE}/sitemap_products_1.xml</loc></sitemap>
+             <sitemap><loc>${BASE}/en/sitemap_collections_1.xml</loc></sitemap>
+           </sitemapindex>`,
+        ),
+      ),
+      http.get(`${BASE}/sitemap_products_1.xml`, () =>
+        HttpResponse.xml(
+          `<?xml version="1.0"?><urlset><url><loc>${BASE}/products/only-in-sitemap</loc></url></urlset>`,
+        ),
+      ),
+      // The locale-prefixed sub-sitemap the index advertises but the storefront
+      // does not serve — the exact 404 that showed up as a "broken page".
+      http.get(`${BASE}/en/sitemap_collections_1.xml`, () =>
+        HttpResponse.text("Not found", { status: 404 }),
+      ),
+      // The home page links to nothing, so the sitemap seed is the ONLY way
+      // /products/only-in-sitemap can be found.
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", "<p>hi</p>"))),
+      http.get(`${BASE}/products/only-in-sitemap`, () =>
+        HttpResponse.html(html("Only in sitemap – Acme", "<h1>Only in sitemap</h1>")),
+      ),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-sitemap-index", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+    });
+
+    expect(summary.status).toBe("completed");
+
+    const crawledUrls = db.__created.pages.map((p: any) => p.url);
+    // The page listed in the sub-sitemap was seeded and crawled…
+    expect(crawledUrls).toContain(`${BASE}/products/only-in-sitemap`);
+    // …and no sitemap file became a page row of its own.
+    expect(crawledUrls.some((u: string) => u.endsWith(".xml"))).toBe(false);
+    // The 404 sub-sitemap must not be reported as a broken page of the shop.
+    expect(summary.pagesBroken).toBe(0);
+  });
+
   it("detects a password-redirect on the root seed and aborts with storefront_password", async () => {
     server.use(
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),

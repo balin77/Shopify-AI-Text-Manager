@@ -100,6 +100,10 @@ export function decaySpacingMs(current: number, base = BASE_SPACING_MS): number 
 const MAX_EDGES_TRACKED = 100_000;
 const MAX_BROKEN_LINKS_PERSISTED = 1000;
 const MAX_SITEMAP_SEED_URLS = 5000;
+/** Sub-sitemaps expanded from a sitemap index. Same bound as the sitemap
+ *  section's MAX_SUB_SITEMAPS — a shop with more than 25 sub-sitemaps is past
+ *  the point where seeding adds anything the BFS won't find. */
+const MAX_SUB_SITEMAPS_SEEDED = 25;
 
 export function crawlUserAgent(appUrl: string): string {
   return `ContentPilotSEO/1.0 (+${appUrl.replace(/\/+$/, "")}/bot)`;
@@ -116,6 +120,19 @@ function pathStartsWithSegment(pathname: string, seg: string): boolean {
 export function isDenylistedPath(pathname: string): boolean {
   const p = pathname.toLowerCase();
   return CRAWL_DENYLIST_PATHS.some((d) => pathStartsWithSegment(p, d));
+}
+
+/** Machine feeds Shopify generates itself: sitemaps (`sitemap_products_1.xml`),
+ *  the `.json` endpoints, blog Atom feeds. They are data endpoints, not
+ *  storefront pages — nothing links to them for a visitor to click, crawling
+ *  them yields no further URLs, and a 4xx on one is a feed problem, not a
+ *  broken page of the shop. Reporting them as broken pages is exactly the
+ *  false positive the sitemap-index expansion below used to produce. The
+ *  sitemap itself is audited by the sitemap section (sitemap.service.ts). */
+const FEED_EXTENSIONS = [".xml", ".atom", ".rss", ".json"];
+export function isFeedPath(pathname: string): boolean {
+  const p = pathname.toLowerCase();
+  return FEED_EXTENSIONS.some((ext) => p.endsWith(ext));
 }
 
 /**
@@ -808,7 +825,32 @@ async function fetchWithRetry(
   return fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
 }
 
-async function fetchSitemapUrls(fetchImpl: typeof fetch, sitemapUrl: string, userAgent: string): Promise<string[]> {
+interface SitemapDoc {
+  /** `<url><loc>` — real storefront pages. */
+  pageUrls: string[];
+  /** `<sitemap><loc>` — sub-sitemaps of an index, to expand one level. */
+  subSitemaps: string[];
+}
+
+/**
+ * Parse one sitemap document, keeping page entries and sub-sitemap references
+ * apart.
+ *
+ * This used to collect every `<loc>` indiscriminately. Shopify's
+ * `/sitemap.xml` is ALWAYS an index, so what got seeded were the sub-sitemap
+ * XML files themselves — never the pages they list. Two consequences: the
+ * sitemap seed contributed no pages at all (an XML file has no `<a href>`, so
+ * the BFS found nothing in it), and every sub-sitemap was crawled and
+ * persisted as if it were a storefront page — a 4xx on one (a locale-prefixed
+ * sitemap of a market that doesn't serve it, say) then showed up in the report
+ * as a broken page of the shop, while the sitemap section, which only ever
+ * looked at `<url><loc>` entries, correctly reported nothing.
+ */
+async function fetchSitemapDoc(
+  fetchImpl: typeof fetch,
+  sitemapUrl: string,
+  userAgent: string,
+): Promise<SitemapDoc | null> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -821,25 +863,25 @@ async function fetchSitemapUrls(fetchImpl: typeof fetch, sitemapUrl: string, use
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     // Same capped-read helper as page fetches (§ cheap fix 9) — an
     // unbounded `res.text()` here let a pathological/malicious sitemap
     // buffer an arbitrarily large response into memory.
     const text = await readBodyCapped(res, MAX_BODY_BYTES);
-    // Loose XML parse (cheerio in xmlMode) — covers both a plain urlset and a
-    // sitemap index (nested <sitemap><loc>); nested sub-sitemaps are enqueued
-    // like any other same-origin URL but not recursively expanded (documented
-    // limitation, not required by §3.1 — the root `/` seed still finds
-    // everything reachable by links).
     const $ = cheerio.load(text, { xmlMode: true });
-    const locs: string[] = [];
-    $("loc").each((_, el) => {
+    const pageUrls: string[] = [];
+    $("url > loc").each((_, el) => {
       const loc = $(el).text().trim();
-      if (loc) locs.push(loc);
+      if (loc) pageUrls.push(loc);
     });
-    return locs.slice(0, MAX_SITEMAP_SEED_URLS);
+    const subSitemaps: string[] = [];
+    $("sitemap > loc").each((_, el) => {
+      const loc = $(el).text().trim();
+      if (loc) subSitemaps.push(loc);
+    });
+    return { pageUrls, subSitemaps };
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -1174,6 +1216,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       return;
     }
     if (isDenylistedPath(pathname)) return;
+    // Same treatment as a denylisted path — no page row, and no edge either:
+    // a link to a feed is not a broken link to report.
+    if (isFeedPath(pathname)) return;
     if (!isAllowedByRobots(robotsGroups, pathname, userAgent)) return;
 
     if (fromUrl) recordEdge(fromUrl, norm, anchor);
@@ -1190,13 +1235,50 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     spawn(norm, depth);
   }
 
-  // Sitemap seed (§3.1) — fetched once up front, its <loc> entries become
-  // additional BFS seeds at depth 0. Not itself persisted as a SeoCrawlPage
-  // (it's a data feed, not a storefront page).
+  // Sitemap seed (§3.1) — fetched once up front, its <url><loc> entries become
+  // additional BFS seeds at depth 0. Sitemaps themselves are never persisted as
+  // SeoCrawlPage rows (they're a data feed, not a storefront page) — that's
+  // what `isFeedPath` guarantees for the sub-sitemaps too.
   const sitemapUrl = normalizeCrawlUrl("/sitemap.xml", origin, primaryDomain, [myshopifyDomain]);
   if (sitemapUrl && isAllowedByRobots(robotsGroups, "/sitemap.xml", userAgent)) {
-    const sitemapLocs = await fetchSitemapUrls(fetchImpl, sitemapUrl, userAgent);
-    for (const loc of sitemapLocs) tryEnqueue(loc, 0, null, null);
+    let seeded = 0;
+    const seed = (locs: string[]) => {
+      for (const loc of locs) {
+        if (seeded >= MAX_SITEMAP_SEED_URLS) return;
+        seeded += 1;
+        tryEnqueue(loc, 0, null, null);
+      }
+    };
+
+    const root = await fetchSitemapDoc(fetchImpl, sitemapUrl, userAgent);
+    if (root) {
+      seed(root.pageUrls);
+      // Expand the index one level. Routed through the semaphore like every
+      // other request: 25 unthrottled parallel fetches is exactly the burst
+      // the storefront's bot shield reacts to, and being turned away here
+      // would cost the crawl its whole sitemap seed.
+      const subs = root.subSitemaps
+        .filter((sub) => {
+          const norm = normalizeCrawlUrl(sub, origin, primaryDomain, [myshopifyDomain]);
+          if (!norm) return false;
+          try {
+            return isAllowedByRobots(robotsGroups, new URL(norm).pathname, userAgent);
+          } catch {
+            return false;
+          }
+        })
+        .slice(0, MAX_SUB_SITEMAPS_SEEDED);
+      const docs = await Promise.all(
+        subs.map((sub) =>
+          semaphore.run(() =>
+            abortedError ? Promise.resolve(null) : fetchSitemapDoc(fetchImpl, sub, userAgent),
+          ),
+        ),
+      );
+      for (const doc of docs) {
+        if (doc) seed(doc.pageUrls);
+      }
+    }
   }
   tryEnqueue(rootUrl, 0, null, null);
 
