@@ -35,6 +35,7 @@ import {
   isBotBlockStatus,
   classifyLinkStatus,
   parseCrawlError,
+  type LinkStatusClass,
 } from "../services/seo/crawl.service";
 // Client-safe module on purpose: the component renders this threshold, and
 // importing it from crawl.service would pull url-resolver.server into the
@@ -52,10 +53,19 @@ const TYPE_PATH: Record<AuditType, string> = {
 
 const UI_ROW_CAP = 100;
 
+/** Broken-link EDGES are only used to explain *why* a broken page is reachable
+ *  ("linked from …"), so the query needs more rows than the page list itself:
+ *  one broken page can be linked from many others. */
+const MAX_BROKEN_LINK_ROWS = 500;
+/** Link sources rendered per broken page before the "+N more" summary. */
+const MAX_SOURCES_PER_PAGE = 5;
+
 /** The report's sections. Ids double as the `?tab=` deep-link values the SEO
  *  dashboard's problem buckets navigate with — keep them in sync with
  *  CRAWL_TAB_FOR_PROBLEM in app.seo._index.tsx. */
 const CATEGORY_IDS = [
+  "allPages",
+  "okPages",
   "broken",
   "serverErrors",
   "blocked",
@@ -107,6 +117,41 @@ interface BrokenLinkRow {
   anchor: string | null;
   fromResourceType: AuditType | null;
   fromResourceId: string | null;
+}
+
+/** A page the crawler actually fetched — backs the "all pages" and "OK pages"
+ *  sections behind the two total tiles. */
+interface CrawledPageRow {
+  url: string;
+  title: string | null;
+  statusCode: number;
+  /** Classified server-side — see the note in `PageRowLine`. */
+  statusClass: LinkStatusClass;
+  responseMs: number;
+  resourceType: AuditType | null;
+  resourceId: string | null;
+}
+
+/**
+ * A page that answered 4xx (or ran into a redirect loop). This — not the link
+ * edge list — is what the "broken" tile counts: a broken URL found only in the
+ * sitemap has no inbound link edge, so an edge-only section showed "none found"
+ * while the tile reported a non-zero count.
+ */
+interface BrokenPageRow {
+  url: string;
+  statusCode: number;
+  resourceType: AuditType | null;
+  resourceId: string | null;
+  /** Internal pages linking here — capped at MAX_SOURCES_PER_PAGE. */
+  sources: {
+    fromUrl: string;
+    anchor: string | null;
+    fromResourceType: AuditType | null;
+    fromResourceId: string | null;
+  }[];
+  /** Total inbound broken-link edges found, so the UI can say "+N more". */
+  sourceTotal: number;
 }
 
 interface OrphanRow {
@@ -177,6 +222,23 @@ const EXAMPLE_SNAPSHOT: SnapshotView = {
   headDriftCount: 5,
 };
 
+/** Every list the report renders, empty — used by the gated and never-scanned
+ *  responses so a new section can't be forgotten in one of them. */
+const EMPTY_LISTS = {
+  allPages: [] as CrawledPageRow[],
+  okPages: [] as CrawledPageRow[],
+  brokenPages: [] as BrokenPageRow[],
+  brokenLinks: [] as BrokenLinkRow[],
+  serverErrors: [] as ServerErrorRow[],
+  blocked: [] as BlockedRow[],
+  orphans: [] as OrphanRow[],
+  headDrift: [] as HeadDriftRow[],
+  slowest: [] as SlowRow[],
+  duplicates: [] as DuplicateGroupRow[],
+  /** Row counts before the UI_ROW_CAP slice, for the "showing N of M" hint. */
+  totals: { allPages: 0, okPages: 0, brokenPages: 0 },
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -188,13 +250,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       gated: true,
       running: false,
       snapshot: EXAMPLE_SNAPSHOT,
-      brokenLinks: [] as BrokenLinkRow[],
-      serverErrors: [] as ServerErrorRow[],
-      blocked: [] as BlockedRow[],
-      orphans: [] as OrphanRow[],
-      headDrift: [] as HeadDriftRow[],
-      slowest: [] as SlowRow[],
-      duplicates: [] as DuplicateGroupRow[],
+      ...EMPTY_LISTS,
     });
   }
 
@@ -208,13 +264,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       gated: false,
       running: !!runningTask,
       snapshot: null,
-      brokenLinks: [] as BrokenLinkRow[],
-      serverErrors: [] as ServerErrorRow[],
-      blocked: [] as BlockedRow[],
-      orphans: [] as OrphanRow[],
-      headDrift: [] as HeadDriftRow[],
-      slowest: [] as SlowRow[],
-      duplicates: [] as DuplicateGroupRow[],
+      ...EMPTY_LISTS,
     });
   }
 
@@ -241,8 +291,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .slice(0, UI_ROW_CAP)
     .map((p) => ({ url: p.url, statusCode: p.statusCode }));
   const blockedTotal = pages.filter((p) => isBotBlockStatus(p.statusCode)).length;
-  const brokenTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "broken").length;
-  const okTotal = pages.filter((p) => classifyLinkStatus(p.statusCode) === "ok").length;
+  const brokenPagesAll = pages.filter((p) => classifyLinkStatus(p.statusCode) === "broken");
+  const okPagesAll = pages.filter((p) => classifyLinkStatus(p.statusCode) === "ok");
+  const brokenTotal = brokenPagesAll.length;
+  const okTotal = okPagesAll.length;
+
+  const toPageRow = (p: (typeof pages)[number]): CrawledPageRow => ({
+    url: p.url,
+    title: p.title,
+    statusCode: p.statusCode,
+    statusClass: classifyLinkStatus(p.statusCode),
+    responseMs: p.responseMs,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceId: p.resourceId ?? null,
+  });
+  const byUrl = (a: { url: string }, b: { url: string }) => a.url.localeCompare(b.url);
+
+  const allPages: CrawledPageRow[] = [...pages].sort(byUrl).slice(0, UI_ROW_CAP).map(toPageRow);
+  const okPages: CrawledPageRow[] = [...okPagesAll].sort(byUrl).slice(0, UI_ROW_CAP).map(toPageRow);
 
   // Server errors are page-level, NOT edge-level: a 500 means this page of the
   // shop failed, whether or not anything links to it. Reading them off the
@@ -283,20 +349,58 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // only exist in snapshots written before those splits.
     where: { shop, snapshotId: snapshotRow.id, statusCode: { notIn: [403, 429, 0], lt: 500 } },
     select: { fromUrl: true, toUrl: true, statusCode: true, anchor: true },
-    take: UI_ROW_CAP,
+    take: MAX_BROKEN_LINK_ROWS,
   });
-  const brokenLinks: BrokenLinkRow[] = brokenLinkRows.map((bl) => {
+  // Edges whose target page row is missing — the page list can't show those, so
+  // they are rendered on their own below the broken pages. Normally empty: the
+  // crawler only writes an edge for a page it fetched.
+  const brokenPageUrls = new Set(brokenPagesAll.map((p) => p.url));
+  const brokenLinks: BrokenLinkRow[] = brokenLinkRows
+    .filter((bl) => !brokenPageUrls.has(bl.toUrl))
+    .slice(0, UI_ROW_CAP)
+    .map((bl) => {
+      const from = pageByUrl.get(bl.fromUrl);
+      return {
+        fromUrl: bl.fromUrl,
+        toUrl: bl.toUrl,
+        statusCode: bl.statusCode,
+        anchor: bl.anchor,
+        fromResourceType:
+          from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
+        fromResourceId: from?.resourceId ?? null,
+      };
+    });
+
+  // Attach the inbound link edges to their target page, so a broken page can
+  // say who links to it — and stays listed when nobody does.
+  const sourcesByTarget = new Map<string, BrokenPageRow["sources"]>();
+  for (const bl of brokenLinkRows) {
     const from = pageByUrl.get(bl.fromUrl);
-    return {
+    const source = {
       fromUrl: bl.fromUrl,
-      toUrl: bl.toUrl,
-      statusCode: bl.statusCode,
       anchor: bl.anchor,
       fromResourceType:
         from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
       fromResourceId: from?.resourceId ?? null,
     };
-  });
+    const list = sourcesByTarget.get(bl.toUrl);
+    if (list) list.push(source);
+    else sourcesByTarget.set(bl.toUrl, [source]);
+  }
+  const brokenPages: BrokenPageRow[] = [...brokenPagesAll]
+    .sort(byUrl)
+    .slice(0, UI_ROW_CAP)
+    .map((p) => {
+      const sources = sourcesByTarget.get(p.url) ?? [];
+      return {
+        url: p.url,
+        statusCode: p.statusCode,
+        resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+        resourceId: p.resourceId ?? null,
+        sources: sources.slice(0, MAX_SOURCES_PER_PAGE),
+        sourceTotal: sources.length,
+      };
+    });
 
   const orphans: OrphanRow[] =
     snapshotRow.status === "capped"
@@ -361,6 +465,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     gated: false,
     running: !!runningTask,
     snapshot,
+    allPages,
+    okPages,
+    brokenPages,
     brokenLinks,
     serverErrors,
     blocked,
@@ -368,6 +475,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     headDrift,
     slowest,
     duplicates,
+    totals: { allPages: pages.length, okPages: okTotal, brokenPages: brokenTotal },
   });
 };
 
@@ -450,6 +558,8 @@ export default function SeoCrawl() {
 
   // Section heading, since there is no tab bar left to say what is shown.
   const CATEGORY_LABEL: Record<CategoryId, string> = {
+    allPages: c.tabAllPages,
+    okPages: c.tabOkPages,
     broken: c.tabBrokenLinks,
     serverErrors: c.tabServerErrors,
     blocked: c.tabBlocked,
@@ -533,9 +643,18 @@ export default function SeoCrawl() {
 
           {snapshot && (
             <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
-              {/* The first two are totals, not sections — nothing to open. */}
-              <Tile label={c.tilePages} value={snapshot.pagesCrawled} />
-              <Tile label={c.tileOk} value={snapshot.pagesOk} />
+              <Tile
+                label={c.tilePages}
+                value={snapshot.pagesCrawled}
+                onClick={() => setActiveTab("allPages")}
+                selected={activeTab === "allPages"}
+              />
+              <Tile
+                label={c.tileOk}
+                value={snapshot.pagesOk}
+                onClick={() => setActiveTab("okPages")}
+                selected={activeTab === "okPages"}
+              />
               <Tile
                 label={c.tileBroken}
                 value={snapshot.pagesBroken}
@@ -592,40 +711,141 @@ export default function SeoCrawl() {
           <BlockStack gap="300">
             <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
 
-            {activeTab === "broken" && (
+            {activeTab === "allPages" && (
               <BlockStack gap="200">
-                {data.brokenLinks.length === 0 ? (
+                {data.allPages.length === 0 ? (
+                  <Text as="p" tone="subdued">{c.emptyAllPages}</Text>
+                ) : (
+                  <>
+                    <CapNotice shown={data.allPages.length} total={data.totals.allPages} template={c.rowCapHint} />
+                    {data.allPages.map((p) => (
+                      <PageRowLine
+                        key={p.url}
+                        page={p}
+                        openLabel={c.openInEditor}
+                        onOpen={openInEditor}
+                        redirectLoopLabel={c.statusRedirectLoop}
+                      />
+                    ))}
+                  </>
+                )}
+              </BlockStack>
+            )}
+
+            {activeTab === "okPages" && (
+              <BlockStack gap="200">
+                {data.okPages.length === 0 ? (
+                  <Text as="p" tone="subdued">{c.emptyOkPages}</Text>
+                ) : (
+                  <>
+                    <Text as="p" variant="bodySm" tone="subdued">{c.okPagesHint}</Text>
+                    <CapNotice shown={data.okPages.length} total={data.totals.okPages} template={c.rowCapHint} />
+                    {data.okPages.map((p) => (
+                      <PageRowLine
+                        key={p.url}
+                        page={p}
+                        openLabel={c.openInEditor}
+                        onOpen={openInEditor}
+                        redirectLoopLabel={c.statusRedirectLoop}
+                      />
+                    ))}
+                  </>
+                )}
+              </BlockStack>
+            )}
+
+            {activeTab === "broken" && (
+              <BlockStack gap="300">
+                {data.brokenPages.length === 0 && data.brokenLinks.length === 0 ? (
                   <Text as="p" tone="subdued">{c.emptyBrokenLinks}</Text>
                 ) : (
-                  data.brokenLinks.map((bl, i) => (
-                    <InlineStack key={i} gap="300" align="space-between" blockAlign="center" wrap>
-                      <BlockStack gap="050">
-                        <Text as="span" variant="bodySm" tone="subdued">{c.colFrom}: {bl.fromUrl}</Text>
-                        <Text as="span" variant="bodySm">{c.colTo}: {bl.toUrl}</Text>
-                        {bl.anchor && (
-                          <Text as="span" variant="bodySm" tone="subdued">{c.colAnchor}: {bl.anchor}</Text>
+                  <>
+                    <Banner tone="critical">{c.brokenPagesHint}</Banner>
+                    <CapNotice
+                      shown={data.brokenPages.length}
+                      total={data.totals.brokenPages}
+                      template={c.rowCapHint}
+                    />
+                    {data.brokenPages.map((p) => (
+                      <BlockStack key={p.url} gap="100">
+                        <InlineStack gap="300" align="space-between" blockAlign="center" wrap>
+                          <Text as="span" variant="bodySm">{p.url}</Text>
+                          <InlineStack gap="200" blockAlign="center">
+                            <Badge tone="critical">
+                              {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
+                              {p.statusCode === -1 ? c.statusRedirectLoop : String(p.statusCode)}
+                            </Badge>
+                            <Button size="slim" variant="plain" onClick={() => createRedirect(p.url)}>
+                              {c.createRedirect}
+                            </Button>
+                          </InlineStack>
+                        </InlineStack>
+                        {p.sourceTotal === 0 ? (
+                          <Text as="span" variant="bodySm" tone="subdued">{c.brokenNoSource}</Text>
+                        ) : (
+                          <BlockStack gap="050">
+                            {p.sources.map((s, i) => (
+                              <InlineStack key={`${s.fromUrl}:${i}`} gap="200" align="space-between" blockAlign="center" wrap>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {c.brokenLinkedFrom}: {s.fromUrl}
+                                  {s.anchor ? ` · ${c.colAnchor}: ${s.anchor}` : ""}
+                                </Text>
+                                {s.fromResourceType && s.fromResourceId && (
+                                  <Button
+                                    size="slim"
+                                    variant="plain"
+                                    onClick={() =>
+                                      openInEditor(s.fromResourceType as AuditType, s.fromResourceId as string)
+                                    }
+                                  >
+                                    {c.openInEditor}
+                                  </Button>
+                                )}
+                              </InlineStack>
+                            ))}
+                            {p.sourceTotal > p.sources.length && (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {c.moreSources.replace("{count}", String(p.sourceTotal - p.sources.length))}
+                              </Text>
+                            )}
+                          </BlockStack>
                         )}
                       </BlockStack>
-                      <InlineStack gap="200" blockAlign="center">
-                        <Badge tone="critical">
-                          {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
-                          {bl.statusCode === -1 ? c.statusRedirectLoop : String(bl.statusCode)}
-                        </Badge>
-                        {bl.fromResourceType && bl.fromResourceId && (
-                          <Button
-                            size="slim"
-                            variant="plain"
-                            onClick={() => openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)}
-                          >
-                            {c.openInEditor}
+                    ))}
+                    {/* Only edges whose target page row is missing — everything
+                        else is already listed above, with its sources. */}
+                    {data.brokenLinks.map((bl, i) => (
+                      <InlineStack key={i} gap="300" align="space-between" blockAlign="center" wrap>
+                        <BlockStack gap="050">
+                          <Text as="span" variant="bodySm" tone="subdued">{c.colFrom}: {bl.fromUrl}</Text>
+                          <Text as="span" variant="bodySm">{c.colTo}: {bl.toUrl}</Text>
+                          {bl.anchor && (
+                            <Text as="span" variant="bodySm" tone="subdued">{c.colAnchor}: {bl.anchor}</Text>
+                          )}
+                        </BlockStack>
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="critical">
+                            {/* -1 is the crawler's marker for a redirect loop, not an HTTP status. */}
+                            {bl.statusCode === -1 ? c.statusRedirectLoop : String(bl.statusCode)}
+                          </Badge>
+                          {bl.fromResourceType && bl.fromResourceId && (
+                            <Button
+                              size="slim"
+                              variant="plain"
+                              onClick={() =>
+                                openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)
+                              }
+                            >
+                              {c.openInEditor}
+                            </Button>
+                          )}
+                          <Button size="slim" variant="plain" onClick={() => createRedirect(bl.toUrl)}>
+                            {c.createRedirect}
                           </Button>
-                        )}
-                        <Button size="slim" variant="plain" onClick={() => createRedirect(bl.toUrl)}>
-                          {c.createRedirect}
-                        </Button>
+                        </InlineStack>
                       </InlineStack>
-                    </InlineStack>
-                  ))
+                    ))}
+                  </>
                 )}
               </BlockStack>
             )}
@@ -797,6 +1017,64 @@ export default function SeoCrawl() {
   }
 
   return <SeoSectionLayout sectionId="crawl">{body}</SeoSectionLayout>;
+}
+
+/** "Showing the first N of M" — rendered only when the UI_ROW_CAP slice
+ *  actually dropped rows, so a complete list stays silent. */
+function CapNotice({ shown, total, template }: { shown: number; total: number; template: string }) {
+  if (total <= shown) return null;
+  return (
+    <Text as="p" variant="bodySm" tone="subdued">
+      {template.replace("{shown}", String(shown)).replace("{total}", String(total))}
+    </Text>
+  );
+}
+
+/** One crawled page: URL (falling back to its title), HTTP status, server time
+ *  and — when the URL resolved to a shop resource — the editor link. */
+function PageRowLine({
+  page,
+  openLabel,
+  onOpen,
+  redirectLoopLabel,
+}: {
+  page: CrawledPageRow;
+  openLabel: string;
+  onOpen: (type: AuditType, id: string) => void;
+  redirectLoopLabel: string;
+}) {
+  // `statusClass` is computed in the loader on purpose: calling
+  // classifyLinkStatus here would pull crawl.service (and url-resolver.server)
+  // into the client bundle — same reason SLOW_PAGE_WARN_MS lives in
+  // crawl.shared.ts.
+  const tone = page.statusClass === "ok" ? "success" : page.statusClass === "blocked" ? "warning" : "critical";
+  return (
+    <InlineStack gap="300" align="space-between" blockAlign="center" wrap>
+      <BlockStack gap="050">
+        <Text as="span" variant="bodySm">{page.url}</Text>
+        {page.title && (
+          <Text as="span" variant="bodySm" tone="subdued">{page.title}</Text>
+        )}
+      </BlockStack>
+      <InlineStack gap="200" blockAlign="center">
+        {page.responseMs > 0 && (
+          <Text as="span" variant="bodySm" tone="subdued">{`${page.responseMs} ms`}</Text>
+        )}
+        <Badge tone={tone}>
+          {page.statusCode === -1 ? redirectLoopLabel : String(page.statusCode)}
+        </Badge>
+        {page.resourceType && page.resourceId && (
+          <Button
+            size="slim"
+            variant="plain"
+            onClick={() => onOpen(page.resourceType as AuditType, page.resourceId as string)}
+          >
+            {openLabel}
+          </Button>
+        )}
+      </InlineStack>
+    </InlineStack>
+  );
 }
 
 /** `<button>` reset — same approach as the findings accordion in
