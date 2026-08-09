@@ -1412,6 +1412,14 @@ export const es: Translation = {
         serverErrors: "Páginas con error de servidor",
         orphanPages: "Páginas sin enlaces internos (huérfanas)",
         headDrift: "El título de la página no coincide con el título SEO guardado",
+        translationMissing: "Falta la traducción en este idioma",
+      },
+      missingTranslationsTooltip: "Traducciones que faltan:",
+      translationFields: {
+        title: "Título",
+        description: "Descripción",
+        seoTitle: "Título SEO",
+        metaDescription: "Meta descripción",
       },
       types: {
         product: "Productos",

@@ -267,8 +267,38 @@ export default function SeoDashboard() {
     setSearchParams(next, { replace: true });
   };
 
+  // The deep link carries the locale the dashboard is showing. Without it the
+  // editor always opened in the primary language, so a merchant reviewing the
+  // French audit landed on the right product in the wrong language — and the
+  // finding they clicked (a missing French meta description, say) wasn't even
+  // visible there.
   const openInEditor = (type: AuditType, id: string) => {
-    handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
+    const params = new URLSearchParams({ select: id });
+    if (activeLocale) params.set("locale", activeLocale);
+    handleNavigate(TYPE_PATH[type], { searchParams: params });
+  };
+
+  /** Blue dot + tooltip naming the untranslated fields — the same signal (and
+   *  the same colour) the content editor's item list uses. */
+  const MissingTranslationDot = ({ fields }: { fields?: string[] }) => {
+    if (!fields || fields.length === 0) return null;
+    const labels = fields.map((f) => (d.translationFields as Record<string, string>)[f] || f);
+    return (
+      <Tooltip content={`${d.missingTranslationsTooltip} ${labels.join(", ")}`} dismissOnMouseOut>
+        <span
+          aria-label={d.missingTranslationsTooltip}
+          style={{
+            display: "inline-block",
+            width: "10px",
+            height: "10px",
+            borderRadius: "50%",
+            backgroundColor: "rgba(59, 130, 246, 0.9)",
+            flexShrink: 0,
+            cursor: "default",
+          }}
+        />
+      </Tooltip>
+    );
   };
 
   // "Rescan" — kicks off the detached "seoAudit" Task (seo-audit.handler.ts)
@@ -757,10 +787,19 @@ export default function SeoDashboard() {
                                   align="space-between"
                                   blockAlign="center"
                                 >
-                                  <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                                  <div
+                                    style={{
+                                      minWidth: 0,
+                                      flex: "1 1 auto",
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "0.5rem",
+                                    }}
+                                  >
                                     <Text as="span" variant="bodySm" truncate>
                                       {it.title || it.id}
                                     </Text>
+                                    <MissingTranslationDot fields={it.missingTranslations} />
                                   </div>
                                   <InlineStack gap="400" blockAlign="center">
                                     <Text as="span" variant="bodySm" tone="subdued">
@@ -880,9 +919,12 @@ export default function SeoDashboard() {
                               )}
                             </td>
                             <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
-                              <Text as="span" variant="bodyMd" truncate>
-                                {row.title || row.id}
-                              </Text>
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+                                <Text as="span" variant="bodyMd" truncate>
+                                  {row.title || row.id}
+                                </Text>
+                                <MissingTranslationDot fields={row.missingTranslations} />
+                              </div>
                             </td>
                             <td style={{ padding: "6px 8px" }}>
                               <Text as="span" variant="bodySm" tone="subdued">

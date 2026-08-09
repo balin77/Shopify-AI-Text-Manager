@@ -1412,6 +1412,14 @@ export const de = {
         serverErrors: "Seiten mit Serverfehler",
         orphanPages: "Seiten ohne interne Verlinkung (Waisen)",
         headDrift: "Seitentitel weicht vom gespeicherten SEO-Titel ab",
+        translationMissing: "Übersetzung fehlt in dieser Sprache",
+      },
+      missingTranslationsTooltip: "Fehlende Übersetzungen:",
+      translationFields: {
+        title: "Titel",
+        description: "Beschreibung",
+        seoTitle: "SEO-Titel",
+        metaDescription: "Meta-Description",
       },
       types: {
         product: "Produkte",

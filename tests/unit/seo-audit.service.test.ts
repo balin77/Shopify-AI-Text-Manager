@@ -749,6 +749,92 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
     expect(called).toBe(false);
   });
 
+  /** Foreign-locale scan against the same fixture shop, with whatever
+   *  ContentTranslation rows the test supplies. */
+  async function analyzeInLocale(rows: { resourceId: string; key: string; value: string }[]) {
+    const db = {
+      ...makeDb(),
+      contentTranslation: { findMany: async () => rows },
+      productImageAltTranslation: { groupBy: async () => [] },
+    } as any;
+    return analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      locale: "fr",
+    });
+  }
+
+  it("reports an item with NO translations at all as missing every translatable field", async () => {
+    // The regression: an item with zero ContentTranslation rows had no overlay
+    // entry, so the scorer silently fell back to the primary values and the
+    // item looked perfectly translated — nothing was reported for exactly the
+    // items that were least translated.
+    const audit = await analyzeInLocale([]);
+    const bucket = audit.problems.find((p) => p.code === "translationMissing");
+    expect(bucket).toBeDefined();
+    expect(bucket!.count).toBe(audit.totalScanned);
+
+    const p1 = bucket!.items.find((i) => i.id === "gid-P1");
+    expect(p1?.missingTranslations).toEqual(["title", "description", "seoTitle", "metaDescription"]);
+  });
+
+  it("does not ask for a translation of a field the primary locale leaves empty", async () => {
+    // gid-P2 has no seoTitle/seoDescription at all — there is nothing to
+    // translate, and the primary-side seoTitleMissing finding already says so.
+    const audit = await analyzeInLocale([]);
+    const bucket = audit.problems.find((p) => p.code === "translationMissing");
+    const p2 = bucket!.items.find((i) => i.id === "gid-P2");
+    expect(p2?.missingTranslations).toEqual(["title", "description"]);
+  });
+
+  it("scores the primary value where Shopify falls back, not an empty string", async () => {
+    // A partially translated item used to be scored with "" for its missing
+    // fields, so it collected seoTitleMissing/metaDescription findings for copy
+    // the storefront actually serves (Shopify falls back to the primary).
+    const audit = await analyzeInLocale([
+      { resourceId: "gid-P1", key: "title", value: U(40, "FR-T1-") },
+    ]);
+    const p1Row = audit.worstOffenders.find((r) => r.id === "gid-P1");
+    // gid-P1 is the fixture's perfect item: falling back keeps it perfect.
+    expect(p1Row).toBeUndefined();
+    const missing = audit.problems
+      .find((p) => p.code === "translationMissing")!
+      .items.find((i) => i.id === "gid-P1")?.missingTranslations;
+    expect(missing).toEqual(["description", "seoTitle", "metaDescription"]);
+  });
+
+  it("drops an item from the bucket once every field is translated", async () => {
+    const audit = await analyzeInLocale([
+      { resourceId: "gid-P1", key: "title", value: U(40, "FR-T1-") },
+      { resourceId: "gid-P1", key: "body_html", value: A(200) },
+      { resourceId: "gid-P1", key: "meta_title", value: U(40, "FR-ST1-") },
+      { resourceId: "gid-P1", key: "meta_description", value: U(140, "FR-D1-") },
+    ]);
+    const bucket = audit.problems.find((p) => p.code === "translationMissing");
+    expect(bucket!.items.some((i) => i.id === "gid-P1")).toBe(false);
+  });
+
+  it("treats an empty stored translation as no translation", async () => {
+    // A blank row is not a translation — the storefront serves the primary,
+    // exactly as with no row at all.
+    const audit = await analyzeInLocale([{ resourceId: "gid-P1", key: "meta_title", value: "   " }]);
+    const missing = audit.problems
+      .find((p) => p.code === "translationMissing")!
+      .items.find((i) => i.id === "gid-P1")?.missingTranslations;
+    expect(missing).toContain("seoTitle");
+  });
+
+  it("reports no missing translations on a primary-locale scan", async () => {
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db: makeDb() as any,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+    });
+    expect(audit.problems.some((p) => p.code === "translationMissing")).toBe(false);
+    expect(audit.worstOffenders.every((r) => r.missingTranslations === undefined)).toBe(true);
+  });
+
   it("a crawl-table read failure degrades gracefully (no crawl buckets, scan still succeeds)", async () => {
     const db = {
       ...makeDb(),

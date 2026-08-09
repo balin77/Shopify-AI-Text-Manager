@@ -463,6 +463,14 @@ export interface UseContentEditorProps {
 
   /** Optional initial item ID to select on mount (e.g. from URL params) */
   initialItemId?: string;
+
+  /**
+   * Optional locale to open in, from `?locale=xx` on a deep link (the SEO
+   * dashboard links here with the locale it was showing). Ignored unless it is
+   * a published foreign locale of this shop — an unknown or stale code falls
+   * back to the primary language rather than opening an empty editor.
+   */
+  initialLocale?: string;
 }
 
 export interface UseContentEditorReturn {

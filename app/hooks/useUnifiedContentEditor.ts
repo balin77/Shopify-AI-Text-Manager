@@ -60,7 +60,7 @@ interface TaskData {
 }
 
 export function useUnifiedContentEditor(props: UseContentEditorProps): UseContentEditorReturn {
-  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId } = props;
+  const { config, items, shopLocales, primaryLocale, fetcher, showInfoBox, t, onTranslateToAllLocalesComplete, initialItemId, initialLocale } = props;
   // Markets for the "Translate & Adapt" market selector. Empty when the shop has
   // no extra markets or the read_markets scope is missing → selector stays hidden.
   const markets = props.markets ?? [];
@@ -91,7 +91,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // fallback to overwrite the persisted value before we ever got to read it.
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [hasRestored, setHasRestored] = useState(false);
-  const [currentLanguage, setCurrentLanguage] = useState(primaryLocale);
+  // `shopLocales` comes from the route loader, so it is already populated on
+  // mount — the deep-linked locale can be validated right here instead of via
+  // a late-resolution effect (which would fight the user's first click).
+  const [currentLanguage, setCurrentLanguage] = useState(() => {
+    if (!initialLocale || initialLocale === primaryLocale) return primaryLocale;
+    const known = shopLocales.find((l) => l.locale === initialLocale && !l.primary);
+    return known ? initialLocale : primaryLocale;
+  });
   const currentLanguageRef = useLatestRef(currentLanguage);
   // Selected market for market-specific translations ("" = all markets / global).
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");

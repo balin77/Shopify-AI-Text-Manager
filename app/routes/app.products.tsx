@@ -327,6 +327,9 @@ export default function ProductsPage() {
   // Deep-link from the SEO dashboard: ?select=<Shopify GID> preselects the item.
   const [searchParams] = useSearchParams();
   const initialItemId = searchParams.get("select") || undefined;
+  // Locale of the deep link (the SEO dashboard passes the language it was
+  // showing). Validated against the shop's locales inside the editor hook.
+  const initialLocale = searchParams.get("locale") || undefined;
 
   // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
   // "Mit AI überarbeiten" button on the Freshness panel links here with
@@ -354,6 +357,7 @@ export default function ProductsPage() {
     showInfoBox,
     t,
     initialItemId,
+    initialLocale,
   });
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)

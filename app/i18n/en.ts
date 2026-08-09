@@ -1413,6 +1413,14 @@ export const en: Translation = {
         serverErrors: "Pages returning a server error",
         orphanPages: "Pages with no internal links (orphans)",
         headDrift: "Page title drifted from the stored SEO title",
+        translationMissing: "Translation missing in this language",
+      },
+      missingTranslationsTooltip: "Missing translations:",
+      translationFields: {
+        title: "Title",
+        description: "Description",
+        seoTitle: "SEO title",
+        metaDescription: "Meta description",
       },
       types: {
         product: "Products",

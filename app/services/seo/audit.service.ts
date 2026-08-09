@@ -75,7 +75,16 @@ export interface AuditItemRow {
    * without cross-referencing bucket item lists (which are capped and
    * unordered). Empty array when the item has no non-success findings. */
   problems: string[];
+  /** Field keys (`title` / `description` / `seoTitle` / `metaDescription`)
+   * that have primary content but no translation in the audited locale.
+   * Absent on a primary-locale audit and on fully translated items — the
+   * dashboard renders it as the blue "translation missing" dot, same signal
+   * as the content editor's item list. */
+  missingTranslations?: string[];
 }
+
+/** The four fields the audit scores, in the order the tooltip lists them. */
+export const TRANSLATABLE_AUDIT_FIELDS = ["title", "description", "seoTitle", "metaDescription"] as const;
 
 export interface AuditTypeStat {
   type: AuditType;
@@ -102,7 +111,7 @@ export interface AuditProblemBucket {
    * "Fix with AI" bulk handler (seo-bulk-fix.handler.ts) to know WHICH items
    * to regenerate without trusting client-supplied ids, AND by the dashboard
    * UI to render the expandable per-bucket item list (deep-links per row). */
-  items: { type: AuditType; id: string; title: string }[];
+  items: { type: AuditType; id: string; title: string; missingTranslations?: string[] }[];
   /**
    * How the dashboard's bucket header button behaves (PLAN_SEO_SUITE_COMPLETION.md
    * §3.6). "fixWithAi" (default when absent, for backward compatibility with
@@ -155,6 +164,11 @@ const FINDING_TO_BUCKET: Record<string, string> = {
   someImagesMissingAlt: "imagesMissingAlt",
 };
 
+/** Bucket for "primary content exists, this locale has no translation". Not in
+ *  FINDING_TO_BUCKET because computeSeoScore never emits it: it isn't a finding
+ *  about the copy, it's a gap between two locales. */
+const TRANSLATION_MISSING_BUCKET = "translationMissing";
+
 /** Normalize a value for cross-item duplicate comparison (trim + lowercase). */
 function normalizeForDuplicateCheck(value: string | null | undefined): string {
   return (value ?? "").trim().toLowerCase();
@@ -205,6 +219,8 @@ function scoreOne(
     metaDescription: string;
     totalImages: number;
     imagesWithAlt: number;
+    /** From `resolveEffectiveValues` — empty on a primary-locale audit. */
+    missingTranslations?: string[];
   },
   seoTitleEffectiveLimit: number,
   seoLimits: Partial<import("~/utils/character-limits").SeoLimits> | null,
@@ -228,8 +244,23 @@ function scoreOne(
     if (bucket) buckets.add(bucket);
   }
 
+  // A missing translation is not a finding about the copy (computeSeoScore
+  // never sees it), so it adds a bucket without touching score or issueCount:
+  // the storefront still serves the primary text, which is what the score
+  // measures. The gap gets its own bucket and the blue dot instead.
+  const missingTranslations = input.missingTranslations ?? [];
+  if (missingTranslations.length > 0) buckets.add(TRANSLATION_MISSING_BUCKET);
+
   return {
-    row: { id, type, title, score: result.score, issueCount, problems: [...buckets] },
+    row: {
+      id,
+      type,
+      title,
+      score: result.score,
+      issueCount,
+      problems: [...buckets],
+      ...(missingTranslations.length > 0 ? { missingTranslations } : {}),
+    },
     buckets,
   };
 }
@@ -286,19 +317,25 @@ const AUDIT_RESOURCE_TYPE: Record<AuditType, string> = {
   page: "Page",
 };
 
+/** A stored translation per field, or `null` where none exists. `null` is not
+ *  the same as an empty translation: Shopify serves the PRIMARY value when a
+ *  translation is absent, so the audit scores the primary text and reports the
+ *  gap separately (see `resolveEffectiveValues`). */
 interface TranslationOverlay {
-  title: string;
-  body: string;
-  metaTitle: string;
-  metaDescription: string;
+  title: string | null;
+  body: string | null;
+  metaTitle: string | null;
+  metaDescription: string | null;
 }
 
 /**
  * Batch-load foreign-locale ContentTranslation rows for every item passed in.
  * One findMany across all resource types (resourceId is a globally-unique
- * Shopify GID). Returns an id -> { title, body, metaTitle, metaDescription }
- * map with empty strings for missing rows so the scorer can treat missing
- * translations the same way it treats an empty primary value.
+ * Shopify GID). Items with no rows at all are simply absent from the map —
+ * `resolveEffectiveValues` treats a missing entry and an all-null entry
+ * identically, which is what fixes the old asymmetry: an item with SOME
+ * translations was scored with "" for the missing ones, while an item with
+ * NONE fell through to its primary values and looked perfectly translated.
  */
 async function loadTranslationOverlays(
   db: PrismaClient,
@@ -333,9 +370,12 @@ async function loadTranslationOverlays(
   for (const r of rows) {
     let overlay = map.get(r.resourceId);
     if (!overlay) {
-      overlay = { title: "", body: "", metaTitle: "", metaDescription: "" };
+      overlay = { title: null, body: null, metaTitle: null, metaDescription: null };
       map.set(r.resourceId, overlay);
     }
+    // An empty stored value is not a translation — the storefront falls back
+    // to the primary just as it does with no row at all.
+    if (!nonEmpty(r.value)) continue;
     switch (r.key) {
       case TRANSLATION_KEY_TITLE:
         overlay.title = r.value;
@@ -352,6 +392,58 @@ async function loadTranslationOverlays(
     }
   }
   return map;
+}
+
+/** The four audited values of one item in the PRIMARY locale. */
+interface PrimaryValues {
+  title: string;
+  body: string;
+  metaTitle: string;
+  metaDescription: string;
+}
+
+interface EffectiveValues extends PrimaryValues {
+  /** Fields with primary content and no translation in the audited locale. */
+  missingTranslations: string[];
+}
+
+/**
+ * What the storefront actually serves in the audited locale, plus the list of
+ * fields that are only served because Shopify fell back to the primary.
+ *
+ * The scoring inputs deliberately fall back to the primary value: Shopify
+ * serves the primary text when no translation is registered, so an untranslated
+ * page is NOT missing a meta description — it is missing a TRANSLATION of one.
+ * Scoring it as empty produced "meta description missing" for a page Google
+ * sees a meta description on, and (because a fully untranslated item had no
+ * overlay entry at all) reported nothing whatsoever for the items that were
+ * least translated. Both now collapse into one honest signal:
+ * `missingTranslations`, rendered as the blue dot in the dashboard.
+ *
+ * A field whose PRIMARY is empty is never reported — there is nothing to
+ * translate, and the primary-side finding already covers it.
+ */
+export function resolveEffectiveValues(
+  primary: PrimaryValues,
+  overlay: { title: string | null; body: string | null; metaTitle: string | null; metaDescription: string | null } | undefined,
+  isForeignLocale: boolean,
+): EffectiveValues {
+  if (!isForeignLocale) return { ...primary, missingTranslations: [] };
+
+  const missingTranslations: string[] = [];
+  const resolve = (field: string, translated: string | null | undefined, primaryValue: string): string => {
+    if (nonEmpty(translated)) return translated as string;
+    if (nonEmpty(primaryValue)) missingTranslations.push(field);
+    return primaryValue;
+  };
+
+  return {
+    title: resolve("title", overlay?.title, primary.title),
+    body: resolve("description", overlay?.body, primary.body),
+    metaTitle: resolve("seoTitle", overlay?.metaTitle, primary.metaTitle),
+    metaDescription: resolve("metaDescription", overlay?.metaDescription, primary.metaDescription),
+    missingTranslations,
+  };
 }
 
 /**
@@ -648,17 +740,25 @@ export async function analyzeStore(
         // the storefront ships when no translation is registered.
         imagesWithAlt = nonEmpty(p.featuredImageAlt) ? 1 : 0;
       }
-      const overlay = overlays?.get(p.id);
-      const effectiveTitle = overlay ? overlay.title : p.title;
-      const effectiveDescription = overlay ? overlay.body : p.descriptionHtml ?? "";
-      const effectiveSeoTitle = overlay ? overlay.metaTitle : p.seoTitle ?? "";
-      const effectiveMetaDescription = overlay
-        ? overlay.metaDescription
-        : p.seoDescription ?? "";
-      // For foreign locales, score the TRANSLATED values so titleLength /
-      // seoTitleMissing / metaDescription-* findings fire on the actual
-      // storefront copy for this locale. Missing translation = "" = missing
-      // finding, exactly like an empty primary field.
+      // Foreign locales score what the storefront serves for this locale —
+      // the translation where there is one, the primary where Shopify falls
+      // back — and report the fallbacks as missing translations.
+      const {
+        title: effectiveTitle,
+        body: effectiveDescription,
+        metaTitle: effectiveSeoTitle,
+        metaDescription: effectiveMetaDescription,
+        missingTranslations,
+      } = resolveEffectiveValues(
+        {
+          title: p.title,
+          body: p.descriptionHtml ?? "",
+          metaTitle: p.seoTitle ?? "",
+          metaDescription: p.seoDescription ?? "",
+        },
+        overlays?.get(p.id),
+        !!foreignLocale,
+      );
       const item = scoreOne(
         "product",
         p.id,
@@ -669,6 +769,7 @@ export async function analyzeStore(
           metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
+          missingTranslations,
         },
         seoTitleEffectiveLimit,
         seoLimits,
@@ -749,11 +850,22 @@ export async function analyzeStore(
 
     const stat = newStat("collection");
     for (const c of collections) {
-      const overlay = collectionOverlays?.get(c.id);
-      const effectiveTitle = overlay ? overlay.title : c.title;
-      const effectiveDescription = overlay ? overlay.body : c.descriptionHtml ?? "";
-      const effectiveSeoTitle = overlay ? overlay.metaTitle : c.seoTitle ?? "";
-      const effectiveMetaDescription = overlay ? overlay.metaDescription : c.seoDescription ?? "";
+      const {
+        title: effectiveTitle,
+        body: effectiveDescription,
+        metaTitle: effectiveSeoTitle,
+        metaDescription: effectiveMetaDescription,
+        missingTranslations,
+      } = resolveEffectiveValues(
+        {
+          title: c.title,
+          body: c.descriptionHtml ?? "",
+          metaTitle: c.seoTitle ?? "",
+          metaDescription: c.seoDescription ?? "",
+        },
+        collectionOverlays?.get(c.id),
+        !!foreignLocale,
+      );
       // Collection featured-image alt has no per-locale store in this app,
       // so foreign audits fall back to the primary alt (same value the
       // storefront ships when no translation is registered).
@@ -769,6 +881,7 @@ export async function analyzeStore(
           metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
+          missingTranslations,
         },
         seoTitleEffectiveLimit,
         seoLimits,
@@ -823,11 +936,22 @@ export async function analyzeStore(
 
     const stat = newStat("article");
     for (const a of articles) {
-      const overlay = articleOverlays?.get(a.id);
-      const effectiveTitle = overlay ? overlay.title : a.title;
-      const effectiveDescription = overlay ? overlay.body : a.body ?? "";
-      const effectiveSeoTitle = overlay ? overlay.metaTitle : a.seoTitle ?? "";
-      const effectiveMetaDescription = overlay ? overlay.metaDescription : a.seoDescription ?? "";
+      const {
+        title: effectiveTitle,
+        body: effectiveDescription,
+        metaTitle: effectiveSeoTitle,
+        metaDescription: effectiveMetaDescription,
+        missingTranslations,
+      } = resolveEffectiveValues(
+        {
+          title: a.title,
+          body: a.body ?? "",
+          metaTitle: a.seoTitle ?? "",
+          metaDescription: a.seoDescription ?? "",
+        },
+        articleOverlays?.get(a.id),
+        !!foreignLocale,
+      );
       const totalImages = nonEmpty(a.imageUrl) ? 1 : 0;
       const imagesWithAlt = nonEmpty(a.imageAltText) ? 1 : 0;
       const item = scoreOne(
@@ -840,6 +964,7 @@ export async function analyzeStore(
           metaDescription: effectiveMetaDescription,
           totalImages,
           imagesWithAlt,
+          missingTranslations,
         },
         seoTitleEffectiveLimit,
         seoLimits,
@@ -892,11 +1017,22 @@ export async function analyzeStore(
 
     const stat = newStat("page");
     for (const pg of pages) {
-      const overlay = pageOverlays?.get(pg.id);
-      const effectiveTitle = overlay ? overlay.title : pg.title;
-      const effectiveDescription = overlay ? overlay.body : pg.body ?? "";
-      const effectiveSeoTitle = overlay ? overlay.metaTitle : pg.seoTitle ?? "";
-      const effectiveMetaDescription = overlay ? overlay.metaDescription : pg.seoDescription ?? "";
+      const {
+        title: effectiveTitle,
+        body: effectiveDescription,
+        metaTitle: effectiveSeoTitle,
+        metaDescription: effectiveMetaDescription,
+        missingTranslations,
+      } = resolveEffectiveValues(
+        {
+          title: pg.title,
+          body: pg.body ?? "",
+          metaTitle: pg.seoTitle ?? "",
+          metaDescription: pg.seoDescription ?? "",
+        },
+        pageOverlays?.get(pg.id),
+        !!foreignLocale,
+      );
       const item = scoreOne(
         "page",
         pg.id,
@@ -907,6 +1043,7 @@ export async function analyzeStore(
           metaDescription: effectiveMetaDescription,
           totalImages: 0,
           imagesWithAlt: 0,
+          missingTranslations,
         },
         seoTitleEffectiveLimit,
         seoLimits,
@@ -938,7 +1075,10 @@ export async function analyzeStore(
   // Capped, per-bucket item refs — see MAX_PROBLEM_BUCKET_ITEMS. Kept separate
   // from bucketCounts so the count stays the TRUE total even once a bucket's
   // item list has filled up.
-  const bucketItems = new Map<string, { type: AuditType; id: string; title: string }[]>();
+  const bucketItems = new Map<
+    string,
+    { type: AuditType; id: string; title: string; missingTranslations?: string[] }[]
+  >();
   // id -> type/title lookup so the duplicate-SEO buckets below (built from
   // seoTitleGroups/seoDescriptionGroups, which only track ids) can also carry
   // typed item refs, same as every other bucket.
@@ -946,13 +1086,30 @@ export async function analyzeStore(
   const titleById = new Map<string, string>();
   let scoreSum = 0;
 
-  const addBucketItem = (code: string, type: AuditType, id: string, title: string) => {
+  // `missingTranslations` rides along on EVERY bucket's item refs, not just
+  // the translationMissing one: the dashboard renders the blue dot on any item
+  // row, so a product listed under "meta description too short" also shows
+  // that it isn't translated yet.
+  const addBucketItem = (
+    code: string,
+    type: AuditType,
+    id: string,
+    title: string,
+    missingTranslations?: string[],
+  ) => {
     let items = bucketItems.get(code);
     if (!items) {
       items = [];
       bucketItems.set(code, items);
     }
-    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) items.push({ type, id, title });
+    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) {
+      items.push({
+        type,
+        id,
+        title,
+        ...(missingTranslations && missingTranslations.length > 0 ? { missingTranslations } : {}),
+      });
+    }
   };
 
   for (const { row, buckets } of scored) {
@@ -964,7 +1121,7 @@ export async function analyzeStore(
     titleById.set(row.id, row.title);
     for (const b of buckets) {
       bucketCounts.set(b, (bucketCounts.get(b) ?? 0) + 1);
-      addBucketItem(b, row.type, row.id, row.title);
+      addBucketItem(b, row.type, row.id, row.title, row.missingTranslations);
     }
   }
 
@@ -987,7 +1144,7 @@ export async function analyzeStore(
       for (const id of ids) {
         const type = typeById.get(id);
         if (type) {
-          addBucketItem("duplicateSeoTitle", type, id, titleById.get(id) ?? "");
+          addBucketItem("duplicateSeoTitle", type, id, titleById.get(id) ?? "", rowById.get(id)?.missingTranslations);
           const r = rowById.get(id);
           if (r && !r.problems.includes("duplicateSeoTitle")) r.problems.push("duplicateSeoTitle");
         }
@@ -1001,7 +1158,13 @@ export async function analyzeStore(
       for (const id of ids) {
         const type = typeById.get(id);
         if (type) {
-          addBucketItem("duplicateSeoDescription", type, id, titleById.get(id) ?? "");
+          addBucketItem(
+            "duplicateSeoDescription",
+            type,
+            id,
+            titleById.get(id) ?? "",
+            rowById.get(id)?.missingTranslations,
+          );
           const r = rowById.get(id);
           if (r && !r.problems.includes("duplicateSeoDescription"))
             r.problems.push("duplicateSeoDescription");
