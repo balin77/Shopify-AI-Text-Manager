@@ -1531,6 +1531,11 @@ export const es: Translation = {
         noTypes: "No se encontró JSON-LD en ninguna página rastreada.",
         duplicatesHint: "Marcado duplicado: el mismo tipo se entrega más de una vez en una página. Normalmente tu tema ya lo emite y una app añade otro — desactiva uno de los dos para que Google no reciba datos contradictorios.",
         duplicateRow: "{type}: duplicado en {pages} páginas",
+        duplicateFromApp: "En {pages} de ellas una de las copias proviene de esta app — desactiva ese tipo en los ajustes del bloque de la app en el editor de temas y solo quedará la versión de tu tema.",
+        duplicateNotFromApp: "Ninguna de las copias proviene de esta app. El origen es tu tema y/u otra app — busca \"application/ld+json\" en el código fuente de la página y compara los dos bloques.",
+        duplicateSourceUnknown: "El origen aún no puede determinarse con este rastreo (es anterior a la detección de origen). Lanza un nuevo rastreo y aquí se indicará qué copia proviene de esta app.",
+        appEmbedOn: "Bloque de la app detectado: esta app entrega JSON-LD en al menos una página rastreada.",
+        appEmbedUnknown: "Bloque de la app no detectado: no se vio marcado de esta app en las páginas rastreadas. Eso significa que el bloque no está activado en tu tema — o que el rastreo es anterior a la detección de origen.",
         sourceCaveat: "Nota: el HTML entregado no revela quién generó el marcado — el tema, esta app y otra app se ven igual.",
       },
       batch: {

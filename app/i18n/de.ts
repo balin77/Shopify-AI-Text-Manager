@@ -1531,6 +1531,11 @@ export const de = {
         noTypes: "Auf keiner gecrawlten Seite wurde JSON-LD gefunden.",
         duplicatesHint: "Doppeltes Markup gefunden: derselbe Typ wird auf einer Seite mehrfach ausgeliefert. Meist emittiert dein Theme ihn bereits und eine App zusätzlich — schalte einen der beiden ab, damit Google keine widersprüchlichen Angaben bekommt.",
         duplicateRow: "{type}: auf {pages} Seiten mehrfach",
+        duplicateFromApp: "Auf {pages} davon stammt eine der Kopien von dieser App — schalte den passenden Typ in den App-Embed-Einstellungen im Theme-Editor ab, dann bleibt nur die Version deines Themes übrig.",
+        duplicateNotFromApp: "Keine der Kopien stammt von dieser App. Die Quelle ist dein Theme und/oder eine andere App — such im Seitenquelltext nach \"application/ld+json\" und vergleiche die beiden Blöcke.",
+        duplicateSourceUnknown: "Die Herkunft lässt sich für diesen Crawl noch nicht bestimmen (er ist älter als die Herkunftserkennung). Starte einen neuen Crawl, dann steht hier, welche Kopie von dieser App stammt.",
+        appEmbedOn: "App-Embed erkannt: Diese App liefert auf mindestens einer gecrawlten Seite JSON-LD aus.",
+        appEmbedUnknown: "App-Embed nicht erkannt: Auf den gecrawlten Seiten war kein Markup dieser App zu sehen. Das heißt entweder, das Embed ist im Theme nicht aktiviert — oder der Crawl ist älter als die Herkunftserkennung.",
         sourceCaveat: "Hinweis: Im ausgelieferten HTML lässt sich nicht unterscheiden, wer das Markup erzeugt hat — Theme, diese App oder eine andere App sehen identisch aus.",
       },
       batch: {

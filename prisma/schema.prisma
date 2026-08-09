@@ -1356,6 +1356,10 @@ model SeoCrawlPage {
   // which is what makes duplicate markup detectable). "" = none found, which is
   // also what every row written before this column existed reports.
   jsonLdTypes   String  @default("")
+  // Subset of jsonLdTypes emitted by THIS app's storefront block, identified by
+  // its data-contentpilot attribute. Lets the report say which copy of a
+  // duplicated type is ours — the delivered HTML tells nobody otherwise.
+  jsonLdAppTypes String @default("")
 
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 

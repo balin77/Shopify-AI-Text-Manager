@@ -838,19 +838,38 @@ export default function SeoStructuredData() {
 
                 {liveJsonLd.duplicates.length > 0 && (
                   <Banner tone="warning">
-                    <BlockStack gap="100">
+                    <BlockStack gap="200">
                       <Text as="p" variant="bodyMd">{live.duplicatesHint}</Text>
                       {liveJsonLd.duplicates.map((dup) => (
-                        <Text as="p" variant="bodySm" key={dup.type}>
-                          {live.duplicateRow
-                            .replace("{type}", dup.type)
-                            .replace("{pages}", String(dup.pages))}
-                          {dup.examples.length > 0 ? ` — ${dup.examples[0]}` : ""}
-                        </Text>
+                        <BlockStack gap="050" key={dup.type}>
+                          <Text as="p" variant="bodySm" fontWeight="semibold">
+                            {live.duplicateRow
+                              .replace("{type}", dup.type)
+                              .replace("{pages}", String(dup.pages))}
+                          </Text>
+                          {/* The actionable half: turning our own toggle off
+                              only helps where one copy is actually ours. */}
+                          <Text as="p" variant="bodySm">
+                            {dup.appIsOneCopy > 0
+                              ? live.duplicateFromApp.replace("{pages}", String(dup.appIsOneCopy))
+                              : liveJsonLd.appEmbedDetected
+                                ? live.duplicateNotFromApp
+                                : live.duplicateSourceUnknown}
+                          </Text>
+                          {dup.examples.map((u) => (
+                            <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                          ))}
+                        </BlockStack>
                       ))}
                     </BlockStack>
                   </Banner>
                 )}
+
+                <Text as="p" variant="bodySm">
+                  {liveJsonLd.appEmbedDetected
+                    ? live.appEmbedOn
+                    : live.appEmbedUnknown}
+                </Text>
 
                 <BlockStack gap="100">
                   <Text as="p" variant="bodySm" fontWeight="semibold">{live.typesFound}</Text>

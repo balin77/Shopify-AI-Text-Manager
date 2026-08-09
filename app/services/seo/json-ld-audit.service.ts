@@ -339,6 +339,13 @@ export interface LiveJsonLdDuplicateRow {
   /** Pages serving this @type more than once. */
   pages: number;
   examples: string[];
+  /**
+   * …of which this app emitted one of the copies. `pages` minus this is the
+   * number where the duplication is entirely between the theme and other apps
+   * — a case turning our own toggle off would not fix, which is exactly the
+   * wrong advice to give.
+   */
+  appIsOneCopy: number;
 }
 
 export interface LiveJsonLdSummary {
@@ -358,6 +365,13 @@ export interface LiveJsonLdSummary {
   /** Every @type served anywhere, with the number of pages serving it. */
   typeCounts: { type: string; pages: number }[];
   duplicates: LiveJsonLdDuplicateRow[];
+  /**
+   * Whether this app's storefront block was seen emitting anything at all.
+   * `null` = no page carried the marker AND none could have (snapshot predates
+   * the marked block) — unknown, not "off". The Admin API cannot answer this
+   * question at all, which is why the section used to call it "unknown".
+   */
+  appEmbedDetected: boolean | null;
 }
 
 const MAX_LIVE_EXAMPLES = 5;
@@ -380,7 +394,13 @@ export async function summarizeLiveJsonLd(
 
   const rows = await db.seoCrawlPage.findMany({
     where: { shop, snapshotId: snapshot.id },
-    select: { url: true, statusCode: true, resourceType: true, jsonLdTypes: true },
+    select: {
+      url: true,
+      statusCode: true,
+      resourceType: true,
+      jsonLdTypes: true,
+      jsonLdAppTypes: true,
+    },
   });
 
   // Only pages that actually served content can be judged on their markup — a
@@ -407,14 +427,27 @@ export async function summarizeLiveJsonLd(
   // The example lists are capped, so the page COUNT has to be tallied
   // separately or a shop with six duplicate pages would report five.
   const duplicateCounts = new Map<string, number>();
+  /** Duplicated types where one of the copies is this app's. */
+  const duplicateAppCounts = new Map<string, number>();
   for (const row of served) {
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
+    const appTypes = new Set(
+      row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : [],
+    );
     const seen = new Map<string, number>();
     for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
     for (const [t, n] of seen) {
-      if (n > 1) duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
+      if (n <= 1) continue;
+      duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
+      if (appTypes.has(t)) duplicateAppCounts.set(t, (duplicateAppCounts.get(t) ?? 0) + 1);
     }
   }
+
+  // "Marker seen anywhere" is proof the embed is on. Its absence proves
+  // nothing on its own: a snapshot crawled before the marked block shipped
+  // looks identical to one from a shop with the embed switched off.
+  const anyMarked = served.some((r) => !!r.jsonLdAppTypes);
+  const appEmbedDetected = anyMarked ? true : null;
 
   for (const [resourceType, expected] of Object.entries(EXPECTED_TYPE_BY_RESOURCE)) {
     const ofType = served.filter((r) => r.resourceType === resourceType);
@@ -444,7 +477,13 @@ export async function summarizeLiveJsonLd(
       .map(([type, pages]) => ({ type, pages }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
     duplicates: [...duplicateCounts.entries()]
-      .map(([type, pages]) => ({ type, pages, examples: duplicatePages.get(type) ?? [] }))
+      .map(([type, pages]) => ({
+        type,
+        pages,
+        examples: duplicatePages.get(type) ?? [],
+        appIsOneCopy: duplicateAppCounts.get(type) ?? 0,
+      }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
+    appEmbedDetected,
   };
 }

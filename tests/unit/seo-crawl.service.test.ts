@@ -20,6 +20,7 @@ import {
   parseCrawlError,
   rateLimitRetryDelayMs,
   extractJsonLdTypes,
+  extractAppJsonLdTypes,
   coolDownDurationMs,
   BLOCK_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
@@ -624,6 +625,21 @@ describe("extractJsonLdTypes", () => {
     expect(extractJsonLdTypes($)).toEqual(["Product"]);
   });
 
+  it("separates this app's own blocks from everyone else's", () => {
+    const $ = load(
+      '<script type="application/ld+json">{"@type":"Product"}</script>' +
+        '<script type="application/ld+json" data-contentpilot="product">{"@type":"Product"}</script>' +
+        '<script type="application/ld+json" data-contentpilot="organization">{"@type":"Organization"}</script>',
+    );
+    expect(extractJsonLdTypes($)).toEqual(["Product", "Product", "Organization"]);
+    expect(extractAppJsonLdTypes($)).toEqual(["Product", "Organization"]);
+  });
+
+  it("reports no app blocks when nothing carries the marker", () => {
+    const $ = load(script('{"@type":"Product"}'));
+    expect(extractAppJsonLdTypes($)).toEqual([]);
+  });
+
   it("ignores scripts that are not ld+json", () => {
     const $ = load('<script type="application/json">{"@type":"Product"}</script><script>var x=1;</script>');
     expect(extractJsonLdTypes($)).toEqual([]);
@@ -789,6 +805,8 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     const product = db.__created.pages.find((p: any) => p.url.includes("/products/blue-shoe"));
     // Nested Offer must NOT be recorded — only the two top-level blocks.
     expect(product?.jsonLdTypes).toBe("Product,BreadcrumbList");
+    // Neither block carries our marker, so none is attributed to this app.
+    expect(product?.jsonLdAppTypes).toBe("");
     const home = db.__created.pages.find((p: any) => p.url.endsWith("/"));
     expect(home?.jsonLdTypes).toBe("Organization");
   });

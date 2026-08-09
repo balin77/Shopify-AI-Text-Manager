@@ -1532,6 +1532,11 @@ export const en: Translation = {
         noTypes: "No JSON-LD was found on any crawled page.",
         duplicatesHint: "Duplicate markup found: the same type is served more than once on a page. Usually your theme already emits it and an app adds another — turn one of them off so Google doesn't get conflicting data.",
         duplicateRow: "{type}: duplicated on {pages} pages",
+        duplicateFromApp: "On {pages} of them one copy comes from this app — turn that type off in the app embed settings in the theme editor and only your theme's version remains.",
+        duplicateNotFromApp: "None of the copies come from this app. The source is your theme and/or another app — search the page source for \"application/ld+json\" and compare the two blocks.",
+        duplicateSourceUnknown: "The source can't be determined from this crawl yet (it predates source detection). Run a new crawl and this will say which copy came from this app.",
+        appEmbedOn: "App embed detected: this app serves JSON-LD on at least one crawled page.",
+        appEmbedUnknown: "App embed not detected: no markup from this app was seen on the crawled pages. That means either the embed is not enabled in your theme — or the crawl predates source detection.",
         sourceCaveat: "Note: the delivered HTML doesn't reveal who generated the markup — theme, this app and another app look identical.",
       },
       batch: {

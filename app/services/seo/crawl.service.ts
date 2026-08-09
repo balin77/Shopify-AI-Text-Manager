@@ -591,8 +591,27 @@ function collectJsonLdTypes(node: unknown, out: string[]): void {
  * container for several top-level nodes.
  */
 export function extractJsonLdTypes($: cheerio.CheerioAPI): string[] {
+  return typesFromScripts($, 'script[type="application/ld+json"]');
+}
+
+/**
+ * Only the blocks THIS app emitted, identified by the `data-contentpilot`
+ * attribute its storefront block writes on every script tag. A data attribute
+ * is inert for JSON-LD consumers, so marking costs nothing and buys the one
+ * thing the delivered HTML otherwise cannot tell a merchant: when the same
+ * type appears twice on a page, which copy is ours and which is the theme's.
+ *
+ * Empty on a shop whose theme still runs an older version of the block — the
+ * summary treats "app emitted nothing anywhere" as unknown, not as proof the
+ * embed is off.
+ */
+export function extractAppJsonLdTypes($: cheerio.CheerioAPI): string[] {
+  return typesFromScripts($, 'script[type="application/ld+json"][data-contentpilot]');
+}
+
+function typesFromScripts($: cheerio.CheerioAPI, selector: string): string[] {
   const out: string[] = [];
-  $('script[type="application/ld+json"]').each((_, el) => {
+  $(selector).each((_, el) => {
     if (out.length >= MAX_JSON_LD_TYPES_PER_PAGE) return;
     const raw = $(el).contents().text().trim();
     if (!raw) return;
@@ -985,6 +1004,8 @@ interface PageRecord {
   locale: string;
   /** schema.org @type values served by the page — see extractJsonLdTypes. */
   jsonLdTypes: string[];
+  /** …of which came from this app's storefront block (data-contentpilot). */
+  jsonLdAppTypes: string[];
 }
 
 export interface RunCrawlDeps {
@@ -1254,6 +1275,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       wordCount: 0,
       locale: resolveGscPagePath(url)?.locale ?? "",
       jsonLdTypes: [],
+      jsonLdAppTypes: [],
     };
     pages.set(url, record);
 
@@ -1277,6 +1299,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       // the app that sees what the storefront actually serves — the JSON-LD
       // section otherwise only validates what the app WOULD emit.
       record.jsonLdTypes = extractJsonLdTypes($);
+      record.jsonLdAppTypes = extractAppJsonLdTypes($);
 
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href");
@@ -1411,6 +1434,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     inboundCount: number;
     outboundCount: number;
     jsonLdTypes: string;
+    jsonLdAppTypes: string;
   }[] = [];
 
   const headDriftCandidates: { resourceType: AuditType; resourceId: string; crawledTitle: string | null }[] = [];
@@ -1446,6 +1470,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       inboundCount: inboundCounts.get(url) ?? 0,
       outboundCount: outboundCounts.get(url) ?? 0,
       jsonLdTypes: page.jsonLdTypes.join(","),
+      jsonLdAppTypes: page.jsonLdAppTypes.join(","),
     });
 
     // statusCode must be 2xx (§ fix 5): a broken resolved page never had its

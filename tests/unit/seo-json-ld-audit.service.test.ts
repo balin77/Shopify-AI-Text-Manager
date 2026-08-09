@@ -245,6 +245,7 @@ describe("summarizeLiveJsonLd", () => {
     statusCode: 200,
     resourceType: "product",
     jsonLdTypes: "",
+    jsonLdAppTypes: "",
     ...over,
   });
 
@@ -291,7 +292,7 @@ describe("summarizeLiveJsonLd", () => {
       "shop.myshopify.com",
     );
     expect(summary!.duplicates).toEqual([
-      { type: "Product", pages: 1, examples: ["https://s/p/1"] },
+      { type: "Product", pages: 1, examples: ["https://s/p/1"], appIsOneCopy: 0 },
     ]);
     // Duplicates must not inflate the per-type page count.
     expect(summary!.typeCounts.find((t) => t.type === "Product")!.pages).toBe(2);
@@ -316,5 +317,32 @@ describe("summarizeLiveJsonLd", () => {
   it("carries the crawl status through so a capped run can be labelled", async () => {
     const summary = await summarizeLiveJsonLd(crawlDb([page()], "capped"), "shop.myshopify.com");
     expect(summary!.crawlStatus).toBe("capped");
+  });
+
+  it("attributes a duplicate to this app when one copy carries our marker", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        // Theme + our block on the same page.
+        page({ url: "https://s/p/1", jsonLdTypes: "Product,Product", jsonLdAppTypes: "Product" }),
+        // Theme + some OTHER app: turning our toggle off would not help here,
+        // so it must not be counted as ours.
+        page({ url: "https://s/p/2", jsonLdTypes: "Product,Product" }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const dup = summary!.duplicates.find((d) => d.type === "Product")!;
+    expect(dup.pages).toBe(2);
+    expect(dup.appIsOneCopy).toBe(1);
+    expect(summary!.appEmbedDetected).toBe(true);
+  });
+
+  it("reports the app embed as unknown rather than off when nothing is marked", async () => {
+    // A snapshot crawled before the marked block shipped is indistinguishable
+    // from a shop with the embed disabled — saying "off" would be a guess.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "Product" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.appEmbedDetected).toBeNull();
   });
 });

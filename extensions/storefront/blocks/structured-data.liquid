@@ -26,7 +26,7 @@
 -%}
 
 {%- if want_org -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="organization">
 {
   "@context": "https://schema.org",
   "@type": "Organization",
@@ -93,7 +93,7 @@
     # only emits it when a caller supplies one).
     assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
   -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="product">
 {
   "@context": "https://schema.org",
   "@type": "Product",
@@ -157,7 +157,7 @@
     {%- endfor -%}
   {%- endcapture -%}
   {%- if faq_body != blank -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="faq">
 {
   "@context": "https://schema.org",
   "@type": "FAQPage",
@@ -174,7 +174,7 @@
     assign c_url = shop.url | append: collection.url
     assign c_desc = collection.metafields.global.description_tag | default: collection.description | strip_html | truncate: 500
   -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="collection">
 {
   "@context": "https://schema.org",
   "@type": "CollectionPage",
@@ -194,7 +194,7 @@
       assign a_img = article.image | image_url: width: 1200
     endif
   -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="article">
 {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
@@ -221,7 +221,7 @@
   `| json`-escaped.
 {%- endcomment -%}
 {%- if want_breadcrumb and request.page_type == 'product' and product -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="breadcrumb">
 {
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
@@ -232,7 +232,7 @@
 }
 </script>
 {%- elsif want_breadcrumb and request.page_type == 'collection' and collection -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="breadcrumb">
 {
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
@@ -243,7 +243,7 @@
 }
 </script>
 {%- elsif want_breadcrumb and request.page_type == 'article' and article -%}
-<script type="application/ld+json">
+<script type="application/ld+json" data-contentpilot="breadcrumb">
 {
   "@context": "https://schema.org",
   "@type": "BreadcrumbList",
