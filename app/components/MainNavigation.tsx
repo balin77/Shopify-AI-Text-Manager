@@ -21,6 +21,38 @@ import { taskErrorText } from "../utils/task-error-text";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
 
+/**
+ * Task types that run across the whole shop rather than on one item, and
+ * therefore never write a `resourceTitle`. Each needs its own completion
+ * sentence — the generic "Task completed for {title}" rendered them as
+ * `Task completed for ""`. Keep in sync when a new site-wide task type is
+ * added; the `!resourceTitle` fallback below catches anything missed.
+ */
+const SITE_WIDE_TASK_MESSAGE_KEY: Record<string, string> = {
+  seoCrawl: "crawlCompleted",
+  seoAudit: "auditCompleted",
+  seoJsonLdAudit: "jsonLdAuditCompleted",
+  seoInternalLinks: "internalLinksCompleted",
+  seoRobotsAdvice: "robotsAdviceCompleted",
+  // The bulk editor's write task. Its type stays `seoBulkMeta` for historical
+  // reasons (CLAUDE.md) — the message must not repeat that name at merchants.
+  seoBulkMeta: "bulkEditorSaveCompleted",
+  bulkEditorTranslate: "bulkEditorTranslateCompleted",
+  keywordIntent: "keywordIntentCompleted",
+};
+
+/** English fallbacks, mirroring the inline `||` defaults used elsewhere here. */
+const SITE_WIDE_TASK_FALLBACK: Record<string, string> = {
+  seoCrawl: "Website crawl finished",
+  seoAudit: "SEO analysis finished",
+  seoJsonLdAudit: "JSON-LD check finished",
+  seoInternalLinks: "Internal link suggestions ready",
+  seoRobotsAdvice: "robots.txt analysis finished",
+  seoBulkMeta: "Bulk editor: changes saved",
+  bulkEditorTranslate: "Bulk editor: translation finished",
+  keywordIntent: "Keyword analysis finished",
+};
+
 export function MainNavigation() {
   const location = useLocation();
   const navigation = useNavigation();
@@ -82,10 +114,30 @@ export function MainNavigation() {
         if (task.type === "altTextTemplateApply") {
           return t.tasks?.altTextTemplateApplied?.replace("{title}", resourceTitle) || `Alt-text templates applied to "${resourceTitle}"`;
         }
-        // The crawl is site-wide and carries no resourceTitle — the generic
-        // message would render as `Task completed for ""`.
-        if (task.type === "seoCrawl") {
-          return t.tasks?.crawlCompleted || "Website crawl finished";
+        // Site-wide tasks (every SEO scan, both bulk-editor tasks) have no
+        // resourceTitle — there is no single item they belong to. The generic
+        // message rendered them all as `Task completed for ""`.
+        const siteWideKey = SITE_WIDE_TASK_MESSAGE_KEY[task.type];
+        if (siteWideKey) {
+          const message = (t.tasks as unknown as Record<string, string> | undefined)?.[siteWideKey];
+          return typeof message === "string" ? message : SITE_WIDE_TASK_FALLBACK[task.type];
+        }
+        // seoBulkFix stores a machine string ("metaDescriptionMissing:fr",
+        // "fixAllForItem:product:8123") as its resourceTitle — readable to the
+        // bulk-fix runner, not to a merchant. Name the problem it fixed
+        // instead, using the dashboard's own label for the code.
+        if (task.type === "seoBulkFix") {
+          const code = resourceTitle.startsWith("fixAllForItem:") ? "" : resourceTitle.split(":")[0];
+          const problemLabel = code
+            ? (t.seo?.dashboard?.problems as Record<string, string> | undefined)?.[code]
+            : undefined;
+          const done = t.tasks?.seoBulkFixCompleted || "SEO fix finished";
+          return problemLabel ? `${done}: ${problemLabel}` : done;
+        }
+        // Safety net for any task type that reaches here without a title —
+        // never render the `for ""` form.
+        if (!resourceTitle) {
+          return t.tasks?.taskCompletedGeneric || "Task completed";
         }
         return t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
       })();
