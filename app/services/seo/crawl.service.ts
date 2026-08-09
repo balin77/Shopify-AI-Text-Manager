@@ -545,6 +545,67 @@ export function classifyLinkStatus(statusCode: number): LinkStatusClass {
   return "ok";
 }
 
+// ── JSON-LD detection (§ live structured-data coverage) ────────────────────
+
+/** Cap on recorded @type values per page. A page with more schema blocks than
+ *  this has bigger problems than the tail we drop. */
+const MAX_JSON_LD_TYPES_PER_PAGE = 50;
+/** Defensive bound on a single @type string before it reaches the DB. */
+const MAX_JSON_LD_TYPE_LENGTH = 64;
+
+/** Collect `@type` from one parsed JSON-LD node, following `@graph`. */
+function collectJsonLdTypes(node: unknown, out: string[]): void {
+  if (out.length >= MAX_JSON_LD_TYPES_PER_PAGE) return;
+  if (Array.isArray(node)) {
+    for (const entry of node) collectJsonLdTypes(entry, out);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  const obj = node as Record<string, unknown>;
+
+  const rawType = obj["@type"];
+  // `@type` is a string or an array of strings (a node can be several types).
+  for (const t of Array.isArray(rawType) ? rawType : [rawType]) {
+    if (typeof t !== "string") continue;
+    const clean = t.trim().slice(0, MAX_JSON_LD_TYPE_LENGTH);
+    if (clean && out.length < MAX_JSON_LD_TYPES_PER_PAGE) out.push(clean);
+  }
+
+  // A `@graph` wrapper is one script block holding many nodes — Shopify's own
+  // `structured_data` filter and several themes emit that shape, so ignoring it
+  // would report "no markup" for pages that are fully marked up.
+  const graph = obj["@graph"];
+  if (graph) collectJsonLdTypes(graph, out);
+}
+
+/**
+ * Every schema.org `@type` served by the page, in document order, REPEATS
+ * INCLUDED — two `Product` entries mean two blocks claim to describe the same
+ * page, which is the single most common structured-data defect on a Shopify
+ * storefront (the theme emits one and an app emits another).
+ *
+ * Nested types are deliberately NOT collected: an `Offer` inside a `Product`
+ * or a `ListItem` inside a `BreadcrumbList` is part of that node, not markup
+ * in its own right, and counting it would make every coverage number
+ * meaningless. `@graph` members ARE collected — there the nesting is just a
+ * container for several top-level nodes.
+ */
+export function extractJsonLdTypes($: cheerio.CheerioAPI): string[] {
+  const out: string[] = [];
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (out.length >= MAX_JSON_LD_TYPES_PER_PAGE) return;
+    const raw = $(el).contents().text().trim();
+    if (!raw) return;
+    try {
+      collectJsonLdTypes(JSON.parse(raw), out);
+    } catch {
+      // Invalid JSON in a script block is a real defect, but this crawl pass
+      // reports what IS served — the in-app validator covers correctness.
+    }
+  });
+  return out;
+}
+
 // `SLOW_PAGE_WARN_MS` lives in crawl.shared.ts — the crawl report renders it in
 // component scope, and importing it from here would drag this module (and
 // url-resolver.server) into the client bundle.
@@ -922,6 +983,8 @@ interface PageRecord {
   h1Count: number;
   wordCount: number;
   locale: string;
+  /** schema.org @type values served by the page — see extractJsonLdTypes. */
+  jsonLdTypes: string[];
 }
 
 export interface RunCrawlDeps {
@@ -1190,6 +1253,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       h1Count: 0,
       wordCount: 0,
       locale: resolveGscPagePath(url)?.locale ?? "",
+      jsonLdTypes: [],
     };
     pages.set(url, record);
 
@@ -1209,6 +1273,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       record.canonical = $('link[rel="canonical"]').attr("href")?.trim() || null;
       record.h1Count = $("h1").length;
       record.wordCount = countWords($);
+      // Free: the HTML is already fetched and parsed. This is the only place in
+      // the app that sees what the storefront actually serves — the JSON-LD
+      // section otherwise only validates what the app WOULD emit.
+      record.jsonLdTypes = extractJsonLdTypes($);
 
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href");
@@ -1342,6 +1410,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     locale: string;
     inboundCount: number;
     outboundCount: number;
+    jsonLdTypes: string;
   }[] = [];
 
   const headDriftCandidates: { resourceType: AuditType; resourceId: string; crawledTitle: string | null }[] = [];
@@ -1376,6 +1445,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       locale: page.locale,
       inboundCount: inboundCounts.get(url) ?? 0,
       outboundCount: outboundCounts.get(url) ?? 0,
+      jsonLdTypes: page.jsonLdTypes.join(","),
     });
 
     // statusCode must be 2xx (§ fix 5): a broken resolved page never had its

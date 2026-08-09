@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import * as cheerio from "cheerio";
 import {
   normalizeCrawlUrl,
   isDenylistedPath,
@@ -18,6 +19,7 @@ import {
   dominantBlockSource,
   parseCrawlError,
   rateLimitRetryDelayMs,
+  extractJsonLdTypes,
   coolDownDurationMs,
   BLOCK_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
@@ -579,6 +581,55 @@ describe("isAllowedByRobots", () => {
   });
 });
 
+describe("extractJsonLdTypes", () => {
+  const load = (html: string) => cheerio.load(html);
+  const script = (json: string) => `<script type="application/ld+json">${json}</script>`;
+
+  it("reads the top-level @type of every block", () => {
+    const $ = load(
+      script('{"@context":"https://schema.org","@type":"Organization","name":"Acme"}') +
+        script('{"@type":"Product","name":"Shoe"}'),
+    );
+    expect(extractJsonLdTypes($)).toEqual(["Organization", "Product"]);
+  });
+
+  it("keeps repeats — two Product blocks is the duplicate-markup signal", () => {
+    const $ = load(script('{"@type":"Product"}') + script('{"@type":"Product"}'));
+    expect(extractJsonLdTypes($)).toEqual(["Product", "Product"]);
+  });
+
+  it("follows @graph, the shape Shopify's own filter emits", () => {
+    const $ = load(
+      script('{"@context":"https://schema.org","@graph":[{"@type":"WebSite"},{"@type":"Organization"}]}'),
+    );
+    expect(extractJsonLdTypes($)).toEqual(["WebSite", "Organization"]);
+  });
+
+  it("handles a top-level array and a multi-typed node", () => {
+    const $ = load(script('[{"@type":"BreadcrumbList"},{"@type":["Product","Thing"]}]'));
+    expect(extractJsonLdTypes($)).toEqual(["BreadcrumbList", "Product", "Thing"]);
+  });
+
+  it("does NOT descend into nested nodes", () => {
+    // An Offer inside a Product is part of that node, not markup of its own —
+    // counting it would make every coverage number meaningless.
+    const $ = load(
+      script('{"@type":"Product","offers":{"@type":"Offer","price":"9.99"},"brand":{"@type":"Brand"}}'),
+    );
+    expect(extractJsonLdTypes($)).toEqual(["Product"]);
+  });
+
+  it("skips unparseable and empty blocks without throwing", () => {
+    const $ = load(script("{not json") + script("") + script('{"@type":"Product"}'));
+    expect(extractJsonLdTypes($)).toEqual(["Product"]);
+  });
+
+  it("ignores scripts that are not ld+json", () => {
+    const $ = load('<script type="application/json">{"@type":"Product"}</script><script>var x=1;</script>');
+    expect(extractJsonLdTypes($)).toEqual([]);
+  });
+});
+
 // ── msw-mocked end-to-end crawl (§9 integration) ────────────────────────────
 
 const HOST = "shop-fixture.example.com";
@@ -697,6 +748,49 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     const blueShoePage = db.__created.pages.find((p: any) => p.url.includes("/products/blue-shoe"));
     expect(blueShoePage?.resourceType).toBe("product");
     expect(blueShoePage?.resourceId).toBe("gid://shopify/Product/1");
+  });
+
+  it("persists the JSON-LD types each page served", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html(
+            "Home – Acme",
+            `<script type="application/ld+json">{"@type":"Organization"}</script>
+             <a href="/products/blue-shoe">Blue Shoe</a>`,
+          ),
+        ),
+      ),
+      http.get(`${BASE}/products/blue-shoe`, () =>
+        HttpResponse.html(
+          html(
+            "Blue Shoe – Acme",
+            `<script type="application/ld+json">{"@type":"Product","offers":{"@type":"Offer"}}</script>
+             <script type="application/ld+json">{"@type":"BreadcrumbList"}</script>`,
+          ),
+        ),
+      ),
+    );
+
+    const db = makeDb();
+    await runCrawl("snap-jsonld", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+    });
+
+    const product = db.__created.pages.find((p: any) => p.url.includes("/products/blue-shoe"));
+    // Nested Offer must NOT be recorded — only the two top-level blocks.
+    expect(product?.jsonLdTypes).toBe("Product,BreadcrumbList");
+    const home = db.__created.pages.find((p: any) => p.url.endsWith("/"));
+    expect(home?.jsonLdTypes).toBe("Organization");
   });
 
   it("expands a sitemap INDEX into pages instead of crawling the sub-sitemaps as pages", async () => {

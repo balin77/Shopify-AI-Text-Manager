@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runJsonLdAudit } from "~/services/seo/json-ld-audit.service";
+import { runJsonLdAudit, summarizeLiveJsonLd } from "~/services/seo/json-ld-audit.service";
 import { MAX_PROBLEM_BUCKET_ITEMS } from "~/services/seo/audit.service";
 
 /**
@@ -221,5 +221,100 @@ describe("runJsonLdAudit", () => {
       [4, 5],
       [5, 5],
     ]);
+  });
+});
+
+// ── Live coverage from the crawl snapshot ──────────────────────────────────
+
+describe("summarizeLiveJsonLd", () => {
+  /** Crawl-snapshot stub: only the two delegates the summary reads. */
+  function crawlDb(pages: any[] | null, status = "completed") {
+    return {
+      seoCrawlSnapshot: {
+        findFirst: async () =>
+          pages === null
+            ? null
+            : { id: "snap-1", startedAt: new Date("2026-08-01T10:00:00Z"), finishedAt: new Date("2026-08-01T10:20:00Z"), status },
+      },
+      seoCrawlPage: { findMany: async () => pages ?? [] },
+    } as any;
+  }
+
+  const page = (over: Partial<Record<string, any>> = {}) => ({
+    url: "https://shop.example.com/products/a",
+    statusCode: 200,
+    resourceType: "product",
+    jsonLdTypes: "",
+    ...over,
+  });
+
+  it("returns null when the shop has never completed a crawl", async () => {
+    expect(await summarizeLiveJsonLd(crawlDb(null), "shop.myshopify.com")).toBeNull();
+  });
+
+  it("counts a product page as covered by Product or ProductGroup", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/p/1", jsonLdTypes: "Organization,Product" }),
+        // Shopify's own structured_data filter emits ProductGroup for products
+        // with variants — counting only "Product" would report it as missing.
+        page({ url: "https://s/p/2", jsonLdTypes: "ProductGroup" }),
+        page({ url: "https://s/p/3", jsonLdTypes: "Organization,BreadcrumbList" }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const products = summary!.coverage.find((c) => c.resourceType === "product")!;
+    expect(products.total).toBe(3);
+    expect(products.withMarkup).toBe(2);
+    expect(products.missingExamples).toEqual(["https://s/p/3"]);
+  });
+
+  it("ignores pages that never served content", async () => {
+    // A 404 without Product markup is not a structured-data problem.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/p/1", jsonLdTypes: "Product" }),
+        page({ url: "https://s/p/gone", statusCode: 404 }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.pagesChecked).toBe(1);
+    expect(summary!.coverage.find((c) => c.resourceType === "product")!.total).toBe(1);
+  });
+
+  it("reports a type served twice on one page as a duplicate", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/p/1", jsonLdTypes: "Product,Organization,Product" }),
+        page({ url: "https://s/p/2", jsonLdTypes: "Product" }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.duplicates).toEqual([
+      { type: "Product", pages: 1, examples: ["https://s/p/1"] },
+    ]);
+    // Duplicates must not inflate the per-type page count.
+    expect(summary!.typeCounts.find((t) => t.type === "Product")!.pages).toBe(2);
+  });
+
+  it("flags a pre-column snapshot as not measured instead of 'no markup'", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "" }), page({ url: "https://s/p/2", jsonLdTypes: "" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(true);
+  });
+
+  it("does not flag notMeasured once any page reports a type", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "" }), page({ url: "https://s/p/2", jsonLdTypes: "Product" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(false);
+  });
+
+  it("carries the crawl status through so a capped run can be labelled", async () => {
+    const summary = await summarizeLiveJsonLd(crawlDb([page()], "capped"), "shop.myshopify.com");
+    expect(summary!.crawlStatus).toBe("capped");
   });
 });

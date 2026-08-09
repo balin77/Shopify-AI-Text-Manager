@@ -42,6 +42,7 @@ import {
   type JsonLdWarning,
 } from "../services/structured-data.service";
 import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
+import { summarizeLiveJsonLd } from "../services/seo/json-ld-audit.service";
 import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/json-ld-audit.service";
 
 /** Extract the trailing numeric id from a GID like "gid://shopify/Product/123". */
@@ -377,6 +378,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
+  // What the storefront ACTUALLY serves, from the last crawl. Best-effort: a
+  // read failure (or a snapshot older than the jsonLdTypes column) must never
+  // sink this page — the in-app preview and batch report stand on their own.
+  const liveJsonLd = await summarizeLiveJsonLd(db, shop).catch(() => null);
+
   return json({
     previews,
     themeEditorUrl,
@@ -386,6 +392,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     sampleArticleAdminUrl,
     jsonLdAudit,
     jsonLdAuditRunning: !!runningJsonLdAuditTask,
+    liveJsonLd,
   });
 };
 
@@ -430,12 +437,14 @@ export default function SeoStructuredData() {
     sampleArticleAdminUrl,
     jsonLdAudit,
     jsonLdAuditRunning,
+    liveJsonLd,
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const s = t.seo.structuredDataPage;
   const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
+  const live = (s as any).live as Record<string, string>;
   const hintCopy = (s as any).hints as Record<string, string>;
 
   const schemaTypeKeys = [
@@ -762,6 +771,103 @@ export default function SeoStructuredData() {
                     })}
                   />
                 )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* Live coverage — the only place in the app that reports what the
+            storefront actually serves. Everything above validates what the app
+            WOULD emit; the two answer different questions and the copy says so. */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingMd">{live.title}</Text>
+            <Text as="p" variant="bodyMd" tone="subdued">{live.intro}</Text>
+
+            {!liveJsonLd ? (
+              <Banner tone="info">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">{live.noCrawl}</Text>
+                  <div>
+                    <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                  </div>
+                </BlockStack>
+              </Banner>
+            ) : liveJsonLd.notMeasured ? (
+              // An older snapshot has no jsonLdTypes at all. Reporting that as
+              // "no structured data anywhere" would be a false alarm.
+              <Banner tone="info">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd">{live.notMeasured}</Text>
+                  <div>
+                    <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                  </div>
+                </BlockStack>
+              </Banner>
+            ) : (
+              <BlockStack gap="300">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {live.basis
+                    .replace("{time}", new Date(liveJsonLd.crawledAt).toLocaleString())
+                    .replace("{pages}", String(liveJsonLd.pagesChecked))}
+                </Text>
+                {liveJsonLd.crawlStatus === "capped" && (
+                  <Banner tone="warning">{live.cappedCrawl}</Banner>
+                )}
+
+                {liveJsonLd.coverage.length > 0 && (
+                  <DataTable
+                    columnContentTypes={["text", "numeric", "text"]}
+                    headings={[live.colPageType, live.colCoverage, live.colMissingExamples]}
+                    rows={liveJsonLd.coverage.map((row) => [
+                      (live.pageTypes as unknown as Record<string, string>)[row.resourceType] ||
+                        row.resourceType,
+                      `${row.withMarkup} / ${row.total}`,
+                      row.withMarkup === row.total ? (
+                        <Badge tone="success">{live.allCovered}</Badge>
+                      ) : (
+                        <BlockStack gap="050">
+                          {row.missingExamples.map((u) => (
+                            <Text as="span" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                          ))}
+                        </BlockStack>
+                      ),
+                    ])}
+                  />
+                )}
+
+                {liveJsonLd.duplicates.length > 0 && (
+                  <Banner tone="warning">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodyMd">{live.duplicatesHint}</Text>
+                      {liveJsonLd.duplicates.map((dup) => (
+                        <Text as="p" variant="bodySm" key={dup.type}>
+                          {live.duplicateRow
+                            .replace("{type}", dup.type)
+                            .replace("{pages}", String(dup.pages))}
+                          {dup.examples.length > 0 ? ` — ${dup.examples[0]}` : ""}
+                        </Text>
+                      ))}
+                    </BlockStack>
+                  </Banner>
+                )}
+
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{live.typesFound}</Text>
+                  {liveJsonLd.typeCounts.length === 0 ? (
+                    <Text as="p" variant="bodySm" tone="subdued">{live.noTypes}</Text>
+                  ) : (
+                    <InlineStack gap="200" wrap>
+                      {liveJsonLd.typeCounts.map((tc) => (
+                        <Badge key={tc.type}>
+                          {live.typeCount.replace("{type}", tc.type).replace("{pages}", String(tc.pages))}
+                        </Badge>
+                      ))}
+                    </InlineStack>
+                  )}
+                </BlockStack>
+
+                <Text as="p" variant="bodySm" tone="subdued">{live.sourceCaveat}</Text>
               </BlockStack>
             )}
           </BlockStack>

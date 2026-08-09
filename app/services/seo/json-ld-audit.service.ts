@@ -299,3 +299,152 @@ export async function runJsonLdAudit(
     buckets: bucketList,
   };
 }
+
+// ── Live coverage from the last crawl (§ "is it actually served?") ─────────
+//
+// Everything above answers "is the markup the app would build correct?". It
+// reads the DB cache and never sees a storefront page. That leaves the one
+// question a merchant actually asks first — "is structured data on my pages at
+// all?" — unanswered, and it is not answerable from the Admin API: what a
+// storefront serves is the sum of the theme's own markup, this app's embed and
+// any other app's, none of which is queryable.
+//
+// The crawler already downloads and parses every page, so it records the
+// `@type` values it sees (SeoCrawlPage.jsonLdTypes). This section turns those
+// rows into the coverage report. It therefore reports what IS served, never
+// WHO served it — theme markup and app markup are indistinguishable in the
+// delivered HTML, and pretending otherwise would be a guess.
+
+/** Type expected on each crawled resource type. Pages have no schema in this
+ *  app (no buildPageJsonLd exists, and the storefront block emits none), so
+ *  they are counted but never reported as "missing". */
+const EXPECTED_TYPE_BY_RESOURCE: Record<string, string[]> = {
+  product: ["Product", "ProductGroup"],
+  collection: ["CollectionPage"],
+  article: ["BlogPosting", "Article"],
+};
+
+export interface LiveJsonLdCoverageRow {
+  resourceType: "product" | "collection" | "article";
+  /** Crawled, successfully served pages of this type. */
+  total: number;
+  /** …of which carry one of EXPECTED_TYPE_BY_RESOURCE. */
+  withMarkup: number;
+  /** Up to 5 example URLs that carry none — the actionable part. */
+  missingExamples: string[];
+}
+
+export interface LiveJsonLdDuplicateRow {
+  type: string;
+  /** Pages serving this @type more than once. */
+  pages: number;
+  examples: string[];
+}
+
+export interface LiveJsonLdSummary {
+  /** When the crawl behind these numbers ran. */
+  crawledAt: string;
+  /** Crawl status — a capped/failed run measured only part of the shop. */
+  crawlStatus: string;
+  /** Successfully served pages the numbers are based on. */
+  pagesChecked: number;
+  /**
+   * True when the snapshot predates jsonLdTypes (every row ""). Without this
+   * flag an old snapshot would render as "no structured data anywhere", which
+   * is a false alarm, not a finding.
+   */
+  notMeasured: boolean;
+  coverage: LiveJsonLdCoverageRow[];
+  /** Every @type served anywhere, with the number of pages serving it. */
+  typeCounts: { type: string; pages: number }[];
+  duplicates: LiveJsonLdDuplicateRow[];
+}
+
+const MAX_LIVE_EXAMPLES = 5;
+
+/**
+ * Summarize the structured data actually served, from the newest crawl
+ * snapshot. Returns null when the shop has never completed a crawl — the UI
+ * then points at the crawl section instead of showing empty numbers.
+ */
+export async function summarizeLiveJsonLd(
+  db: PrismaClient,
+  shop: string,
+): Promise<LiveJsonLdSummary | null> {
+  const snapshot = await db.seoCrawlSnapshot.findFirst({
+    where: { shop, status: { in: ["completed", "capped"] } },
+    orderBy: { startedAt: "desc" },
+    select: { id: true, startedAt: true, finishedAt: true, status: true },
+  });
+  if (!snapshot) return null;
+
+  const rows = await db.seoCrawlPage.findMany({
+    where: { shop, snapshotId: snapshot.id },
+    select: { url: true, statusCode: true, resourceType: true, jsonLdTypes: true },
+  });
+
+  // Only pages that actually served content can be judged on their markup — a
+  // 404 carrying no Product schema is not a structured-data problem.
+  const served = rows.filter((r) => r.statusCode >= 200 && r.statusCode < 400);
+
+  const coverage: LiveJsonLdCoverageRow[] = [];
+  const pagesByType = new Map<string, number>();
+  const duplicatePages = new Map<string, string[]>();
+
+  for (const row of served) {
+    const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
+    const seen = new Map<string, number>();
+    for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
+    for (const [t, n] of seen) {
+      pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
+      if (n > 1) {
+        const list = duplicatePages.get(t) ?? [];
+        if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
+        duplicatePages.set(t, list);
+      }
+    }
+  }
+  // The example lists are capped, so the page COUNT has to be tallied
+  // separately or a shop with six duplicate pages would report five.
+  const duplicateCounts = new Map<string, number>();
+  for (const row of served) {
+    const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
+    const seen = new Map<string, number>();
+    for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
+    for (const [t, n] of seen) {
+      if (n > 1) duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
+    }
+  }
+
+  for (const [resourceType, expected] of Object.entries(EXPECTED_TYPE_BY_RESOURCE)) {
+    const ofType = served.filter((r) => r.resourceType === resourceType);
+    if (ofType.length === 0) continue;
+    const missingExamples: string[] = [];
+    let withMarkup = 0;
+    for (const row of ofType) {
+      const types = row.jsonLdTypes ? row.jsonLdTypes.split(",") : [];
+      if (types.some((t) => expected.includes(t))) withMarkup += 1;
+      else if (missingExamples.length < MAX_LIVE_EXAMPLES) missingExamples.push(row.url);
+    }
+    coverage.push({
+      resourceType: resourceType as LiveJsonLdCoverageRow["resourceType"],
+      total: ofType.length,
+      withMarkup,
+      missingExamples,
+    });
+  }
+
+  return {
+    crawledAt: (snapshot.finishedAt ?? snapshot.startedAt).toISOString(),
+    crawlStatus: snapshot.status,
+    pagesChecked: served.length,
+    notMeasured: served.length > 0 && served.every((r) => !r.jsonLdTypes),
+    coverage,
+    typeCounts: [...pagesByType.entries()]
+      .map(([type, pages]) => ({ type, pages }))
+      .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
+    duplicates: [...duplicateCounts.entries()]
+      .map(([type, pages]) => ({ type, pages, examples: duplicatePages.get(type) ?? [] }))
+      .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
+  };
+}
