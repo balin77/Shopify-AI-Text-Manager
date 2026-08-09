@@ -62,10 +62,28 @@ const BOT_BLOCK_THRESHOLD = 3;
  *  protection ("Verifying your connection", 429) trips on a low request count
  *  from a single IP and then applies to the whole domain, so the only way
  *  through is to stop entirely and let it lapse. */
-export const BLOCK_COOLDOWN_MS = 30_000;
+export const BLOCK_COOLDOWN_MS = 60_000;
+/** Ceiling on a cool-down driven by `Retry-After`. A host asking for more than
+ *  this is asking for another crawl, not a pause. */
+export const MAX_COOLDOWN_MS = 5 * 60_000;
 /** Cool-downs before the crawl gives up. Three failed pauses means the shield
  *  is not going to lift within a crawl, and reporting that beats grinding. */
 const MAX_COOLDOWNS = 3;
+
+/**
+ * How long to stop everything after a run of blocks.
+ *
+ * `Retry-After` is the host telling us exactly how long its shield holds. The
+ * per-request retry can't honour a long one (the wait would hold a concurrency
+ * slot — see RETRY_AFTER_MAX_MS), but the global cool-down can, and should:
+ * pausing 30s when the server said 60 just walks back into the same 429, and
+ * three of those exhaust MAX_COOLDOWNS and abort a crawl the host was willing
+ * to serve a minute later.
+ */
+export function coolDownDurationMs(baseMs: number, retryAfterSec: number | null): number {
+  const asked = retryAfterSec != null && retryAfterSec > 0 ? retryAfterSec * 1000 : 0;
+  return Math.min(MAX_COOLDOWN_MS, Math.max(baseMs, asked));
+}
 /** Parallel requests. Deliberately low: the storefront edge counts requests
  *  per IP, and the whole crawl runs from one server address. */
 const CRAWL_CONCURRENCY = 2;
@@ -79,11 +97,17 @@ const RATE_LIMIT_BACKOFF_MS = 2_000;
 const BLOCK_BODY_SNIFF_BYTES = 8 * 1024;
 /** Request spacing: the starting floor, the ceiling the adaptive backoff
  *  escalates to after repeated 429s (doubling each time), and how many clean
- *  responses in a row it takes to halve the spacing back down again. The
- *  ceiling is deliberately modest — spacing is global, so 1s already caps the
- *  crawler at one request per second no matter how many slots are free. */
-export const BASE_SPACING_MS = 500;
-export const MAX_SPACING_MS = 2_000;
+ *  responses in a row it takes to halve the spacing back down again.
+ *
+ *  Spacing is GLOBAL, so the floor alone sets the sustained rate: 1s means one
+ *  request per second no matter how many slots are free. It used to be 500ms.
+ *  Two requests a second is what Shopify's own storefront shield reacts to,
+ *  and since the sitemap seed started contributing actual pages a crawl is
+ *  long enough for that to matter — a run at half speed beats one that gets
+ *  turned away halfway through. The ceiling is correspondingly higher: a
+ *  shield that keeps refusing deserves a real brake, not a 2s tap. */
+export const BASE_SPACING_MS = 1_000;
+export const MAX_SPACING_MS = 5_000;
 export const SPACING_DECAY_AFTER_OK = 25;
 
 /** Brake harder after a 429 — saturating, never unbounded. */
@@ -1046,6 +1070,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   /** While in the future, every worker parks before issuing a request. */
   let coolDownUntil = 0;
   let coolDownsUsed = 0;
+  /** Longest `Retry-After` seen since the last cool-down, in seconds. */
+  let askedRetryAfterSec: number | null = null;
   let outstanding = 0;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
@@ -1092,6 +1118,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     if (isBotBlockStatus(outcome.status)) {
       const source = outcome.block?.source ?? "unknown";
       blockSourceCounts.set(source, (blockSourceCounts.get(source) ?? 0) + 1);
+      // Remember the longest wait the host asked for — the cool-down below
+      // honours it instead of guessing.
+      const asked = outcome.block?.retryAfterSec;
+      if (asked != null && asked > 0) askedRetryAfterSec = Math.max(askedRetryAfterSec ?? 0, asked);
 
       // Adaptive backoff: a 429 that survived its retry means we're still
       // going too fast for this host. Widen the spacing for every remaining
@@ -1117,7 +1147,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
           // Stop entirely for a while instead of aborting. The shield lapses
           // on its own; crawling through it never works, and a slow crawl
           // beats no crawl at all.
-          coolDownUntil = Date.now() + coolDownMs;
+          coolDownUntil = Date.now() + coolDownDurationMs(coolDownMs, askedRetryAfterSec);
+          askedRetryAfterSec = null;
           spacingMs = maxSpacing;
           semaphore.setMinSpacing(spacingMs);
         }

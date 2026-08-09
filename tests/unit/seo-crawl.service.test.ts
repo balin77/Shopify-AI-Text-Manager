@@ -18,6 +18,9 @@ import {
   dominantBlockSource,
   parseCrawlError,
   rateLimitRetryDelayMs,
+  coolDownDurationMs,
+  BLOCK_COOLDOWN_MS,
+  MAX_COOLDOWN_MS,
   normalizeHeadTitle,
   decodeHtmlEntities,
   isAllowedByRobots,
@@ -385,6 +388,33 @@ describe("rateLimitRetryDelayMs", () => {
     // 5 slots × a long wait idles the crawler completely.
     expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 10, server: null })).toBeNull();
     expect(rateLimitRetryDelayMs({ source: "rate_limit", retryAfterSec: 5, server: null })).toBe(5000);
+  });
+});
+
+describe("coolDownDurationMs", () => {
+  it("falls back to the base cool-down when the host asked for nothing", () => {
+    expect(coolDownDurationMs(BLOCK_COOLDOWN_MS, null)).toBe(BLOCK_COOLDOWN_MS);
+    expect(coolDownDurationMs(BLOCK_COOLDOWN_MS, 0)).toBe(BLOCK_COOLDOWN_MS);
+  });
+
+  it("waits out a Retry-After the per-request retry had to give up on", () => {
+    // The whole point: pausing 60s when the host said 120 walks straight back
+    // into the same 429 and burns a cool-down for nothing.
+    expect(coolDownDurationMs(BLOCK_COOLDOWN_MS, 120)).toBe(120_000);
+  });
+
+  it("never lets a Retry-After shorten the base cool-down", () => {
+    expect(coolDownDurationMs(BLOCK_COOLDOWN_MS, 5)).toBe(BLOCK_COOLDOWN_MS);
+  });
+
+  it("caps an absurd Retry-After — that is a new crawl, not a pause", () => {
+    expect(coolDownDurationMs(BLOCK_COOLDOWN_MS, 3600)).toBe(MAX_COOLDOWN_MS);
+  });
+
+  it("keeps the worst case inside the stuck-task threshold", () => {
+    // task-recovery.service.js reaps a seoCrawl task after 45 min without a
+    // heartbeat; the cool-downs must not add up to anywhere near that.
+    expect(MAX_COOLDOWN_MS * 3).toBeLessThan(45 * 60_000);
   });
 });
 
