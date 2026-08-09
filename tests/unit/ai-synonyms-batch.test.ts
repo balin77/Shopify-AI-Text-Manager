@@ -117,3 +117,89 @@ describe('AIService.generateSynonymsBatch', () => {
     expect(prompts).toHaveLength(0);
   });
 });
+
+/**
+ * `AIService.findLocalizedAnchors` — the per-language anchor lookup behind the
+ * internal-linking "carry translations" step
+ * (app/services/seo/internal-links-translate.server.ts).
+ *
+ * The point is that it is NOT a translation call: it gets each translated text
+ * and must copy the wording out of it, because the caller then inserts that
+ * wording with a whole-word matcher. A dictionary form the text does not
+ * contain is worthless there. These tests pin that contract plus the same
+ * degrade-quietly rule as the synonym batch — a bad answer costs a link, never
+ * a translation.
+ */
+describe('AIService.findLocalizedAnchors', () => {
+  let svc: AIService;
+  let prompts: string[];
+
+  const respondWith = (text: string) => {
+    vi.spyOn(svc as any, 'executeAIRequest').mockImplementation(async (prompt: unknown) => {
+      prompts.push(String(prompt));
+      return text;
+    });
+  };
+
+  const SAMPLES = [
+    { locale: 'es', text: 'Los portalápices de madera son bonitos.' },
+    { locale: 'fr', text: 'Nos pots à crayons en bois.' },
+  ];
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    prompts = [];
+    svc = new AIService('claude', CONFIG);
+  });
+
+  it('returns the wording per locale from a single request that carries each text', async () => {
+    respondWith('{"es": "portalápices", "fr": "pots à crayons"}');
+
+    const result = await svc.findLocalizedAnchors('Stifthalter', 'de', SAMPLES);
+
+    expect(result).toEqual({ es: 'portalápices', fr: 'pots à crayons' });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('Stifthalter');
+    expect(prompts[0]).toContain('Los portalápices de madera son bonitos.');
+    expect(prompts[0]).toContain('Nos pots à crayons en bois.');
+  });
+
+  it('drops a language the text does not mention (empty string = the correct answer)', async () => {
+    respondWith('{"es": "portalápices", "fr": ""}');
+
+    expect(await svc.findLocalizedAnchors('Stifthalter', 'de', SAMPLES)).toEqual({ es: 'portalápices' });
+  });
+
+  it('ignores locales that were not asked about', async () => {
+    respondWith('{"es": "portalápices", "it": "portapenne"}');
+
+    expect(await svc.findLocalizedAnchors('Stifthalter', 'de', SAMPLES)).toEqual({ es: 'portalápices' });
+  });
+
+  it('truncates each text so several languages fit in one request', async () => {
+    respondWith('{"es": ""}');
+
+    await svc.findLocalizedAnchors('Stifthalter', 'de', [{ locale: 'es', text: 'x'.repeat(500) }], {
+      maxTextChars: 100,
+    });
+
+    expect(prompts[0]).toContain('x'.repeat(100));
+    expect(prompts[0]).not.toContain('x'.repeat(101));
+  });
+
+  it('degrades to no wordings on a non-object response, and never throws when the provider fails', async () => {
+    respondWith('sorry, I cannot do that');
+    expect(await svc.findLocalizedAnchors('Stifthalter', 'de', SAMPLES)).toEqual({});
+
+    vi.spyOn(svc as any, 'executeAIRequest').mockRejectedValue(new Error('provider down'));
+    await expect(svc.findLocalizedAnchors('Stifthalter', 'de', SAMPLES)).resolves.toEqual({});
+  });
+
+  it('makes no request without samples or without an anchor', async () => {
+    respondWith('{}');
+
+    expect(await svc.findLocalizedAnchors('Stifthalter', 'de', [])).toEqual({});
+    expect(await svc.findLocalizedAnchors('   ', 'de', SAMPLES)).toEqual({});
+    expect(prompts).toHaveLength(0);
+  });
+});

@@ -250,6 +250,44 @@ function isAlreadyLinked(hrefs: string[], target: { resourceType: TargetResource
 }
 
 /**
+ * The plain text an anchor could actually be placed in — the concatenated
+ * ELIGIBLE text nodes, i.e. exactly what matching and insertion see (no text
+ * from inside an existing `<a>`, a heading, `<script>`/`<style>`/`<title>`).
+ *
+ * Used to show a translated body to the AI when asking which wording it uses
+ * for an anchor: feeding it the raw HTML would let it pick a phrase that sits
+ * in a heading or an existing link, which insertLinkIntoHtml then refuses —
+ * a suggestion that can never be applied.
+ */
+export function eligibleAnchorText(html: string | null | undefined): string {
+  if (!html || !html.trim()) return "";
+  const $ = cheerio.load(html, null, false);
+  return collectTextNodes($)
+    .map((node) => node.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * True when `html` already contains a link to the target's storefront path —
+ * the standalone form of the skip rule above, for callers that hold one HTML
+ * string rather than a parsed source (the translation carry step, which must
+ * not add a second link to a translation that already has one). Exact
+ * handle-segment comparison, so `/products/vase-large` is not treated as a
+ * link to `/products/vase`; a localized prefix like `/de/products/vase` still
+ * matches, since only the trailing segments are compared.
+ */
+export function htmlAlreadyLinksTo(
+  html: string | null | undefined,
+  target: { resourceType: TargetResourceType; handle: string },
+): boolean {
+  if (!html || !html.trim()) return false;
+  const $ = cheerio.load(html, null, false);
+  return isAlreadyLinked(collectHrefs($), target);
+}
+
+/**
  * Unicode-aware whole-word/whole-phrase, case-insensitive match (same
  * boundary trick as keywords.service's private `buildWordBoundaryRegex` —
  * re-implemented rather than imported/exported because this one needs the

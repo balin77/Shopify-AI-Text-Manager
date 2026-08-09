@@ -1646,6 +1646,12 @@ export const de = {
       previewLoadError: "Vorschau konnte nicht geladen werden. Bitte erneut versuchen.",
       acceptSuccess: "Link gespeichert.",
       acceptSaveError: "Speichern fehlgeschlagen. Bitte erneut versuchen.",
+      carryTranslationsLabel: "Übersetzungen mitführen",
+      carryTranslationsHelp:
+        "Empfohlen. Der eingefügte Link ändert nur die Formatierung, nicht den Text — deine bestehenden Übersetzungen bleiben deshalb erhalten und bekommen denselben Link mit der jeweils passenden fremdsprachigen URL. Ohne diese Option löscht Shopify beim Speichern wie üblich alle Übersetzungen des bearbeiteten Feldes.",
+      acceptTranslationsLinked: " In {count} Übersetzung(en) wurde der Link ebenfalls gesetzt.",
+      acceptTranslationsKept:
+        " {count} Übersetzung(en) blieben unverändert erhalten — der Ankertext liess sich dort nicht eindeutig finden.",
     },
     sitemapPage: {
       introTitle: "Wie funktioniert die Sitemap-Steuerung?",
