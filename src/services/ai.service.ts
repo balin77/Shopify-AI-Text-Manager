@@ -1119,6 +1119,87 @@ Respond in JSON format: [["synonym one", "synonym two"], [], ...]`;
   }
 
   /**
+   * The wording each TRANSLATED text actually uses for `anchor` — the internal
+   * linking "carry translations" step
+   * (app/services/seo/internal-links-translate.server.ts).
+   *
+   * Deliberately NOT a plain translation of the anchor. A context-free
+   * translation of "Stifthalter" is "portalápiz", while the Spanish text most
+   * likely says "portalápices" (or "lapicero") — close enough for a human,
+   * useless for the exact whole-word insertion that follows, which would then
+   * find nothing and leave that language unlinked. So the model gets the
+   * translated text itself and must copy a substring OUT of it.
+   *
+   * That also makes the answer verifiable: the caller inserts the returned
+   * phrase with the same matcher used everywhere else, so a hallucinated or
+   * inflected wording simply fails to insert — it can never end up in the
+   * merchant's content.
+   *
+   * One request for ALL locales. Never throws, never returns a locale it was
+   * not asked about: any provider/parse problem degrades to "no wording for
+   * that language", which costs a link, not a translation.
+   */
+  async findLocalizedAnchors(
+    anchor: string,
+    fromLocale: string,
+    samples: { locale: string; text: string }[],
+    options: { maxTextChars?: number } = {},
+  ): Promise<Record<string, string>> {
+    const { maxTextChars = 3000 } = options;
+    const cleanAnchor = sanitizePromptInput(anchor, { maxLength: 200 });
+    if (!cleanAnchor || samples.length === 0) return {};
+
+    const blocks = samples
+      .map((sample) => {
+        // Truncated per locale: only the wording matters, and a long body would
+        // push several languages past the context window in one request.
+        const text = sanitizePromptInput(sample.text, { allowNewlines: true }).slice(0, maxTextChars);
+        return `### ${sample.locale}\n${text || '(empty)'}`;
+      })
+      .join('\n\n');
+
+    const jsonStructure: Record<string, string> = {};
+    for (const sample of samples) jsonStructure[sample.locale] = '...';
+
+    const prompt = `A phrase from a ${localeName(fromLocale) || fromLocale} text is going to be turned into a link. Below are translations of that same text in other languages. For each one, find the wording IT uses for that phrase.
+
+Phrase: "${cleanAnchor}"
+
+${blocks}
+
+Requirements:
+- Copy the wording EXACTLY as it appears in that language's text, character for character, including its inflection, capitalization and any accents. Do not translate the phrase yourself and do not normalize it to a dictionary form.
+- Pick the shortest wording that clearly refers to the same thing, and prefer its first occurrence.
+- If a text does not mention the thing at all, return an empty string "" for that language. An empty string is the correct answer — never guess.
+- One entry per language code below, no extra keys.
+
+Respond with ONLY this JSON shape:
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    try {
+      const responseText = await this.askAI(prompt);
+      const parsed: unknown = this.parseJSONResponse(responseText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        loggers.ai('warn', '[AI-SERVICE] findLocalizedAnchors: unexpected response shape — no localized anchors', {
+          got: Array.isArray(parsed) ? 'array' : typeof parsed,
+        });
+        return {};
+      }
+      const out: Record<string, string> = {};
+      for (const sample of samples) {
+        const value = (parsed as Record<string, unknown>)[sample.locale];
+        if (typeof value === 'string' && value.trim().length > 0) out[sample.locale] = value.trim();
+      }
+      return out;
+    } catch (err) {
+      loggers.ai('warn', '[AI-SERVICE] findLocalizedAnchors failed — translations keep their text without a link', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {};
+    }
+  }
+
+  /**
    * Permissive recovery for a malformed `["a", "b", ...]` response when the
    * model forgot to escape a straight " inside one of the values (common with
    * typographic content like German „Foo"). Strict JSON.parse rejects the

@@ -37,6 +37,14 @@
  *
  * "Alle annehmen" / "Alle ablehnen" do the same to the whole listed set
  * (filters included, all pages) in ONE request — see the same file.
+ *
+ * "Übersetzungen mitführen" (on by default, hidden on single-language shops)
+ * rides along on every accept. Without it an accept is an ordinary primary
+ * save, and a primary save purges the foreign translations of the field it
+ * touched — which for a link insertion means losing translations for text that
+ * did not change. With it the purge is skipped and the same link is written
+ * into each existing translation, pointing at the localized URL. See
+ * internal-links-translate.server.ts.
  */
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
@@ -53,6 +61,7 @@ import {
   Banner,
   Select,
   Modal,
+  Checkbox,
   type ComplexAction,
 } from "@shopify/polaris";
 import { ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -103,6 +112,10 @@ interface ActionResult {
   accepted?: number;
   failed?: number;
   remaining?: number;
+  /** accept + acceptAll, when "Übersetzungen mitführen" is on: how many foreign
+   *  translations got the link, and how many kept their text without one. */
+  translationsLinked?: number;
+  translationsUnlinked?: number;
 }
 
 const EXAMPLE_ROWS: SuggestionRow[] = [
@@ -175,6 +188,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: false,
       lastRun: null as string | null,
       primaryLocale: "",
+      hasForeignLocales: false,
       view: "open" as View,
       fromFilter: "all",
       toFilter: "all",
@@ -199,6 +213,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+  // Drives the "carry translations" toggle: on a single-language shop there is
+  // nothing to carry, so the option is not shown at all.
+  const hasForeignLocales = shopLocales.some((l) => l.published && !l.primary);
 
   const [runningTask, lastTask, total, openCount, rejectedCount] = await Promise.all([
     db.task.findFirst({ where: { shop, type: "seoInternalLinks", status: "running" }, select: { id: true } }),
@@ -256,6 +273,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     running: !!runningTask,
     lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
     primaryLocale,
+    hasForeignLocales,
     view,
     fromFilter: fromFilter ?? "all",
     toFilter: toFilter ?? "all",
@@ -327,6 +345,11 @@ export default function SeoInternalLinks() {
   const [busyIds, setBusyIds] = useState<string[]>([]);
   const [bulkRunning, setBulkRunning] = useState<"accept" | "reject" | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState<"accept" | "reject" | null>(null);
+
+  // On by default: losing hand-written translations to a formatting-level edit
+  // is the surprising outcome, so it is the one the merchant has to opt INTO.
+  const [carryTranslations, setCarryTranslations] = useState(true);
+  const carryActive = data.hasForeignLocales && carryTranslations;
 
   useEffect(() => {
     if (generateFetcher.state !== "idle" || !generateFetcher.data) return;
@@ -408,6 +431,23 @@ export default function SeoInternalLinks() {
   const acceptErrorMessage = (result: ActionResult | null) =>
     result?.code === "STALE" ? c.previewStaleError : result?.error || c.acceptSaveError;
 
+  /** "Link gespeichert." plus, when the carry step ran, what happened to the
+   *  translations — the whole point of the toggle is that the merchant can see
+   *  they are still there. */
+  const acceptSuccessMessage = (result: ActionResult | null) => {
+    let message = c.acceptSuccess;
+    const linked = result?.translationsLinked ?? 0;
+    const unlinked = result?.translationsUnlinked ?? 0;
+    if (linked > 0) message += c.acceptTranslationsLinked.replace("{count}", String(linked));
+    if (unlinked > 0) message += c.acceptTranslationsKept.replace("{count}", String(unlinked));
+    return message;
+  };
+
+  /** Every accept carries the toggle. Sent as an explicit flag rather than
+   *  relying on a server default, so the endpoint's behaviour always matches
+   *  what the checkbox on screen says. */
+  const acceptFields = () => ({ carryTranslations: carryActive ? "1" : "0" });
+
   const submitRowAction = async (row: SuggestionRow, actionType: "reject" | "restore") => {
     setBusy(row.id, true);
     try {
@@ -427,8 +467,8 @@ export default function SeoInternalLinks() {
   const acceptSuggestion = async (row: SuggestionRow) => {
     setBusy(row.id, true);
     try {
-      const result = await post({ actionType: "accept", suggestionId: row.id });
-      if (result?.success) reportSuccess(c.acceptSuccess);
+      const result = await post({ actionType: "accept", suggestionId: row.id, ...acceptFields() });
+      if (result?.success) reportSuccess(acceptSuccessMessage(result));
       else reportError(acceptErrorMessage(result));
     } catch {
       reportError(c.acceptSaveError);
@@ -462,12 +502,12 @@ export default function SeoInternalLinks() {
 
     setConfirming(true);
     try {
-      const result = await post({ actionType: "accept", suggestionId: row.id });
+      const result = await post({ actionType: "accept", suggestionId: row.id, ...acceptFields() });
       if (!result?.success) {
         setPreviewError(acceptErrorMessage(result));
         return;
       }
-      reportSuccess(c.acceptSuccess);
+      reportSuccess(acceptSuccessMessage(result));
       setPreviewRow(null);
     } catch {
       setPreviewError(c.acceptSaveError);
@@ -499,6 +539,7 @@ export default function SeoInternalLinks() {
         view: data.view,
         from: data.fromFilter,
         to: data.toFilter,
+        ...(kind === "accept" ? acceptFields() : {}),
       });
       if (!result?.success) {
         reportError(result?.error || c.actionError);
@@ -512,6 +553,10 @@ export default function SeoInternalLinks() {
       const failed = result.failed ?? 0;
       const remaining = result.remaining ?? 0;
       let message = c.bulkAcceptResult.replace("{accepted}", String(accepted));
+      const linked = result.translationsLinked ?? 0;
+      const unlinked = result.translationsUnlinked ?? 0;
+      if (linked > 0) message += c.acceptTranslationsLinked.replace("{count}", String(linked));
+      if (unlinked > 0) message += c.acceptTranslationsKept.replace("{count}", String(unlinked));
       if (failed > 0) message += c.bulkAcceptFailed.replace("{failed}", String(failed));
       // Only invite another round when there is more left than the failures of
       // this run — a suggestion whose anchor text is gone never succeeds, so
@@ -662,6 +707,19 @@ export default function SeoInternalLinks() {
               </Button>
             </InlineStack>
           </InlineStack>
+
+          {/* Applies to every accept below — single row, preview modal and
+              "Alle annehmen" alike, which is why it sits with the operations
+              and not inside a row. */}
+          {data.hasForeignLocales && (
+            <Checkbox
+              label={c.carryTranslationsLabel}
+              helpText={c.carryTranslationsHelp}
+              checked={carryTranslations}
+              onChange={setCarryTranslations}
+              disabled={bulkBusy}
+            />
+          )}
 
           {banner && (
             <Banner tone={banner.tone} onDismiss={() => setBanner(null)}>

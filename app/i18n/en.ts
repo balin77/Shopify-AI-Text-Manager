@@ -1704,6 +1704,12 @@ export const en: Translation = {
       previewLoadError: "Couldn't load the preview. Please try again.",
       acceptSuccess: "Link saved.",
       acceptSaveError: "Save failed. Please try again.",
+      carryTranslationsLabel: "Keep translations",
+      carryTranslationsHelp:
+        "Recommended. Inserting the link only changes formatting, not the wording — so your existing translations are kept and get the same link with the matching localized URL. Without this option, saving deletes every translation of the edited field, as Shopify saves normally do.",
+      acceptTranslationsLinked: " The link was added to {count} translation(s) as well.",
+      acceptTranslationsKept:
+        " {count} translation(s) were kept unchanged — the anchor text could not be located in them.",
     },
     sitemapPage: {
       introTitle: "How does sitemap control work?",

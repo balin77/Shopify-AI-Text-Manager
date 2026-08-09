@@ -21,6 +21,14 @@
  * the editor routes use. This route does NOT write content itself (CLAUDE.md
  * architecture invariant: one write path), it only calls that handler in-process
  * instead of over HTTP.
+ *
+ * `carryTranslations` (the page's toggle, on by default) changes what an accept
+ * does to the source item's FOREIGN content. Off, an accept is a plain primary
+ * save: the handler purges the translations of the field it changed, which for
+ * a link insertion throws away translations the merchant wrote for text that
+ * did not actually change. On, `changedFields` is omitted so nothing is purged,
+ * and the same link is written into each existing translation with the
+ * localized URL — see internal-links-translate.server.ts.
  */
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
@@ -36,6 +44,10 @@ import {
 } from "../services/seo/internal-links.service";
 import { RESOURCE_ROUTE, BULK_ACCEPT_LIMIT } from "../services/seo/internal-links-routes";
 import { suggestionWhere, parseView, parseTypeFilter } from "../services/seo/internal-links-query";
+import { carryLinkIntoTranslations, type CarryOutcome } from "../services/seo/internal-links-translate.server";
+import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
+import { fieldTranslationKeyMap } from "../../src/services/shopify-content.service";
+import { createAIService, getMissingPreferredKey } from "./api-ai-handlers/shared";
 
 /**
  * How many source items "Alle annehmen" applies at the same time. Suggestions
@@ -56,7 +68,17 @@ type SuggestionRecord = {
 };
 
 type Insertion =
-  | { ok: true; before: string; after: string; savePath: string; fieldKey: "description" | "body"; itemId: string }
+  | {
+      ok: true;
+      before: string;
+      after: string;
+      savePath: string;
+      fieldKey: "description" | "body";
+      itemId: string;
+      /** Resolved link target — the carry step needs its handle and title to
+       *  build the localized href and the localized anchor wording. */
+      target: { resourceId: string; resourceType: "Product" | "Collection"; handle: string; title: string };
+    }
   | { ok: false; code: "UNSUPPORTED" | "STALE" | "SOURCE_MISSING" | "TARGET_MISSING"; error: string };
 
 /**
@@ -91,17 +113,19 @@ async function computeInsertion(db: any, shop: string, suggestion: SuggestionRec
     return { ok: false, code: "SOURCE_MISSING", error: "Source content not found" };
   }
 
-  let targetHandle: string | null = null;
+  let targetRow: { handle: string | null; title: string | null } | null = null;
   if (suggestion.toResourceType === "Product") {
-    targetHandle = (await db.product.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
+    targetRow = await db.product.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true, title: true } });
   } else if (suggestion.toResourceType === "Collection") {
-    targetHandle = (await db.collection.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true } }))?.handle ?? null;
+    targetRow = await db.collection.findFirst({ where: { id: suggestion.toResourceId, shop }, select: { handle: true, title: true } });
   }
+  const targetHandle = targetRow?.handle ?? null;
   if (!targetHandle) {
     return { ok: false, code: "TARGET_MISSING", error: "Target content not found" };
   }
 
-  const href = targetUrlPath({ resourceType: suggestion.toResourceType as "Product" | "Collection", handle: targetHandle });
+  const targetType = suggestion.toResourceType as "Product" | "Collection";
+  const href = targetUrlPath({ resourceType: targetType, handle: targetHandle });
   const result = insertLinkIntoHtml(currentHtml, suggestion.anchorText, href);
   if (!result.inserted) {
     return { ok: false, code: "STALE", error: "Anchor text not found in current content" };
@@ -114,15 +138,22 @@ async function computeInsertion(db: any, shop: string, suggestion: SuggestionRec
     savePath: fromRoute.path,
     fieldKey: fromRoute.fieldKey,
     itemId: suggestion.fromResourceId,
+    target: {
+      resourceId: suggestion.toResourceId,
+      resourceType: targetType,
+      handle: targetHandle,
+      title: targetRow?.title ?? "",
+    },
   };
 }
 
 /**
  * Everything a save needs, loaded once per request: the unified handler, the
- * per-resource-type editor config it expects, and the shop's primary locale
- * (an accepted link is always primary-locale content).
+ * per-resource-type editor config it expects, the shop's primary locale (an
+ * accepted link is always primary-locale content) and — for the carry step —
+ * the published foreign locales plus an AI hook for the anchor wording.
  */
-async function loadApplyContext(db: any, shop: string, admin: any) {
+async function loadApplyContext(db: any, shop: string, admin: any, carryTranslations: boolean) {
   const [{ handleUnifiedContentActions }, configs, aiSettings, aiInstructions, shopLocales] = await Promise.all([
     import("../actions/unified-content.actions"),
     import("../config/content-fields.config"),
@@ -130,6 +161,11 @@ async function loadApplyContext(db: any, shop: string, admin: any) {
     db.aIInstructions.findUnique({ where: { shop } }),
     getCachedShopLocales(admin, shop).catch(() => []),
   ]);
+
+  const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+  const foreignLocales = carryTranslations
+    ? shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale)
+    : [];
 
   return {
     handleUnifiedContentActions,
@@ -141,14 +177,48 @@ async function loadApplyContext(db: any, shop: string, admin: any) {
     } as Record<string, any>,
     aiSettings,
     aiInstructions,
-    primaryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
+    primaryLocale,
+    foreignLocales,
+    gateway: new ShopifyApiGateway(admin, shop),
+    translateAnchor: buildAnchorTranslator(aiSettings, shop, primaryLocale),
   };
+}
+
+/**
+ * Reads the anchor's wording out of each translation in ONE request, or
+ * undefined when the shop has no usable AI key (the carry step then relies on
+ * the target's translated title and on the anchor being spelled the same way,
+ * which covers brand and product names).
+ *
+ * No Task row and no queue: this runs inside the merchant's accept request, so
+ * it must answer within it — `createAIService` with an empty taskId is the
+ * documented direct-execution path (ai.service.ts askAI).
+ */
+function buildAnchorTranslator(
+  aiSettings: any,
+  shop: string,
+  primaryLocale: string,
+):
+  | ((anchor: string, fromLocale: string, samples: { locale: string; text: string }[]) => Promise<Record<string, string>>)
+  | undefined {
+  if (!primaryLocale) return undefined;
+  if (getMissingPreferredKey(aiSettings)) return undefined;
+
+  return (anchor, fromLocale, samples) =>
+    createAIService(aiSettings, shop, "").findLocalizedAnchors(anchor, fromLocale, samples);
 }
 
 /**
  * Apply one suggestion: insert the link into the current content and save it
  * through the editor's own handler. Returns the insertion failure code when
  * there is nothing to save, so a single accept can tell the merchant WHY.
+ *
+ * With `carryTranslations` on, `changedFields` is deliberately NOT sent: it is
+ * the only thing that triggers the handler's stale-translation purge, and a
+ * link insertion leaves the wording untouched, so the translations are still
+ * correct. The link is then written into them separately (carry step below).
+ * Everything about that step is best-effort — the translations survive whether
+ * or not it succeeds, so its failures never fail the accept.
  */
 async function applySuggestion(
   db: any,
@@ -157,12 +227,14 @@ async function applySuggestion(
   session: any,
   ctx: Awaited<ReturnType<typeof loadApplyContext>>,
   suggestion: SuggestionRecord,
-): Promise<{ ok: true } | { ok: false; code?: string; error: string }> {
+): Promise<{ ok: true; carried?: CarryOutcome } | { ok: false; code?: string; error: string }> {
   const insertion = await computeInsertion(db, shop, suggestion);
   if (!insertion.ok) return { ok: false, code: insertion.code, error: insertion.error };
 
   const contentConfig = ctx.configByType[suggestion.fromResourceType];
   if (!contentConfig) return { ok: false, code: "UNSUPPORTED", error: "Unsupported source resource type" };
+
+  const carry = ctx.foreignLocales.length > 0;
 
   const saveForm = new FormData();
   saveForm.set("action", "updateContent");
@@ -170,7 +242,7 @@ async function applySuggestion(
   saveForm.set("locale", ctx.primaryLocale);
   saveForm.set("primaryLocale", ctx.primaryLocale);
   saveForm.set(insertion.fieldKey, insertion.after);
-  saveForm.set("changedFields", JSON.stringify([insertion.fieldKey]));
+  if (!carry) saveForm.set("changedFields", JSON.stringify([insertion.fieldKey]));
 
   const response = await ctx.handleUnifiedContentActions({
     admin,
@@ -184,7 +256,24 @@ async function applySuggestion(
   const body = (await response.json().catch(() => null)) as { success?: boolean; error?: string } | null;
   if (!body?.success) return { ok: false, error: body?.error || "Save failed" };
 
-  return { ok: true };
+  if (!carry) return { ok: true };
+
+  const carried = await carryLinkIntoTranslations({
+    gateway: ctx.gateway,
+    db,
+    shop,
+    source: { resourceId: insertion.itemId, resourceType: suggestion.fromResourceType },
+    target: insertion.target,
+    // The ONE field→key map (CLAUDE.md); "description"/"body" both land on
+    // "body_html" for all four source types.
+    translationKey: fieldTranslationKeyMap(suggestion.fromResourceType)[insertion.fieldKey],
+    anchorText: suggestion.anchorText,
+    primaryLocale: ctx.primaryLocale,
+    foreignLocales: ctx.foreignLocales,
+    translateAnchor: ctx.translateAnchor,
+  });
+
+  return { ok: true, carried };
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -194,6 +283,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = getFormString(formData, "actionType");
   const suggestionId = getFormString(formData, "suggestionId");
+  // The page's toggle. Absent = off, so a caller that predates it keeps the old
+  // purging behaviour; the page itself sends "1" unless the merchant turns it off.
+  const carryTranslations = getFormString(formData, "carryTranslations") === "1";
 
   // Directly POST-reachable, so the plan is checked here and not only in the
   // page's loader — every path below writes to the merchant's shop.
@@ -230,7 +322,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, accepted: 0, failed: 0, remaining: 0 });
     }
 
-    const ctx = await loadApplyContext(db, shop, admin);
+    const ctx = await loadApplyContext(db, shop, admin, carryTranslations);
 
     // Suggestions that share a source item run in order (each insertion builds
     // on the content the previous save wrote); different source items run
@@ -238,6 +330,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const queue = groupSuggestionsBySource(batch as SuggestionRecord[]);
     const acceptedIds: string[] = [];
     let failed = 0;
+    let translationsLinked = 0;
+    let translationsUnlinked = 0;
 
     const worker = async () => {
       for (;;) {
@@ -248,8 +342,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             ok: false as const,
             error: "Save failed",
           }));
-          if (result.ok) acceptedIds.push(suggestion.id);
-          else failed++;
+          if (result.ok) {
+            acceptedIds.push(suggestion.id);
+            translationsLinked += result.carried?.linked.length ?? 0;
+            translationsUnlinked += result.carried?.unlinked.length ?? 0;
+          } else failed++;
         }
       }
     };
@@ -266,7 +363,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // suggests another round when there is more left than just this run's
     // failures (a suggestion whose anchor text is gone never succeeds).
     const remaining = await db.seoInternalLinkSuggestion.count({ where });
-    return json({ success: true, accepted: acceptedIds.length, failed, remaining });
+    return json({
+      success: true,
+      accepted: acceptedIds.length,
+      failed,
+      remaining,
+      translationsLinked,
+      translationsUnlinked,
+    });
   }
 
   // ── Single-suggestion actions ──────────────────────────────────────────────
@@ -315,7 +419,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (actionType === "accept") {
-    const ctx = await loadApplyContext(db, shop, admin);
+    const ctx = await loadApplyContext(db, shop, admin, carryTranslations);
     const result = await applySuggestion(db, shop, admin, session, ctx, suggestion);
     if (!result.ok) {
       const status = result.code === "STALE" ? 409 : result.code ? 400 : 500;
@@ -327,7 +431,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       where: { id: suggestion.id },
       data: { status: "accepted", dismissedUntil: null },
     });
-    return json({ success: true });
+    return json({
+      success: true,
+      translationsLinked: result.carried?.linked.length ?? 0,
+      translationsUnlinked: result.carried?.unlinked.length ?? 0,
+    });
   }
 
   return json({ success: false, error: `Unknown actionType: ${actionType}` }, { status: 400 });

@@ -9,12 +9,15 @@ import {
   runInternalLinkSuggestions,
   rejectedAnchorsByTarget,
   groupSuggestionsBySource,
+  eligibleAnchorText,
+  htmlAlreadyLinksTo,
   MAX_SUGGESTIONS_PER_SOURCE,
   MAX_PENDING_PER_SHOP,
   SYNONYM_BATCH_SIZE,
   type TargetItem,
   type AssignmentLike,
 } from "~/services/seo/internal-links.service";
+import { localizedAnchorCandidates } from "~/services/seo/internal-links-translate.server";
 
 /**
  * Phase 2 (PLAN_SEO_SUITE_COMPLETION.md §4/§9) — internal-linking matcher +
@@ -229,6 +232,88 @@ describe("targetUrlPath", () => {
   it("builds the storefront path per resource type", () => {
     expect(targetUrlPath({ resourceType: "Product", handle: "foo" })).toBe("/products/foo");
     expect(targetUrlPath({ resourceType: "Collection", handle: "bar" })).toBe("/collections/bar");
+  });
+});
+
+describe("htmlAlreadyLinksTo (translation carry — never double-link)", () => {
+  const vase = { resourceType: "Product" as const, handle: "vase" };
+
+  it("matches a plain and a locale-prefixed link to the same target", () => {
+    expect(htmlAlreadyLinksTo('<p>a <a href="/products/vase">Vase</a></p>', vase)).toBe(true);
+    expect(htmlAlreadyLinksTo('<p>a <a href="/de/products/vase">Vase</a></p>', vase)).toBe(true);
+    expect(htmlAlreadyLinksTo('<p>a <a href="https://x.com/fr/products/vase/">Vase</a></p>', vase)).toBe(true);
+  });
+
+  it("does not treat a longer handle as a link to the target (prefix collision)", () => {
+    expect(htmlAlreadyLinksTo('<p><a href="/products/vase-large">x</a></p>', vase)).toBe(false);
+    expect(htmlAlreadyLinksTo('<p><a href="/collections/vase">x</a></p>', vase)).toBe(false);
+  });
+
+  it("is false for empty content and content without links", () => {
+    expect(htmlAlreadyLinksTo("", vase)).toBe(false);
+    expect(htmlAlreadyLinksTo("<p>Just a Vase.</p>", vase)).toBe(false);
+  });
+});
+
+describe("eligibleAnchorText (what the AI is shown of a translation)", () => {
+  it("returns only text an anchor could actually be inserted into", () => {
+    const html = `
+      <h2>Stifthalter aus Holz</h2>
+      <p>Der <a href="/products/x">Stifthalter Arabe</a> steht hier.</p>
+      <p>Unsere Stifthalter sind schön.</p>
+      <script>var stifthalter = 1;</script>
+    `;
+    const text = eligibleAnchorText(html);
+
+    expect(text).toContain("Unsere Stifthalter sind schön.");
+    expect(text).toContain("steht hier.");
+    // Heading, existing link text and script body are all off-limits for an
+    // insertion, so showing them would invite an unusable answer.
+    expect(text).not.toContain("aus Holz");
+    expect(text).not.toContain("Arabe");
+    expect(text).not.toContain("var");
+  });
+
+  it("collapses whitespace and is empty for empty content", () => {
+    expect(eligibleAnchorText("<p>a\n\n   b</p>")).toBe("a b");
+    expect(eligibleAnchorText("")).toBe("");
+    expect(eligibleAnchorText(null)).toBe("");
+  });
+});
+
+describe("localizedAnchorCandidates (translation carry — anchor wording per locale)", () => {
+  it("prefers the translated target title when the anchor IS the target title", () => {
+    expect(
+      localizedAnchorCandidates({
+        anchorText: "Green Vase",
+        targetTitle: "green vase", // case-insensitive match
+        translatedTitle: "Grüne Vase",
+        aiAnchor: "grüne Blumenvase",
+      }),
+    ).toEqual(["Grüne Vase", "grüne Blumenvase", "Green Vase"]);
+  });
+
+  it("falls back to the AI wording when the anchor is a keyword, not the title", () => {
+    expect(
+      localizedAnchorCandidates({
+        anchorText: "ceramic vase",
+        targetTitle: "Green Vase",
+        translatedTitle: "Grüne Vase",
+        aiAnchor: "Keramikvase",
+      }),
+    ).toEqual(["Keramikvase", "ceramic vase"]);
+  });
+
+  it("keeps the verbatim anchor as the last resort and de-dupes case-insensitively", () => {
+    expect(localizedAnchorCandidates({ anchorText: "Kumiko", targetTitle: "Kumiko" })).toEqual(["Kumiko"]);
+    expect(
+      localizedAnchorCandidates({
+        anchorText: "Kumiko",
+        targetTitle: "Kumiko",
+        translatedTitle: "kumiko",
+        aiAnchor: "  ",
+      }),
+    ).toEqual(["kumiko"]);
   });
 });
 

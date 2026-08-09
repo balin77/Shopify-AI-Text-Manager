@@ -1703,6 +1703,12 @@ export const es: Translation = {
       previewLoadError: "No se pudo cargar la vista previa. Inténtalo de nuevo.",
       acceptSuccess: "Enlace guardado.",
       acceptSaveError: "Error al guardar. Inténtalo de nuevo.",
+      carryTranslationsLabel: "Conservar las traducciones",
+      carryTranslationsHelp:
+        "Recomendado. Insertar el enlace solo cambia el formato, no el texto: por eso tus traducciones existentes se conservan y reciben el mismo enlace con la URL localizada correspondiente. Sin esta opción, al guardar se eliminan todas las traducciones del campo editado, como en cualquier guardado de Shopify.",
+      acceptTranslationsLinked: " El enlace también se añadió a {count} traducción(es).",
+      acceptTranslationsKept:
+        " {count} traducción(es) se conservaron sin cambios: no se pudo localizar el texto del enlace en ellas.",
     },
     sitemapPage: {
       introTitle: "¿Cómo funciona el control del sitemap?",
