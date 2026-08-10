@@ -61,78 +61,161 @@
 </script>
 {%- endif -%}
 
+{%- comment -%}
+  Product. Built to stand ALONE: the theme's own `{{ product | structured_data }}`
+  is expected to be removed later, so this entity has to carry everything Google
+  needs by itself.
+
+  Two invariants worth stating, because both are easy to break:
+
+  1. The output does NOT depend on `?variant=`. Shopify strips the variant
+     parameter from the canonical URL, so a page that emitted a different
+     entity per variant URL would hand Google several identities for one page.
+     `@id` and `url` are therefore always the canonical product URL, and the
+     selected variant's price lives in its own Offer inside the array. That
+     also means `selected_or_first_available_variant` must not be read here.
+  2. `@id` uses Dawn's exact scheme (`/products/<handle>#product`,
+     `...?variant=<id>#offer`) so removing the theme's schema later does not
+     change the identity of anything.
+{%- endcomment -%}
 {%- if want_product and request.page_type == 'product' and product -%}
   {%- liquid
     assign p_url = shop.url | append: product.url
+    # Relative @id, exactly as Dawn emits it — JSON-LD resolves it against the
+    # page URL, and matching Dawn keeps the identity stable across the switch.
+    assign p_id = product.url | append: '#product'
     # `page_description` is Shopify's own meta description for the CURRENT
     # page and follows the active locale; the raw `global.description_tag`
     # metafield does not, so a Spanish page shipped a German description while
     # its `name` was correctly Spanish. `product.description` is a translated
     # native field and makes a safe fallback.
     assign p_desc = page_description | default: product.description | strip_html | truncate: 500
-    assign p_img = ''
-    if product.featured_image
-      assign p_img = product.featured_image | image_url: width: 1200
-      assign p_img_scheme = p_img | slice: 0, 2
-      if p_img_scheme == '//'
-        assign p_img = p_img | prepend: 'https:'
-      endif
-    endif
-    assign p_var = product.selected_or_first_available_variant
-    assign p_price = product.price
-    if p_var and p_var.price
-      assign p_price = p_var.price
-    endif
     assign p_currency = cart.currency.iso_code | default: shop.currency
     # Shopify "rating" metafield value is a rating object: .rating / .scale_max
     assign r_obj = product.metafields.reviews.rating.value
     assign r_count = product.metafields.reviews.rating_count.value
-
-    # GTIN/Brand/Offer completeness (plan §C1): barcode is a native
-    # ProductVariant property (no metafield scope/sync needed). Non-digit
-    # separators (spaces/hyphens) are stripped before length-matching to
-    # gtin8/12/13/14; any other non-empty length falls back to generic gtin.
-    assign p_gtin = p_var.barcode | default: '' | remove: '-' | remove: ' '
-    assign p_gtin_len = p_gtin | size
-    assign p_gtin_key = ''
-    if p_gtin_len == 8
-      assign p_gtin_key = 'gtin8'
-    elsif p_gtin_len == 12
-      assign p_gtin_key = 'gtin12'
-    elsif p_gtin_len == 13
-      assign p_gtin_key = 'gtin13'
-    elsif p_gtin_len == 14
-      assign p_gtin_key = 'gtin14'
-    elsif p_gtin != ''
-      assign p_gtin_key = 'gtin'
-    endif
     assign p_mpn = product.metafields.custom.mpn.value
     # priceValidUntil defaults to "one year from now" here (the pure
     # structured-data.service.ts keeps this clock-free for testability and
     # only emits it when a caller supplies one).
     assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
+    assign variant_count = product.variants | size
   -%}
+
+  {%- comment -%}
+    Images as an array (Google prefers several, and 1:1/4:3/16:9 crops of the
+    same shot are explicitly recommended). Capped so a product with 200 media
+    items can't blow up the page.
+  {%- endcomment -%}
+  {%- capture p_images -%}
+    {%- assign img_printed = 0 -%}
+    {%- for p_image in product.images limit: 10 -%}
+      {%- assign img_url = p_image | image_url: width: 1200 -%}
+      {%- assign img_scheme = img_url | slice: 0, 2 -%}
+      {%- if img_scheme == '//' -%}{%- assign img_url = img_url | prepend: 'https:' -%}{%- endif -%}
+      {%- if img_printed > 0 -%},{%- endif -%}{{ img_url | json }}
+      {%- assign img_printed = img_printed | plus: 1 -%}
+    {%- endfor -%}
+  {%- endcapture -%}
+
+  {%- comment -%}
+    One Offer per variant — NOT AggregateOffer. Google derives the price range
+    from an offer array by itself and additionally gets per-variant SKU, GTIN
+    and availability, all of which AggregateOffer throws away. Past the
+    threshold the markup would outweigh the page, so a shop with very many
+    variants falls back to AggregateOffer for size alone.
+
+    `availability` is computed per variant rather than from `product.available`:
+    once the theme's schema is gone this is the only statement Google sees, and
+    "InStock" for something that ships in three weeks is simply false.
+    `inventory_quantity` / `inventory_policy` are used for the decision only and
+    never written into the markup.
+  {%- endcomment -%}
+  {%- assign max_variant_offers = 25 -%}
+  {%- capture p_offers -%}
+    {%- if variant_count > max_variant_offers -%}
+      {
+        "@type": "AggregateOffer",
+        "priceCurrency": {{ p_currency | json }},
+        "lowPrice": {{ product.price_min | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "highPrice": {{ product.price_max | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "offerCount": {{ variant_count }},
+        "url": {{ p_url | json }}
+      }
+    {%- else -%}
+    [
+      {%- assign off_printed = 0 -%}
+      {%- for v in product.variants -%}
+        {%- liquid
+          assign v_url = p_url | append: '?variant=' | append: v.id
+          assign v_id = product.url | append: '?variant=' | append: v.id | append: '#offer'
+
+          if v.inventory_management == blank
+            assign v_avail = 'https://schema.org/InStock'
+          elsif v.available == false
+            assign v_avail = 'https://schema.org/OutOfStock'
+          elsif v.inventory_quantity <= 0 and v.inventory_policy == 'continue'
+            assign v_avail = 'https://schema.org/BackOrder'
+          else
+            assign v_avail = 'https://schema.org/InStock'
+          endif
+
+          assign v_gtin = v.barcode | default: '' | remove: '-' | remove: ' '
+          assign v_gtin_len = v_gtin | size
+          assign v_gtin_key = ''
+          if v_gtin_len == 8
+            assign v_gtin_key = 'gtin8'
+          elsif v_gtin_len == 12
+            assign v_gtin_key = 'gtin12'
+          elsif v_gtin_len == 13
+            assign v_gtin_key = 'gtin13'
+          elsif v_gtin_len == 14
+            assign v_gtin_key = 'gtin14'
+          elsif v_gtin != ''
+            assign v_gtin_key = 'gtin'
+          endif
+        -%}
+        {%- if off_printed > 0 -%},{%- endif -%}
+        {
+          "@type": "Offer",
+          "@id": {{ v_id | json }},
+          "price": {{ v.price | divided_by: 100.0 | round: 2 | append: '' | json }},
+          "priceCurrency": {{ p_currency | json }},
+          "availability": {{ v_avail | json }},
+          "itemCondition": "https://schema.org/NewCondition",
+          "priceValidUntil": {{ p_valid_until | json }},
+          "url": {{ v_url | json }}
+          {%- if v.sku != blank -%}, "sku": {{ v.sku | json }}{%- endif -%}
+          {%- if v_gtin_key != '' -%}, "{{ v_gtin_key }}": {{ v_gtin | json }}{%- endif -%}
+        }
+        {%- assign off_printed = off_printed | plus: 1 -%}
+      {%- endfor -%}
+    ]
+    {%- endif -%}
+  {%- endcapture -%}
 <script type="application/ld+json" data-contentpilot="product">
 {
   "@context": "https://schema.org",
   "@type": "Product",
+  "@id": {{ p_id | json }},
   "name": {{ product.title | json }},
   "url": {{ p_url | json }}
   {%- if p_desc != '' -%}, "description": {{ p_desc | json }}{%- endif -%}
-  {%- if p_img != '' -%}, "image": {{ p_img | json }}{%- endif -%}
-  {%- if p_var and p_var.sku != blank -%}, "sku": {{ p_var.sku | json }}{%- endif -%}
-  {%- if p_gtin_key != '' -%}, "{{ p_gtin_key }}": {{ p_gtin | json }}{%- endif -%}
+  {%- if img_printed > 0 -%}, "image": [{{ p_images | strip }}]{%- endif -%}
+  {%- comment -%}
+    SKU and GTIN sit on the OFFERS, not here: with several variants a
+    product-level value would have to pick one, and picking the selected
+    variant is exactly the `?variant=`-dependent output invariant 1 rules out.
+    A single-variant product keeps them at product level too, where they are
+    unambiguous and Merchant Center reads them most reliably.
+  {%- endcomment -%}
+  {%- if variant_count == 1 -%}
+    {%- assign only_v = product.variants | first -%}
+    {%- if only_v.sku != blank -%}, "sku": {{ only_v.sku | json }}{%- endif -%}
+  {%- endif -%}
   {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
   , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
-  , "offers": {
-      "@type": "Offer",
-      "price": {{ p_price | divided_by: 100.0 | round: 2 | json }},
-      "priceCurrency": {{ p_currency | json }},
-      "availability": {% if product.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
-      "itemCondition": "https://schema.org/NewCondition",
-      "priceValidUntil": {{ p_valid_until | json }},
-      "url": {{ p_url | json }}
-    }
+  , "offers": {{ p_offers | strip }}
   {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}
   , "aggregateRating": {
       "@type": "AggregateRating",

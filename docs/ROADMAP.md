@@ -443,6 +443,29 @@ keine Kunden).
 
 ---
 
+## Backlog
+
+### JSON-LD: `hasMerchantReturnPolicy` + `shippingDetails` (Merchant listings)
+
+Ohne diese beiden Felder meldet die Google Search Console unter "Merchant
+listings" Warnungen zu unserem Product-Markup. Sie fehlen bewusst — die Daten
+existieren nirgends in der App, und die beiden naheliegenden Quellen taugen
+nicht: `shop.refund_policy` ist Fließtext (Parsen wäre Raten), und
+markt-/gewichtsabhängige Versandkosten sind über Liquid nicht verlässlich
+abbildbar.
+
+Entscheidend für die spätere Umsetzung: **Google prüft diese Angaben gegen die
+Merchant-Center-Daten und entzieht bei Abweichung die Rich Results komplett.**
+Falsche Angaben sind also schlechter als gar keine. Wenn wir es bauen, dann
+ausschließlich als explizite Händler-Eingabe im App-Embed (Rückgabefrist,
+Rückgabeart, Versandkosten/-dauer je Zielland) mit **leerem Default** — nie
+geraten, nie geparst, nie aus einer Policy-Seite extrahiert. Bis dahin sind die
+Search-Console-Warnungen der bewusst gewählte Preis.
+
+Betroffene Datei: `extensions/storefront/blocks/structured-data.liquid`.
+
+---
+
 ## Open Questions / Decisions Needed
 
 - [ ] Annual Plans einführen? (20% Rabatt?)
