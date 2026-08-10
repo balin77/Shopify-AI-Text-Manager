@@ -36,6 +36,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { StepTile } from "../components/seo/StepTile";
 import { ToggleSwitch } from "../components/ToggleSwitch";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
@@ -251,69 +252,9 @@ function CrawlerGroupDetail({ group }: { group: RobotsCrawlerGroup }) {
  * crawler may read the store at all, llms.txt only helps it understand what it
  * read. Rendering both as equal cards (the old layout) hid that dependency and
  * put the optional one first. They're now two selectable steps, access first.
+ * The tile itself is shared with the structured-data section — see StepTile.
  */
 type AeoStep = "robots" | "llms";
-
-function StepTile({
-  selected,
-  onSelect,
-  kicker,
-  title,
-  body,
-  badge,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  kicker: string;
-  title: string;
-  body: string;
-  badge: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      style={{
-        display: "block",
-        width: "100%",
-        // The button is the grid item, so it carries the height for the two
-        // tiles to line up when one has more text than the other.
-        height: "100%",
-        textAlign: "left",
-        background: "none",
-        border: "none",
-        padding: 0,
-        font: "inherit",
-        cursor: "pointer",
-      }}
-    >
-      <Box
-        padding="400"
-        borderWidth={selected ? "050" : "025"}
-        borderColor={selected ? "border-emphasis" : "border"}
-        borderRadius="200"
-        background={selected ? "bg-surface-secondary" : "bg-surface"}
-        minHeight="100%"
-      >
-        <BlockStack gap="200">
-          <InlineStack gap="200" blockAlign="center" wrap>
-            <Text as="span" variant="bodySm" tone="subdued" fontWeight="medium">
-              {kicker}
-            </Text>
-            {badge}
-          </InlineStack>
-          <Text as="h3" variant="headingMd">
-            {title}
-          </Text>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {body}
-          </Text>
-        </BlockStack>
-      </Box>
-    </button>
-  );
-}
 
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();

@@ -24,11 +24,12 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
-import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { StepTile } from "../components/seo/StepTile";
 import {
   buildOrganizationJsonLd,
   buildProductJsonLd,
@@ -445,6 +446,33 @@ export default function SeoStructuredData() {
   const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
   const live = (s as any).live as Record<string, string>;
+
+  // Delivery before data quality: markup that never reaches the page makes the
+  // catalog report moot, so step 1 is what the storefront actually serves.
+  const [step, setStep] = useState<"delivery" | "data">("delivery");
+
+  // Each tile carries its own verdict. "Unknown" is a real state for both and
+  // must not be dressed up as a clean result: no crawl yet on the left, never
+  // run on the right.
+  const deliveryBadge = !liveJsonLd || liveJsonLd.notMeasured ? (
+    <Badge>{live.badgeUnknown}</Badge>
+  ) : liveJsonLd.duplicates.length > 0 ? (
+    <Badge tone="critical">{live.badgeDuplicates}</Badge>
+  ) : liveJsonLd.coverage.some((c) => c.withMarkup < c.total) ? (
+    <Badge tone="warning">{live.badgeGaps}</Badge>
+  ) : (
+    <Badge tone="success">{live.badgeOk}</Badge>
+  );
+
+  const dataBadge = !jsonLdAudit ? (
+    <Badge>{b.badgeUnknown}</Badge>
+  ) : jsonLdAudit.buckets.length === 0 ? (
+    <Badge tone="success">{b.badgeOk}</Badge>
+  ) : (
+    <Badge tone="warning">
+      {b.badgeIssues.replace("{count}", String(jsonLdAudit.buckets.length))}
+    </Badge>
+  );
   const hintCopy = (s as any).hints as Record<string, string>;
 
   const schemaTypeKeys = [
@@ -682,215 +710,243 @@ export default function SeoStructuredData() {
           </BlockStack>
         </Card>
 
-        {/* 5. Batch-Prüfung (Phase 5, PLAN_SEO_SUITE_COMPLETION.md §7): runs
-            validateJsonLd over the WHOLE cached catalog instead of one
-            example item per type, aggregated by warning code. */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingLg">
-                {b.title}
-              </Text>
-              <Button onClick={handleCheckNow} disabled={checkInProgress || checkFetcher.state !== "idle"} loading={checkFetcher.state !== "idle"}>
-                {b.checkNow}
-              </Button>
-            </InlineStack>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              {b.intro}
-            </Text>
+        {/* The two halves are sequential, not a pair — markup has to reach the
+            page before its data quality means anything — so they are steps, in
+            the same shape the AEO section uses for robots.txt/llms.txt. */}
+        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          <StepTile
+            selected={step === "delivery"}
+            onSelect={() => setStep("delivery")}
+            kicker={live.stepKicker}
+            title={live.stepTitle}
+            body={live.stepBody}
+            badge={deliveryBadge}
+          />
+          <StepTile
+            selected={step === "data"}
+            onSelect={() => setStep("data")}
+            kicker={b.stepKicker}
+            title={b.stepTitle}
+            body={b.stepBody}
+            badge={dataBadge}
+          />
+        </InlineGrid>
 
-            {checkBanner && (
-              <Banner tone={checkBanner.tone} onDismiss={() => setCheckBanner(null)}>
-                {checkBanner.message}
-              </Banner>
-            )}
-            {!checkBanner && checkInProgress && <Banner tone="info">{b.checking}</Banner>}
+        {/* Step 1 — what the storefront actually serves (from the last crawl).
+            The only place in the app that reads a real page. */}
+        {step === "delivery" && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">{live.title}</Text>
+              <Text as="p" variant="bodyMd" tone="subdued">{live.intro}</Text>
 
-            <Text as="p" variant="bodySm" tone="subdued">
-              {jsonLdAudit
-                ? b.lastChecked.replace("{time}", new Date(jsonLdAudit.generatedAt).toLocaleString())
-                : b.neverChecked}
-            </Text>
+              {!liveJsonLd ? (
+                <Banner tone="info">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{live.noCrawl}</Text>
+                    <div>
+                      <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                    </div>
+                  </BlockStack>
+                </Banner>
+              ) : liveJsonLd.notMeasured ? (
+                // An older snapshot has no jsonLdTypes at all. Reporting that as
+                // "no structured data anywhere" would be a false alarm.
+                <Banner tone="info">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{live.notMeasured}</Text>
+                    <div>
+                      <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                    </div>
+                  </BlockStack>
+                </Banner>
+              ) : (
+                <BlockStack gap="300">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {live.basis
+                      .replace("{time}", new Date(liveJsonLd.crawledAt).toLocaleString())
+                      .replace("{pages}", String(liveJsonLd.pagesChecked))}
+                  </Text>
+                  {liveJsonLd.crawlStatus === "capped" && (
+                    <Banner tone="warning">{live.cappedCrawl}</Banner>
+                  )}
 
-            {jsonLdAudit && (
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm">
-                  {b.totalScanned
-                    .replace("{scanned}", String(jsonLdAudit.totalScanned))
-                    .replace("{available}", String(jsonLdAudit.totalAvailable))}
+                  {liveJsonLd.coverage.length > 0 && (
+                    <DataTable
+                      columnContentTypes={["text", "numeric", "text"]}
+                      headings={[live.colPageType, live.colCoverage, live.colMissingExamples]}
+                      rows={liveJsonLd.coverage.map((row) => [
+                        (live.pageTypes as unknown as Record<string, string>)[row.resourceType] ||
+                          row.resourceType,
+                        `${row.withMarkup} / ${row.total}`,
+                        row.withMarkup === row.total ? (
+                          <Badge tone="success">{live.allCovered}</Badge>
+                        ) : (
+                          <BlockStack gap="050">
+                            {row.missingExamples.map((u) => (
+                              <Text as="span" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                            ))}
+                          </BlockStack>
+                        ),
+                      ])}
+                    />
+                  )}
+
+                  {liveJsonLd.duplicates.length > 0 && (
+                    <Banner tone="warning">
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodyMd">{live.duplicatesHint}</Text>
+                        {liveJsonLd.duplicates.map((dup) => (
+                          <BlockStack gap="050" key={dup.type}>
+                            <Text as="p" variant="bodySm" fontWeight="semibold">
+                              {live.duplicateRow
+                                .replace("{type}", dup.type)
+                                .replace("{pages}", String(dup.pages))}
+                            </Text>
+                            {/* The actionable half: turning our own toggle off
+                                only helps where one copy is actually ours. */}
+                            <Text as="p" variant="bodySm">
+                              {dup.appIsOneCopy > 0
+                                ? live.duplicateFromApp.replace("{pages}", String(dup.appIsOneCopy))
+                                : liveJsonLd.appEmbedDetected
+                                  ? live.duplicateNotFromApp
+                                  : live.duplicateSourceUnknown}
+                            </Text>
+                            {dup.examples.map((u) => (
+                              <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                            ))}
+                          </BlockStack>
+                        ))}
+                      </BlockStack>
+                    </Banner>
+                  )}
+
+                  <Text as="p" variant="bodySm">
+                    {liveJsonLd.appEmbedDetected
+                      ? live.appEmbedOn
+                      : live.appEmbedUnknown}
+                  </Text>
+
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodySm" fontWeight="semibold">{live.typesFound}</Text>
+                    {liveJsonLd.typeCounts.length === 0 ? (
+                      <Text as="p" variant="bodySm" tone="subdued">{live.noTypes}</Text>
+                    ) : (
+                      <InlineStack gap="200" wrap>
+                        {liveJsonLd.typeCounts.map((tc) => (
+                          <Badge key={tc.type}>
+                            {live.typeCount.replace("{type}", tc.type).replace("{pages}", String(tc.pages))}
+                          </Badge>
+                        ))}
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+
+                  <Text as="p" variant="bodySm" tone="subdued">{live.sourceCaveat}</Text>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Step 2 — whether the CATALOG carries the data a rich result needs.
+            Reads the DB cache, never a live page. */}
+        {step === "data" && (
+          // Phase 5 (PLAN_SEO_SUITE_COMPLETION.md §7): validateJsonLd over the
+          // WHOLE cached catalog instead of one example item per type,
+          // aggregated by warning code.
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingLg">
+                  {b.title}
                 </Text>
-                {jsonLdAudit.capped && <Banner tone="warning">{b.capped}</Banner>}
+                <Button onClick={handleCheckNow} disabled={checkInProgress || checkFetcher.state !== "idle"} loading={checkFetcher.state !== "idle"}>
+                  {b.checkNow}
+                </Button>
+              </InlineStack>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                {b.intro}
+              </Text>
 
-                {jsonLdAudit.buckets.length === 0 ? (
-                  <Badge tone="success">{b.empty}</Badge>
-                ) : (
-                  <DataTable
-                    columnContentTypes={["text", "text", "numeric", "text"]}
-                    headings={[b.codeColumn, "", b.countColumn, b.itemsColumn]}
-                    rows={jsonLdAudit.buckets.map((bucket) => {
-                      const localizedCode = warningCopy?.[bucket.code] || bucket.code;
-                      const visibleItems = bucket.items.slice(0, 10);
-                      const remaining = bucket.count - visibleItems.length;
-                      return [
-                        localizedCode,
-                        <Badge key="sev" tone={severityTone(bucket.severity)}>
-                          {bucket.severity === "error"
-                            ? b.severityError
-                            : bucket.severity === "info"
-                            ? b.severityInfo
-                            : b.severityWarning}
-                        </Badge>,
-                        bucket.count,
-                        <BlockStack key="items" gap="100">
-                          {visibleItems.map((item) => (
-                            <InlineStack key={item.id} gap="100" blockAlign="center">
-                              <Button
-                                variant="plain"
-                                onClick={() => openBatchItemInEditor(item.type, item.id)}
-                              >
-                                {item.title}
-                              </Button>
-                              {item.url && (
+              {checkBanner && (
+                <Banner tone={checkBanner.tone} onDismiss={() => setCheckBanner(null)}>
+                  {checkBanner.message}
+                </Banner>
+              )}
+              {!checkBanner && checkInProgress && <Banner tone="info">{b.checking}</Banner>}
+
+              <Text as="p" variant="bodySm" tone="subdued">
+                {jsonLdAudit
+                  ? b.lastChecked.replace("{time}", new Date(jsonLdAudit.generatedAt).toLocaleString())
+                  : b.neverChecked}
+              </Text>
+
+              {jsonLdAudit && (
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodySm">
+                    {b.totalScanned
+                      .replace("{scanned}", String(jsonLdAudit.totalScanned))
+                      .replace("{available}", String(jsonLdAudit.totalAvailable))}
+                  </Text>
+                  {jsonLdAudit.capped && <Banner tone="warning">{b.capped}</Banner>}
+
+                  {jsonLdAudit.buckets.length === 0 ? (
+                    <Badge tone="success">{b.empty}</Badge>
+                  ) : (
+                    <DataTable
+                      columnContentTypes={["text", "text", "numeric", "text"]}
+                      headings={[b.codeColumn, "", b.countColumn, b.itemsColumn]}
+                      rows={jsonLdAudit.buckets.map((bucket) => {
+                        const localizedCode = warningCopy?.[bucket.code] || bucket.code;
+                        const visibleItems = bucket.items.slice(0, 10);
+                        const remaining = bucket.count - visibleItems.length;
+                        return [
+                          localizedCode,
+                          <Badge key="sev" tone={severityTone(bucket.severity)}>
+                            {bucket.severity === "error"
+                              ? b.severityError
+                              : bucket.severity === "info"
+                              ? b.severityInfo
+                              : b.severityWarning}
+                          </Badge>,
+                          bucket.count,
+                          <BlockStack key="items" gap="100">
+                            {visibleItems.map((item) => (
+                              <InlineStack key={item.id} gap="100" blockAlign="center">
                                 <Button
                                   variant="plain"
-                                  url={`${GOOGLE_RICH_RESULTS_TEST}?url=${encodeURIComponent(item.url)}`}
-                                  target="_blank"
+                                  onClick={() => openBatchItemInEditor(item.type, item.id)}
                                 >
-                                  {b.richResultsTest}
+                                  {item.title}
                                 </Button>
-                              )}
-                            </InlineStack>
-                          ))}
-                          {remaining > 0 && (
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {b.moreItems.replace("{count}", String(remaining))}
-                            </Text>
-                          )}
-                        </BlockStack>,
-                      ];
-                    })}
-                  />
-                )}
-              </BlockStack>
-            )}
-          </BlockStack>
-        </Card>
-
-        {/* Live coverage — the only place in the app that reports what the
-            storefront actually serves. Everything above validates what the app
-            WOULD emit; the two answer different questions and the copy says so. */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">{live.title}</Text>
-            <Text as="p" variant="bodyMd" tone="subdued">{live.intro}</Text>
-
-            {!liveJsonLd ? (
-              <Banner tone="info">
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">{live.noCrawl}</Text>
-                  <div>
-                    <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
-                  </div>
-                </BlockStack>
-              </Banner>
-            ) : liveJsonLd.notMeasured ? (
-              // An older snapshot has no jsonLdTypes at all. Reporting that as
-              // "no structured data anywhere" would be a false alarm.
-              <Banner tone="info">
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd">{live.notMeasured}</Text>
-                  <div>
-                    <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
-                  </div>
-                </BlockStack>
-              </Banner>
-            ) : (
-              <BlockStack gap="300">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {live.basis
-                    .replace("{time}", new Date(liveJsonLd.crawledAt).toLocaleString())
-                    .replace("{pages}", String(liveJsonLd.pagesChecked))}
-                </Text>
-                {liveJsonLd.crawlStatus === "capped" && (
-                  <Banner tone="warning">{live.cappedCrawl}</Banner>
-                )}
-
-                {liveJsonLd.coverage.length > 0 && (
-                  <DataTable
-                    columnContentTypes={["text", "numeric", "text"]}
-                    headings={[live.colPageType, live.colCoverage, live.colMissingExamples]}
-                    rows={liveJsonLd.coverage.map((row) => [
-                      (live.pageTypes as unknown as Record<string, string>)[row.resourceType] ||
-                        row.resourceType,
-                      `${row.withMarkup} / ${row.total}`,
-                      row.withMarkup === row.total ? (
-                        <Badge tone="success">{live.allCovered}</Badge>
-                      ) : (
-                        <BlockStack gap="050">
-                          {row.missingExamples.map((u) => (
-                            <Text as="span" variant="bodySm" tone="subdued" key={u}>{u}</Text>
-                          ))}
-                        </BlockStack>
-                      ),
-                    ])}
-                  />
-                )}
-
-                {liveJsonLd.duplicates.length > 0 && (
-                  <Banner tone="warning">
-                    <BlockStack gap="200">
-                      <Text as="p" variant="bodyMd">{live.duplicatesHint}</Text>
-                      {liveJsonLd.duplicates.map((dup) => (
-                        <BlockStack gap="050" key={dup.type}>
-                          <Text as="p" variant="bodySm" fontWeight="semibold">
-                            {live.duplicateRow
-                              .replace("{type}", dup.type)
-                              .replace("{pages}", String(dup.pages))}
-                          </Text>
-                          {/* The actionable half: turning our own toggle off
-                              only helps where one copy is actually ours. */}
-                          <Text as="p" variant="bodySm">
-                            {dup.appIsOneCopy > 0
-                              ? live.duplicateFromApp.replace("{pages}", String(dup.appIsOneCopy))
-                              : liveJsonLd.appEmbedDetected
-                                ? live.duplicateNotFromApp
-                                : live.duplicateSourceUnknown}
-                          </Text>
-                          {dup.examples.map((u) => (
-                            <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
-                          ))}
-                        </BlockStack>
-                      ))}
-                    </BlockStack>
-                  </Banner>
-                )}
-
-                <Text as="p" variant="bodySm">
-                  {liveJsonLd.appEmbedDetected
-                    ? live.appEmbedOn
-                    : live.appEmbedUnknown}
-                </Text>
-
-                <BlockStack gap="100">
-                  <Text as="p" variant="bodySm" fontWeight="semibold">{live.typesFound}</Text>
-                  {liveJsonLd.typeCounts.length === 0 ? (
-                    <Text as="p" variant="bodySm" tone="subdued">{live.noTypes}</Text>
-                  ) : (
-                    <InlineStack gap="200" wrap>
-                      {liveJsonLd.typeCounts.map((tc) => (
-                        <Badge key={tc.type}>
-                          {live.typeCount.replace("{type}", tc.type).replace("{pages}", String(tc.pages))}
-                        </Badge>
-                      ))}
-                    </InlineStack>
+                                {item.url && (
+                                  <Button
+                                    variant="plain"
+                                    url={`${GOOGLE_RICH_RESULTS_TEST}?url=${encodeURIComponent(item.url)}`}
+                                    target="_blank"
+                                  >
+                                    {b.richResultsTest}
+                                  </Button>
+                                )}
+                              </InlineStack>
+                            ))}
+                            {remaining > 0 && (
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {b.moreItems.replace("{count}", String(remaining))}
+                              </Text>
+                            )}
+                          </BlockStack>,
+                        ];
+                      })}
+                    />
                   )}
                 </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+        )}
 
-                <Text as="p" variant="bodySm" tone="subdued">{live.sourceCaveat}</Text>
-              </BlockStack>
-            )}
-          </BlockStack>
-        </Card>
       </BlockStack>
     </SeoSectionLayout>
   );
