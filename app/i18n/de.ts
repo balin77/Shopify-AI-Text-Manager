@@ -1525,6 +1525,7 @@ export const de = {
         basis: "Grundlage: Crawl vom {time}, {pages} ausgelieferte Seiten geprüft.",
         cappedCrawl: "Der Crawl wurde vorzeitig gestoppt — die Zahlen decken nur einen Teil des Shops ab.",
         colPageType: "Seitentyp",
+        colCrawled: "Gecrawlt",
         colCoverage: "Mit Markup",
         colMissingExamples: "Beispiele ohne Markup",
         allCovered: "Vollständig",

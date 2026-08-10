@@ -1525,6 +1525,7 @@ export const es: Translation = {
         basis: "Base: rastreo del {time}, {pages} páginas entregadas comprobadas.",
         cappedCrawl: "El rastreo se detuvo antes de tiempo — estas cifras cubren solo una parte de la tienda.",
         colPageType: "Tipo de página",
+        colCrawled: "Rastreadas",
         colCoverage: "Con marcado",
         colMissingExamples: "Ejemplos sin marcado",
         allCovered: "Completo",

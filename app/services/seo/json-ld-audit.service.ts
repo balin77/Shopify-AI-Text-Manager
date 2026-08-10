@@ -324,10 +324,43 @@ const EXPECTED_TYPE_BY_RESOURCE: Record<string, string[]> = {
   article: ["BlogPosting", "Article"],
 };
 
+/**
+ * schema.org types that describe the SAME thing about a page, collapsed onto
+ * one canonical name before duplicates are counted.
+ *
+ * Exact @type matching missed the most common duplication there is: Dawn emits
+ * `Article` for a blog post while this app emits `BlogPosting`. BlogPosting is
+ * a subtype of Article, so both claim to be *the* article of that page and
+ * Google has to pick one — a duplicate by every meaning that matters, invisible
+ * to a string comparison. Same for Product/ProductGroup, where Shopify's own
+ * structured_data filter emits the latter for products with variants.
+ *
+ * Deliberately narrow: only pairs where both types describe the page's primary
+ * entity. Two different types that legitimately coexist (Organization and
+ * BreadcrumbList, say) must never be folded together.
+ */
+const EQUIVALENT_TYPE: Record<string, string> = {
+  ProductGroup: "Product",
+  BlogPosting: "Article",
+  NewsArticle: "Article",
+};
+
+/** Canonical name a type is counted under when looking for duplicates. */
+export function canonicalJsonLdType(type: string): string {
+  return EQUIVALENT_TYPE[type] ?? type;
+}
+
 export interface LiveJsonLdCoverageRow {
   resourceType: "product" | "collection" | "article";
   /** Crawled, successfully served pages of this type. */
   total: number;
+  /**
+   * How many of this type exist in the shop at all. A report that says
+   * "15 pages have duplicate markup" while the crawl only reached 15 of 41
+   * products understates the problem threefold and reads like a full result —
+   * so the two numbers are shown side by side and never merged.
+   */
+  catalogTotal: number;
   /** …of which carry one of EXPECTED_TYPE_BY_RESOURCE. */
   withMarkup: number;
   /** Up to 5 example URLs that carry none — the actionable part. */
@@ -407,16 +440,37 @@ export async function summarizeLiveJsonLd(
   // 404 carrying no Product schema is not a structured-data problem.
   const served = rows.filter((r) => r.statusCode >= 200 && r.statusCode < 400);
 
+  // Catalog sizes, so the report can say "15 of 41 product pages crawled"
+  // instead of presenting a partial crawl as the whole shop.
+  const [productTotal, collectionTotal, articleTotal] = await Promise.all([
+    db.product.count({ where: { shop } }).catch(() => 0),
+    db.collection.count({ where: { shop } }).catch(() => 0),
+    db.article.count({ where: { shop } }).catch(() => 0),
+  ]);
+  const catalogTotals: Record<string, number> = {
+    product: productTotal,
+    collection: collectionTotal,
+    article: articleTotal,
+  };
+
   const coverage: LiveJsonLdCoverageRow[] = [];
   const pagesByType = new Map<string, number>();
   const duplicatePages = new Map<string, string[]>();
 
   for (const row of served) {
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
+    // typeCounts keep the RAW names (a merchant wants to see "BlogPosting"
+    // when that is what the page carries); only the duplicate tally collapses
+    // them, see canonicalJsonLdType.
     const seen = new Map<string, number>();
     for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
-    for (const [t, n] of seen) {
-      pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
+    for (const [t, n] of seen) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
+    const canonical = new Map<string, number>();
+    for (const t of types) {
+      const c = canonicalJsonLdType(t);
+      canonical.set(c, (canonical.get(c) ?? 0) + 1);
+    }
+    for (const [t, n] of canonical) {
       if (n > 1) {
         const list = duplicatePages.get(t) ?? [];
         if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
@@ -432,11 +486,16 @@ export async function summarizeLiveJsonLd(
   for (const row of served) {
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
     const appTypes = new Set(
-      row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : [],
+      (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
+        canonicalJsonLdType,
+      ),
     );
-    const seen = new Map<string, number>();
-    for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
-    for (const [t, n] of seen) {
+    const canonical = new Map<string, number>();
+    for (const t of types) {
+      const c = canonicalJsonLdType(t);
+      canonical.set(c, (canonical.get(c) ?? 0) + 1);
+    }
+    for (const [t, n] of canonical) {
       if (n <= 1) continue;
       duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
       if (appTypes.has(t)) duplicateAppCounts.set(t, (duplicateAppCounts.get(t) ?? 0) + 1);
@@ -462,6 +521,7 @@ export async function summarizeLiveJsonLd(
     coverage.push({
       resourceType: resourceType as LiveJsonLdCoverageRow["resourceType"],
       total: ofType.length,
+      catalogTotal: catalogTotals[resourceType] ?? 0,
       withMarkup,
       missingExamples,
     });

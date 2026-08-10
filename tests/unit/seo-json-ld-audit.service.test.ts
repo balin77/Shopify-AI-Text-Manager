@@ -237,6 +237,9 @@ describe("summarizeLiveJsonLd", () => {
             : { id: "snap-1", startedAt: new Date("2026-08-01T10:00:00Z"), finishedAt: new Date("2026-08-01T10:20:00Z"), status },
       },
       seoCrawlPage: { findMany: async () => pages ?? [] },
+      product: { count: async () => 3 },
+      collection: { count: async () => 0 },
+      article: { count: async () => 0 },
     } as any;
   }
 
@@ -344,5 +347,49 @@ describe("summarizeLiveJsonLd", () => {
       "shop.myshopify.com",
     );
     expect(summary!.appEmbedDetected).toBeNull();
+  });
+
+  it("counts Article and BlogPosting on one page as ONE duplicated claim", async () => {
+    // Dawn emits Article for a blog post, this app emits BlogPosting. Both
+    // claim to be *the* article of that page, so Google has to pick one —
+    // a duplicate that exact @type matching never saw.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({
+          url: "https://s/blogs/news/a",
+          resourceType: "article",
+          jsonLdTypes: "Article,BlogPosting",
+          jsonLdAppTypes: "BlogPosting",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const dup = summary!.duplicates.find((d) => d.type === "Article")!;
+    expect(dup.pages).toBe(1);
+    // …and our BlogPosting is recognised as one of the two copies.
+    expect(dup.appIsOneCopy).toBe(1);
+    // The raw names stay visible in the type list — the merchant sees what the
+    // page actually carries.
+    expect(summary!.typeCounts.map((t) => t.type).sort()).toEqual(["Article", "BlogPosting"]);
+  });
+
+  it("does not fold types that legitimately coexist", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "Organization,BreadcrumbList,Product" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.duplicates).toEqual([]);
+  });
+
+  it("reports crawled pages against the catalog size", async () => {
+    // The honesty fix: 1 crawled product out of 3 in the catalog must not read
+    // like a complete result.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "Product" })]),
+      "shop.myshopify.com",
+    );
+    const products = summary!.coverage.find((c) => c.resourceType === "product")!;
+    expect(products.total).toBe(1);
+    expect(products.catalogTotal).toBe(3);
   });
 });

@@ -604,112 +604,6 @@ export default function SeoStructuredData() {
           </BlockStack>
         </Card>
 
-        {/* 3. What you see below (preview intro + schema types) */}
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingLg">
-              {(s as any).previewIntroTitle as string}
-            </Text>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              {(s as any).previewIntroBody as string}
-            </Text>
-            <BlockStack gap="100">
-              <Text as="h3" variant="headingMd">
-                {s.schemaTypesTitle}
-              </Text>
-              <InlineStack gap="200" wrap>
-                {schemaTypeKeys.map((k) => (
-                  <Badge key={k} tone="success">
-                    {(s as unknown as Record<string, string>)[k]}
-                  </Badge>
-                ))}
-              </InlineStack>
-            </BlockStack>
-          </BlockStack>
-        </Card>
-
-        {/* 4. Live preview with per-warning hints + fix-up buttons */}
-        <Card>
-          <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingLg">
-                {s.previewTitle}
-              </Text>
-              <Button url={GOOGLE_RICH_RESULTS_TEST} target="_blank" variant="plain">
-                {s.validateWithGoogle}
-              </Button>
-            </InlineStack>
-
-            {previews.length === 0 ? (
-              <Text as="p" tone="subdued">
-                {s.previewEmpty}
-              </Text>
-            ) : (
-              previews.map((block) => (
-                <BlockStack key={block.labelKey} gap="200">
-                  <Text as="p" variant="headingSm">
-                    {(s as unknown as Record<string, string>)[block.labelKey]}
-                  </Text>
-                  {block.warnings.length === 0 ? (
-                    <Badge tone="success">{t.seo.structuredDataValid}</Badge>
-                  ) : (
-                    <BlockStack gap="200">
-                      {block.warnings.map((w, i) => {
-                        // Remix's JsonifyObject drops the `code` string-union
-                        // through Jsonify, so read it via a widening cast.
-                        const code = (w as unknown as { code: string }).code;
-                        const localizedMessage = warningCopy?.[code] || w.message;
-                        const hint = hintCopy?.[code] || "";
-                        const linkKind = FIX_LINK_BY_CODE[code];
-                        const fixUrl = linkKind ? fixUrlFor(linkKind) : null;
-                        const fixLabel = linkKind ? fixLabelFor(linkKind) : "";
-                        return (
-                          <BlockStack key={i} gap="100">
-                            <InlineStack gap="100" blockAlign="center">
-                              <Badge tone={severityTone(w.severity)}>
-                                {w.severity}
-                              </Badge>
-                              <Text as="span" variant="bodySm">
-                                {localizedMessage}
-                              </Text>
-                            </InlineStack>
-                            {hint ? (
-                              <Text as="p" variant="bodySm" tone="subdued">
-                                {hint}
-                              </Text>
-                            ) : null}
-                            {fixUrl ? (
-                              <InlineStack>
-                                <Button url={fixUrl} target="_blank" variant="plain">
-                                  {fixLabel}
-                                </Button>
-                              </InlineStack>
-                            ) : null}
-                          </BlockStack>
-                        );
-                      })}
-                    </BlockStack>
-                  )}
-                  <pre
-                    style={{
-                      maxHeight: "260px",
-                      overflow: "auto",
-                      background: "#f6f6f7",
-                      padding: "8px",
-                      borderRadius: "4px",
-                      fontSize: "11px",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {block.code}
-                  </pre>
-                </BlockStack>
-              ))
-            )}
-          </BlockStack>
-        </Card>
-
         {/* The two halves are sequential, not a pair — markup has to reach the
             page before its data quality means anything — so they are steps, in
             the same shape the AEO section uses for robots.txt/llms.txt. */}
@@ -773,11 +667,25 @@ export default function SeoStructuredData() {
 
                   {liveJsonLd.coverage.length > 0 && (
                     <DataTable
-                      columnContentTypes={["text", "numeric", "text"]}
-                      headings={[live.colPageType, live.colCoverage, live.colMissingExamples]}
+                      columnContentTypes={["text", "numeric", "numeric", "text"]}
+                      headings={[
+                        live.colPageType,
+                        live.colCrawled,
+                        live.colCoverage,
+                        live.colMissingExamples,
+                      ]}
                       rows={liveJsonLd.coverage.map((row) => [
                         (live.pageTypes as unknown as Record<string, string>)[row.resourceType] ||
                           row.resourceType,
+                        // Crawled vs. catalog — a partial crawl must not read
+                        // like a complete result.
+                        row.catalogTotal > row.total ? (
+                          <Text as="span" variant="bodySm" tone="caution">
+                            {`${row.total} / ${row.catalogTotal}`}
+                          </Text>
+                        ) : (
+                          `${row.total} / ${row.catalogTotal || row.total}`
+                        ),
                         `${row.withMarkup} / ${row.total}`,
                         row.withMarkup === row.total ? (
                           <Badge tone="success">{live.allCovered}</Badge>
@@ -852,6 +760,112 @@ export default function SeoStructuredData() {
         {/* Step 2 — whether the CATALOG carries the data a rich result needs.
             Reads the DB cache, never a live page. */}
         {step === "data" && (
+          <BlockStack gap="400">
+          {/* 3. What you see below (preview intro + schema types) */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingLg">
+                {(s as any).previewIntroTitle as string}
+              </Text>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                {(s as any).previewIntroBody as string}
+              </Text>
+              <BlockStack gap="100">
+                <Text as="h3" variant="headingMd">
+                  {s.schemaTypesTitle}
+                </Text>
+                <InlineStack gap="200" wrap>
+                  {schemaTypeKeys.map((k) => (
+                    <Badge key={k} tone="success">
+                      {(s as unknown as Record<string, string>)[k]}
+                    </Badge>
+                  ))}
+                </InlineStack>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+
+          {/* 4. Live preview with per-warning hints + fix-up buttons */}
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingLg">
+                  {s.previewTitle}
+                </Text>
+                <Button url={GOOGLE_RICH_RESULTS_TEST} target="_blank" variant="plain">
+                  {s.validateWithGoogle}
+                </Button>
+              </InlineStack>
+
+              {previews.length === 0 ? (
+                <Text as="p" tone="subdued">
+                  {s.previewEmpty}
+                </Text>
+              ) : (
+                previews.map((block) => (
+                  <BlockStack key={block.labelKey} gap="200">
+                    <Text as="p" variant="headingSm">
+                      {(s as unknown as Record<string, string>)[block.labelKey]}
+                    </Text>
+                    {block.warnings.length === 0 ? (
+                      <Badge tone="success">{t.seo.structuredDataValid}</Badge>
+                    ) : (
+                      <BlockStack gap="200">
+                        {block.warnings.map((w, i) => {
+                          // Remix's JsonifyObject drops the `code` string-union
+                          // through Jsonify, so read it via a widening cast.
+                          const code = (w as unknown as { code: string }).code;
+                          const localizedMessage = warningCopy?.[code] || w.message;
+                          const hint = hintCopy?.[code] || "";
+                          const linkKind = FIX_LINK_BY_CODE[code];
+                          const fixUrl = linkKind ? fixUrlFor(linkKind) : null;
+                          const fixLabel = linkKind ? fixLabelFor(linkKind) : "";
+                          return (
+                            <BlockStack key={i} gap="100">
+                              <InlineStack gap="100" blockAlign="center">
+                                <Badge tone={severityTone(w.severity)}>
+                                  {w.severity}
+                                </Badge>
+                                <Text as="span" variant="bodySm">
+                                  {localizedMessage}
+                                </Text>
+                              </InlineStack>
+                              {hint ? (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {hint}
+                                </Text>
+                              ) : null}
+                              {fixUrl ? (
+                                <InlineStack>
+                                  <Button url={fixUrl} target="_blank" variant="plain">
+                                    {fixLabel}
+                                  </Button>
+                                </InlineStack>
+                              ) : null}
+                            </BlockStack>
+                          );
+                        })}
+                      </BlockStack>
+                    )}
+                    <pre
+                      style={{
+                        maxHeight: "260px",
+                        overflow: "auto",
+                        background: "#f6f6f7",
+                        padding: "8px",
+                        borderRadius: "4px",
+                        fontSize: "11px",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {block.code}
+                    </pre>
+                  </BlockStack>
+                ))
+              )}
+            </BlockStack>
+          </Card>
           // Phase 5 (PLAN_SEO_SUITE_COMPLETION.md §7): validateJsonLd over the
           // WHOLE cached catalog instead of one example item per type,
           // aggregated by warning code.
@@ -945,6 +959,7 @@ export default function SeoStructuredData() {
               )}
             </BlockStack>
           </Card>
+          </BlockStack>
         )}
 
       </BlockStack>

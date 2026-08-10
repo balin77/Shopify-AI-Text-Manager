@@ -1526,6 +1526,7 @@ export const en: Translation = {
         basis: "Based on the crawl from {time}, {pages} served pages checked.",
         cappedCrawl: "The crawl stopped early — these numbers cover only part of the shop.",
         colPageType: "Page type",
+        colCrawled: "Crawled",
         colCoverage: "With markup",
         colMissingExamples: "Examples without markup",
         allCovered: "Complete",

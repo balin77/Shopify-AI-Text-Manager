@@ -23,6 +23,16 @@
   elsif shop.brand.logo
     assign logo_url = shop.brand.logo | image_url: width: 512
   endif
+  # `image_url` returns a PROTOCOL-RELATIVE URL ("//cdn.shopify.com/..."), and
+  # Google requires an absolute one. Dawn prepends "https:" unconditionally; we
+  # test the first two characters instead, so an already-absolute URL can never
+  # become "https:https://...". Same treatment everywhere an image is emitted.
+  if logo_url != ''
+    assign logo_scheme = logo_url | slice: 0, 2
+    if logo_scheme == '//'
+      assign logo_url = logo_url | prepend: 'https:'
+    endif
+  endif
 -%}
 
 {%- if want_org -%}
@@ -54,10 +64,19 @@
 {%- if want_product and request.page_type == 'product' and product -%}
   {%- liquid
     assign p_url = shop.url | append: product.url
-    assign p_desc = product.metafields.global.description_tag | default: product.description | strip_html | truncate: 500
+    # `page_description` is Shopify's own meta description for the CURRENT
+    # page and follows the active locale; the raw `global.description_tag`
+    # metafield does not, so a Spanish page shipped a German description while
+    # its `name` was correctly Spanish. `product.description` is a translated
+    # native field and makes a safe fallback.
+    assign p_desc = page_description | default: product.description | strip_html | truncate: 500
     assign p_img = ''
     if product.featured_image
       assign p_img = product.featured_image | image_url: width: 1200
+      assign p_img_scheme = p_img | slice: 0, 2
+      if p_img_scheme == '//'
+        assign p_img = p_img | prepend: 'https:'
+      endif
     endif
     assign p_var = product.selected_or_first_available_variant
     assign p_price = product.price
@@ -172,7 +191,8 @@
 {%- if want_collection and request.page_type == 'collection' and collection -%}
   {%- liquid
     assign c_url = shop.url | append: collection.url
-    assign c_desc = collection.metafields.global.description_tag | default: collection.description | strip_html | truncate: 500
+    # Locale-aware, same reasoning as the product description above.
+    assign c_desc = page_description | default: collection.description | strip_html | truncate: 500
   -%}
 <script type="application/ld+json" data-contentpilot="collection">
 {
@@ -188,10 +208,14 @@
 {%- if want_article and request.page_type == 'article' and article -%}
   {%- liquid
     assign a_url = shop.url | append: article.url
-    assign a_desc = article.excerpt_or_content | strip_html | truncate: 500
+    assign a_desc = page_description | default: article.excerpt_or_content | strip_html | truncate: 500
     assign a_img = ''
     if article.image
       assign a_img = article.image | image_url: width: 1200
+      assign a_img_scheme = a_img | slice: 0, 2
+      if a_img_scheme == '//'
+        assign a_img = a_img | prepend: 'https:'
+      endif
     endif
   -%}
 <script type="application/ld+json" data-contentpilot="article">
