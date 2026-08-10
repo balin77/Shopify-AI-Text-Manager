@@ -445,6 +445,27 @@ keine Kunden).
 
 ## Backlog
 
+### JSON-LD: Entscheidung vor dem Ausbau des Theme-Schemas — `Product` vs. `ProductGroup`
+
+Dawn gibt bei Varianten-Produkten `ProductGroup` mit `hasVariant` aus (eine
+eigene Entity je Variante), wir geben `Product` mit einem Offer-Array. Beide
+Modelle sind valide, aber sie sind **nicht gleichwertig**: Wird das
+Theme-Schema entfernt, verliert Google die einzelnen Varianten-Entities.
+Sichtbar wird das erst Wochen später in der Search Console, nicht am Tag des
+Umbaus.
+
+Vor dem Entfernen des Theme-Schemas bewusst entscheiden:
+
+- **Offer-Array behalten** — Google leitet die Preisspanne selbst ab und
+  bekommt Verfügbarkeit + SKU je Variante. Keine eigenständigen
+  Varianten-Entities.
+- **Auf `ProductGroup` + `hasVariant` wechseln** — Varianten bleiben eigene
+  Entities (relevant, wenn einzelne Varianten in der Suche ranken sollen),
+  dafür deutlich größeres Markup.
+
+Nicht nebenbei beim Ausbau entscheiden — der Wechsel ändert die Identität der
+Entities und damit, was Google über die Zeit gelernt hat.
+
 ### JSON-LD: `hasMerchantReturnPolicy` + `shippingDetails` (Merchant listings)
 
 Ohne diese beiden Felder meldet die Google Search Console unter "Merchant

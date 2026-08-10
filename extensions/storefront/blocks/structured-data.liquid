@@ -89,7 +89,12 @@
     # metafield does not, so a Spanish page shipped a German description while
     # its `name` was correctly Spanish. `product.description` is a translated
     # native field and makes a safe fallback.
-    assign p_desc = page_description | default: product.description | strip_html | truncate: 500
+    # The SEO meta description is stored HTML-ENCODED, and `strip_html` only
+    # removes tags — it does not decode entities, so `&quot;` and `&amp;` went
+    # into the JSON verbatim while the native `name` (never encoded) looked
+    # fine. Decode before `| json`, `&amp;` LAST: doing it first would turn the
+    # literal text "&amp;quot;" into a quote character.
+    assign p_desc = page_description | default: product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
     assign p_currency = cart.currency.iso_code | default: shop.currency
     # Shopify "rating" metafield value is a rating object: .rating / .scale_max
     assign r_obj = product.metafields.reviews.rating.value
@@ -100,6 +105,72 @@
     # only emits it when a caller supplies one).
     assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
     assign variant_count = product.variants | size
+    assign max_variant_offers = 25
+
+    # Above the threshold there are no Offers to carry sku/gtin, and Google
+    # Merchant listings need SOME product identifier — so the AggregateOffer
+    # case (like the single-variant case) puts them on the Product. `first`,
+    # never `selected_or_first_available_variant`: the output must not depend
+    # on `?variant=`.
+    assign id_variant = nil
+    if variant_count == 1 or variant_count > max_variant_offers
+      assign id_variant = product.variants | first
+    endif
+    assign id_gtin = ''
+    assign id_gtin_key = ''
+    if id_variant
+      assign id_gtin = id_variant.barcode | default: '' | remove: '-' | remove: ' '
+      assign id_gtin_len = id_gtin | size
+      if id_gtin_len == 8
+        assign id_gtin_key = 'gtin8'
+      elsif id_gtin_len == 12
+        assign id_gtin_key = 'gtin12'
+      elsif id_gtin_len == 13
+        assign id_gtin_key = 'gtin13'
+      elsif id_gtin_len == 14
+        assign id_gtin_key = 'gtin14'
+      elsif id_gtin != ''
+        assign id_gtin_key = 'gtin'
+      endif
+    endif
+
+    # AggregateOffer inputs. Availability has to be aggregated rather than
+    # omitted: a product whose 30 variants are ALL sold out would otherwise
+    # hand Google prices with no availability signal at all — the same false
+    # claim the per-variant branch exists to avoid. lowPrice/highPrice come
+    # from the AVAILABLE variants while there are any, so the advertised price
+    # is one a shopper can actually pay.
+    assign agg_avail_count = 0
+    assign agg_backorder_count = 0
+    assign agg_has_low = false
+    assign agg_low = 0
+    assign agg_high = 0
+    for v in product.variants
+      if v.available
+        assign agg_avail_count = agg_avail_count | plus: 1
+        if v.inventory_management != blank and v.inventory_quantity <= 0 and v.inventory_policy == 'continue'
+          assign agg_backorder_count = agg_backorder_count | plus: 1
+        endif
+        if agg_has_low == false or v.price < agg_low
+          assign agg_low = v.price
+          assign agg_has_low = true
+        endif
+        if v.price > agg_high
+          assign agg_high = v.price
+        endif
+      endif
+    endfor
+    if agg_avail_count == 0
+      assign agg_low = product.price_min
+      assign agg_high = product.price_max
+      assign agg_availability = 'https://schema.org/OutOfStock'
+    elsif agg_backorder_count == agg_avail_count
+      # Every purchasable variant is a backorder — saying InStock here is the
+      # "ships in three weeks" lie in aggregate form.
+      assign agg_availability = 'https://schema.org/BackOrder'
+    else
+      assign agg_availability = 'https://schema.org/InStock'
+    endif
   -%}
 
   {%- comment -%}
@@ -131,15 +202,16 @@
     `inventory_quantity` / `inventory_policy` are used for the decision only and
     never written into the markup.
   {%- endcomment -%}
-  {%- assign max_variant_offers = 25 -%}
   {%- capture p_offers -%}
     {%- if variant_count > max_variant_offers -%}
       {
         "@type": "AggregateOffer",
         "priceCurrency": {{ p_currency | json }},
-        "lowPrice": {{ product.price_min | divided_by: 100.0 | round: 2 | append: '' | json }},
-        "highPrice": {{ product.price_max | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "lowPrice": {{ agg_low | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "highPrice": {{ agg_high | divided_by: 100.0 | round: 2 | append: '' | json }},
         "offerCount": {{ variant_count }},
+        "availability": {{ agg_availability | json }},
+        "itemCondition": "https://schema.org/NewCondition",
         "url": {{ p_url | json }}
       }
     {%- else -%}
@@ -209,9 +281,9 @@
     A single-variant product keeps them at product level too, where they are
     unambiguous and Merchant Center reads them most reliably.
   {%- endcomment -%}
-  {%- if variant_count == 1 -%}
-    {%- assign only_v = product.variants | first -%}
-    {%- if only_v.sku != blank -%}, "sku": {{ only_v.sku | json }}{%- endif -%}
+  {%- if id_variant -%}
+    {%- if id_variant.sku != blank -%}, "sku": {{ id_variant.sku | json }}{%- endif -%}
+    {%- if id_gtin_key != '' -%}, "{{ id_gtin_key }}": {{ id_gtin | json }}{%- endif -%}
   {%- endif -%}
   {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
   , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
@@ -275,7 +347,7 @@
   {%- liquid
     assign c_url = shop.url | append: collection.url
     # Locale-aware, same reasoning as the product description above.
-    assign c_desc = page_description | default: collection.description | strip_html | truncate: 500
+    assign c_desc = page_description | default: collection.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
   -%}
 <script type="application/ld+json" data-contentpilot="collection">
 {
@@ -291,7 +363,7 @@
 {%- if want_article and request.page_type == 'article' and article -%}
   {%- liquid
     assign a_url = shop.url | append: article.url
-    assign a_desc = page_description | default: article.excerpt_or_content | strip_html | truncate: 500
+    assign a_desc = page_description | default: article.excerpt_or_content | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
     assign a_img = ''
     if article.image
       assign a_img = article.image | image_url: width: 1200
