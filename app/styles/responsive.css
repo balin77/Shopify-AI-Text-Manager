@@ -84,18 +84,26 @@ html {
   scrollbar-gutter: stable;
 }
 
-/* Visibility Utilities for Mobile/Tablet/Desktop */
-/* Breakpoint bei 900px: Unter 900px = Mobile Dropdown, ab 900px = Desktop Sidebar */
+/* Visibility Utilities for Mobile/Tablet/Desktop
+   Breakpoint bei 900px: Unter 900px = Mobile Dropdown, ab 900px = Desktop Sidebar
+
+   The HIDING rules are `!important` and each lives inside the media query that
+   owns it. Reason: several bars set an inline `display: flex` for their desktop
+   layout (SubNavBar — the L2/L3 sub-nav — and the nav loading indicator), and an
+   inline style beats a plain class rule. Those bars were therefore still painted
+   above the page content on mobile instead of living only in the hamburger
+   drawer. The SHOWING rules stay non-important on purpose, so an inline
+   `display` still decides the box type at the sizes where the element IS
+   visible. */
 .mobile-only {
   display: block;
 }
 
-.tablet-only {
-  display: none;
-}
-
-.desktop-only {
-  display: none;
+@media (max-width: 899px) {
+  .tablet-only,
+  .desktop-only {
+    display: none !important;
+  }
 }
 
 /* UnifiedLanguageBar: full name on desktop, abbreviation on mobile.
@@ -138,7 +146,7 @@ html {
 
 @media (min-width: 900px) and (max-width: 1279px) {
   .mobile-only {
-    display: none;
+    display: none !important;
   }
 
   .tablet-only {
@@ -152,11 +160,11 @@ html {
 
 @media (min-width: 1280px) {
   .mobile-only {
-    display: none;
+    display: none !important;
   }
 
   .tablet-only {
-    display: none;
+    display: none !important;
   }
 
   .desktop-only {

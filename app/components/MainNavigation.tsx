@@ -9,12 +9,12 @@ import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
-import { MobileMenu } from "./MobileMenu";
+import { MobileMenu, type MobileNavGroup } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
-import { isSeoPath, SEO_SECTIONS } from "../config/seo-sections";
+import { isSeoPath, SEO_RUBRICS } from "../config/seo-sections";
 import { meetsPlan } from "../utils/planUtils";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { taskErrorText } from "../utils/task-error-text";
@@ -61,7 +61,7 @@ export function MainNavigation() {
   const { t } = useI18n();
   const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress } = useInfoBox();
   const [popoverActive, setPopoverActive] = useState(false);
-  const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
+  const { plan, getPlanDisplayName, getMaxProducts, canAccessContentType } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
@@ -318,32 +318,62 @@ export function MainNavigation() {
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
-  // Content types for the mobile drawer (Plan §3.6: Level 2 + Level 3 collapse
-  // into the hamburger menu). Flattened from the shared rubric config so it
-  // stays in sync with the desktop bars.
-  const isOnContentPage = isContentPath(location.pathname);
-
+  // Mobile drawer data (Plan §3.6: Level 2 + Level 3 collapse into the
+  // hamburger menu). Built from the SAME rubric configs the desktop bars read,
+  // and kept GROUPED — a flat list would drop the Level-2 rubric that gives the
+  // Level-3 entries their context, which is exactly what the drawer needs in
+  // order to show the two levels as two levels.
   const mobileContentLabels = t.content as unknown as Record<string, string>;
-  const contentTypes = CONTENT_RUBRICS.flatMap((r) =>
-    r.entries.map((e) => ({
-      id: e.id,
-      label: mobileContentLabels?.[e.labelKey] || e.id,
-      icon: e.icon,
-      path: e.path,
-    }))
-  );
+  const contentRubricLabels = (t as unknown as { rubrics?: Record<string, string> }).rubrics ?? {};
 
-  // SEO sections mirror the desktop SubNavBar so mobile users can jump straight
-  // to a sub-section (Übersicht, Strukturierte Daten, …) from the hamburger.
-  const isOnSeoPage = isSeoPath(location.pathname);
+  // Conditional entries (e.g. Abo-Pläne) are dropped on the same terms as the
+  // desktop Level-3 bar: hidden only when the plan is entitled AND the shop has
+  // no such content — otherwise the upsell lock stays.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const appRootData = matches.find((m) => m.id === "routes/app")?.data as any;
+  const conditionalContent: Record<string, boolean> | undefined = appRootData?.conditionalContent;
+
+  const contentGroups: MobileNavGroup[] = CONTENT_RUBRICS.map((r) => ({
+    id: r.id,
+    label: contentRubricLabels[r.id] || r.id,
+    icon: r.icon,
+    entries: r.entries
+      .filter((e) => {
+        if (!e.conditional) return true;
+        const present = conditionalContent?.[e.id];
+        return !(present === false && canAccessContentType(e.planContentType));
+      })
+      .map((e) => ({
+        id: e.id,
+        label: mobileContentLabels?.[e.labelKey] || e.id,
+        icon: e.icon,
+        path: e.path,
+        locked: !canAccessContentType(e.planContentType),
+        count: e.id === "products" ? productCount : undefined,
+        countCritical:
+          e.id === "products" &&
+          productCount !== undefined &&
+          maxProducts !== Infinity &&
+          productCount >= maxProducts,
+      })),
+  })).filter((g) => g.entries.length > 0);
+
+  // SEO rubrics + sections mirror the desktop SubNavBar pair so mobile users can
+  // jump straight to a sub-section (Übersicht, Strukturierte Daten, …).
   const seoSectionStrings =
     (t.seo as { sections?: Record<string, { label?: string }> }).sections ?? {};
-  const seoTypes = SEO_SECTIONS.map((section) => ({
-    id: section.id,
-    label: seoSectionStrings[section.id]?.label || section.id,
-    icon: section.icon,
-    path: section.path,
-    locked: section.planGate ? !meetsPlan(plan, section.planGate) : false,
+  const seoRubricStrings = (t.seo as { rubrics?: Record<string, string> }).rubrics ?? {};
+  const seoGroups: MobileNavGroup[] = SEO_RUBRICS.map((r) => ({
+    id: r.id,
+    label: seoRubricStrings[r.id] || r.id,
+    icon: r.icon,
+    entries: r.entries.map((section) => ({
+      id: section.id,
+      label: seoSectionStrings[section.id]?.label || section.id,
+      icon: section.icon,
+      path: section.path,
+      locked: section.planGate ? !meetsPlan(plan, section.planGate) : false,
+    })),
   }));
 
   return (
@@ -371,12 +401,8 @@ export function MainNavigation() {
           <div className="mobile-only">
             <MobileMenu
               activeTab={isContentPath(location.pathname) ? "content" : isSeoPath(location.pathname) ? "seo" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
-              productCount={productCount}
-              maxProducts={maxProducts}
-              contentTypes={contentTypes}
-              showContentTypes={isOnContentPage}
-              seoTypes={seoTypes}
-              showSeoTypes={isOnSeoPage}
+              contentGroups={contentGroups}
+              seoGroups={seoGroups}
             />
           </div>
 
