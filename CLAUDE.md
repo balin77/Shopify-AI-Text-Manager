@@ -46,6 +46,7 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
 ## Deploy-critical gotchas
 
 - **Only ONE theme app extension per Shopify app.** All storefront/theme blocks (JSON-LD, social-meta, app embeds) MUST live under [extensions/storefront/](extensions/storefront/). Creating a second `type = "theme"` extension silently breaks `shopify app deploy`.
+- **The extension has a hard 100 KiB (102400 bytes) Liquid budget.** Every `extensions/storefront/blocks/*.liquid` counts together; `assets/` does not (served statically — that's why the block logic lives there). Over budget, the CLI fails with `bundle: Extension Liquid content size exceeds 100 KB limit`. The commented sources are already over it, so deploy via `npm run deploy` ([scripts/deploy-minified.mjs](scripts/deploy-minified.mjs)) — it minifies the blocks in place, deploys, and restores the sources in a `finally` (also on failure/Ctrl-C). **Never commit minified blocks**; `blocks/` stays commented in git. Minification skips `<script>`/`<style>`/`<pre>`/`<textarea>`/`{% raw %}` and every `{% … %}` / `{{ … }}` interior byte-identically, so comments inside a JSON island buy no headroom — when it gets tight, move markup into `assets/`. Check with `npm run minify:blocks`.
 - **App embeds cannot inject `<head>` CSS.** `{% stylesheet %}` is not available in app blocks; styles must live inline or in a section/block that participates in the theme's asset pipeline.
 - **Meta title/description on pages, blogs, articles ≠ native `seo` field.** They live in `global.title_tag` / `description_tag` **metafields**. Clearing requires `metafieldsDelete` — setting an empty string does NOT clear.
 - **`metafieldsSet` with `""` is rejected** ("Value can't be blank") — clear a metafield via `metafieldsDelete` (`MetafieldIdentifierInput`: `ownerId`+`namespace`+`key`; the old GID-based `metafieldDelete` was removed 2025-01). Always send `type` on `metafieldsSet` (required when creating without a definition); max 25 per call, atomic upsert.
@@ -71,7 +72,8 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
 - `npm run shopify` — `shopify app dev` (recommended for embedded work)
 - `npm run test` — Vitest (`npm run test:watch`, `npm run test:ui`)
 - `npm run typecheck` — tsc
-- `npm run deploy` — `shopify app deploy`
+- `npm run deploy -- -c dev --allow-updates` — minify-then-`shopify app deploy` wrapper ([scripts/deploy-minified.mjs](scripts/deploy-minified.mjs)); all args pass through. Never call the bare CLI (see the Liquid-budget gotcha above)
+- `npm run minify:blocks` — report the extension Liquid budget without deploying
 - `npm run build:flags` — regenerate storefront flag artifact
 
 ## Notes for future work
