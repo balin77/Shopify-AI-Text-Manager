@@ -342,6 +342,7 @@ function AppContent() {
           remounted on every sub-page. Only the <Outlet /> content swaps.
           ContentTypeNavigation returns null on non-content pages. */}
       <div
+        className="app-shell"
         style={{
           display: "flex",
           flexDirection: "column",
@@ -352,7 +353,9 @@ function AppContent() {
           // fixed-frame routes too: the editor and the .app-page-content pages
           // scroll INSIDE a frame, so the frame itself has to end above the
           // bar — trailing padding on the page content would never reach them.
-          paddingBottom: "var(--app-bottom-inset)",
+          // The reserve is its own variable so a route that already ends clear
+          // of the bar can opt out (see .app-shell:has(.seo-layout)).
+          paddingBottom: "var(--app-shell-bottom-reserve, var(--app-bottom-inset))",
           boxSizing: "border-box",
         }}
       >

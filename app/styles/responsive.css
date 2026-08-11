@@ -27,9 +27,9 @@
      into view. The SEO pages only looked exempt because their inner scroll
      container happens to carry 1rem of trailing padding.
 
-     0 on desktop, where nothing overlays the bottom. The 85px below is the one
+     0 on desktop, where nothing overlays the bottom. The 90px below is the one
      place the bar's height is stated — tune it here. Measured against the real
-     Shopify mobile app; 64px was not enough to clear it. */
+     Shopify mobile app (64px and 85px were both short). */
   --app-bottom-inset: 0px;
 }
 
@@ -41,8 +41,26 @@
 
 @media (max-width: 899px) {
   :root {
-    --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 85px);
+    --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 90px);
   }
+}
+
+/* How much the app shell itself gives up at the bottom. Normally the full
+   inset — but a route that already ends clear of the bar must not have it
+   reserved a second time, or it gains a dead strip on top of its own spacing.
+   The SEO layout is such a route: it scrolls inside its own frame whose content
+   wrapper already carries trailing padding, and it was correct before the inset
+   existed.
+
+   Deliberately a SEPARATE variable from --app-bottom-inset: the shell's
+   descendants include viewport-fixed overlays (the hamburger drawer, the
+   compact item selector) that must keep reserving the real bar height on every
+   route, SEO included. Zeroing --app-bottom-inset here would reach them too. */
+.app-shell {
+  --app-shell-bottom-reserve: var(--app-bottom-inset);
+}
+.app-shell:has(.seo-layout) {
+  --app-shell-bottom-reserve: 0px;
 }
 
 /* Always reserve the scrollbar track, so content doesn't jump sideways when a

@@ -123,7 +123,10 @@ export default function SeoLayout() {
     // runs behind the (sticky) SubNavBar — the merchant sees the track/thumb
     // extending up alongside the sub-nav chips. Same pattern the fixed-frame
     // editor routes use (see comment in app.tsx's <main>).
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+    // `seo-layout` marks this route as bringing its own bottom spacing, so the
+    // app shell does not reserve the mobile bar inset a second time on top of
+    // it (see .app-shell:has(.seo-layout) in responsive.css).
+    <div className="seo-layout" style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
       <SubNavBar
         items={rubricItems}
         activeId={activeRubric?.id ?? null}
