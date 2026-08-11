@@ -21,17 +21,13 @@ import { checkAndSyncSubscription } from "./services/billing.server";
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
  * Falls back to October25 (2025-10) if not found or not set
+ *
+ * @shopify/shopify-api v13 removed the 2022-10 … 2024-07 enum members, so
+ * those strings now fall through to the default instead of pinning a version
+ * the SDK can no longer talk to.
  */
 function getApiVersion(versionString?: string): ApiVersion {
   const versionMap: Record<string, ApiVersion> = {
-    "2022-10": ApiVersion.October22,
-    "2023-01": ApiVersion.January23,
-    "2023-04": ApiVersion.April23,
-    "2023-07": ApiVersion.July23,
-    "2023-10": ApiVersion.October23,
-    "2024-01": ApiVersion.January24,
-    "2024-04": ApiVersion.April24,
-    "2024-07": ApiVersion.July24,
     "2024-10": ApiVersion.October24,
     "2025-01": ApiVersion.January25,
     "2025-04": ApiVersion.April25,
@@ -39,6 +35,8 @@ function getApiVersion(versionString?: string): ApiVersion {
     "2025-10": ApiVersion.October25,
     "2026-01": ApiVersion.January26,
     "2026-04": ApiVersion.April26,
+    "2026-07": ApiVersion.July26,
+    "2026-10": ApiVersion.October26,
     "unstable": ApiVersion.Unstable,
   };
 
