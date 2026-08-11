@@ -199,7 +199,10 @@ export type FetcherData =
 // `seo.sections.<id>.label` and `seo.dashboard.problems.*`). Only used as the
 // loose structural target for TranslationStrings; the precise per-locale type
 // remains `typeof de` (Translation), so this never weakens real key checking.
-export type TranslationValue = string | { [key: string]: TranslationValue } | undefined;
+// `string[]` because some blocks are genuinely lists — e.g. the per-embed
+// activation steps in settings, which are numbered in the UI and must stay one
+// translatable unit rather than step1/step2/step3 keys.
+export type TranslationValue = string | string[] | { [key: string]: TranslationValue } | undefined;
 
 export interface HelpContent {
   title: string;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, Text, BlockStack, Button, Banner, Box, Divider } from "@shopify/polaris";
+import { Card, Text, BlockStack, InlineStack, Button, Banner, Box, Divider, Collapsible } from "@shopify/polaris";
 import type { FetcherWithComponents } from "@remix-run/react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
@@ -54,6 +54,17 @@ export function SettingsSetupTab({
   const socialMetaEmbedUrl = buildEmbedUrl("social-meta");
   const webVitalsEmbedUrl = buildEmbedUrl("web-vitals");
   const ts = t.settings as unknown as Record<string, string>;
+  // The long-form explanations, folded away per embed. Optional on purpose:
+  // a locale that hasn't got them yet simply renders the box without a toggle.
+  const details = (t.settings as unknown as { themeSetupDetails?: Record<string, EmbedDetails> })
+    .themeSetupDetails;
+  const detailLabels = {
+    detailsShowLabel: ts.themeSetupDetailsShow,
+    detailsHideLabel: ts.themeSetupDetailsHide,
+    whatLabel: ts.themeSetupDetailsWhat,
+    stepsLabel: ts.themeSetupDetailsSteps,
+    verifyLabel: ts.themeSetupDetailsVerify,
+  };
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [webhookLoading, setWebhookLoading] = useState(false);
   const [webhookData, setWebhookData] = useState<any>(null);
@@ -253,6 +264,8 @@ export function SettingsSetupTab({
               "Lets customers pick the storefront language and country/currency. Uses Shopify's native localization API — no extra setup beyond activating the embed."
             }
             url={localeSwitcherEmbedUrl}
+            details={details?.localeSwitcher}
+            {...detailLabels}
             buttonLabel={ts.themeSetupOptionBButton ?? "Activate switcher"}
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}
@@ -268,6 +281,8 @@ export function SettingsSetupTab({
               "If your theme's product gallery is not replaced automatically, open the embed settings and set the “Native gallery CSS selector” to your theme's product gallery element (inspect it in the browser; e.g. media-gallery or .product__media-wrapper)."
             }
             url={variantGalleryEmbedUrl}
+            details={details?.variantGallery}
+            {...detailLabels}
             buttonLabel={t.settings.themeSetupOptionAButton}
             requiredPlan="pro"
             currentPlan={subscriptionPlan}
@@ -283,6 +298,8 @@ export function SettingsSetupTab({
               "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront."
             }
             url={directTranslationEmbedUrl}
+            details={details?.directTranslation}
+            {...detailLabels}
             buttonLabel={ts.themeSetupOptionCButton ?? "Activate direct translations"}
             requiredPlan="max"
             currentPlan={subscriptionPlan}
@@ -302,6 +319,8 @@ export function SettingsSetupTab({
               "Emits schema.org markup for products, collections and blog articles — the basis for rich results in Google. Without the embed enabled nothing reaches the storefront."
             }
             url={jsonLdEmbedUrl}
+            details={details?.jsonLd}
+            {...detailLabels}
             buttonLabel={ts.themeSetupJsonLdButton ?? "Activate structured data"}
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}
@@ -316,6 +335,8 @@ export function SettingsSetupTab({
               "Adds the Open Graph and Twitter Card tags that give shared links an image, title and description on Facebook, X, LinkedIn, WhatsApp and in AI chat previews."
             }
             url={socialMetaEmbedUrl}
+            details={details?.socialMeta}
+            {...detailLabels}
             buttonLabel={ts.themeSetupSocialMetaButton ?? "Activate social previews"}
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}
@@ -330,6 +351,8 @@ export function SettingsSetupTab({
               "Measures loading speed at your actual visitors instead of in a lab. Without the embed the speed section only has lab data."
             }
             url={webVitalsEmbedUrl}
+            details={details?.webVitals}
+            {...detailLabels}
             buttonLabel={ts.themeSetupWebVitalsButton ?? "Activate Web Vitals"}
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}
@@ -391,6 +414,28 @@ interface EmbedActivateBoxProps {
   currentPlan: Plan;
   /** Optional override of the "Requires the {plan} plan." template. */
   requiresPlanText?: string;
+  /**
+   * The long explanation, folded away behind a toggle. Merchants who already
+   * know what they are switching on should not have to scroll past four
+   * paragraphs to reach the next button — but the depth has to be SOMEWHERE,
+   * which is why the standalone Variant-Gallery setup page (unreachable, English
+   * only) could be dropped in favour of this.
+   */
+  details?: EmbedDetails;
+  detailsShowLabel?: string;
+  detailsHideLabel?: string;
+  whatLabel?: string;
+  stepsLabel?: string;
+  verifyLabel?: string;
+}
+
+export interface EmbedDetails {
+  /** What the embed does on the storefront. */
+  what: string;
+  /** Activation steps, embed-specific where they differ. */
+  steps: string[];
+  /** How the merchant can tell it is actually working. */
+  verify: string;
 }
 
 function EmbedActivateBox({
@@ -402,7 +447,15 @@ function EmbedActivateBox({
   requiredPlan,
   currentPlan,
   requiresPlanText,
+  details,
+  detailsShowLabel,
+  detailsHideLabel,
+  whatLabel,
+  stepsLabel,
+  verifyLabel,
 }: EmbedActivateBoxProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = `embed-details-${title.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}`;
   const allowed = !requiredPlan || meetsPlan(currentPlan, requiredPlan);
   const planNote =
     !allowed && requiredPlan
@@ -419,7 +472,7 @@ function EmbedActivateBox({
         {planNote && (
           <Text as="p" variant="bodySm" tone="caution">{planNote}</Text>
         )}
-        <div>
+        <InlineStack gap="200" blockAlign="center">
           <Button
             url={allowed ? url : undefined}
             external={allowed}
@@ -429,7 +482,51 @@ function EmbedActivateBox({
           >
             {buttonLabel}
           </Button>
-        </div>
+          {details && (
+            <Button
+              variant="plain"
+              size="slim"
+              onClick={() => setDetailsOpen((open) => !open)}
+              ariaExpanded={detailsOpen}
+              ariaControls={detailsId}
+              disclosure={detailsOpen ? "up" : "down"}
+            >
+              {detailsOpen ? (detailsHideLabel ?? "Less") : (detailsShowLabel ?? "How does it work?")}
+            </Button>
+          )}
+        </InlineStack>
+
+        {details && (
+          <Collapsible
+            id={detailsId}
+            open={detailsOpen}
+            transition={{ duration: "150ms", timingFunction: "ease-in-out" }}
+          >
+            <Box paddingBlockStart="300">
+              <BlockStack gap="300">
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{whatLabel ?? "What it does"}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{details.what}</Text>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{stepsLabel ?? "How to activate it"}</Text>
+                  <BlockStack gap="100">
+                    {details.steps.map((step, i) => (
+                      <InlineStack key={i} gap="200" blockAlign="start" wrap={false}>
+                        <Text as="span" variant="bodySm" fontWeight="semibold">{`${i + 1}.`}</Text>
+                        <Text as="span" variant="bodySm" tone="subdued">{step}</Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+                </BlockStack>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{verifyLabel ?? "How to tell it works"}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{details.verify}</Text>
+                </BlockStack>
+              </BlockStack>
+            </Box>
+          </Collapsible>
+        )}
       </BlockStack>
     </Box>
   );

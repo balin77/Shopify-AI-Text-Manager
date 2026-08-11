@@ -867,6 +867,65 @@ export const es: Translation = {
     themeSetupOptionCDescription: "Traduce textos de apps de terceros (reseñas, sellos, page builders) que las traducciones nativas de Shopify no pueden alcanzar. Sin el embed activo, no ocurre nada en el escaparate.",
     themeSetupOptionCButton: "Activar traducciones directas",
     themeSetupOptionRequiresPlan: "Requiere el plan {plan}.",
+    themeSetupDetailsShow: "¿Cómo funciona?",
+    themeSetupDetailsHide: "Mostrar menos",
+    themeSetupDetailsWhat: "¿Qué hace?",
+    themeSetupDetailsSteps: "Cómo activarlo",
+    themeSetupDetailsVerify: "Cómo saber que funciona",
+    themeSetupDetails: {
+      localeSwitcher: {
+        what: "Muestra un selector de idioma y país/moneda en tu tienda. Usa la API de localización nativa de Shopify, así que el cambio afecta a todo el contenido traducido, no solo a los textos de la app.",
+        steps: [
+          "Pulsa el botón de arriba — el editor de temas se abre con el bloque preseleccionado. Actívalo y guarda el tema.",
+          "En los ajustes del bloque decide DÓNDE aparece el selector: flotante, en la cabecera, en el pie o en un selector CSS propio. Sin ubicación no aparece nada.",
+          "Opcionalmente ajusta el aspecto: banderas, etiquetas, colores, comportamiento en pantallas estrechas.",
+        ],
+        verify: "Abre tu tienda — el selector está en la posición elegida. Si falta, el selector CSS no coincide con tu tema; la variante flotante siempre funciona.",
+      },
+      variantGallery: {
+        what: "Sustituye la galería de producto de tu tema por imágenes específicas de cada variante: cuando un cliente elige una variante solo ve sus imágenes. Qué imagen pertenece a qué variante se define en ContentPilot en la página de producto.",
+        steps: [
+          "Pulsa el botón de arriba, activa el bloque y guarda el tema.",
+          "Deja activado \"Heredar los ajustes de galería del tema\" — la galería adopta así las miniaturas y la posición de tu tema.",
+          "Si la galería nativa no se sustituye: pon el \"Native gallery CSS selector\" del bloque al elemento de galería de tu tema (inspecciónalo en el navegador, p. ej. media-gallery o .product__media-wrapper).",
+        ],
+        verify: "Abre una página de producto con varias variantes y cambia de variante — las imágenes cambian con ella. Si ves dos galerías superpuestas, el selector aún no está configurado.",
+      },
+      directTranslation: {
+        what: "Traduce textos de apps de terceros (reseñas, distintivos, page builders) que la traducción nativa de Shopify no alcanza. Las traducciones vienen de ContentPilot y se aplican en el navegador del visitante.",
+        steps: [
+          "Pulsa el botón de arriba, activa el bloque y guarda el tema.",
+          "Opcionalmente activa la herramienta de captura — recoge los textos de terceros que encuentra mientras navegas en el editor de temas.",
+          "Traduce los textos recogidos en \"Traducciones directas\".",
+        ],
+        verify: "Abre tu tienda en otro idioma — los textos capturados aparecen traducidos. Sin el bloque activado no pasa nada en la tienda, por mucho que hayas traducido.",
+      },
+      jsonLd: {
+        what: "Entrega marcado schema.org para productos, colecciones y artículos de blog — la base para que Google muestre precios, disponibilidad y valoraciones directamente en el resultado de búsqueda.",
+        steps: [
+          "Pulsa el botón de arriba, activa el bloque y guarda el tema.",
+          "En el bloque elige qué tipos se entregan: producto, colección, artículo, organización, breadcrumb, FAQ.",
+          "Importante: si tu tema ya entrega uno de esos tipos, desactívalo aquí. El marcado duplicado es la causa más frecuente de avisos en Search Console.",
+        ],
+        verify: "En SEO → Datos estructurados, el paso 1 muestra tras el siguiente rastreo qué páginas entregan marcado y si algún tipo aparece dos veces.",
+      },
+      socialMeta: {
+        what: "Añade las etiquetas Open Graph y Twitter Card para que los enlaces compartidos aparezcan con imagen, título y descripción en Facebook, X, LinkedIn, WhatsApp y en vistas previas de chats de IA, en lugar de como una URL desnuda.",
+        steps: [
+          "Pulsa el botón de arriba, activa el bloque y guarda el tema.",
+          "Opcionalmente define una imagen para compartir por defecto — se usa cuando una página no tiene imagen propia (páginas de contacto o informativas).",
+        ],
+        verify: "Pega un enlace en WhatsApp o Slack, o usa el Sharing Debugger de Facebook. Estos servicios cachean mucho — tras un cambio, pídeles que vuelvan a leerlo.",
+      },
+      webVitals: {
+        what: "Mide LCP, CLS e INP con tus visitantes reales en lugar de en laboratorio. Sin el bloque, la sección de velocidad solo tiene datos de laboratorio de PageSpeed Insights, que pueden diferir bastante de la experiencia real.",
+        steps: [
+          "Pulsa el botón de arriba, activa el bloque y guarda el tema.",
+          "Nada más — la medición se ejecuta automáticamente desde el siguiente visitante.",
+        ],
+        verify: "En SEO → Velocidad y calidad aparecen datos de usuarios reales tras algunas visitas. Con poco tráfico puede tardar unos días.",
+      },
+    },
     themeSetupSeoGroup: "SEO",
     themeSetupJsonLdTitle: "Datos estructurados (JSON-LD)",
     themeSetupJsonLdDescription: "Entrega marcado schema.org para productos, colecciones y artículos de blog — la base de los rich results en Google. Sin el bloque activado no llega nada a la tienda.",

@@ -868,6 +868,65 @@ export const en: Translation = {
     themeSetupOptionCDescription: "Translates text from 3rd-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. Without the embed enabled, nothing happens on the storefront.",
     themeSetupOptionCButton: "Activate direct translations",
     themeSetupOptionRequiresPlan: "Requires the {plan} plan.",
+    themeSetupDetailsShow: "How does this work?",
+    themeSetupDetailsHide: "Show less",
+    themeSetupDetailsWhat: "What it does",
+    themeSetupDetailsSteps: "How to activate it",
+    themeSetupDetailsVerify: "How to tell it works",
+    themeSetupDetails: {
+      localeSwitcher: {
+        what: "Shows a language and country/currency picker on your storefront. It uses Shopify's native localization API, so switching affects all translated content, not just app text.",
+        steps: [
+          "Click the button above — the theme editor opens with the app embed preselected. Switch the embed on and save the theme.",
+          "In the embed settings decide WHERE the switcher appears: floating, in the header, in the footer, or at a CSS selector of your own. Without a placement nothing shows up.",
+          "Optionally adjust the look: flags, labels, colours, behaviour on narrow screens.",
+        ],
+        verify: "Open your storefront — the switcher sits in the chosen position. If it's missing, the CSS selector doesn't match your theme; the floating variant always works.",
+      },
+      variantGallery: {
+        what: "Replaces your theme's product gallery with variant-specific images: when a customer picks a variant they only see that variant's images. Which image belongs to which variant is set in ContentPilot on the product page.",
+        steps: [
+          "Click the button above, switch the embed on, save the theme.",
+          "Leave \"Inherit theme gallery settings\" on — the gallery then takes over your theme's thumbnails and position.",
+          "If the native gallery is not replaced: set the embed's \"Native gallery CSS selector\" to your theme's gallery element (inspect it in the browser, e.g. media-gallery or .product__media-wrapper).",
+        ],
+        verify: "Open a product page with several variants and switch variant — the images change with it. Two galleries stacked on top of each other means the selector isn't set yet.",
+      },
+      directTranslation: {
+        what: "Translates text from third-party apps (reviews, badges, page builders) that Shopify's native translations can't reach. The translations come from ContentPilot and are applied in the visitor's browser.",
+        steps: [
+          "Click the button above, switch the embed on, save the theme.",
+          "Optionally enable the capture tool — it collects the third-party text it finds while you browse in the theme editor.",
+          "Translate the collected text under \"Direct translations\".",
+        ],
+        verify: "Open your storefront in a foreign language — the captured text appears translated. Without the embed enabled nothing happens on the storefront, no matter how much you translated.",
+      },
+      jsonLd: {
+        what: "Emits schema.org markup for products, collections and blog articles — the basis for Google showing prices, availability and ratings directly in the search result.",
+        steps: [
+          "Click the button above, switch the embed on, save the theme.",
+          "In the embed, pick which types are emitted: product, collection, article, organization, breadcrumb, FAQ.",
+          "Important: if your theme already emits one of those types, switch it off here. Duplicate markup is the most common cause of Search Console warnings.",
+        ],
+        verify: "Under SEO → Structured data, step 1 shows after the next website crawl which pages serve markup and whether a type appears twice.",
+      },
+      socialMeta: {
+        what: "Adds the Open Graph and Twitter Card tags so shared links appear with an image, title and description on Facebook, X, LinkedIn, WhatsApp and in AI chat previews instead of as a bare URL.",
+        steps: [
+          "Click the button above, switch the embed on, save the theme.",
+          "Optionally set a default share image — it is used when a page has no image of its own (contact or info pages, say).",
+        ],
+        verify: "Paste a link into WhatsApp or Slack, or use Facebook's Sharing Debugger. These services cache aggressively — after a change, ask them to re-fetch.",
+      },
+      webVitals: {
+        what: "Measures LCP, CLS and INP at your actual visitors instead of in a lab. Without the embed the speed section only has PageSpeed Insights lab data, which can differ considerably from what real users experience.",
+        steps: [
+          "Click the button above, switch the embed on, save the theme.",
+          "Nothing else — measurement runs automatically from the next visitor on.",
+        ],
+        verify: "Under SEO → Speed & quality, real user data appears after a few visits. On a low-traffic shop that can take a few days.",
+      },
+    },
     themeSetupSeoGroup: "SEO",
     themeSetupJsonLdTitle: "Structured data (JSON-LD)",
     themeSetupJsonLdDescription: "Emits schema.org markup for products, collections and blog articles — the basis for rich results in Google. Without the embed enabled nothing reaches the storefront.",

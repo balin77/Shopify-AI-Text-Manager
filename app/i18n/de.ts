@@ -865,6 +865,65 @@ export const de = {
     themeSetupOptionCDescription: "Übersetzt Text aus Drittanbieter-Apps (Reviews, Badges, Page-Builder), die Shopifys native Übersetzungen nicht erreichen können. Ohne aktiviertes Embed passiert auf der Storefront nichts.",
     themeSetupOptionCButton: "Direktübersetzungen aktivieren",
     themeSetupOptionRequiresPlan: "Erfordert den {plan}-Plan.",
+    themeSetupDetailsShow: "Wie funktioniert das?",
+    themeSetupDetailsHide: "Weniger anzeigen",
+    themeSetupDetailsWhat: "Was macht es?",
+    themeSetupDetailsSteps: "So aktivierst du es",
+    themeSetupDetailsVerify: "Woran du siehst, dass es läuft",
+    themeSetupDetails: {
+      localeSwitcher: {
+        what: "Blendet in deiner Storefront eine Auswahl für Sprache und Land/Währung ein. Sie nutzt Shopifys native Localization-API — die Umschaltung wirkt also auf alle übersetzten Inhalte, nicht nur auf App-Texte.",
+        steps: [
+          "Auf den Button oben klicken — der Theme-Editor öffnet sich mit dem App-Embed vorausgewählt. Embed einschalten und Theme speichern.",
+          "In den Embed-Einstellungen festlegen, WO der Umschalter erscheint: schwebend, im Header, im Footer oder an einem eigenen CSS-Selektor. Ohne Platzierung erscheint nichts.",
+          "Optional Aussehen anpassen: Flaggen, Beschriftung, Farben, Verhalten auf schmalen Bildschirmen.",
+        ],
+        verify: "Storefront öffnen — der Umschalter steht an der gewählten Position. Fehlt er, passt der CSS-Selektor nicht zu deinem Theme; die schwebende Variante funktioniert dagegen immer.",
+      },
+      variantGallery: {
+        what: "Ersetzt die Produktgalerie deines Themes durch variantenspezifische Bilder: Wählt ein Kunde eine Variante, sieht er nur deren Bilder. Welches Bild zu welcher Variante gehört, legst du in ContentPilot auf der Produktseite fest.",
+        steps: [
+          "Auf den Button oben klicken, Embed einschalten, Theme speichern.",
+          "„Theme-Galerie-Einstellungen übernehmen\" eingeschaltet lassen — dann übernimmt die Galerie Thumbnails und Position deines Themes.",
+          "Wird die native Galerie nicht ersetzt: im Embed den „Native gallery CSS selector\" auf das Galerie-Element deines Themes setzen (im Browser inspizieren, z. B. media-gallery oder .product__media-wrapper).",
+        ],
+        verify: "Produktseite mit mehreren Varianten öffnen und die Variante wechseln — die Bilder wechseln mit. Siehst du zwei Galerien übereinander, ist der Selektor noch nicht gesetzt.",
+      },
+      directTranslation: {
+        what: "Übersetzt Texte von Fremd-Apps (Bewertungen, Badges, Page-Builder), die Shopifys native Übersetzung nicht erreicht. Die Übersetzungen stammen aus ContentPilot und werden im Browser des Besuchers eingesetzt.",
+        steps: [
+          "Auf den Button oben klicken, Embed einschalten, Theme speichern.",
+          "Optional das Erfassungswerkzeug einschalten — es sammelt im Theme-Editor die gefundenen Fremdtexte ein.",
+          "Die gesammelten Texte unter „Direktübersetzungen\" übersetzen.",
+        ],
+        verify: "Storefront in einer Fremdsprache öffnen — die erfassten Texte erscheinen übersetzt. Ohne aktives Embed passiert auf der Storefront nichts, egal wie viel du übersetzt hast.",
+      },
+      jsonLd: {
+        what: "Liefert schema.org-Markup für Produkte, Kollektionen und Blog-Artikel aus — die Grundlage dafür, dass Google Preise, Verfügbarkeit und Bewertungen direkt im Suchergebnis anzeigen kann.",
+        steps: [
+          "Auf den Button oben klicken, Embed einschalten, Theme speichern.",
+          "Im Embed auswählen, welche Typen ausgeliefert werden: Produkt, Kollektion, Artikel, Organisation, Breadcrumb, FAQ.",
+          "Wichtig: Liefert dein Theme einen Typ bereits selbst aus, diesen hier abschalten. Doppeltes Markup ist die häufigste Ursache für Warnungen in der Search Console.",
+        ],
+        verify: "Unter SEO → Strukturierte Daten zeigt Schritt 1 nach dem nächsten Website-Crawl, welche Seiten Markup ausliefern und ob ein Typ doppelt vorkommt.",
+      },
+      socialMeta: {
+        what: "Ergänzt die Open-Graph- und Twitter-Card-Tags, damit geteilte Links auf Facebook, X, LinkedIn, WhatsApp und in KI-Chat-Vorschauen mit Bild, Titel und Beschreibung erscheinen statt als nackte URL.",
+        steps: [
+          "Auf den Button oben klicken, Embed einschalten, Theme speichern.",
+          "Optional ein Standard-Teilerbild hinterlegen — es wird genutzt, wenn eine Seite kein eigenes Bild hat (z. B. Kontakt- oder Infoseiten).",
+        ],
+        verify: "Einen Link in WhatsApp oder Slack einfügen, oder Facebooks Sharing Debugger nutzen. Diese Dienste cachen stark — nach Änderungen dort das erneute Einlesen anstoßen.",
+      },
+      webVitals: {
+        what: "Misst LCP, CLS und INP bei deinen echten Besuchern statt im Labor. Ohne das Embed zeigt der Ladezeit-Bereich nur Labordaten von PageSpeed Insights — die von der Erfahrung echter Nutzer deutlich abweichen können.",
+        steps: [
+          "Auf den Button oben klicken, Embed einschalten, Theme speichern.",
+          "Sonst nichts — die Messung läuft ab dem nächsten Besucher automatisch mit.",
+        ],
+        verify: "Unter SEO → Ladezeit & Qualität erscheinen nach einigen Besuchen echte Nutzerdaten. Bei wenig Traffic kann das ein paar Tage dauern.",
+      },
+    },
     themeSetupSeoGroup: "SEO",
     themeSetupJsonLdTitle: "Strukturierte Daten (JSON-LD)",
     themeSetupJsonLdDescription: "Liefert schema.org-Markup für Produkte, Kollektionen und Blog-Artikel aus — die Grundlage für Rich Results bei Google. Ohne aktiviertes Embed kommt nichts auf der Storefront an.",
