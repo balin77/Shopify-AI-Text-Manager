@@ -51,7 +51,7 @@ RUN npx prisma generate
 COPY --chown=node:node --from=builder /app/build ./build
 
 # Copy runtime files
-COPY --chown=node:node server.js start.js remix.config.js ./
+COPY --chown=node:node server.js start.js ./
 COPY --chown=node:node task-cleanup.service.js task-recovery.service.js webp-processor.service.js stale-image-cleanup.service.js gdpr-audit-cleanup.service.js image-op-refund.js ./
 COPY --chown=node:node scripts ./scripts/
 
