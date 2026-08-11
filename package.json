@@ -7,7 +7,6 @@
   "scripts": {
     "build": "prisma generate && react-router build && node scripts/strip-client-sourcemaps.mjs",
     "postinstall": "prisma generate || true",
-    "postdeploy": "node scripts/migrate-baseline.js",
     "dev": "react-router dev",
     "start": "node scripts/validate-env.js && node start.js",
     "start:migrate": "node scripts/migrate-baseline.js && npm run start",
