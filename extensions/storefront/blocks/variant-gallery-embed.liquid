@@ -1,5 +1,57 @@
+{%- comment -%}
+  App Embed Block — target: head. ONE block that owns the whole feature:
+  pre-paint FOUC prevention, JSON data island, controller script and the
+  custom-element placeholder. Shopify injects this just before </head>,
+  so the inline <style>/<script>/<link>/JSON-island parts are parsed
+  during <head> parsing — before the <body> / native gallery is painted,
+  which is the only true pre-paint hook.
+
+  How the HTML parser places things:
+    Everything except <cp-embed-gallery> is head-valid (<style>, <script>,
+    <link>) and stays in <head>. The <cp-embed-gallery> placeholder is
+    NOT head-valid, so when the parser encounters it the head insertion
+    mode ends implicitly (per HTML5 spec) and the element is placed as
+    the FIRST <body> child. The deferred controller script (registered
+    in head) then upgrades that placeholder and `connectedCallback`
+    fires → _init resolves the native gallery, hides it per-element,
+    releases the blanket class and mounts the custom gallery.
+
+  FOUC flow:
+    1. Setter script (synchronous, head-parse) reads the JSON data island
+       above it and, ONLY if the current variant actually has images
+       (resolved from ?variant= or product.selected_or_first_available_
+       variant — [name="id"] does not exist yet at head-parse), adds
+       `cp-vg-prehide` to <html>. The blanket <style> hides all default-
+       selector native galleries pre-paint via visibility:hidden (layout
+       reserved → no shift when revealed).
+    2. window.__cpVgFouc.prehideTimer (3s) is the only fail-safe to drop
+       the class if the controller never mounts.
+    3. The deferred controller runs at DOMContentLoaded, _tick releases
+       the blanket synchronously THEN applies the precise per-element
+       .cp-vg-native-hidden hide in the same tick → no flash. On AJAX
+       variant switch the controller re-adds the blanket synchronously
+       (observer + event handlers gated by _needsCover) and releases on
+       the next tick.
+
+  Constraints (Shopify): app embed blocks have only Global Liquid scope
+  (`product` is available on product pages). The bundled Shopify
+  stylesheet tag is forbidden in app blocks — plain <style>/<script>
+  only. Custom elements as direct head children are not head-valid, so
+  the placeholder MUST be last in this block (or the parser closes head
+  early and metadata after it ends up in body).
+{%- endcomment -%}
+
 {%- if product != blank -%}
 
+{%- comment -%}
+  R3-H1: `| json` escapes JSON syntax but NOT `<`, so an attacker-influenced
+  variant.title containing `</script><script>…` would break out of this
+  JSON island and inject script regardless of the JS-side _esc(). Every
+  free-text value interpolated below MUST additionally neutralise `<`/`>`
+  by replacing them with their \uXXXX JSON escapes (JSON.parse restores
+  them, so data is unchanged). Image URLs are Shopify CDN and
+  IDs/dimensions are numeric, so only variant.title needs this.
+{%- endcomment -%}
 <script type="application/json" id="cp-embed-data-{{ block.id }}">
   {
     {%- for variant in product.variants -%}
@@ -12,12 +64,24 @@
         {%- assign cp_seen_file_ids = ',' -%}
         {%- assign cp_seen_urls = ',' -%}
         {%- assign cp_seen_models = ',' -%}
-        
+        {%- comment -%}
+          Precomputed booleans for the if/elsif chain below. Liquid does
+          not support parenthesised boolean expressions like
+          `(a and b) or (c and d)`, so the sub-conditions are flattened
+          here into named flags that the chain can OR together.
+        {%- endcomment -%}
         {%- assign cp_has_vg     = false -%}
         {%- assign cp_has_models = false -%}
         {%- if vg != blank and vg.value != blank -%}{%- assign cp_has_vg = true -%}{%- endif -%}
         {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}{%- assign cp_has_models = true -%}{%- endif -%}
-        
+        {%- comment -%}
+          Voll-mix path: variant_gallery_order (json) is a unified array of
+          { kind: 'file' | 'url' | 'model', value } entries that mirrors how
+          the merchant drag-arranged files + external URLs + 3D models in
+          the admin. When present we iterate it as the primary source of
+          order, then append unreferenced items (new uploads / URLs / models
+          added since the last save).
+        {%- endcomment -%}
         {%- if cp_order_mf != blank and cp_order_mf.value != blank -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
@@ -88,7 +152,7 @@
               {%- endfor -%}
             {%- elsif entry.kind == 'url' -%}
               {%- assign entry_val = entry.value | append: '' -%}
-              
+              {%- comment -%} url_encode removes the comma (and other special chars), so the comma-joined cp_seen_urls set's `,VALUE,` substring check stays safe for URLs that legitimately contain commas (e.g. Vimeo privacy hash, ?list=a,b,c). {%- endcomment -%}
               {%- assign url_token = entry_val | url_encode -%}
               {%- assign url_needle = ',' | append: url_token | append: ',' -%}
               {%- if cp_seen_urls contains url_needle -%}{%- continue -%}{%- endif -%}
@@ -141,13 +205,21 @@
               {%- endif -%}
             {%- elsif entry.kind == 'model' -%}
               {%- assign entry_val = entry.value | append: '' -%}
-              
+              {%- comment -%} Same comma-safe membership pattern as the url branch. {%- endcomment -%}
               {%- assign model_token = entry_val | url_encode -%}
               {%- assign model_needle = ',' | append: model_token | append: ',' -%}
               {%- if cp_seen_models contains model_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_models = cp_seen_models | append: model_token | append: ',' -%}
               {%- assign cp_model_url = entry_val | strip -%}
-              
+              {%- comment -%}
+                Look up the parallel JPEG preview (custom.variant_3d_previews
+                is a list.url metafield aligned 1:1 with variant_3d_models by
+                index). voll-mix path has no natural index — the entry came
+                from the order JSON — so we re-scan cp_models_mf.value to
+                find this URL's position, then pull the same-index preview.
+                Empty string when the metafield is missing or the slot has
+                no preview yet (legacy models from before this metafield).
+              {%- endcomment -%}
               {%- assign cp_model_preview = '' -%}
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank and cp_models_mf != blank and cp_models_mf.value != blank -%}
                 {%- for cp_m_url in cp_models_mf.value -%}
@@ -172,7 +244,12 @@
               {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
-          
+          {%- comment -%}
+            Tail-emit: any vg.value items whose id is missing from the order
+            metafield (e.g. files added after the last reorder save) are
+            appended in their natural vg.value order, so they're still
+            visible on the storefront.
+          {%- endcomment -%}
           {%- if vg != blank and vg.value != blank -%}
             {%- for item in vg.value -%}
               {%- assign item_id_str = item.id | append: '' -%}
@@ -267,7 +344,17 @@
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
-          
+          {%- comment -%}
+            Tail-emit for 3D models added since the last reorder save:
+            handleAddThreeDModelUrl in the admin only writes
+            variant_3d_models, NOT variant_gallery_order. Without this
+            loop, a model added to a variant with an existing order JSON
+            would be visible in the admin (the orderedUrls memo appends
+            unseen URLs) but invisible on the storefront — silent state
+            drift between admin and storefront. The dedup against
+            cp_seen_models ensures models that ARE already in the order
+            JSON aren't double-emitted.
+          {%- endcomment -%}
           {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}
             {%- for cp_model_url_raw in cp_models_mf.value -%}
               {%- assign cp_model_url = cp_model_url_raw | strip -%}
@@ -275,7 +362,7 @@
               {%- assign model_tail_needle = ',' | append: model_tail_token | append: ',' -%}
               {%- if cp_seen_models contains model_tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_models = cp_seen_models | append: model_tail_token | append: ',' -%}
-              
+              {%- comment -%} Parallel preview lookup by index — forloop.index0 maps directly to the same slot in custom.variant_3d_previews. {%- endcomment -%}
               {%- assign cp_model_preview = '' -%}
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
@@ -295,7 +382,13 @@
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
-        
+        {%- comment -%}
+          Default path (no variant_gallery_order yet): existing behaviour —
+          featured_image, then vg.value items, then external URLs, then
+          3D models. The branch also fires when ONLY models are set so a
+          variant with just a .glb is not silently dropped into the
+          product.media fallback.
+        {%- endcomment -%}
         {%- elsif cp_has_vg or cp_has_models -%}
           {%- if variant.featured_image != blank -%}
             {%- assign vfi = variant.featured_image -%}
@@ -311,7 +404,20 @@
             }
             {%- assign cp_has_any = true -%}
           {%- endif -%}
-          
+          {%- comment -%}
+            Default order (when variant_gallery_order is not set):
+            ALL images first (vg.value natural order, preceded by featured_image
+            above), then ALL native videos, then external videos, then 3D models.
+            We split vg.value into two passes — pass 1 emits image entries only,
+            pass 2 emits video entries only — so a video inserted between two
+            images in the metafield does not break up the image group on the
+            storefront. The merchant-defined mix order is still respected via
+            the voll-mix path above when variant_gallery_order IS set.
+            No vg-model branch here either: Shopify `list.file_reference`
+            returns MediaImage / Video / GenericFile only — variant-specific
+            3D models live in custom.variant_3d_models (list.url) and are
+            emitted after the external-video loop.
+          {%- endcomment -%}
           {%- for item in vg.value -%}
             {%- if item.media_type == 'image' -%}
               {%- assign cp_src = item | image_url: width: 800 -%}
@@ -356,7 +462,14 @@
               {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
-          
+          {%- comment -%}
+            YouTube/Vimeo URLs from custom.variant_external_videos (list.url).
+            `list.file_reference` can't hold URLs, so they live on a parallel
+            metafield and are appended after the file-backed items. URL parsing
+            uses split-pipes (no regex in Liquid). The controller's existing
+            `external_video` dispatch handles these unchanged — only host +
+            external_id are required at runtime.
+          {%- endcomment -%}
           {%- assign cp_extvids = variant.metafields.custom.variant_external_videos -%}
           {%- if cp_extvids != blank and cp_extvids.value != blank -%}
             {%- for cp_url_raw in cp_extvids.value -%}
@@ -408,11 +521,17 @@
               {%- endif -%}
             {%- endfor -%}
           {%- endif -%}
-          
+          {%- comment -%}
+            3D models from custom.variant_3d_models (list.url). Shopify's
+            list.file_reference rejects Media3d, so variant-scoped models
+            live in this parallel list.url metafield. .glb URLs are emitted
+            directly; <model-viewer> on the storefront knows how to handle
+            them without a Shopify-side preview image.
+          {%- endcomment -%}
           {%- if cp_models_mf != blank and cp_models_mf.value != blank -%}
             {%- for cp_model_url_raw in cp_models_mf.value -%}
               {%- assign cp_model_url = cp_model_url_raw | strip -%}
-              
+              {%- comment -%} Parallel preview lookup — same index in variant_3d_previews. {%- endcomment -%}
               {%- assign cp_model_preview = '' -%}
               {%- if cp_previews_mf != blank and cp_previews_mf.value != blank -%}
                 {%- assign cp_model_preview = cp_previews_mf.value[forloop.index0] | default: '' -%}
@@ -433,7 +552,7 @@
             {%- endfor -%}
           {%- endif -%}
         {%- endif -%}
-        
+        {%- comment -%} Step 2: if no images from metafield, fall back to product.media. Handles ALL media types so a merchant-uploaded video / 3D model is no longer silently dropped (Bilder + Video-Player). featured_image emitted first as primary (RISK-4) and deduped from the loop. {%- endcomment -%}
         {%- unless cp_has_any -%}
           {%- assign cp_vfi_id = blank -%}
           {%- if variant.featured_image != blank -%}
@@ -538,6 +657,19 @@
   }
 </script>
 
+{%- comment -%}
+  Pre-paint setter. Reads the JSON island above (single source of truth,
+  no duplicated has-images logic), resolves the current variant from
+  ?variant= or selected_or_first_available_variant (no [name="id"] in
+  the DOM yet at head-parse time — the controller handles late
+  corrections), and adds `cp-vg-prehide` to <html> ONLY if data[id] is
+  non-empty. This is now perfectly aligned with the controller decision
+  (a variant whose variant_gallery is set but whose every image_url is
+  empty yields an empty data[id] and is NOT pre-hidden).
+
+  Security: only numeric IDs and the canonical class literal are used —
+  no merchant-controlled value is interpolated into JS strings here.
+{%- endcomment -%}
 <script>
   (function () {
     try {
@@ -559,6 +691,12 @@
   })();
 </script>
 
+{%- comment -%}
+  CANONICAL native-selector list. Kept in sync with the _selectors array
+  in assets/variant-gallery-embed.js — change both together.
+  visibility:hidden reserves layout (no shift when the blanket is
+  released and the controller's per-element display:none takes over).
+{%- endcomment -%}
 <style>
   html.cp-vg-prehide media-gallery,
   html.cp-vg-prehide [id^="MediaGallery"],
@@ -571,6 +709,13 @@
 {{ 'variant-gallery-embed.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'variant-gallery-embed.js' | asset_url }}" defer></script>
 
+{%- comment -%}
+  Placeholder element. NOT head-valid per HTML5, so the parser closes
+  <head> implicitly when it reaches this tag and places the element as
+  the first <body> child. Everything above (head-valid) therefore stays
+  in <head> and is parsed pre-paint. Keep this LAST inside the if-block
+  for that invariant to hold.
+{%- endcomment -%}
 <cp-embed-gallery
   id="cp-embed-gallery-{{ block.id }}"
   class="cp-embed-gallery"
