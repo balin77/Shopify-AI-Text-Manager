@@ -18,6 +18,42 @@ If you create a second extension folder with its own `shopify.extension.toml`,
 
 See [Shopify docs](https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/configuration).
 
+## Deploying — the 100 KiB Liquid budget
+
+Shopify also enforces a hard **100 KiB (102400 bytes)** limit on the *Liquid*
+content of the extension. Every `blocks/*.liquid` file counts against it
+together; `assets/` does **not** (JS/CSS/SVG are served statically, which is why
+the block logic lives there). Blowing the budget fails the deploy with:
+
+> bundle: Extension Liquid content size exceeds 100 KB limit
+
+The commented sources are past that limit on their own, so deploy through the
+wrapper, never through the bare CLI:
+
+```bash
+npm run deploy -- -c dev --allow-updates
+npm run deploy -- -c prod
+```
+
+[`scripts/deploy-minified.mjs`](../../scripts/deploy-minified.mjs) strips Liquid
+comments and indentation from the blocks **in place**, runs `shopify app deploy`
+with every argument passed through, and restores the commented sources
+afterwards — including on failure and on Ctrl-C. The minified form never
+survives the command, so `blocks/` stays fully commented in git. **Never commit
+minified blocks.**
+
+To see the budget without deploying:
+
+```bash
+npm run minify:blocks
+```
+
+The transform only touches plain markup. `<script>` (JS and JSON/JSON-LD
+islands), `<style>`, `<pre>`, `<textarea>`, `{% raw %}` bodies and the interior
+of every `{% … %}` / `{{ … }}` expression are left byte-identical — so comments
+*inside* a JSON island are not stripped and do not buy you any headroom. When
+the budget gets tight, move markup or data into `assets/`.
+
 ## Blocks
 
 | Handle                  | Type      | Purpose                                            |
