@@ -42,6 +42,7 @@ import { UnifiedItemList } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
@@ -116,10 +117,6 @@ export const loader = createContentLoader({
       // domains aren't fetched (extra round-trip not worth it; the .myshopify
       // domain works on every shop).
       shopUrl: `https://${ctx.session.shop}`,
-      // Theme-editor deep-link to the direct-translation app embed. Mirrors the
-      // builder in SettingsSetupTab — needs the SHOPIFY_API_KEY (client_id)
-      // and the block handle "direct-translation".
-      themeEditorEmbedUrl: `https://${ctx.session.shop}/admin/themes/current/editor?context=apps&activateAppId=${(process.env.SHOPIFY_API_KEY || "").trim()}/direct-translation`,
     };
   },
 });
@@ -331,7 +328,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const NEW_ID = "__new__";
 
 export default function DirectTranslationsPage() {
-  const { items, primaryLocale, targetLocales, markets, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, themeEditorEmbedUrl, error } =
+  const { items, primaryLocale, targetLocales, markets, collect, ignoreTranslateNo, filterByLanguage, newCandidateCount, shopUrl, error } =
     useLoaderData<typeof loader>() as {
       items: DirectTranslationDTO[];
       shopLocales: unknown;
@@ -343,10 +340,10 @@ export default function DirectTranslationsPage() {
       filterByLanguage: boolean;
       newCandidateCount: number;
       shopUrl: string;
-      themeEditorEmbedUrl: string;
       error: string | null;
     };
   const { t, locale: appLocale } = useI18n();
+  const { handleNavigate } = useAppNavigation();
   const { showInfoBox } = useInfoBox();
   const confirm = useConfirm();
   const { runningTaskCount } = useTaskCount();
@@ -837,8 +834,18 @@ export default function DirectTranslationsPage() {
                         <Text as="p" tone="subdued">{tt.aboutDetails}</Text>
                         <Text as="p" tone="subdued">{tt.aboutWorkflow}</Text>
                         <InlineStack align="start">
-                          <Button url={themeEditorEmbedUrl} external variant="primary" size="slim">
-                            {tt.openThemeEditor}
+                          {/* Every app embed is activated in Settings → Setup,
+                              not from the feature that happens to need it. */}
+                          <Button
+                            onClick={() =>
+                              handleNavigate("/app/settings", {
+                                searchParams: new URLSearchParams({ tab: "setup" }),
+                              })
+                            }
+                            variant="primary"
+                            size="slim"
+                          >
+                            {(tt as unknown as Record<string, string>).activateInSettings ?? tt.openThemeEditor}
                           </Button>
                         </InlineStack>
                       </BlockStack>
