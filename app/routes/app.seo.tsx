@@ -129,6 +129,7 @@ export default function SeoLayout() {
         activeId={activeRubric?.id ?? null}
         onSelect={onSelectRubric}
         ariaLabel="SEO rubrics"
+        placement="app-nav"
       />
 
       {/* A single-entry rubric (Übersicht) would render one Level-3 chip that
@@ -140,6 +141,7 @@ export default function SeoLayout() {
           onSelect={onSelectSection}
           ariaLabel="SEO sections"
           variant="level3"
+          placement="app-nav"
         />
       )}
 

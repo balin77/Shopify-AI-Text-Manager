@@ -50,6 +50,7 @@ export function RubricNavigation() {
       activeId={activeRubric.id}
       onSelect={goToRubric}
       ariaLabel="Content rubrics"
+      placement="app-nav"
       stickyTop={mainNavHeight}
       onMeasure={setRubricNavHeight}
     />

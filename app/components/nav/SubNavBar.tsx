@@ -10,8 +10,16 @@
  * tabs read as the same hierarchy.
  *
  * Keeps the `.rubric-nav` class so the hover style in responsive.css continues
- * to apply. `desktop-only` hides the bar on mobile — the drawer/hamburger
- * handles those levels on small screens.
+ * to apply.
+ *
+ * `placement` decides whether the bar survives on mobile. An `app-nav` bar is a
+ * level of the GLOBAL navigation, which the hamburger drawer owns below 900px —
+ * it gets `desktop-only` so the two don't both render. An `in-page` bar is a
+ * switcher belonging to one page (the keywords Bibliothek/Zuordnungen tabs, the
+ * sitemap resource-type picker inside a card); the drawer navigates between
+ * routes and has no business carrying page state, so those stay visible at every
+ * width. `in-page` is the default on purpose: forgetting the prop leaves a
+ * control visible, which is the far better failure than silently hiding it.
  */
 
 import { InlineStack, Text } from "@shopify/polaris";
@@ -40,6 +48,12 @@ export interface SubNavBarProps {
   trailing?: ReactNode;
   /** Visual level: raised card-chips (default) or flat indented sub-tabs. */
   variant?: "level2" | "level3";
+  /**
+   * `app-nav` = a level of the global navigation, hidden below 900px because the
+   * hamburger drawer renders it there. `in-page` (default) = a page-local
+   * switcher, visible at every width.
+   */
+  placement?: "app-nav" | "in-page";
 }
 
 export function SubNavBar({
@@ -51,11 +65,17 @@ export function SubNavBar({
   onMeasure,
   trailing,
   variant = "level2",
+  placement = "in-page",
 }: SubNavBarProps) {
   const isL3 = variant === "level3";
   // Hover styling lives in responsive.css per level: `.rubric-nav` (grey chip
   // fill) vs `.content-type-nav` (subtle tint for the flat sub-tabs).
-  const levelClass = `desktop-only ${isL3 ? "content-type-nav" : "rubric-nav"}`;
+  const levelClass = [
+    placement === "app-nav" ? "desktop-only" : "",
+    isL3 ? "content-type-nav" : "rubric-nav",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const navRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,9 +108,15 @@ export function SubNavBar({
       style={{
         borderBottom: "1px solid #e1e3e5",
         background: isL3 ? "white" : "#fafbfb",
-        // Extra left padding indents L3 chips under the L2 bar so the
-        // hierarchy reads top → down (same offset as ContentTypeNavigation).
-        padding: isL3 ? "0.2rem 1rem 0.2rem 2rem" : "0.25rem 1rem",
+        // The L3 indent only exists to nest the bar under the L2 bar above it
+        // (same offset as ContentTypeNavigation) — an in-page picker has no L2
+        // above it and sits inside a card that brings its own padding, so it
+        // aligns with the card's own content instead of hanging 2rem inside it.
+        padding: isL3
+          ? placement === "app-nav"
+            ? "0.2rem 1rem 0.2rem 2rem"
+            : "0.2rem 0"
+          : "0.25rem 1rem",
         ...(stickyTop != null
           ? {
               position: "sticky",
