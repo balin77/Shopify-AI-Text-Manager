@@ -47,6 +47,12 @@ export function SettingsSetupTab({
   const variantGalleryEmbedUrl = buildEmbedUrl("variant-gallery-embed");
   const localeSwitcherEmbedUrl = buildEmbedUrl("locale-switcher");
   const directTranslationEmbedUrl = buildEmbedUrl("direct-translation");
+  // SEO embeds. Their own sections link HERE rather than to the theme editor:
+  // every embed the app owns is activated in one place, so a merchant never has
+  // to remember which feature hid its activation on which page.
+  const jsonLdEmbedUrl = buildEmbedUrl("structured-data");
+  const socialMetaEmbedUrl = buildEmbedUrl("social-meta");
+  const webVitalsEmbedUrl = buildEmbedUrl("web-vitals");
   const ts = t.settings as unknown as Record<string, string>;
   const [webhookStatus, setWebhookStatus] = useState<string>("");
   const [webhookLoading, setWebhookLoading] = useState(false);
@@ -279,6 +285,52 @@ export function SettingsSetupTab({
             url={directTranslationEmbedUrl}
             buttonLabel={ts.themeSetupOptionCButton ?? "Activate direct translations"}
             requiredPlan="max"
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
+
+          <Divider />
+
+          <Text as="h3" variant="headingSm">
+            {ts.themeSetupSeoGroup ?? "SEO"}
+          </Text>
+
+          <EmbedActivateBox
+            title={ts.themeSetupJsonLdTitle ?? "Structured data (JSON-LD)"}
+            description={
+              ts.themeSetupJsonLdDescription ??
+              "Emits schema.org markup for products, collections and blog articles — the basis for rich results in Google. Without the embed enabled nothing reaches the storefront."
+            }
+            url={jsonLdEmbedUrl}
+            buttonLabel={ts.themeSetupJsonLdButton ?? "Activate structured data"}
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
+
+          <Divider />
+
+          <EmbedActivateBox
+            title={ts.themeSetupSocialMetaTitle ?? "Open Graph / social previews"}
+            description={
+              ts.themeSetupSocialMetaDescription ??
+              "Adds the Open Graph and Twitter Card tags that give shared links an image, title and description on Facebook, X, LinkedIn, WhatsApp and in AI chat previews."
+            }
+            url={socialMetaEmbedUrl}
+            buttonLabel={ts.themeSetupSocialMetaButton ?? "Activate social previews"}
+            currentPlan={subscriptionPlan}
+            requiresPlanText={ts.themeSetupOptionRequiresPlan}
+          />
+
+          <Divider />
+
+          <EmbedActivateBox
+            title={ts.themeSetupWebVitalsTitle ?? "Real-user Web Vitals"}
+            description={
+              ts.themeSetupWebVitalsDescription ??
+              "Measures loading speed at your actual visitors instead of in a lab. Without the embed the speed section only has lab data."
+            }
+            url={webVitalsEmbedUrl}
+            buttonLabel={ts.themeSetupWebVitalsButton ?? "Activate Web Vitals"}
             currentPlan={subscriptionPlan}
             requiresPlanText={ts.themeSetupOptionRequiresPlan}
           />

@@ -330,12 +330,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const apiKey = process.env.SHOPIFY_API_KEY || "";
-  const themeEditorUrl = apiKey
-    ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/structured-data`
-    : `https://${shop}/admin/themes/current/editor?context=apps`;
-  const themeEditorUrlSocialMeta = apiKey
-    ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/social-meta`
-    : `https://${shop}/admin/themes/current/editor?context=apps`;
+  // Activation moved to Settings → Setup: every app-owned embed is switched on
+  // in ONE place, so a merchant never has to remember which feature hid its
+  // activation button on which section page. No theme-editor URL is built here
+  // any more — this page links to the settings tab instead.
   // Direct link to Settings → Brand where `shop.brand.logo` (the field the
   // Storefront Liquid block reads for the Organization JSON-LD logo) is set.
   // Shown next to the Organization "no logo" warning so the merchant can
@@ -386,8 +384,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     previews,
-    themeEditorUrl,
-    themeEditorUrlSocialMeta,
     brandingUrl,
     sampleProductAdminUrl,
     sampleArticleAdminUrl,
@@ -431,8 +427,6 @@ const FIX_LINK_BY_CODE: Record<string, FixLinkKind> = {
 export default function SeoStructuredData() {
   const {
     previews,
-    themeEditorUrl,
-    themeEditorUrlSocialMeta,
     brandingUrl,
     sampleProductAdminUrl,
     sampleArticleAdminUrl,
@@ -446,6 +440,10 @@ export default function SeoStructuredData() {
   const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
   const live = (s as any).live as Record<string, string>;
+
+  /** Every app embed is activated in Settings → Setup, not from here. */
+  const openEmbedSettings = () =>
+    handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "setup" }) });
 
   // Delivery before data quality: markup that never reaches the page makes the
   // catalog report moot, so step 1 is what the storefront actually serves.
@@ -487,14 +485,14 @@ export default function SeoStructuredData() {
     if (kind === "branding") return brandingUrl;
     if (kind === "productAdmin") return sampleProductAdminUrl;
     if (kind === "articleAdmin") return sampleArticleAdminUrl;
-    if (kind === "themeEditorJsonLd") return themeEditorUrl;
+    // themeEditorJsonLd is handled as an in-app navigation, not a URL.
     return null;
   };
   const fixLabelFor = (kind: FixLinkKind): string => {
     if (kind === "branding") return s.setBrandLogo;
     if (kind === "productAdmin") return (s as any).openSampleProduct as string;
     if (kind === "articleAdmin") return (s as any).openSampleArticle as string;
-    if (kind === "themeEditorJsonLd") return s.activateInThemeEditor;
+    if (kind === "themeEditorJsonLd") return (s as any).activateInSettings as string;
     return "";
   };
 
@@ -585,8 +583,8 @@ export default function SeoStructuredData() {
                 {(s as any).activationJsonLdTitle as string}
               </Text>
               <InlineStack>
-                <Button url={themeEditorUrl} target="_blank" variant="primary">
-                  {s.activateInThemeEditor}
+                <Button onClick={openEmbedSettings} variant="primary">
+                  {(s as any).activateInSettings as string}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -596,8 +594,8 @@ export default function SeoStructuredData() {
                 {(s as any).activationOgTitle as string}
               </Text>
               <InlineStack>
-                <Button url={themeEditorUrlSocialMeta} target="_blank" variant="primary">
-                  {s.ogActivate}
+                <Button onClick={openEmbedSettings} variant="primary">
+                  {(s as any).activateInSettings as string}
                 </Button>
               </InlineStack>
             </BlockStack>
@@ -835,7 +833,16 @@ export default function SeoStructuredData() {
                                   {hint}
                                 </Text>
                               ) : null}
-                              {fixUrl ? (
+                              {/* The embed fix-up is an in-app navigation to
+                                  Settings → Setup; the others are external
+                                  admin links. */}
+                              {linkKind === "themeEditorJsonLd" ? (
+                                <InlineStack>
+                                  <Button onClick={openEmbedSettings} variant="plain">
+                                    {fixLabel}
+                                  </Button>
+                                </InlineStack>
+                              ) : fixUrl ? (
                                 <InlineStack>
                                   <Button url={fixUrl} target="_blank" variant="plain">
                                     {fixLabel}

@@ -38,6 +38,7 @@ import {
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { HelpTooltip } from "../components/HelpTooltip";
@@ -235,13 +236,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     computeAltTextAudit(db, admin, shop).catch(() => null),
   ]);
 
-  // Theme-editor deep link for enabling the RUM app embed — house pattern from
-  // app.seo.structured-data.tsx: myshopify domain (custom domains only proxy
-  // /admin via redirect) + activateAppId to preselect the embed when possible.
-  const apiKey = process.env.SHOPIFY_API_KEY || "";
-  const rumEmbedUrl = apiKey
-    ? `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/web-vitals`
-    : `https://${shop}/admin/themes/current/editor?context=apps`;
+  // The RUM embed is activated in Settings → Setup with every other app embed,
+  // so this section links there instead of building its own theme-editor URL.
 
   // The run this page most recently kicked off (the `runAudit` action models it
   // as a `Task`, like the AI generations do). When one is still fresh, the
@@ -257,7 +253,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     pages,
     history,
     rum,
-    rumEmbedUrl,
     runsToday,
     dailyLimit: getDailyPageSpeedRunsLimit(plan),
     activeAudit,
@@ -1949,9 +1944,10 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 }
 
 export default function SeoPerformance() {
-  const { domain, products, collections, pages, history, rum, rumEmbedUrl, runsToday, dailyLimit, activeAudit, altTextAudit } =
+  const { domain, products, collections, pages, history, rum, runsToday, dailyLimit, activeAudit, altTextAudit } =
     useLoaderData<typeof loader>();
   const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
   const p = t.seo.performancePage;
 
   const fetcher = useFetcher<ActionResult>();
@@ -3144,7 +3140,13 @@ export default function SeoPerformance() {
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd" tone="subdued">{p.rum.emptyBody}</Text>
                 <InlineStack>
-                  <Button url={rumEmbedUrl} target="_blank">
+                  <Button
+                    onClick={() =>
+                      handleNavigate("/app/settings", {
+                        searchParams: new URLSearchParams({ tab: "setup" }),
+                      })
+                    }
+                  >
                     {p.rum.emptyButton}
                   </Button>
                 </InlineStack>
