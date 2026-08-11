@@ -27,8 +27,9 @@
      into view. The SEO pages only looked exempt because their inner scroll
      container happens to carry 1rem of trailing padding.
 
-     0 on desktop, where nothing overlays the bottom. The 64px below is the one
-     place the bar's height is stated — tune it here. */
+     0 on desktop, where nothing overlays the bottom. The 85px below is the one
+     place the bar's height is stated — tune it here. Measured against the real
+     Shopify mobile app; 64px was not enough to clear it. */
   --app-bottom-inset: 0px;
 }
 
@@ -40,7 +41,7 @@
 
 @media (max-width: 899px) {
   :root {
-    --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 64px);
+    --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 85px);
   }
 }
 
