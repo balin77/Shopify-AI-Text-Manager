@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Liquid minifier for the theme app extension blocks.
  *
