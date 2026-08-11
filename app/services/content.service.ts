@@ -1,4 +1,4 @@
-﻿import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+﻿import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "~/utils/logger.server";
 import {
   GET_SHOP_LOCALES,

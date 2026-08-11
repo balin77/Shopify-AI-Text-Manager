@@ -12,7 +12,7 @@
  * logging and the Tasks-tab audit trail.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -26,8 +26,9 @@ import {
   parseRobotsAdviceResponse,
   ROBOTS_ADVICE_BATCH,
 } from "~/services/seo/aeo.service";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleSeoRobotsAdvice(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoRobotsAdvice(ctx: AIActionContext): Promise<DataResponse> {
   const { admin, session, db, settings } = ctx;
 
   const plan = (settings?.subscriptionPlan || "free") as Plan;

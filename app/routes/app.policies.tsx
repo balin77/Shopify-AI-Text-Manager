@@ -8,8 +8,8 @@
  * and set automatically by Shopify based on the policy type.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
@@ -23,6 +23,7 @@ import { useEffect } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { logger } from "~/utils/logger.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load data from database
@@ -188,7 +189,7 @@ function getPolicyTypeName(type: string, t: any) {
 
 export default function PoliciesPage() {
   const { policies, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();

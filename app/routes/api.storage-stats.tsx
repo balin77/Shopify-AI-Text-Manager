@@ -5,8 +5,8 @@
  * Uses PostgreSQL aggregate queries (octet_length) to avoid loading all records into memory.
  */
 
-import type { LoaderFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { db } from '~/db.server';
 import { logger } from '~/utils/logger.server';

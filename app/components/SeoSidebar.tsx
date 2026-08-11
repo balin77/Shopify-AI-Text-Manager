@@ -1,6 +1,6 @@
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import {

@@ -5,8 +5,8 @@
  * Compare to app.pages.old.tsx - we went from ~734 lines to ~150 lines (80% reduction!)
  */
 
-import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -19,6 +19,7 @@ import { useEffect, useRef } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load pages directly from Shopify (no DB sync)
@@ -101,7 +102,7 @@ export const action = async (args: ActionFunctionArgs) => {
 
 export default function PagesPage() {
   const { pages, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();

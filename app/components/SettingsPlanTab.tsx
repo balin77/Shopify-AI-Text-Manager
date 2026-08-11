@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { useRevalidator } from "@remix-run/react";
+import { useRevalidator } from "react-router";
 import {
   BlockStack,
   InlineStack,

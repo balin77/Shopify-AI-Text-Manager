@@ -10,7 +10,7 @@
  * 3. Return images to frontend
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";

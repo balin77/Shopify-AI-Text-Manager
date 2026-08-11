@@ -1,5 +1,6 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { logger } from "~/utils/logger.server";
+import type { DataResponse } from "~/types/data-response";
 
 /**
  * Normalise an error thrown by `authenticate.admin` inside a BACKGROUND/polled
@@ -25,9 +26,9 @@ import { logger } from "~/utils/logger.server";
  *    can run the token-exchange retry. Never re-wrap its status into a new json.
  *  - a non-Response (genuinely unexpected) error: 500 with `fallback`.
  *
- * Returns a Response for the graceful cases; re-throws for the auth cases.
+ * Returns a data() result for the graceful cases; re-throws for the auth cases.
  */
-export function handlePolledAuthError(err: unknown, fallback: Record<string, unknown>): Response {
+export function handlePolledAuthError(err: unknown, fallback: Record<string, unknown>): DataResponse {
   if (err instanceof Response) {
     if (err.status === 429) {
       logger.warn("[PolledAuth] rate limited — returning graceful fallback");

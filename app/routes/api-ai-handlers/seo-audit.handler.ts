@@ -15,7 +15,7 @@
  * able to see/refresh their SEO score.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -26,9 +26,10 @@ import { seoTitleEffectiveLimit } from "~/utils/seo-score";
 import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 import type { Plan } from "~/config/plans";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleSeoAudit(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoAudit(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings } = ctx;
 
   // Single-flight: only one seoAudit run per shop at a time — a second click

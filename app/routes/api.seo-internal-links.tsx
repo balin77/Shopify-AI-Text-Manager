@@ -31,7 +31,7 @@
  * localized URL — see internal-links-translate.server.ts.
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
@@ -48,6 +48,7 @@ import { carryLinkIntoTranslations, type CarryOutcome } from "../services/seo/in
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { fieldTranslationKeyMap } from "../../src/services/shopify-content.service";
 import { createAIService, getMissingPreferredKey } from "./api-ai-handlers/shared";
+import { readDataPayload } from "~/utils/data-response";
 
 /**
  * How many source items "Alle annehmen" applies at the same time. Suggestions
@@ -253,7 +254,7 @@ async function applySuggestion(
     aiSettings: ctx.aiSettings,
     aiInstructions: ctx.aiInstructions,
   });
-  const body = (await response.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+  const body = await readDataPayload<{ success?: boolean; error?: string }>(response);
   if (!body?.success) return { ok: false, error: body?.error || "Save failed" };
 
   if (!carry) return { ok: true };

@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { useLocation, useNavigate } from "@remix-run/react";
+import { useLocation, useNavigate } from "react-router";
 import { Icon } from "@shopify/polaris";
 import { MenuIcon, XIcon, ChevronRightIcon, ChevronDownIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";

@@ -9,7 +9,7 @@
  * This automatically returns 401 for invalid HMAC signatures.
  */
 
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "~/shopify.server";
 import {
   exportCustomerData,

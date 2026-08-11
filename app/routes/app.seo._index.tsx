@@ -17,8 +17,8 @@
  * "Fix with AI" bulk action uses.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,

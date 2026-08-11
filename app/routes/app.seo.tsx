@@ -15,8 +15,8 @@
  * render identical bars and hover behaviour from their respective configs.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLocation, useNavigation } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { Outlet, useLocation, useNavigation } from "react-router";
 import { Card, BlockStack, SkeletonBodyText } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";

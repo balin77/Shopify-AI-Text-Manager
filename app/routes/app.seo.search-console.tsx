@@ -8,8 +8,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams } from "react-router";
 
 type ExportPayload = { csv: string; filename: string; rowCount: number } | { error: string };
 import {
@@ -77,6 +77,7 @@ import {
   freshnessDismissKey,
   type FreshnessResourceType,
 } from "../services/seo/freshness.service";
+import type { DataResponse } from "~/types/data-response";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -456,7 +457,7 @@ const QUICK_WIN_TYPE_PATH: Record<string, string> = {
   Page: "/app/pages",
 };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 

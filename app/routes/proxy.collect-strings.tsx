@@ -10,7 +10,7 @@
  * global, so there is no per-locale / per-scope partitioning. Never creates
  * items or translations.
  */
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import {

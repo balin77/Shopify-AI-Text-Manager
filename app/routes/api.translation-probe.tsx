@@ -14,7 +14,7 @@
  * spot in the admin language editor.
  */
 
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { db } from "~/db.server";

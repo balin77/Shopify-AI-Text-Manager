@@ -1,6 +1,6 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useRouteError, useFetcher } from "@remix-run/react";
-import { boundary } from "@shopify/shopify-app-remix/server";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useFetcher } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 import "../styles/responsive.css";

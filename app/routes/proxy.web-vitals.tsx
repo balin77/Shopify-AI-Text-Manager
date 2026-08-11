@@ -10,7 +10,7 @@
  * resolves the shop's offline session. Always answers 200 with no-store so a
  * beacon failure never disturbs the storefront.
  */
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { allowWebVitalSample, recordWebVitalSample } from "../services/seo/web-vitals.service";

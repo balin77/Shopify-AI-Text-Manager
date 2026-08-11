@@ -16,7 +16,7 @@
  * have an AI key" gate, matching seoAudit.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -25,7 +25,8 @@ import { getShopCurrencyCode } from "~/services/bulk-editor/load.server";
 import { runJsonLdAudit, type JsonLdAuditAggregate } from "~/services/seo/json-ld-audit.service";
 import type { ShopInfo } from "~/services/structured-data.service";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
 const SHOP_CONTEXT_QUERY = `#graphql
   query seoJsonLdAuditShop {
@@ -56,7 +57,7 @@ async function fetchShopContext(admin: AdminApiContext, fallbackShop: string): P
   }
 }
 
-export async function handleSeoJsonLdAudit(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoJsonLdAudit(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db } = ctx;
 
   // Single-flight: only one seoJsonLdAudit run per shop at a time.

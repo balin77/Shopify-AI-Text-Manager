@@ -3,7 +3,7 @@
  * Use this after updating scopes to force re-authentication
  */
 
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";
 import { authenticate } from "../shopify.server";

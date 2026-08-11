@@ -34,8 +34,7 @@ import {
   ProgressBar,
   useIndexResourceState,
 } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
-import type { SerializeFrom } from "@remix-run/node";
+import type { FetcherWithComponents } from "react-router";
 import type { KeywordResourceType } from "../../../services/seo/keywords.service";
 import { HelpTooltip } from "../../HelpTooltip";
 import type { Translation } from "../../../i18n/de";
@@ -44,8 +43,9 @@ import { GroupSidebar } from "./GroupSidebar";
 import { KeywordPaste } from "./KeywordPaste";
 import { ResearchPanel } from "./ResearchPanel";
 import { AssignPanel } from "./AssignPanel";
+import type { Route } from "../../../routes/+types/app.seo.keywords";
 
-type LoaderData = SerializeFrom<typeof loader>;
+type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 type DecisionMap = Record<string, "accept" | "secondaryOnly" | "reject">;
 type AssignKeyword = { keywordId: string; keyword: string };

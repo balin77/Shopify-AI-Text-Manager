@@ -8,8 +8,8 @@
  * cannot be rolled back.
  */
 
-import type { ActionFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
+import type { ActionFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { cancelSubscription, getCurrentSubscription, syncSubscriptionToDatabase } from '~/services/billing.server';
 import { resolveDevPlanMode, setDevForcedPlan } from '~/services/dev-plan-override.server';

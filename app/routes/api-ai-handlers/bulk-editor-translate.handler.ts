@@ -28,7 +28,7 @@
  * is reachable directly via POST /api/ai.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isAuthError } from "./shared";
 import type { AIService } from "../../../src/services/ai.service";
@@ -59,14 +59,15 @@ import {
   findInvalidLocaleOrMarket,
 } from "~/services/bulk-editor/translations.server";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
 /** Fields compact enough for the short-batch prompt — mirrors the
  * SHORT_FIELD_KEYS of translateAllContent (minus handle, which is excluded
  * from AI bulk translation entirely, see below). */
 const SHORT_FIELDS = new Set(["title", "seoTitle", "productType"]);
 
-export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<Response> {
+export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings } = ctx;
   const shop = session.shop;
 

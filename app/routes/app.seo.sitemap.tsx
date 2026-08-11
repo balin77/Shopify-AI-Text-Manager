@@ -21,8 +21,8 @@
  * safely; it does not require the spike to have run first.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Card, BlockStack, InlineStack, Text, Badge, Button, Banner, DataTable, Modal, List,

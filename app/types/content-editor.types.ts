@@ -4,7 +4,7 @@
  * Shared types for the unified content editor system
  */
 
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
 

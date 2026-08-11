@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
@@ -11,6 +11,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { analyzeOnPage, getItemKeywords } from "~/services/seo/keywords.service";
+import type { DataResponse } from "~/types/data-response";
 
 /**
  * Post-generation stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). Field-type
@@ -38,7 +39,7 @@ function findStuffedKeyword(
   return null;
 }
 
-export async function handleFormatField(ctx: AIActionContext): Promise<Response> {
+export async function handleFormatField(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, contentType, itemId } = ctx;
   const formData = ctx.formData;
 
@@ -129,7 +130,7 @@ Return only the formatted text, without explanations.`;
   }
 }
 
-export async function handleGenerateAIText(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, seoTitleMaxChars, seoLimits, contentType, itemId } = ctx;
   const formData = ctx.formData;
 
@@ -377,7 +378,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<Respon
   }
 }
 
-export async function handleFormatAIText(ctx: AIActionContext): Promise<Response> {
+export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, contentType, itemId } = ctx;
   const formData = ctx.formData;
 

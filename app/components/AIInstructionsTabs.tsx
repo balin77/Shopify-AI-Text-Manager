@@ -10,7 +10,7 @@ import {
   DEFAULT_GENERAL_INSTRUCTIONS,
   type EntityType
 } from "../constants/aiInstructionsDefaults";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 
 interface Instructions {

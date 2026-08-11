@@ -11,8 +11,8 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "@remix-run/react";
+import { type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
@@ -34,6 +34,7 @@ import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -305,7 +306,7 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function ProductsPage() {
   const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
   const translationSyncFetcher = useFetcher<{ success: boolean }>();
   const revalidator = useRevalidator();

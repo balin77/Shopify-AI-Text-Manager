@@ -1,17 +1,17 @@
-import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-react-router/adapters/node";
 // Defensive: the adapter import above is side-effect-only and
-// @shopify/shopify-app-remix declares no "sideEffects" field, so the Rollup
-// SSR build can drop it — leaving abstractRuntimeString() at its default
-// throw and crashing the Remix build load at boot. Re-invoke the setter
+// @shopify/shopify-app-react-router declares no "sideEffects" field, so the
+// Rollup SSR build can drop it — leaving abstractRuntimeString() at its default
+// throw and crashing the build load at boot. Re-invoke the setter
 // directly so the call is a top-level expression Rollup cannot eliminate.
 import { setAbstractRuntimeString } from "@shopify/shopify-api/runtime";
-setAbstractRuntimeString(() => "Remix (Node)");
+setAbstractRuntimeString(() => "React Router (Node)");
 
 import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
-} from "@shopify/shopify-app-remix/server";
+} from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
@@ -96,9 +96,11 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
-  future: {
-    unstable_newEmbeddedAuthStrategy: true,
-  },
+  // `future.unstable_newEmbeddedAuthStrategy: true` used to live here. In
+  // @shopify/shopify-app-react-router v2 the flag is gone because the strategy
+  // it opted into IS the only strategy — the auth-code-flow implementation was
+  // removed and apps are embedded by default. Dropping the flag therefore keeps
+  // this app on exactly the token-exchange behaviour it already had.
   // NOTE (review LOW "no scopes_update handling"): we intentionally do not
   // subscribe to the SCOPES_UPDATE webhook. With unstable_newEmbeddedAuthStrategy
   // (token-exchange/managed install), Shopify re-runs OAuth and fires afterAuth

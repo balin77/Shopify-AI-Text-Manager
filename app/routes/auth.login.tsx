@@ -1,4 +1,4 @@
-import { LoaderFunctionArgs, redirect, json } from "@remix-run/node";
+import { LoaderFunctionArgs, redirect, data as json } from "react-router";
 import { login } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 

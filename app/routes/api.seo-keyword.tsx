@@ -12,7 +12,7 @@
  * list so the client can render without a follow-up load.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import {
@@ -26,6 +26,7 @@ import {
   type KeywordRole,
 } from "../services/seo/keywords.service";
 import { getFormString } from "../utils/form-data.utils";
+import type { DataResponse } from "~/types/data-response";
 
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
 
@@ -60,7 +61,7 @@ type ActionResult =
   // warning with an "add anyway" retry (acceptCannibalization=true).
   | { ok: false; error: "cannibalization"; existingItemTitle: string };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
 

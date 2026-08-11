@@ -12,7 +12,7 @@
  * resolves the shop's offline session, so the shop is trusted (not client
  * input). Same-origin from the storefront → no CORS needed.
  */
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { getDictionary, isDirectTranslationsAvailable } from "../services/direct-translation.server";

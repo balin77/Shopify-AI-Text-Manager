@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { data as json } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "~/shopify.server";
 import { logger } from "~/utils/logger.server";
 

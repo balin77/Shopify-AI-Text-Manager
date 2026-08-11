@@ -21,9 +21,9 @@
  */
 
 import { useState } from 'react';
-import type { LoaderFunctionArgs, ActionFunctionArgs } from '@remix-run/node';
-import { json, redirect, createCookie } from '@remix-run/node';
-import { useLoaderData, useActionData, Form, useNavigation } from '@remix-run/react';
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
+import { data as json, redirect, createCookie } from "react-router";
+import { useLoaderData, useActionData, Form, useNavigation } from "react-router";
 import { timingSafeEqual } from 'node:crypto';
 import { db } from '~/db.server';
 import { redactShopData } from '~/services/gdpr.service';

@@ -5,7 +5,7 @@
  * Handles: generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
@@ -18,12 +18,13 @@ import { getFormInt, getFormJSON, getFormString } from "../../utils/form-data.ut
 import { isValidLocale } from "../../utils/validation";
 import { sanitizePromptInput } from "../../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../../utils/error-handler";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";
 import type { SeoLimits } from "../../utils/character-limits";
 import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
+import type { DataResponse } from "~/types/data-response";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -141,7 +142,7 @@ export async function saveImageAltTextPrimary(opts: {
 export async function handleGenerateAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
@@ -212,7 +213,7 @@ export async function handleGenerateAltText(
 export async function handleGenerateAllAltTexts(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imagesData = getFormJSON<Array<{ url: string }>>(formData, "imagesData");
@@ -309,7 +310,7 @@ export async function handleGenerateAllAltTexts(
 export async function handleTranslateAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
@@ -390,7 +391,7 @@ export async function handleTranslateAltText(
 export async function handleTranslateAltTextToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, provider, serviceConfig, shopifyContentService } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
@@ -731,7 +732,7 @@ export async function handleGenerateAltTextFromSku(
 export async function handleSaveImageAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, db, session } = ctx;
   const mediaId = getFormString(formData, "mediaId");
   const altText = getFormString(formData, "altText") ?? "";
@@ -833,7 +834,7 @@ export async function handleSaveImageAltText(
 export async function handleLoadImageAltTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db } = ctx;
   const productId = getFormString(formData, "productId") || ctx.itemId;
   const locale = getFormString(formData, "locale");

@@ -21,8 +21,8 @@
  * in what actually ships, only in what this in-app preview can show.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import { Card, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";

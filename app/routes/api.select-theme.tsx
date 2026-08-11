@@ -10,8 +10,8 @@
  * client can populate the dropdown without a second endpoint.
  */
 
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { authenticate } from "~/shopify.server";
 import { getFormString } from "~/utils/form-data.utils";
 import { listThemes, resolveSelectedThemeId, setSelectedThemeId, getCachedThemes, pickMainThemeId } from "~/services/theme-selection.server";

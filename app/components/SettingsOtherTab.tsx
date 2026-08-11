@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { BlockStack, Card, InlineStack, Text } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { SettingsMetafieldsTab } from "./SettingsMetafieldsTab";
 import { SettingsRichtextTab } from "./SettingsRichtextTab";

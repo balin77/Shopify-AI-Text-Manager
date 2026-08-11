@@ -12,7 +12,7 @@
  * When `translateAll` is set, a Task-tracked AI translation into all published
  * target locales is kicked off in the background.
  */
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { createItem, setTranslation, normalizeSource, isDirectTranslationsAvailable } from "../services/direct-translation.server";

@@ -5,7 +5,7 @@
  * Handles: translateField, translateAll, translateAllForLocale, translateFieldToAllLocales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { TranslationService } from "../../../src/services/translation.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "../../utils/validation";
@@ -15,10 +15,11 @@ import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
 import { findMetaobjectLabelField } from "../../constants/shopifyFields";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
+import type { DataResponse } from "~/types/data-response";
 
 // ============================================================================
 // METAOBJECT TRANSLATION HELPER (local copy)
@@ -177,7 +178,7 @@ function getEffectiveResourceType(itemId: string, configResourceType: string): s
 export async function handleTranslateField(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");
@@ -270,7 +271,7 @@ export async function handleTranslateField(
 export async function handleTranslateAll(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const targetLocalesStr = getFormString(formData, "targetLocales");
@@ -426,7 +427,7 @@ export async function handleTranslateAll(
 export async function handleTranslateAllForLocale(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const targetLocale = getFormString(formData, "targetLocale");
@@ -586,7 +587,7 @@ export async function handleTranslateAllForLocale(
 export async function handleTranslateFieldToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");

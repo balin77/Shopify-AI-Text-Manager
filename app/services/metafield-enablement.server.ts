@@ -6,7 +6,7 @@
  * (gating which metafields show in the editor + one-time lazy backfill).
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { ContentService } from "./content.service";
 import { categorizeMetafieldOwner, type MetafieldOwnerCategory } from "../config/known-third-party-apps";

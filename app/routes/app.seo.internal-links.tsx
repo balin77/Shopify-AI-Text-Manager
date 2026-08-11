@@ -47,8 +47,8 @@
  * internal-links-translate.server.ts.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Card,

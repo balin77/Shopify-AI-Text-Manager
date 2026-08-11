@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, type ReactElement } from "react";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import {
   Page,
   Card,

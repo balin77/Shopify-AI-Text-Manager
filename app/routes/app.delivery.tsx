@@ -7,7 +7,7 @@
  * Thin wrapper over the shared ThemeContent domain factories + page.
  */
 
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import { Banner } from "@shopify/polaris";
 import { DELIVERY_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";

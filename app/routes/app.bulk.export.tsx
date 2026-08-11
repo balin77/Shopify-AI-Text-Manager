@@ -16,7 +16,7 @@
  * trusted.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";

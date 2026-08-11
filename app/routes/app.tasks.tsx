@@ -1,5 +1,5 @@
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Page,

@@ -9,7 +9,7 @@
  * call into the two helpers below, parameterised by `domain`.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { tryDecryptApiKey } from "../utils/encryption.server";
@@ -17,6 +17,7 @@ import { getFormString } from "~/utils/form-data.utils";
 import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
+import type { DataResponse } from "~/types/data-response";
 
 /**
  * Prisma `where` fragment scoping ThemeContent/ThemeTranslation reads to the
@@ -75,7 +76,7 @@ export async function loadThemeGroupResponse(opts: {
   resourceTypes?: string[];
   /** Shopify Theme-GID to scope the read to (Theme-Auswahl). null/undefined = no scope. */
   selectedThemeId?: string;
-}): Promise<Response> {
+}): Promise<DataResponse> {
   const { db, shop, domain, groupId, page, limit, search, resourceTypes, selectedThemeId } = opts;
 
   const themeGroups = await db.themeContent.findMany({
@@ -204,7 +205,7 @@ export async function handleThemeContentActionResponse(opts: {
   resourceTypes?: string[];
   /** Shopify Theme-GID to scope reads/writes to (Theme-Auswahl). */
   selectedThemeId?: string;
-}): Promise<Response> {
+}): Promise<DataResponse> {
   const { db, admin, session, formData, domain, groupId, resourceTypes, selectedThemeId } = opts;
   const actionType = getFormString(formData, "action");
 

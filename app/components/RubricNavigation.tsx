@@ -9,7 +9,7 @@
  * single `<ContentTypeNavigation />`. On non-content pages it renders null.
  */
 
-import { useLocation } from "@remix-run/react";
+import { useLocation } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";

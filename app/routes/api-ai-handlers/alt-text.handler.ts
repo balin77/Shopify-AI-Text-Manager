@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isPrismaError, isAuthError } from "./shared";
 import type { TranslatableContentItem } from "./shared";
@@ -9,19 +9,20 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
+import type { DataResponse } from "~/types/data-response";
 
 // Reject a malformed productId before it reaches a DB lookup or Shopify
 // mutation. productId is optional in several flows, so an empty value passes
 // (the callers already guard on `if (productId && ...)`); only a non-empty,
 // non-GID value is rejected.
-function invalidProductGidResponse(productId: string): Response | null {
+function invalidProductGidResponse(productId: string): DataResponse | null {
   if (productId && !isValidShopifyGID(productId)) {
     return json({ success: false, error: `Invalid product GID: ${productId}` }, { status: 400 });
   }
   return null;
 }
 
-export async function handleGenerateAltText(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -129,7 +130,7 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
   }
 }
 
-export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType } = ctx;
 
   const productId = getFormString(formData, "productId");
@@ -299,7 +300,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
   });
 }
 
-export async function handleTranslateAltText(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAltText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -382,7 +383,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
   }
 }
 
-export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -685,7 +686,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   }
 }
 
-export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const altTextsDataJson = getFormString(formData, "altTextsData");
@@ -971,7 +972,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   }
 }
 
-export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const altTextsDataJson = getFormString(formData, "altTextsData");

@@ -13,7 +13,7 @@
  * the safe state, so the scheduler simply finishes it on a later cycle.
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { Prisma } from "@prisma/client";
 import { db } from "../db.server";
 import { getPlanLimits, getSyncScope, canAccessContentType, type Plan } from "../utils/planUtils";

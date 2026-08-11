@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
 import {
   Page,
   Card,

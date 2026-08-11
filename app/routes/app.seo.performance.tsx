@@ -15,8 +15,8 @@
  * services/seo/pagespeed.types.ts.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Card,
@@ -74,6 +74,7 @@ import { getWebVitalsSummary } from "../services/seo/web-vitals.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import type { WebVitalDevice } from "../services/seo/web-vitals.types";
 import { buildAltImageMatches, type AltImageMatch } from "../services/seo/alt-image-matches";
+import type { DataResponse } from "~/types/data-response";
 
 const SHOP_HOST_QUERY = `#graphql
   query seoPerformanceShopHost {
@@ -359,7 +360,7 @@ const MAX_ALT_MATCH_URLS = 20;
  */
 const MAX_ALT_MATCH_IMAGES = 20_000;
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;

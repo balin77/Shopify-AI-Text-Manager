@@ -1,12 +1,13 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<Response> {
+export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { db, session, formData, groupId, firstGroup, domain } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const currentValue = getFormString(formData, "currentValue");

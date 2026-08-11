@@ -12,7 +12,7 @@
  * behavior during scrolling.
  */
 
-import { useLocation, useMatches } from "@remix-run/react";
+import { useLocation, useMatches } from "react-router";
 import { InlineStack, Text, Tooltip } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";

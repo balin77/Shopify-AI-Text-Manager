@@ -6,7 +6,7 @@
  *          translateSubResourceToAllLocales, savePrimarySubResources
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
@@ -14,6 +14,7 @@ import { getFullErrorMessage } from "../../utils/error-handler";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
+import type { DataResponse } from "~/types/data-response";
 
 // ============================================================================
 // LOAD SUB-RESOURCE TRANSLATIONS (Options + Metafields)
@@ -22,7 +23,7 @@ import type { ContentActionHandlerContext } from "./alt-text.action";
 export async function handleLoadSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db, session, shopifyContentService } = ctx;
 
   const locale = getFormString(formData, "locale");
@@ -168,7 +169,7 @@ export async function handleLoadSubResourceTranslations(
 export async function handleSaveSubResourceTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db, shopifyContentService } = ctx;
   // gateway is needed for deleting translations
   const { admin, session } = ctx;
@@ -353,7 +354,7 @@ export async function handleSaveSubResourceTranslations(
 export async function handleTranslateSubResources(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig } = ctx;
 
   const targetLocale = getFormString(formData, "targetLocale");
@@ -521,7 +522,7 @@ export async function handleTranslateSubResources(
 export async function handleTranslateSubResourceToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, shopifyContentService, provider, serviceConfig } = ctx;
 
   const sourceDataJson = getFormString(formData, "sourceData");
@@ -720,7 +721,7 @@ export async function handleTranslateSubResourceToAllLocales(
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, db } = ctx;
 
   const productId = getFormString(formData, "productId");

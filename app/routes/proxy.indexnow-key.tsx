@@ -7,7 +7,7 @@
  * unauthenticated IndexNow/Bing fetch resolves the shop here. The key is public
  * by design (not a secret).
  */
-import { type LoaderFunctionArgs } from "@remix-run/node";
+import { type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { getIndexNowConfig } from "../services/seo/index-now.service";

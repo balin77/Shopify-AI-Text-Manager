@@ -16,7 +16,7 @@
  * "shop must have an AI key" gate, same as seoAudit.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage } from "./shared";
 import { getFormJSON } from "~/utils/form-data.utils";
@@ -39,9 +39,10 @@ import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server"
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { findInvalidLocaleOrMarket } from "~/services/bulk-editor/translations.server";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoBulkMeta(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings } = ctx;
 
   // Plan gate (review W1): the bulk route enforces "basic" in its own

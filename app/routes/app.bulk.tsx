@@ -18,8 +18,8 @@
  * session params (host/shop/embedded) survive.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -113,6 +113,7 @@ import {
   TranslateMissingModal,
   type TranslateMissingMode,
 } from "../components/bulk-editor/TranslateMissingModal";
+import type { DataResponse } from "~/types/data-response";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -331,7 +332,7 @@ type ActionResult =
   | { ok: true; saved: number; failures: BulkFailure[] }
   | { ok: false; error: string };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;

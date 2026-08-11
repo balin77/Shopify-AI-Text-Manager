@@ -8,7 +8,7 @@
  * can run the same Task-tracked AI translation.
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 
 /** Build a bound AIService.translateBatchValues for this shop, plus the provider. */
 export async function buildTranslateBatch(shop: string, taskId?: string) {

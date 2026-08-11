@@ -8,7 +8,7 @@
  * - Handles image alt-text updates for all locales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { logger, loggers } from "~/utils/logger.server";
@@ -17,6 +17,8 @@ import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
+import type { DataResponse } from "~/types/data-response";
+import { readDataPayload, readDataStatus } from "~/utils/data-response";
 
 interface UpdateProductParams {
   locale: string;
@@ -40,7 +42,7 @@ export async function handleUpdateProduct(
   context: ActionContext,
   formData: FormData,
   productId: string
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db } = await import("~/db.server");
 
   // Shop-isolation: productId comes straight from the route params and GIDs are
@@ -132,7 +134,7 @@ export async function handleUpdateProduct(
     }
 
     // Check if this is a translation update or primary locale update
-    let response: Response;
+    let response: DataResponse;
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
@@ -141,11 +143,11 @@ export async function handleUpdateProduct(
 
     // If alt-text saves failed, merge warning into the response
     if (failedAltTextIndices.length > 0) {
-      const responseData = await response.json() as any;
+      const responseData = await readDataPayload<Record<string, unknown>>(response);
       return json({
         ...responseData,
         failedAltTextIndices,
-      }, { status: response.status });
+      }, { status: readDataStatus(response) ?? 200 });
     }
 
     return response;
@@ -492,7 +494,7 @@ async function updateTranslatedProduct(
   productId: string,
   params: UpdateProductParams,
   shop: string
-): Promise<Response> {
+): Promise<DataResponse> {
   const marketId = params.marketId || "";
   loggers.product("info", "Updating translated product", {
     productId,
@@ -847,7 +849,7 @@ async function updatePrimaryProduct(
   changedFields: string[] = [],
   changedAltTextIndices: number[] = [],
   shop: string
-): Promise<Response> {
+): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
   // Validate that title is not emptied for the primary locale — but ONLY when

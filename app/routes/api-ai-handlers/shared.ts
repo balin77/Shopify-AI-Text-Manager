@@ -2,7 +2,7 @@
  * Shared types and helpers used by all api.ai action handlers.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider, isAuthError } from "../../../src/services/ai.service";
 import type { AIProvider } from "../../../src/services/ai.service";
 import { getProviderDisplayName } from "../../utils/api-key-validation";
@@ -14,10 +14,11 @@ import {
 import type { ContentEditorConfig } from "../../types/content-editor.types";
 import type { AISettings, AIInstructions } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { SeoLimits } from "../../utils/character-limits";
 import { resolveSeoLimits } from "../../utils/character-limits";
+import type { DataResponse } from "~/types/data-response";
 
 // ─── Content type config map ──────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ export { isAuthError };
  * {@link noAiKeyResponse} but for the invalid- rather than missing-key case, so
  * the client toast can point the merchant to Settings → AI API Access Codes.
  */
-export function aiAuthErrorResponse(error: unknown): Response {
+export function aiAuthErrorResponse(error: unknown): DataResponse {
   return json(
     {
       success: false,
@@ -191,7 +192,7 @@ export function getMissingPreferredKey(
 export function noAiKeyResponse(
   settings: AISettings | null,
   missing: { provider: AIProvider; displayName: string }
-): Response {
+): DataResponse {
   const t = getTranslation((settings?.appLanguage ?? "en") as Locale);
   const template =
     t.settings.aiKeyMissingBody ??

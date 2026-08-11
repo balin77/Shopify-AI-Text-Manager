@@ -8,7 +8,7 @@
  * the same one that works for the page's POST actions — and returns the CSV
  * as a JSON string that the client Blob-downloads.
  */
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { listRedirects } from "../services/seo/redirects.service";
 

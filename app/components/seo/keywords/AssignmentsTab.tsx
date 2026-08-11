@@ -31,7 +31,7 @@ import {
   Select,
   Banner,
 } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import { scoreTone } from "../../../utils/seo-score";
 import { HelpTooltip } from "../../HelpTooltip";
 import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
@@ -41,10 +41,10 @@ import type {
   DensityBand,
 } from "../../../services/seo/keywords.service";
 import type { Translation } from "../../../i18n/de";
-import type { SerializeFrom } from "@remix-run/node";
 import type { loader, ActionResult } from "../../../routes/app.seo.keywords";
+import type { Route } from "../../../routes/+types/app.seo.keywords";
 
-type LoaderData = SerializeFrom<typeof loader>;
+type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 type KeywordRow = LoaderData["keywords"][number];
 

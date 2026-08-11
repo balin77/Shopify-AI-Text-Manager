@@ -8,8 +8,8 @@
  * requires that).
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher } from "react-router";
 import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -25,6 +25,7 @@ import {
   drainQueue,
   getQueueCount,
 } from "../services/seo/index-now.service";
+import type { DataResponse } from "~/types/data-response";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -60,7 +61,7 @@ type ActionResult =
   | { ok: true; kind: "submitted"; submitted: number; failed: number }
   | { ok: false; error: string };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 

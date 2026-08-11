@@ -17,8 +17,8 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher } from "react-router";
 import {
   Card,
   BlockStack,
@@ -51,6 +51,7 @@ import {
   type RobotsCrawlerGroup,
   type RobotsRuleImpact,
 } from "../services/seo/aeo.service";
+import type { DataResponse } from "~/types/data-response";
 
 async function loadSettings(db: any, shop: string): Promise<{ plan: Plan; autoUpdate: boolean }> {
   const settings = await db.aISettings.findUnique({
@@ -113,7 +114,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 

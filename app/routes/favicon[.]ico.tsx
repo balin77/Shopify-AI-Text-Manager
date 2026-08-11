@@ -1,4 +1,4 @@
-import { redirect } from "@remix-run/node";
+import { redirect } from "react-router";
 
 // Browsers auto-request /favicon.ico. Without a handler Remix bubbles a
 // 404 route error that pollutes the logs. Redirect to the real icon

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import {
   Card,
   Text,

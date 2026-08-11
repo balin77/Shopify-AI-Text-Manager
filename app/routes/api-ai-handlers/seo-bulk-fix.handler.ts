@@ -13,7 +13,7 @@
  * cache so the audit immediately reflects the fix on the next reload.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isAuthError, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
@@ -29,7 +29,8 @@ import type { Plan } from "~/config/plans";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import type { AISettings, PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -75,7 +76,7 @@ const AUDIT_TYPE_TO_CONTENT_TYPE: Record<AuditType, string> = {
   page: "pages",
 };
 
-export async function handleSeoBulkFix(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, seoTitleMaxChars, seoLimits } = ctx;
   const problemCode = getFormString(formData, "problemCode");
   // Foreign-locale mode: dashboard's language switcher passes ?locale=xx
@@ -263,7 +264,7 @@ async function handleFixAllForItem(
   itemId: string,
   itemType: AuditType | "",
   requestedLocale: string,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, admin, db, settings, seoTitleMaxChars, seoLimits } = ctx;
 
   if (!itemId || !itemType) {

@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";

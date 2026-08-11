@@ -11,8 +11,8 @@
  * All writes go through the route action; the page uses fetchers so it stays put.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   Card,
@@ -51,6 +51,7 @@ import {
   GET_PAGE_HANDLES,
 } from "../graphql/content.queries";
 import { getFormString } from "../utils/form-data.utils";
+import type { DataResponse } from "~/types/data-response";
 
 const IMPORT_ROW_CAP = 1000;
 
@@ -130,7 +131,7 @@ type ActionResult =
   | { ok: true; kind: "imported"; created: number; skipped: number; errors: ImportError[] }
   | { ok: false; error: string; detail?: string };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const form = await request.formData();

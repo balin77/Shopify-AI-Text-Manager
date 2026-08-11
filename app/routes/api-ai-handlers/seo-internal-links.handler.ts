@@ -19,7 +19,7 @@
  * reached.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -29,8 +29,9 @@ import type { Plan } from "~/config/plans";
 import { runInternalLinkSuggestions, HEARTBEAT_EVERY_SOURCES } from "~/services/seo/internal-links.service";
 import type { InternalLinksSummary } from "~/services/seo/internal-links.service";
 import type { PrismaClient, AISettings } from "@prisma/client";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoInternalLinks(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings } = ctx;
 
   // Pro-gate (plan §4.3) — same gate style as distributeKeywords.

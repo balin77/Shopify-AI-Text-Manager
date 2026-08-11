@@ -11,7 +11,7 @@
  * level navigation and the bounce-back are correct for the embedded app.
  */
 
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { redirect, type LoaderFunctionArgs } from "react-router";
 import { logger } from "~/utils/logger.server";
 import {
   consumeOAuthState,

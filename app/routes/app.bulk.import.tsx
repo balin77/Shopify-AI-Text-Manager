@@ -13,7 +13,7 @@
  * both enforced here (the client pre-checks the file size only for UX).
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
@@ -31,12 +31,13 @@ import {
   buildCsvImportPreview,
   type CsvImportPreviewResult,
 } from "../services/bulk-editor/csv-import.server";
+import type { DataResponse } from "~/types/data-response";
 
 export type CsvImportActionResult =
   | CsvImportPreviewResult
   | { ok: false; error: "gated" | "invalid" | "tooLarge" };
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;

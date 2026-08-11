@@ -1,7 +1,7 @@
 import { PassThrough } from "stream";
-import type { EntryContext } from "@remix-run/node";
-import { createReadableStreamFromReadable } from "@remix-run/node";
-import { RemixServer } from "@remix-run/react";
+import type { EntryContext } from "react-router";
+import { createReadableStreamFromReadable } from "@react-router/node";
+import { ServerRouter } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
@@ -44,7 +44,7 @@ export default async function handleRequest(
   request: Request,
   responseStatusCode: number,
   responseHeaders: Headers,
-  remixContext: EntryContext
+  reactRouterContext: EntryContext
 ) {
   const url = new URL(request.url);
   logger.debug('Incoming request', {
@@ -69,10 +69,9 @@ export default async function handleRequest(
   return new Promise((resolve, reject) => {
     let shellRendered = false;
     const { pipe, abort } = renderToPipeableStream(
-      <RemixServer
-        context={remixContext}
+      <ServerRouter
+        context={reactRouterContext}
         url={request.url}
-        abortDelay={ABORT_DELAY}
       />,
       {
         onShellReady() {

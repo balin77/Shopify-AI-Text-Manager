@@ -9,7 +9,7 @@
  * specific sync + load + transform logic via the `loadData` callback.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { PrismaClient } from "@prisma/client";
 import type { AISettings } from "@prisma/client";
 import { authenticate } from "../shopify.server";

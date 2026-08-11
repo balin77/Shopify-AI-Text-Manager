@@ -11,12 +11,12 @@
 import { useState } from "react";
 import { Card, BlockStack, InlineStack, Text, Button, TextField, Select, Banner, Checkbox } from "@shopify/polaris";
 import { Collapsible } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
-import type { SerializeFrom } from "@remix-run/node";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation } from "../../../i18n/de";
 import type { loader } from "../../../routes/app.seo.keywords";
+import type { Route } from "../../../routes/+types/app.seo.keywords";
 
-type LoaderData = SerializeFrom<typeof loader>;
+type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 
 export interface ResearchPanelProps {

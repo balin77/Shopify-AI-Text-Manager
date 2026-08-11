@@ -20,8 +20,8 @@
  * changing user-facing labels or code-level identifiers.
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { data as json, type ActionFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { COOKIE_BANNER_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";

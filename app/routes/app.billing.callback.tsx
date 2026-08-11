@@ -9,9 +9,9 @@
  */
 
 import { useEffect, useMemo } from 'react';
-import type { LoaderFunctionArgs } from '@remix-run/node';
-import { json, redirect } from '@remix-run/node';
-import { useLoaderData, useNavigate } from '@remix-run/react';
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json, redirect } from "react-router";
+import { useLoaderData, useNavigate } from "react-router";
 import { Page, Card, BlockStack, Text, Spinner, Button } from '@shopify/polaris';
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';

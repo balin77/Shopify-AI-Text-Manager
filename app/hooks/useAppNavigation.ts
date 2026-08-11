@@ -20,7 +20,7 @@
  */
 
 import { useCallback } from "react";
-import { useNavigate } from "@remix-run/react";
+import { useNavigate } from "react-router";
 
 interface NavigateOptions {
   /** Additional search params to include (will be merged with preserved params) */

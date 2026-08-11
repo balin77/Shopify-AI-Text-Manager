@@ -10,8 +10,8 @@
  */
 
 import { useEffect, useState, useMemo, useRef } from "react";
-import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -24,6 +24,7 @@ import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import { logger } from "~/utils/logger.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Load metaobjects with fields
@@ -132,7 +133,7 @@ export const action = async (args: ActionFunctionArgs) => {
 
 export default function MetaobjectsPage() {
   const { metaobjects, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const entryFetcher = useFetcher();
   const revalidator = useRevalidator();
   const { t } = useI18n();

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, BlockStack, Text, InlineStack, Divider, Banner } from "@shopify/polaris";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { useI18n } from "../contexts/I18nContext";

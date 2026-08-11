@@ -7,7 +7,7 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useRevalidator } from "@remix-run/react";
+import { useRevalidator } from "react-router";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { useEditorImageManagement } from "./useEditorImageManagement";
 import { useEditorChangeDetection } from "./useEditorChangeDetection";

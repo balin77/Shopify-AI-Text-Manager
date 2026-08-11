@@ -15,7 +15,7 @@
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useFetcher, useRevalidator } from "@remix-run/react";
+import { useFetcher, useRevalidator } from "react-router";
 import { Banner } from "@shopify/polaris";
 import { UnifiedContentEditor } from "./UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";

@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext, TranslatableContentItem, ShopifyGraphQLResponse } from "./shared";
 import { errorMessage, errorStack, createAIService, isAuthError } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
@@ -16,6 +16,7 @@ import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
 import { isGroupedFieldKey } from "~/utils/grouped-field.utils";
 import { writeCookieBannerTranslations } from "~/utils/cookie-banner-availability.server";
+import type { DataResponse } from "~/types/data-response";
 
 /**
  * COOKIE_BANNER translatable resources are rejected by the pinned stable
@@ -72,7 +73,7 @@ async function registerTemplateFieldTranslation(params: {
   return { accepted: true };
 }
 
-export async function handleTranslateField(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateField(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings, contentType, itemId } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");
@@ -254,7 +255,7 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<Respon
   }
 }
 
-export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings, contentType, itemId } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");

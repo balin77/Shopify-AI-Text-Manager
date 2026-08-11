@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import type { ContentImage, AltTextTranslation, ContentEditorConfig, TranslatableContentItem } from "../types/content-editor.types";
 
 interface UseEditorImageManagementProps {

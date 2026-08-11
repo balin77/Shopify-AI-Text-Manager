@@ -7,8 +7,8 @@
  * data (Phase 6) plugs into the same rows later.
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
 import { BlockStack, Banner, Text, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
@@ -62,6 +62,7 @@ import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { getFormString } from "../utils/form-data.utils";
+import type { DataResponse } from "~/types/data-response";
 
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
 
@@ -436,7 +437,7 @@ async function lookupItemTitle(
 /** CSV import cap per request (plan §5.3) — anything bigger must be split. */
 const MAX_CSV_ROWS = 2000;
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const form = await request.formData();

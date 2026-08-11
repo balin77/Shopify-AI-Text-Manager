@@ -126,7 +126,7 @@
  */
 
 import * as cheerio from "cheerio";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
 import { METAFIELDS_SET, METAFIELDS_DELETE } from "../../graphql/content.mutations";

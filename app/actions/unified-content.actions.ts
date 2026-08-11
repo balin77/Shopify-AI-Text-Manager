@@ -5,8 +5,8 @@
  * Based on the products implementation with all bug fixes
  */
 
-import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { data as json } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { AIService, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
@@ -23,7 +23,7 @@ import { getFullErrorMessage } from "../utils/error-handler";
 import { getInstructionWithDefault, getWritingStyleInstructions, getCharacterLimitRequirement } from "~/utils/ai-instructions.utils";
 import { resolveSeoContext } from "../routes/api-ai-handlers/shared";
 import { findMetaobjectLabelField } from "../constants/shopifyFields";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";

@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -6,6 +6,7 @@ import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 import { logger } from "~/utils/logger.server";
 import { stripLiquidAndHtml } from "~/utils/liquid-strip";
 import type { TranslatableField } from "~/actions/templates/shared";
+import type { DataResponse } from "~/types/data-response";
 
 /** Number of template excerpts sent to the AI per call. */
 const BATCH_SIZE = 5;
@@ -42,7 +43,7 @@ interface PendingRow {
  *
  * Fired lazily by the System page when it detects untitled templates.
  */
-export async function handleGenerateTemplateTitles(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateTemplateTitles(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, admin } = ctx;
   const shop = session.shop;
 

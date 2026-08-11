@@ -5,9 +5,9 @@
  * Required for Shopify App Store submission
  */
 
-import { json } from '@remix-run/node';
-import type { LoaderFunctionArgs } from '@remix-run/node';
-import { useLoaderData } from '@remix-run/react';
+import { data as json } from "react-router";
+import type { LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);

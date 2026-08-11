@@ -9,8 +9,8 @@
  * as the SEO dashboard's rescan and the JSON-LD batch check).
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Card,

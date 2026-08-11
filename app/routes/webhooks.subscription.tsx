@@ -5,7 +5,7 @@
  * - app_subscriptions/update
  */
 
-import type { ActionFunctionArgs } from '@remix-run/node';
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { checkAndSyncSubscription } from '~/services/billing.server';
 import { logger } from '~/utils/logger.server';

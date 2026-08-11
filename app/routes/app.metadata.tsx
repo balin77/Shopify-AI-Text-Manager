@@ -5,8 +5,8 @@
  */
 
 import { useState } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import {
   Page,
   Card,

@@ -7,7 +7,7 @@
  * `importCsv` action — this endpoint only researches.
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import {
   gatherSuggestions,
@@ -18,6 +18,7 @@ import {
 } from "../services/seo/keyword-suggestions.service";
 import { getFormString } from "../utils/form-data.utils";
 import { MAX_KEYWORD_LENGTH } from "../services/seo/keywords.service";
+import type { DataResponse } from "~/types/data-response";
 
 type ActionResult =
   | { ok: true; groups: SuggestionGroups }
@@ -27,7 +28,7 @@ type ActionResult =
 // list: any bcp47-ish "xx" / "xx-yy" is fine for Google.
 const HL_RE = /^[a-z]{2}(-[a-z]{2,4})?$/i;
 
-export const action = async ({ request }: ActionFunctionArgs): Promise<Response> => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { session } = await authenticate.admin(request);
 
   const form = await request.formData();

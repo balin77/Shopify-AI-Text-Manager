@@ -11,8 +11,8 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { data as json, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import {
   Card,
   BlockStack,

@@ -10,7 +10,7 @@
  * Tasks-tab audit trail.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -23,8 +23,9 @@ import {
   INTENT_BATCH_SIZE,
 } from "~/services/seo/keyword-intent.service";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleClassifyKeywordIntents(ctx: AIActionContext): Promise<Response> {
+export async function handleClassifyKeywordIntents(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings } = ctx;
 
   // Pro-gate (plan §8: Intent-Batch is Pro).

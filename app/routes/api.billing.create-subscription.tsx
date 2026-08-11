@@ -7,8 +7,8 @@
  * Shopify `test` flag (see billing.server.ts), never a DB-direct write.
  */
 
-import type { ActionFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
+import type { ActionFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { createSubscription, getCurrentSubscription } from '~/services/billing.server';
 import type { BillingPlan } from '~/config/billing';

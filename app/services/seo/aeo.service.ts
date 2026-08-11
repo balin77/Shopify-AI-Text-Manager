@@ -17,7 +17,7 @@
  * already-present `write_themes` scope. No new model, no new scope.
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
 import { GET_THEMES, GET_THEME_FILES } from "../../graphql/content.queries";

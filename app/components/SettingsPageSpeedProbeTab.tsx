@@ -17,7 +17,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useFetcher } from "@remix-run/react";
+import { useFetcher } from "react-router";
 import { Card, Text, BlockStack, Button, InlineStack, ButtonGroup, TextField, Banner } from "@shopify/polaris";
 
 type DebugRawPsiResult =

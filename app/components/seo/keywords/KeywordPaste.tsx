@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import { BlockStack, InlineStack, Text, Button, TextField, Select, Banner } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation } from "../../../i18n/de";
 import type { ActionResult } from "../../../routes/app.seo.keywords";
 

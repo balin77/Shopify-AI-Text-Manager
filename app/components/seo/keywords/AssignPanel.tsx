@@ -28,7 +28,7 @@ import {
   Checkbox,
   Banner,
 } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation } from "../../../i18n/de";
 import type { ActionResult } from "../../../routes/app.seo.keywords";
 import type { KeywordResourceType, KeywordRole } from "../../../services/seo/keywords.service";

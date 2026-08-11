@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import {
   Card,

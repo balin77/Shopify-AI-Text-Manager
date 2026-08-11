@@ -7,7 +7,7 @@
  * - Stops syncing 5 minutes after last activity
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { BackgroundSyncService } from "./background-sync.service";
 import { isShopActive } from "../middleware/activity-tracker.middleware";
 import { logger } from "~/utils/logger.server";

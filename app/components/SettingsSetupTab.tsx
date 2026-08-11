@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Card, Text, BlockStack, InlineStack, Button, Banner, Box, Divider, Collapsible } from "@shopify/polaris";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 import { SettingsLanguageTab } from "./SettingsLanguageTab";

@@ -5,8 +5,8 @@
  * Compare to app.collections.old.tsx - we went from ~990 lines to ~130 lines (87% reduction!)
  */
 
-import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -18,6 +18,7 @@ import { useEffect, useRef } from "react";
 import type { ContentItem } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Incremental sync + load from database
@@ -149,7 +150,7 @@ export const action = async (args: ActionFunctionArgs) => {
 
 export default function CollectionsPage() {
   const { collections, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();

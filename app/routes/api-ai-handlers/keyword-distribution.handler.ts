@@ -19,7 +19,7 @@
  *    task's result is stamped `appliedAt` so the preview disappears.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isAuthError } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
@@ -48,6 +48,7 @@ import {
   type DistributionKeyword,
   type DistributionSuggestion,
 } from "~/services/seo/keyword-distribution.service";
+import type { DataResponse } from "~/types/data-response";
 
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
 
@@ -83,7 +84,7 @@ export interface DistributionApplyResult {
   errors: number;
 }
 
-export async function handleDistributeKeywords(ctx: AIActionContext): Promise<Response> {
+export async function handleDistributeKeywords(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData } = ctx;
 
   // Pro-gate (plan §5.5) — same gate style as GSC. /api/ai has no route-level
@@ -118,7 +119,7 @@ export async function handleDistributeKeywords(ctx: AIActionContext): Promise<Re
 
 // ─── Stage "suggest" ───────────────────────────────────────────────────────
 
-async function handleSuggestStage(ctx: AIActionContext): Promise<Response> {
+async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData } = ctx;
 
   const groupId = getFormString(formData, "groupId");
@@ -452,7 +453,7 @@ function isValidApplyRow(row: unknown): row is ApplyRow {
   );
 }
 
-async function handleApplyStage(ctx: AIActionContext): Promise<Response> {
+async function handleApplyStage(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData } = ctx;
 
   const targetType = getFormString(formData, "targetType") as KeywordResourceType;

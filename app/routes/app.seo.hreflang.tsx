@@ -7,8 +7,8 @@
  * editor (?select=<GID>) where the merchant can translate them.
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import {
   Card,
   BlockStack,

@@ -13,14 +13,15 @@
  * in api.ai.tsx), matching seoAudit/seoJsonLdAudit.
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage } from "./shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { runCrawl, pruneOldCrawlSnapshots } from "~/services/seo/crawl.service";
 import type { PrismaClient } from "@prisma/client";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
+import type { DataResponse } from "~/types/data-response";
 
 const SHOP_CONTEXT_QUERY = `#graphql
   query seoCrawlShop {
@@ -48,7 +49,7 @@ async function fetchShopContext(
   }
 }
 
-export async function handleSeoCrawl(ctx: AIActionContext): Promise<Response> {
+export async function handleSeoCrawl(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db } = ctx;
 
   // Single-flight: only one seoCrawl run per shop at a time.

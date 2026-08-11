@@ -5,7 +5,7 @@
  * Handles: updateContent
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { sanitizeSlug } from "../../utils/slug.utils";
 import { logger } from "../../utils/logger.server";
 import { getFormString } from "../../utils/form-data.utils";
@@ -13,6 +13,8 @@ import { isValidShopifyGID, safeJsonParse } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { findMetaobjectLabelField } from "../../constants/shopifyFields";
 import type { ContentActionHandlerContext } from "./alt-text.action";
+import type { DataResponse } from "~/types/data-response";
+import { readDataPayload, readDataStatus } from "~/utils/data-response";
 
 // ============================================================================
 // UPDATE CONTENT
@@ -21,7 +23,7 @@ import type { ContentActionHandlerContext } from "./alt-text.action";
 export async function handleUpdateContent(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, shopifyContentService } = ctx;
 
   const locale = getFormString(formData, "locale");
@@ -93,8 +95,8 @@ export async function handleUpdateContent(
 
       const productResult = await handleUpdateProduct(context, productFormData, itemId);
       // Inject actionType into the response for discriminated union matching
-      const productBody = await productResult.json();
-      return json({ ...productBody, actionType: "updateContent" }, { status: productResult.status });
+      const productBody = await readDataPayload<Record<string, unknown>>(productResult);
+      return json({ ...productBody, actionType: "updateContent" }, { status: readDataStatus(productResult) ?? 200 });
     }
 
     // Special handling for Metaobjects

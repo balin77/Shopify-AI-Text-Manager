@@ -1,4 +1,4 @@
-import { RemixBrowser } from "@remix-run/react";
+import { HydratedRouter } from "react-router/dom";
 import { startTransition } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { initSentryClient } from "~/utils/sentry.client";
@@ -54,5 +54,5 @@ if (typeof window !== 'undefined') {
 }
 
 startTransition(() => {
-  hydrateRoot(document, <RemixBrowser />);
+  hydrateRoot(document, <HydratedRouter />);
 });

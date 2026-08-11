@@ -7,7 +7,7 @@
  * Thin wrapper over the shared ThemeContent domain factories + page.
  */
 
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import { SELLING_PLANS_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";
