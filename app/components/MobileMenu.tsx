@@ -468,6 +468,12 @@ export function MobileMenu({ activeTab, contentGroups = [], seoGroups = [] }: Mo
                 <span>{getPlanDisplayName()}</span>
               </button>
             </div>
+
+            {/* The drawer is viewport-fixed, so the app shell's bottom inset
+                does not apply to it. A real spacer (rather than padding on the
+                scroll container, which some engines drop) keeps the last row
+                scrollable clear of the Shopify mobile button bar. */}
+            <div aria-hidden="true" style={{ height: "var(--app-bottom-inset)" }} />
           </nav>
         </>
       )}

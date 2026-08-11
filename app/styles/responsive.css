@@ -13,6 +13,35 @@
      the same value and stays as tight as the content page. Routes must NOT add
      their own page-level padding wrapper on top of this. */
   --app-page-padding: 16px;
+
+  /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
+     always the LARGE viewport, so with a mobile browser toolbar showing, a
+     100vh shell is taller than what is actually visible and its last rows can
+     never be scrolled into view. `dvh` tracks the visible viewport instead. */
+  --app-shell-height: 100vh;
+
+  /* Space kept clear at the very bottom of the app. The Shopify mobile app
+     draws its own button bar ACROSS the embedded app, and mobile browsers put
+     their toolbar in the same place — neither is part of our layout, so without
+     a reserve the last rows of every page sit underneath and cannot be scrolled
+     into view. The SEO pages only looked exempt because their inner scroll
+     container happens to carry 1rem of trailing padding.
+
+     0 on desktop, where nothing overlays the bottom. The 64px below is the one
+     place the bar's height is stated — tune it here. */
+  --app-bottom-inset: 0px;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-shell-height: 100dvh;
+  }
+}
+
+@media (max-width: 899px) {
+  :root {
+    --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 64px);
+  }
 }
 
 /* Always reserve the scrollbar track, so content doesn't jump sideways when a

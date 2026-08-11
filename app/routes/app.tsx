@@ -341,7 +341,21 @@ function AppContent() {
           layout route so it survives sibling navigation instead of being
           remounted on every sub-page. Only the <Outlet /> content swaps.
           ContentTypeNavigation returns null on non-content pages. */}
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "var(--app-shell-height)",
+          // Keep the app clear of the bar the Shopify mobile app draws across
+          // the bottom (see --app-bottom-inset). Shrinking the SHELL rather
+          // than padding the scrolled content is what makes this work for the
+          // fixed-frame routes too: the editor and the .app-page-content pages
+          // scroll INSIDE a frame, so the frame itself has to end above the
+          // bar — trailing padding on the page content would never reach them.
+          paddingBottom: "var(--app-bottom-inset)",
+          boxSizing: "border-box",
+        }}
+      >
         <MainNavigation />
         <ContentTypeNavigation />
         {/* Fills the space below the (in-flow) nav bars. overflowY:auto makes

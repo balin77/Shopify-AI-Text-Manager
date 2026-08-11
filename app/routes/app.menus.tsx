@@ -119,7 +119,11 @@ export default function MenusPage() {
   return (
     <PlanAccessGate contentType="menus">
     <Page fullWidth>
-      <div style={{ height: `calc(100vh - ${getTotalNavHeight()}px)`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      {/* Own viewport calc rather than height:100% (the Polaris Page chain has
+          no definite height here). It therefore has to subtract the bottom
+          inset itself — the app shell's padding-bottom does not reach a box
+          sized off the viewport. */}
+      <div style={{ height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Menus List */}
         <div style={{ width: "350px", flexShrink: 0 }}>
           <Card padding="0">

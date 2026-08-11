@@ -231,10 +231,14 @@
   max-height: calc(100vh - 250px); /* Prevent infinite scroll */
 }
 
-/* Mobile: Use full available height */
+/* Mobile: Use full available height.
+   These size off the viewport instead of the flex chain, so the app shell's
+   padding-bottom does not reach them — they subtract --app-bottom-inset
+   themselves, otherwise the editor runs under the Shopify mobile button bar
+   and its last field can never be scrolled into view. */
 @media (max-width: 768px) {
   .field-editor-area {
-    max-height: calc(100vh - var(--navbar-height, 73px) - 120px);
+    max-height: calc(var(--app-shell-height) - var(--navbar-height, 73px) - 120px - var(--app-bottom-inset));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
   }
@@ -243,8 +247,8 @@
   .unified-editor-container {
     display: flex !important;
     flex-direction: column !important;
-    height: calc(100vh - var(--navbar-height, 73px) - 32px) !important;
-    min-height: calc(100vh - var(--navbar-height, 73px) - 32px) !important;
+    height: calc(var(--app-shell-height) - var(--navbar-height, 73px) - 32px - var(--app-bottom-inset)) !important;
+    min-height: calc(var(--app-shell-height) - var(--navbar-height, 73px) - 32px - var(--app-bottom-inset)) !important;
   }
 }
 

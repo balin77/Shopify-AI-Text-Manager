@@ -141,7 +141,10 @@ export function UnifiedItemSelectorCompact({
               top: "60px",
               left: "12px",
               right: "12px",
-              maxHeight: "calc(100vh - 80px)",
+              // position:fixed is viewport-relative, so the app shell's bottom
+              // inset does not apply — subtract it here or the last entries of
+              // this (mobile-only) dropdown sit under the Shopify button bar.
+              maxHeight: "calc(var(--app-shell-height) - 80px - var(--app-bottom-inset))",
               backgroundColor: "white",
               borderRadius: "8px",
               boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)",
