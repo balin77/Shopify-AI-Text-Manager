@@ -338,7 +338,11 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
           </Banner>
         )}
 
-        {/* Locale bar — same look as the content editors' locale buttons. */}
+        {/* Locale bar — same look as the content editors' locale buttons, and
+            hidden for the same reason on a single-language shop: it would be
+            one permanently-active button with nothing to switch to. The primary
+            view (term management) is what stays. */}
+        {shopLocales.length > 1 && (
         <InlineStack gap="200" wrap>
           {shopLocales.map((locale) => (
             <Button
@@ -353,6 +357,7 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
             </Button>
           ))}
         </InlineStack>
+        )}
 
         <Divider />
 

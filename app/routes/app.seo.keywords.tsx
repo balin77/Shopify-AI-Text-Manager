@@ -1151,7 +1151,10 @@ export default function SeoKeywords() {
 
         {/* Locale-Navbar (top): language is the outermost dimension (§2).
             Rendered as Polaris buttons to match the locale bar on the content
-            (Inhalte) pages — active locale = primary variant. */}
+            (Inhalte) pages — active locale = primary variant. Hidden on a
+            single-language shop, where it would be one permanently-active
+            button (same rule as the content editor's language bar). */}
+        {localeNavItems.length > 1 && (
         <div
           role="navigation"
           aria-label={k.localeNavLabel}
@@ -1174,6 +1177,7 @@ export default function SeoKeywords() {
               </Button>
             ))}
         </div>
+        )}
         {/* Tab SubNavBar: Bibliothek / Zuordnungen. Help icon pinned far right. */}
         <SubNavBar
           ariaLabel={k.tabNavLabel}

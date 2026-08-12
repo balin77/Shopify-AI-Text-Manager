@@ -34,6 +34,14 @@ export interface SeoSectionDef {
   kind: SeoSectionKind;
   /** Minimum plan required to use the section (absent = all plans). */
   planGate?: Plan;
+  /**
+   * The section only says something once the shop has a second language (e.g.
+   * the hreflang audit compares published secondary locales against the primary
+   * one). On a single-language shop its nav chip is greyed out and the section
+   * renders an explanation instead of an empty report — same treatment the
+   * translate actions get in the content editor.
+   */
+  requiresMultipleLocales?: boolean;
 }
 
 /** One Level-2 rubric grouping several SEO sections. */
@@ -85,6 +93,7 @@ export const SEO_RUBRICS: SeoRubricDef[] = [
         icon: "🌐",
         labelKey: "hreflang",
         kind: "audit",
+        requiresMultipleLocales: true,
       },
     ],
   },

@@ -16,7 +16,7 @@
  */
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
-import { Outlet, useLocation, useNavigation } from "react-router";
+import { Outlet, useLoaderData, useLocation, useNavigation } from "react-router";
 import { Card, BlockStack, SkeletonBodyText } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -36,9 +36,21 @@ import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Auth-gate the whole SEO tab; section data is loaded by each child route.
-  await authenticate.admin(request);
-  return json({});
+  const { admin, session } = await authenticate.admin(request);
+  // Locale count drives the language gate on sections that only say something
+  // with a second shop language (hreflang). Read from the 60s locale cache the
+  // sections use anyway, so this costs no extra Admin API call in practice.
+  // Degrades to 2 ("assume multi-language") on error: a failed lookup must not
+  // grey out a section the shop can actually use.
+  const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+  const localeCount = await getCachedShopLocales(admin, session.shop)
+    .then((locales) => locales.filter((l) => l.published !== false).length)
+    .catch(() => 2);
+  return json({ localeCount });
 };
+
+/** Route id — child sections read `localeCount` via useRouteLoaderData. */
+export const SEO_LAYOUT_ROUTE_ID = "routes/app.seo";
 
 interface SeoSectionStrings {
   label?: string;
@@ -47,9 +59,12 @@ interface SeoSectionStrings {
 export default function SeoLayout() {
   const location = useLocation();
   const navigation = useNavigation();
+  const { localeCount } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { plan } = usePlan();
   const { handleNavigate } = useAppNavigation();
+  const singleLocale = localeCount <= 1;
+  const singleLocaleHint = t.common?.requiresSecondLanguage;
 
   const active = getActiveSeoSection(location.pathname);
   const activeRubric = getActiveSeoRubric(location.pathname);
@@ -75,31 +90,48 @@ export default function SeoLayout() {
   const isLocked = (section: (typeof SEO_SECTIONS)[number]) =>
     section.planGate ? !meetsPlan(plan, section.planGate) : false;
 
+  /** Greyed out because the shop has a single language, not because of the plan. */
+  const isLanguageGated = (section: (typeof SEO_SECTIONS)[number]) =>
+    !!section.requiresMultipleLocales && singleLocale;
+
   // Level 2 — one chip per rubric. A rubric only shows the lock when EVERY one
   // of its sections is gated above the merchant's plan; a mixed rubric (e.g.
   // Verlinkungen: Weiterleitungen free, Interne Verlinkung Pro) stays open and
   // the lock is carried by the individual Level-3 chip.
   const rubricItems: SubNavBarItem[] = SEO_RUBRICS.map((rubric) => {
-    const locked = rubric.entries.every(isLocked);
+    // A rubric whose sections are ALL unavailable — for whichever reason —
+    // carries the marker itself; a mixed rubric stays open and the Level-3 chip
+    // carries it.
+    const locked = rubric.entries.every((e) => isLocked(e) || isLanguageGated(e));
     const firstGated = rubric.entries.find((e) => e.planGate);
+    const languageOnly = locked && rubric.entries.every(isLanguageGated);
     return {
       id: rubric.id,
       icon: rubric.icon,
       label: rubricStrings[rubric.id] || rubric.id,
       locked,
-      tooltip: locked && firstGated ? lockedTitle(firstGated) : undefined,
+      lockIcon: languageOnly ? "🌐" : undefined,
+      tooltip: languageOnly
+        ? singleLocaleHint
+        : locked && firstGated
+          ? lockedTitle(firstGated)
+          : undefined,
     };
   });
 
   // Level 3 — sections of the active rubric only.
   const sectionItems: SubNavBarItem[] = (activeRubric?.entries ?? []).map((section) => {
-    const locked = isLocked(section);
+    const planLocked = isLocked(section);
+    const languageLocked = isLanguageGated(section);
     return {
       id: section.id,
       icon: section.icon,
       label: sectionStrings[section.id]?.label || section.id,
-      locked,
-      tooltip: locked ? lockedTitle(section) : undefined,
+      locked: planLocked || languageLocked,
+      // Plan gate wins the marker: an upgrade unlocks the section outright,
+      // while the language hint would still apply afterwards.
+      lockIcon: !planLocked && languageLocked ? "🌐" : undefined,
+      tooltip: planLocked ? lockedTitle(section) : languageLocked ? singleLocaleHint : undefined,
     };
   });
 
@@ -108,7 +140,8 @@ export default function SeoLayout() {
   const onSelectRubric = (item: SubNavBarItem) => {
     const rubric: SeoRubricDef | undefined = SEO_RUBRICS.find((r) => r.id === item.id);
     if (!rubric) return;
-    const target = rubric.entries.find((e) => !isLocked(e)) || rubric.entries[0];
+    const target =
+      rubric.entries.find((e) => !isLocked(e) && !isLanguageGated(e)) || rubric.entries[0];
     if (target) handleNavigate(target.path);
   };
 

@@ -10,7 +10,8 @@
  */
 
 import type { ReactNode } from "react";
-import { Card, BlockStack, Text, InlineStack, Button } from "@shopify/polaris";
+import { useRouteLoaderData } from "react-router";
+import { Card, BlockStack, Text, InlineStack, Button, Banner } from "@shopify/polaris";
 import { usePlan } from "../../contexts/PlanContext";
 import { useI18n } from "../../contexts/I18nContext";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
@@ -50,6 +51,16 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
 
   const locked = section?.planGate ? !meetsPlan(plan, section.planGate) : false;
 
+  // Language gate: sections like the hreflang audit compare secondary locales
+  // against the primary one, so on a single-language shop they can only render
+  // an empty report. Show the reason instead. `localeCount` comes from the SEO
+  // layout route (app.seo.tsx); a missing value means "don't gate".
+  const layoutData = useRouteLoaderData("routes/app.seo") as { localeCount?: number } | undefined;
+  const languageLocked =
+    !!section?.requiresMultipleLocales
+    && typeof layoutData?.localeCount === "number"
+    && layoutData.localeCount <= 1;
+
   return (
     <BlockStack gap="400">
       <BlockStack gap="100">
@@ -70,7 +81,14 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
         )}
       </BlockStack>
 
-      {locked ? (
+      {languageLocked ? (
+        <Banner tone="info">
+          <Text as="p" variant="bodyMd">
+            {t.common?.requiresSecondLanguage
+              || "Your shop has only one language. Add another language in your Shopify settings to use this."}
+          </Text>
+        </Banner>
+      ) : locked ? (
         <BlockStack gap="400">
           <Card>
             <div style={{ padding: "1rem", textAlign: "center" }}>

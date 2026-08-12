@@ -29,8 +29,14 @@ export interface SubNavBarItem {
   id: string;
   label: string;
   icon?: string;
-  /** Shows a 🔒 next to the label. */
+  /** Greys the chip out and shows `lockIcon` next to the label. */
   locked?: boolean;
+  /**
+   * Marker for a locked chip. Defaults to 🔒 (plan gate). Pass something else
+   * when the chip is unavailable for a different reason — e.g. 🌐 for a section
+   * that needs a second shop language — so a padlock never implies "upgrade".
+   */
+  lockIcon?: string;
   /** Native tooltip (upgrade hint, etc.). Also used as aria title. */
   tooltip?: string;
 }
@@ -190,7 +196,7 @@ export function SubNavBar({
               </Text>
               {item.locked && (
                 <span style={{ marginLeft: "0.15rem", fontSize: isL3 ? "0.8rem" : "0.85rem" }}>
-                  🔒
+                  {item.lockIcon ?? "🔒"}
                 </span>
               )}
             </button>
