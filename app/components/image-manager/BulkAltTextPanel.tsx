@@ -15,6 +15,7 @@ import {
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useInfoBox } from "../../contexts/InfoBoxContext";
 import { useAltTextOps } from "../../contexts/AltTextOpsContext";
 import type { VariantWithGallery } from "./types";
@@ -130,6 +131,10 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
   const isPrimaryLocale = activeLocale === primaryLocale;
   const foreignLocales = shopLocales.filter(l => l !== primaryLocale);
   const hasMultipleLocales = shopLocales.length > 1;
+  // Single-language shop: the locale chips are gone (nothing to switch to), but
+  // the translate buttons stay visible and greyed out so the feature is still
+  // discoverable — the tooltip says what's missing.
+  const singleLocaleHint = hasMultipleLocales ? undefined : t.common?.requiresSecondLanguage;
 
   const isSkuRunning = skuFetcher.state !== "idle";
 
@@ -584,18 +589,18 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
           )}
 
           {/* Translate All button — below locale selector */}
-          {hasMultipleLocales && (
+          <DisabledActionTooltip hint={singleLocaleHint} preferredPosition="below">
             <Button
               size="slim"
               onClick={() => handleTranslate(null)}
               loading={isTranslatingAll}
-              disabled={isTranslatingAll}
+              disabled={isTranslatingAll || !!singleLocaleHint}
             >
               🌍 {isTranslatingAll
                 ? (im?.altTextTemplateTranslating ?? "Translating…")
                 : (im?.altTextTemplateTranslateAll ?? "Translate all positions")}
             </Button>
-          )}
+          </DisabledActionTooltip>
 
           {/* Positions */}
           {positions.map((pos, idx) => {
@@ -609,19 +614,19 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                     {pos.label ? ` – ${pos.label}` : ""}
                   </Text>
                   <InlineStack gap="200" blockAlign="center">
-                    {hasMultipleLocales && (
+                    <DisabledActionTooltip hint={singleLocaleHint} preferredPosition="below">
                       <Button
                         size="slim"
                         variant="plain"
                         onClick={() => handleTranslate(idx)}
                         loading={isThisTranslating}
-                        disabled={isThisTranslating || isTranslatingAll}
+                        disabled={isThisTranslating || isTranslatingAll || !!singleLocaleHint}
                       >
                         🌍 {isThisTranslating
                           ? (im?.altTextTemplateTranslating ?? "Translating…")
                           : (im?.altTextTemplateTranslate ?? "Translate")}
                       </Button>
-                    )}
+                    </DisabledActionTooltip>
                     {positions.length > 1 && (
                       <Button
                         icon={DeleteIcon}

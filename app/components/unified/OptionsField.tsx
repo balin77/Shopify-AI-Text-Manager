@@ -13,6 +13,8 @@
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
+import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import type { ShopLocale } from "../../types/content-editor.types";
@@ -146,6 +148,8 @@ export function OptionsField({
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
+  // Single-language shop → the option translate buttons have no target locale.
+  const singleLocaleHint = useSingleLocaleHint();
 
   // Navigate to metaobjects page with optional type pre-selection
   const navigateToMetaobjects = (option: OptionData) => {
@@ -210,13 +214,16 @@ export function OptionsField({
                         </div>
                         {/* Translate Entire Option Button — on same line as Option header */}
                         {onTranslate && (
-                          <Button
-                            size="slim"
-                            onClick={() => onTranslate(option.id)}
-                            loading={translatingFieldIds.has(entireFieldId)}
-                          >
-                            🌍 {t.translateButton || (option.isLinked ? "Translate option name" : "Translate entire option")}
-                          </Button>
+                          <DisabledActionTooltip hint={singleLocaleHint}>
+                            <Button
+                              size="slim"
+                              onClick={() => onTranslate(option.id)}
+                              loading={translatingFieldIds.has(entireFieldId)}
+                              disabled={!!singleLocaleHint}
+                            >
+                              🌍 {t.translateButton || (option.isLinked ? "Translate option name" : "Translate entire option")}
+                            </Button>
+                          </DisabledActionTooltip>
                         )}
                       </div>
 
@@ -254,23 +261,28 @@ export function OptionsField({
                                 <div className="ai-field-footer-left" />
                                 <div className="ai-field-footer-right">
                                   {onTranslateField && (
-                                    <Button
-                                      size="slim"
-                                      onClick={() => onTranslateField(option.id, "name")}
-                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                    >
-                                      🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                    </Button>
+                                    <DisabledActionTooltip hint={singleLocaleHint}>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onTranslateField(option.id, "name")}
+                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                        disabled={!!singleLocaleHint}
+                                      >
+                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                      </Button>
+                                    </DisabledActionTooltip>
                                   )}
                                   {onCopyFieldToAllLocales && (
-                                    <Button
-                                      size="slim"
-                                      onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                      disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                    >
-                                      📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                    </Button>
+                                    <DisabledActionTooltip hint={singleLocaleHint}>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onCopyFieldToAllLocales(option.id, "name")}
+                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                        disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
+                                      >
+                                        📋 {t.copyToAllLocalesButton || "Copy to all languages"}
+                                      </Button>
+                                    </DisabledActionTooltip>
                                   )}
                                 </div>
                               </div>
@@ -327,23 +339,28 @@ export function OptionsField({
                                 <div className="ai-field-footer-left" />
                                 <div className="ai-field-footer-right">
                                   {onTranslateField && (
-                                    <Button
-                                      size="slim"
-                                      onClick={() => onTranslateField(option.id, "name")}
-                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                    >
-                                      🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                    </Button>
+                                    <DisabledActionTooltip hint={singleLocaleHint}>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onTranslateField(option.id, "name")}
+                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                        disabled={!!singleLocaleHint}
+                                      >
+                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                      </Button>
+                                    </DisabledActionTooltip>
                                   )}
                                   {onCopyFieldToAllLocales && (
-                                    <Button
-                                      size="slim"
-                                      onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                      loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                      disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                    >
-                                      📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                    </Button>
+                                    <DisabledActionTooltip hint={singleLocaleHint}>
+                                      <Button
+                                        size="slim"
+                                        onClick={() => onCopyFieldToAllLocales(option.id, "name")}
+                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
+                                        disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
+                                      >
+                                        📋 {t.copyToAllLocalesButton || "Copy to all languages"}
+                                      </Button>
+                                    </DisabledActionTooltip>
                                   )}
                                 </div>
                               </div>
@@ -385,23 +402,28 @@ export function OptionsField({
                                       <div className="ai-field-footer-left" />
                                       <div className="ai-field-footer-right">
                                         {onTranslateField && (
-                                          <Button
-                                            size="slim"
-                                            onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                            loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                          >
-                                            🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                          </Button>
+                                          <DisabledActionTooltip hint={singleLocaleHint}>
+                                            <Button
+                                              size="slim"
+                                              onClick={() => onTranslateField(option.id, "value", valueIndex)}
+                                              loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                              disabled={!!singleLocaleHint}
+                                            >
+                                              🌍 {t.translateFieldButton || t.translateButton || "Translate"}
+                                            </Button>
+                                          </DisabledActionTooltip>
                                         )}
                                         {onCopyFieldToAllLocales && (
-                                          <Button
-                                            size="slim"
-                                            onClick={() => onCopyFieldToAllLocales(option.id, "value", valueIndex)}
-                                            loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                            disabled={!value || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                          >
-                                            📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                          </Button>
+                                          <DisabledActionTooltip hint={singleLocaleHint}>
+                                            <Button
+                                              size="slim"
+                                              onClick={() => onCopyFieldToAllLocales(option.id, "value", valueIndex)}
+                                              loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
+                                              disabled={!value || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
+                                            >
+                                              📋 {t.copyToAllLocalesButton || "Copy to all languages"}
+                                            </Button>
+                                          </DisabledActionTooltip>
                                         )}
                                       </div>
                                     </div>

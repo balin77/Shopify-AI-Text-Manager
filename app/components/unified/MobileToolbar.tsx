@@ -112,6 +112,10 @@ export function MobileToolbar({
     fieldLabels: i18n.common.fieldLabels,
   };
   const [popoverActive, setPopoverActive] = useState(false);
+  // Single-language shop: no locale row (one dead button), and "Translate All"
+  // stays in the menu but greyed out with an explanation.
+  const isSingleLocale = shopLocales.length <= 1;
+  const singleLocaleHint = isSingleLocale ? i18n.common?.requiresSecondLanguage : undefined;
 
   const togglePopover = useCallback(() => setPopoverActive((prev) => !prev), []);
   const closePopover = useCallback(() => setPopoverActive(false), []);
@@ -126,9 +130,10 @@ export function MobileToolbar({
   return (
     <Card padding="300">
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        {/* Left: Horizontally scrollable language buttons */}
+        {/* Left: Horizontally scrollable language buttons (hidden when the shop
+            has a single language — nothing to switch between) */}
         <div className="mobile-language-scroll">
-          {shopLocales.map((locale) => {
+          {(isSingleLocale ? [] : shopLocales).map((locale) => {
             const buttonStyle = useLocaleButtonStyle(
               locale,
               selectedItem,
@@ -200,7 +205,10 @@ export function MobileToolbar({
                     onTranslateAll();
                     closePopover();
                   },
-                  disabled: isTranslating,
+                  // Greyed out with the reason inline (ActionList can't host a
+                  // hover tooltip) when the shop has nothing to translate into.
+                  disabled: isTranslating || isSingleLocale,
+                  helpText: singleLocaleHint,
                 },
                 {
                   content: t.clearAll || "Clear All",

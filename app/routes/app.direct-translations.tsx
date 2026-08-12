@@ -39,7 +39,7 @@ import { authenticate } from "../shopify.server";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { UnifiedItemList } from "../components/unified/UnifiedItemList";
-import { UnifiedLanguageBar } from "../components/unified/UnifiedLanguageBar";
+import { UnifiedLanguageBar, shouldRenderLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -904,7 +904,19 @@ export default function DirectTranslationsPage() {
               </Card>
 
               {/* Language bar — shared component for uniformity with the other
-                  content tabs (status colours, Ctrl/Cmd-click toggle, tooltips). */}
+                  content tabs (status colours, Ctrl/Cmd-click toggle, tooltips).
+                  Skipped for single-language shops unless a market override is
+                  still selectable (the bar itself renders null there, so the
+                  Card would otherwise stay behind as an empty box). Translating
+                  DOES stay available here: a direct-translation source string is
+                  arbitrary storefront text, so translating it into the shop's
+                  only language is a valid operation. */}
+              {shouldRenderLanguageBar({
+                localeCount: barLocales.length,
+                marketCount: markets.length,
+                hasMarketHandler: true,
+                allowPrimaryLocaleMarket: true,
+              }) && (
               <Card>
                 <UnifiedLanguageBar
                   shopLocales={barLocales}
@@ -934,6 +946,7 @@ export default function DirectTranslationsPage() {
                   }}
                 />
               </Card>
+              )}
 
               {/* Editor */}
               {selectedId == null && !isNew ? (

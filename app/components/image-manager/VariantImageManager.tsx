@@ -8,6 +8,7 @@ import { usePlan } from "../../contexts/PlanContext";
 import { meetsPlan, getPlanDisplayName } from "../../utils/planUtils";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
@@ -189,6 +190,11 @@ export function VariantImageManager({
 }: VariantImageManagerProps) {
   const { t } = useI18n();
   const { plan } = usePlan();
+  // Alt-text translation needs at least one foreign locale. Without one the
+  // buttons stay visible but greyed out, with this as their tooltip.
+  const singleLocaleHint = enabledLanguages.filter(l => l !== primaryLocale).length > 0
+    ? undefined
+    : t.common?.requiresSecondLanguage;
   // WebP conversion bills a monthly image-operation per image (Pro+ only —
   // free/basic have monthlyImageOperations=0 which the server already
   // rejects). Disable the button + show a plan hint so the merchant doesn't
@@ -2611,16 +2617,18 @@ export function VariantImageManager({
                     </Button>
                   </div>
                 )}
-                {isPrimaryLocale && enabledLanguages.filter(l => l !== primaryLocale).length > 0 && (
+                {isPrimaryLocale && (
                   <div onMouseDown={() => { productGalleryBlurSkipRef.current = true; }}>
-                    <Button
-                      size="slim"
-                      disabled={altTextFetcher.state !== "idle"}
-                      loading={altTextFetcher.state !== "idle"}
-                      onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
-                    >
-                      {`🌍 ${t.imageManager.translateAltAll}`}
-                    </Button>
+                    <DisabledActionTooltip hint={singleLocaleHint}>
+                      <Button
+                        size="slim"
+                        disabled={altTextFetcher.state !== "idle" || !!singleLocaleHint}
+                        loading={altTextFetcher.state !== "idle"}
+                        onClick={() => handleTranslateAltTextToAllLocales(productSingleSelected, productCurrentAltText)}
+                      >
+                        {`🌍 ${t.imageManager.translateAltAll}`}
+                      </Button>
+                    </DisabledActionTooltip>
                   </div>
                 )}
                 {!isPrimaryLocale && (

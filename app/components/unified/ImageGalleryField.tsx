@@ -20,6 +20,8 @@
 import { useState, useEffect } from "react";
 import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -158,6 +160,8 @@ export function ImageGalleryField({
   t = {},
 }: ImageGalleryFieldProps) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  // Single-language shop → nothing to translate alt-texts into.
+  const singleLocaleHint = useSingleLocaleHint();
 
   // Reset selected image when images change
   useEffect(() => {
@@ -397,13 +401,16 @@ export function ImageGalleryField({
             </Button>
           )}
           {isPrimaryLocale && onTranslateAllAltTexts && (
-            <Button
-              size="slim"
-              onClick={onTranslateAllAltTexts}
-              loading={isFieldLoading ? isFieldLoading(-1) : false}
-            >
-              🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
-            </Button>
+            <DisabledActionTooltip hint={singleLocaleHint}>
+              <Button
+                size="slim"
+                onClick={onTranslateAllAltTexts}
+                loading={isFieldLoading ? isFieldLoading(-1) : false}
+                disabled={!!singleLocaleHint}
+              >
+                🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
+              </Button>
+            </DisabledActionTooltip>
           )}
           {!isPrimaryLocale && onTranslateAllAltTextsForLocale && (
             <Button

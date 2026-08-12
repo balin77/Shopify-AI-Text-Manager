@@ -3,7 +3,9 @@ import { Text, Button, InlineStack, Banner } from "@shopify/polaris";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { useI18n } from "../contexts/I18nContext";
+import { useSingleLocaleHint } from "../contexts/LocaleAvailabilityContext";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import { sanitizeHTML } from "../utils/sanitizer";
 import "../styles/AIEditableField.css";
@@ -92,6 +94,10 @@ export function AIEditableHTMLField({
   // sanitized (Liquid-stripped) HTML and corrupt the template.
   const containsLiquid = useMemo(() => /\{\{|\{%/.test(value || ""), [value]);
   const previewReadOnly = readOnly || (mode === "rendered" && containsLiquid);
+
+  // Set in a single-language shop: translate / copy-to-all-locales have no
+  // target, so those buttons are greyed out with this as their tooltip.
+  const singleLocaleHint = useSingleLocaleHint();
 
   // Cleanup typing timer on unmount
   useEffect(() => {
@@ -342,28 +348,32 @@ export function AIEditableHTMLField({
           )}
           {(onTranslate || onTranslateToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button
-                size="slim"
-                onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
-                loading={isLoading}
-                disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading}
-              >
-                🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
-              </Button>
+              <DisabledActionTooltip hint={singleLocaleHint}>
+                <Button
+                  size="slim"
+                  onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
+                  loading={isLoading}
+                  disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading || !!singleLocaleHint}
+                >
+                  🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
+                </Button>
+              </DisabledActionTooltip>
             </div>
           )}
           {(onCopy || onCopyToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button
-                size="slim"
-                onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
-                loading={isLoading}
-                disabled={isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)}
-              >
-                📋 {isPrimaryLocale
-                  ? (t.products?.copyToAllLocales || "Copy to all")
-                  : (t.products?.copy || "Copy")}
-              </Button>
+              <DisabledActionTooltip hint={singleLocaleHint}>
+                <Button
+                  size="slim"
+                  onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
+                  loading={isLoading}
+                  disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!singleLocaleHint}
+                >
+                  📋 {isPrimaryLocale
+                    ? (t.products?.copyToAllLocales || "Copy to all")
+                    : (t.products?.copy || "Copy")}
+                </Button>
+              </DisabledActionTooltip>
             </div>
           )}
         </div>

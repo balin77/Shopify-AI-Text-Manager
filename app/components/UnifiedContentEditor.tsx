@@ -12,7 +12,7 @@ import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
-import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
+import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -38,6 +38,8 @@ import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
+import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperationsStore";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
@@ -334,6 +336,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // group with `embedTechnical` (theme-content-domain.server.ts).
   const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
 
+  // Single-language shop: every translate / copy-to-all-locales action has no
+  // target and would only ever produce a "no target languages" warning. The
+  // buttons stay visible but greyed out with an explaining tooltip, and the
+  // language bar disappears entirely (nothing to switch between).
+  const hasMultipleLocales = shopLocales.length > 1;
+  const singleLocaleHint = hasMultipleLocales ? undefined : t.common?.requiresSecondLanguage;
+
   // Translated resource names for the item list
   const resourceNames = (t.content?.resourceNames || {}) as Record<string, string>;
   const translatedResourceName = {
@@ -590,6 +599,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   })();
 
   return (
+    // Tells every nested field/action whether translating is possible at all —
+    // a single-language shop greys out the translate/copy-to-all buttons.
+    <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     <Page fullWidth>
       <div
         className="unified-content-editor-layout"
@@ -740,7 +752,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
               {/* Desktop: Language Bar + Operation Buttons (>= 769px) */}
               <div className="toolbar-desktop-only">
-                {/* Language Selection Bar */}
+                {/* Language Selection Bar — skipped entirely for single-language
+                    shops (the bar itself renders null; the Card would stay as an
+                    empty box). */}
+                {shouldRenderLanguageBar({
+                  localeCount: shopLocales.length,
+                  marketCount: state.markets?.length ?? 0,
+                  hasMarketHandler: true,
+                }) && (
                 <Card padding="400">
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
@@ -774,6 +793,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     }}
                   />
                 </Card>
+                )}
 
                 {/* Operation Buttons */}
                 <div style={{ marginTop: "1rem" }}>
@@ -788,16 +808,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               Hidden for app-embed technical groups — translating
                               CSS selectors / config would break the embed. */}
                           {!isEmbedTechnical && (
-                          <Button
-                            onClick={handlers.handleTranslateAll}
-                            loading={isAllLocalesActionRunning}
-                            disabled={isAllLocalesActionRunning}
-                            size="slim"
-                          >
-                            {isAllLocalesActionRunning
-                              ? (t.content?.translating || "Translating...")
-                              : (t.content?.translateAll || "🌍 Translate All")}
-                          </Button>
+                          <DisabledActionTooltip hint={singleLocaleHint}>
+                            <Button
+                              onClick={handlers.handleTranslateAll}
+                              loading={isAllLocalesActionRunning}
+                              disabled={isAllLocalesActionRunning || !!singleLocaleHint}
+                              size="slim"
+                            >
+                              {isAllLocalesActionRunning
+                                ? (t.content?.translating || "Translating...")
+                                : (t.content?.translateAll || "🌍 Translate All")}
+                            </Button>
+                          </DisabledActionTooltip>
                           )}
                           {/* Clear All: hidden for templates when primary edit is not
                               enabled, and for app-embed technical groups. */}
@@ -1375,6 +1397,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </Modal.Section>
       </Modal>
     </Page>
+    </LocaleAvailabilityProvider>
   );
 }
 

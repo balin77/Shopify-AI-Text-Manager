@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { Text, Button, InlineStack, Collapsible, Badge } from "@shopify/polaris";
 import { useDroppable } from "@dnd-kit/core";
 import { useI18n } from "../../contexts/I18nContext";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { PULSE_SYNC_EPOCH } from "../../utils/contentEditor.utils";
 import { TIMING } from "../../constants/timing";
 import { SortableImageGrid } from "./SortableImageGrid";
@@ -91,6 +92,10 @@ export function VariantGallerySection({
   onBrowseLibrary,
 }: VariantGallerySectionProps) {
   const { t } = useI18n();
+  // No foreign locale → alt-text translation is greyed out instead of hidden.
+  const singleLocaleHint = enabledLanguages.filter(l => l !== primaryLocale).length > 0
+    ? undefined
+    : t.common?.requiresSecondLanguage;
   const [open, setOpen] = useState(false);
   const isOpen = open || forceOpen;
   const { setNodeRef: setDropRef } = useDroppable({ id: variant.id });
@@ -374,16 +379,18 @@ export function VariantGallerySection({
                       </Button>
                     </div>
                   )}
-                  {isPrimaryLocale && onTranslateAltToAllLocales && enabledLanguages.filter(l => l !== primaryLocale).length > 0 && (
+                  {isPrimaryLocale && onTranslateAltToAllLocales && (
                     <div onMouseDown={() => { skipNextBlurRef.current = true; }}>
-                      <Button
-                        size="slim"
-                        disabled={isAltTextLoading}
-                        loading={isAltTextLoading}
-                        onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
-                      >
-                        {`🌍 ${t.imageManager.translateAltAll}`}
-                      </Button>
+                      <DisabledActionTooltip hint={singleLocaleHint}>
+                        <Button
+                          size="slim"
+                          disabled={isAltTextLoading || !!singleLocaleHint}
+                          loading={isAltTextLoading}
+                          onClick={() => onTranslateAltToAllLocales(singleSelectedUrl, currentAltText)}
+                        >
+                          {`🌍 ${t.imageManager.translateAltAll}`}
+                        </Button>
+                      </DisabledActionTooltip>
                     </div>
                   )}
                   {!isPrimaryLocale && onTranslateAltText && (

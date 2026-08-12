@@ -1144,6 +1144,8 @@ export const en: Translation = {
     noContentToFormat: "No content available to format",
     noTargetLanguagesSelected: "No target languages selected",
     noTargetLanguagesEnabled: "No target languages enabled",
+    // Tooltip on translate/copy-to-all actions in a single-language shop
+    requiresSecondLanguage: "Your shop has only one language. Add another language in your Shopify settings to use translation.",
     fieldTranslatedToLanguages: "{fieldType} has been translated to {count} language(s)",
     fieldTranslatedAndSaved: "{fieldType} translated and saved successfully",
     // Tooltip for locale buttons
