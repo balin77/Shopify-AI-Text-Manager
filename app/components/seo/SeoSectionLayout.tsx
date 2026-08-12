@@ -16,7 +16,7 @@ import { usePlan } from "../../contexts/PlanContext";
 import { useI18n } from "../../contexts/I18nContext";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { meetsPlan } from "../../utils/planUtils";
-import { SEO_SECTIONS } from "../../config/seo-sections";
+import { SEO_SECTIONS, SEO_LAYOUT_ROUTE_ID } from "../../config/seo-sections";
 import { PLAN_DISPLAY_NAMES } from "../../config/plans";
 
 interface SeoSectionLayoutProps {
@@ -55,7 +55,7 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
   // against the primary one, so on a single-language shop they can only render
   // an empty report. Show the reason instead. `localeCount` comes from the SEO
   // layout route (app.seo.tsx); a missing value means "don't gate".
-  const layoutData = useRouteLoaderData("routes/app.seo") as { localeCount?: number } | undefined;
+  const layoutData = useRouteLoaderData(SEO_LAYOUT_ROUTE_ID) as { localeCount?: number } | undefined;
   const languageLocked =
     !!section?.requiresMultipleLocales
     && typeof layoutData?.localeCount === "number"
@@ -81,7 +81,11 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
         )}
       </BlockStack>
 
-      {languageLocked ? (
+      {/* Plan gate first — same priority the nav chips use (app.seo.tsx): an
+          upgrade unlocks the section outright, while the language hint would
+          still apply afterwards, so showing it first would hide the actionable
+          half. */}
+      {!locked && languageLocked ? (
         <Banner tone="info">
           <Text as="p" variant="bodyMd">
             {t.common?.requiresSecondLanguage

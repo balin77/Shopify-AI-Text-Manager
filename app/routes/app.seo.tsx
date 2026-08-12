@@ -40,17 +40,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Locale count drives the language gate on sections that only say something
   // with a second shop language (hreflang). Read from the 60s locale cache the
   // sections use anyway, so this costs no extra Admin API call in practice.
-  // Degrades to 2 ("assume multi-language") on error: a failed lookup must not
-  // grey out a section the shop can actually use.
+  //
+  // NOT wrapped in a catch: the cache re-throws a 401 Response on purpose so the
+  // request can re-authenticate — swallowing it would strand the merchant on a
+  // silently degraded page. Every OTHER failure is already swallowed inside the
+  // cache, which then resolves with `[]`; an empty list therefore means "lookup
+  // failed", not "shop has no locales" (a shop always has at least its primary).
+  // Treat it as multi-language so a failed lookup never greys out a section the
+  // shop can actually use.
   const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-  const localeCount = await getCachedShopLocales(admin, session.shop)
-    .then((locales) => locales.filter((l) => l.published !== false).length)
-    .catch(() => 2);
-  return json({ localeCount });
+  const published = (await getCachedShopLocales(admin, session.shop)).filter(
+    (l) => l.published !== false,
+  ).length;
+  return json({ localeCount: published === 0 ? 2 : published });
 };
-
-/** Route id — child sections read `localeCount` via useRouteLoaderData. */
-export const SEO_LAYOUT_ROUTE_ID = "routes/app.seo";
 
 interface SeoSectionStrings {
   label?: string;

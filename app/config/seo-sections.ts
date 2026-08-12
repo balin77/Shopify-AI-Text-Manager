@@ -20,6 +20,14 @@
 
 import type { Plan } from "./plans";
 
+/**
+ * Route id of the SEO layout route (app.seo.tsx). Sections read its loader data
+ * (`localeCount`) via `useRouteLoaderData`. Lives here rather than in the route
+ * module so a component can reference it without importing the route (which
+ * would pull the route's server loader into the client bundle).
+ */
+export const SEO_LAYOUT_ROUTE_ID = "routes/app.seo";
+
 export type SeoSectionKind = "audit" | "tool" | "integration";
 
 export interface SeoSectionDef {

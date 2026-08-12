@@ -133,47 +133,22 @@ export function MobileToolbar({
         {/* Left: Horizontally scrollable language buttons (hidden when the shop
             has a single language — nothing to switch between) */}
         <div className="mobile-language-scroll">
-          {(isSingleLocale ? [] : shopLocales).map((locale) => {
-            const buttonStyle = useLocaleButtonStyle(
-              locale,
-              selectedItem,
-              primaryLocale,
-              contentType,
-              isLoadingData,
-              validationOverlays,
-              validationVersion
-            );
-
-            const tooltip = getLocaleButtonTooltip(locale, selectedItem, primaryLocale, contentType, isLoadingData, tooltipI18n, validationOverlays);
-
-            const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
-            const isPrimary = locale.primary;
-            const isCurrentLanguage = currentLanguage === locale.locale;
-            const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
-
-            const buttonEl = (
-              <div key={locale.locale} style={{ ...buttonStyle, flexShrink: 0 }}>
-                <Button
-                  variant={isCurrentLanguage ? "primary" : undefined}
-                  onClick={() => onLanguageChange(locale.locale)}
-                  size="slim"
-                  tone={!isEnabled && !isPrimary ? "critical" : undefined}
-                >
-                  {shortLabel}
-                </Button>
-              </div>
-            );
-
-            if (tooltip) {
-              return (
-                <Tooltip key={locale.locale} content={tooltip} dismissOnMouseOut preferredPosition="below">
-                  {buttonEl}
-                </Tooltip>
-              );
-            }
-
-            return buttonEl;
-          })}
+          {(isSingleLocale ? [] : shopLocales).map((locale) => (
+            <MobileLocaleButton
+              key={locale.locale}
+              locale={locale}
+              selectedItem={selectedItem}
+              primaryLocale={primaryLocale}
+              contentType={contentType}
+              isLoadingData={isLoadingData}
+              validationOverlays={validationOverlays}
+              validationVersion={validationVersion}
+              enabledLanguages={enabledLanguages}
+              currentLanguage={currentLanguage}
+              onLanguageChange={onLanguageChange}
+              tooltipI18n={tooltipI18n}
+            />
+          ))}
         </div>
 
         {/* Right: Reload icon + More Actions Popover. Save/Discard are handled
@@ -261,4 +236,89 @@ export function MobileToolbar({
       )}
     </Card>
   );
+}
+
+/**
+ * One locale chip — a component rather than an inline `.map()` body because
+ * `useLocaleButtonStyle` is a hook: rendering the list inline made the hook
+ * count depend on `shopLocales.length`, so a shop going 1 → 2 locales on a
+ * revalidation would throw "Rendered more hooks than during the previous
+ * render". Mirrors `LocaleButton` in UnifiedLanguageBar.
+ */
+function MobileLocaleButton({
+  locale,
+  selectedItem,
+  primaryLocale,
+  contentType,
+  isLoadingData,
+  validationOverlays,
+  validationVersion,
+  enabledLanguages,
+  currentLanguage,
+  onLanguageChange,
+  tooltipI18n,
+}: {
+  locale: ShopLocale;
+  selectedItem: TranslatableItem | null;
+  primaryLocale: string;
+  contentType: ContentType;
+  isLoadingData: boolean;
+  validationOverlays?: ValidationOverlays;
+  validationVersion?: number;
+  enabledLanguages?: string[];
+  currentLanguage: string;
+  onLanguageChange: (locale: string) => void;
+  tooltipI18n: {
+    missingContent: string;
+    missingTranslations: string;
+    fieldLabels: Record<string, string>;
+  };
+}) {
+  const buttonStyle = useLocaleButtonStyle(
+    locale,
+    selectedItem,
+    primaryLocale,
+    contentType,
+    isLoadingData,
+    validationOverlays,
+    validationVersion,
+  );
+
+  const tooltip = getLocaleButtonTooltip(
+    locale,
+    selectedItem,
+    primaryLocale,
+    contentType,
+    isLoadingData,
+    tooltipI18n,
+    validationOverlays,
+  );
+
+  const isEnabled = !enabledLanguages || enabledLanguages.includes(locale.locale);
+  const isPrimary = locale.primary;
+  const isCurrentLanguage = currentLanguage === locale.locale;
+  const shortLabel = locale.locale.charAt(0).toUpperCase() + locale.locale.slice(1);
+
+  const buttonEl = (
+    <div style={{ ...buttonStyle, flexShrink: 0 }}>
+      <Button
+        variant={isCurrentLanguage ? "primary" : undefined}
+        onClick={() => onLanguageChange(locale.locale)}
+        size="slim"
+        tone={!isEnabled && !isPrimary ? "critical" : undefined}
+      >
+        {shortLabel}
+      </Button>
+    </div>
+  );
+
+  if (tooltip) {
+    return (
+      <Tooltip content={tooltip} dismissOnMouseOut preferredPosition="below">
+        {buttonEl}
+      </Tooltip>
+    );
+  }
+
+  return buttonEl;
 }

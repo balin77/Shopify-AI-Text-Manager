@@ -61,6 +61,19 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
   - Unmapped resource types silently drop from the Shopify push while still writing the DB — that's a false-success bug pattern.
 - **Autofix-normalized richtext: mirror the PUSHED value to DB, not the raw one.** If autofix rewrites a richtext value (`test<p></p>` → `<p>test</p>`) before writing `config/settings_data.json`, STEP 2b of the update handler must mirror the normalized value into `ContentTranslation`. Mirroring the raw value diverges DB from file → next save can't find the old value → save appears to no-op.
 
+## Single-language shops (one shop locale) — mandatory rules for every new UI
+
+A shop with only its primary locale must never be offered translation UI it cannot use. These rules are not optional polish; apply them to **every new button, bar or section** that touches locales. Reference implementation: [LocaleAvailabilityContext.tsx](app/contexts/LocaleAvailabilityContext.tsx) + [DisabledActionTooltip.tsx](app/components/DisabledActionTooltip.tsx).
+
+- **Locale buttons/bars: REMOVE, don't disable.** Anything that switches between languages (locale chip rows, `UnifiedLanguageBar`, `MobileToolbar`'s locale row, the keyword/glossary/dashboard locale bars) renders nothing at `locales.length <= 1` — a single permanently-active button is noise. Drop the surrounding `<Card>`/wrapper too so no empty box is left: `shouldRenderLanguageBar()` in [UnifiedLanguageBar.tsx](app/components/unified/UnifiedLanguageBar.tsx) is the caller-side twin of the bar's internal emptiness check. Kill the Ctrl+click hint with the bar (the primary locale can't be toggled off).
+- **Everything else: DISABLE + tooltip, don't hide.** Translate, translate-to-all-locales, copy-to-all-locales, "Accept & Translate", alt-text translation, per-option/metafield 🌍 — all stay visible, greyed out, with `t.common.requiresSecondLanguage` as the tooltip. Hiding them makes merchants think the feature is missing.
+- **Get the flag from the context, not from props.** Inside the editor tree call `useSingleLocaleHint()` — it returns `undefined` when the shop is multi-language (so `disabled={... || !!singleLocaleHint}` and `<DisabledActionTooltip hint={singleLocaleHint}>` are no-ops) and the reason string otherwise. `UnifiedContentEditor` provides `LocaleAvailabilityProvider`; components outside it (image manager panels that receive `shopLocales`/`enabledLanguages` as props) derive the same hint locally.
+- **Disabled controls need the wrapper.** Browsers do not dispatch pointer events for a disabled control, so a bare Polaris `<Tooltip>` around it never opens. Always wrap with `DisabledActionTooltip`. In an `ActionList` (no hover tooltip possible) use `disabled` + `helpText` instead.
+- **Whole sections that only exist for translation** (e.g. the hreflang audit): mark the descriptor `requiresMultipleLocales` ([seo-sections.ts](app/config/seo-sections.ts)), grey the nav chip with a **🌐** marker (never 🔒 — that reads as "upgrade your plan") and render the explanation in place of the section body. A plan gate outranks the language gate in both the marker and the body.
+- **Never gate on a failed lookup.** `getCachedShopLocales` swallows non-401 errors and resolves with `[]`, so an empty list means "lookup failed", not "one locale" — treat it as multi-language. Do not `catch` around it: it re-throws 401 on purpose so the request can re-authenticate.
+- **Handlers stay defensive anyway.** The client gate is UI only; every `targetLocales = enabled.filter(l => l !== primaryLocale)` path keeps its `length === 0` guard, and server actions keep returning a successful no-op.
+- **Exception — Direct translations.** `/app/direct-translations` targets *all* published locales including the primary (the source string is arbitrary storefront text), so its translate buttons stay enabled with a single locale. Only its locale bar disappears.
+
 ## Auth / boundaries
 
 - Shopify auth + session handled by the standard `@shopify/shopify-app-remix` flow.
@@ -76,6 +89,11 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
 - `npm run deploy -- -c dev --allow-updates` (or `-c prod`) — **the only correct way to deploy.** Minify-then-`shopify app deploy` wrapper ([scripts/deploy-minified.mjs](scripts/deploy-minified.mjs)); all args pass through. Calling `shopify app deploy` directly fails on the 100 KiB Liquid limit — see the deploy gotchas above
 - `npm run minify:blocks` — report the extension Liquid budget without deploying
 - `npm run build:flags` — regenerate storefront flag artifact
+
+## Working agreement
+
+- **Every larger or system-relevant change ends with a review pass.** Once the rebuild is finished (and typecheck + tests are green), run an independent review agent over the diff — `/code-review high` on the branch, or a subagent with the same brief — and then FIX what it finds before reporting the work as done. "System-relevant" = anything touching a write path, translation/sync logic, auth or plan gating, a shared component or context used across pages, DB schema or migrations, deploy scripts, or a cross-cutting UI rule like the single-language rules above. Small local edits (a string, one styling tweak, a test) don't need it.
+- Report the findings and what you did with each; if a finding is a false positive, say why instead of silently dropping it.
 
 ## Notes for future work
 
