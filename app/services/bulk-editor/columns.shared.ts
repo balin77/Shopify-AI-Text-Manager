@@ -493,7 +493,10 @@ export function buildOptionColumns(): ColumnDescriptor[] {
         label: field, // heading is built from t.bulkEditor.columns.optionName/-Values + position
         group: "options",
         editable: true,
-        translatable: false, // option translations stay in the single editor (sub-resource path)
+        // Option translations live on the ProductOption / ProductOptionValue
+        // resource, not on the product — apply.server.ts routes these cells
+        // through the sub-resource write path (translations.server.ts).
+        translatable: true,
         inputType: field === "values" ? "textarea" : "text",
         minWidth: field === "values" ? 220 : 160,
         optionPosition: position,
@@ -1292,10 +1295,36 @@ export function estimateCalls(
   for (const group of groups) {
     const entries = Object.entries(group.cells);
     if (group.locale !== "") {
-      const hasWrites = entries.some(([, v]) => v !== "");
-      const hasClears = entries.some(([, v]) => v === "");
+      // Sub-resource cells (metafields, product options) do NOT ride on the
+      // row's own translationsRegister: each target resource costs its own
+      // register/remove call, and an option-VALUES cell is one call per value.
+      // Counting them as part of the row's single call would let a save that
+      // fans out into hundreds of calls slip past MAX_TASK_CALLS.
+      const ownEntries = entries.filter(([columnId]) => {
+        const column = columnById.get(columnId);
+        return !column || (column.kind !== "metafield" && column.kind !== "option");
+      });
+      const subEntries = entries.filter(([columnId]) => {
+        const column = columnById.get(columnId);
+        return column && (column.kind === "metafield" || column.kind === "option");
+      });
+      const hasWrites = ownEntries.some(([, v]) => v !== "");
+      const hasClears = ownEntries.some(([, v]) => v === "");
       calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
       if (hasWrites) foreignDigestResources.add(group.rowId);
+      for (const [columnId, value] of subEntries) {
+        const column = columnById.get(columnId);
+        // Values cells fan out per entry; the exact count is only known
+        // server-side, so estimate with the display separator (over-estimating
+        // is the safe direction for a budget guard).
+        const targets =
+          column?.kind === "option" && column.optionField === "values"
+            ? Math.max(1, value.split(LIST_DISPLAY_SEPARATOR.trim()).length)
+            : 1;
+        // One register (or remove) + one digest fetch per target resource.
+        calls += targets;
+        if (value !== "") calls += Math.ceil(targets / DIGEST_BATCH_CHUNK);
+      }
       continue;
     }
     if (group.rowType === "variant") {

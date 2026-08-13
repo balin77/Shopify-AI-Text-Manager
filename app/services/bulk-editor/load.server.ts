@@ -12,7 +12,12 @@
 import type { PrismaClient, Prisma } from "@prisma/client";
 import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
-import { translationKeysByColumnId } from "./translations.server";
+import {
+  translationKeysByColumnId,
+  isSubResourceColumn,
+  subResourceCacheFromRow,
+  subResourceTargetsForColumn,
+} from "./translations.server";
 import {
   type BulkRow,
   type BulkRowType,
@@ -23,6 +28,8 @@ import {
   type MetafieldColumnSpec,
   type ProductColumnCaps,
   getColumnForType,
+  buildColumnsForType,
+  LIST_DISPLAY_SEPARATOR,
   metafieldColumnId,
   metaobjectColumnId,
 } from "./columns.shared";
@@ -335,22 +342,97 @@ async function attachForeignValues(
     },
     select: { resourceId: true, key: true, value: true, marketId: true },
   });
-  if (translations.length === 0) return;
-
   const byRow = new Map<string, Record<string, string>>();
+  const recordFor = (rowId: string): Record<string, string> => {
+    let record = byRow.get(rowId);
+    if (!record) {
+      record = {};
+      byRow.set(rowId, record);
+    }
+    return record;
+  };
   for (const t of translations) {
     const columnId = columnIdByKey.get(t.key);
     if (!columnId) continue;
-    let record = byRow.get(t.resourceId);
-    if (!record) {
-      record = {};
-      byRow.set(t.resourceId, record);
-    }
-    record[`${opts.locale}|${t.marketId}|${columnId}`] = t.value;
+    recordFor(t.resourceId)[`${opts.locale}|${t.marketId}|${columnId}`] = t.value;
   }
+
+  // Metafield/option cells translate on resources of their OWN — their values
+  // are keyed by the METAFIELD / OPTION / OPTION VALUE gid, not by the row id.
+  await attachSubResourceForeignValues(db, shop, opts, rows, marketIds, recordFor);
+
   for (const row of rows) {
     const record = byRow.get(row.id);
     if (record) row.foreignValues = record;
+  }
+}
+
+/**
+ * Foreign values of the sub-resource columns (Plan §4.1/§4.2): metafield cells
+ * read the Metafield's "value" translation, option cells the ProductOption /
+ * ProductOptionValue "name" translations — the same rows the single-item editor
+ * writes, so both editors show the same state.
+ *
+ * A VALUES cell joins its entries with the display separator and leaves an
+ * untranslated entry EMPTY ("Rot |  | Grün") instead of falling back to the
+ * primary name: a primary name shown in a foreign cell would read as
+ * "translated" and hide the gap.
+ */
+async function attachSubResourceForeignValues(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  rows: BulkRow[],
+  marketIds: string[],
+  recordFor: (rowId: string) => Record<string, string>,
+): Promise<void> {
+  if (opts.type !== "product" || !opts.productCells) return;
+  const columns = buildColumnsForType("product", opts.productCells.metafieldSpecs, opts.productCells.caps).filter(
+    isSubResourceColumn,
+  );
+  if (columns.length === 0) return;
+
+  // rowId → columnId → the target gids of that cell (in value order).
+  const targetsByRow = new Map<string, Map<string, string[]>>();
+  const allIds = new Set<string>();
+  for (const row of rows) {
+    const cache = subResourceCacheFromRow(row);
+    const byColumn = new Map<string, string[]>();
+    for (const column of columns) {
+      const targets = subResourceTargetsForColumn(column, cache);
+      if (!targets || targets.length === 0) continue;
+      byColumn.set(column.id, targets.map((t) => t.resourceId));
+      for (const target of targets) allIds.add(target.resourceId);
+    }
+    if (byColumn.size > 0) targetsByRow.set(row.id, byColumn);
+  }
+  if (allIds.size === 0) return;
+
+  const translations = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      resourceId: { in: [...allIds] },
+      locale: opts.locale,
+      marketId: { in: marketIds },
+      key: { in: ["value", "name"] },
+    },
+    select: { resourceId: true, value: true, marketId: true },
+  });
+  if (translations.length === 0) return;
+  const byResource = new Map<string, string>();
+  for (const t of translations) byResource.set(`${t.marketId}|${t.resourceId}`, t.value);
+
+  for (const row of rows) {
+    const byColumn = targetsByRow.get(row.id);
+    if (!byColumn) continue;
+    for (const marketId of marketIds) {
+      for (const [columnId, ids] of byColumn) {
+        const values = ids.map((id) => byResource.get(`${marketId}|${id}`) ?? "");
+        if (values.every((v) => v === "")) continue;
+        recordFor(row.id)[`${opts.locale}|${marketId}|${columnId}`] =
+          ids.length === 1 ? values[0] : values.join(LIST_DISPLAY_SEPARATOR);
+      }
+    }
   }
 }
 

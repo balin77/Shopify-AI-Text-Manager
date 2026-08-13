@@ -144,6 +144,9 @@ function mockDb() {
     productMetafield: {
       upsert: vi.fn(async () => ({})),
       deleteMany: vi.fn(async () => ({ count: 1 })),
+      // A deleted metafield takes its translations with it — the apply path
+      // looks the gid up to clear them.
+      findFirst: vi.fn(async () => ({ id: "gid://shopify/Metafield/1" })),
     },
     productOption: {
       findFirst: vi.fn(async (_args?: unknown) => ({

@@ -46,6 +46,12 @@ import {
   LOCALE_KEY_SEP,
   translationKeyForColumn,
   CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
+  isSubResourceColumn,
+  subResourceTargetsForColumn,
+  loadProductSubResourceCaches,
+  EMPTY_SUB_RESOURCE_CACHE,
+  type ProductSubResourceCache,
+  type SubResourceTarget,
   type TranslationInput,
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
@@ -55,6 +61,7 @@ import {
   parseMoney,
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   METAFIELDS_SET_CHUNK,
+  LIST_DISPLAY_SEPARATOR,
   IMG_ALT_COLUMN_ID,
   VAR_SKU_COLUMN_ID,
   VAR_PRICE_COLUMN_ID,
@@ -137,6 +144,10 @@ interface PersistDeps {
    * stale-foreign-translation invalidation (Plan §6.6 / Phase 4b). Loaded once
    * per run; empty when the lookup failed (invalidation then safely no-ops). */
   foreignLocales: string[];
+  /** productId → cached metafield/option GIDs, for the foreign groups that
+   * write SUB-RESOURCE translations (metafield "value", option/value "name").
+   * Loaded in ONE pass by applyBulkDiff, together with their digests. */
+  subResourceCaches: Map<string, ProductSubResourceCache>;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -241,12 +252,17 @@ async function invalidateStaleForeignTranslations(
   rowType: BulkRowType,
   resourceId: string,
   translationKeys: string[],
+  /** ContentTranslation.resourceType to match — set for SUB-RESOURCES
+   * (Metafield / ProductOption / ProductOptionValue), whose rows are keyed by
+   * their own gid, not by the product's. */
+  resourceTypeOverride?: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
   const keys = [...new Set(translationKeys.filter(Boolean))];
   if (keys.length === 0 || foreignLocales.length === 0) return;
 
-  const isMetaobject = rowType === "metaobject";
+  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
+  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -259,7 +275,7 @@ async function invalidateStaleForeignTranslations(
       : await db.contentTranslation.findMany({
           where: {
             shop,
-            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+            resourceType: contentResourceType,
             resourceId,
             marketId: "",
             key: { in: keys },
@@ -292,7 +308,7 @@ async function invalidateStaleForeignTranslations(
         await db.contentTranslation.deleteMany({
           where: {
             shop,
-            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+            resourceType: contentResourceType,
             resourceId,
             key: { in: localeKeys },
             locale,
@@ -463,7 +479,7 @@ async function persistProductMetafields(
   cells: ProductCellGroups,
   deps: PersistDeps,
 ): Promise<BulkFailure[]> {
-  const { db, gateway } = deps;
+  const { db, shop, gateway } = deps;
   const productId = group.rowId;
   const failures: BulkFailure[] = [];
 
@@ -575,6 +591,9 @@ async function persistProductMetafields(
           },
           update: { value: echo.value, type: echo.type },
         });
+        // The metafield's own foreign translations are now stale (§6.6) — they
+        // live on the METAFIELD gid, so they need their own invalidation.
+        await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], "Metafield");
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -611,6 +630,18 @@ async function persistProductMetafields(
           if (!confirmed) {
             failures.push(failureOf(group, "Shopify did not confirm the metafield removal.", entry.columnId));
             continue;
+          }
+          // The metafield is gone — so are its translations. Delete the local
+          // rows by gid; Shopify removed them with the metafield itself, so
+          // there is nothing to confirm remotely.
+          const removed = await db.productMetafield.findFirst({
+            where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
+            select: { id: true },
+          });
+          if (removed) {
+            await db.contentTranslation.deleteMany({
+              where: { shop, resourceId: removed.id, resourceType: "Metafield" },
+            });
           }
           await db.productMetafield.deleteMany({
             where: { productId, namespace: entry.identifier.namespace, key: entry.identifier.key },
@@ -783,6 +814,16 @@ async function persistProductOptions(
       }
       if (Object.keys(dbData).length > 0) {
         await db.productOption.update({ where: { id: option.id }, data: dbData });
+      }
+
+      // §6.6: a renamed option (or option value) makes ITS OWN foreign
+      // translations stale — they live on the ProductOption /
+      // ProductOptionValue gid, so each one is invalidated separately.
+      if (optionInput.name !== undefined) {
+        await invalidateStaleForeignTranslations(deps, "product", option.id, ["name"], "ProductOption");
+      }
+      for (const update of valueUpdates ?? []) {
+        await invalidateStaleForeignTranslations(deps, "product", update.id, ["name"], "ProductOptionValue");
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1262,8 +1303,15 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   }
   const writes: TranslationCell[] = [];
   const clears: TranslationCell[] = [];
+  /** Cells whose translation does NOT live on this row's translatableResource
+   * (metafields, product options) — written below against their own GIDs. */
+  const subResourceCells: { columnId: string; column: ColumnDescriptor; value: string }[] = [];
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
+    if (column && isSubResourceColumn(column)) {
+      subResourceCells.push({ columnId, column, value });
+      continue;
+    }
     const key = column ? translationKeyForColumn(column, group.rowType) : null;
     if (!column || !key) {
       // Validation rejected non-translatable columns already — reaching this
@@ -1273,6 +1321,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     }
     if (value === "") clears.push({ columnId, key, value });
     else writes.push({ columnId, key, value });
+  }
+
+  if (subResourceCells.length > 0) {
+    failures.push(...(await persistSubResourceTranslations(group, subResourceCells, deps)));
   }
 
   // Duplicate-slug guard (same rule as updateContent in the single editor):
@@ -1462,6 +1514,186 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   }
 
   return failures;
+}
+
+/**
+ * Foreign-locale writes for SUB-RESOURCE cells (Plan §4.1/§4.2 columns whose
+ * translation lives on their own Shopify resource):
+ *
+ *   metafield cell     → the Metafield gid,       key "value"
+ *   option name cell   → the ProductOption gid,   key "name"
+ *   option values cell → ONE ProductOptionValue gid per entry, key "name"
+ *
+ * Same three invariants as the row path: digest rule (§6.3), echo-verified
+ * register/remove, DB mirror only for CONFIRMED keys. The resourceType strings
+ * mirror the single-item editor's (sub-resources.action.ts), so both editors
+ * read and write the same ContentTranslation rows.
+ *
+ * A values cell fans out to several resources but stays ONE cell for the
+ * merchant: any failing entry fails the whole cell (with the entry named), so
+ * the grid never shows a green cell over a half-written list.
+ */
+async function persistSubResourceTranslations(
+  group: BulkDiffRowGroup,
+  cells: { columnId: string; column: ColumnDescriptor; value: string }[],
+  deps: PersistDeps,
+): Promise<BulkFailure[]> {
+  const { db, shop, gateway } = deps;
+  const { locale, marketId } = group;
+  const failures: BulkFailure[] = [];
+  const cache = deps.subResourceCaches.get(group.rowId) ?? EMPTY_SUB_RESOURCE_CACHE;
+
+  for (const cell of cells) {
+    const targets = subResourceTargetsForColumn(cell.column, cache);
+    if (!targets || targets.length === 0) {
+      failures.push(
+        failureOf(
+          group,
+          cell.column.kind === "metafield"
+            ? "This metafield is not in the local cache — resync this product first."
+            : "This option cannot be translated here (linked to metaobjects, missing, or cached without Shopify ids) — use the single-item editor.",
+          cell.columnId,
+        ),
+      );
+      continue;
+    }
+
+    // Pair each target with the value it should carry. A values cell is the
+    // only 1:n case and must line up positionally with the option's values.
+    let pairs: { target: SubResourceTarget; value: string }[];
+    if (cell.column.kind === "option" && cell.column.optionField === "values") {
+      if (cell.value === "") {
+        pairs = targets.map((target) => ({ target, value: "" }));
+      } else {
+        const names = cell.value.split(LIST_DISPLAY_SEPARATOR.trim()).map((v) => v.trim());
+        if (names.length !== targets.length) {
+          failures.push(
+            failureOf(
+              group,
+              `This option has ${targets.length} value(s) — the translation must list exactly ${targets.length}, separated by "|".`,
+              cell.columnId,
+            ),
+          );
+          continue;
+        }
+        if (names.some((n) => n === "")) {
+          failures.push(
+            failureOf(group, "Option values must not be empty — separate values with |.", cell.columnId),
+          );
+          continue;
+        }
+        pairs = targets.map((target, index) => ({ target, value: names[index] }));
+      }
+    } else {
+      pairs = [{ target: targets[0], value: cell.value }];
+    }
+
+    let cellFailed: string | null = null;
+    for (const pair of pairs) {
+      const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
+      if (error && !cellFailed) cellFailed = error;
+    }
+    if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
+    else markTranslationSaved(group.rowId);
+  }
+
+  return failures;
+
+  /** ONE resource, ONE key. Returns an error message, or null on success. */
+  async function writeSubResourceTranslation(
+    target: SubResourceTarget,
+    value: string,
+    persistDeps: PersistDeps,
+  ): Promise<string | null> {
+    // Clearing: Shopify rejects blank option/metafield translations, so a
+    // cleared cell REMOVES the translation — and the local row only goes when
+    // Shopify confirms the removal (CLAUDE.md).
+    if (value === "") {
+      try {
+        const { confirmedKeys, userErrors } = await removeAndVerify(
+          gateway,
+          target.resourceId,
+          [target.key],
+          locale,
+          marketId,
+        );
+        if (!confirmedKeys.has(target.key)) {
+          return (
+            userErrors[0]?.message ??
+            "Shopify did not confirm the translation removal — the local value was kept."
+          );
+        }
+        await db.contentTranslation.deleteMany({
+          where: { shop, resourceId: target.resourceId, key: target.key, locale, marketId },
+        });
+        return null;
+      } catch (err: unknown) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    // §6.3 digest rule: prefetched, ONE re-fetch, then cell error — no Shopify
+    // write and no DB-only row.
+    let digest = persistDeps.digests.get(target.resourceId)?.get(target.key);
+    if (!digest && !persistDeps.digestRefetched.has(target.resourceId)) {
+      persistDeps.digestRefetched.add(target.resourceId);
+      try {
+        const fresh = await fetchDigestsForResource(gateway, target.resourceId);
+        persistDeps.digests.set(target.resourceId, fresh);
+        digest = fresh.get(target.key);
+      } catch {
+        // fall through to the cell error below
+      }
+    }
+    if (!digest) {
+      return target.resourceType === "Metafield"
+        ? "Shopify provides no translatable digest for this metafield — its definition is not marked as translatable."
+        : "Shopify provides no translatable digest for this option value — nothing was saved.";
+    }
+
+    try {
+      const { confirmedKeys, userErrors } = await registerAndVerify(gateway, target.resourceId, [
+        {
+          key: target.key,
+          value,
+          locale,
+          translatableContentDigest: digest,
+          ...(marketId ? { marketId } : {}),
+        },
+      ]);
+      if (!confirmedKeys.has(target.key)) {
+        return (
+          userErrors[0]?.message ??
+          "Shopify reported no error but did not store this translation — nothing was saved."
+        );
+      }
+      await db.contentTranslation.upsert({
+        where: {
+          shop_resourceId_key_locale_marketId: {
+            shop,
+            resourceId: target.resourceId,
+            key: target.key,
+            locale,
+            marketId,
+          },
+        },
+        update: { value, digest, resourceType: target.resourceType },
+        create: {
+          shop,
+          resourceId: target.resourceId,
+          resourceType: target.resourceType,
+          key: target.key,
+          value,
+          locale,
+          marketId,
+          digest,
+        },
+      });
+      return null;
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
 }
 
 // ─── Variant rows: ONE productVariantsBulkUpdate per PRODUCT (Plan §5.4) ───
@@ -1792,6 +2024,51 @@ export async function applyBulkDiff(
     }
     if (hasWrite) foreignResourceIds.push(group.rowId);
   }
+  // Sub-resource cells (metafields, product options) translate on resources of
+  // their OWN — their cached GIDs and digests are loaded in the same pass, so a
+  // 250-row save still costs one batched digest query instead of one per cell.
+  const subResourceProductIds = new Set<string>();
+  const subResourceMetafieldKeys = new Map<string, { namespace: string; key: string }>();
+  let needOptionCache = false;
+  for (const group of groups) {
+    if (group.locale === "" || group.rowType !== "product") continue;
+    for (const columnId of Object.keys(group.cells)) {
+      const column = columnsByType[group.rowType].find((c) => c.id === columnId);
+      if (!column || !isSubResourceColumn(column)) continue;
+      subResourceProductIds.add(group.rowId);
+      if (column.kind === "metafield" && column.metafieldNamespace && column.metafieldKey) {
+        subResourceMetafieldKeys.set(column.id, {
+          namespace: column.metafieldNamespace,
+          key: column.metafieldKey,
+        });
+      }
+      if (column.kind === "option") needOptionCache = true;
+    }
+  }
+  const subResourceCaches =
+    subResourceProductIds.size > 0
+      ? await loadProductSubResourceCaches(
+          db,
+          [...subResourceProductIds],
+          [...subResourceMetafieldKeys.values()],
+          needOptionCache,
+        )
+      : new Map<string, ProductSubResourceCache>();
+  for (const group of groups) {
+    if (group.locale === "" || !subResourceCaches.has(group.rowId)) continue;
+    const cache = subResourceCaches.get(group.rowId)!;
+    for (const [columnId, value] of Object.entries(group.cells)) {
+      // Clears need no digest — only registers do.
+      if (value === "") continue;
+      const column = columnsByType[group.rowType].find((c) => c.id === columnId);
+      if (!column || !isSubResourceColumn(column)) continue;
+      for (const target of subResourceTargetsForColumn(column, cache) ?? []) {
+        foreignResourceIds.push(target.resourceId);
+        foreignKeys.add(target.key);
+      }
+    }
+  }
+
   const digests =
     foreignResourceIds.length > 0
       ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
@@ -1806,6 +2083,7 @@ export async function applyBulkDiff(
     digests,
     digestRefetched: new Set(),
     foreignLocales,
+    subResourceCaches,
   };
   const failures: BulkFailure[] = [];
   let saved = 0;

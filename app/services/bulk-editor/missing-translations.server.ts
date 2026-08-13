@@ -19,9 +19,16 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { loadBulkRows, type BulkAdminClient } from "./load.server";
-import { translationKeyForColumn, CONTENT_RESOURCE_TYPE_BY_ROW_TYPE } from "./translations.server";
+import {
+  translationKeyForColumn,
+  isSubResourceColumn,
+  subResourceCacheFromRow,
+  subResourceTargetsForColumn,
+  CONTENT_RESOURCE_TYPE_BY_ROW_TYPE,
+} from "./translations.server";
 import {
   primaryValueForColumn,
+  LIST_DISPLAY_SEPARATOR,
   METAFIELD_TYPE_SINGLE_LINE,
   METAFIELD_TYPE_MULTI_LINE,
   type BulkFilterId,
@@ -46,12 +53,12 @@ import {
  *   verified write path (MetaobjectTranslation). Only single/multi-line text —
  *   `list.*` fields carry their entries in ONE string separated by "|", which a
  *   translation would shatter, and rich_text is read-only everywhere.
- * - `metafield`, `option`, `image` columns are NOT offered: their translations
- *   do not ride on the row's own translatableResource (metafield translations
- *   are keyed on the METAFIELD gid, option translations on the option/value
- *   gids, alt-texts on the MediaImage), so applyBulkDiff has no verified write
- *   path for them at all. Offering them would produce cell errors, not
- *   translations.
+ * - `metafield` and `option` columns: their translations ride on their OWN
+ *   Shopify resource (the Metafield gid, the ProductOption / ProductOptionValue
+ *   gids), which applyBulkDiff writes through the verified sub-resource path.
+ * - `image` (alt-text) columns are NOT offered: alt-text translations ride on
+ *   the MediaImage resource, and even the primary write needs the deprecated
+ *   productUpdateMedia path — no verified bulk translation path exists.
  */
 export function translateCandidateColumns(
   columns: ColumnDescriptor[],
@@ -67,6 +74,20 @@ export function translateCandidateColumns(
         column.moFieldType === METAFIELD_TYPE_SINGLE_LINE || column.moFieldType === METAFIELD_TYPE_MULTI_LINE
       );
     }
+    // Metafield + option columns translate on their own Shopify resource
+    // (apply.server.ts persistSubResourceTranslations). Whether a given ROW can
+    // actually back them (cached gids, non-linked option) is decided per row in
+    // the scan, not here.
+    if (column.kind === "metafield") {
+      // Same text-type filter as the metaobject fields: a list metafield holds
+      // its entries as ONE json string, which a translation would shatter.
+      return (
+        type === "product" &&
+        (column.metafieldType === METAFIELD_TYPE_SINGLE_LINE ||
+          column.metafieldType === METAFIELD_TYPE_MULTI_LINE)
+      );
+    }
+    if (column.kind === "option") return type === "product";
     return false;
   });
 }
@@ -77,9 +98,19 @@ export function candidateTranslationKey(column: ColumnDescriptor, type: BulkRowT
   return translationKeyForColumn(column, type);
 }
 
-/** The row's PRIMARY value for a candidate column — the AI's source text. */
+/** The row's PRIMARY value for a candidate column — the AI's source text. An
+ * option-VALUES column yields the joined list, exactly as the grid cell shows
+ * it (the write splits it back apart, positionally). */
 export function candidateSourceValue(row: BulkRow, column: ColumnDescriptor): string {
   if (column.kind === "mofield") return row.moFields?.[column.id] ?? "";
+  if (column.kind === "metafield") return row.metafields?.[column.id]?.value ?? "";
+  if (column.kind === "option") {
+    const option = row.options?.find((o) => o.position === column.optionPosition);
+    if (!option) return "";
+    return column.optionField === "name"
+      ? option.name
+      : option.values.map((v) => v.name).join(LIST_DISPLAY_SEPARATOR);
+  }
   return primaryValueForColumn(row, column);
 }
 
@@ -114,12 +145,31 @@ export interface MissingScanResult {
   scanTruncated: boolean;
 }
 
-/** Rows carry no dynamic product payloads here: the candidate columns never
- * include metafield/option/image columns, so loading them would be waste. */
-const NO_PRODUCT_CELLS: NonNullable<Parameters<typeof loadBulkRows>[2]["productCells"]> = {
-  metafieldSpecs: [],
-  caps: { metafields: false, options: false, imageAlt: false },
-};
+/**
+ * Exactly the dynamic product payloads the candidate columns need — nothing
+ * more. Metafield/option columns carry their own namespace/key/position, so the
+ * scan derives its load plan from the columns instead of taking the caller's
+ * (wider) grid configuration.
+ */
+function productCellsFor(
+  columns: ColumnDescriptor[],
+): NonNullable<Parameters<typeof loadBulkRows>[2]["productCells"]> {
+  const metafieldSpecs = columns
+    .filter((c) => c.kind === "metafield" && c.metafieldNamespace && c.metafieldKey)
+    .map((c) => ({
+      namespace: c.metafieldNamespace as string,
+      key: c.metafieldKey as string,
+      type: c.metafieldType ?? METAFIELD_TYPE_SINGLE_LINE,
+    }));
+  return {
+    metafieldSpecs,
+    caps: {
+      metafields: metafieldSpecs.length > 0,
+      options: columns.some((c) => c.kind === "option"),
+      imageAlt: false,
+    },
+  };
+}
 
 export async function scanMissingTranslations(
   db: PrismaClient,
@@ -138,11 +188,17 @@ export async function scanMissingTranslations(
   // columnId → Shopify key. Bijective per row type.
   const keyByColumnId = new Map<string, string>();
   for (const column of opts.columns) {
+    if (isSubResourceColumn(column)) continue;
     const key = candidateTranslationKey(column, opts.type);
     if (key) keyByColumnId.set(column.id, key);
   }
-  if (keyByColumnId.size === 0) return empty;
+  if (keyByColumnId.size === 0 && !opts.columns.some(isSubResourceColumn)) return empty;
   const keys = [...new Set(keyByColumnId.values())];
+  // Columns whose translation lives on their own Shopify resource — resolved
+  // per ROW below (a linked option or an uncached metafield simply has no
+  // target and therefore no candidate).
+  const subColumns = opts.columns.filter(isSubResourceColumn);
+  const productCells = productCellsFor(opts.columns);
 
   // "missingTranslation" is a FOREIGN-view filter (load.server.ts gates every
   // one of its branches on locale !== ""), and this scan runs on the primary
@@ -173,7 +229,7 @@ export async function scanMissingTranslations(
       sort: null,
       skip: scannedRows,
       take,
-      productCells: NO_PRODUCT_CELLS,
+      productCells,
       admin: opts.admin,
       moType: opts.moType,
     });
@@ -185,10 +241,20 @@ export async function scanMissingTranslations(
     scannedRows += rows.length;
 
     const translated = await loadTranslatedLocales(db, shop, opts, rows, keys);
+    const subTranslated = await loadSubResourceTranslatedLocales(db, shop, opts, rows, subColumns);
     for (const row of rows) {
       const byKey = translated.get(row.id);
       const columns: MissingItem["columns"] = [];
+      const subCache = subColumns.length > 0 ? subResourceCacheFromRow(row) : null;
       for (const column of opts.columns) {
+        if (subCache && isSubResourceColumn(column)) {
+          const entry = missingSubResourceEntry(row, column, subCache, opts, subTranslated);
+          if (!entry) continue;
+          columns.push(entry);
+          const byLocale = (unitsByColumnLocale[column.id] ??= {});
+          for (const locale of entry.locales) byLocale[locale] = (byLocale[locale] ?? 0) + 1;
+          continue;
+        }
         const key = keyByColumnId.get(column.id);
         if (!key) continue;
         // Nothing to translate without a primary value — the same rule the old
@@ -232,6 +298,92 @@ export async function scanMissingTranslations(
     // it ran out of rows, the result is complete no matter how far it walked.
     scanTruncated: !exhausted && scannedRows < matchedRows,
   };
+}
+
+/**
+ * One sub-resource column of one row → its missing-translation entry, or null
+ * when nothing is missing (or the row cannot back the column at all: linked
+ * option, uncached metafield, legacy option values without gids).
+ *
+ * A VALUES cell covers SEVERAL ProductOptionValue resources but stays ONE cell:
+ * it counts as missing as soon as ONE entry lacks a translation, and it carries
+ * the entries that are already translated (`existingListValues`) so the task can
+ * merge instead of overwriting them.
+ */
+function missingSubResourceEntry(
+  row: BulkRow,
+  column: ColumnDescriptor,
+  cache: ReturnType<typeof subResourceCacheFromRow>,
+  opts: MissingScanOptions,
+  translatedByLocale: Map<string, Map<string, string>>,
+): MissingItem["columns"][number] | null {
+  const targets = subResourceTargetsForColumn(column, cache);
+  if (!targets || targets.length === 0) return null;
+  const source = candidateSourceValue(row, column);
+  if (source.trim() === "") return null;
+
+  const isList = column.kind === "option" && column.optionField === "values";
+  const missing: string[] = [];
+  const existingByLocale: Record<string, string[]> = {};
+  for (const locale of opts.foreignLocales) {
+    const byResource = translatedByLocale.get(locale);
+    const values = targets.map((t) => byResource?.get(t.resourceId) ?? "");
+    if (values.every((v) => v !== "")) continue;
+    missing.push(locale);
+    if (isList) existingByLocale[locale] = values;
+  }
+  if (missing.length === 0) return null;
+
+  return {
+    columnId: column.id,
+    locales: missing,
+    ...(opts.withSources ? { source } : {}),
+    ...(opts.withSources && isList ? { existingListValuesByLocale: existingByLocale } : {}),
+  };
+}
+
+/**
+ * locale → (sub-resource gid → non-empty GLOBAL translation) for the page's
+ * rows. One query for every metafield/option/option-value of the chunk.
+ */
+async function loadSubResourceTranslatedLocales(
+  db: PrismaClient,
+  shop: string,
+  opts: MissingScanOptions,
+  rows: BulkRow[],
+  subColumns: ColumnDescriptor[],
+): Promise<Map<string, Map<string, string>>> {
+  const byLocale = new Map<string, Map<string, string>>();
+  if (subColumns.length === 0) return byLocale;
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const cache = subResourceCacheFromRow(row);
+    for (const column of subColumns) {
+      for (const target of subResourceTargetsForColumn(column, cache) ?? []) ids.add(target.resourceId);
+    }
+  }
+  if (ids.size === 0) return byLocale;
+
+  const records = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      resourceId: { in: [...ids] },
+      marketId: "",
+      key: { in: ["value", "name"] },
+      locale: { in: opts.foreignLocales },
+    },
+    select: { resourceId: true, locale: true, value: true },
+  });
+  for (const record of records) {
+    if (!record.value || record.value.trim() === "") continue;
+    let map = byLocale.get(record.locale);
+    if (!map) {
+      map = new Map();
+      byLocale.set(record.locale, map);
+    }
+    map.set(record.resourceId, record.value);
+  }
+  return byLocale;
 }
 
 /** Second line of an item — enough context to tell two similar titles apart. */

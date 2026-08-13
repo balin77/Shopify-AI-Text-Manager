@@ -18,10 +18,14 @@ import {
   type MissingItem,
 } from "~/services/bulk-editor/translate-missing.shared";
 import { translateCandidateColumns } from "~/services/bulk-editor/missing-translations.server";
-import { buildJobs } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
+import { buildJobs, mergeExistingListValues } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
+import {
+  subResourceCacheFromRow,
+  subResourceTargetsForColumn,
+} from "~/services/bulk-editor/translations.server";
 import {
   buildColumnsForType,
-  buildMetaobjectColumn,
+  type BulkRow,
   type ColumnDescriptor,
   type ProductColumnCaps,
 } from "~/services/bulk-editor/columns.shared";
@@ -231,17 +235,31 @@ describe("translate-missing: candidate columns", () => {
     expect(ids).toContain("field.seoDescription");
   });
 
-  it("never offers columns the verified write path cannot translate", () => {
+  it("offers metafield and option columns — they translate on their own resource", () => {
     const columns = translateCandidateColumns(
-      buildColumnsForType("product", [{ namespace: "custom", key: "care", type: "single_line_text_field" }], ALL_CAPS),
+      buildColumnsForType(
+        "product",
+        [
+          { namespace: "custom", key: "care", type: "single_line_text_field" },
+          { namespace: "custom", key: "tags", type: "list.single_line_text_field" },
+        ],
+        ALL_CAPS,
+      ),
       "product",
       "",
     );
     const ids = columns.map((c) => c.id);
-    // Metafields/options/alt-texts translate on their OWN Shopify resource,
-    // not on the product's translatableResource.
-    expect(ids).not.toContain("mf.custom.care");
-    expect(ids.some((id) => id.startsWith("opt."))).toBe(false);
+    expect(ids).toContain("mf.custom.care");
+    expect(ids).toContain("opt.1.name");
+    expect(ids).toContain("opt.1.values");
+    // A list metafield holds its entries in ONE json string — translating it
+    // would shatter the list.
+    expect(ids).not.toContain("mf.custom.tags");
+  });
+
+  it("never offers alt-texts (no verified translation write path exists)", () => {
+    const columns = translateCandidateColumns(buildColumnsForType("product", [], ALL_CAPS), "product", "");
+    const ids = columns.map((c) => c.id);
     expect(ids).not.toContain("img.alt");
     // Never translatable at all.
     expect(ids).not.toContain("field.status");
@@ -359,5 +377,106 @@ describe("translate-missing: job building", () => {
     const { units, overCap } = buildJobs(many, columns, selectAllPairs(), ["de"], "product");
     expect(units).toBe(MAX_TRANSLATE_UNITS);
     expect(overCap).toBe(10);
+  });
+});
+
+describe("translate-missing: sub-resource targets", () => {
+  const productColumns = buildColumnsForType(
+    "product",
+    [{ namespace: "custom", key: "care", type: "single_line_text_field" }],
+    ALL_CAPS,
+  );
+  const column = (id: string): ColumnDescriptor => {
+    const found = productColumns.find((c) => c.id === id);
+    if (!found) throw new Error(`no column ${id}`);
+    return found;
+  };
+  const rowWith = (overrides: Partial<BulkRow>): BulkRow =>
+    ({
+      id: "gid://shopify/Product/1",
+      type: "product",
+      title: "Scarf",
+      seoTitle: "",
+      seoDescription: "",
+      handle: "scarf",
+      ...overrides,
+    }) as BulkRow;
+
+  it("maps a metafield cell onto the METAFIELD gid, key 'value'", () => {
+    const cache = subResourceCacheFromRow(
+      rowWith({ metafields: { "mf.custom.care": { id: "gid://shopify/Metafield/9", value: "Wash cold", type: "single_line_text_field" } } }),
+    );
+    expect(subResourceTargetsForColumn(column("mf.custom.care"), cache)).toEqual([
+      { resourceId: "gid://shopify/Metafield/9", key: "value", resourceType: "Metafield" },
+    ]);
+  });
+
+  it("maps an option-values cell onto ONE target per value, in order", () => {
+    const cache = subResourceCacheFromRow(
+      rowWith({
+        options: [
+          {
+            id: "gid://shopify/ProductOption/1",
+            position: 1,
+            name: "Size",
+            values: [
+              { id: "gid://shopify/ProductOptionValue/1", name: "S" },
+              { id: "gid://shopify/ProductOptionValue/2", name: "M" },
+            ],
+            hasValueIds: true,
+            linked: false,
+          },
+        ],
+      }),
+    );
+    expect(subResourceTargetsForColumn(column("opt.1.name"), cache)).toEqual([
+      { resourceId: "gid://shopify/ProductOption/1", key: "name", resourceType: "ProductOption" },
+    ]);
+    expect(subResourceTargetsForColumn(column("opt.1.values"), cache)?.map((t) => t.resourceId)).toEqual([
+      "gid://shopify/ProductOptionValue/1",
+      "gid://shopify/ProductOptionValue/2",
+    ]);
+  });
+
+  it("refuses linked options, legacy values and uncached metafields", () => {
+    const linked = subResourceCacheFromRow(
+      rowWith({
+        options: [
+          { id: "gid://shopify/ProductOption/1", position: 1, name: "Color", values: [], hasValueIds: true, linked: true },
+        ],
+      }),
+    );
+    expect(subResourceTargetsForColumn(column("opt.1.name"), linked)).toBeNull();
+
+    const legacy = subResourceCacheFromRow(
+      rowWith({
+        options: [
+          {
+            id: "gid://shopify/ProductOption/1",
+            position: 1,
+            name: "Size",
+            values: [{ id: "", name: "S" }],
+            hasValueIds: false,
+            linked: false,
+          },
+        ],
+      }),
+    );
+    expect(subResourceTargetsForColumn(column("opt.1.values"), legacy)).toBeNull();
+
+    expect(subResourceTargetsForColumn(column("mf.custom.care"), subResourceCacheFromRow(rowWith({})))).toBeNull();
+  });
+});
+
+describe("translate-missing: option value list merge", () => {
+  it("keeps entries that are already translated and fills only the gaps", () => {
+    expect(mergeExistingListValues(["Klein", "Mittel", "Gross"], ["S-alt", "", "G-alt"])).toBe(
+      "S-alt | Mittel | G-alt",
+    );
+  });
+
+  it("uses the AI output when nothing is translated yet", () => {
+    expect(mergeExistingListValues(["Klein", "Mittel"], undefined)).toBe("Klein | Mittel");
+    expect(mergeExistingListValues(["Klein", "Mittel"], ["", ""])).toBe("Klein | Mittel");
   });
 });

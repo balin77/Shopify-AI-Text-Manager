@@ -67,6 +67,17 @@ export interface MissingColumnEntry {
    * (`withSources`) — the page's loader must never ship whole product
    * descriptions to the browser just to draw a checkbox. */
   source?: string;
+  /**
+   * Option-VALUES cells only (`withSources`): per target locale, the
+   * translation each entry ALREADY has — "" where it is missing, in the
+   * option's value order.
+   *
+   * One cell covers several ProductOptionValue resources and the write always
+   * carries the WHOLE list, so the task merges the AI's output over these
+   * instead of replacing them. Without the merge, translating a half-finished
+   * option list would overwrite the entries that were already translated, and
+   * "only missing values are filled" would quietly stop being true. */
+  existingListValuesByLocale?: Record<string, string[]>;
 }
 
 /** One item (product, collection, …) with at least one missing translation. */

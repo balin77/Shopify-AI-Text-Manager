@@ -44,6 +44,7 @@ import {
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   BULK_FILTER_IDS,
+  LIST_DISPLAY_SEPARATOR,
   type BulkDiffEntry,
   type BulkFilterId,
   type BulkRowType,
@@ -51,7 +52,10 @@ import {
 } from "~/services/bulk-editor/columns.shared";
 import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
-import { canonicalFieldNameForColumn } from "~/services/bulk-editor/translations.server";
+import {
+  canonicalFieldNameForColumn,
+  isSubResourceColumn,
+} from "~/services/bulk-editor/translations.server";
 import {
   scanMissingTranslations,
   translateCandidateColumns,
@@ -86,6 +90,10 @@ interface TranslateJob {
     fieldKey: string;
     source: string;
     locales: string[];
+    /** Option-VALUES cells: per locale, the entries that are ALREADY
+     * translated ("" where missing) — the AI's output is merged over these so
+     * an existing entry is never replaced. */
+    existingListValuesByLocale?: Record<string, string[]>;
   }[];
   /** Primary-locale handle — the duplicate-slug guard compares against it. */
   primaryHandle: string;
@@ -291,6 +299,9 @@ export function buildJobs(
         fieldKey: aiFieldKey(column),
         source: entry.source,
         locales,
+        ...(entry.existingListValuesByLocale
+          ? { existingListValuesByLocale: entry.existingListValuesByLocale }
+          : {}),
       });
       units += locales.length;
     }
@@ -312,6 +323,25 @@ function aiFieldKey(column: ColumnDescriptor): string {
  * different thing entirely and must not touch that cache. */
 function isGroupedProductTypeColumn(column: ColumnDescriptor): boolean {
   return column.kind === "field" && canonicalFieldNameForColumn(column) === "productType";
+}
+
+/** An option-VALUES cell: ONE cell, several ProductOptionValue resources. */
+function isListValuesColumn(column: ColumnDescriptor): boolean {
+  return column.kind === "option" && column.optionField === "values";
+}
+
+/**
+ * Merges the AI's entries over the ones that already have a translation: the
+ * write carries the WHOLE list, so without this an existing entry would be
+ * replaced by a fresh AI variant — and "only missing values are filled" would
+ * stop being true for option values.
+ */
+export function mergeExistingListValues(fresh: string[], existing: string[] | undefined): string {
+  const merged = fresh.map((value, index) => {
+    const keep = existing?.[index];
+    return keep && keep.trim() !== "" ? keep : value.trim();
+  });
+  return merged.join(LIST_DISPLAY_SEPARATOR);
 }
 
 /** Base field columns translateShortFieldsBatch accepts. Metaobject fields are
@@ -385,11 +415,17 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       // field may legitimately be called "handle" or "productType", and it must
       // NOT be slugified or written into the shop-wide productType cache.
       const grouped = job.cells.filter((c) => isGroupedProductTypeColumn(c.column));
+      // Metafield/option cells are short, standalone strings on their own
+      // Shopify resource — translateBatchValues is the prompt the single-item
+      // editor already uses for exactly these (sub-resources.action.ts).
+      const sub = job.cells.filter((c) => isSubResourceColumn(c.column));
       const short = job.cells.filter(
-        (c) => !isGroupedProductTypeColumn(c.column) && isShortFieldColumn(c.column),
+        (c) =>
+          !isGroupedProductTypeColumn(c.column) && !isSubResourceColumn(c.column) && isShortFieldColumn(c.column),
       );
       const long = job.cells.filter(
-        (c) => !isGroupedProductTypeColumn(c.column) && !isShortFieldColumn(c.column),
+        (c) =>
+          !isGroupedProductTypeColumn(c.column) && !isSubResourceColumn(c.column) && !isShortFieldColumn(c.column),
       );
 
       // One AI call per group and row, over the UNION of the locales its cells
@@ -404,6 +440,10 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       /** Columns whose AI call already failed as a group — their cells must not
        * be reported a second time as "no translation". */
       const failedColumnIds = new Set<string>();
+      /** `${columnId}|${locale}` — the sub-resource path translates ONE locale
+       * per call, so a failure there must not write off the cell's other
+       * languages. */
+      const failedCellLocales = new Set<string>();
       const failGroup = (cells: TranslateJob["cells"], message: string) => {
         for (const cell of cells) {
           failedColumnIds.add(cell.column.id);
@@ -464,9 +504,54 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
         }
       }
 
+      if (sub.length > 0) {
+        // One call per LOCALE over every sub-resource string of the row: an
+        // option-values cell contributes one string per entry, so the numbered
+        // batch prompt maps back positionally.
+        for (const locale of unionLocales(sub)) {
+          const cellsForLocale = sub.filter((c) => c.locales.includes(locale));
+          const slices: { cell: TranslateJob["cells"][number]; start: number; length: number }[] = [];
+          const values: string[] = [];
+          for (const cell of cellsForLocale) {
+            const parts = isListValuesColumn(cell.column)
+              ? cell.source.split(LIST_DISPLAY_SEPARATOR.trim()).map((v) => v.trim())
+              : [cell.source];
+            slices.push({ cell, start: values.length, length: parts.length });
+            values.push(...parts);
+          }
+          try {
+            const translated = await aiService.translateBatchValues(
+              values,
+              primaryLocale,
+              locale,
+              "product options and metafield values",
+            );
+            for (const slice of slices) {
+              const parts = translated.slice(slice.start, slice.start + slice.length);
+              // Never substitute the source: a missing entry stays empty and is
+              // reported as a failed cell below.
+              if (parts.length !== slice.length || parts.some((v) => !v || !v.trim())) continue;
+              const merged = isListValuesColumn(slice.cell.column)
+                ? mergeExistingListValues(parts, slice.cell.existingListValuesByLocale?.[locale])
+                : parts[0].trim();
+              collect({ [locale]: { [slice.cell.fieldKey]: merged } });
+            }
+          } catch (err: unknown) {
+            if (isAuthError(err)) throw err;
+            const message = errorMessage(err);
+            for (const cell of cellsForLocale) {
+              failedCellLocales.add(`${cell.column.id}|${locale}`);
+              failures.push({ rowId: job.rowId, columnId: cell.column.id, message });
+              processed++;
+            }
+          }
+        }
+      }
+
       for (const cell of job.cells) {
         if (failedColumnIds.has(cell.column.id)) continue;
         for (const locale of cell.locales) {
+          if (failedCellLocales.has(`${cell.column.id}|${locale}`)) continue;
           processed++;
           // Never substitute the source text — an untranslated value written
           // as a "translation" is silent corruption.
