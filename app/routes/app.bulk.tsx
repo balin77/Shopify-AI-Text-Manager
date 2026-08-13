@@ -52,6 +52,7 @@ import {
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
   BULK_FILTER_IDS,
+  canonicalFieldNameForColumn,
   IMAGE_ROW_ALT_COLUMN_ID,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
@@ -110,6 +111,8 @@ import { CsvImportModal } from "../components/bulk-editor/CsvImportModal";
 import type { BulkCsvExportPayload } from "./app.bulk.export";
 import type { CsvImportActionResult } from "./app.bulk.import";
 import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
+import { BulkLanguageBar, shouldRenderBulkLanguageBar } from "../components/bulk-editor/BulkLanguageBar";
+import type { BulkCellActions } from "../components/bulk-editor/BulkCell";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
@@ -526,6 +529,12 @@ export default function BulkEditor() {
   const syncMediaLibraryFetcher = useFetcher();
   /** Row whose image is shown large (§ image cell). Null = modal closed. */
   const [previewRow, setPreviewRow] = useState<BulkRow | null>(null);
+  /**
+   * Foreign locales the per-cell "…into all active languages" actions target.
+   * In-memory and defaulted to all, exactly like the content editor's
+   * enabledLanguages — a Ctrl+click on a language button flips one off.
+   */
+  const [disabledLocales, setDisabledLocales] = useState<string[]>([]);
 
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
@@ -1302,6 +1311,145 @@ export default function BulkEditor() {
       ? t.common?.requiresSecondLanguage
       : undefined;
 
+  // ── Per-cell actions (§ the content editor's field footer, per grid cell) ──
+
+  /** Cells with a running action — keyed `${rowId}|${columnId}`. */
+  const [busyCells, setBusyCells] = useState<Set<string>>(new Set());
+  const [cellActionError, setCellActionError] = useState<string | null>(null);
+
+  const setCellBusy = (key: string, busy: boolean) => {
+    setBusyCells((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
+  /** Every action writes into the EDIT MAP, never to Shopify: the merchant
+   * reviews the result in the grid and saves it through the normal pipeline. */
+  const applyCellEdits = (entries: { key: string; value: string }[]) => {
+    if (entries.length === 0) return;
+    undoStackRef.current = pushSnapshot(undoStackRef.current, {
+      edits,
+      tag: `cellAction|${++priceActionCounterRef.current}`,
+    });
+    setEdits((prev) => {
+      const next = { ...prev };
+      for (const entry of entries) next[entry.key] = entry.value;
+      return next;
+    });
+  };
+
+  /** POST to /api/ai and return the parsed payload, or null on failure. */
+  const postAi = async (body: Record<string, string>): Promise<Record<string, unknown> | null> => {
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        body: new URLSearchParams(body),
+        headers: { Accept: "application/json" },
+      });
+      const payload = (await response.json()) as Record<string, unknown>;
+      if (!payload.success) {
+        setCellActionError(typeof payload.error === "string" ? payload.error : b.errorGeneric);
+        return null;
+      }
+      return payload;
+    } catch (err: unknown) {
+      setCellActionError(err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  };
+
+  /** The row's PRIMARY value for a column — the source every translate/copy
+   * action starts from, regardless of which language is on screen. */
+  const primarySourceValue = (row: BulkRow, column: ColumnDescriptor): string => {
+    const primaryKey = makeEditKey(row.id, "", "", column.id);
+    return edits[primaryKey] ?? resolveCellValue(row, column).value;
+  };
+
+  const handleCellImprove = async (row: BulkRow, column: ColumnDescriptor) => {
+    const cellKey = `${row.id}|${column.id}`;
+    setCellActionError(null);
+    setCellBusy(cellKey, true);
+    const payload = await postAi({
+      action: "generateAIText",
+      contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[row.type],
+      itemId: row.id,
+      fieldType: canonicalFieldNameForColumn(column),
+      currentValue: valueFor(row, column),
+      contextTitle: row.title,
+      mainLanguage: localeNameByCode.get(locale || primaryLocaleCode) ?? "",
+    });
+    setCellBusy(cellKey, false);
+    const generated = payload?.generatedContent;
+    if (typeof generated === "string" && generated.trim() !== "") {
+      applyCellEdits([{ key: makeEditKey(row.id, locale, isForeign ? marketId : "", column.id), value: generated }]);
+    }
+  };
+
+  const handleCellTranslateAll = async (row: BulkRow, column: ColumnDescriptor) => {
+    const cellKey = `${row.id}|${column.id}`;
+    const source = primarySourceValue(row, column);
+    if (source.trim() === "") return;
+    setCellActionError(null);
+    setCellBusy(cellKey, true);
+    const entries: { key: string; value: string }[] = [];
+    for (const target of enabledLocales) {
+      const payload = await postAi({
+        action: "translateField",
+        contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[row.type],
+        itemId: row.id,
+        fieldType: canonicalFieldNameForColumn(column),
+        sourceText: source,
+        targetLocale: target,
+        primaryLocale: primaryLocaleCode,
+      });
+      const translated = payload?.translatedValue;
+      if (typeof translated === "string" && translated.trim() !== "") {
+        // Market overrides stay a per-cell decision — these edits are global.
+        entries.push({ key: makeEditKey(row.id, target, "", column.id), value: translated });
+      }
+    }
+    setCellBusy(cellKey, false);
+    applyCellEdits(entries);
+  };
+
+  const handleCellCopyAll = (row: BulkRow, column: ColumnDescriptor) => {
+    const source = primarySourceValue(row, column);
+    if (source.trim() === "") return;
+    setCellActionError(null);
+    applyCellEdits(enabledLocales.map((target) => ({ key: makeEditKey(row.id, target, "", column.id), value: source })));
+  };
+
+  /**
+   * Which actions a cell offers. Improve is FIELD columns only — the AI
+   * prompts are built from the content configs' field definitions, and a
+   * metafield/option key would produce a generic, weak prompt. Translate/copy
+   * need a translatable column and at least one active foreign language.
+   */
+  const cellActionsFor = (row: BulkRow, column: ColumnDescriptor): BulkCellActions | undefined => {
+    if (!resolveCellValue(row, column).editable) return undefined;
+    if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
+      return undefined;
+    }
+    const canImprove = column.kind === "field" && row.type !== "image";
+    const canFanOut = column.translatable && enabledLocales.length > 0 && !isForeign;
+    if (!canImprove && !canFanOut) return undefined;
+    return {
+      ...(canImprove ? { onImprove: () => void handleCellImprove(row, column) } : {}),
+      ...(canFanOut ? { onTranslateAll: () => void handleCellTranslateAll(row, column) } : {}),
+      ...(canFanOut ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
+      busy: busyCells.has(`${row.id}|${column.id}`),
+      labels: {
+        menu: b.cellActions.menu,
+        improve: b.cellActions.improve,
+        translateAll: b.cellActions.translateAll,
+        copyAll: b.cellActions.copyAll,
+      },
+    };
+  };
+
   /** Whether this type has anything the translate page could work on at all.
    * Deliberately a coarse client check (the page itself applies the exact
    * candidate rule, translateCandidateColumns) — it only decides whether the
@@ -1476,11 +1624,20 @@ export default function BulkEditor() {
   const showMoreVariantsHint = type === "variant" && rows.some((r) => (r as BulkRow).hasMoreVariants);
 
 
-  const localeOptions = data.locales.map((l) => ({
-    label: l.primary ? `${l.name} ${b.primaryLocaleSuffix}` : l.name,
-    // "" = primary — same sentinel as the edit-map/URL segments.
-    value: l.primary ? "" : l.locale,
-  }));
+  /** The shop's primary locale code — the AI endpoints want the real code,
+   * not the grid's "" sentinel. */
+  const primaryLocaleCode = data.locales.find((l) => l.primary)?.locale ?? "";
+
+  /** Published foreign locales minus the ones switched off. */
+  const enabledLocales = useMemo(
+    () => data.locales.filter((l) => !l.primary && !disabledLocales.includes(l.locale)).map((l) => l.locale),
+    [data.locales, disabledLocales],
+  );
+
+  const handleToggleLocale = (loc: string) => {
+    setDisabledLocales((prev) => (prev.includes(loc) ? prev.filter((l) => l !== loc) : [...prev, loc]));
+  };
+
   const marketOptions = [
     { label: b.allMarkets, value: "" },
     ...data.markets.map((m) => ({ label: m.name, value: m.id })),
@@ -1583,6 +1740,11 @@ export default function BulkEditor() {
                       .replace("{skipped}", String(pasteBanner.skipped))}
                   </Banner>
                 )}
+                {cellActionError && (
+                  <Banner tone="critical" onDismiss={() => setCellActionError(null)}>
+                    {cellActionError}
+                  </Banner>
+                )}
                 {data.mediaLibraryNeverSynced && (
                   <Banner
                     tone="info"
@@ -1650,15 +1812,22 @@ export default function BulkEditor() {
                         />
                       </div>
                     )}
-                    {localeOptions.length > 1 && (
-                      <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
-                        <Select
-                          label={b.languageLabel}
-                          options={localeOptions}
-                          value={locale}
-                          onChange={handleLocaleChange}
-                        />
-                      </div>
+                    {/* Language buttons instead of a dropdown, with the
+                        editors' Ctrl+click semantics — see BulkLanguageBar. */}
+                    {shouldRenderBulkLanguageBar(data.locales.length) && (
+                      <BulkLanguageBar
+                        locales={data.locales}
+                        currentLocale={locale}
+                        enabledLocales={enabledLocales}
+                        onSelect={handleLocaleChange}
+                        onToggle={handleToggleLocale}
+                        appLocale={uiLocale}
+                        strings={{
+                          primarySuffix: b.primaryLocaleSuffix,
+                          enabledHint: b.languageBar.enabledHint,
+                          disabledHint: b.languageBar.disabledHint,
+                        }}
+                      />
                     )}
                     {isForeign && data.markets.length > 0 && (
                       <div style={{ maxWidth: "220px", flex: "0 0 200px" }}>
@@ -1791,6 +1960,7 @@ export default function BulkEditor() {
                       sort={sort}
                       onSortToggle={handleSortToggle}
                       openInEditorLabel={b.openInEditor}
+                      cellActions={cellActionsFor}
                       onPreviewImage={setPreviewRow}
                       previewImageLabel={b.imagePreview.open}
                       onOpenInEditor={(row) =>

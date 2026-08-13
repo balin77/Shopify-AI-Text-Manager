@@ -37,9 +37,10 @@ import {
   type ShopifyAdminClient,
 } from "../../../src/services/shopify-content.service";
 import type { PrismaClient } from "@prisma/client";
+export { canonicalFieldNameForColumn } from "./columns.shared";
 import {
   DIGEST_BATCH_CHUNK,
-  fieldNameOfColumn,
+  canonicalFieldNameForColumn,
   metafieldColumnId,
   BULK_COLUMNS_BY_TYPE,
   type BulkRow,
@@ -48,17 +49,6 @@ import {
 } from "./columns.shared";
 
 // ─── Column → Shopify translatable-content key ─────────────────────────────
-
-/**
- * Bulk-editor column field names that differ from the canonical UI field
- * names of FIELD_TO_TRANSLATION_KEY (shopify-content.service.ts — the ONE
- * exported map, Plan §6.1). Only aliases live here; the actual field→key
- * mapping must never be re-declared.
- */
-const COLUMN_FIELD_ALIAS: Record<string, string> = {
-  descriptionHtml: "description",
-  seoDescription: "metaDescription",
-};
 
 /**
  * Shopify translatable-content key for a bulk column, or null when the column
@@ -74,20 +64,12 @@ export function translationKeyForColumn(column: ColumnDescriptor, rowType?: Bulk
   if (!column.translatable) return null;
   if (column.kind === "mofield") return column.moFieldKey ?? null;
   if (column.kind !== "field") return null;
-  const field = fieldNameOfColumn(column);
+  const field = canonicalFieldNameForColumn(column);
   // A MediaImage has exactly ONE translatable key ("alt") — verified against
   // the live API (Settings → Translation Probe → image alt-text section).
   if (rowType === "image") return field === "altText" ? "alt" : null;
   const keyMap = rowType === "policy" ? fieldTranslationKeyMap("ShopPolicy") : FIELD_TO_TRANSLATION_KEY;
-  return keyMap[COLUMN_FIELD_ALIAS[field] ?? field] ?? null;
-}
-
-/** Canonical UI field name for a bulk column ("descriptionHtml" →
- * "description") — the name the AI translation prompts and the single-editor
- * paths use. */
-export function canonicalFieldNameForColumn(column: ColumnDescriptor): string {
-  const field = fieldNameOfColumn(column);
-  return COLUMN_FIELD_ALIAS[field] ?? field;
+  return keyMap[field] ?? null;
 }
 
 /** columnId → Shopify key for every translatable column of a row type — used

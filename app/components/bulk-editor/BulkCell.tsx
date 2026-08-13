@@ -17,7 +17,8 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
-import { Button, InlineStack, Select, Text, Tooltip } from "@shopify/polaris";
+import { ActionList, Button, InlineStack, Popover, Select, Text, Tooltip } from "@shopify/polaris";
+import { MenuVerticalIcon } from "@shopify/polaris-icons";
 import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
 
 /** Keyboard navigation directions (Plan §8.4): Tab/Shift-Tab walk the
@@ -68,6 +69,30 @@ interface BulkCellProps {
   /** Raw paste hook (§8.3): return true to consume the paste (rectangle
    * distribution); false lets the browser paste normally into the textarea. */
   onPasteText?: (text: string) => boolean;
+  /** Per-cell actions, revealed on hover/focus as a three-dot menu. Absent =
+   * no menu (read-only cells, and columns none of the actions can serve). */
+  actions?: BulkCellActions;
+}
+
+/**
+ * The same three field actions the content editor offers, per grid cell. Each
+ * produces an EDIT — nothing is written until the merchant saves, so they ride
+ * the ordinary diff pipeline like a typed value.
+ */
+export interface BulkCellActions {
+  /** AI-improve the value of the CURRENT view. */
+  onImprove?: () => void;
+  /** Translate the primary value into every active foreign language. */
+  onTranslateAll?: () => void;
+  /** Copy the primary value into every active foreign language, verbatim. */
+  onCopyAll?: () => void;
+  busy?: boolean;
+  labels: {
+    menu: string;
+    improve: string;
+    translateAll: string;
+    copyAll: string;
+  };
 }
 
 export function BulkCell({
@@ -88,6 +113,7 @@ export function BulkCell({
   onNavigate,
   onEscape,
   onPasteText,
+  actions,
 }: BulkCellProps) {
   // Read-only cells (blogTitle, rich-text metafields, linked options, …):
   // grey text + tooltip explaining why; rich-text cells additionally offer
@@ -144,7 +170,7 @@ export function BulkCell({
     );
   }
 
-  return (
+  const cell = (
     <LazyTextCell
       value={value}
       isDirty={isDirty}
@@ -157,6 +183,55 @@ export function BulkCell({
       onEscape={onEscape}
       onPasteText={onPasteText}
     />
+  );
+  if (!actions || (!actions.onImprove && !actions.onTranslateAll && !actions.onCopyAll)) return cell;
+  return (
+    <div className="cp-bulk-cell-with-actions">
+      {cell}
+      <BulkCellMenu actions={actions} />
+    </div>
+  );
+}
+
+/**
+ * Three vertical dots at the cell's right edge — hidden until the cell is
+ * hovered or focused (CSS in BulkGrid), so a 250-row grid does not turn into a
+ * wall of icons.
+ */
+function BulkCellMenu({ actions }: { actions: BulkCellActions }) {
+  const [open, setOpen] = useState(false);
+  const items = [
+    ...(actions.onImprove
+      ? [{ content: actions.labels.improve, prefix: "✨", onAction: () => { setOpen(false); actions.onImprove?.(); } }]
+      : []),
+    ...(actions.onTranslateAll
+      ? [{ content: actions.labels.translateAll, prefix: "🌍", onAction: () => { setOpen(false); actions.onTranslateAll?.(); } }]
+      : []),
+    ...(actions.onCopyAll
+      ? [{ content: actions.labels.copyAll, prefix: "📋", onAction: () => { setOpen(false); actions.onCopyAll?.(); } }]
+      : []),
+  ].map(({ prefix, content, onAction }) => ({ content: `${prefix} ${content}`, onAction }));
+
+  return (
+    <span className="cp-bulk-cell-actions">
+      <Popover
+        active={open}
+        onClose={() => setOpen(false)}
+        preferredAlignment="right"
+        activator={
+          <Button
+            variant="tertiary"
+            size="micro"
+            icon={MenuVerticalIcon}
+            loading={actions.busy}
+            accessibilityLabel={actions.labels.menu}
+            onClick={() => setOpen((prev) => !prev)}
+          />
+        }
+      >
+        <ActionList actionRole="menuitem" items={items} />
+      </Popover>
+    </span>
   );
 }
 

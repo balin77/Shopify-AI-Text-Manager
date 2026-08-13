@@ -31,7 +31,7 @@ import {
   type CellReadOnlyReason,
   type ColumnDescriptor,
 } from "../../services/bulk-editor/columns.shared";
-import { BulkCell, type BulkCellStatusOptions, type CellNavDirection } from "./BulkCell";
+import { BulkCell, type BulkCellActions, type BulkCellStatusOptions, type CellNavDirection } from "./BulkCell";
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
@@ -78,6 +78,9 @@ interface BulkGridProps {
   /** Click on the image cell — opens the preview modal. */
   onPreviewImage: (row: BulkRow) => void;
   previewImageLabel: string;
+  /** Per-cell action menu (three dots on hover). Returns undefined for cells
+   * that have nothing to offer. */
+  cellActions?: (row: BulkRow, column: ColumnDescriptor) => BulkCellActions | undefined;
   columnHeading: (column: ColumnDescriptor) => string;
   statusOptions: BulkCellStatusOptions;
   handleWarning: string;
@@ -114,6 +117,7 @@ export function BulkGrid({
   onOpenInEditor,
   onPreviewImage,
   previewImageLabel,
+  cellActions,
   columnHeading,
   statusOptions,
   handleWarning,
@@ -232,6 +236,20 @@ export function BulkGrid({
         .cp-bulk-sticky-0 { left: 0; }
         .cp-bulk-sticky-1 { left: ${IMAGE_COLUMN_WIDTH}px; box-shadow: 1px 0 0 var(--p-color-border, #e1e3e5); }
         .cp-bulk-th.cp-bulk-sticky { z-index: 4; }
+        /* Per-cell action menu: present in the DOM (so keyboard users can tab
+           to it) but invisible until the cell is hovered or holds focus —
+           250 rows of always-visible icons would be a wall of noise. */
+        .cp-bulk-cell-with-actions { position: relative; }
+        .cp-bulk-cell-actions {
+          position: absolute;
+          top: 2px;
+          right: 2px;
+          opacity: 0;
+          transition: opacity 100ms ease-in-out;
+        }
+        .cp-bulk-cell:hover .cp-bulk-cell-actions,
+        .cp-bulk-cell-with-actions:focus-within .cp-bulk-cell-actions,
+        .cp-bulk-cell-actions:focus-within { opacity: 1; }
         /* Field colours, matching the single editor (Plan §2): applied to the
            cell WRAPPER (the input itself is transparent). Same hexes as
            AIEditableField.css so "Inhalt" and the bulk grid read identically.
@@ -515,6 +533,7 @@ export function BulkGrid({
                       cellCoord={`${rowIndex}:${i}`}
                       onNavigate={(direction) => navigateFromCell(rowIndex, i, direction)}
                       onEscape={() => onResetCell(row, col)}
+                      actions={cellActions?.(row, col)}
                       onPasteText={(text) => onPasteRect(rowIndex, i, text)}
                     />
                   </div>

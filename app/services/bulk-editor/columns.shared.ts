@@ -134,6 +134,25 @@ export interface ColumnDescriptor {
   moFieldType?: string;
 }
 
+/**
+ * Bulk-editor column field names that differ from the canonical UI field names
+ * of FIELD_TO_TRANSLATION_KEY (shopify-content.service.ts — the ONE exported
+ * map). Only aliases live here; the actual field→key mapping must never be
+ * re-declared.
+ */
+const COLUMN_FIELD_ALIAS: Record<string, string> = {
+  descriptionHtml: "description",
+  seoDescription: "metaDescription",
+};
+
+/** Canonical UI field name for a bulk column ("descriptionHtml" →
+ * "description") — the name the AI prompts and the single-editor paths use.
+ * Client-safe: the grid's cell actions address the AI endpoints with it. */
+export function canonicalFieldNameForColumn(column: ColumnDescriptor): string {
+  const field = fieldNameOfColumn(column);
+  return COLUMN_FIELD_ALIAS[field] ?? field;
+}
+
 /** For kind "field": the flat row property (and Prisma column) behind the
  * column — "field.title" → "title". */
 export function fieldNameOfColumn(column: ColumnDescriptor): string {

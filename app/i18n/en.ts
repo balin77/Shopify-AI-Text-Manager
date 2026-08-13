@@ -2707,6 +2707,16 @@ export const en: Translation = {
       negative: "The amount cannot be negative.",
       invalid: "Not a valid amount.",
     },
+    cellActions: {
+      menu: "Actions for this field",
+      improve: "Improve with AI",
+      translateAll: "Translate into all active languages",
+      copyAll: "Copy into all active languages",
+    },
+    languageBar: {
+      enabledHint: "Click to switch. Ctrl/Cmd+click switches the language off for the cell actions.",
+      disabledHint: "Switched off for the cell actions. Ctrl/Cmd+click switches it back on.",
+    },
     imagePreview: {
       open: "Enlarge image",
       title: "Image",

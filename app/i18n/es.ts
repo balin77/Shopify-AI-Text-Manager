@@ -2706,6 +2706,16 @@ export const es: Translation = {
       negative: "El importe no puede ser negativo.",
       invalid: "No es un importe válido.",
     },
+    cellActions: {
+      menu: "Acciones para este campo",
+      improve: "Mejorar con IA",
+      translateAll: "Traducir a todos los idiomas activos",
+      copyAll: "Copiar a todos los idiomas activos",
+    },
+    languageBar: {
+      enabledHint: "Haz clic para cambiar. Ctrl/Cmd+clic desactiva el idioma para las acciones de celda.",
+      disabledHint: "Desactivado para las acciones de celda. Ctrl/Cmd+clic lo vuelve a activar.",
+    },
     imagePreview: {
       open: "Ampliar imagen",
       title: "Imagen",

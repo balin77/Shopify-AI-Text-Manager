@@ -2707,6 +2707,16 @@ export const de = {
       negative: "Der Betrag darf nicht negativ sein.",
       invalid: "Kein gültiger Betrag.",
     },
+    cellActions: {
+      menu: "Aktionen für dieses Feld",
+      improve: "Mit KI verbessern",
+      translateAll: "In alle aktiven Sprachen übersetzen",
+      copyAll: "In alle aktiven Sprachen übertragen",
+    },
+    languageBar: {
+      enabledHint: "Klicken zum Wechseln. Strg/Cmd+Klick schaltet die Sprache für die Zellaktionen aus.",
+      disabledHint: "Für die Zellaktionen ausgeschaltet. Strg/Cmd+Klick schaltet sie wieder ein.",
+    },
     imagePreview: {
       open: "Bild vergrössern",
       title: "Bild",
