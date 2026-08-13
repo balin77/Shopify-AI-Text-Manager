@@ -73,6 +73,9 @@ import type { DataResponse } from "~/types/data-response";
  * translateShortFieldsBatch accepts (productType runs its own grouped path). */
 const SHORT_FIELDS = new Set(["title", "seoTitle", "handle"]);
 
+/** The ONE column whose AI output is a URL slug. */
+const HANDLE_COLUMN_ID = "field.handle";
+
 /** One row's work: which columns to translate into which locales. */
 interface TranslateJob {
   rowId: string;
@@ -262,6 +265,7 @@ export function buildJobs(
   let units = 0;
   let overCap = 0;
 
+  let capped = false;
   for (const item of items) {
     const cells: TranslateJob["cells"] = [];
     for (const entry of item.columns) {
@@ -270,13 +274,18 @@ export function buildJobs(
       if (!isPairSelected(selection, item.rowId, entry.columnId)) continue;
       const locales = entry.locales.filter((l) => targetLocales.includes(l));
       if (locales.length === 0) continue;
-      if (units + locales.length > MAX_TRANSLATE_UNITS) {
+      // Defensive: the scan is always run withSources here — a missing source
+      // means there is nothing to translate, never "translate an empty string".
+      // Checked BEFORE the cap so a blank cell is not charged as a remainder.
+      if (!entry.source || entry.source.trim() === "") continue;
+      // The cap cuts a contiguous TAIL: once it is hit nothing further is
+      // taken, so the run is exactly the prefix the page listed first and
+      // `overCap` is the honest "left for the next run" number.
+      if (capped || units + locales.length > MAX_TRANSLATE_UNITS) {
+        capped = true;
         overCap += locales.length;
         continue;
       }
-      // Defensive: the scan is always run withSources here — a missing source
-      // means there is nothing to translate, never "translate an empty string".
-      if (!entry.source || entry.source.trim() === "") continue;
       cells.push({
         column,
         fieldKey: aiFieldKey(column),
@@ -298,6 +307,20 @@ function aiFieldKey(column: ColumnDescriptor): string {
   return column.kind === "mofield" ? column.moFieldKey ?? column.id : canonicalFieldNameForColumn(column);
 }
 
+/** The BASE product field that must run through the shop-wide
+ * GroupedFieldTranslation cache — a metaobject field named "productType" is a
+ * different thing entirely and must not touch that cache. */
+function isGroupedProductTypeColumn(column: ColumnDescriptor): boolean {
+  return column.kind === "field" && canonicalFieldNameForColumn(column) === "productType";
+}
+
+/** Base field columns translateShortFieldsBatch accepts. Metaobject fields are
+ * never short: that prompt strips newlines, which would flatten a multi-line
+ * metaobject text. */
+function isShortFieldColumn(column: ColumnDescriptor): boolean {
+  return column.kind === "field" && SHORT_FIELDS.has(canonicalFieldNameForColumn(column));
+}
+
 // ─── Runner ────────────────────────────────────────────────────────────────
 
 interface RunArgs {
@@ -313,11 +336,15 @@ interface RunArgs {
 }
 
 interface TranslateResultJson {
+  /** All three counters are UNITS (row × field × language) — the same unit the
+   * page's "{n} translations selected" uses. applyBulkDiff's own `saved` counts
+   * ROW GROUPS and must never be reported as a translation count. */
   saved: number;
-  failures: { rowId: string; columnId?: string; message: string }[];
+  failed: number;
   /** Handles that were deliberately NOT written: the translation equalled the
    * primary handle (no separate URL needed) or normalized to nothing. */
   skippedHandles: number;
+  failures: { rowId: string; columnId?: string; message: string }[];
 }
 
 async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
@@ -354,9 +381,16 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
   let processed = 0;
   try {
     for (const job of jobs) {
-      const grouped = job.cells.filter((c) => c.fieldKey === "productType");
-      const short = job.cells.filter((c) => c.fieldKey !== "productType" && SHORT_FIELDS.has(c.fieldKey));
-      const long = job.cells.filter((c) => c.fieldKey !== "productType" && !SHORT_FIELDS.has(c.fieldKey));
+      // Routing keys on the COLUMN, never on the AI payload key: a metaobject
+      // field may legitimately be called "handle" or "productType", and it must
+      // NOT be slugified or written into the shop-wide productType cache.
+      const grouped = job.cells.filter((c) => isGroupedProductTypeColumn(c.column));
+      const short = job.cells.filter(
+        (c) => !isGroupedProductTypeColumn(c.column) && isShortFieldColumn(c.column),
+      );
+      const long = job.cells.filter(
+        (c) => !isGroupedProductTypeColumn(c.column) && !isShortFieldColumn(c.column),
+      );
 
       // One AI call per group and row, over the UNION of the locales its cells
       // need — asking per (field, locale) would multiply the call count by up
@@ -445,7 +479,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             });
             continue;
           }
-          if (cell.fieldKey === "handle") {
+          if (cell.column.id === HANDLE_COLUMN_ID) {
             // AI output → a slug Shopify accepts; identical-to-primary handles
             // are skipped on purpose (a translated URL that equals the primary
             // one is a routing conflict, not a translation).
@@ -484,13 +518,30 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
           })
           .catch(() => undefined);
       });
-      saved = applyResult.saved;
+      // applyResult.saved counts row GROUPS, not translations — count the diff
+      // entries no failure was attributed to instead (a cell failure carries
+      // its columnId + locale, a row-level one only the row).
+      const failedCells = new Set<string>();
+      const failedRowLocales = new Set<string>();
+      for (const failure of applyResult.failures) {
+        const locale = failure.locale ?? "";
+        if (failure.columnId) failedCells.add(`${failure.rowId}|${locale}|${failure.columnId}`);
+        else failedRowLocales.add(`${failure.rowId}|${locale}`);
+      }
+      saved = diff.filter(
+        (entry) =>
+          !failedCells.has(`${entry.rowId}|${entry.locale}|${entry.columnId}`) &&
+          !failedRowLocales.has(`${entry.rowId}|${entry.locale}`),
+      ).length;
       failures.push(
         ...applyResult.failures.map((f) => ({ rowId: f.rowId, columnId: f.columnId, message: f.message })),
       );
     }
 
-    const result: TranslateResultJson = { saved, failures, skippedHandles };
+    // Every selected unit ends in exactly one bucket: saved, deliberately
+    // skipped, or failed — derived, so the three always add up to the run.
+    const failed = Math.max(0, units - saved - skippedHandles);
+    const result: TranslateResultJson = { saved, failed, skippedHandles, failures };
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
     await db.task.update({
       where: { id: taskId },

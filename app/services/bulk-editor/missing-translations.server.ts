@@ -29,7 +29,12 @@ import {
   type BulkRowType,
   type ColumnDescriptor,
 } from "./columns.shared";
-import { MAX_TRANSLATE_SCAN_ROWS, type MissingItem } from "./translate-missing.shared";
+import {
+  MAX_TRANSLATE_CANDIDATE_ITEMS,
+  MAX_TRANSLATE_SCAN_ROWS,
+  TRANSLATE_SCAN_CHUNK,
+  type MissingItem,
+} from "./translate-missing.shared";
 
 /**
  * Columns the page offers for AI translation, in display order.
@@ -130,75 +135,102 @@ export async function scanMissingTranslations(
   };
   if (opts.foreignLocales.length === 0 || opts.columns.length === 0) return empty;
 
-  const { rows, total } = await loadBulkRows(db, shop, {
-    type: opts.type,
-    // Primary view: the scan reads primary values and compares them against
-    // the translation tables itself.
-    locale: "",
-    marketId: "",
-    search: opts.search,
-    filters: opts.filters,
-    sort: null,
-    skip: 0,
-    take: MAX_TRANSLATE_SCAN_ROWS,
-    productCells: NO_PRODUCT_CELLS,
-    admin: opts.admin,
-    moType: opts.moType,
-  });
-  if (rows.length === 0) {
-    return { ...empty, matchedRows: total };
-  }
-
-  // columnId → Shopify key (and back). Bijective per row type.
+  // columnId → Shopify key. Bijective per row type.
   const keyByColumnId = new Map<string, string>();
   for (const column of opts.columns) {
     const key = candidateTranslationKey(column, opts.type);
     if (key) keyByColumnId.set(column.id, key);
   }
-  if (keyByColumnId.size === 0) return { ...empty, matchedRows: total };
+  if (keyByColumnId.size === 0) return empty;
+  const keys = [...new Set(keyByColumnId.values())];
 
-  const translated = await loadTranslatedLocales(db, shop, opts, rows, [...new Set(keyByColumnId.values())]);
+  // "missingTranslation" is a FOREIGN-view filter (load.server.ts gates every
+  // one of its branches on locale !== ""), and this scan runs on the primary
+  // view — carrying it along would leave it silently inert while `matchedRows`
+  // reported an unfiltered total. It is also redundant: this page IS the
+  // missing-translation view.
+  const filters = opts.filters.filter((f) => f !== "missingTranslation");
 
   const items: MissingItem[] = [];
   const unitsByColumnLocale: Record<string, Record<string, number>> = {};
-  for (const row of rows) {
-    const byKey = translated.get(row.id);
-    const columns: MissingItem["columns"] = [];
-    for (const column of opts.columns) {
-      const key = keyByColumnId.get(column.id);
-      if (!key) continue;
-      // Nothing to translate without a primary value — the same rule the old
-      // task used, and the reason an "empty everywhere" field never shows up.
-      const source = candidateSourceValue(row, column);
-      if (source.trim() === "") continue;
-      const have = byKey?.get(key);
-      const missing = opts.foreignLocales.filter((locale) => !have?.has(locale));
-      if (missing.length === 0) continue;
-      columns.push({
-        columnId: column.id,
-        locales: missing,
-        ...(opts.withSources ? { source } : {}),
-      });
-      const byLocale = (unitsByColumnLocale[column.id] ??= {});
-      for (const locale of missing) byLocale[locale] = (byLocale[locale] ?? 0) + 1;
-    }
-    if (columns.length === 0) continue;
-    items.push({
-      rowId: row.id,
-      title: row.title || row.handle || row.id,
-      subtitle: subtitleOf(row),
-      ...(row.imageUrl ? { imageUrl: row.imageUrl } : {}),
-      ...(opts.withSources ? { primaryHandle: row.handle ?? "" } : {}),
-      columns,
+  let matchedRows = 0;
+  let scannedRows = 0;
+  let exhausted = false;
+
+  // Chunked walk instead of one big window: rows that are already fully
+  // translated must NOT occupy the budget, otherwise a shop whose first N rows
+  // are done would be told "nothing is missing" forever.
+  while (scannedRows < MAX_TRANSLATE_SCAN_ROWS && items.length < MAX_TRANSLATE_CANDIDATE_ITEMS) {
+    const take = Math.min(TRANSLATE_SCAN_CHUNK, MAX_TRANSLATE_SCAN_ROWS - scannedRows);
+    const { rows, total } = await loadBulkRows(db, shop, {
+      type: opts.type,
+      // Primary view: the scan reads primary values and compares them against
+      // the translation tables itself.
+      locale: "",
+      marketId: "",
+      search: opts.search,
+      filters,
+      sort: null,
+      skip: scannedRows,
+      take,
+      productCells: NO_PRODUCT_CELLS,
+      admin: opts.admin,
+      moType: opts.moType,
     });
+    matchedRows = total;
+    if (rows.length === 0) {
+      exhausted = true;
+      break;
+    }
+    scannedRows += rows.length;
+
+    const translated = await loadTranslatedLocales(db, shop, opts, rows, keys);
+    for (const row of rows) {
+      const byKey = translated.get(row.id);
+      const columns: MissingItem["columns"] = [];
+      for (const column of opts.columns) {
+        const key = keyByColumnId.get(column.id);
+        if (!key) continue;
+        // Nothing to translate without a primary value — the same rule the old
+        // task used, and the reason an "empty everywhere" field never shows up.
+        const source = candidateSourceValue(row, column);
+        if (source.trim() === "") continue;
+        const have = byKey?.get(key);
+        const missing = opts.foreignLocales.filter((locale) => !have?.has(locale));
+        if (missing.length === 0) continue;
+        columns.push({
+          columnId: column.id,
+          locales: missing,
+          ...(opts.withSources ? { source } : {}),
+        });
+        const byLocale = (unitsByColumnLocale[column.id] ??= {});
+        for (const locale of missing) byLocale[locale] = (byLocale[locale] ?? 0) + 1;
+      }
+      if (columns.length === 0) continue;
+      items.push({
+        rowId: row.id,
+        title: row.title || row.handle || row.id,
+        subtitle: subtitleOf(row),
+        ...(row.imageUrl ? { imageUrl: row.imageUrl } : {}),
+        ...(opts.withSources ? { primaryHandle: row.handle ?? "" } : {}),
+        columns,
+      });
+    }
+
+    if (scannedRows >= total) {
+      exhausted = true;
+      break;
+    }
   }
 
   return {
     items,
     unitsByColumnLocale,
-    matchedRows: total,
-    scannedRows: rows.length,
-    scanTruncated: total > rows.length,
+    matchedRows,
+    scannedRows,
+    // Truncated = the walk stopped on a budget while rows were left over. When
+    // it ran out of rows, the result is complete no matter how far it walked.
+    scanTruncated: !exhausted && scannedRows < matchedRows,
   };
 }
 

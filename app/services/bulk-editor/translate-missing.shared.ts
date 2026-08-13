@@ -34,17 +34,16 @@ export const TRANSLATE_MISSING_PAGE_SIZE = 25;
 export const MAX_TRANSLATE_UNITS = 2000;
 
 /**
- * How many rows of the current filter set are scanned for candidates — the
- * same window MAX_BULK_TASK_ITEMS uses for the other task path. Beyond it the
- * list (and every run) covers the first N rows only and says so.
- *
- * Deliberately far below MAX_TRANSLATE_UNITS/row-count: every scan loads these
- * rows in full (a product row carries its description), and a row typically
- * contributes ~10 units, so 500 rows already overflow one run's unit budget.
- * Translated rows drop OUT of the candidate list, so the window walks forward
- * on its own with every completed run.
+ * Candidate scan budget. The scan walks the filter set in chunks and stops as
+ * soon as it has collected MAX_TRANSLATE_CANDIDATE_ITEMS items — so ALREADY
+ * translated rows do not occupy the window: after a completed run the scan
+ * simply walks past them to the next untranslated ones. MAX_TRANSLATE_SCAN_ROWS
+ * bounds the walk for the case where nothing is missing at all; hitting either
+ * bound is reported to the merchant, never silently swallowed.
  */
-export const MAX_TRANSLATE_SCAN_ROWS = 500;
+export const TRANSLATE_SCAN_CHUNK = 250;
+export const MAX_TRANSLATE_SCAN_ROWS = 5000;
+export const MAX_TRANSLATE_CANDIDATE_ITEMS = 500;
 
 /** Columns that are NOT preselected: a translated URL handle changes that
  * language's storefront URL, and many shops deliberately keep one handle across
@@ -108,8 +107,17 @@ export function parseTranslatePairKey(key: string): { rowId: string; columnId: s
   return { rowId: key.slice(0, index), columnId: key.slice(index + 1) };
 }
 
-export function initialTranslateSelection(): TranslateSelection {
-  return { mode: "all", defaultOffColumnIds: [...TRANSLATE_DEFAULT_OFF_COLUMN_IDS], exceptions: new Set() };
+/**
+ * Everything preselected except the default-off columns — narrowed to the
+ * columns this content type actually HAS, otherwise a type without a handle
+ * column (metaobjects, policies) would sit on a permanently indeterminate
+ * "select all" box for a fully selected list.
+ */
+export function initialTranslateSelection(availableColumnIds?: string[]): TranslateSelection {
+  const defaultOffColumnIds = TRANSLATE_DEFAULT_OFF_COLUMN_IDS.filter(
+    (id) => !availableColumnIds || availableColumnIds.includes(id),
+  );
+  return { mode: "all", defaultOffColumnIds, exceptions: new Set() };
 }
 
 /** State a pair has BEFORE its exceptions are applied. */

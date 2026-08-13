@@ -91,6 +91,17 @@ describe("translate-missing: selection defaults", () => {
     expect(units).toBe(4);
   });
 
+  it("only defaults off a column the content type actually has", () => {
+    // Metaobjects/policies have no handle column — the header checkbox must
+    // read as fully checked, not permanently indeterminate.
+    const selection = initialTranslateSelection(["mo.size_guide.intro"]);
+    expect(selection.defaultOffColumnIds).toEqual([]);
+    expect(allSelectionState(selection)).toBe("checked");
+    expect(initialTranslateSelection(["field.title", "field.handle"]).defaultOffColumnIds).toEqual([
+      "field.handle",
+    ]);
+  });
+
   it("select-all takes the handle in, deselect-all empties everything", () => {
     const all = selectAllPairs();
     expect(allSelectionState(all)).toBe("checked");
@@ -298,6 +309,43 @@ describe("translate-missing: job building", () => {
     const { jobs, units } = buildJobs([item], columns, selectAllPairs(), ["de"], "product");
     expect(units).toBe(0);
     expect(jobs).toHaveLength(0);
+  });
+
+  it("cuts the cap as a contiguous tail, not as a cherry-pick", () => {
+    // A big item first, then small ones: once the cap is hit NOTHING further is
+    // taken, otherwise the run would not be the prefix the page listed.
+    const big: MissingItem = {
+      rowId: "gid://shopify/Product/big",
+      title: "Big",
+      subtitle: "",
+      primaryHandle: "",
+      columns: [{ columnId: "field.title", locales: ["de", "fr"], source: "Big" }],
+    };
+    const small: MissingItem = {
+      rowId: "gid://shopify/Product/small",
+      title: "Small",
+      subtitle: "",
+      primaryHandle: "",
+      columns: [{ columnId: "field.title", locales: ["de"], source: "Small" }],
+    };
+    // Fill the budget to MAX-1 so only the small item could still fit.
+    const filler: MissingItem[] = Array.from({ length: MAX_TRANSLATE_UNITS - 1 }, (_, i) => ({
+      rowId: `gid://shopify/Product/f${i}`,
+      title: `Filler ${i}`,
+      subtitle: "",
+      primaryHandle: "",
+      columns: [{ columnId: "field.title", locales: ["de"], source: `Filler ${i}` }],
+    }));
+    const { jobs, units, overCap } = buildJobs(
+      [...filler, big, small],
+      columns,
+      selectAllPairs(),
+      ["de", "fr"],
+      "product",
+    );
+    expect(units).toBe(MAX_TRANSLATE_UNITS - 1);
+    expect(overCap).toBe(3); // the big item's 2 units + the small item's 1
+    expect(jobs.some((j) => j.rowId === "gid://shopify/Product/small")).toBe(false);
   });
 
   it("caps a run at MAX_TRANSLATE_UNITS and reports the remainder", () => {

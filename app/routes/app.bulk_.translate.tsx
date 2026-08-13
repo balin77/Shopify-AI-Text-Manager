@@ -248,8 +248,9 @@ interface TranslateFetcherResult {
 }
 
 interface TranslateTaskResult {
+  /** Counted in UNITS (row × field × language), like the page's own summary. */
   saved?: number;
-  failures?: { rowId: string; columnId?: string; message: string }[];
+  failed?: number;
   /** Handles whose translation equalled the primary handle (or normalized to
    * nothing) — skipped on purpose, not failures. */
   skippedHandles?: number;
@@ -270,7 +271,10 @@ export default function BulkTranslateMissingPage() {
   const revalidator = useRevalidator();
   const startFetcher = useFetcher<TranslateFetcherResult>();
 
-  const [selection, setSelection] = useState<TranslateSelection>(initialTranslateSelection);
+  const columnIds = useMemo(() => data.columns.map((c) => c.id), [data.columns]);
+  const [selection, setSelection] = useState<TranslateSelection>(() =>
+    initialTranslateSelection(data.columns.map((c) => c.id)),
+  );
   // A run started in an earlier visit (or in another tab) is picked up on
   // mount — single-flight is per shop, so this is THE run, and the page must
   // show its state instead of an idle-looking start button.
@@ -410,13 +414,13 @@ export default function BulkTranslateMissingPage() {
         setBanner({
           kind: "done",
           saved: parsed?.saved ?? 0,
-          failed: parsed?.failures?.length ?? 0,
+          failed: parsed?.failed ?? 0,
           skippedHandles: parsed?.skippedHandles ?? 0,
           overCap: startedOverCap.current,
         });
         // The translated rows are no longer candidates — reload the list and
         // start from a clean selection.
-        setSelection(initialTranslateSelection());
+        setSelection(initialTranslateSelection(columnIds));
         missingLocalesByPair.current = new Map();
         revalidator.revalidate();
       } catch {
