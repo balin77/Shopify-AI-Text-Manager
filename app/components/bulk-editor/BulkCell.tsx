@@ -86,6 +86,14 @@ export interface BulkCellActions {
   onTranslateAll?: () => void;
   /** Copy the primary value into every active foreign language, verbatim. */
   onCopyAll?: () => void;
+  /**
+   * Why the two fan-out actions cannot run (a single-language shop, or every
+   * foreign language switched off). Set ⇒ both entries STAY in the menu,
+   * disabled and carrying this as their help text — hiding them would read as
+   * "the feature is missing" (CLAUDE.md single-language rules; an ActionList
+   * cannot show a hover tooltip, so `disabled` + `helpText` is the form).
+   */
+  fanOutDisabledReason?: string;
   busy?: boolean;
   labels: {
     menu: string;
@@ -184,7 +192,9 @@ export function BulkCell({
       onPasteText={onPasteText}
     />
   );
-  if (!actions || (!actions.onImprove && !actions.onTranslateAll && !actions.onCopyAll)) return cell;
+  const hasMenu =
+    !!actions && (!!actions.onImprove || !!actions.onTranslateAll || !!actions.onCopyAll || !!actions.fanOutDisabledReason);
+  if (!actions || !hasMenu) return cell;
   return (
     <div className="cp-bulk-cell-with-actions">
       {cell}
@@ -200,17 +210,43 @@ export function BulkCell({
  */
 function BulkCellMenu({ actions }: { actions: BulkCellActions }) {
   const [open, setOpen] = useState(false);
-  const items = [
-    ...(actions.onImprove
-      ? [{ content: actions.labels.improve, prefix: "✨", onAction: () => { setOpen(false); actions.onImprove?.(); } }]
-      : []),
-    ...(actions.onTranslateAll
-      ? [{ content: actions.labels.translateAll, prefix: "🌍", onAction: () => { setOpen(false); actions.onTranslateAll?.(); } }]
-      : []),
-    ...(actions.onCopyAll
-      ? [{ content: actions.labels.copyAll, prefix: "📋", onAction: () => { setOpen(false); actions.onCopyAll?.(); } }]
-      : []),
-  ].map(({ prefix, content, onAction }) => ({ content: `${prefix} ${content}`, onAction }));
+  const disabled = actions.fanOutDisabledReason;
+  const items: { content: string; onAction?: () => void; disabled?: boolean; helpText?: string }[] = [];
+  if (actions.onImprove) {
+    items.push({
+      content: `✨ ${actions.labels.improve}`,
+      onAction: () => {
+        setOpen(false);
+        actions.onImprove?.();
+      },
+    });
+  }
+  if (actions.onTranslateAll || disabled) {
+    items.push({
+      content: `🌍 ${actions.labels.translateAll}`,
+      ...(disabled
+        ? { disabled: true, helpText: disabled }
+        : {
+            onAction: () => {
+              setOpen(false);
+              actions.onTranslateAll?.();
+            },
+          }),
+    });
+  }
+  if (actions.onCopyAll || disabled) {
+    items.push({
+      content: `📋 ${actions.labels.copyAll}`,
+      ...(disabled
+        ? { disabled: true, helpText: disabled }
+        : {
+            onAction: () => {
+              setOpen(false);
+              actions.onCopyAll?.();
+            },
+          }),
+    });
+  }
 
   return (
     <span className="cp-bulk-cell-actions">

@@ -2708,6 +2708,7 @@ export const de = {
       invalid: "Kein gültiger Betrag.",
     },
     cellActions: {
+      noActiveLanguage: "Keine Zielsprache aktiv — mit Strg/Cmd+Klick auf einen Sprachbutton wieder einschalten.",
       menu: "Aktionen für dieses Feld",
     },
     languageBar: {

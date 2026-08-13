@@ -2708,6 +2708,7 @@ export const en: Translation = {
       invalid: "Not a valid amount.",
     },
     cellActions: {
+      noActiveLanguage: "No target language active — Ctrl/Cmd+click a language button to switch one back on.",
       menu: "Actions for this field",
     },
     languageBar: {

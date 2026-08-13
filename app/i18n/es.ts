@@ -2707,6 +2707,7 @@ export const es: Translation = {
       invalid: "No es un importe válido.",
     },
     cellActions: {
+      noActiveLanguage: "Ningún idioma de destino activo: Ctrl/Cmd+clic en un botón de idioma para reactivarlo.",
       menu: "Acciones para este campo",
     },
     languageBar: {

@@ -1452,11 +1452,21 @@ export default function BulkEditor() {
     // Primary view: fan out into every active language. Foreign view: fill the
     // language on screen from the primary value — the editor's own narrowing.
     const canFanOut = column.translatable && fanOutTargets().length > 0;
-    if (!canImprove && !canFanOut) return undefined;
+    // A translatable column always OFFERS the two fan-out entries; when they
+    // cannot run they stay visible and disabled with the reason (CLAUDE.md:
+    // hiding them reads as "the feature is missing"). singleLocaleHint is
+    // undefined when the locale lookup merely failed — never gate on that.
+    const fanOutDisabledReason = canFanOut
+      ? undefined
+      : column.translatable
+        ? (singleLocaleHint ?? b.cellActions.noActiveLanguage)
+        : undefined;
+    if (!canImprove && !canFanOut && !fanOutDisabledReason) return undefined;
     return {
       ...(canImprove ? { onImprove: () => void handleCellImprove(row, column) } : {}),
       ...(canFanOut ? { onTranslateAll: () => void handleCellTranslateAll(row, column) } : {}),
       ...(canFanOut ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
+      ...(fanOutDisabledReason ? { fanOutDisabledReason } : {}),
       busy: busyCells.has(`${row.id}|${column.id}`),
       // The content editor's own labels (t.products.*), not a second set:
       // the two surfaces offer the same three actions and must not drift
