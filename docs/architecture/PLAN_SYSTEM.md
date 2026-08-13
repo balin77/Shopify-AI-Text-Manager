@@ -35,8 +35,7 @@ app/
 ├── components/
 │   ├── SettingsPlanTab.tsx         # Plan-Auswahl/Upgrade (Shopify Billing API)
 │   ├── ContentTypeNavigation.tsx   # Plan-aware Content-Type-Tabs
-│   ├── PlanBadge.tsx               # Visual Plan-Indikator
-│   └── UpgradePrompt.tsx           # Upgrade-Call-to-Action
+│   └── PlanAccessGate.tsx          # Sperrt eine Seite/Sektion unter dem nötigen Plan
 └── routes/
     ├── app.tsx                     # Plan im Loader laden (checkAndSyncSubscription)
     ├── app.products.tsx            # Plan-basierte Produkt-Limits
@@ -126,7 +125,7 @@ function MyComponent() {
 
   // Beispiel:
   if (!canAccessContentType("articles")) {
-    return <UpgradePrompt feature="Blog Articles" currentPlan={plan} />;
+    return <PlanAccessGate contentType="articles">{children}</PlanAccessGate>;
   }
 }
 ```

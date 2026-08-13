@@ -217,10 +217,12 @@ export async function redactCustomerData(
  *
  *  • Deliberately RETAINED: GdprAuditLog — mandatory 3-year retention
  *    (Art. 5(2) GDPR). Its time-based upper bound is enforced by
- *    GdprAuditLogCleanupService
- *    (src/services/gdpr-audit-cleanup.service.ts; standalone mirror
- *    gdpr-audit-cleanup.service.js, started from server.js, runs daily and
- *    deletes rows where requestedAt < now − 3 years). Never deleted here.
+ *    GdprAuditLogCleanupService — it runs daily and deletes rows where
+ *    requestedAt < now − 3 years. Never deleted here. Two copies exist on
+ *    purpose: gdpr-audit-cleanup.service.js in the repo root is the one
+ *    server.js actually starts (plain JS, loaded by Node without the app
+ *    build), src/services/gdpr-audit-cleanup.service.ts is the typed twin
+ *    covered by tests/unit/gdpr-audit-cleanup.service.test.ts. Change both.
  *
  * A schema-coverage guard in tests/unit/gdpr.service.test.ts parses
  * schema.prisma and fails if a new shop-scoped model is added without being
@@ -548,9 +550,10 @@ export async function redactShopData(
  *
  * Persists every GDPR webhook event to the GdprAuditLog table. The mandatory
  * 3-year retention period (Art. 5(2) GDPR) is enforced by
- * GdprAuditLogCleanupService (src/services/gdpr-audit-cleanup.service.ts;
- * standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
- * which runs daily and deletes only rows where requestedAt < now − 3 years.
+ * GdprAuditLogCleanupService (gdpr-audit-cleanup.service.js in the repo root is
+ * what server.js starts; src/services/gdpr-audit-cleanup.service.ts is its
+ * tested twin), which runs daily and deletes only rows where
+ * requestedAt < now − 3 years.
  */
 export async function logGDPRRequest(
   shop: string,
