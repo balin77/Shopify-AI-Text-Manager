@@ -29,6 +29,8 @@ export interface BulkLanguageBarProps {
   /** App UI language — localizes the language NAMES. */
   appLocale: string;
   strings: {
+    /** Marker after the primary language's name. Carries its own brackets
+     * ("(Primary)") — do not add another pair. */
     primarySuffix: string;
     /** Tooltip on an enabled foreign button. */
     enabledHint: string;
@@ -66,7 +68,7 @@ export function BulkLanguageBar({
         const isCurrent = currentLocale === value;
         const isEnabled = locale.primary || enabledLocales.includes(locale.locale);
         const label = `${getLocalizedLanguageName(locale.locale, appLocale, locale.name)}${
-          locale.primary ? ` (${strings.primarySuffix})` : ""
+          locale.primary ? ` ${strings.primarySuffix}` : ""
         }`;
 
         return (
