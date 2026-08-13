@@ -1595,6 +1595,13 @@ export default function BulkEditor() {
                     {b.mediaLibrary.neverSynced}
                   </Banner>
                 )}
+                {syncMediaLibraryFetcher.state === "idle" &&
+                  syncMediaLibraryFetcher.data &&
+                  !(syncMediaLibraryFetcher.data as { success?: boolean }).success && (
+                    <Banner tone="critical">
+                      {(syncMediaLibraryFetcher.data as { error?: string }).error || b.errorGeneric}
+                    </Banner>
+                  )}
                 {data.translationFilterApproximate && (
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
@@ -1870,10 +1877,13 @@ export default function BulkEditor() {
                       style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
                     />
                   )}
-                  {/* The alt text is what this grid is about — show the value
-                      the row actually carries, in the current view. */}
+                  {/* The alt text is what this grid is about. Image rows carry
+                      it as their own (translatable) cell — every other type
+                      only has the thumbnail's alt for context. */}
                   <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-                    {previewRow ? valueFor(previewRow, ALT_PREVIEW_COLUMN) || b.imagePreview.noAlt : ""}
+                    {(previewRow?.type === "image"
+                      ? valueFor(previewRow, ALT_PREVIEW_COLUMN)
+                      : (previewRow?.imageAlt ?? "")) || b.imagePreview.noAlt}
                   </Text>
                 </BlockStack>
               </Modal.Section>

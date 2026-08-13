@@ -213,9 +213,10 @@ export async function scanMissingTranslations(
   let matchedRows = 0;
   let scannedRows = 0;
   // The OFFSET is advanced by the requested window, not by the returned row
-  // count: a loader may legitimately return fewer rows than asked for (the
-  // image union does), and advancing by the count would re-read the tail of
-  // the previous chunk — duplicate candidates and doubled unit estimates.
+  // count. The image union legitimately returns fewer rows than asked for (it
+  // drops library copies of images the product segment already served), and
+  // advancing by the count would re-read the tail of the previous chunk —
+  // duplicate candidates and doubled unit estimates.
   let scanOffset = 0;
   let exhausted = false;
 

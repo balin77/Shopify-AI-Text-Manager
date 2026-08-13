@@ -534,23 +534,22 @@ interface BulkImageCellProps {
 
 /**
  * Image cell: hovering reveals a dark overlay with a magnifier; clicking opens
- * the image in a preview modal (which is also where the "open in editor" jump
- * lives now — the thumbnail is too small to judge an alt text against).
- * Rows with no imageUrl render a placeholder box so the affordance is uniform
- * across all rows of the type; only rows WITH an image are clickable.
+ * the preview modal (which is also where the "open in editor" jump lives now —
+ * the thumbnail is too small to judge an alt text against).
+ *
+ * ALWAYS a button, including for rows without an image: the modal is the only
+ * remaining path to the single editor, and blog/policy/metaobject rows have no
+ * thumbnail at all.
  */
 function BulkImageCell({ row, onOpen, openLabel }: BulkImageCellProps) {
-  if (!row.imageUrl) {
-    return (
-      <span className="cp-bulk-img-btn">
-        <span className="cp-bulk-img-placeholder" aria-hidden="true" />
-      </span>
-    );
-  }
   return (
     <Tooltip content={openLabel}>
       <button type="button" className="cp-bulk-img-btn" onClick={() => onOpen(row)} aria-label={openLabel}>
-        <img src={row.imageUrl} alt={row.imageAlt ?? ""} className="cp-bulk-img" loading="lazy" />
+        {row.imageUrl ? (
+          <img src={row.imageUrl} alt={row.imageAlt ?? ""} className="cp-bulk-img" loading="lazy" />
+        ) : (
+          <span className="cp-bulk-img-placeholder" aria-hidden="true" />
+        )}
         <span className="cp-bulk-img-overlay" aria-hidden="true">
           <SearchIcon />
         </span>

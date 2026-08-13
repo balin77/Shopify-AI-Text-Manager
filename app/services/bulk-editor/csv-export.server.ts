@@ -136,7 +136,10 @@ export async function buildBulkCsvExport(
       return { ok: false, error: "tooLarge", total: page.total };
     }
     rows.push(...page.rows);
-    if (page.rows.length < EXPORT_PAGE_SIZE || rows.length >= page.total) break;
+    // Stop on the OFFSET, never on a short page: a loader may legitimately
+    // return fewer rows than asked for (the image union drops rows the product
+    // segment already served), and stopping there would truncate the export.
+    if (skip + EXPORT_PAGE_SIZE >= page.total) break;
   }
 
   const header = [CSV_ID_HEADER, ...exportColumns.map((c) => c.id)];

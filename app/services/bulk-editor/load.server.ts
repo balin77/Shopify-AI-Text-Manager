@@ -951,7 +951,7 @@ async function loadImageRows(
   return {
     rows: [...productSegment.rows, ...librarySegment.rows],
     total: productSegment.total + librarySegment.total,
-    translationFilterApproximate: false,
+    translationFilterApproximate: librarySegment.approximate ?? false,
     mediaLibraryNeverSynced: librarySegment.neverSynced,
   };
 }
@@ -1059,9 +1059,15 @@ async function loadProductMediaRows(
  * from the MediaLibraryImage cache — read through the media-library service, so
  * this loader never touches that model directly.
  *
- * NOTHING is filtered after paging: `total` has to be exact, or the CSV export
- * sweep and the candidate scan (both of which page until a short page appears)
- * would stop early. Every restriction is therefore pushed INTO the query.
+ * Restrictions are pushed INTO the query wherever the cache can express them,
+ * so `total` stays exact. The ONE exception is the de-dup against product
+ * media: an image attached to a product since the last media sync still carries
+ * a non-"product" usageKind, and listing it twice is NOT cosmetic — the two
+ * copies would read from different translation stores (the library copy has no
+ * imageCacheId) while both write to the same one, so a translation would save
+ * and come back empty. It is therefore dropped after paging, which can leave a
+ * page short; the sweeps that page over this loader stop on the OFFSET, never
+ * on a short page.
  *
  * One deliberate limitation, visible rather than silent: the PRIMARY alt of
  * these images cannot be written from this app (`altPrimaryReadOnly` —
@@ -1073,7 +1079,7 @@ async function loadLibraryImageRows(
   shop: string,
   opts: LoadBulkRowsOptions,
   productMediaTotal: number,
-): Promise<{ rows: BulkRow[]; total: number; neverSynced: boolean }> {
+): Promise<{ rows: BulkRow[]; total: number; neverSynced: boolean; approximate?: boolean }> {
   const { loadMediaLibraryImages } = await import("../media-library/load.server");
   const skip = Math.max(0, opts.skip - productMediaTotal);
   const consumed = Math.max(0, Math.min(opts.take, productMediaTotal - opts.skip));
@@ -1084,6 +1090,7 @@ async function loadLibraryImageRows(
   // about — so the ids that DO have a translation are resolved here and
   // excluded in the query, keeping the count exact.
   let excludeMediaIds: string[] | undefined;
+  let translationExclusionCapped = false;
   if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
     const translated = await db.contentTranslation.findMany({
       where: {
@@ -1094,12 +1101,36 @@ async function loadLibraryImageRows(
         NOT: { value: "" },
       },
       select: { resourceId: true },
-      take: TRANSLATION_NOT_IN_CAP,
+      // +1 probe: hitting the cap means the exclusion list is incomplete and
+      // the result becomes approximate — the same contract the content types
+      // use for their anti-join.
+      take: TRANSLATION_NOT_IN_CAP + 1,
     });
-    excludeMediaIds = translated.map((t) => t.resourceId);
+    translationExclusionCapped = translated.length > TRANSLATION_NOT_IN_CAP;
+    excludeMediaIds = translated.slice(0, TRANSLATION_NOT_IN_CAP).map((t) => t.resourceId);
   }
 
   const sortField = librarySortField(opts.sort);
+  // The media loader caps `take` (MAX_TAKE) — the CSV import resolves rows in
+  // chunks well above it, so an id sweep is split rather than silently clamped.
+  if (opts.ids) {
+    const found: BulkRow[] = [];
+    for (let i = 0; i < opts.ids.length; i += LIBRARY_ID_CHUNK) {
+      const chunk = opts.ids.slice(i, i + LIBRARY_ID_CHUNK);
+      const page = await loadMediaLibraryImages(db, shop, {
+        search: "",
+        skip: 0,
+        take: LIBRARY_ID_CHUNK,
+        excludeProductMedia: true,
+        mediaIds: chunk,
+      });
+      found.push(...page.rows.map(toLibraryRow));
+    }
+    const attachedIds = await productMediaIdsAmong(db, shop, found.map((r) => r.id));
+    const rows = found.filter((r) => !attachedIds.has(r.id));
+    return { rows, total: rows.length, neverSynced: false };
+  }
+
   const { rows, total, neverSynced } = await loadMediaLibraryImages(db, shop, {
     search: opts.search,
     skip,
@@ -1113,27 +1144,59 @@ async function loadLibraryImageRows(
     // here would cost an exact `total`, which the export and scan sweeps need.
     excludeProductMedia: true,
     missingAltOnly: opts.filters.includes("missingAltText"),
-    ...(opts.ids ? { mediaIds: opts.ids } : {}),
     ...(excludeMediaIds ? { excludeMediaIds } : {}),
     ...(sortField && opts.sort ? { sort: { field: sortField, direction: opts.sort.direction } } : {}),
   });
 
+  const mapped = rows.map(toLibraryRow);
+  const attachedIds = await productMediaIdsAmong(db, shop, mapped.map((r) => r.id));
   return {
-    rows: rows.map((row) => ({
-      id: row.mediaId,
-      type: "image" as const,
-      title: row.usageLabel || row.filename || row.mediaId,
-      seoTitle: "",
-      seoDescription: "",
-      handle: "",
-      altText: row.altText,
-      imageUsage: row.usageLabel || row.usageKind,
-      imageUrl: row.url,
-    })),
+    rows: mapped.filter((row) => !attachedIds.has(row.id)),
     total,
     neverSynced,
+    approximate: translationExclusionCapped,
   };
 }
+
+/** Media-library row → grid row. */
+function toLibraryRow(row: {
+  mediaId: string;
+  url: string;
+  altText: string;
+  filename: string;
+  usageKind: string;
+  usageLabel: string;
+}): BulkRow {
+  return {
+    id: row.mediaId,
+    type: "image",
+    title: row.usageLabel || row.filename || row.mediaId,
+    seoTitle: "",
+    seoDescription: "",
+    handle: "",
+    altText: row.altText,
+    imageUsage: row.usageLabel || row.usageKind,
+    imageUrl: row.url,
+  };
+}
+
+/** Which of these MediaImage gids are product media — the segment that owns
+ * them (and their ProductImageAltTranslation rows). */
+async function productMediaIdsAmong(
+  db: PrismaClient,
+  shop: string,
+  mediaIds: string[],
+): Promise<Set<string>> {
+  if (mediaIds.length === 0) return new Set();
+  const attached = await db.productImage.findMany({
+    where: { mediaId: { in: mediaIds }, product: { shop } },
+    select: { mediaId: true },
+  });
+  return new Set(attached.map((a) => a.mediaId).filter((id): id is string => !!id));
+}
+
+/** Chunk for the id sweep — the media loader clamps `take` at 250. */
+const LIBRARY_ID_CHUNK = 250;
 
 /** The grid's sort column → the media cache's sortable field, or null when the
  * cache cannot express it (position is product-media only). */
