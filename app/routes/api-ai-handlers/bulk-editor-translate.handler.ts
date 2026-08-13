@@ -1,28 +1,29 @@
 /**
- * Bulk editor — "Translate missing" AI task (docs/plans/PLAN_BULK_EDITOR.md
- * §6.5): one column + one target language → translate every EMPTY cell of the
- * current filter set. Always runs as the detached Task `bulkEditorTranslate`
- * (registered in LONG_RUNNING_TASK_TYPES, task-recovery.service.js) with
- * single-flight per shop and per-row progress.
+ * Bulk editor — "translate missing" AI task (the /app/bulk/translate page).
+ *
+ * Fills the translations the merchant selected on that page: several FIELDS ×
+ * several TARGET LANGUAGES × many rows in one run. Always runs as the detached
+ * Task `bulkEditorTranslate` (registered in LONG_RUNNING_TASK_TYPES,
+ * task-recovery.service.js) with single-flight per shop and per-unit progress.
+ *
+ * Trust model — nothing about the selection is taken at face value:
+ * - the row type, the columns and the locales are re-validated against the
+ *   SERVER-built column universe / the published shop locales;
+ * - the candidate set is RE-SCANNED here (scanMissingTranslations, the same
+ *   scan the page's loader ran), and the merchant's selection is replayed over
+ *   it. A cell that was filled in between silently drops out; a cell the client
+ *   claims but the server does not see never enters the run.
+ *
+ * Writing goes through applyBulkDiff — the ONE verified write path (digest
+ * rule, registerAndVerify echo check, DB mirror, markTranslationSaved). There
+ * is no preview mode: only MISSING values are written, so nothing is ever
+ * overwritten, and the result is reviewed in the grid afterwards.
  *
  * AI work goes through AIQueueService.enqueue() — createAIService(settings,
- * shop, taskId) wires the queue automatically (Contract §8, pattern 4). This
- * is the difference to the pure write task `seoBulkMeta`, which deliberately
- * bypasses the AI queue.
+ * shop, taskId) wires the queue automatically (Contract §8, pattern 4).
  *
- * Results:
- * - mode "preview" (default): suggestions are stored in Task.result; the
- *   route polls /api/task-result and merges them into the client edit map —
- *   NOTHING is written to Shopify/DB without the merchant's review.
- * - mode "save": the suggestions become a BulkDiffEntry[] and run through
- *   applyBulkDiff — i.e. the SAME verified translation path (digest rule,
- *   registerAndVerify echo check, DB mirror, markTranslationSaved) as manual
- *   saving. No second write path exists.
- *
- * §6.6 → Phase 4b: this task is MARKET-AWARE. It reads the grid's selected
- * market and writes the suggestions with that marketId ("" stays global); the
- * verified write path (registerAndVerify / persistTranslationRow) already keys
- * off each entry's marketId, so no second write path exists.
+ * Market scope: GLOBAL only (marketId ""). The page has no market dimension —
+ * a market-specific override stays a per-cell decision in the grid.
  *
  * Plan gate: Pro (fan-out AI work, §10.7) — checked here because this handler
  * is reachable directly via POST /api/ai.
@@ -32,7 +33,7 @@ import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isAuthError } from "./shared";
 import type { AIService } from "../../../src/services/ai.service";
-import { getFormString } from "~/utils/form-data.utils";
+import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { meetsPlan } from "~/utils/planUtils";
@@ -40,32 +41,52 @@ import { PLAN_CONFIG, type Plan } from "~/config/plans";
 import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
 import { GroupedFieldTranslationService } from "../../../src/services/grouped-field-translation.service";
 import {
-  primaryValueForColumn,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
-  MAX_BULK_TASK_ITEMS,
   BULK_FILTER_IDS,
   type BulkDiffEntry,
   type BulkFilterId,
   type BulkRowType,
   type ColumnDescriptor,
 } from "~/services/bulk-editor/columns.shared";
-import { buildServerColumnsByType, productColumnCapsForPlan, loadProductMetafieldColumnSpecs } from "~/services/bulk-editor/columns.server";
-import { loadBulkRows } from "~/services/bulk-editor/load.server";
+import { buildServerColumnsByType } from "~/services/bulk-editor/columns.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { canonicalFieldNameForColumn } from "~/services/bulk-editor/translations.server";
 import {
-  translationKeyForColumn,
-  canonicalFieldNameForColumn,
-  findInvalidLocaleOrMarket,
-} from "~/services/bulk-editor/translations.server";
+  scanMissingTranslations,
+  translateCandidateColumns,
+} from "~/services/bulk-editor/missing-translations.server";
+import {
+  MAX_TRANSLATE_UNITS,
+  dedupeHandle,
+  isPairSelected,
+  normalizeTranslatedHandle,
+  parseTranslateSelection,
+  type MissingItem,
+  type TranslateSelection,
+} from "~/services/bulk-editor/translate-missing.shared";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
 
-/** Fields compact enough for the short-batch prompt — mirrors the
- * SHORT_FIELD_KEYS of translateAllContent (minus handle, which is excluded
- * from AI bulk translation entirely, see below). */
-const SHORT_FIELDS = new Set(["title", "seoTitle", "productType"]);
+/** Fields compact enough for the short-batch prompt — the subset
+ * translateShortFieldsBatch accepts (productType runs its own grouped path). */
+const SHORT_FIELDS = new Set(["title", "seoTitle", "handle"]);
+
+/** One row's work: which columns to translate into which locales. */
+interface TranslateJob {
+  rowId: string;
+  /** columnId → { column, source text, target locales }. */
+  cells: {
+    column: ColumnDescriptor;
+    /** AI payload key: the canonical field name, or the metaobject field key. */
+    fieldKey: string;
+    source: string;
+    locales: string[];
+  }[];
+  /** Primary-locale handle — the duplicate-slug guard compares against it. */
+  primaryHandle: string;
+}
 
 export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, formData, settings } = ctx;
@@ -87,47 +108,52 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
   }
   const rowType = rawType as BulkRowType;
 
-  const columnId = getFormString(formData, "columnId");
-  const columnsByType = await buildServerColumnsByType(db, shop, plan);
-  const column = columnsByType[rowType].find((c) => c.id === columnId);
-  const translationKey = column ? translationKeyForColumn(column, rowType) : null;
-  // AI scope (Phase 4 decision): BASE field columns only. handle is
-  // translatable at Shopify and may be typed manually, but bulk-AI-generating
-  // hundreds of URL slugs is excluded — the single editor treats handles as a
-  // special guided case (slug sanitization, duplicate guards).
-  if (!column || column.kind !== "field" || !translationKey || columnId === "field.handle") {
-    return json({ success: false, error: "This column cannot be AI-translated." }, { status: 400 });
-  }
-
-  const targetLocale = getFormString(formData, "targetLocale");
+  // Target languages: every one must be a PUBLISHED, non-primary shop locale —
+  // an unknown locale silently collapsing to primary would rewrite live primary
+  // content (translations.server.ts findInvalidLocaleOrMarket, same rule).
   const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
   const primaryLocale = shopLocales.find((l) => l.primary)?.locale || "en";
-  const localeMatch = shopLocales.find((l) => l.locale === targetLocale && l.published && !l.primary);
-  if (!localeMatch) {
-    // Data-integrity gate: an unknown locale must never collapse to primary.
+  const requested = (getFormString(formData, "locales") || "")
+    .split(",")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const targetLocales = [...new Set(requested)];
+  const unknown = targetLocales.find(
+    (locale) => !shopLocales.some((l) => l.locale === locale && l.published && !l.primary),
+  );
+  if (unknown) {
     return json(
-      { success: false, error: `Locale "${targetLocale}" is not a published foreign locale of this shop.` },
+      { success: false, error: `Locale "${unknown}" is not a published foreign locale of this shop.` },
       { status: 400 },
     );
   }
-
-  // §6.6 → Phase 4b: the AI path is now MARKET-AWARE. A non-empty market must
-  // be an ACTIVE market of this shop (findInvalidLocaleOrMarket also re-checks
-  // the locale, which is harmless). A market only ever accompanies a foreign
-  // locale — the client only sends one when the grid is on a foreign view.
-  const market = getFormString(formData, "market") || "";
-  if (market !== "") {
-    const invalid = await findInvalidLocaleOrMarket(admin, shop, [{ locale: targetLocale, marketId: market }]);
-    if (invalid) {
-      return json({ success: false, error: invalid }, { status: 400 });
-    }
+  if (targetLocales.length === 0) {
+    return json({ success: false, error: "No target language selected." }, { status: 400 });
   }
 
-  const mode = getFormString(formData, "mode") === "save" ? "save" : "preview";
   const search = getFormString(formData, "search") || "";
   const filters = (getFormString(formData, "filters") || "")
     .split(",")
     .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
+  const selection = parseTranslateSelection(getFormJSON(formData, "selection"));
+
+  const columnsByType = await buildServerColumnsByType(db, shop, plan);
+  // Metaobject rows are only schema-homogeneous per definition type — an
+  // unknown moType would mix schemas, so it is validated like every other param.
+  let moType = "";
+  if (rowType === "metaobject") {
+    const rawMoType = getFormString(formData, "moType") || "";
+    const definitions = await db.metaobjectDefinition.findMany({
+      where: { shop },
+      select: { type: true },
+      orderBy: { type: "asc" },
+    });
+    moType = definitions.some((d) => d.type === rawMoType) ? rawMoType : definitions[0]?.type ?? "";
+  }
+  const columns = translateCandidateColumns(columnsByType[rowType], rowType, moType);
+  if (columns.length === 0) {
+    return json({ success: false, error: "This content type has no AI-translatable fields." }, { status: 400 });
+  }
 
   // Single-flight per shop — a second run would race the same cells.
   const runningTask = await db.task.findFirst({
@@ -146,40 +172,20 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     );
   }
 
-  // Candidate rows = the merchant's CURRENT filter set (search + filters),
-  // across the whole result (not just the visible page), capped at
-  // MAX_BULK_TASK_ITEMS. loadBulkRows with the target locale also attaches
-  // foreignValues, so "cell is empty" needs no extra query.
-  const productCaps = productColumnCapsForPlan(plan);
-  const metafieldSpecs =
-    rowType === "product" && productCaps.metafields ? await loadProductMetafieldColumnSpecs(db, shop) : [];
-  const { rows, total } = await loadBulkRows(db, shop, {
+  // THE authority on what is missing — re-scanned here, never taken from the
+  // client (§ trust model above).
+  const scan = await scanMissingTranslations(db, shop, {
     type: rowType,
-    locale: targetLocale,
-    marketId: market, // Phase 4b: market-aware — "" stays global
     search,
     filters,
-    sort: null,
-    skip: 0,
-    take: MAX_BULK_TASK_ITEMS,
-    productCells: { metafieldSpecs, caps: productCaps },
-    // Blog rows are live-fetched (Phase 5) — the loader needs the client.
+    moType,
+    foreignLocales: targetLocales,
+    columns,
     admin,
+    withSources: true,
   });
 
-  const jobs: { rowId: string; source: string }[] = [];
-  for (const row of rows) {
-    // "Empty" means empty in the CURRENT (locale, market) layer: under a
-    // market only a missing market-specific override counts (the global value
-    // shows as a ghost but is not the market's value). marketId "" → the key
-    // collapses to the global `${locale}||${columnId}` (pre-4b behaviour).
-    const existing = row.foreignValues?.[`${targetLocale}|${market}|${columnId}`];
-    if (existing && existing.trim() !== "") continue; // already translated
-    const source = primaryValueForColumn(row, column);
-    if (!source || source.trim() === "") continue; // nothing to translate
-    jobs.push({ rowId: row.id, source });
-  }
-
+  const { jobs, units, overCap } = buildJobs(scan.items, columns, selection, targetLocales, rowType);
   if (jobs.length === 0) {
     return json({ success: true, none: true, total: 0 });
   }
@@ -190,9 +196,9 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
       type: "bulkEditorTranslate",
       status: "running",
       resourceType: BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType],
-      fieldType: canonicalFieldNameForColumn(column),
-      targetLocale,
-      total: jobs.length,
+      fieldType: fieldTypeLabel(jobs),
+      targetLocale: targetLocales.join(","),
+      total: units,
       processed: 0,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -205,12 +211,9 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     admin,
     settings,
     jobs,
-    column,
+    units,
     rowType,
-    targetLocale,
-    marketId: market,
     primaryLocale,
-    mode,
     columnsByType,
   }).catch((err: unknown) => {
     logger.error("[API-AI] Bulk-editor translate crashed", {
@@ -220,17 +223,79 @@ export async function handleBulkEditorTranslate(ctx: AIActionContext): Promise<D
     });
   });
 
-  // truncated (Finding 6): the candidate window is capped at
-  // MAX_BULK_TASK_ITEMS rows — report the cap AND the full match count so the
-  // client can tell the merchant that the remainder needs another run.
   return json({
     success: true,
     taskId: task.id,
-    total: jobs.length,
-    truncated: total > rows.length,
-    matchedRows: total,
-    rowLimit: MAX_BULK_TASK_ITEMS,
+    total: units,
+    // Honest truncation (same pattern as the scan window): units above the cap
+    // are left for the next run and reported, never silently dropped.
+    skippedOverCap: overCap,
+    scanTruncated: scan.scanTruncated,
+    matchedRows: scan.matchedRows,
+    scannedRows: scan.scannedRows,
   });
+}
+
+// ─── Job building ──────────────────────────────────────────────────────────
+
+/** Task.fieldType is a display label — one field name, or "multiple". */
+function fieldTypeLabel(jobs: TranslateJob[]): string {
+  const names = new Set<string>();
+  for (const job of jobs) for (const cell of job.cells) names.add(cell.fieldKey);
+  return names.size === 1 ? [...names][0] : "multiple";
+}
+
+/**
+ * Server-side candidate set ∩ merchant selection, capped at
+ * MAX_TRANSLATE_UNITS in scan order (the order the page listed them in, so the
+ * cap cuts off the tail the merchant saw last).
+ */
+export function buildJobs(
+  items: MissingItem[],
+  columns: ColumnDescriptor[],
+  selection: TranslateSelection,
+  targetLocales: string[],
+  rowType: BulkRowType,
+): { jobs: TranslateJob[]; units: number; overCap: number } {
+  const columnById = new Map(columns.map((c) => [c.id, c] as const));
+  const jobs: TranslateJob[] = [];
+  let units = 0;
+  let overCap = 0;
+
+  for (const item of items) {
+    const cells: TranslateJob["cells"] = [];
+    for (const entry of item.columns) {
+      const column = columnById.get(entry.columnId);
+      if (!column) continue;
+      if (!isPairSelected(selection, item.rowId, entry.columnId)) continue;
+      const locales = entry.locales.filter((l) => targetLocales.includes(l));
+      if (locales.length === 0) continue;
+      if (units + locales.length > MAX_TRANSLATE_UNITS) {
+        overCap += locales.length;
+        continue;
+      }
+      // Defensive: the scan is always run withSources here — a missing source
+      // means there is nothing to translate, never "translate an empty string".
+      if (!entry.source || entry.source.trim() === "") continue;
+      cells.push({
+        column,
+        fieldKey: aiFieldKey(column),
+        source: entry.source,
+        locales,
+      });
+      units += locales.length;
+    }
+    if (cells.length > 0) {
+      jobs.push({ rowId: item.rowId, cells, primaryHandle: item.primaryHandle ?? "" });
+    }
+  }
+  return { jobs, units, overCap };
+}
+
+/** Key the AI prompt sees: the canonical field name ("description", "title"),
+ * or the metaobject field key (which is the shop's own descriptive name). */
+function aiFieldKey(column: ColumnDescriptor): string {
+  return column.kind === "mofield" ? column.moFieldKey ?? column.id : canonicalFieldNameForColumn(column);
 }
 
 // ─── Runner ────────────────────────────────────────────────────────────────
@@ -240,111 +305,184 @@ interface RunArgs {
   shop: string;
   admin: AdminApiContext;
   settings: AIActionContext["settings"];
-  jobs: { rowId: string; source: string }[];
-  column: ColumnDescriptor;
+  jobs: TranslateJob[];
+  units: number;
   rowType: BulkRowType;
-  targetLocale: string;
-  /** Phase 4b: "" = global, a Market GID = market-specific override. */
-  marketId: string;
   primaryLocale: string;
-  mode: "preview" | "save";
   columnsByType: Record<BulkRowType, ColumnDescriptor[]>;
 }
 
 interface TranslateResultJson {
-  mode: "preview" | "save";
-  /** preview: the suggestions for the client edit map. save: empty. */
-  suggestions: BulkDiffEntry[];
+  saved: number;
   failures: { rowId: string; columnId?: string; message: string }[];
-  saved?: number;
+  /** Handles that were deliberately NOT written: the translation equalled the
+   * primary handle (no separate URL needed) or normalized to nothing. */
+  skippedHandles: number;
 }
 
 async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
-  const { db, shop, admin, settings, jobs, column, rowType, targetLocale, marketId, primaryLocale, mode, columnsByType } = args;
-  const fieldName = canonicalFieldNameForColumn(column);
+  const { db, shop, admin, settings, jobs, units, rowType, primaryLocale, columnsByType } = args;
   const contentType = BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType];
-  // createAIService(settings, shop, taskId) → every provider call goes
-  // through AIQueueService.enqueue (rate limits, per-shop fairness).
+  // createAIService(settings, shop, taskId) → every provider call goes through
+  // AIQueueService.enqueue (rate limits, per-shop fairness).
   const aiService = createAIService(settings, shop, taskId);
 
-  const suggestions: BulkDiffEntry[] = [];
+  const diff: BulkDiffEntry[] = [];
   const failures: TranslateResultJson["failures"] = [];
-  // Translation covers 0–100 % in preview mode; in save mode it covers 0–80 %
-  // and the verified write pass 80–100 %.
-  const translateSpan = mode === "save" ? 80 : 100;
+  let skippedHandles = 0;
+  // Translation covers 0–80 %, the verified write pass 80–100 %.
+  const TRANSLATE_SPAN = 80;
 
-  const heartbeat = async (processed: number, progress: number) => {
+  const heartbeat = async (processed: number) => {
     await db.task
-      .update({ where: { id: taskId }, data: { processed, progress: Math.min(100, Math.round(progress)) } })
+      .update({
+        where: { id: taskId },
+        data: { processed, progress: Math.min(TRANSLATE_SPAN, Math.round((processed / units) * TRANSLATE_SPAN)) },
+      })
       .catch(() => undefined);
   };
 
-  const pushSuggestion = (rowId: string, value: string) => {
-    suggestions.push({
-      rowId,
-      rowType,
-      locale: targetLocale,
-      marketId, // Phase 4b: the selected market ("" = global)
-      columnId: column.id,
-      value,
-    });
-  };
+  /** Handles already produced in this run, per locale — two products whose
+   * titles translate to the same slug must not fight over one URL. */
+  const handlesByLocale = new Map<string, Set<string>>();
+  /** productType is translated ONCE per distinct source value across the whole
+   * run (shop-wide GroupedFieldTranslation cache) — otherwise one Google
+   * Merchant category fans out into several AI variants across the catalog. */
+  const groupedService = new GroupedFieldTranslationService(db);
+  const productTypeCache = new Map<string, Record<string, string>>();
 
+  let processed = 0;
   try {
-    if (rowType === "product" && fieldName === "productType") {
-      // productType MUST run through the GroupedFieldTranslation cache
-      // (Plan §6.5) — otherwise one Google-Merchant category fans out into
-      // several AI variants across the catalog.
-      await translateProductTypeGrouped(args, aiService, pushSuggestion, failures, heartbeat, translateSpan);
-    } else {
-      const isShort = SHORT_FIELDS.has(fieldName);
-      for (let i = 0; i < jobs.length; i++) {
-        const job = jobs[i];
+    for (const job of jobs) {
+      const grouped = job.cells.filter((c) => c.fieldKey === "productType");
+      const short = job.cells.filter((c) => c.fieldKey !== "productType" && SHORT_FIELDS.has(c.fieldKey));
+      const long = job.cells.filter((c) => c.fieldKey !== "productType" && !SHORT_FIELDS.has(c.fieldKey));
+
+      // One AI call per group and row, over the UNION of the locales its cells
+      // need — asking per (field, locale) would multiply the call count by up
+      // to 6 × 3 for the same tokens.
+      const results: Record<string, Record<string, string>> = {};
+      const collect = (partial: Record<string, Record<string, string>>) => {
+        for (const [locale, fields] of Object.entries(partial)) {
+          Object.assign((results[locale] ??= {}), fields);
+        }
+      };
+      /** Columns whose AI call already failed as a group — their cells must not
+       * be reported a second time as "no translation". */
+      const failedColumnIds = new Set<string>();
+      const failGroup = (cells: TranslateJob["cells"], message: string) => {
+        for (const cell of cells) {
+          failedColumnIds.add(cell.column.id);
+          failures.push({ rowId: job.rowId, columnId: cell.column.id, message });
+          processed += cell.locales.length;
+        }
+      };
+
+      if (short.length > 0) {
         try {
-          let value: string | undefined;
-          if (isShort) {
-            const res = await aiService.translateShortFieldsBatch(
-              { [fieldName]: job.source },
+          collect(
+            await aiService.translateShortFieldsBatch(
+              payloadOf(short),
               primaryLocale,
-              [targetLocale],
+              unionLocales(short),
               contentType,
-            );
-            value = res[targetLocale]?.[fieldName];
-          } else {
-            // Long fields one row at a time (Plan §6.5) — HTML preserved.
-            const res = await aiService.translateFieldsToLocalesChunked(
-              { [fieldName]: job.source },
-              primaryLocale,
-              [targetLocale],
-              { preserveHtml: true, contextLabel: contentType },
-            );
-            value = res[targetLocale]?.[fieldName];
-          }
-          if (!value || !value.trim()) {
-            // Never substitute the source text — an untranslated value
-            // written as a "translation" is silent corruption (N-H3).
-            failures.push({ rowId: job.rowId, columnId: column.id, message: "AI returned no translation." });
-          } else {
-            pushSuggestion(job.rowId, value);
-          }
+            ),
+          );
         } catch (err: unknown) {
           // An invalid AI key fails every remaining row identically — abort.
           if (isAuthError(err)) throw err;
-          failures.push({ rowId: job.rowId, columnId: column.id, message: errorMessage(err) });
+          failGroup(short, errorMessage(err));
         }
-        await heartbeat(i + 1, ((i + 1) / jobs.length) * translateSpan);
       }
+
+      if (long.length > 0) {
+        try {
+          collect(
+            await aiService.translateFieldsToLocalesChunked(
+              payloadOf(long),
+              primaryLocale,
+              unionLocales(long),
+              { preserveHtml: true, contextLabel: contentType },
+            ),
+          );
+        } catch (err: unknown) {
+          if (isAuthError(err)) throw err;
+          failGroup(long, errorMessage(err));
+        }
+      }
+
+      for (const cell of grouped) {
+        try {
+          const values = await translateProductTypeValue(
+            cell.source,
+            cell.locales,
+            { grouped: groupedService, shop, aiService, primaryLocale, contentType },
+            productTypeCache,
+          );
+          collect(
+            Object.fromEntries(
+              Object.entries(values).map(([locale, value]) => [locale, { productType: value }]),
+            ),
+          );
+        } catch (err: unknown) {
+          if (isAuthError(err)) throw err;
+          failGroup([cell], errorMessage(err));
+        }
+      }
+
+      for (const cell of job.cells) {
+        if (failedColumnIds.has(cell.column.id)) continue;
+        for (const locale of cell.locales) {
+          processed++;
+          // Never substitute the source text — an untranslated value written
+          // as a "translation" is silent corruption.
+          let value = (results[locale]?.[cell.fieldKey] ?? "").trim();
+          if (!value) {
+            failures.push({
+              rowId: job.rowId,
+              columnId: cell.column.id,
+              message: "AI returned no translation.",
+            });
+            continue;
+          }
+          if (cell.fieldKey === "handle") {
+            // AI output → a slug Shopify accepts; identical-to-primary handles
+            // are skipped on purpose (a translated URL that equals the primary
+            // one is a routing conflict, not a translation).
+            const used = handlesByLocale.get(locale) ?? new Set<string>();
+            handlesByLocale.set(locale, used);
+            value = dedupeHandle(normalizeTranslatedHandle(value), used);
+            if (!value || value === job.primaryHandle.trim()) {
+              skippedHandles++;
+              continue;
+            }
+          }
+          diff.push({
+            rowId: job.rowId,
+            rowType,
+            locale,
+            // GLOBAL only — the page has no market dimension.
+            marketId: "",
+            columnId: cell.column.id,
+            value,
+          });
+        }
+      }
+      await heartbeat(processed);
     }
 
-    let saved: number | undefined;
-    if (mode === "save" && suggestions.length > 0) {
+    let saved = 0;
+    if (diff.length > 0) {
       // The SAME verified write path as manual saving: digest rule (§6.3),
-      // registerAndVerify echo check, DB mirror, markTranslationSaved.
-      // No foreignLocales needed: every suggestion is a FOREIGN write (locale =
-      // targetLocale) → persistTranslationRow, never a primary path, so the
-      // Phase-4b invalidation never triggers here.
-      const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType }, suggestions, async (done, totalRows) => {
-        await heartbeat(jobs.length, 80 + (done / totalRows) * 20);
+      // registerAndVerify echo check, DB mirror, markTranslationSaved. Every
+      // entry is a FOREIGN write, so the primary-save invalidation never fires.
+      const applyResult = await applyBulkDiff({ db, shop, admin, columnsByType }, diff, async (done, totalRows) => {
+        await db.task
+          .update({
+            where: { id: taskId },
+            data: { progress: Math.min(100, Math.round(TRANSLATE_SPAN + (done / totalRows) * 20)) },
+          })
+          .catch(() => undefined);
       });
       saved = applyResult.saved;
       failures.push(
@@ -352,20 +490,14 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       );
     }
 
-    const produced = suggestions.length;
-    const result: TranslateResultJson = {
-      mode,
-      suggestions: mode === "preview" ? suggestions : [],
-      failures,
-      ...(saved !== undefined ? { saved } : {}),
-    };
+    const result: TranslateResultJson = { saved, failures, skippedHandles };
     const failedRows = new Set(failures.map((f) => f.rowId)).size;
     await db.task.update({
       where: { id: taskId },
       data: {
-        status: produced === 0 && failedRows > 0 ? "failed" : "completed",
+        status: saved === 0 && failedRows > 0 ? "failed" : "completed",
         progress: 100,
-        processed: jobs.length,
+        processed: units,
         completedAt: new Date(),
         result: JSON.stringify(result),
         error: failedRows > 0 ? `${failedRows} row(s) failed`.substring(0, 1000) : null,
@@ -383,98 +515,95 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
   }
 }
 
+/** { fieldKey → source } for one AI call. */
+function payloadOf(cells: TranslateJob["cells"]): Record<string, string> {
+  const payload: Record<string, string> = {};
+  for (const cell of cells) if (!(cell.fieldKey in payload)) payload[cell.fieldKey] = cell.source;
+  return payload;
+}
+
+/** Union of the locales the cells of one AI call need. */
+function unionLocales(cells: TranslateJob["cells"]): string[] {
+  const locales = new Set<string>();
+  for (const cell of cells) for (const locale of cell.locales) locales.add(locale);
+  return [...locales];
+}
+
 /**
- * productType path: one translation per DISTINCT source value, served from
- * the shop-wide GroupedFieldTranslation cache first; fresh translations are
- * persisted back so every product sharing a source value gets the SAME
- * category label.
+ * productType path: one translation per DISTINCT source value, served from the
+ * shop-wide GroupedFieldTranslation cache first; fresh translations are
+ * persisted back so every product sharing a source value gets the SAME category
+ * label. The per-run Map additionally avoids re-querying the cache per row.
  */
-async function translateProductTypeGrouped(
-  args: RunArgs,
-  aiService: AIService,
-  pushSuggestion: (rowId: string, value: string) => void,
-  failures: TranslateResultJson["failures"],
-  heartbeat: (processed: number, progress: number) => Promise<void>,
-  translateSpan: number,
-): Promise<void> {
-  const { db, shop, jobs, column, targetLocale, primaryLocale, rowType } = args;
-  const contentType = BULK_ROW_TYPE_TO_CONTENT_TYPE[rowType];
-  const groupedService = new GroupedFieldTranslationService(db);
+async function translateProductTypeValue(
+  source: string,
+  locales: string[],
+  deps: {
+    grouped: GroupedFieldTranslationService;
+    shop: string;
+    aiService: AIService;
+    primaryLocale: string;
+    contentType: string;
+  },
+  cache: Map<string, Record<string, string>>,
+): Promise<Record<string, string>> {
+  const key = source.trim();
+  const known = cache.get(key) ?? {};
+  const wanted = locales.filter((l) => !known[l]);
+  if (wanted.length === 0) return pick(known, locales);
 
-  const rowsBySource = new Map<string, string[]>();
-  for (const job of jobs) {
-    const source = job.source.trim();
-    const list = rowsBySource.get(source) ?? [];
-    list.push(job.rowId);
-    rowsBySource.set(source, list);
+  const lookup = await deps.grouped.lookup({
+    shop: deps.shop,
+    fieldKey: "productType",
+    sourceLocale: deps.primaryLocale,
+    sourceValue: key,
+    targetLocales: wanted,
+  });
+  for (const [locale, value] of Object.entries(lookup.hits)) {
+    if (value && value.trim()) known[locale] = value;
   }
 
-  let processedRows = 0;
-  let handledSources = 0;
-  for (const [source, rowIds] of rowsBySource) {
-    let value: string | null = null;
-    // Failure bookkeeping (Finding 5): the catch below records its own
-    // failures; without the flag, a null/empty AI result WITHOUT an exception
-    // fell through both branches and the rows silently vanished from the run
-    // (neither suggestion nor failure).
-    let failed = false;
-    try {
-      const lookup = await groupedService.lookup({
-        shop,
-        fieldKey: "productType",
-        sourceLocale: primaryLocale,
-        sourceValue: source,
-        targetLocales: [targetLocale],
-      });
-      value = lookup.hits[targetLocale] ?? null;
-      if (!value) {
-        const res = await aiService.translateShortFieldsBatch(
-          { productType: source },
-          primaryLocale,
-          [targetLocale],
-          contentType,
-        );
-        value = res[targetLocale]?.productType ?? null;
-        if (value && value.trim()) {
-          await groupedService
-            .upsertMany({
-              shop,
-              fieldKey: "productType",
-              sourceLocale: primaryLocale,
-              sourceValue: source,
-              entries: { [targetLocale]: value },
-              source: "ai",
-            })
-            .catch((err: unknown) => {
-              logger.error("[API-AI] Bulk-editor translate: grouped-field persist failed", {
-                context: "AI",
-                error: errorMessage(err),
-              });
-            });
-        }
-      }
-    } catch (err: unknown) {
-      if (isAuthError(err)) throw err;
-      const message = errorMessage(err);
-      for (const rowId of rowIds) failures.push({ rowId, columnId: column.id, message });
-      value = null;
-      failed = true;
-    }
-
-    if (!failed) {
+  const stillMissing = wanted.filter((l) => !known[l]);
+  if (stillMissing.length > 0) {
+    const res = await deps.aiService.translateShortFieldsBatch(
+      { productType: key },
+      deps.primaryLocale,
+      stillMissing,
+      deps.contentType,
+    );
+    const fresh: Record<string, string> = {};
+    for (const locale of stillMissing) {
+      const value = res[locale]?.productType;
       if (value && value.trim()) {
-        for (const rowId of rowIds) pushSuggestion(rowId, value);
-      } else {
-        // null/undefined/empty AI result — every affected row fails visibly
-        // (Finding 5); never substitute the source text (N-H3).
-        for (const rowId of rowIds) {
-          failures.push({ rowId, columnId: column.id, message: "AI returned no translation." });
-        }
+        known[locale] = value;
+        fresh[locale] = value;
       }
     }
-
-    processedRows += rowIds.length;
-    handledSources++;
-    await heartbeat(processedRows, (handledSources / rowsBySource.size) * translateSpan);
+    if (Object.keys(fresh).length > 0) {
+      await deps.grouped
+        .upsertMany({
+          shop: deps.shop,
+          fieldKey: "productType",
+          sourceLocale: deps.primaryLocale,
+          sourceValue: key,
+          entries: fresh,
+          source: "ai",
+        })
+        .catch((err: unknown) => {
+          logger.error("[API-AI] Bulk-editor translate: grouped-field persist failed", {
+            context: "AI",
+            error: errorMessage(err),
+          });
+        });
+    }
   }
+
+  cache.set(key, known);
+  return pick(known, locales);
+}
+
+function pick(values: Record<string, string>, locales: string[]): Record<string, string> {
+  const picked: Record<string, string> = {};
+  for (const locale of locales) if (values[locale]) picked[locale] = values[locale];
+  return picked;
 }
