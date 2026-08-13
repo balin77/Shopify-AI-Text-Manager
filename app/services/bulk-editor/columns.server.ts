@@ -43,7 +43,14 @@ import {
  * the seoBulkMeta handler apply; the CSV export/import routes use this. */
 export function allowedRowTypesForPlan(plan: Plan): BulkRowType[] {
   const contentTypes = PLAN_CONFIG[plan].contentTypes as string[];
-  return BULK_ROW_TYPES.filter((t) => contentTypes.includes(BULK_ROW_TYPE_TO_CONTENT_TYPE[t]));
+  const imagesCached = PLAN_CONFIG[plan].cacheEnabled.productImages;
+  return BULK_ROW_TYPES.filter((t) => {
+    if (!contentTypes.includes(BULK_ROW_TYPE_TO_CONTENT_TYPE[t])) return false;
+    // Image rows read the ProductImage cache — without it the type would be an
+    // empty grid, not a gated one.
+    if (t === "image" && !imagesCached) return false;
+    return true;
+  });
 }
 
 /** Which dynamic product columns the plan may offer (Plan §10.7): the cache

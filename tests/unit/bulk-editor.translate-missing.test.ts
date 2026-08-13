@@ -20,8 +20,10 @@ import {
 import { translateCandidateColumns } from "~/services/bulk-editor/missing-translations.server";
 import { buildJobs, mergeExistingListValues } from "~/routes/api-ai-handlers/bulk-editor-translate.handler";
 import {
+  isSubResourceColumn,
   subResourceCacheFromRow,
   subResourceTargetsForColumn,
+  translationKeyForColumn,
 } from "~/services/bulk-editor/translations.server";
 import {
   buildColumnsForType,
@@ -478,5 +480,37 @@ describe("translate-missing: option value list merge", () => {
   it("uses the AI output when nothing is translated yet", () => {
     expect(mergeExistingListValues(["Klein", "Mittel"], undefined)).toBe("Klein | Mittel");
     expect(mergeExistingListValues(["Klein", "Mittel"], ["", ""])).toBe("Klein | Mittel");
+  });
+});
+
+describe("image rows", () => {
+  const imageColumns = buildColumnsForType("image", [], ALL_CAPS);
+
+  it("offers the alt text as an ordinary translatable field column", () => {
+    const candidates = translateCandidateColumns(imageColumns, "image", "");
+    expect(candidates.map((c) => c.id)).toEqual(["field.altText"]);
+  });
+
+  it("translates the alt on the row's own MediaImage resource, key 'alt'", () => {
+    const alt = imageColumns.find((c) => c.id === "field.altText");
+    expect(alt).toBeDefined();
+    // The row id IS the MediaImage gid, so this is the ordinary row path —
+    // no sub-resource indirection.
+    expect(isSubResourceColumn(alt!)).toBe(false);
+    expect(translationKeyForColumn(alt!, "image")).toBe("alt");
+  });
+
+  it("keeps the context columns read-only", () => {
+    for (const id of ["image", "productTitle", "position"]) {
+      const column = imageColumns.find((c) => c.id === id);
+      expect(column, id).toBeDefined();
+      expect(column!.editable, id).toBe(false);
+      expect(column!.translatable, id).toBe(false);
+    }
+  });
+
+  it("never maps another field name onto the alt key", () => {
+    const title = buildColumnsForType("product", [], ALL_CAPS).find((c) => c.id === "field.title");
+    expect(translationKeyForColumn(title!, "image")).toBeNull();
   });
 });

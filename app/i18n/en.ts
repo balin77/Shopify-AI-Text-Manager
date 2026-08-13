@@ -2569,6 +2569,7 @@ export const en: Translation = {
       blog: "Blogs",
       policy: "Policies",
       metaobject: "Metaobjects",
+      image: "Product images",
     },
     columns: {
       image: "Image",
@@ -2602,6 +2603,7 @@ export const en: Translation = {
       policyTitle: "Policy",
       moDisplayName: "Entry",
       moHandle: "Handle",
+      altText: "Alt text",
     },
     statusOptions: {
       active: "Active",
@@ -2649,6 +2651,7 @@ export const en: Translation = {
       missingSku: "Without SKU",
       missingPrice: "Without price",
       compareAtNotAbovePrice: "Compare-at price ≤ price",
+      missingAltText: "Alt text missing",
     },
     filterApproximateBanner: "Very large catalog: the \"Missing translation\" filter is approximate and may show some already-translated entries.",
     moreVariantsBanner: "Some products have more than 100 variants — the remainder is not shown here and can be edited in the Shopify admin.",

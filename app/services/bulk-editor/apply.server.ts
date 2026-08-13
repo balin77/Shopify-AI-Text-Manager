@@ -62,6 +62,7 @@ import {
   METAFIELD_TYPE_LIST_SINGLE_LINE,
   METAFIELDS_SET_CHUNK,
   LIST_DISPLAY_SEPARATOR,
+  IMAGE_ROW_ALT_COLUMN_ID,
   IMG_ALT_COLUMN_ID,
   VAR_SKU_COLUMN_ID,
   VAR_PRICE_COLUMN_ID,
@@ -263,6 +264,14 @@ async function invalidateStaleForeignTranslations(
 
   const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
   const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+
+  // Image rows keep their translations in ProductImageAltTranslation — one key
+  // ("alt") on one resource, so the generic key/locale bookkeeping below would
+  // be pure overhead.
+  if (rowType === "image" && !resourceTypeOverride) {
+    await invalidateStaleImageAltTranslations(deps, resourceId);
+    return;
+  }
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -321,6 +330,43 @@ async function invalidateStaleForeignTranslations(
     logger.warn("[BULK] Stale foreign-translation invalidation failed — stale rows kept", {
       context: "Bulk",
       resourceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * The image counterpart of invalidateStaleForeignTranslations: a changed
+ * PRIMARY alt makes every foreign alt stale. Same rules — echo-verified removal
+ * on Shopify first, local rows deleted ONLY for confirmed locales, best-effort
+ * (the primary write already succeeded, so a failure here logs and keeps the
+ * stale rows rather than failing the cell).
+ */
+async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
+  const { db, gateway, foreignLocales } = deps;
+  if (foreignLocales.length === 0) return;
+  try {
+    const cacheId = await imageCacheIdFor(deps, mediaId);
+    if (!cacheId) return;
+    const existing = await db.productImageAltTranslation.findMany({
+      where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
+      select: { locale: true },
+    });
+    if (existing.length === 0) return;
+
+    const locales = [...new Set(existing.map((e) => e.locale))];
+    const { confirmedPairs } = await removeAndVerifyAcrossLocales(gateway, mediaId, ["alt"], locales, "");
+    const confirmedLocales = locales.filter((locale) =>
+      confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}alt`),
+    );
+    if (confirmedLocales.length === 0) return;
+    await db.productImageAltTranslation.deleteMany({
+      where: { imageId: cacheId, marketId: "", locale: { in: confirmedLocales } },
+    });
+  } catch (err: unknown) {
+    logger.warn("[BULK] Stale image-alt invalidation failed — stale rows kept", {
+      context: "Bulk",
+      resourceId: mediaId,
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -836,6 +882,73 @@ async function persistProductOptions(
 
 // ─── Product row: stage 4 — main-image alt-text via productUpdateMedia ─────
 
+/**
+ * ONE productUpdateMedia call for ONE medium, with echo verification.
+ * Returns an error message, or null on success.
+ *
+ * DELIBERATELY productUpdateMedia (Plan §14 no. 3): the mutation is deprecated
+ * in favour of fileUpdate, but fileUpdate requires the write_files scope →
+ * re-consent of every installed merchant (§11 no-go). This is also the existing
+ * alt-text write path of the app (app/actions/product/update.actions.ts).
+ * Revisit only when a scope event happens anyway.
+ *
+ * Shared by the product row's `img.alt` column and the IMAGE row type, so both
+ * write through the same mutation and the same echo rule.
+ */
+async function writeMediaAltText(
+  deps: PersistDeps,
+  productId: string,
+  mediaId: string,
+  value: string,
+): Promise<string | null> {
+  try {
+    const response = await deps.gateway.graphql(
+      `#graphql
+        mutation bulkEditorUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
+          productUpdateMedia(media: $media, productId: $productId) {
+            media {
+              alt
+              mediaErrors { code details message }
+            }
+            mediaUserErrors { field message }
+          }
+        }`,
+      {
+        variables: {
+          productId,
+          // Empty string clears the alt-text on Shopify (null means "don't
+          // change") — same contract as the single editor's write path.
+          media: [{ id: mediaId, alt: value }],
+        },
+      },
+    );
+    const data = (await response.json()) as {
+      data?: {
+        productUpdateMedia?: {
+          media?: { alt?: string | null; mediaErrors?: { message: string }[] }[] | null;
+          mediaUserErrors?: { field?: string[] | string; message: string }[];
+        };
+      };
+    };
+    const payload = data.data?.productUpdateMedia;
+    const mediaUserErrors = payload?.mediaUserErrors ?? [];
+    if (mediaUserErrors.length > 0) return mediaUserErrors[0].message;
+    const mediaErrors = payload?.media?.[0]?.mediaErrors ?? [];
+    if (mediaErrors.length > 0) return mediaErrors[0].message;
+    // Echo check (not just "media non-empty"): productUpdateMedia can accept
+    // the call with empty mediaErrors yet leave the alt untouched — the silent
+    // no-op class this module guards against everywhere else. Shopify returns
+    // null for a cleared alt, which our empty-string input normalizes to.
+    const echoedAlt = payload?.media?.[0]?.alt ?? "";
+    if (!payload?.media || payload.media.length === 0 || echoedAlt !== value) {
+      return "Shopify did not confirm the alt-text write.";
+    }
+    return null;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 async function persistProductImageAlt(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -862,63 +975,13 @@ async function persistProductImageAlt(
     return failures;
   }
 
-  try {
-    // DELIBERATELY productUpdateMedia (Plan §14 no. 3): the mutation is
-    // deprecated in favour of fileUpdate, but fileUpdate requires the
-    // write_files scope → re-consent of every installed merchant (§11
-    // no-go). This is also the existing alt-text write path of the app
-    // (app/actions/product/update.actions.ts). Revisit only when a scope
-    // event happens anyway.
-    const response = await gateway.graphql(
-      `#graphql
-        mutation bulkEditorUpdateMedia($media: [UpdateMediaInput!]!, $productId: ID!) {
-          productUpdateMedia(media: $media, productId: $productId) {
-            media {
-              alt
-              mediaErrors { code details message }
-            }
-            mediaUserErrors { field message }
-          }
-        }`,
-      {
-        variables: {
-          productId,
-          // Empty string clears the alt-text on Shopify (null means "don't
-          // change") — same contract as the single editor's write path.
-          media: [{ id: image.mediaId, alt: imageAlt.value }],
-        },
-      },
-    );
-    const data = (await response.json()) as {
-      data?: {
-        productUpdateMedia?: {
-          media?: { alt?: string | null; mediaErrors?: { message: string }[] }[] | null;
-          mediaUserErrors?: { field?: string[] | string; message: string }[];
-        };
-      };
-    };
-    const payload = data.data?.productUpdateMedia;
-    const mediaUserErrors = payload?.mediaUserErrors ?? [];
-    const mediaErrors = payload?.media?.[0]?.mediaErrors ?? [];
-    if (mediaUserErrors.length > 0) {
-      fail(mediaUserErrors[0].message);
-      return failures;
-    }
-    if (mediaErrors.length > 0) {
-      fail(mediaErrors[0].message);
-      return failures;
-    }
-    // Echo check (not just "media non-empty"): productUpdateMedia can accept
-    // the call with empty mediaErrors yet leave the alt untouched — the silent
-    // no-op class this module guards against everywhere else. Compare the
-    // echoed alt against what we sent (Shopify returns null for a cleared alt,
-    // which our empty-string input normalizes to). Only mirror on a match.
-    const echoedAlt = payload?.media?.[0]?.alt ?? "";
-    if (!payload?.media || payload.media.length === 0 || echoedAlt !== imageAlt.value) {
-      fail("Shopify did not confirm the alt-text write.");
-      return failures;
-    }
+  const error = await writeMediaAltText(deps, productId, image.mediaId, imageAlt.value);
+  if (error) {
+    fail(error);
+    return failures;
+  }
 
+  try {
     // DB mirror WITH altTextModifiedAt (Plan §4.3/§10.3): the product sync
     // preserves alt-texts younger than PRESERVE_WINDOW_MS (5 min,
     // product-sync.service.ts) — without the stamp, the products/update
@@ -951,6 +1014,70 @@ async function persistProductRow(group: BulkDiffRowGroup, deps: PersistDeps): Pr
   failures.push(...(await persistProductMetafields(group, cells, deps)));
   failures.push(...(await persistProductOptions(group, cells, deps)));
   failures.push(...(await persistProductImageAlt(group, cells, deps)));
+  return failures;
+}
+
+/**
+ * Image ROWS, primary locale: the row IS a product medium, so its only editable
+ * cell is the alt-text and the write is ONE productUpdateMedia.
+ *
+ * The owning product is resolved SERVER-side from the cache (never taken from
+ * the client) — which doubles as the tenancy check: a MediaImage GID that does
+ * not belong to this shop simply does not resolve.
+ */
+async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<BulkFailure[]> {
+  const { db, shop } = deps;
+  const columns = deps.columnsByType.image;
+  const failures: BulkFailure[] = [];
+
+  const cells = Object.entries(group.cells).filter(([columnId]) => {
+    const column = columns.find((c) => c.id === columnId);
+    if (column?.editable) return true;
+    failures.push(failureOf(group, `Column "${columnId}" is not editable.`, columnId));
+    return false;
+  });
+  if (cells.length === 0) return failures;
+
+  const image = await db.productImage.findFirst({
+    where: { mediaId: group.rowId, product: { shop } },
+    select: { id: true, productId: true, position: true },
+  });
+  if (!image) {
+    for (const [columnId] of cells) {
+      failures.push(
+        failureOf(group, "This image is not in the local cache — resync the product first.", columnId),
+      );
+    }
+    return failures;
+  }
+
+  for (const [columnId, value] of cells) {
+    if (columnId !== IMAGE_ROW_ALT_COLUMN_ID) {
+      failures.push(failureOf(group, `Column "${columnId}" cannot be written on an image row.`, columnId));
+      continue;
+    }
+    const error = await writeMediaAltText(deps, image.productId, group.rowId, value);
+    if (error) {
+      failures.push(failureOf(group, error, columnId));
+      continue;
+    }
+    // DB mirror WITH altTextModifiedAt (Plan §4.3/§10.3): the product sync
+    // preserves alt-texts younger than PRESERVE_WINDOW_MS — without the stamp
+    // the products/update webhook triggered by OUR OWN write overwrites it.
+    await db.productImage.update({
+      where: { id: image.id },
+      data: { altText: value, altTextModifiedAt: new Date() },
+    });
+    // Position 0 is the featured image; the product list and the grid
+    // thumbnail read Product.featuredImageAlt — keep it in step.
+    if ((image.position ?? 0) === 0) {
+      await db.product
+        .update({ where: { shop_id: { shop, id: image.productId } }, data: { featuredImageAlt: value } })
+        .catch(() => undefined);
+    }
+    // §6.6: the alt's foreign translations are now stale.
+    await invalidateStaleForeignTranslations(deps, "image", group.rowId, ["alt"]);
+  }
   return failures;
 }
 
@@ -1257,6 +1384,16 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
 
 // ─── Foreign-locale rows: translationsRegister/-Remove with verification ───
 
+/** ProductImage cache-row id for a MediaImage GID, shop-scoped (which doubles
+ * as the tenancy check). Null when the image is not cached. */
+async function imageCacheIdFor(deps: PersistDeps, mediaId: string): Promise<string | null> {
+  const row = await deps.db.productImage.findFirst({
+    where: { mediaId, product: { shop: deps.shop } },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
 /** Primary-locale handle of a row — for the duplicate-slug guard below. */
 async function loadPrimaryHandle(
   db: PrismaClient,
@@ -1416,7 +1553,24 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
-        if (group.rowType === "metaobject") {
+        if (group.rowType === "image") {
+          // Image alt translations live in ProductImageAltTranslation (keyed by
+          // the ProductImage CACHE row, unique on imageId+locale+marketId) —
+          // the same store the single editor and the SEO bulk fix write, so
+          // all three read each other's rows.
+          const cacheId = await imageCacheIdFor(deps, resourceId);
+          if (!cacheId) {
+            failures.push(
+              failureOf(group, "This image is not in the local cache — resync the product first.", write.columnId),
+            );
+            continue;
+          }
+          await db.productImageAltTranslation.upsert({
+            where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
+            update: { altText: write.value },
+            create: { imageId: cacheId, locale, marketId, altText: write.value },
+          });
+        } else if (group.rowType === "metaobject") {
           // Metaobject translations mirror into their OWN table (Phase 5,
           // unique shop_metaobjectId_key_locale_marketId) — the shape every
           // existing writer and the sync use. `type` comes from the cache
@@ -1504,7 +1658,16 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
-        if (group.rowType === "metaobject") {
+        if (group.rowType === "image") {
+          // Cleared alt translation — the row goes only because Shopify already
+          // confirmed the removal above (CLAUDE.md).
+          const cacheId = await imageCacheIdFor(deps, resourceId);
+          if (cacheId) {
+            await db.productImageAltTranslation.deleteMany({
+              where: { imageId: cacheId, locale, marketId },
+            });
+          }
+        } else if (group.rowType === "metaobject") {
           await db.metaobjectTranslation.deleteMany({
             where: { shop, metaobjectId: resourceId, key: clear.key, locale, marketId },
           });
@@ -1993,6 +2156,9 @@ async function persistRow(group: BulkDiffRowGroup, deps: PersistDeps): Promise<B
   }
   if (group.rowType === "metaobject") {
     return persistMetaobjectRow(group, deps);
+  }
+  if (group.rowType === "image") {
+    return persistImageRow(group, deps);
   }
 
   try {

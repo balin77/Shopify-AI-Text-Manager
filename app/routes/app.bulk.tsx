@@ -395,6 +395,8 @@ const TYPE_EDITOR_PATH: Record<BulkRowType, string> = {
   blog: "/app/blog",
   policy: "/app/policies",
   metaobject: "/app/metaobjects",
+  // Image rows open their PRODUCT (row.productId) — media have no own page.
+  image: "/app/products",
 };
 
 interface BulkFetcherResult {
@@ -426,6 +428,7 @@ const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   // Metaobject defaults are computed per selected definition type (context
   // columns + the type's field columns) — see defaultColumnsFor() below.
   metaobject: ["moDisplayName", "moHandle"],
+  image: ["image", "productTitle", "position", "field.altText"],
 };
 
 /** Maps a legacy stored column name ("title", "image", "blogTitle") to the
@@ -1717,6 +1720,7 @@ export default function BulkEditor() {
                     filterMissingSku: b.filters.missingSku,
                     filterMissingPrice: b.filters.missingPrice,
                     filterCompareAtNotAbovePrice: b.filters.compareAtNotAbovePrice,
+                    filterMissingAltText: b.filters.missingAltText,
                     pageSizeLabel: b.pageSizeLabel,
                     onlyChangedLabel: b.onlyChanged,
                   }}

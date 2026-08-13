@@ -29,6 +29,7 @@ import {
   type ProductColumnCaps,
   getColumnForType,
   buildColumnsForType,
+  IMAGE_ROW_ALT_COLUMN_ID,
   formatListMetafieldValue,
   LIST_DISPLAY_SEPARATOR,
   METAFIELD_TYPE_LIST_SINGLE_LINE,
@@ -109,6 +110,7 @@ const RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   blog: "Blog",
   policy: "ShopPolicy",
   metaobject: "Metaobject", // unused — metaobjects read MetaobjectTranslation instead
+  image: "MediaImage", // unused — image rows read ProductImageAltTranslation instead
 };
 
 // ─── Shop currency (Phase 3 — Plan §5.2) ───────────────────────────────────
@@ -324,6 +326,12 @@ async function attachForeignValues(
   // not in ContentTranslation like every other content type.
   if (opts.type === "metaobject") {
     return attachMetaobjectForeignValues(db, shop, opts, rows);
+  }
+  // Image rows keep their alt translations in ProductImageAltTranslation —
+  // keyed by the ProductImage CACHE row, not by the MediaImage GID that is the
+  // row id.
+  if (opts.type === "image") {
+    return attachImageAltForeignValues(db, shop, opts, rows);
   }
   const keyByColumnId = translationKeysByColumnId(opts.type);
   if (keyByColumnId.size === 0) return;
@@ -547,6 +555,9 @@ async function loadBulkRowsInner(
   }
   if (type === "metaobject") {
     return loadMetaobjectRows(db, shop, opts);
+  }
+  if (type === "image") {
+    return loadImageRows(db, shop, opts);
   }
   const { and, translationFilterApproximate } = await buildWhere(db, shop, opts);
   const orderBy = buildOrderBy(type, opts.sort);
@@ -855,6 +866,101 @@ async function loadVariantRows(
   };
 }
 
+// ─── Image rows: one row = one product MEDIUM ──────────────────────────────
+
+/**
+ * Product media as their own rows — the same sub-entity pattern as variants.
+ *
+ * The row id is the Shopify **MediaImage GID** (`ProductImage.mediaId`), which
+ * is exactly the resource its alt-text translation rides on ("alt"); the row
+ * path therefore needs no special casing beyond the DB mirror
+ * (ProductImageAltTranslation instead of ContentTranslation).
+ *
+ * Cached rows WITHOUT a mediaId are legacy: they can neither be written
+ * (productUpdateMedia needs the GID) nor translated, and they have no valid row
+ * id — so they are excluded here. A product resync fills the field in.
+ */
+async function loadImageRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<LoadBulkRowsResult> {
+  const { skip, take } = opts;
+  const and: Prisma.ProductImageWhereInput[] = [{ mediaId: { not: null } }];
+
+  if (opts.ids) and.push({ mediaId: { in: opts.ids } });
+
+  const search = opts.search.trim();
+  if (search) {
+    and.push({
+      OR: [
+        { altText: { contains: search, mode: "insensitive" } },
+        { product: { title: { contains: search, mode: "insensitive" } } },
+      ],
+    });
+  }
+  if (opts.filters.includes("missingAltText")) {
+    and.push({ OR: [{ altText: null }, { altText: "" }] });
+  }
+
+  const where: Prisma.ProductImageWhereInput = { product: { shop }, AND: and };
+
+  // Default order mirrors the Shopify admin: product, then media position.
+  let orderBy: Prisma.ProductImageOrderByWithRelationInput[] = [
+    { product: { title: "asc" } },
+    { position: "asc" },
+  ];
+  if (opts.sort) {
+    const column = getColumnForType("image", opts.sort.columnId);
+    const key = column?.sortKey;
+    if (key === "productTitle") {
+      orderBy = [{ product: { title: opts.sort.direction } }, { position: "asc" }];
+    } else if (key === "altText" || key === "position") {
+      orderBy = [{ [key]: opts.sort.direction }, { position: "asc" }];
+    }
+  }
+
+  const [items, total] = await Promise.all([
+    db.productImage.findMany({
+      where,
+      select: {
+        id: true,
+        mediaId: true,
+        url: true,
+        altText: true,
+        position: true,
+        product: { select: { id: true, title: true } },
+      },
+      orderBy,
+      skip,
+      take,
+    }),
+    db.productImage.count({ where }),
+  ]);
+
+  return {
+    rows: items.map((image) => ({
+      // The MediaImage GID — the translation resource AND the diff row id.
+      id: image.mediaId as string,
+      type: "image" as const,
+      title: image.product.title,
+      seoTitle: "",
+      seoDescription: "",
+      handle: "",
+      altText: image.altText ?? "",
+      productId: image.product.id,
+      productTitle: image.product.title,
+      imageUrl: image.url,
+      position: image.position ?? undefined,
+      // The cache row id — apply.server needs it to mirror the translation
+      // into ProductImageAltTranslation (which is keyed by ProductImage.id).
+      imageCacheId: image.id,
+    })),
+    total,
+    translationFilterApproximate: false,
+  };
+}
+
 // ─── Blog container rows (Phase 5 — Plan §7) ───────────────────────────────
 
 /** Un-paginated ceiling of the live blogs query — matches app.blog.tsx. A
@@ -1096,6 +1202,49 @@ async function loadMetaobjectRows(
     total,
     translationFilterApproximate,
   };
+}
+
+/**
+ * ProductImageAltTranslation → BulkRow.foreignValues for image rows (same key
+ * format `${locale}|${marketId}|${columnId}`, same global-layer inclusion under
+ * a market override as the other types).
+ */
+async function attachImageAltForeignValues(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  rows: BulkRow[],
+): Promise<void> {
+  const cacheIds = rows.map((r) => r.imageCacheId).filter((id): id is string => !!id);
+  if (cacheIds.length === 0) return;
+  const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
+  const translations = await db.productImageAltTranslation.findMany({
+    where: {
+      // Tenancy rides on the relation — ProductImageAltTranslation has no shop
+      // column of its own.
+      image: { id: { in: cacheIds }, product: { shop } },
+      locale: opts.locale,
+      marketId: { in: marketIds },
+    },
+    select: { imageId: true, altText: true, marketId: true },
+  });
+  if (translations.length === 0) return;
+
+  const byCacheId = new Map<string, { marketId: string; altText: string }[]>();
+  for (const t of translations) {
+    const list = byCacheId.get(t.imageId) ?? [];
+    list.push({ marketId: t.marketId, altText: t.altText });
+    byCacheId.set(t.imageId, list);
+  }
+  for (const row of rows) {
+    const entries = row.imageCacheId ? byCacheId.get(row.imageCacheId) : undefined;
+    if (!entries) continue;
+    const record: Record<string, string> = {};
+    for (const entry of entries) {
+      record[`${opts.locale}|${entry.marketId}|${IMAGE_ROW_ALT_COLUMN_ID}`] = entry.altText;
+    }
+    row.foreignValues = record;
+  }
 }
 
 /** MetaobjectTranslation → BulkRow.foreignValues, the metaobject counterpart

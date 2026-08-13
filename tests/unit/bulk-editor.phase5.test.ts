@@ -61,6 +61,7 @@ function columnsByType(metaobjectSpecs: MetaobjectColumnSpec[] = FAQ_SPECS): Rec
     blog: BULK_COLUMNS_BY_TYPE.blog,
     policy: BULK_COLUMNS_BY_TYPE.policy,
     metaobject: buildColumnsForType("metaobject", [], fullCaps, metaobjectSpecs),
+    image: BULK_COLUMNS_BY_TYPE.image,
   };
 }
 

@@ -75,6 +75,9 @@ export function translationKeyForColumn(column: ColumnDescriptor, rowType?: Bulk
   if (column.kind === "mofield") return column.moFieldKey ?? null;
   if (column.kind !== "field") return null;
   const field = fieldNameOfColumn(column);
+  // A MediaImage has exactly ONE translatable key ("alt") — verified against
+  // the live API (Settings → Translation Probe → image alt-text section).
+  if (rowType === "image") return field === "altText" ? "alt" : null;
   const keyMap = rowType === "policy" ? fieldTranslationKeyMap("ShopPolicy") : FIELD_TO_TRANSLATION_KEY;
   return keyMap[COLUMN_FIELD_ALIAS[field] ?? field] ?? null;
 }
@@ -119,6 +122,10 @@ export const CONTENT_RESOURCE_TYPE_BY_ROW_TYPE: Record<BulkRowType, string> = {
   blog: "Blog",
   policy: "ShopPolicy",
   metaobject: "Metaobject",
+  // Image rows translate on their OWN MediaImage GID (the row id). Their DB
+  // mirror is ProductImageAltTranslation, not ContentTranslation — the same
+  // split metaobjects already have (persistTranslationRow branches on it).
+  image: "MediaImage",
 };
 
 // ─── Sub-resource translations (metafields, product options) ───────────────

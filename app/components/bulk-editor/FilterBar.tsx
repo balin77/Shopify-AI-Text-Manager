@@ -45,6 +45,7 @@ interface FilterBarProps {
     filterMissingSku: string;
     filterMissingPrice: string;
     filterCompareAtNotAbovePrice: string;
+    filterMissingAltText: string;
     pageSizeLabel: string;
     onlyChangedLabel: string;
   };
@@ -85,6 +86,7 @@ export function FilterBar({
     missingSku: strings.filterMissingSku,
     missingPrice: strings.filterMissingPrice,
     compareAtNotAbovePrice: strings.filterCompareAtNotAbovePrice,
+    missingAltText: strings.filterMissingAltText,
   };
   // ONE id source per set (FILTER_IDS_BY_SET, Finding 13); the translation
   // filter additionally needs a selected foreign locale to mean anything.

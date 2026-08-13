@@ -56,9 +56,10 @@ import {
  * - `metafield` and `option` columns: their translations ride on their OWN
  *   Shopify resource (the Metafield gid, the ProductOption / ProductOptionValue
  *   gids), which applyBulkDiff writes through the verified sub-resource path.
- * - `image` (alt-text) columns are NOT offered: alt-text translations ride on
- *   the MediaImage resource, and even the primary write needs the deprecated
- *   productUpdateMedia path — no verified bulk translation path exists.
+ * - The product row's `img.alt` column (kind "image") is NOT offered: it can
+ *   only ever address the MAIN image. Alt-texts are translated on the IMAGE row
+ *   type instead, where the row id IS the MediaImage GID and the alt column is
+ *   an ordinary translatable field column (key "alt").
  */
 export function translateCandidateColumns(
   columns: ColumnDescriptor[],
@@ -407,6 +408,36 @@ async function loadTranslatedLocales(
   keys: string[],
 ): Promise<Map<string, Map<string, Set<string>>>> {
   const rowIds = rows.map((r) => r.id);
+  // Image rows: alt translations live in ProductImageAltTranslation, keyed by
+  // the ProductImage CACHE row (the row id is the MediaImage GID).
+  if (opts.type === "image") {
+    const cacheIdByRow = new Map<string, string>();
+    for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
+    if (cacheIdByRow.size === 0) return new Map();
+    const records = await db.productImageAltTranslation.findMany({
+      where: {
+        image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
+        marketId: "",
+        locale: { in: opts.foreignLocales },
+      },
+      select: { imageId: true, locale: true, altText: true },
+    });
+    const byRow = new Map<string, Map<string, Set<string>>>();
+    for (const record of records) {
+      if (!record.altText || record.altText.trim() === "") continue;
+      const rowId = cacheIdByRow.get(record.imageId);
+      if (!rowId) continue;
+      let byKey = byRow.get(rowId);
+      if (!byKey) {
+        byKey = new Map();
+        byRow.set(rowId, byKey);
+      }
+      const locales = byKey.get("alt") ?? new Set<string>();
+      locales.add(record.locale);
+      byKey.set("alt", locales);
+    }
+    return byRow;
+  }
   const isMetaobject = opts.type === "metaobject";
   const records = isMetaobject
     ? (

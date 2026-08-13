@@ -2569,6 +2569,7 @@ export const de = {
       blog: "Blogs",
       policy: "Richtlinien",
       metaobject: "Metaobjekte",
+      image: "Produktbilder",
     },
     columns: {
       image: "Bild",
@@ -2602,6 +2603,7 @@ export const de = {
       policyTitle: "Richtlinie",
       moDisplayName: "Eintrag",
       moHandle: "Handle",
+      altText: "Alt-Text",
     },
     statusOptions: {
       active: "Aktiv",
@@ -2649,6 +2651,7 @@ export const de = {
       missingSku: "Ohne SKU",
       missingPrice: "Ohne Preis",
       compareAtNotAbovePrice: "Vergleichspreis ≤ Preis",
+      missingAltText: "Alt-Text fehlt",
     },
     filterApproximateBanner: "Sehr großer Katalog: Der Filter \"Übersetzung fehlt\" ist angenähert und kann einzelne bereits übersetzte Einträge anzeigen.",
     moreVariantsBanner: "Einige Produkte haben mehr als 100 Varianten — die Restmenge wird hier nicht angezeigt und kann im Shopify-Admin bearbeitet werden.",

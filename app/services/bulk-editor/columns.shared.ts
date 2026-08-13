@@ -25,6 +25,8 @@ import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 export type BulkRowType =
   | "product"
   | "variant"
+  /** One row = one product MEDIUM (its Shopify MediaImage GID is the row id). */
+  | "image"
   | "collection"
   | "article"
   | "page"
@@ -41,6 +43,7 @@ export const BULK_ROW_TYPES: BulkRowType[] = [
   "blog",
   "policy",
   "metaobject",
+  "image",
 ];
 
 /**
@@ -62,6 +65,9 @@ export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   blog: "blogs",
   policy: "policies",
   metaobject: "metaobjects",
+  // Image rows are PRODUCT media — they ride the products gate (and, on top of
+  // it, the productImages cache flag; see allowedRowTypesForPlan).
+  image: "products",
 };
 
 // ─── Column descriptors (Plan §1.2) ────────────────────────────────────────
@@ -302,6 +308,22 @@ const COL_BODY = fieldColumn("body", { translatable: true, inputType: "textarea"
 const COL_SUMMARY = fieldColumn("summary", { translatable: true, inputType: "textarea", minWidth: 240 });
 
 /**
+ * Image ROWS (one row = one product medium): the editable, translatable
+ * alt-text. Unlike the product row's `img.alt` column — which can only ever
+ * address the MAIN image — an image row's id IS the MediaImage GID, so the
+ * translation rides on the row's own translatableResource (key "alt") and the
+ * ordinary row path handles it.
+ */
+export const IMAGE_ROW_ALT_COLUMN_ID = "field.altText";
+
+const IMAGE_ROW_ALT_COLUMN = fieldColumn("altText", {
+  translatable: true,
+  inputType: "text",
+  minWidth: 280,
+  sortKey: "altText",
+});
+
+/**
  * Per-type column allowlist, in canonical (picker + default render) order.
  * Used by the UI (column picker + grid) AND by the server (route action and
  * /api/ai handler reject any diff entry whose column isn't editable for its
@@ -355,6 +377,10 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
   // editable columns are the per-definition mofield columns appended by
   // buildColumnsForType from the shop's MetaobjectDefinition specs.
   metaobject: [MO_DISPLAY_NAME_COLUMN, MO_HANDLE_COLUMN],
+  // Image rows (one row = one product medium with a Shopify MediaImage GID).
+  // The product title is the "where does this image belong" column; position
+  // is Shopify's media order.
+  image: [IMAGE_COLUMN, PRODUCT_TITLE_COLUMN, VARIANT_POSITION_COLUMN, IMAGE_ROW_ALT_COLUMN],
 };
 
 export function getColumnForType(type: BulkRowType, columnId: string): ColumnDescriptor | undefined {
@@ -897,6 +923,12 @@ export interface BulkRow {
    * read-only with a "resync" hint (Plan §4.3 — productUpdateMedia needs the
    * MediaImage GID). Absent ⇒ product has no image. */
   mainImage?: { mediaId: string | null; alt: string };
+  /** Image rows: the row's editable, translatable alt-text (primary locale). */
+  altText?: string;
+  /** Image rows: the ProductImage cache-row id. The alt translation mirror
+   * (ProductImageAltTranslation) is keyed by it, while the ROW id is the
+   * Shopify MediaImage GID. */
+  imageCacheId?: string;
   /** Metaobject rows (Phase 5): the row's MetaobjectDefinition.type. A
    * mofield column is only editable when its moType matches this. `title`
    * holds the displayName, `handle` the metaobject handle. */
@@ -1355,7 +1387,8 @@ export function estimateCalls(
     }
     if (group.rowType !== "product") {
       // Single-mutation rows: collection/page/article, policy
-      // (shopPolicyUpdate) and metaobject (metaobjectUpdate) — 1 call each.
+      // (shopPolicyUpdate), metaobject (metaobjectUpdate) and image rows
+      // (productUpdateMedia) — 1 call each.
       calls += 1;
       continue;
     }
@@ -1452,7 +1485,9 @@ export type BulkFilterId =
   // Variant-row filters (Phase 3, Plan §5.3):
   | "missingSku"
   | "missingPrice"
-  | "compareAtNotAbovePrice"; // compareAtPrice ≤ price — the classic data error
+  | "compareAtNotAbovePrice" // compareAtPrice ≤ price — the classic data error
+  // Image-row filter (one row = one product medium):
+  | "missingAltText";
 
 export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSeoTitle",
@@ -1461,6 +1496,7 @@ export const BULK_FILTER_IDS: BulkFilterId[] = [
   "missingSku",
   "missingPrice",
   "compareAtNotAbovePrice",
+  "missingAltText",
 ];
 
 /** Filters that apply to variant rows — the FilterBar shows exactly these for
@@ -1470,10 +1506,11 @@ export const VARIANT_FILTER_IDS: BulkFilterId[] = ["missingSku", "missingPrice",
 /** Which filter vocabulary a row type speaks (Phase 3/5): "content" = SEO +
  * translation filters; "variant" = the price/SKU data filters;
  * "translationOnly" = policy/metaobject rows, which have no SEO columns. */
-export type BulkFilterSet = "content" | "variant" | "translationOnly";
+export type BulkFilterSet = "content" | "variant" | "translationOnly" | "image";
 
 export function filterSetForType(type: BulkRowType): BulkFilterSet {
   if (type === "variant") return "variant";
+  if (type === "image") return "image";
   if (type === "policy" || type === "metaobject") return "translationOnly";
   return "content";
 }
@@ -1488,6 +1525,7 @@ export const FILTER_IDS_BY_SET: Record<BulkFilterSet, BulkFilterId[]> = {
   content: ["missingSeoTitle", "missingSeoDescription", "missingTranslation"],
   variant: VARIANT_FILTER_IDS,
   translationOnly: ["missingTranslation"],
+  image: ["missingAltText", "missingTranslation"],
 };
 
 export type SortDirection = "asc" | "desc";
