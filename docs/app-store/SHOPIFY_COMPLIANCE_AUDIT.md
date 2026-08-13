@@ -329,10 +329,12 @@ Transparenz/Consent** (für eine KI-App der kritischste Bereich) und **Datenschu
 - **Status:** Behoben (P5). `getRestClient()` aus `src/shopify-connector.ts`
   entfernt; repo-weit **keine** REST-Admin-Oberfläche mehr
   (`clients.Rest`/`admin.rest`/`restResources` = 0 Treffer). Alle Shopify-Calls
-  laufen über `/graphql.json`. typecheck grün.
+  laufen über `/graphql.json`. typecheck grün. Nachtrag: `src/shopify-connector.ts`
+  existiert nicht mehr — die Datei war die Vor-Remix-Standalone-Bibliothek und
+  wurde als toter Code gelöscht, der Befund ist damit endgültig erledigt.
 - **Anforderung:** Neue Public Apps ausschließlich GraphQL Admin API (Req 2.2.4, seit
   2025-04-01).
-- **Datei:** [src/shopify-connector.ts:112-114](src/shopify-connector.ts#L112-L114)
+- **Datei:** `src/shopify-connector.ts:112-114` (Datei inzwischen gelöscht)
 - **Ist-Zustand:** `new this.shopify.clients.Rest(...)` — nie aufgerufen (toter Code),
   aber ein Reviewer-Scan auf `clients.Rest`/REST kann es beanstanden. Alle echten
   Shopify-Calls laufen über `/graphql.json` (verifiziert in `admin-client.server.ts`,
