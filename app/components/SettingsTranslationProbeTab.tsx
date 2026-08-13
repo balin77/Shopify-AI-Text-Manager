@@ -81,6 +81,23 @@ interface ProbeReport {
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
   themeFetchWorkaround?: ThemeFetchWorkaround;
+  imageAltDiag?: ImageAltDiag;
+}
+
+/** Mirrors ImageAltDiag in api.translation-probe.tsx — "which images can carry
+ * a translated alt text?", answered with data from this shop. */
+interface ImageAltDiag {
+  enumSupport: Array<{ resourceType: string; supported: boolean; sampleCount: number; error?: string }>;
+  subjects: Array<{
+    kind: string;
+    resourceId: string;
+    label: string;
+    imageProbe?: { hasImage: boolean; imageId: string | null; altText: string | null; idSelectable: boolean };
+    translatableKeys: string[];
+    hasAltKey: boolean;
+    error?: string;
+  }>;
+  verdict: string;
 }
 
 function formatMarkdown(report: ProbeReport): string {
@@ -132,6 +149,43 @@ function formatMarkdown(report: ProbeReport): string {
     for (const r of tsd.resourceThemeIds) {
       const rid = r.resourceId.length > 90 ? `${r.resourceId.slice(0, 87)}…` : r.resourceId;
       lines.push(`| \`${r.resourceType}\` | \`${rid.replace(/\|/g, "\\|")}\` | ${r.extractedThemeId === null ? "(none)" : `\`${r.extractedThemeId}\``} |`);
+    }
+    lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  const iad = report.imageAltDiag;
+  if (iad) {
+    lines.push(`## Image alt-text translatability`);
+    lines.push(``);
+    lines.push(`**Verdict:** ${iad.verdict}`);
+    lines.push(``);
+    lines.push(`\`translatableResources(resourceType:)\` enum support:`);
+    lines.push(``);
+    lines.push(`| resourceType | accepted | sample rows | error |`);
+    lines.push(`|---|---|---|---|`);
+    for (const e of iad.enumSupport) {
+      lines.push(
+        `| \`${e.resourceType}\` | ${e.supported ? "yes" : "**no**"} | ${e.sampleCount} | ${(e.error ?? "").replace(/\|/g, "\\|") || "—"} |`,
+      );
+    }
+    lines.push(``);
+    lines.push(`Sample subjects:`);
+    lines.push(``);
+    lines.push(`| subject | GID | image? | translatable keys | has \`alt\` |`);
+    lines.push(`|---|---|---|---|---|`);
+    for (const s of iad.subjects) {
+      const gid = s.resourceId ? `\`${s.resourceId.length > 60 ? `${s.resourceId.slice(0, 57)}…` : s.resourceId}\`` : "(none)";
+      const img = !s.imageProbe
+        ? "—"
+        : !s.imageProbe.idSelectable
+          ? "**`image { id }` not selectable**"
+          : s.imageProbe.hasImage
+            ? `id ${s.imageProbe.imageId ? `\`${s.imageProbe.imageId}\`` : "**null**"}`
+            : "no image";
+      const keys = s.error ? `_${s.error.replace(/\|/g, "\\|")}_` : s.translatableKeys.join(", ") || "(none)";
+      lines.push(`| ${s.kind} — ${s.label.replace(/\|/g, "\\|")} | ${gid} | ${img} | ${keys} | ${s.hasAltKey ? "yes" : "no"} |`);
     }
     lines.push(``);
     lines.push(`---`);
@@ -321,6 +375,21 @@ export function SettingsTranslationProbeTab() {
           )}
         </BlockStack>
       </Card>
+
+      {report?.imageAltDiag && (
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">Image alt-text translatability</Text>
+            <Banner tone="info">
+              <Text as="p">{report.imageAltDiag.verdict}</Text>
+            </Banner>
+            <Text as="p" tone="subdued">
+              Details (enum support per resource type, sample GIDs and their translatable keys) are in
+              the markdown report below.
+            </Text>
+          </BlockStack>
+        </Card>
+      )}
 
       {report && (
         <Card>

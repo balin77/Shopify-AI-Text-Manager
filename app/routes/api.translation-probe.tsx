@@ -134,6 +134,53 @@ interface ProbeReport {
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
   themeFetchWorkaround?: ThemeFetchWorkaround;
+  imageAltDiag?: ImageAltDiag;
+}
+
+/**
+ * Empirical answer to "which images can have a TRANSLATED alt text?".
+ *
+ * Product media are known to work (the app writes them today: translationsRegister
+ * on the MediaImage GID, key "alt"). Open questions this section settles with
+ * data from THIS shop instead of assumptions:
+ *
+ * 1. Is MEDIA_IMAGE a valid `TranslatableResourceType`? If yes, every image in
+ *    the Files library — not just product media — can be enumerated and
+ *    translated through one and the same path.
+ * 2. Does a COLLECTION / ARTICLE carry an alt key in its own translatable
+ *    content? (Expected: no — their translatable keys are title/body_html/
+ *    meta_title/meta_description/handle.)
+ * 3. Does a collection's / article's featured image have an addressable GID of
+ *    its own, and does `translatableResource` resolve it? Shopify's legacy
+ *    `Image` type is not a MediaImage, so this is the crux: if it resolves,
+ *    those alts ARE translatable after all; if not, they are not — full stop.
+ */
+interface ImageAltDiag {
+  /** One entry per resource type we asked `translatableResources(resourceType:)` for. */
+  enumSupport: Array<{ resourceType: string; supported: boolean; sampleCount: number; error?: string }>;
+  /** Sample subjects and what their translatable content looks like. */
+  subjects: ImageAltSubject[];
+  verdict: string;
+}
+
+interface ImageAltSubject {
+  kind: "productMedia" | "collection" | "collectionImage" | "article" | "articleImage";
+  /** The GID we asked about ("" when the shop has no such object). */
+  resourceId: string;
+  label: string;
+  /** Present for the *Image subjects: what the object's image field returned. */
+  imageProbe?: {
+    hasImage: boolean;
+    imageId: string | null;
+    altText: string | null;
+    /** False when Shopify rejected `image { id }` outright — the legacy Image
+     * type then has no addressable GID at all. */
+    idSelectable: boolean;
+  };
+  /** translatableResource(resourceId) → the keys it offers. */
+  translatableKeys: string[];
+  hasAltKey: boolean;
+  error?: string;
 }
 
 /**
@@ -216,6 +263,51 @@ const THEME_FILES_QUERY = `#graphql
           filename
           body { ... on OnlineStoreThemeFileBodyText { content } }
         }
+      }
+    }
+  }
+`;
+
+// Sample subjects for the image-alt diagnosis. Deliberately THREE separate
+// queries: `image { id }` may not even be selectable on Shopify's legacy Image
+// type, and root-level `articles` is newer than some API versions — one
+// combined query would let a single invalid field hide every other answer.
+const IMAGE_ALT_PRODUCTS_QUERY = `#graphql
+  query imageAltProducts {
+    products(first: 25) {
+      nodes {
+        id
+        title
+        media(first: 1) { nodes { ... on MediaImage { id alt } } }
+      }
+    }
+  }
+`;
+
+/** `$withId` is not a GraphQL feature — the caller string-swaps the selection
+ * so a failure of `image { id }` is observable instead of fatal. */
+const IMAGE_ALT_COLLECTIONS_QUERY = (withId: boolean) => `#graphql
+  query imageAltCollections {
+    collections(first: 25) {
+      nodes { id title image { ${withId ? "id " : ""}url altText } }
+    }
+  }
+`;
+
+const IMAGE_ALT_ARTICLES_QUERY = (withId: boolean) => `#graphql
+  query imageAltArticles {
+    articles(first: 25) {
+      nodes { id title image { ${withId ? "id " : ""}url altText } }
+    }
+  }
+`;
+
+/** Fallback for API versions without a root `articles` connection. */
+const IMAGE_ALT_ARTICLES_VIA_BLOGS_QUERY = (withId: boolean) => `#graphql
+  query imageAltArticlesViaBlogs {
+    blogs(first: 5) {
+      nodes {
+        articles(first: 10) { nodes { id title image { ${withId ? "id " : ""}url altText } } }
       }
     }
   }
@@ -665,6 +757,9 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
+  // ── Image alt-text diagnosis (read-only) ─────────────────────────────────
+  report.imageAltDiag = await probeImageAltTranslatability(admin);
+
   logger.info("[TRANSLATION-PROBE] Done", {
     context: "TranslationProbe",
     shop: session.shop,
@@ -674,4 +769,241 @@ export async function action({ request }: ActionFunctionArgs) {
   });
 
   return json({ success: true, report });
+}
+
+/**
+ * Answers "which images can carry a translated alt text?" empirically.
+ *
+ * Read-only: enumeration attempts and translatableResource lookups only, no
+ * mutation. An unsupported enum value comes back as a GraphQL error, which is
+ * exactly the signal we want — so errors are REPORTED, never swallowed.
+ */
+async function probeImageAltTranslatability(
+  admin: { graphql: (query: string, opts?: Record<string, unknown>) => Promise<Response> },
+): Promise<ImageAltDiag> {
+  const enumSupport: ImageAltDiag["enumSupport"] = [];
+  const subjects: ImageAltSubject[] = [];
+
+  // 1. Which enum values does this API version accept? MEDIA_IMAGE is the
+  //    interesting one: it would make the whole Files library enumerable.
+  for (const resourceType of ["MEDIA_IMAGE", "COLLECTION", "ARTICLE", "PRODUCT_IMAGE", "FILE"]) {
+    try {
+      const response = await admin.graphql(PROBE_QUERY, { variables: { first: 3, resourceType } });
+      const data = (await response.json()) as {
+        data?: { translatableResources?: { edges?: unknown[] } };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) {
+        enumSupport.push({ resourceType, supported: false, sampleCount: 0, error: data.errors[0].message });
+        continue;
+      }
+      enumSupport.push({
+        resourceType,
+        supported: true,
+        sampleCount: data.data?.translatableResources?.edges?.length ?? 0,
+      });
+    } catch (e) {
+      enumSupport.push({
+        resourceType,
+        supported: false,
+        sampleCount: 0,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  // 2. Sample subjects: a product's MediaImage (the known-good baseline), a
+  //    collection and an article — each once as the OBJECT and once as its
+  //    IMAGE, if the image has an addressable GID at all.
+  const noteFailure = (label: string, error: string) => {
+    subjects.push({
+      kind: "productMedia",
+      resourceId: "",
+      label,
+      translatableKeys: [],
+      hasAltKey: false,
+      error,
+    });
+  };
+
+  /** Runs a query and returns its data, or null (after recording why). */
+  const run = async <T,>(label: string, query: string): Promise<T | null> => {
+    try {
+      const response = await admin.graphql(query);
+      const data = (await response.json()) as { data?: T; errors?: Array<{ message: string }> };
+      if (data.errors?.length) {
+        noteFailure(label, data.errors.map((e) => e.message).join(" | "));
+        return null;
+      }
+      return data.data ?? null;
+    } catch (e) {
+      noteFailure(label, e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  };
+
+  interface ImageNode {
+    id: string;
+    title: string;
+    image?: { id?: string | null; altText?: string | null } | null;
+  }
+
+  let sampleProductMedia: { id: string; label: string } | null = null;
+  const productData = await run<{ products?: { nodes?: Array<{ id: string; title: string; media?: { nodes?: Array<{ id?: string; alt?: string | null }> } }> } }>(
+    "product media query",
+    IMAGE_ALT_PRODUCTS_QUERY,
+  );
+  for (const product of productData?.products?.nodes ?? []) {
+    const media = product.media?.nodes?.find((m) => m?.id);
+    if (media?.id) {
+      sampleProductMedia = { id: media.id, label: product.title };
+      break;
+    }
+  }
+
+  /**
+   * Picks the first object that HAS an image, and reports whether `image { id }`
+   * was even selectable — a legacy `Image` without an addressable GID can never
+   * be a translation target, and that answer is exactly what we are after.
+   */
+  const pickWithImage = async (
+    label: string,
+    build: (withId: boolean) => string,
+    extract: (data: unknown) => ImageNode[],
+  ): Promise<{ node: ImageNode | null; imageIdSelectable: boolean }> => {
+    const withId = await run<unknown>(`${label} (image.id)`, build(true));
+    if (withId) {
+      const nodes = extract(withId);
+      return { node: nodes.find((n) => n.image) ?? nodes[0] ?? null, imageIdSelectable: true };
+    }
+    // `image { id }` was rejected — retry without it so we still learn whether
+    // the object has an image at all.
+    const withoutId = await run<unknown>(`${label} (no image.id)`, build(false));
+    if (!withoutId) return { node: null, imageIdSelectable: false };
+    const nodes = extract(withoutId);
+    return { node: nodes.find((n) => n.image) ?? nodes[0] ?? null, imageIdSelectable: false };
+  };
+
+  const collectionPick = await pickWithImage("collections", IMAGE_ALT_COLLECTIONS_QUERY, (data) => {
+    const typed = data as { collections?: { nodes?: ImageNode[] } };
+    return typed.collections?.nodes ?? [];
+  });
+  let articlePick = await pickWithImage("articles", IMAGE_ALT_ARTICLES_QUERY, (data) => {
+    const typed = data as { articles?: { nodes?: ImageNode[] } };
+    return typed.articles?.nodes ?? [];
+  });
+  if (!articlePick.node) {
+    // Older API versions have no root `articles` connection — go through blogs.
+    articlePick = await pickWithImage("articles via blogs", IMAGE_ALT_ARTICLES_VIA_BLOGS_QUERY, (data) => {
+      const typed = data as { blogs?: { nodes?: Array<{ articles?: { nodes?: ImageNode[] } }> } };
+      return (typed.blogs?.nodes ?? []).flatMap((b) => b.articles?.nodes ?? []);
+    });
+  }
+
+  const sampleCollection = collectionPick.node;
+  const sampleArticle = articlePick.node;
+
+  const inspect = async (kind: ImageAltSubject["kind"], resourceId: string, label: string, imageProbe?: ImageAltSubject["imageProbe"]) => {
+    const subject: ImageAltSubject = {
+      kind,
+      resourceId,
+      label,
+      ...(imageProbe ? { imageProbe } : {}),
+      translatableKeys: [],
+      hasAltKey: false,
+    };
+    if (!resourceId) {
+      subject.error = "no such object in this shop (or the image has no addressable GID)";
+      subjects.push(subject);
+      return;
+    }
+    try {
+      const response = await admin.graphql(SINGLE_TRANSLATABLE_QUERY, { variables: { resourceId } });
+      const data = (await response.json()) as {
+        data?: { translatableResource?: { translatableContent?: Array<{ key: string }> } | null };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) {
+        subject.error = data.errors.map((e) => e.message).join(" | ");
+      } else if (!data.data?.translatableResource) {
+        subject.error = "translatableResource resolved to null — not a translatable resource";
+      } else {
+        subject.translatableKeys = [...new Set((data.data.translatableResource.translatableContent ?? []).map((c) => c.key))];
+        subject.hasAltKey = subject.translatableKeys.includes("alt");
+      }
+    } catch (e) {
+      subject.error = e instanceof Error ? e.message : String(e);
+    }
+    subjects.push(subject);
+  };
+
+  await inspect("productMedia", sampleProductMedia?.id ?? "", sampleProductMedia?.label ?? "(no product with media)");
+  await inspect("collection", sampleCollection?.id ?? "", sampleCollection?.title ?? "(no collection)");
+  await inspect(
+    "collectionImage",
+    sampleCollection?.image?.id ?? "",
+    `${sampleCollection?.title ?? "(no collection)"} → image`,
+    {
+      hasImage: !!sampleCollection?.image,
+      imageId: sampleCollection?.image?.id ?? null,
+      altText: sampleCollection?.image?.altText ?? null,
+      idSelectable: collectionPick.imageIdSelectable,
+    },
+  );
+  await inspect("article", sampleArticle?.id ?? "", sampleArticle?.title ?? "(no article)");
+  await inspect(
+    "articleImage",
+    sampleArticle?.image?.id ?? "",
+    `${sampleArticle?.title ?? "(no article)"} → image`,
+    {
+      hasImage: !!sampleArticle?.image,
+      imageId: sampleArticle?.image?.id ?? null,
+      altText: sampleArticle?.image?.altText ?? null,
+      idSelectable: articlePick.imageIdSelectable,
+    },
+  );
+
+  return { enumSupport, subjects, verdict: buildImageAltVerdict(enumSupport, subjects) };
+}
+
+/** Plain-language reading of the numbers above — the sentence that actually
+ * answers the planning question. */
+function buildImageAltVerdict(enumSupport: ImageAltDiag["enumSupport"], subjects: ImageAltSubject[]): string {
+  const parts: string[] = [];
+  const mediaImageEnum = enumSupport.find((e) => e.resourceType === "MEDIA_IMAGE");
+  const productMedia = subjects.find((s) => s.kind === "productMedia");
+  const collectionImage = subjects.find((s) => s.kind === "collectionImage");
+  const articleImage = subjects.find((s) => s.kind === "articleImage");
+
+  parts.push(
+    mediaImageEnum?.supported
+      ? `MEDIA_IMAGE IS a translatable resource type — every image in the Files library can be enumerated (sample returned ${mediaImageEnum.sampleCount}).`
+      : `MEDIA_IMAGE is NOT accepted as a TranslatableResourceType (${mediaImageEnum?.error ?? "no result"}) — images can only be reached through the objects that own them.`,
+  );
+  if (productMedia) {
+    parts.push(
+      productMedia.hasAltKey
+        ? "Product media expose the 'alt' key as expected (baseline confirmed)."
+        : `Product media did NOT expose an 'alt' key — baseline BROKEN, treat every other result here with suspicion (${productMedia.error ?? (productMedia.translatableKeys.join(", ") || "no keys")}).`,
+    );
+  }
+  for (const [name, subject] of [["Collection", collectionImage], ["Article", articleImage]] as const) {
+    if (!subject) continue;
+    if (subject.imageProbe && !subject.imageProbe.idSelectable) {
+      parts.push(
+        `${name} featured image: Shopify rejected \`image { id }\` — the legacy Image type exposes no GID, so it can never be a translation target.`,
+      );
+    } else if (!subject.imageProbe?.hasImage) {
+      parts.push(`${name} featured image: this shop has no sample to test with — inconclusive.`);
+    } else if (!subject.imageProbe.imageId) {
+      parts.push(`${name} featured image has NO addressable GID (image.id is null) — it cannot be a translation target.`);
+    } else if (subject.hasAltKey) {
+      parts.push(`${name} featured image IS translatable via ${subject.imageProbe.imageId} (key 'alt').`);
+    } else {
+      parts.push(
+        `${name} featured image is NOT translatable: ${subject.error ?? `keys are [${subject.translatableKeys.join(", ")}]`}.`,
+      );
+    }
+  }
+  return parts.join(" ");
 }
