@@ -173,8 +173,8 @@ function formatMarkdown(report: ProbeReport): string {
     lines.push(``);
     lines.push(`Sample subjects:`);
     lines.push(``);
-    lines.push(`| subject | GID | image? | translatable keys | has \`alt\` |`);
-    lines.push(`|---|---|---|---|---|`);
+    lines.push(`| subject | GID | image? | primary alt | translatable keys | has \`alt\` |`);
+    lines.push(`|---|---|---|---|---|---|`);
     for (const s of iad.subjects) {
       const gid = s.resourceId ? `\`${s.resourceId.length > 60 ? `${s.resourceId.slice(0, 57)}…` : s.resourceId}\`` : "(none)";
       const img = !s.imageProbe
@@ -185,7 +185,14 @@ function formatMarkdown(report: ProbeReport): string {
             ? `id ${s.imageProbe.imageId ? `\`${s.imageProbe.imageId}\`` : "**null**"}`
             : "no image";
       const keys = s.error ? `_${s.error.replace(/\|/g, "\\|")}_` : s.translatableKeys.join(", ") || "(none)";
-      lines.push(`| ${s.kind} — ${s.label.replace(/\|/g, "\\|")} | ${gid} | ${img} | ${keys} | ${s.hasAltKey ? "yes" : "no"} |`);
+      const alt = s.imageProbe
+        ? s.imageProbe.altText
+          ? `"${s.imageProbe.altText.slice(0, 40).replace(/\|/g, "\\|")}"`
+          : "**(empty)**"
+        : "—";
+      lines.push(
+        `| ${s.kind} — ${s.label.replace(/\|/g, "\\|")} | ${gid} | ${img} | ${alt} | ${keys} | ${s.hasAltKey ? "yes" : "no"} |`,
+      );
     }
     lines.push(``);
     lines.push(`---`);

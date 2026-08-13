@@ -871,17 +871,22 @@ async function probeImageAltTranslatability(
     build: (withId: boolean) => string,
     extract: (data: unknown) => ImageNode[],
   ): Promise<{ node: ImageNode | null; imageIdSelectable: boolean }> => {
+    // Prefer a sample whose image HAS an alt text: on an image without one,
+    // "no translatable keys" would be ambiguous between "not translatable at
+    // all" and "nothing set that could be translated".
+    const best = (nodes: ImageNode[]): ImageNode | null =>
+      nodes.find((n) => n.image?.altText && n.image.altText.trim() !== "") ??
+      nodes.find((n) => n.image) ??
+      nodes[0] ??
+      null;
+
     const withId = await run<unknown>(`${label} (image.id)`, build(true));
-    if (withId) {
-      const nodes = extract(withId);
-      return { node: nodes.find((n) => n.image) ?? nodes[0] ?? null, imageIdSelectable: true };
-    }
+    if (withId) return { node: best(extract(withId)), imageIdSelectable: true };
     // `image { id }` was rejected — retry without it so we still learn whether
     // the object has an image at all.
     const withoutId = await run<unknown>(`${label} (no image.id)`, build(false));
     if (!withoutId) return { node: null, imageIdSelectable: false };
-    const nodes = extract(withoutId);
-    return { node: nodes.find((n) => n.image) ?? nodes[0] ?? null, imageIdSelectable: false };
+    return { node: best(extract(withoutId)), imageIdSelectable: false };
   };
 
   const collectionPick = await pickWithImage("collections", IMAGE_ALT_COLLECTIONS_QUERY, (data) => {
