@@ -19,7 +19,7 @@
  * die Laufzeit-Scopes kommen aus SHOPIFY_SCOPES (app/shopify.server.ts:88).
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
 import { getPlanLimits, isValidPlan } from "~/utils/planUtils";
