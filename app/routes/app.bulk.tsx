@@ -1388,6 +1388,14 @@ export default function BulkEditor() {
     }
   };
 
+  /**
+   * Target languages of a fan-out action. On the PRIMARY view that is every
+   * active foreign language; in a FOREIGN view it is just the language on
+   * screen — the same narrowing the content editor does, where the button
+   * turns from "translate to all" into "translate from the primary language".
+   */
+  const fanOutTargets = (): string[] => (isForeign ? [locale] : enabledLocales);
+
   const handleCellTranslateAll = async (row: BulkRow, column: ColumnDescriptor) => {
     const cellKey = `${row.id}|${column.id}`;
     const source = primarySourceValue(row, column);
@@ -1395,7 +1403,7 @@ export default function BulkEditor() {
     setCellActionError(null);
     setCellBusy(cellKey, true);
     const entries: { key: string; value: string }[] = [];
-    for (const target of enabledLocales) {
+    for (const target of fanOutTargets()) {
       const payload = await postAi({
         action: "translateField",
         contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[row.type],
@@ -1407,8 +1415,10 @@ export default function BulkEditor() {
       });
       const translated = payload?.translatedValue;
       if (typeof translated === "string" && translated.trim() !== "") {
-        // Market overrides stay a per-cell decision — these edits are global.
-        entries.push({ key: makeEditKey(row.id, target, "", column.id), value: translated });
+        // In a foreign view the edit lands in the layer on screen (market
+        // included); fanning out from the primary view writes GLOBAL
+        // translations, because a market override is a per-cell decision.
+        entries.push({ key: makeEditKey(row.id, target, isForeign ? marketId : "", column.id), value: translated });
       }
     }
     setCellBusy(cellKey, false);
@@ -1419,7 +1429,12 @@ export default function BulkEditor() {
     const source = primarySourceValue(row, column);
     if (source.trim() === "") return;
     setCellActionError(null);
-    applyCellEdits(enabledLocales.map((target) => ({ key: makeEditKey(row.id, target, "", column.id), value: source })));
+    applyCellEdits(
+      fanOutTargets().map((target) => ({
+        key: makeEditKey(row.id, target, isForeign ? marketId : "", column.id),
+        value: source,
+      })),
+    );
   };
 
   /**
@@ -1434,18 +1449,24 @@ export default function BulkEditor() {
       return undefined;
     }
     const canImprove = column.kind === "field" && row.type !== "image";
-    const canFanOut = column.translatable && enabledLocales.length > 0 && !isForeign;
+    // Primary view: fan out into every active language. Foreign view: fill the
+    // language on screen from the primary value — the editor's own narrowing.
+    const canFanOut = column.translatable && fanOutTargets().length > 0;
     if (!canImprove && !canFanOut) return undefined;
     return {
       ...(canImprove ? { onImprove: () => void handleCellImprove(row, column) } : {}),
       ...(canFanOut ? { onTranslateAll: () => void handleCellTranslateAll(row, column) } : {}),
       ...(canFanOut ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
       busy: busyCells.has(`${row.id}|${column.id}`),
+      // The content editor's own labels (t.products.*), not a second set:
+      // the two surfaces offer the same three actions and must not drift
+      // apart in wording. Primary view fans out ("Translate" / "Copy to all
+      // languages"), a foreign view fills the language on screen.
       labels: {
         menu: b.cellActions.menu,
-        improve: b.cellActions.improve,
-        translateAll: b.cellActions.translateAll,
-        copyAll: b.cellActions.copyAll,
+        improve: t.products.aiImprove,
+        translateAll: isForeign ? t.products.translateFromPrimary : t.products.translate,
+        copyAll: isForeign ? t.products.copy : t.products.copyToAllLocales,
       },
     };
   };

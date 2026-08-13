@@ -2709,9 +2709,6 @@ export const de = {
     },
     cellActions: {
       menu: "Aktionen für dieses Feld",
-      improve: "Mit KI verbessern",
-      translateAll: "In alle aktiven Sprachen übersetzen",
-      copyAll: "In alle aktiven Sprachen übertragen",
     },
     languageBar: {
       enabledHint: "Klicken zum Wechseln. Strg/Cmd+Klick schaltet die Sprache für die Zellaktionen aus.",

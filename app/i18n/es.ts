@@ -2708,9 +2708,6 @@ export const es: Translation = {
     },
     cellActions: {
       menu: "Acciones para este campo",
-      improve: "Mejorar con IA",
-      translateAll: "Traducir a todos los idiomas activos",
-      copyAll: "Copiar a todos los idiomas activos",
     },
     languageBar: {
       enabledHint: "Haz clic para cambiar. Ctrl/Cmd+clic desactiva el idioma para las acciones de celda.",
