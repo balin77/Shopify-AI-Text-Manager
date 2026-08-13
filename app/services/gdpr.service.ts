@@ -189,7 +189,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 40 models in prisma/schema.prisma:
+ * Coverage of all 57 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
@@ -206,7 +206,7 @@ export async function redactCustomerData(
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
  *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion,
- *      SeoSitemapExclusion
+ *      SeoSitemapExclusion, MediaLibraryImage, MediaLibrarySyncState
  *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
@@ -540,6 +540,19 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoSitemapExclusionsDeleted.count} SEO sitemap exclusions`);
+
+    // Delete the media-library cache (Shopify Files / MediaImage) plus its
+    // sync marker. Both are shop-scoped caches with no cascade parent, so
+    // they must be purged explicitly.
+    const mediaLibraryImagesDeleted = await tx.mediaLibraryImage.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${mediaLibraryImagesDeleted.count} media library images`);
+
+    const mediaLibrarySyncStateDeleted = await tx.mediaLibrarySyncState.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${mediaLibrarySyncStateDeleted.count} media library sync state rows`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);

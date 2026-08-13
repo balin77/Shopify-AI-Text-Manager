@@ -36,6 +36,8 @@ const { db } = vi.hoisted(() => {
     metaobject: { deleteMany: deleteMany() },
     metaobjectTranslation: { deleteMany: deleteMany() },
     metaobjectDefinition: { deleteMany: deleteMany() },
+    mediaLibraryImage: { deleteMany: deleteMany() },
+    mediaLibrarySyncState: { deleteMany: deleteMany() },
     // cleanup uses db.$transaction(async (tx) => …) — tx is the same client.
     $transaction: vi.fn(),
   };

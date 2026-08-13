@@ -1478,3 +1478,55 @@ model SeoSitemapExclusion {
   @@unique([shop, resourceType, resourceId])
   @@index([shop, status])
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Media-Bibliothek (Shopify Files) — Cache für den Bulk-Editor
+// ─────────────────────────────────────────────────────────────────────────────
+// Der Produkt-Sync cacht Produktmedien bereits in `ProductImage`. Bilder, die an
+// KEINEM Produkt hängen (Dateien-Bibliothek, Metaobjekt-Referenzen, Theme-
+// Bilder) sind dort per Definition nicht enthalten — der Bulk-Editor braucht sie
+// aber, weil jedes MediaImage genau einen übersetzbaren Key (`alt`) hat und
+// `translatableResources(resourceType: MEDIA_IMAGE)` sie alle aufzählt.
+//
+// Quelle: files(query:"media_type:IMAGE") — siehe app/services/media-library/
+// sync.server.ts. Shopify sagt dort NICHT, wo eine Datei verwendet wird; die
+// usage*-Spalten sind eine best-effort-Auflösung aus lokalen Caches und stehen
+// bewusst FLACH (nicht als JSON) hier, weil danach gefiltert und sortiert wird.
+model MediaLibraryImage {
+  id   String @id // gid://shopify/MediaImage/… — zugleich die Übersetzungs-Ressource
+  shop String
+
+  url      String
+  altText  String? // Primärsprachlicher Alt-Text (null = nicht gesetzt)
+  filename String  @default("") // ohne Query-String, "" wenn unbekannt
+  mimeType String?
+
+  // Reihenfolge aus dem Sync-Lauf (files(sortKey: CREATED_AT, reverse: true)),
+  // damit die Liste ohne zusätzliche Sortierspalte stabil "neueste zuerst" ist.
+  position         Int       @default(0)
+  shopifyCreatedAt DateTime?
+
+  // Best-effort-Verwendung. usageKind ist ein MediaImageUsageKind-String
+  // ("product" | "metaobject" | … | "unknown"); "" bei Owner/Label = unbekannt.
+  // NIE geraten: was nicht sicher auflösbar ist, bleibt "unknown".
+  usageKind    String @default("unknown")
+  usageOwnerId String @default("")
+  usageLabel   String @default("")
+
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, usageKind])
+  @@index([shop, position])
+}
+
+// Ein Marker-Row pro Shop: "der Media-Sync ist mindestens einmal vollständig
+// durchgelaufen". Ohne ihn wäre ein Shop ganz ohne Bilder nicht von einem
+// nie synchronisierten Shop zu unterscheiden (loadMediaLibraryImages.neverSynced).
+model MediaLibrarySyncState {
+  shop           String   @id
+  lastFullSyncAt DateTime
+  imageCount     Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}

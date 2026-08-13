@@ -23,6 +23,7 @@ export interface CleanupStats {
   deletedContentTranslations: number;
   deletedMenus: number;
   deletedMetaobjects: number;
+  deletedMediaLibraryImages: number;
 }
 
 /**
@@ -45,6 +46,7 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
     deletedContentTranslations: 0,
     deletedMenus: 0,
     deletedMetaobjects: 0,
+    deletedMediaLibraryImages: 0,
   };
 
   // Single source of truth — same scope the sync uses, so cleanup and sync can
@@ -61,6 +63,13 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
   // 2. Delete product-related data if cache is disabled
   if (!limits.cacheEnabled.productImages || limits.productImages === "featured-only") {
     stats.deletedProductImages = await deleteNonFeaturedImages(shop);
+  }
+
+  // Die Bildbibliothek (MediaImage-Cache) hängt am selben Flag wie die
+  // Produktbilder. "featured-only" betrifft nur Produktgalerien — die
+  // Dateien-Bibliothek kennt kein Featured-Bild, deshalb hier nur das Flag.
+  if (!limits.cacheEnabled.productImages) {
+    stats.deletedMediaLibraryImages = await deleteMediaLibraryCache(shop);
   }
 
   if (!limits.cacheEnabled.productOptions) {
@@ -201,6 +210,23 @@ async function deleteNonFeaturedImages(shop: string): Promise<number> {
   });
 
   return result.count;
+}
+
+/**
+ * Delete the media-library cache and its sync marker.
+ *
+ * Beides zusammen in einer Transaktion, damit nie ein "vollständig
+ * synchronisiert"-Marker ohne Bilder zurückbleibt (der Loader würde sonst
+ * `neverSynced: false` bei leerer Liste melden und der Editor keinen
+ * Sync-Hinweis anzeigen).
+ */
+async function deleteMediaLibraryCache(shop: string): Promise<number> {
+  const { imagesCount } = await db.$transaction(async (tx) => {
+    const images = await tx.mediaLibraryImage.deleteMany({ where: { shop } });
+    await tx.mediaLibrarySyncState.deleteMany({ where: { shop } });
+    return { imagesCount: images.count };
+  });
+  return imagesCount;
 }
 
 /**
