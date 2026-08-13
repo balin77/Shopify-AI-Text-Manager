@@ -2568,7 +2568,7 @@ export const es: Translation = {
       blog: "Blogs",
       policy: "Políticas",
       metaobject: "Metaobjetos",
-      image: "Imágenes de producto",
+      image: "Imágenes",
     },
     columns: {
       image: "Imagen",

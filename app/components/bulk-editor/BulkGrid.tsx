@@ -164,7 +164,9 @@ export function BulkGrid({
 
   const gridTemplateColumns = [
     `${IMAGE_COLUMN_WIDTH}px`,
-    ...displayColumns.map((c) => `minmax(${c.minWidth}px, 1fr)`),
+    // Columns without a maxWidth share the remaining width equally (1fr);
+    // a capped one stays at its own size instead of stretching.
+    ...displayColumns.map((c) => `minmax(${c.minWidth}px, ${c.maxWidth ? `${c.maxWidth}px` : "1fr"})`),
   ].join(" ");
 
   const stickyClass = (index: number): string => {

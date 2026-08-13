@@ -2569,7 +2569,7 @@ export const de = {
       blog: "Blogs",
       policy: "Richtlinien",
       metaobject: "Metaobjekte",
-      image: "Produktbilder",
+      image: "Bilder",
     },
     columns: {
       image: "Bild",

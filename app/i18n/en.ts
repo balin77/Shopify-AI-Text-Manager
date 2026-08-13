@@ -2569,7 +2569,7 @@ export const en: Translation = {
       blog: "Blogs",
       policy: "Policies",
       metaobject: "Metaobjects",
-      image: "Product images",
+      image: "Images",
     },
     columns: {
       image: "Image",

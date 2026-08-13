@@ -25,7 +25,9 @@ import { isValidShopifyGID, isValidLocale } from "../../utils/validation";
 export type BulkRowType =
   | "product"
   | "variant"
-  /** One row = one product MEDIUM (its Shopify MediaImage GID is the row id). */
+  /** One row = one IMAGE of the shop (its Shopify MediaImage GID is the row
+   * id): product media from the product cache, everything else from the media
+   * library. */
   | "image"
   | "collection"
   | "article"
@@ -65,8 +67,9 @@ export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   blog: "blogs",
   policy: "policies",
   metaobject: "metaobjects",
-  // Image rows are PRODUCT media — they ride the products gate (and, on top of
-  // it, the productImages cache flag; see allowedRowTypesForPlan).
+  // Image rows ride the products gate (and, on top of it, the productImages
+  // cache flag; see allowedRowTypesForPlan) — product media are the bulk of
+  // them and the cache they need is the product-image one.
   image: "products",
 };
 
@@ -95,6 +98,10 @@ export interface ColumnDescriptor {
   translatable: boolean;
   inputType: "text" | "textarea" | "select" | "money" | "number" | "boolean";
   minWidth: number;
+  /** Upper bound for the column's grid track. Without it a column grows to an
+   * equal 1fr share, which wastes the row's width on columns whose content is
+   * always tiny (a position number). */
+  maxWidth?: number;
   /** DB column backing a server-side sort — absent means the column is NOT
    * sortable and the header must not render a sort affordance (Plan §3.3). */
   sortKey?: string;
@@ -243,7 +250,10 @@ const VARIANT_POSITION_COLUMN: ColumnDescriptor = {
   editable: false,
   translatable: false,
   inputType: "number",
-  minWidth: 70,
+  // A two-digit number and the sort affordance — nothing here ever needs more,
+  // and the width is better spent on the text columns next to it.
+  minWidth: 56,
+  maxWidth: 72,
   sortKey: "position",
 };
 
@@ -276,6 +286,10 @@ function fieldColumn(
     translatable: boolean;
     inputType: ColumnDescriptor["inputType"];
     minWidth: number;
+  /** Upper bound for the column's grid track. Without it a column grows to an
+   * equal 1fr share, which wastes the row's width on columns whose content is
+   * always tiny (a position number). */
+  maxWidth?: number;
     sortKey?: string;
     group?: ColumnGroup;
   },
@@ -395,9 +409,9 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
   // editable columns are the per-definition mofield columns appended by
   // buildColumnsForType from the shop's MetaobjectDefinition specs.
   metaobject: [MO_DISPLAY_NAME_COLUMN, MO_HANDLE_COLUMN],
-  // Image rows (one row = one product medium with a Shopify MediaImage GID).
-  // The product title is the "where does this image belong" column; position
-  // is Shopify's media order.
+  // Image rows (one row = one image of the shop, keyed by its MediaImage GID).
+  // "Used by" answers where the image belongs — the owning product, or the
+  // media library's usage label; position is Shopify's media order.
   image: [IMAGE_COLUMN, IMAGE_USAGE_COLUMN, VARIANT_POSITION_COLUMN, IMAGE_ROW_ALT_COLUMN],
 };
 
