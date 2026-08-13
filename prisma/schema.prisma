@@ -1521,12 +1521,16 @@ model MediaLibraryImage {
   @@index([shop, position])
 }
 
-// Ein Marker-Row pro Shop: "der Media-Sync ist mindestens einmal vollständig
-// durchgelaufen". Ohne ihn wäre ein Shop ganz ohne Bilder nicht von einem
-// nie synchronisierten Shop zu unterscheiden (loadMediaLibraryImages.neverSynced).
+// Ein Marker-Row pro Shop: "der Media-Sync ist mindestens einmal bis zum Ende
+// gelaufen". Ohne ihn wäre ein Shop ganz ohne Bilder nicht von einem nie
+// synchronisierten Shop zu unterscheiden (loadMediaLibraryImages.neverSynced).
+//
+// `truncated` = die Bibliothek war grösser als das Seitenlimit des Syncs, der
+// Cache ist also unvollständig (und wird deshalb auch nie stale-bereinigt).
 model MediaLibrarySyncState {
-  shop           String   @id
-  lastFullSyncAt DateTime
-  imageCount     Int      @default(0)
-  updatedAt      DateTime @updatedAt
+  shop         String   @id
+  lastSyncedAt DateTime
+  imageCount   Int      @default(0)
+  truncated    Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
 }

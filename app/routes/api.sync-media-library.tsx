@@ -16,6 +16,10 @@ import { logger } from "~/utils/logger.server";
  * der Bulk-Editor lädt aus dem Cache, und der Merchant stösst den Abgleich an,
  * wenn er neue Dateien hochgeladen hat.
  *
+ * Der Sync läuft inline in diesem Request; bei sehr grossen Bibliotheken kann
+ * das dauern. Ein Retry ist unschädlich: syncMediaLibrary hält pro Shop nur
+ * einen Lauf gleichzeitig und hängt weitere Aufrufe an den laufenden an.
+ *
  * Antwort: `{ success: true, stats: { synced, removed } }`
  */
 export const action = async ({ request }: ActionFunctionArgs) => {

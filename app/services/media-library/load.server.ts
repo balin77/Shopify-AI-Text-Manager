@@ -65,10 +65,10 @@ export function toUsageKind(value: string): MediaImageUsageKind {
 /**
  * Lädt eine Seite der Bildbibliothek aus dem lokalen Cache.
  *
- * `neverSynced: true` heisst: für diesen Shop ist noch NIE ein Media-Sync
- * vollständig durchgelaufen (kein MediaLibrarySyncState-Marker). Nur so ist
- * "der Shop hat keine Bilder" von "wir haben noch nicht geschaut" zu
- * unterscheiden — beide liefern sonst `total: 0`.
+ * `neverSynced: true` heisst: für diesen Shop ist noch NIE ein Media-Sync bis
+ * zum Ende gelaufen (kein MediaLibrarySyncState-Marker). Nur so ist "der Shop
+ * hat keine Bilder" von "wir haben noch nicht geschaut" zu unterscheiden —
+ * beide liefern sonst `total: 0`.
  *
  * Mandantentrennung: jede Query filtert auf `shop`, ohne Ausnahme.
  */
@@ -129,7 +129,7 @@ export async function loadMediaLibraryImages(
           },
         }),
     db.mediaLibraryImage.count({ where }),
-    db.mediaLibrarySyncState.findUnique({ where: { shop }, select: { lastFullSyncAt: true } }),
+    db.mediaLibrarySyncState.findUnique({ where: { shop }, select: { lastSyncedAt: true } }),
   ]);
 
   const rows: MediaLibraryImageRow[] = records.map((r) => ({

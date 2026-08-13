@@ -211,7 +211,22 @@ describe('syncMediaLibrary — Stale-Delete-Schutz', () => {
     expect(result).toEqual({ synced: 1, removed: 0 });
     expect(db.mediaLibraryImage.upsert).toHaveBeenCalledTimes(1);
     expect(db.mediaLibraryImage.deleteMany).not.toHaveBeenCalled();
-    expect(db.mediaLibrarySyncState.upsert).not.toHaveBeenCalled();
+    // Marker wird gesetzt (der Lauf ist beendet), aber als unvollständig.
+    expect(db.mediaLibrarySyncState.upsert.mock.calls[0][0].update).toMatchObject({ truncated: true });
+  });
+
+  it('Antwort ohne files-Payload gilt als unvollständig statt als "nichts mehr da"', async () => {
+    const db = makeDb();
+    const { admin } = makeAdmin(
+      page([imageNode(M1)], { hasNextPage: true, endCursor: 'C1' }),
+      { json: async () => ({ data: {} }) },
+    );
+
+    const result = await syncMediaLibrary(admin, db as never, shop);
+
+    expect(result).toEqual({ synced: 1, removed: 0 });
+    expect(db.mediaLibraryImage.deleteMany).not.toHaveBeenCalled();
+    expect(db.mediaLibrarySyncState.upsert.mock.calls[0][0].update).toMatchObject({ truncated: true });
   });
 
   it('Seitenlimit erreicht → abgeschnittene Liste löscht nichts', async () => {
@@ -230,7 +245,9 @@ describe('syncMediaLibrary — Stale-Delete-Schutz', () => {
     expect(graphql).toHaveBeenCalledTimes(200);
     expect(result.synced).toBe(200);
     expect(db.mediaLibraryImage.deleteMany).not.toHaveBeenCalled();
-    expect(db.mediaLibrarySyncState.upsert).not.toHaveBeenCalled();
+    // Der Marker wird trotzdem gesetzt — sonst bliebe eine sehr grosse
+    // Bibliothek für den Editor dauerhaft "nie synchronisiert".
+    expect(db.mediaLibrarySyncState.upsert.mock.calls[0][0].update).toMatchObject({ truncated: true });
   });
 
   it('0 Bilder bei vorhandenem lokalem Cache → Störungsverdacht, kein Delete', async () => {
@@ -255,5 +272,40 @@ describe('syncMediaLibrary — Stale-Delete-Schutz', () => {
     expect(db.mediaLibrarySyncState.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where: { shop } }),
     );
+    expect(db.mediaLibrarySyncState.upsert.mock.calls[0][0].update).toMatchObject({ truncated: false });
+  });
+});
+
+describe('syncMediaLibrary — ein Lauf pro Shop', () => {
+  it('ein zweiter Aufruf hängt sich an den laufenden, statt neu zu synchronisieren', async () => {
+    const db = makeDb();
+    let releasePage: (value: unknown) => void = () => {};
+    const pending = new Promise((resolve) => { releasePage = resolve; });
+    const graphql = vi.fn().mockImplementation(async () => {
+      await pending;
+      return page([imageNode(M1)], { hasNextPage: false });
+    });
+
+    const first = syncMediaLibrary({ graphql } as never, db as never, shop);
+    const second = syncMediaLibrary({ graphql } as never, db as never, shop);
+    releasePage(null);
+
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(graphql).toHaveBeenCalledTimes(1);
+    expect(a).toEqual(b);
+    expect(db.mediaLibraryImage.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('gibt den Shop nach einem gescheiterten Lauf wieder frei', async () => {
+    const db = makeDb();
+    const { admin, graphql } = makeAdmin();
+    graphql.mockRejectedValueOnce(new Error('boom'));
+    graphql.mockResolvedValueOnce(page([imageNode(M1)], { hasNextPage: false }));
+
+    await expect(syncMediaLibrary(admin, db as never, shop)).rejects.toThrow('boom');
+    const result = await syncMediaLibrary(admin, db as never, shop);
+
+    expect(result.synced).toBe(1);
   });
 });

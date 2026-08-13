@@ -15,7 +15,7 @@ const shop = 'test.myshopify.com';
 function makeDb(opts: {
   records?: Array<Record<string, unknown>>;
   total?: number;
-  syncState?: { lastFullSyncAt: Date } | null;
+  syncState?: { lastSyncedAt: Date } | null;
 }) {
   const findMany = vi.fn().mockResolvedValue(opts.records ?? []);
   const count = vi.fn().mockResolvedValue(opts.total ?? 0);
@@ -151,7 +151,7 @@ describe('loadMediaLibraryImages — Zeilenform', () => {
         },
       ],
       total: 1,
-      syncState: { lastFullSyncAt: new Date('2026-08-13T00:00:00Z') },
+      syncState: { lastSyncedAt: new Date('2026-08-13T00:00:00Z') },
     });
 
     const { rows, total, neverSynced } = await loadMediaLibraryImages(db, shop, BASE);

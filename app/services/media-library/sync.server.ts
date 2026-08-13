@@ -128,7 +128,21 @@ async function fetchAllImages(
     }
 
     const files = data?.data?.files;
-    const edges: Array<{ node?: FilesNode }> = files?.edges ?? [];
+
+    // Antwort ohne `files`-Feld UND ohne errors-Array: kaputte/unerwartete
+    // Form (z.B. Throttling-Teilantwort). Das darf NICHT als "Shopify hat
+    // nichts mehr" durchgehen — sonst hielte der Sweep alle noch nicht
+    // abgerufenen Bilder für gelöscht. Bereits Gesammeltes behalten, Lauf als
+    // unvollständig melden.
+    if (!files) {
+      logger.warn(
+        `[MediaLibrarySync] Response without a files payload — treating run as incomplete, no stale-delete`,
+        { context: "MediaLibrarySync", shop, page: pages + 1 },
+      );
+      return { images, skippedIds, complete: false };
+    }
+
+    const edges: Array<{ node?: FilesNode }> = files.edges ?? [];
 
     for (const edge of edges) {
       const node = edge?.node;
@@ -157,7 +171,7 @@ async function fetchAllImages(
     }
 
     pages++;
-    if (!files?.pageInfo?.hasNextPage) return { images, skippedIds, complete: true };
+    if (!files.pageInfo?.hasNextPage) return { images, skippedIds, complete: true };
     if (pages >= MAX_PAGES) {
       logger.warn(
         `[MediaLibrarySync] Page limit reached (${MAX_PAGES} pages) — treating run as incomplete, no stale-delete`,
@@ -187,6 +201,7 @@ async function runInBatches<T>(items: T[], size: number, fn: (item: T) => Promis
  *  3. Verwendung best effort auflösen (nur lokale Caches, keine Zusatzabfragen).
  *  4. Upsert pro Bild, mandantengetrennt über den (shop, id)-Compound-Key.
  *  5. Stale-Delete NUR nach einem vollständig durchgelaufenen Sync.
+ *  6. Sync-Marker schreiben (Grundlage für `neverSynced` im Loader).
  *
  * Punkt 5 folgt dem Muster der Stale-Deletes in content-sync.service.ts: ein
  * abgebrochener oder abgeschnittener Lauf löscht nichts. Statt einer riesigen
@@ -194,7 +209,7 @@ async function runInBatches<T>(items: T[], size: number, fn: (item: T) => Promis
  * dem Abruf gesetzt, damit auch parallele Schreiber (z.B. ein künftiger
  * files/update-Webhook) nie versehentlich weggeräumt werden.
  */
-export async function syncMediaLibrary(
+async function runMediaLibrarySync(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
@@ -283,16 +298,19 @@ export async function syncMediaLibrary(
         shop,
       });
     }
-
-    // Marker nur nach einem vollständigen Lauf — er ist die Grundlage für
-    // `neverSynced` im Loader.
-    const now = new Date();
-    await db.mediaLibrarySyncState.upsert({
-      where: { shop },
-      create: { shop, lastFullSyncAt: now, imageCount: images.length },
-      update: { lastFullSyncAt: now, imageCount: images.length },
-    });
   }
+
+  // Marker für `neverSynced`: gesetzt, sobald ein Lauf bis zum Ende gekommen
+  // ist — auch wenn die Liste am Seitenlimit abgeschnitten wurde. Sonst bliebe
+  // eine sehr grosse Bibliothek dauerhaft "nie synchronisiert", obwohl der
+  // Editor längst Zeilen anzeigt. `truncated` hält fest, dass der Cache in dem
+  // Fall unvollständig ist (und deshalb auch nicht stale-bereinigt wurde).
+  const now = new Date();
+  await db.mediaLibrarySyncState.upsert({
+    where: { shop },
+    create: { shop, lastSyncedAt: now, imageCount: images.length, truncated: !complete },
+    update: { lastSyncedAt: now, imageCount: images.length, truncated: !complete },
+  });
 
   logger.info(`[MediaLibrarySync] Complete`, {
     context: "MediaLibrarySync",
@@ -303,4 +321,41 @@ export async function syncMediaLibrary(
   });
 
   return { synced: images.length, removed };
+}
+
+/**
+ * Läuft pro Shop höchstens einmal gleichzeitig.
+ *
+ * Der Sync ist ein manueller Trigger; ein Doppelklick oder ein Browser-Retry
+ * nach einer langen Antwortzeit würde sonst einen zweiten kompletten Durchlauf
+ * starten (Shopify-Rate-Limit + doppelte Upserts). Der zweite Aufruf bekommt
+ * stattdessen das Ergebnis des laufenden.
+ *
+ * Bewusst nur prozesslokal: das ist der Fall, der in der Praxis auftritt (ein
+ * Merchant, ein Klick, eine Instanz). Ein instanzübergreifendes Lock wäre ein
+ * eigener Mechanismus (DB-Lease) und ist hier nicht nötig — zwei parallele
+ * Läufe wären wegen der idempotenten Upserts und des `cutoff`-vor-Abruf
+ * korrekt, nur verschwenderisch.
+ */
+const inFlight = new Map<string, Promise<{ synced: number; removed: number }>>();
+
+export function syncMediaLibrary(
+  admin: AdminApiContext,
+  db: PrismaClient,
+  shop: string,
+): Promise<{ synced: number; removed: number }> {
+  const running = inFlight.get(shop);
+  if (running) {
+    logger.debug(`[MediaLibrarySync] Sync already running for this shop — joining it`, {
+      context: "MediaLibrarySync",
+      shop,
+    });
+    return running;
+  }
+
+  const run = runMediaLibrarySync(admin, db, shop).finally(() => {
+    inFlight.delete(shop);
+  });
+  inFlight.set(shop, run);
+  return run;
 }

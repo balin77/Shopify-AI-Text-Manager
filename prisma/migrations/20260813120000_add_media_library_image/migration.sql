@@ -42,11 +42,13 @@ CREATE INDEX IF NOT EXISTS "MediaLibraryImage_shop_position_idx"
   ON "MediaLibraryImage" ("shop", "position");
 
 -- 2. Sync-Marker: unterscheidet "Shop hat keine Bilder" von "nie synchronisiert".
+--    `truncated` markiert einen Cache, der am Seitenlimit abgeschnitten wurde.
 CREATE TABLE IF NOT EXISTS "MediaLibrarySyncState" (
-  "shop"           TEXT NOT NULL,
-  "lastFullSyncAt" TIMESTAMP(3) NOT NULL,
-  "imageCount"     INTEGER NOT NULL DEFAULT 0,
-  "updatedAt"      TIMESTAMP(3) NOT NULL,
+  "shop"         TEXT NOT NULL,
+  "lastSyncedAt" TIMESTAMP(3) NOT NULL,
+  "imageCount"   INTEGER NOT NULL DEFAULT 0,
+  "truncated"    BOOLEAN NOT NULL DEFAULT false,
+  "updatedAt"    TIMESTAMP(3) NOT NULL,
 
   CONSTRAINT "MediaLibrarySyncState_pkey" PRIMARY KEY ("shop")
 );
