@@ -478,6 +478,40 @@ async function attachMissingTranslationFlags(
   const isMetaobject = opts.type === "metaobject";
   const rowIds = rows.map((r) => r.id);
 
+  // Image rows: alt translations live in ProductImageAltTranslation, keyed by
+  // the ProductImage CACHE row — a ContentTranslation lookup would always come
+  // back empty and paint every translated alt as "missing".
+  if (opts.type === "image") {
+    const cacheIdByRow = new Map<string, string>();
+    for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
+    if (cacheIdByRow.size === 0) return;
+    const altRows = await db.productImageAltTranslation.findMany({
+      where: {
+        image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
+        marketId: "",
+        locale: { in: foreignLocales },
+      },
+      select: { imageId: true, locale: true, altText: true },
+    });
+    const localesByRow = new Map<string, Set<string>>();
+    for (const alt of altRows) {
+      if (!alt.altText || alt.altText.trim() === "") continue;
+      const rowId = cacheIdByRow.get(alt.imageId);
+      if (!rowId) continue;
+      const set = localesByRow.get(rowId) ?? new Set<string>();
+      set.add(alt.locale);
+      localesByRow.set(rowId, set);
+    }
+    for (const row of rows) {
+      const have = localesByRow.get(row.id);
+      const missing = foreignLocales.filter((locale) => !have?.has(locale));
+      if (missing.length === 0) continue;
+      row.untranslatedColumnIds = [IMAGE_ROW_ALT_COLUMN_ID];
+      row.untranslatedLocalesByColumnId = { [IMAGE_ROW_ALT_COLUMN_ID]: missing };
+    }
+    return;
+  }
+
   const translated = isMetaobject
     ? await db.metaobjectTranslation.findMany({
         where: { shop, metaobjectId: { in: rowIds }, marketId: "", key: { in: keys }, locale: { in: foreignLocales } },
@@ -901,6 +935,19 @@ async function loadImageRows(
   }
   if (opts.filters.includes("missingAltText")) {
     and.push({ OR: [{ altText: null }, { altText: "" }] });
+  }
+  // "Missing translation" in the SELECTED foreign locale. A relation filter,
+  // not the notIn anti-join the content types need — ProductImageAltTranslation
+  // hangs off the image, so Prisma can express it exactly (and the result is
+  // never approximate).
+  if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
+    and.push({
+      NOT: {
+        altTextTranslations: {
+          some: { locale: opts.locale, marketId: opts.marketId, NOT: { altText: "" } },
+        },
+      },
+    });
   }
 
   const where: Prisma.ProductImageWhereInput = { product: { shop }, AND: and };

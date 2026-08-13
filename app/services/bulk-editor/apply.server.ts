@@ -996,6 +996,10 @@ async function persistProductImageAlt(
       where: { shop_id: { shop, id: productId } },
       data: { featuredImageAlt: imageAlt.value },
     });
+    // §6.6: the alt's foreign translations are stale now — the same
+    // invalidation the image ROW path and the single editor perform, so the
+    // medium behaves identically no matter which grid edited it.
+    await invalidateStaleForeignTranslations(deps, "image", image.mediaId, ["alt"]);
   } catch (err: unknown) {
     fail(err instanceof Error ? err.message : String(err));
   }
@@ -1061,22 +1065,36 @@ async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Prom
       failures.push(failureOf(group, error, columnId));
       continue;
     }
-    // DB mirror WITH altTextModifiedAt (Plan §4.3/§10.3): the product sync
-    // preserves alt-texts younger than PRESERVE_WINDOW_MS — without the stamp
-    // the products/update webhook triggered by OUR OWN write overwrites it.
-    await db.productImage.update({
-      where: { id: image.id },
-      data: { altText: value, altTextModifiedAt: new Date() },
-    });
-    // Position 0 is the featured image; the product list and the grid
-    // thumbnail read Product.featuredImageAlt — keep it in step.
-    if ((image.position ?? 0) === 0) {
-      await db.product
-        .update({ where: { shop_id: { shop, id: image.productId } }, data: { featuredImageAlt: value } })
-        .catch(() => undefined);
+    // Shopify already holds the new value — a failing mirror must be reported
+    // as a cell failure, not thrown: a concurrent product sync recreates
+    // ProductImage rows (delete+create), so the update can hit P2025 right
+    // after a successful write.
+    try {
+      // DB mirror WITH altTextModifiedAt (Plan §4.3/§10.3): the product sync
+      // preserves alt-texts younger than PRESERVE_WINDOW_MS — without the stamp
+      // the products/update webhook triggered by OUR OWN write overwrites it.
+      await db.productImage.update({
+        where: { id: image.id },
+        data: { altText: value, altTextModifiedAt: new Date() },
+      });
+      // Position 0 is the featured image; the product list and the grid
+      // thumbnail read Product.featuredImageAlt — keep it in step.
+      if ((image.position ?? 0) === 0) {
+        await db.product
+          .update({ where: { shop_id: { shop, id: image.productId } }, data: { featuredImageAlt: value } })
+          .catch(() => undefined);
+      }
+      // §6.6: the alt's foreign translations are now stale.
+      await invalidateStaleForeignTranslations(deps, "image", group.rowId, ["alt"]);
+    } catch (err: unknown) {
+      failures.push(
+        failureOf(
+          group,
+          `The alt text was saved on Shopify, but the local cache could not be updated (${err instanceof Error ? err.message : String(err)}). Resync the product.`,
+          columnId,
+        ),
+      );
     }
-    // §6.6: the alt's foreign translations are now stale.
-    await invalidateStaleForeignTranslations(deps, "image", group.rowId, ["alt"]);
   }
   return failures;
 }
