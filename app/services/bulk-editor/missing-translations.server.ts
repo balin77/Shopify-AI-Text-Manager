@@ -212,6 +212,11 @@ export async function scanMissingTranslations(
   const unitsByColumnLocale: Record<string, Record<string, number>> = {};
   let matchedRows = 0;
   let scannedRows = 0;
+  // The OFFSET is advanced by the requested window, not by the returned row
+  // count: a loader may legitimately return fewer rows than asked for (the
+  // image union does), and advancing by the count would re-read the tail of
+  // the previous chunk — duplicate candidates and doubled unit estimates.
+  let scanOffset = 0;
   let exhausted = false;
 
   // Chunked walk instead of one big window: rows that are already fully
@@ -228,7 +233,7 @@ export async function scanMissingTranslations(
       search: opts.search,
       filters,
       sort: null,
-      skip: scannedRows,
+      skip: scanOffset,
       take,
       productCells,
       admin: opts.admin,
@@ -240,6 +245,7 @@ export async function scanMissingTranslations(
       break;
     }
     scannedRows += rows.length;
+    scanOffset += take;
 
     const translated = await loadTranslatedLocales(db, shop, opts, rows, keys);
     const subTranslated = await loadSubResourceTranslatedLocales(db, shop, opts, rows, subColumns);
@@ -284,7 +290,7 @@ export async function scanMissingTranslations(
       });
     }
 
-    if (scannedRows >= total) {
+    if (scanOffset >= total) {
       exhausted = true;
       break;
     }

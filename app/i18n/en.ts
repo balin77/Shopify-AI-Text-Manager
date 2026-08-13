@@ -2708,6 +2708,17 @@ export const en: Translation = {
       negative: "The amount cannot be negative.",
       invalid: "Not a valid amount.",
     },
+    imagePreview: {
+      open: "Enlarge image",
+      title: "Image",
+      close: "Close",
+      noAlt: "No alt text set.",
+    },
+    mediaLibrary: {
+      neverSynced:
+        "Images outside the product catalogue (files, theme, metaobjects) have not been synced yet — that is why they are missing from this list.",
+      syncButton: "Sync image library",
+    },
     translateMissing: {
       button: "Missing translations",
       title: "Add missing translations",

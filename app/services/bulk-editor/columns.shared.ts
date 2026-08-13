@@ -1132,6 +1132,7 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       else if (column.id === "position") value = row.position != null ? String(row.position) : "";
       else if (column.id === "policyTitle" || column.id === "moDisplayName") value = row.title;
       else if (column.id === "moHandle") value = row.handle;
+      else if (column.id === "imageUsage") value = row.imageUsage ?? row.productTitle ?? "";
       return { value, editable: false, readOnlyReason: "column" };
     }
     default:

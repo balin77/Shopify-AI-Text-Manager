@@ -21,7 +21,7 @@
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Tooltip } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -50,7 +50,9 @@ import {
   formatMoneyForDisplay,
   applyPriceAction,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  BULK_COLUMNS_BY_TYPE,
   BULK_FILTER_IDS,
+  IMAGE_ROW_ALT_COLUMN_ID,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
   FILTER_IDS_BY_SET,
@@ -136,6 +138,9 @@ interface LoaderData {
   locale: string;
   marketId: string;
   translationFilterApproximate: boolean;
+  /** Image view: the shop never ran a media-library sync, so every image
+   * outside the product catalogue is missing from the list. */
+  mediaLibraryNeverSynced: boolean;
   /** Shop-specific metafield columns (Plan §4.1) — plain specs; the client
    * builds the descriptors via buildColumnsForType. */
   metafieldColumns: MetafieldColumnSpec[];
@@ -166,6 +171,10 @@ interface LoaderData {
   currencyCode: string;
 }
 
+/** The alt column of the IMAGE row type — the preview modal shows its value
+ * (the grid's own resolution, so a foreign view shows the translation). */
+const ALT_PREVIEW_COLUMN = BULK_COLUMNS_BY_TYPE.image.find((c) => c.id === IMAGE_ROW_ALT_COLUMN_ID)!;
+
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -189,6 +198,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       locale: "",
       marketId: "",
       translationFilterApproximate: false,
+      mediaLibraryNeverSynced: false,
       metafieldColumns: [],
       metaobjectColumns: [],
       metaobjectTypes: [],
@@ -275,7 +285,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : metaobjectTypes[0]?.type ?? "";
   }
 
-  const [{ rows, total, translationFilterApproximate }, currencyCode] = await Promise.all([
+  const [{ rows, total, translationFilterApproximate, mediaLibraryNeverSynced }, currencyCode] = await Promise.all([
     loadBulkRows(db, shop, {
       type,
       locale,
@@ -313,6 +323,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     locale,
     marketId,
     translationFilterApproximate,
+    mediaLibraryNeverSynced: mediaLibraryNeverSynced ?? false,
     metafieldColumns,
     metaobjectColumns,
     metaobjectTypes,
@@ -428,7 +439,7 @@ const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   // Metaobject defaults are computed per selected definition type (context
   // columns + the type's field columns) — see defaultColumnsFor() below.
   metaobject: ["moDisplayName", "moHandle"],
-  image: ["image", "productTitle", "position", "field.altText"],
+  image: ["image", "imageUsage", "position", "field.altText"],
 };
 
 /** Maps a legacy stored column name ("title", "image", "blogTitle") to the
@@ -510,6 +521,11 @@ export default function BulkEditor() {
   // shows the preview and, after confirmation, submits the returned diff
   // through the NORMAL save pipeline (submitDiff below).
   const importFetcher = useFetcher<CsvImportActionResult>();
+  /** Manual trigger for the media-library cache — the image view is empty
+   * beyond product media until it has run once. */
+  const syncMediaLibraryFetcher = useFetcher();
+  /** Row whose image is shown large (§ image cell). Null = modal closed. */
+  const [previewRow, setPreviewRow] = useState<BulkRow | null>(null);
 
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
@@ -868,8 +884,11 @@ export default function BulkEditor() {
     // Cells this ROW cannot back at all (an option position the product does
     // not have, a linked option, an uncached metafield) are structurally empty
     // — colouring them "untranslated" would mark four permanent yellow cells
-    // on every single-option product.
-    if (resolveCellValue(row, column).readOnlyReason) return null;
+    // on every single-option product. A cell that is only read-only in the
+    // PRIMARY view (a library image's alt) still gets its colour: its
+    // translation is exactly what this feature is about.
+    const resolvedForStatus = resolveCellValue(row, column);
+    if (resolvedForStatus.readOnlyReason && !resolvedForStatus.editableForeign) return null;
     const value = valueFor(row, column).trim();
     if (isForeign) return value === "" ? "untranslated" : null;
     if (value === "") return "untranslated";
@@ -1571,6 +1590,18 @@ export default function BulkEditor() {
                       .replace("{skipped}", String(pasteBanner.skipped))}
                   </Banner>
                 )}
+                {data.mediaLibraryNeverSynced && (
+                  <Banner
+                    tone="info"
+                    action={{
+                      content: b.mediaLibrary.syncButton,
+                      onAction: () => syncMediaLibraryFetcher.submit({}, { method: "post", action: "/api/sync-media-library" }),
+                      loading: syncMediaLibraryFetcher.state !== "idle",
+                    }}
+                  >
+                    {b.mediaLibrary.neverSynced}
+                  </Banner>
+                )}
                 {data.translationFilterApproximate && (
                   <Banner tone="warning">{b.filterApproximateBanner}</Banner>
                 )}
@@ -1760,10 +1791,16 @@ export default function BulkEditor() {
                       sort={sort}
                       onSortToggle={handleSortToggle}
                       openInEditorLabel={b.openInEditor}
+                      onPreviewImage={setPreviewRow}
+                      previewImageLabel={b.imagePreview.open}
                       onOpenInEditor={(row) =>
                         handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                          // Variant rows open their PRODUCT in the editor.
-                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
+                          // Variant and image rows open their PRODUCT. A library
+                          // image belongs to none — open the list unselected
+                          // instead of sending a MediaImage gid as a product id.
+                          ...(row.type === "image" && !row.productId
+                            ? {}
+                            : { searchParams: new URLSearchParams({ select: row.productId ?? row.id }) }),
                         })
                       }
                       columnHeading={columnHeading}
@@ -1807,6 +1844,48 @@ export default function BulkEditor() {
               saveText={b.saveButton}
               discardText={b.discardButton}
             />
+
+            {/* Image preview: the grid thumbnail is far too small to judge an
+                alt text against, so the image cell opens it large. The jump to
+                the full editor lives here too — it used to be the thumbnail's
+                own click target. */}
+            <Modal
+              open={previewRow !== null}
+              onClose={() => setPreviewRow(null)}
+              title={previewRow?.imageUsage || previewRow?.productTitle || previewRow?.title || b.imagePreview.title}
+              secondaryActions={[{ content: b.imagePreview.close, onAction: () => setPreviewRow(null) }]}
+              {...(previewRow && (previewRow.type !== "image" || previewRow.productId)
+                ? {
+                    primaryAction: {
+                      content: b.openInEditor,
+                      onAction: () => {
+                        const row = previewRow;
+                        setPreviewRow(null);
+                        handleNavigate(TYPE_EDITOR_PATH[row.type], {
+                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
+                        });
+                      },
+                    },
+                  }
+                : {})}
+            >
+              <Modal.Section>
+                <BlockStack gap="300" inlineAlign="center">
+                  {previewRow?.imageUrl && (
+                    <img
+                      src={previewRow.imageUrl}
+                      alt={previewRow.imageAlt ?? previewRow.altText ?? ""}
+                      style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
+                    />
+                  )}
+                  {/* The alt text is what this grid is about — show the value
+                      the row actually carries, in the current view. */}
+                  <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                    {previewRow ? valueFor(previewRow, ALT_PREVIEW_COLUMN) || b.imagePreview.noAlt : ""}
+                  </Text>
+                </BlockStack>
+              </Modal.Section>
+            </Modal>
 
             <CsvImportModal
               open={importPreview !== null}

@@ -93,6 +93,10 @@ export interface LoadBulkRowsResult {
   /** True when the missingTranslation anti-join hit the notIn cap — the
    * filter result is approximate and the UI shows a hint banner (§3.3). */
   translationFilterApproximate: boolean;
+  /** Image rows only: the shop never ran a media-library sync, so every image
+   * outside the product catalogue is missing from the list. Without this the
+   * feature would look empty instead of un-synced. */
+  mediaLibraryNeverSynced?: boolean;
 }
 
 /** Cap on the `id NOT IN (…)` list for the missing-translation anti-join.
@@ -947,7 +951,8 @@ async function loadImageRows(
   return {
     rows: [...productSegment.rows, ...librarySegment.rows],
     total: productSegment.total + librarySegment.total,
-    translationFilterApproximate: librarySegment.approximate,
+    translationFilterApproximate: false,
+    mediaLibraryNeverSynced: librarySegment.neverSynced,
   };
 }
 
@@ -1054,51 +1059,67 @@ async function loadProductMediaRows(
  * from the MediaLibraryImage cache — read through the media-library service, so
  * this loader never touches that model directly.
  *
- * Two deliberate limitations, both visible to the merchant rather than silent:
- * - the PRIMARY alt of these images cannot be written from this app
- *   (`altPrimaryReadOnly`; productUpdateMedia is product-scoped and fileUpdate
- *   would need the write_files scope). Their translations are unaffected.
- * - the "missing translation" filter is applied to the loaded PAGE, because the
- *   media cache carries no translation dimension — the result is flagged
- *   approximate, the same contract the content types use for their anti-join.
+ * NOTHING is filtered after paging: `total` has to be exact, or the CSV export
+ * sweep and the candidate scan (both of which page until a short page appears)
+ * would stop early. Every restriction is therefore pushed INTO the query.
+ *
+ * One deliberate limitation, visible rather than silent: the PRIMARY alt of
+ * these images cannot be written from this app (`altPrimaryReadOnly` —
+ * productUpdateMedia is product-scoped and fileUpdate would need the
+ * write_files scope). Their translations are unaffected.
  */
 async function loadLibraryImageRows(
   db: PrismaClient,
   shop: string,
   opts: LoadBulkRowsOptions,
   productMediaTotal: number,
-): Promise<{ rows: BulkRow[]; total: number; approximate: boolean }> {
-  // The CSV import resolves rows by id and only ever addresses product media.
-  if (opts.ids) return { rows: [], total: 0, approximate: false };
-
+): Promise<{ rows: BulkRow[]; total: number; neverSynced: boolean }> {
   const { loadMediaLibraryImages } = await import("../media-library/load.server");
   const skip = Math.max(0, opts.skip - productMediaTotal);
   const consumed = Math.max(0, Math.min(opts.take, productMediaTotal - opts.skip));
   const take = Math.max(0, opts.take - consumed);
 
-  const { rows, total } = await loadMediaLibraryImages(db, shop, {
+  // "Missing translation" for library images: their alts live in
+  // ContentTranslation("MediaImage"), which the media cache knows nothing
+  // about — so the ids that DO have a translation are resolved here and
+  // excluded in the query, keeping the count exact.
+  let excludeMediaIds: string[] | undefined;
+  if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
+    const translated = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceType: "MediaImage",
+        locale: opts.locale,
+        marketId: opts.marketId,
+        NOT: { value: "" },
+      },
+      select: { resourceId: true },
+      take: TRANSLATION_NOT_IN_CAP,
+    });
+    excludeMediaIds = translated.map((t) => t.resourceId);
+  }
+
+  const sortField = librarySortField(opts.sort);
+  const { rows, total, neverSynced } = await loadMediaLibraryImages(db, shop, {
     search: opts.search,
     skip,
     take,
     // Product media are served by the segment above — asking for them here
-    // would list them twice.
+    // would list them twice. The flag reads the cache's own usageKind, which
+    // the media sync resolves at ITS cadence: an image attached to a product
+    // since the last run can appear in both segments until the next sync. That
+    // is a cosmetic duplicate (both rows address the same MediaImage and the
+    // write path picks the store by gid, not by segment) — filtering it out
+    // here would cost an exact `total`, which the export and scan sweeps need.
     excludeProductMedia: true,
     missingAltOnly: opts.filters.includes("missingAltText"),
+    ...(opts.ids ? { mediaIds: opts.ids } : {}),
+    ...(excludeMediaIds ? { excludeMediaIds } : {}),
+    ...(sortField && opts.sort ? { sort: { field: sortField, direction: opts.sort.direction } } : {}),
   });
-  if (rows.length === 0) return { rows: [], total, approximate: false };
 
-  // Defence against a stale usageKind: the media sync resolves "is this a
-  // product medium" at ITS OWN cadence, so an image attached to a product since
-  // the last run would appear in BOTH segments. The product segment wins.
-  const attached = await db.productImage.findMany({
-    where: { mediaId: { in: rows.map((r) => r.mediaId) }, product: { shop } },
-    select: { mediaId: true },
-  });
-  const attachedIds = new Set(attached.map((a) => a.mediaId));
-
-  let mapped: BulkRow[] = rows
-    .filter((row) => !attachedIds.has(row.mediaId))
-    .map((row) => ({
+  return {
+    rows: rows.map((row) => ({
       id: row.mediaId,
       type: "image" as const,
       title: row.usageLabel || row.filename || row.mediaId,
@@ -1111,27 +1132,24 @@ async function loadLibraryImageRows(
       // No owning product ⇒ no productUpdateMedia ⇒ the primary alt is
       // Shopify-admin territory. The translation stays editable.
       altPrimaryReadOnly: true,
-    }));
+    })),
+    total,
+    neverSynced,
+  };
+}
 
-  let approximate = false;
-  if (opts.filters.includes("missingTranslation") && opts.locale !== "" && mapped.length > 0) {
-    const translated = await db.contentTranslation.findMany({
-      where: {
-        shop,
-        resourceType: "MediaImage",
-        resourceId: { in: mapped.map((r) => r.id) },
-        locale: opts.locale,
-        marketId: opts.marketId,
-        NOT: { value: "" },
-      },
-      select: { resourceId: true },
-    });
-    const translatedIds = new Set(translated.map((t) => t.resourceId));
-    mapped = mapped.filter((row) => !translatedIds.has(row.id));
-    approximate = true;
-  }
-
-  return { rows: mapped, total, approximate };
+/** The grid's sort column → the media cache's sortable field, or null when the
+ * cache cannot express it (position is product-media only). */
+function librarySortField(
+  sort: BulkSort | null,
+): "altText" | "filename" | "usageLabel" | null {
+  if (!sort) return null;
+  const key = getColumnForType("image", sort.columnId)?.sortKey;
+  if (key === "altText") return "altText";
+  // The "used by" column sorts by the product title in the DB segment and by
+  // the usage label here — the closest equivalent the cache has.
+  if (key === "productTitle") return "usageLabel";
+  return null;
 }
 
 // ─── Blog container rows (Phase 5 — Plan §7) ───────────────────────────────

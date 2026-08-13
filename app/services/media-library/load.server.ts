@@ -41,6 +41,16 @@ export interface LoadMediaLibraryOptions {
   excludeProductMedia: boolean;
   /** nur Bilder ohne primären Alt-Text. */
   missingAltOnly?: boolean;
+  /** Nur diese MediaImage-GIDs (CSV-Import löst Zeilen über ihre id auf). */
+  mediaIds?: string[];
+  /**
+   * Diese GIDs auslassen. Der Bulk-Editor braucht das, um exakt zu bleiben:
+   * ein Nachfiltern der geladenen SEITE würde `total` überzählen und die
+   * Export-/Scan-Schleifen zu früh abbrechen lassen.
+   */
+  excludeMediaIds?: string[];
+  /** Sortierung; ohne Angabe die Sync-Reihenfolge (neueste zuerst). */
+  sort?: { field: "altText" | "filename" | "usageLabel"; direction: "asc" | "desc" };
 }
 
 /** Obergrenze pro Seite — schützt vor einem `take=100000` aus der Query-String. */
@@ -95,6 +105,11 @@ export async function loadMediaLibraryImages(
     and.push({ OR: [{ altText: null }, { altText: "" }] });
   }
 
+  if (opts.mediaIds) and.push({ id: { in: opts.mediaIds } });
+  if (opts.excludeMediaIds && opts.excludeMediaIds.length > 0) {
+    and.push({ id: { notIn: opts.excludeMediaIds } });
+  }
+
   const search = opts.search.trim();
   if (search) {
     and.push({
@@ -115,7 +130,9 @@ export async function loadMediaLibraryImages(
           where,
           // position stammt aus der Sync-Reihenfolge (neueste zuerst); id als
           // Tiebreaker, damit Paginierung deterministisch bleibt.
-          orderBy: [{ position: "asc" }, { id: "asc" }],
+          orderBy: opts.sort
+            ? [{ [opts.sort.field]: opts.sort.direction }, { id: "asc" }]
+            : [{ position: "asc" }, { id: "asc" }],
           skip,
           take,
           select: {

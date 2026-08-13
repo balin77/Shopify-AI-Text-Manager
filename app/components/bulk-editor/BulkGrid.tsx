@@ -22,7 +22,7 @@
 
 import { useRef } from "react";
 import { Text, Tooltip } from "@shopify/polaris";
-import { EditIcon } from "@shopify/polaris-icons";
+import { SearchIcon } from "@shopify/polaris-icons";
 import {
   resolveCellValue,
   type BulkRow,
@@ -75,6 +75,9 @@ interface BulkGridProps {
   onSortToggle: (column: ColumnDescriptor) => void;
   openInEditorLabel: string;
   onOpenInEditor: (row: BulkRow) => void;
+  /** Click on the image cell — opens the preview modal. */
+  onPreviewImage: (row: BulkRow) => void;
+  previewImageLabel: string;
   columnHeading: (column: ColumnDescriptor) => string;
   statusOptions: BulkCellStatusOptions;
   handleWarning: string;
@@ -109,6 +112,8 @@ export function BulkGrid({
   onSortToggle,
   openInEditorLabel,
   onOpenInEditor,
+  onPreviewImage,
+  previewImageLabel,
   columnHeading,
   statusOptions,
   handleWarning,
@@ -437,7 +442,7 @@ export function BulkGrid({
           return (
             <div key={row.id} role="row" className="cp-bulk-row">
               <div role="cell" className={`cp-bulk-cell${stickyClass(0)}`}>
-                <BulkImageCell row={row} onOpen={onOpenInEditor} openLabel={openInEditorLabel} />
+                <BulkImageCell row={row} onOpen={onPreviewImage} openLabel={previewImageLabel} />
               </div>
               {displayColumns.map((col, i) => {
                 const dirty = isDirty(row, col);
@@ -534,22 +539,26 @@ interface BulkImageCellProps {
 }
 
 /**
- * Image cell that doubles as the "open in editor" affordance: hovering
- * reveals a dark overlay with a pencil icon; clicking anywhere on the cell
- * jumps to the full editor for that row. Rows with no imageUrl render a
- * placeholder box so the affordance is uniform across all rows of the type.
+ * Image cell: hovering reveals a dark overlay with a magnifier; clicking opens
+ * the image in a preview modal (which is also where the "open in editor" jump
+ * lives now — the thumbnail is too small to judge an alt text against).
+ * Rows with no imageUrl render a placeholder box so the affordance is uniform
+ * across all rows of the type; only rows WITH an image are clickable.
  */
 function BulkImageCell({ row, onOpen, openLabel }: BulkImageCellProps) {
+  if (!row.imageUrl) {
+    return (
+      <span className="cp-bulk-img-btn">
+        <span className="cp-bulk-img-placeholder" aria-hidden="true" />
+      </span>
+    );
+  }
   return (
     <Tooltip content={openLabel}>
       <button type="button" className="cp-bulk-img-btn" onClick={() => onOpen(row)} aria-label={openLabel}>
-        {row.imageUrl ? (
-          <img src={row.imageUrl} alt={row.imageAlt ?? ""} className="cp-bulk-img" loading="lazy" />
-        ) : (
-          <span className="cp-bulk-img-placeholder" aria-hidden="true" />
-        )}
+        <img src={row.imageUrl} alt={row.imageAlt ?? ""} className="cp-bulk-img" loading="lazy" />
         <span className="cp-bulk-img-overlay" aria-hidden="true">
-          <EditIcon />
+          <SearchIcon />
         </span>
       </button>
     </Tooltip>

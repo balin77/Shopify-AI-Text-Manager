@@ -2708,6 +2708,17 @@ export const de = {
       negative: "Der Betrag darf nicht negativ sein.",
       invalid: "Kein gültiger Betrag.",
     },
+    imagePreview: {
+      open: "Bild vergrössern",
+      title: "Bild",
+      close: "Schliessen",
+      noAlt: "Kein Alt-Text hinterlegt.",
+    },
+    mediaLibrary: {
+      neverSynced:
+        "Bilder ausserhalb des Produktkatalogs (Dateien, Theme, Metaobjekte) sind noch nicht abgeglichen — sie fehlen deshalb in dieser Liste.",
+      syncButton: "Bildbibliothek abgleichen",
+    },
     translateMissing: {
       button: "Fehlende Übersetzungen",
       title: "Fehlende Übersetzungen ergänzen",

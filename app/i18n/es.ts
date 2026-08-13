@@ -2707,6 +2707,17 @@ export const es: Translation = {
       negative: "El importe no puede ser negativo.",
       invalid: "No es un importe válido.",
     },
+    imagePreview: {
+      open: "Ampliar imagen",
+      title: "Imagen",
+      close: "Cerrar",
+      noAlt: "No hay texto alternativo.",
+    },
+    mediaLibrary: {
+      neverSynced:
+        "Las imágenes fuera del catálogo de productos (archivos, tema, metaobjetos) aún no se han sincronizado, por eso faltan en esta lista.",
+      syncButton: "Sincronizar biblioteca de imágenes",
+    },
     translateMissing: {
       button: "Traducciones faltantes",
       title: "Añadir traducciones faltantes",
