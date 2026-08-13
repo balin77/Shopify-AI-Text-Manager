@@ -21,6 +21,7 @@ import {
   Divider,
   InlineStack,
   Text,
+  Thumbnail,
   Tooltip,
 } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -117,6 +118,13 @@ export function MissingTranslationList({
                   accessibilityLabel={isOpen ? strings.collapse : strings.expand}
                   onClick={() => toggleExpanded(item.rowId)}
                 />
+                {item.imageUrl && (
+                  // Fixed slot so the titles stay aligned across rows with and
+                  // without an image.
+                  <div style={{ width: 40, flex: "0 0 40px" }}>
+                    <Thumbnail source={item.imageUrl} alt="" size="small" />
+                  </div>
+                )}
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <Text as="span" variant="bodyMd" truncate>
                     {item.title}

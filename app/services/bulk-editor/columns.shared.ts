@@ -804,6 +804,11 @@ export const MAX_SYNC_SAVE = 25;
  * import preview enforce the same ceiling BEFORE submitting (Finding 2). */
 export const MAX_BULK_TASK_ITEMS = 500;
 
+/** Assumed number of option values behind a CLEARED option-values cell — its
+ * text is empty, so the real count is only known server-side. Deliberately on
+ * the high side of a typical option (sizes, colours). */
+const CLEARED_OPTION_VALUES_ESTIMATE = 10;
+
 /** Shopify's documented metafieldsSet input limit (Plan §14). Lives here (not
  * apply.server.ts) because estimateCalls needs it client-side. */
 export const METAFIELDS_SET_CHUNK = 25;
@@ -1317,10 +1322,15 @@ export function estimateCalls(
         // Values cells fan out per entry; the exact count is only known
         // server-side, so estimate with the display separator (over-estimating
         // is the safe direction for a budget guard).
-        const targets =
-          column?.kind === "option" && column.optionField === "values"
+        const isValuesCell = column?.kind === "option" && column.optionField === "values";
+        const targets = !isValuesCell
+          ? 1
+          : value !== ""
             ? Math.max(1, value.split(LIST_DISPLAY_SEPARATOR.trim()).length)
-            : 1;
+            : // A CLEARED values cell carries no text to count, yet still costs
+              // one removeAndVerify per value — estimate high, since the guard
+              // must never let a save through that it should have refused.
+              CLEARED_OPTION_VALUES_ESTIMATE;
         // One register (or remove) + one digest fetch per target resource.
         calls += targets;
         if (value !== "") calls += Math.ceil(targets / DIGEST_BATCH_CHUNK);

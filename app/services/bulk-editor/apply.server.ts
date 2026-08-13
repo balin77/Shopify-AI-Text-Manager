@@ -1309,6 +1309,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
     if (column && isSubResourceColumn(column)) {
+      // The `translatable` gate still applies here — diverting BEFORE checking
+      // it would let a read-only rich_text metafield through on this path
+      // (both entrances validate too, this is the defensive second half).
+      if (!column.translatable) {
+        failures.push(failureOf(group, `Column "${columnId}" is not translatable.`, columnId));
+        continue;
+      }
       subResourceCells.push({ columnId, column, value });
       continue;
     }
@@ -1583,6 +1590,22 @@ async function persistSubResourceTranslations(
           continue;
         }
         pairs = targets.map((target, index) => ({ target, value: names[index] }));
+      }
+    } else if (cell.column.kind === "metafield" && cell.column.metafieldType === METAFIELD_TYPE_LIST_SINGLE_LINE) {
+      // A list metafield stores a JSON ARRAY — the translation must use the
+      // same shape as the primary value (persistProductMetafields converts the
+      // same way), otherwise the storefront reads a single string.
+      if (cell.value === "") {
+        pairs = [{ target: targets[0], value: "" }];
+      } else {
+        const parsed = parseListMetafieldInput(cell.value);
+        if (!parsed.ok) {
+          failures.push(
+            failureOf(group, "List values must not be empty — separate values with |.", cell.columnId),
+          );
+          continue;
+        }
+        pairs = [{ target: targets[0], value: JSON.stringify(parsed.values) }];
       }
     } else {
       pairs = [{ target: targets[0], value: cell.value }];
@@ -2049,6 +2072,7 @@ export async function applyBulkDiff(
     subResourceProductIds.size > 0
       ? await loadProductSubResourceCaches(
           db,
+          shop,
           [...subResourceProductIds],
           [...subResourceMetafieldKeys.values()],
           needOptionCache,

@@ -233,6 +233,7 @@ export function subResourceCacheFromRow(row: BulkRow): ProductSubResourceCache {
  */
 export async function loadProductSubResourceCaches(
   db: Pick<PrismaClient, "productMetafield" | "productOption">,
+  shop: string,
   productIds: string[],
   metafieldKeys: { namespace: string; key: string }[],
   needOptions: boolean,
@@ -251,6 +252,10 @@ export async function loadProductSubResourceCaches(
   if (metafieldKeys.length > 0) {
     const metafields = await db.productMetafield.findMany({
       where: {
+        // ProductMetafield/-Option carry no shop column — the tenancy check
+        // rides on the relation, exactly like the variant lookup does. Without
+        // it a client-supplied product id could reach another shop's rows.
+        product: { shop },
         productId: { in: productIds },
         OR: metafieldKeys.map((k) => ({ namespace: k.namespace, key: k.key })),
       },
@@ -263,7 +268,7 @@ export async function loadProductSubResourceCaches(
 
   if (needOptions) {
     const options = await db.productOption.findMany({
-      where: { productId: { in: productIds } },
+      where: { product: { shop }, productId: { in: productIds } },
       select: { id: true, productId: true, position: true, values: true, linkedMetafieldKey: true },
     });
     for (const option of options) {

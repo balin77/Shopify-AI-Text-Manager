@@ -29,7 +29,9 @@ import {
   type ProductColumnCaps,
   getColumnForType,
   buildColumnsForType,
+  formatListMetafieldValue,
   LIST_DISPLAY_SEPARATOR,
+  METAFIELD_TYPE_LIST_SINGLE_LINE,
   metafieldColumnId,
   metaobjectColumnId,
 } from "./columns.shared";
@@ -392,6 +394,9 @@ async function attachSubResourceForeignValues(
   );
   if (columns.length === 0) return;
 
+  const listMetafieldColumnIds = new Set(
+    columns.filter((c) => c.metafieldType === METAFIELD_TYPE_LIST_SINGLE_LINE).map((c) => c.id),
+  );
   // rowId → columnId → the target gids of that cell (in value order).
   const targetsByRow = new Map<string, Map<string, string[]>>();
   const allIds = new Set<string>();
@@ -429,8 +434,13 @@ async function attachSubResourceForeignValues(
       for (const [columnId, ids] of byColumn) {
         const values = ids.map((id) => byResource.get(`${marketId}|${id}`) ?? "");
         if (values.every((v) => v === "")) continue;
-        recordFor(row.id)[`${opts.locale}|${marketId}|${columnId}`] =
-          ids.length === 1 ? values[0] : values.join(LIST_DISPLAY_SEPARATOR);
+        recordFor(row.id)[`${opts.locale}|${marketId}|${columnId}`] = listMetafieldColumnIds.has(columnId)
+          ? // A list metafield's translation is stored as JSON, like its
+            // primary value — the cell shows the same `A | B | C` form.
+            formatListMetafieldValue(values[0])
+          : ids.length === 1
+            ? values[0]
+            : values.join(LIST_DISPLAY_SEPARATOR);
       }
     }
   }

@@ -862,6 +862,11 @@ export default function BulkEditor() {
    * columns colour; uses valueFor so it updates live as the merchant types. */
   const cellTranslationStatus = (row: BulkRow, column: ColumnDescriptor): CellTranslationStatus => {
     if (!column.translatable) return null;
+    // Cells this ROW cannot back at all (an option position the product does
+    // not have, a linked option, an uncached metafield) are structurally empty
+    // — colouring them "untranslated" would mark four permanent yellow cells
+    // on every single-option product.
+    if (resolveCellValue(row, column).readOnlyReason) return null;
     const value = valueFor(row, column).trim();
     if (isForeign) return value === "" ? "untranslated" : null;
     if (value === "") return "untranslated";

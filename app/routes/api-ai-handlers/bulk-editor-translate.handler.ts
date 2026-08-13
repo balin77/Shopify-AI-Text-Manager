@@ -45,6 +45,8 @@ import {
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
   BULK_FILTER_IDS,
   LIST_DISPLAY_SEPARATOR,
+  METAFIELD_TYPE_MULTI_LINE,
+  MAX_TASK_CALLS,
   type BulkDiffEntry,
   type BulkFilterId,
   type BulkRowType,
@@ -272,6 +274,10 @@ export function buildJobs(
   const jobs: TranslateJob[] = [];
   let units = 0;
   let overCap = 0;
+  // Second budget, in SHOPIFY CALLS: an option-values cell is one unit per
+  // language but one translationsRegister per value, so a run that stays under
+  // the unit cap can still fan out into tens of thousands of calls.
+  let calls = 0;
 
   let capped = false;
   for (const item of items) {
@@ -289,11 +295,13 @@ export function buildJobs(
       // The cap cuts a contiguous TAIL: once it is hit nothing further is
       // taken, so the run is exactly the prefix the page listed first and
       // `overCap` is the honest "left for the next run" number.
-      if (capped || units + locales.length > MAX_TRANSLATE_UNITS) {
+      const callsForCell = locales.length * shopifyTargetsPerLocale(column, entry.source);
+      if (capped || units + locales.length > MAX_TRANSLATE_UNITS || calls + callsForCell > MAX_TASK_CALLS) {
         capped = true;
         overCap += locales.length;
         continue;
       }
+      calls += callsForCell;
       cells.push({
         column,
         fieldKey: aiFieldKey(column),
@@ -312,6 +320,14 @@ export function buildJobs(
   return { jobs, units, overCap };
 }
 
+/** How many Shopify translation calls ONE cell costs per language: a
+ * sub-resource cell writes one register per target resource, and an option's
+ * values are one target each. */
+function shopifyTargetsPerLocale(column: ColumnDescriptor, source: string): number {
+  if (!isListValuesColumn(column)) return 1;
+  return Math.max(1, source.split(LIST_DISPLAY_SEPARATOR.trim()).length);
+}
+
 /** Key the AI prompt sees: the canonical field name ("description", "title"),
  * or the metaobject field key (which is the shop's own descriptive name). */
 function aiFieldKey(column: ColumnDescriptor): string {
@@ -323,6 +339,13 @@ function aiFieldKey(column: ColumnDescriptor): string {
  * different thing entirely and must not touch that cache. */
 function isGroupedProductTypeColumn(column: ColumnDescriptor): boolean {
   return column.kind === "field" && canonicalFieldNameForColumn(column) === "productType";
+}
+
+/** Sub-resource cells that go through the numbered batch prompt: everything
+ * except multi-line metafields, whose newlines that prompt would collapse. */
+function isBatchSubResourceColumn(column: ColumnDescriptor): boolean {
+  if (!isSubResourceColumn(column)) return false;
+  return !(column.kind === "metafield" && column.metafieldType === METAFIELD_TYPE_MULTI_LINE);
 }
 
 /** An option-VALUES cell: ONE cell, several ProductOptionValue resources. */
@@ -417,15 +440,17 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
       const grouped = job.cells.filter((c) => isGroupedProductTypeColumn(c.column));
       // Metafield/option cells are short, standalone strings on their own
       // Shopify resource — translateBatchValues is the prompt the single-item
-      // editor already uses for exactly these (sub-resources.action.ts).
-      const sub = job.cells.filter((c) => isSubResourceColumn(c.column));
+      // editor already uses for exactly these (sub-resources.action.ts). Its
+      // sanitizer strips newlines, so MULTI-LINE metafields take the long path
+      // instead (same hazard as the metaobject text fields).
+      const sub = job.cells.filter((c) => isBatchSubResourceColumn(c.column));
       const short = job.cells.filter(
         (c) =>
-          !isGroupedProductTypeColumn(c.column) && !isSubResourceColumn(c.column) && isShortFieldColumn(c.column),
+          !isGroupedProductTypeColumn(c.column) && !isBatchSubResourceColumn(c.column) && isShortFieldColumn(c.column),
       );
       const long = job.cells.filter(
         (c) =>
-          !isGroupedProductTypeColumn(c.column) && !isSubResourceColumn(c.column) && !isShortFieldColumn(c.column),
+          !isGroupedProductTypeColumn(c.column) && !isBatchSubResourceColumn(c.column) && !isShortFieldColumn(c.column),
       );
 
       // One AI call per group and row, over the UNION of the locales its cells
