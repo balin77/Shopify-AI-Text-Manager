@@ -2637,7 +2637,6 @@ export const en: Translation = {
       missingImage: "This product has no image.",
       missingMediaId: "This image is missing its Shopify media id — resync this product first.",
       wrongMetaobjectType: "This column belongs to another metaobject type.",
-      libraryImagePrimaryAlt: "This image belongs to no product — its primary-language alt text can only be changed in the Shopify admin under Content → Files. You can still add translations here.",
       listSeparatorInValue: "A list value contains the \"|\" separator — edit it in the single-item editor.",
     },
     metaobjectTypeLabel: "Metaobject type",

@@ -884,11 +884,8 @@ export default function BulkEditor() {
     // Cells this ROW cannot back at all (an option position the product does
     // not have, a linked option, an uncached metafield) are structurally empty
     // — colouring them "untranslated" would mark four permanent yellow cells
-    // on every single-option product. A cell that is only read-only in the
-    // PRIMARY view (a library image's alt) still gets its colour: its
-    // translation is exactly what this feature is about.
-    const resolvedForStatus = resolveCellValue(row, column);
-    if (resolvedForStatus.readOnlyReason && !resolvedForStatus.editableForeign) return null;
+    // on every single-option product.
+    if (resolveCellValue(row, column).readOnlyReason) return null;
     const value = valueFor(row, column).trim();
     if (isForeign) return value === "" ? "untranslated" : null;
     if (value === "") return "untranslated";
@@ -1084,11 +1081,7 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
-        // A cell may be editable in exactly one of the two views: a library
-        // image's primary alt is Shopify-admin territory while its translation
-        // is perfectly writable (`editableForeign`).
-        const rowEditable = isForeign ? (resolved.editableForeign ?? resolved.editable) : resolved.editable;
-        return rowEditable && (!isForeign || col.translatable);
+        return resolved.editable && (!isForeign || col.translatable);
       }),
     );
     const dist = distributeRect(rect, editable, startRow, startCol);
@@ -1816,7 +1809,6 @@ export default function BulkEditor() {
                         missingMediaId: b.readOnlyReasons.missingMediaId,
                         wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
                         listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
-                        libraryImagePrimaryAlt: b.readOnlyReasons.libraryImagePrimaryAlt,
                       }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}

@@ -1129,9 +1129,6 @@ async function loadLibraryImageRows(
       altText: row.altText,
       imageUsage: row.usageLabel || row.usageKind,
       imageUrl: row.url,
-      // No owning product ⇒ no productUpdateMedia ⇒ the primary alt is
-      // Shopify-admin territory. The translation stays editable.
-      altPrimaryReadOnly: true,
     })),
     total,
     neverSynced,

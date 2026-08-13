@@ -946,14 +946,6 @@ export interface BulkRow {
   /** Image rows: where the image is used — the product title, or the media
    * library's best-effort usage label. */
   imageUsage?: string;
-  /**
-   * Image rows: true when the PRIMARY alt cannot be written from this app.
-   * Library images have no owning product, and productUpdateMedia is
-   * product-scoped; the alternative (fileUpdate) needs the write_files scope,
-   * which would force every merchant to re-consent (CLAUDE.md). Their
-   * TRANSLATIONS are unaffected — translationsRegister needs no such scope.
-   */
-  altPrimaryReadOnly?: boolean;
   /** Image rows: the ProductImage cache-row id. The alt translation mirror
    * (ProductImageAltTranslation) is keyed by it, while the ROW id is the
    * Shopify MediaImage GID. */
@@ -1005,19 +997,12 @@ export type CellReadOnlyReason =
   | "missingImage" // product has no image at all
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
-  | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
-  | "libraryImagePrimaryAlt"; // image outside the product catalogue — primary alt is Shopify-admin only
+  | "listSeparatorInValue"; // a list entry contains "|" — editing would shatter it (Finding 11)
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
   value: string;
   editable: boolean;
-  /**
-   * Editability in a FOREIGN view, when it differs from the primary one.
-   * Absent = same as `editable`. Set for library images, whose primary alt this
-   * app cannot write while their translation is perfectly writable.
-   */
-  editableForeign?: boolean;
   readOnlyReason?: CellReadOnlyReason;
 }
 
@@ -1035,15 +1020,6 @@ function joinOptionValues(option: BulkRowOption): string {
 export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
   switch (column.kind) {
     case "field":
-      if (row.type === "image" && column.id === IMAGE_ROW_ALT_COLUMN_ID && row.altPrimaryReadOnly) {
-        // Read-only in the PRIMARY view only — the translation stays editable.
-        return {
-          value: primaryValueForColumn(row, column),
-          editable: false,
-          editableForeign: true,
-          readOnlyReason: "libraryImagePrimaryAlt",
-        };
-      }
       return { value: primaryValueForColumn(row, column), editable: column.editable };
     case "metafield": {
       const mf = row.metafields?.[column.id];

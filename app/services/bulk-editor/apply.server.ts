@@ -346,12 +346,25 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
   const { db, gateway, foreignLocales } = deps;
   if (foreignLocales.length === 0) return;
   try {
+    // Two stores, one rule: product media mirror into
+    // ProductImageAltTranslation, every other image into
+    // ContentTranslation("MediaImage") — the same split the write path applies.
     const cacheId = await imageCacheIdFor(deps, mediaId);
-    if (!cacheId) return;
-    const existing = await db.productImageAltTranslation.findMany({
-      where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
-      select: { locale: true },
-    });
+    const existing = cacheId
+      ? await db.productImageAltTranslation.findMany({
+          where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
+          select: { locale: true },
+        })
+      : await db.contentTranslation.findMany({
+          where: {
+            shop: deps.shop,
+            resourceType: "MediaImage",
+            resourceId: mediaId,
+            marketId: "",
+            locale: { in: foreignLocales },
+          },
+          select: { locale: true },
+        });
     if (existing.length === 0) return;
 
     const locales = [...new Set(existing.map((e) => e.locale))];
@@ -360,9 +373,21 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
       confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}alt`),
     );
     if (confirmedLocales.length === 0) return;
-    await db.productImageAltTranslation.deleteMany({
-      where: { imageId: cacheId, marketId: "", locale: { in: confirmedLocales } },
-    });
+    if (cacheId) {
+      await db.productImageAltTranslation.deleteMany({
+        where: { imageId: cacheId, marketId: "", locale: { in: confirmedLocales } },
+      });
+    } else {
+      await db.contentTranslation.deleteMany({
+        where: {
+          shop: deps.shop,
+          resourceType: "MediaImage",
+          resourceId: mediaId,
+          marketId: "",
+          locale: { in: confirmedLocales },
+        },
+      });
+    }
   } catch (err: unknown) {
     logger.warn("[BULK] Stale image-alt invalidation failed — stale rows kept", {
       context: "Bulk",
@@ -949,6 +974,64 @@ async function writeMediaAltText(
   }
 }
 
+/**
+ * ONE fileUpdate call for ONE MediaImage, with echo verification. Returns an
+ * error message, or null on success.
+ *
+ * This is the path for images OUTSIDE the product catalogue (files library,
+ * theme, metaobject references): productUpdateMedia is product-scoped and
+ * cannot address them. It needs the `write_files` scope, which the app declares
+ * since the image row type shipped — before that, the scope was deliberately
+ * avoided (it forces every installed merchant to re-consent) and those alts
+ * were read-only.
+ *
+ * Product media deliberately keep productUpdateMedia: it is the app's
+ * established, tested path and the single editor uses the same one.
+ */
+async function writeFileAltText(
+  deps: PersistDeps,
+  mediaId: string,
+  value: string,
+): Promise<string | null> {
+  try {
+    const response = await deps.gateway.graphql(
+      `#graphql
+        mutation bulkEditorFileUpdate($files: [FileUpdateInput!]!) {
+          fileUpdate(files: $files) {
+            files {
+              ... on MediaImage { id alt }
+            }
+            userErrors { field message code }
+          }
+        }`,
+      // Empty string clears the alt (null would mean "don't change") — the same
+      // contract writeMediaAltText uses.
+      { variables: { files: [{ id: mediaId, alt: value }] } },
+    );
+    const data = (await response.json()) as {
+      data?: {
+        fileUpdate?: {
+          files?: { id?: string; alt?: string | null }[] | null;
+          userErrors?: { field?: string[] | string; message: string; code?: string }[];
+        };
+      };
+      errors?: { message: string }[];
+    };
+    if (data.errors && data.errors.length > 0) return data.errors[0].message;
+    const userErrors = data.data?.fileUpdate?.userErrors ?? [];
+    if (userErrors.length > 0) return userErrors[0].message;
+    // Echo check — same rule as every other write in this module: a call
+    // Shopify accepted without storing anything is the silent no-op class.
+    const echoed = data.data?.fileUpdate?.files?.find((f) => f.id === mediaId);
+    if (!echoed || (echoed.alt ?? "") !== value) {
+      return "Shopify did not confirm the alt-text write.";
+    }
+    return null;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 async function persistProductImageAlt(
   group: BulkDiffRowGroup,
   cells: ProductCellGroups,
@@ -1047,24 +1130,47 @@ async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Prom
     select: { id: true, productId: true, position: true },
   });
   if (!image) {
-    // Either a library image (no owning product ⇒ productUpdateMedia cannot
-    // address it, and fileUpdate would need the write_files scope) or an
-    // uncached one. Both are read-only in the PRIMARY view; the grid already
-    // greys the cell, this is the server-side half of the same rule.
+    // No ProductImage row ⇒ an image outside the product catalogue. It is
+    // written through fileUpdate (write_files) instead of the product-scoped
+    // productUpdateMedia, and mirrors into the media-library cache.
     const known = await db.mediaLibraryImage.findUnique({
       where: { shop_id: { shop, id: group.rowId } },
       select: { id: true },
     });
-    for (const [columnId] of cells) {
-      failures.push(
-        failureOf(
-          group,
-          known
-            ? "This image belongs to no product — its primary alt text can only be changed in the Shopify admin under Content → Files. Translations can be saved here."
-            : "This image is not in the local cache — resync the product first.",
-          columnId,
-        ),
-      );
+    if (!known) {
+      for (const [columnId] of cells) {
+        failures.push(
+          failureOf(group, "This image is not in the local cache — run the image-library sync first.", columnId),
+        );
+      }
+      return failures;
+    }
+    for (const [columnId, value] of cells) {
+      if (columnId !== IMAGE_ROW_ALT_COLUMN_ID) {
+        failures.push(failureOf(group, `Column "${columnId}" cannot be written on an image row.`, columnId));
+        continue;
+      }
+      const error = await writeFileAltText(deps, group.rowId, value);
+      if (error) {
+        failures.push(failureOf(group, error, columnId));
+        continue;
+      }
+      try {
+        await db.mediaLibraryImage.update({
+          where: { shop_id: { shop, id: group.rowId } },
+          data: { altText: value },
+        });
+        // §6.6: the alt's foreign translations are stale now.
+        await invalidateStaleForeignTranslations(deps, "image", group.rowId, ["alt"]);
+      } catch (err: unknown) {
+        failures.push(
+          failureOf(
+            group,
+            `The alt text was saved on Shopify, but the local cache could not be updated (${err instanceof Error ? err.message : String(err)}). Run the image-library sync.`,
+            columnId,
+          ),
+        );
+      }
     }
     return failures;
   }

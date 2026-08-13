@@ -530,19 +530,20 @@ describe("image rows: library images", () => {
       ...overrides,
     }) as BulkRow;
 
-  it("keeps a product medium's alt editable in both views", () => {
-    const resolved = resolveCellValue(row({ imageCacheId: "cache-1" }), altColumn);
-    expect(resolved.editable).toBe(true);
-    expect(resolved.editableForeign ?? resolved.editable).toBe(true);
-    expect(resolved.readOnlyReason).toBeUndefined();
+  it("keeps the alt editable for product media AND library images", () => {
+    // Product media write through productUpdateMedia, library images through
+    // fileUpdate (write_files) — both are writable, so the cell never locks.
+    for (const overrides of [{ imageCacheId: "cache-1" }, {}]) {
+      const resolved = resolveCellValue(row(overrides), altColumn);
+      expect(resolved.editable).toBe(true);
+      expect(resolved.readOnlyReason).toBeUndefined();
+    }
   });
 
-  it("locks a library image's PRIMARY alt but keeps its translation editable", () => {
-    // productUpdateMedia is product-scoped and fileUpdate would need the
-    // write_files scope — but translationsRegister needs neither.
-    const resolved = resolveCellValue(row({ altPrimaryReadOnly: true }), altColumn);
-    expect(resolved.editable).toBe(false);
-    expect(resolved.readOnlyReason).toBe("libraryImagePrimaryAlt");
-    expect(resolved.editableForeign).toBe(true);
+  it("resolves the 'used by' column from the row's usage label", () => {
+    const usageColumn = buildColumnsForType("image", [], ALL_CAPS).find((c) => c.id === "imageUsage")!;
+    expect(resolveCellValue(row({ imageUsage: "Theme" }), usageColumn).value).toBe("Theme");
+    // Product media fall back to the product title.
+    expect(resolveCellValue(row({ productTitle: "Vase" }), usageColumn).value).toBe("Vase");
   });
 });
