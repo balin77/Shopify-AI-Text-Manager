@@ -47,13 +47,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const stats = await syncMediaLibrary(admin, db, session.shop);
 
+    // `truncated`: die Bibliothek war grösser als das Seitenlimit des Syncs —
+    // der Cache ist dann bewusst unvollständig und wird auch nicht
+    // stale-bereinigt. Der Aufrufer soll das anzeigen können, statt eine
+    // halbe Liste für die ganze zu halten.
+    const state = await db.mediaLibrarySyncState.findUnique({
+      where: { shop: session.shop },
+      select: { truncated: true, lastSyncedAt: true },
+    });
+
     logger.info("[SYNC-MEDIA-LIBRARY] Complete", {
       context: "SyncMediaLibrary",
       shop: session.shop,
       ...stats,
+      truncated: state?.truncated ?? false,
     });
 
-    return json({ success: true, stats });
+    return json({
+      success: true,
+      stats: {
+        ...stats,
+        truncated: state?.truncated ?? false,
+        lastSyncedAt: state?.lastSyncedAt ?? null,
+      },
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("[SYNC-MEDIA-LIBRARY] Error", {

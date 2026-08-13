@@ -50,6 +50,9 @@ export const UNKNOWN_USAGE: MediaUsage = { kind: "unknown", ownerId: "", label: 
 /** Wie viele IDs pro `in`-Filter — hält die SQL-Statements handhabbar. */
 const ID_CHUNK = 500;
 
+/** Seitengrösse beim Durchsehen des Metaobjekt-Caches (JSON-Spalte `fields`). */
+const METAOBJECT_PAGE = 500;
+
 const MEDIA_IMAGE_GID = /^gid:\/\/shopify\/MediaImage\/\d+$/;
 
 export function isMediaImageGid(value: unknown): value is string {
@@ -177,18 +180,31 @@ export async function collectMetaobjectUsage(
   const index: OwnerIndex = new Map();
   if (wanted.size === 0) return index;
 
-  const metaobjects = await db.metaobject.findMany({
-    where: { shop },
-    select: { id: true, displayName: true, fields: true },
-  });
+  // Seitenweise statt in einem Rutsch: `fields` ist eine JSON-Spalte, die pro
+  // Metaobjekt beliebig gross sein kann — ein Shop mit vielen Metaobjekten
+  // sonst der ganze Cache gleichzeitig im Heap. Cursor-Paginierung über die
+  // (stabile) id, damit kein Eintrag doppelt oder gar nicht gesehen wird.
+  let cursor: string | undefined;
+  for (;;) {
+    const batch = await db.metaobject.findMany({
+      where: { shop },
+      select: { id: true, displayName: true, fields: true },
+      orderBy: { id: "asc" },
+      take: METAOBJECT_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (batch.length === 0) return index;
 
-  for (const mo of metaobjects) {
-    for (const gid of extractFileReferenceGids(mo.fields)) {
-      if (!wanted.has(gid)) continue;
-      addOwner(index, gid, mo.id, mo.displayName ?? "");
+    for (const mo of batch) {
+      for (const gid of extractFileReferenceGids(mo.fields)) {
+        if (!wanted.has(gid)) continue;
+        addOwner(index, gid, mo.id, mo.displayName ?? "");
+      }
     }
+
+    if (batch.length < METAOBJECT_PAGE) return index;
+    cursor = batch[batch.length - 1].id;
   }
-  return index;
 }
 
 /**

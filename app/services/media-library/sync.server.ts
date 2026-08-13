@@ -10,6 +10,13 @@
  * Der Cache ergänzt `ProductImage` (Produktmedien, vom Produkt-Sync gepflegt)
  * um alles, was an keinem Produkt hängt. `ProductImage` wird hier nicht
  * angefasst — nur gelesen, um die Verwendung aufzulösen (usage.server.ts).
+ *
+ * VORAUSSETZUNG: `files()` braucht den Scope `read_files`. Derselbe Scope
+ * trägt schon den Datei-Picker in app/routes/api.files.tsx — fehlt er in der
+ * App-Installation, scheitern beide gleichermassen mit einem
+ * Access-Denied-GraphQL-Fehler (der hier den Lauf abbricht, bevor irgendetwas
+ * gelöscht wird). In [access_scopes] von shopify.app.prod.toml steht er nicht;
+ * die Laufzeit-Scopes kommen aus SHOPIFY_SCOPES (app/shopify.server.ts:88).
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -26,8 +33,15 @@ const PAGE_SIZE = 250;
  * UNVOLLSTÄNDIG — es wird dann nichts gelöscht.
  */
 const MAX_PAGES = 200;
-/** Wie viele Upserts gleichzeitig laufen. */
-const UPSERT_CONCURRENCY = 25;
+/**
+ * Wie viele Upserts gleichzeitig laufen. Bewusst klein: db.server.ts setzt kein
+ * `connection_limit`, der Prisma-Default-Pool ist entsprechend knapp, und ein
+ * Lauf über eine grosse Bibliothek darf ihn nicht so weit belegen, dass andere
+ * Requests in den pool_timeout (P2024) laufen.
+ */
+const UPSERT_CONCURRENCY = 5;
+/** Wie viele IDs pro `in`-Filter — hält die Statements weit unter dem Postgres-Parameterlimit. */
+const ID_CHUNK = 500;
 
 const MEDIA_LIBRARY_QUERY = `#graphql
   query mediaLibraryImages($first: Int!, $after: String, $query: String) {
@@ -278,10 +292,11 @@ async function runMediaLibrarySync(
   });
 
   // Nur-gesehen-aber-nicht-geschrieben (keine URL): Zeitstempel anfassen, damit
-  // der Sweep unten sie nicht für verschwunden hält.
-  if (skippedIds.length > 0) {
+  // der Sweep unten sie nicht für verschwunden hält. In Blöcken, damit die
+  // `in`-Liste auch bei einem grossen laufenden Upload beschränkt bleibt.
+  for (let i = 0; i < skippedIds.length; i += ID_CHUNK) {
     await db.mediaLibraryImage.updateMany({
-      where: { shop, id: { in: skippedIds } },
+      where: { shop, id: { in: skippedIds.slice(i, i + ID_CHUNK) } },
       data: { lastSyncedAt: new Date() },
     });
   }

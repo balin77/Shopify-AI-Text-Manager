@@ -207,6 +207,36 @@ describe('resolveMediaUsage() — metaobject', () => {
     expect(usage.size).toBe(0);
   });
 
+  it('paginiert den Metaobjekt-Cache, statt ihn komplett in den Heap zu ziehen', async () => {
+    // Erste Seite exakt voll → es muss eine zweite mit Cursor folgen.
+    const firstPage = Array.from({ length: 500 }, (_, i) => ({
+      id: `gid://shopify/Metaobject/${i}`,
+      displayName: `MO ${i}`,
+      fields: [],
+    }));
+    const { db, metaobjectFindMany } = makeDb({});
+    metaobjectFindMany
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce([
+        {
+          id: 'gid://shopify/Metaobject/999',
+          displayName: 'Letztes',
+          fields: [{ type: 'file_reference', value: M1 }],
+        },
+      ]);
+
+    const usage = await resolveMediaUsage(db, shop, [M1]);
+
+    expect(metaobjectFindMany).toHaveBeenCalledTimes(2);
+    expect(metaobjectFindMany.mock.calls[0][0]).toMatchObject({ where: { shop }, take: 500 });
+    expect(metaobjectFindMany.mock.calls[1][0]).toMatchObject({
+      where: { shop },
+      cursor: { id: 'gid://shopify/Metaobject/499' },
+      skip: 1,
+    });
+    expect(usage.get(M1)?.ownerId).toBe('gid://shopify/Metaobject/999');
+  });
+
   it('leere Eingabe fragt die Datenbank gar nicht erst', async () => {
     const { db, productImageFindMany, metaobjectFindMany } = makeDb({});
 
