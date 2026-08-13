@@ -453,7 +453,13 @@ export function BulkGrid({
                 // read-only with their own tooltip (Plan §6.4).
                 const resolved = resolveCellValue(row, col);
                 const foreignReadOnly = isForeignLocale && !col.translatable;
-                const cellReadOnly = !resolved.editable || foreignReadOnly;
+                // A cell can be editable in exactly one of the two views: a
+                // library image's primary alt is Shopify-admin territory while
+                // its translation is writable (`editableForeign`).
+                const rowEditable = isForeignLocale
+                  ? (resolved.editableForeign ?? resolved.editable)
+                  : resolved.editable;
+                const cellReadOnly = !rowEditable || foreignReadOnly;
                 // Field colour (Plan §2). On the WRAPPER so the transparent
                 // input shows it and the dirty/error inner backgrounds take
                 // precedence naturally (a dirty or errored cell is never
@@ -493,7 +499,7 @@ export function BulkGrid({
                             : readOnlyTooltips.column
                       }
                       ghost={
-                        isForeignLocale && !foreignReadOnly && resolved.editable
+                        isForeignLocale && !foreignReadOnly && rowEditable
                           ? ghostFor(row, col)
                           : undefined
                       }

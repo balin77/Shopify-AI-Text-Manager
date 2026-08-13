@@ -1047,9 +1047,23 @@ async function persistImageRow(group: BulkDiffRowGroup, deps: PersistDeps): Prom
     select: { id: true, productId: true, position: true },
   });
   if (!image) {
+    // Either a library image (no owning product ⇒ productUpdateMedia cannot
+    // address it, and fileUpdate would need the write_files scope) or an
+    // uncached one. Both are read-only in the PRIMARY view; the grid already
+    // greys the cell, this is the server-side half of the same rule.
+    const known = await db.mediaLibraryImage.findUnique({
+      where: { shop_id: { shop, id: group.rowId } },
+      select: { id: true },
+    });
     for (const [columnId] of cells) {
       failures.push(
-        failureOf(group, "This image is not in the local cache — resync the product first.", columnId),
+        failureOf(
+          group,
+          known
+            ? "This image belongs to no product — its primary alt text can only be changed in the Shopify admin under Content → Files. Translations can be saved here."
+            : "This image is not in the local cache — resync the product first.",
+          columnId,
+        ),
       );
     }
     return failures;
@@ -1572,22 +1586,42 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
         if (group.rowType === "image") {
-          // Image alt translations live in ProductImageAltTranslation (keyed by
-          // the ProductImage CACHE row, unique on imageId+locale+marketId) —
-          // the same store the single editor and the SEO bulk fix write, so
-          // all three read each other's rows.
+          // PRODUCT media mirror into ProductImageAltTranslation (keyed by the
+          // ProductImage CACHE row) — the store the single editor and the SEO
+          // bulk fix write, so all three read each other's rows. Every OTHER
+          // image of the shop has no such row and uses the generic
+          // ContentTranslation table under resourceType "MediaImage".
           const cacheId = await imageCacheIdFor(deps, resourceId);
-          if (!cacheId) {
-            failures.push(
-              failureOf(group, "This image is not in the local cache — resync the product first.", write.columnId),
-            );
-            continue;
+          if (cacheId) {
+            await db.productImageAltTranslation.upsert({
+              where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
+              update: { altText: write.value },
+              create: { imageId: cacheId, locale, marketId, altText: write.value },
+            });
+          } else {
+            await db.contentTranslation.upsert({
+              where: {
+                shop_resourceId_key_locale_marketId: {
+                  shop,
+                  resourceId,
+                  key: write.key,
+                  locale,
+                  marketId,
+                },
+              },
+              update: { value: write.value, digest: write.digest, resourceType: "MediaImage" },
+              create: {
+                shop,
+                resourceId,
+                resourceType: "MediaImage",
+                key: write.key,
+                value: write.value,
+                locale,
+                marketId,
+                digest: write.digest,
+              },
+            });
           }
-          await db.productImageAltTranslation.upsert({
-            where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
-            update: { altText: write.value },
-            create: { imageId: cacheId, locale, marketId, altText: write.value },
-          });
         } else if (group.rowType === "metaobject") {
           // Metaobject translations mirror into their OWN table (Phase 5,
           // unique shop_metaobjectId_key_locale_marketId) — the shape every
@@ -1683,6 +1717,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           if (cacheId) {
             await db.productImageAltTranslation.deleteMany({
               where: { imageId: cacheId, locale, marketId },
+            });
+          } else {
+            await db.contentTranslation.deleteMany({
+              where: { shop, resourceId, resourceType: "MediaImage", key: clear.key, locale, marketId },
             });
           }
         } else if (group.rowType === "metaobject") {

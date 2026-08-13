@@ -1065,7 +1065,11 @@ export default function BulkEditor() {
     const editable = visibleRows.map((row) =>
       displayColumns.map((col) => {
         const resolved = resolveCellValue(row, col);
-        return resolved.editable && (!isForeign || col.translatable);
+        // A cell may be editable in exactly one of the two views: a library
+        // image's primary alt is Shopify-admin territory while its translation
+        // is perfectly writable (`editableForeign`).
+        const rowEditable = isForeign ? (resolved.editableForeign ?? resolved.editable) : resolved.editable;
+        return rowEditable && (!isForeign || col.translatable);
       }),
     );
     const dist = distributeRect(rect, editable, startRow, startCol);
@@ -1775,6 +1779,7 @@ export default function BulkEditor() {
                         missingMediaId: b.readOnlyReasons.missingMediaId,
                         wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
                         listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
+                        libraryImagePrimaryAlt: b.readOnlyReasons.libraryImagePrimaryAlt,
                       }}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}

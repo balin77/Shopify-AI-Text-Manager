@@ -2603,6 +2603,7 @@ export const de = {
       policyTitle: "Richtlinie",
       moDisplayName: "Eintrag",
       moHandle: "Handle",
+      imageUsage: "Zugeordnet zu",
       altText: "Alt-Text",
     },
     statusOptions: {
@@ -2636,6 +2637,7 @@ export const de = {
       missingImage: "Dieses Produkt hat kein Bild.",
       missingMediaId: "Für dieses Bild fehlt die Shopify-Media-ID — Produkt zuerst neu synchronisieren.",
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
+      libraryImagePrimaryAlt: "Dieses Bild hängt an keinem Produkt — sein Alt-Text in der Hauptsprache lässt sich nur im Shopify-Admin unter Inhalte → Dateien ändern. Übersetzungen kannst du hier trotzdem erfassen.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",

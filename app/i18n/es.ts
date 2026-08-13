@@ -2602,6 +2602,7 @@ export const es: Translation = {
       policyTitle: "Política",
       moDisplayName: "Entrada",
       moHandle: "Handle",
+      imageUsage: "Asignado a",
       altText: "Texto alternativo",
     },
     statusOptions: {
@@ -2635,6 +2636,7 @@ export const es: Translation = {
       missingImage: "Este producto no tiene imagen.",
       missingMediaId: "A esta imagen le falta el ID de medios de Shopify — resincroniza este producto primero.",
       wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
+      libraryImagePrimaryAlt: "Esta imagen no pertenece a ningún producto: su texto alternativo en el idioma principal solo se puede cambiar en el panel de Shopify, en Contenido → Archivos. Las traducciones sí se pueden añadir aquí.",
       listSeparatorInValue: "Un valor de la lista contiene el separador \"|\" — edítalo en el editor individual.",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",

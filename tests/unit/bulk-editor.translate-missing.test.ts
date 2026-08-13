@@ -27,6 +27,7 @@ import {
 } from "~/services/bulk-editor/translations.server";
 import {
   buildColumnsForType,
+  resolveCellValue,
   type BulkRow,
   type ColumnDescriptor,
   type ProductColumnCaps,
@@ -501,7 +502,7 @@ describe("image rows", () => {
   });
 
   it("keeps the context columns read-only", () => {
-    for (const id of ["image", "productTitle", "position"]) {
+    for (const id of ["image", "imageUsage", "position"]) {
       const column = imageColumns.find((c) => c.id === id);
       expect(column, id).toBeDefined();
       expect(column!.editable, id).toBe(false);
@@ -512,5 +513,36 @@ describe("image rows", () => {
   it("never maps another field name onto the alt key", () => {
     const title = buildColumnsForType("product", [], ALL_CAPS).find((c) => c.id === "field.title");
     expect(translationKeyForColumn(title!, "image")).toBeNull();
+  });
+});
+
+describe("image rows: library images", () => {
+  const altColumn = buildColumnsForType("image", [], ALL_CAPS).find((c) => c.id === "field.altText")!;
+  const row = (overrides: Partial<BulkRow>): BulkRow =>
+    ({
+      id: "gid://shopify/MediaImage/1",
+      type: "image",
+      title: "banner.jpg",
+      seoTitle: "",
+      seoDescription: "",
+      handle: "",
+      altText: "Banner",
+      ...overrides,
+    }) as BulkRow;
+
+  it("keeps a product medium's alt editable in both views", () => {
+    const resolved = resolveCellValue(row({ imageCacheId: "cache-1" }), altColumn);
+    expect(resolved.editable).toBe(true);
+    expect(resolved.editableForeign ?? resolved.editable).toBe(true);
+    expect(resolved.readOnlyReason).toBeUndefined();
+  });
+
+  it("locks a library image's PRIMARY alt but keeps its translation editable", () => {
+    // productUpdateMedia is product-scoped and fileUpdate would need the
+    // write_files scope — but translationsRegister needs neither.
+    const resolved = resolveCellValue(row({ altPrimaryReadOnly: true }), altColumn);
+    expect(resolved.editable).toBe(false);
+    expect(resolved.readOnlyReason).toBe("libraryImagePrimaryAlt");
+    expect(resolved.editableForeign).toBe(true);
   });
 });

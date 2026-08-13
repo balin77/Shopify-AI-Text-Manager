@@ -484,23 +484,46 @@ async function attachMissingTranslationFlags(
   if (opts.type === "image") {
     const cacheIdByRow = new Map<string, string>();
     for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
-    if (cacheIdByRow.size === 0) return;
-    const altRows = await db.productImageAltTranslation.findMany({
-      where: {
-        image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
-        marketId: "",
-        locale: { in: foreignLocales },
-      },
-      select: { imageId: true, locale: true, altText: true },
-    });
+    const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+    if (cacheIdByRow.size === 0 && libraryIds.length === 0) return;
+
     const localesByRow = new Map<string, Set<string>>();
-    for (const alt of altRows) {
-      if (!alt.altText || alt.altText.trim() === "") continue;
-      const rowId = cacheIdByRow.get(alt.imageId);
-      if (!rowId) continue;
+    const mark = (rowId: string, locale: string) => {
       const set = localesByRow.get(rowId) ?? new Set<string>();
-      set.add(alt.locale);
+      set.add(locale);
       localesByRow.set(rowId, set);
+    };
+
+    if (cacheIdByRow.size > 0) {
+      const altRows = await db.productImageAltTranslation.findMany({
+        where: {
+          image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
+          marketId: "",
+          locale: { in: foreignLocales },
+        },
+        select: { imageId: true, locale: true, altText: true },
+      });
+      for (const alt of altRows) {
+        if (!alt.altText || alt.altText.trim() === "") continue;
+        const rowId = cacheIdByRow.get(alt.imageId);
+        if (rowId) mark(rowId, alt.locale);
+      }
+    }
+    if (libraryIds.length > 0) {
+      const libraryRows = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceType: "MediaImage",
+          resourceId: { in: libraryIds },
+          marketId: "",
+          locale: { in: foreignLocales },
+        },
+        select: { resourceId: true, locale: true, value: true },
+      });
+      for (const t of libraryRows) {
+        if (!t.value || t.value.trim() === "") continue;
+        mark(t.resourceId, t.locale);
+      }
     }
     for (const row of rows) {
       const have = localesByRow.get(row.id);
@@ -919,7 +942,21 @@ async function loadImageRows(
   shop: string,
   opts: LoadBulkRowsOptions,
 ): Promise<LoadBulkRowsResult> {
-  const { skip, take } = opts;
+  const productSegment = await loadProductMediaRows(db, shop, opts);
+  const librarySegment = await loadLibraryImageRows(db, shop, opts, productSegment.total);
+  return {
+    rows: [...productSegment.rows, ...librarySegment.rows],
+    total: productSegment.total + librarySegment.total,
+    translationFilterApproximate: librarySegment.approximate,
+  };
+}
+
+/** Product media — the DB-backed segment, with the full filter/sort vocabulary. */
+async function loadProductMediaRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+): Promise<{ rows: BulkRow[]; total: number }> {
   const and: Prisma.ProductImageWhereInput[] = [{ mediaId: { not: null } }];
 
   if (opts.ids) and.push({ mediaId: { in: opts.ids } });
@@ -967,23 +1004,27 @@ async function loadImageRows(
     }
   }
 
-  const [items, total] = await Promise.all([
-    db.productImage.findMany({
-      where,
-      select: {
-        id: true,
-        mediaId: true,
-        url: true,
-        altText: true,
-        position: true,
-        product: { select: { id: true, title: true } },
-      },
-      orderBy,
-      skip,
-      take,
-    }),
-    db.productImage.count({ where }),
-  ]);
+  const total = await db.productImage.count({ where });
+  // Segment paging: the product media come first, the library images after —
+  // so this segment only serves the part of the window that falls inside it.
+  const take = Math.max(0, Math.min(opts.take, total - opts.skip));
+  const items =
+    take === 0
+      ? []
+      : await db.productImage.findMany({
+          where,
+          select: {
+            id: true,
+            mediaId: true,
+            url: true,
+            altText: true,
+            position: true,
+            product: { select: { id: true, title: true } },
+          },
+          orderBy,
+          skip: opts.skip,
+          take,
+        });
 
   return {
     rows: items.map((image) => ({
@@ -997,6 +1038,7 @@ async function loadImageRows(
       altText: image.altText ?? "",
       productId: image.product.id,
       productTitle: image.product.title,
+      imageUsage: image.product.title,
       imageUrl: image.url,
       position: image.position ?? undefined,
       // The cache row id — apply.server needs it to mirror the translation
@@ -1004,8 +1046,92 @@ async function loadImageRows(
       imageCacheId: image.id,
     })),
     total,
-    translationFilterApproximate: false,
   };
+}
+
+/**
+ * Every OTHER image of the shop (files library, theme, metaobject references)
+ * from the MediaLibraryImage cache — read through the media-library service, so
+ * this loader never touches that model directly.
+ *
+ * Two deliberate limitations, both visible to the merchant rather than silent:
+ * - the PRIMARY alt of these images cannot be written from this app
+ *   (`altPrimaryReadOnly`; productUpdateMedia is product-scoped and fileUpdate
+ *   would need the write_files scope). Their translations are unaffected.
+ * - the "missing translation" filter is applied to the loaded PAGE, because the
+ *   media cache carries no translation dimension — the result is flagged
+ *   approximate, the same contract the content types use for their anti-join.
+ */
+async function loadLibraryImageRows(
+  db: PrismaClient,
+  shop: string,
+  opts: LoadBulkRowsOptions,
+  productMediaTotal: number,
+): Promise<{ rows: BulkRow[]; total: number; approximate: boolean }> {
+  // The CSV import resolves rows by id and only ever addresses product media.
+  if (opts.ids) return { rows: [], total: 0, approximate: false };
+
+  const { loadMediaLibraryImages } = await import("../media-library/load.server");
+  const skip = Math.max(0, opts.skip - productMediaTotal);
+  const consumed = Math.max(0, Math.min(opts.take, productMediaTotal - opts.skip));
+  const take = Math.max(0, opts.take - consumed);
+
+  const { rows, total } = await loadMediaLibraryImages(db, shop, {
+    search: opts.search,
+    skip,
+    take,
+    // Product media are served by the segment above — asking for them here
+    // would list them twice.
+    excludeProductMedia: true,
+    missingAltOnly: opts.filters.includes("missingAltText"),
+  });
+  if (rows.length === 0) return { rows: [], total, approximate: false };
+
+  // Defence against a stale usageKind: the media sync resolves "is this a
+  // product medium" at ITS OWN cadence, so an image attached to a product since
+  // the last run would appear in BOTH segments. The product segment wins.
+  const attached = await db.productImage.findMany({
+    where: { mediaId: { in: rows.map((r) => r.mediaId) }, product: { shop } },
+    select: { mediaId: true },
+  });
+  const attachedIds = new Set(attached.map((a) => a.mediaId));
+
+  let mapped: BulkRow[] = rows
+    .filter((row) => !attachedIds.has(row.mediaId))
+    .map((row) => ({
+      id: row.mediaId,
+      type: "image" as const,
+      title: row.usageLabel || row.filename || row.mediaId,
+      seoTitle: "",
+      seoDescription: "",
+      handle: "",
+      altText: row.altText,
+      imageUsage: row.usageLabel || row.usageKind,
+      imageUrl: row.url,
+      // No owning product ⇒ no productUpdateMedia ⇒ the primary alt is
+      // Shopify-admin territory. The translation stays editable.
+      altPrimaryReadOnly: true,
+    }));
+
+  let approximate = false;
+  if (opts.filters.includes("missingTranslation") && opts.locale !== "" && mapped.length > 0) {
+    const translated = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceType: "MediaImage",
+        resourceId: { in: mapped.map((r) => r.id) },
+        locale: opts.locale,
+        marketId: opts.marketId,
+        NOT: { value: "" },
+      },
+      select: { resourceId: true },
+    });
+    const translatedIds = new Set(translated.map((t) => t.resourceId));
+    mapped = mapped.filter((row) => !translatedIds.has(row.id));
+    approximate = true;
+  }
+
+  return { rows: mapped, total, approximate };
 }
 
 // ─── Blog container rows (Phase 5 — Plan §7) ───────────────────────────────
@@ -1262,9 +1388,35 @@ async function attachImageAltForeignValues(
   opts: LoadBulkRowsOptions,
   rows: BulkRow[],
 ): Promise<void> {
+  const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
+  // Library images (no ProductImage row) keep their alt translations in the
+  // generic ContentTranslation table under resourceType "MediaImage".
+  const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
+  if (libraryIds.length > 0) {
+    const libraryTranslations = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceType: "MediaImage",
+        resourceId: { in: libraryIds },
+        locale: opts.locale,
+        marketId: { in: marketIds },
+      },
+      select: { resourceId: true, value: true, marketId: true },
+    });
+    const byRowId = new Map<string, Record<string, string>>();
+    for (const t of libraryTranslations) {
+      const record = byRowId.get(t.resourceId) ?? {};
+      record[`${opts.locale}|${t.marketId}|${IMAGE_ROW_ALT_COLUMN_ID}`] = t.value;
+      byRowId.set(t.resourceId, record);
+    }
+    for (const row of rows) {
+      const record = byRowId.get(row.id);
+      if (record) row.foreignValues = record;
+    }
+  }
+
   const cacheIds = rows.map((r) => r.imageCacheId).filter((id): id is string => !!id);
   if (cacheIds.length === 0) return;
-  const marketIds = opts.marketId !== "" ? ["", opts.marketId] : [""];
   const translations = await db.productImageAltTranslation.findMany({
     where: {
       // Tenancy rides on the relation — ProductImageAltTranslation has no shop

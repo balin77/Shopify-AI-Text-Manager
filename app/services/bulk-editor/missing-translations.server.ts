@@ -413,28 +413,51 @@ async function loadTranslatedLocales(
   if (opts.type === "image") {
     const cacheIdByRow = new Map<string, string>();
     for (const row of rows) if (row.imageCacheId) cacheIdByRow.set(row.imageCacheId, row.id);
-    if (cacheIdByRow.size === 0) return new Map();
-    const records = await db.productImageAltTranslation.findMany({
-      where: {
-        image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
-        marketId: "",
-        locale: { in: opts.foreignLocales },
-      },
-      select: { imageId: true, locale: true, altText: true },
-    });
+    // Library images (no ProductImage row) use the generic ContentTranslation
+    // table under resourceType "MediaImage".
+    const libraryIds = rows.filter((r) => !r.imageCacheId).map((r) => r.id);
     const byRow = new Map<string, Map<string, Set<string>>>();
-    for (const record of records) {
-      if (!record.altText || record.altText.trim() === "") continue;
-      const rowId = cacheIdByRow.get(record.imageId);
-      if (!rowId) continue;
+    const mark = (rowId: string, locale: string) => {
       let byKey = byRow.get(rowId);
       if (!byKey) {
         byKey = new Map();
         byRow.set(rowId, byKey);
       }
       const locales = byKey.get("alt") ?? new Set<string>();
-      locales.add(record.locale);
+      locales.add(locale);
       byKey.set("alt", locales);
+    };
+
+    if (cacheIdByRow.size > 0) {
+      const records = await db.productImageAltTranslation.findMany({
+        where: {
+          image: { id: { in: [...cacheIdByRow.keys()] }, product: { shop } },
+          marketId: "",
+          locale: { in: opts.foreignLocales },
+        },
+        select: { imageId: true, locale: true, altText: true },
+      });
+      for (const record of records) {
+        if (!record.altText || record.altText.trim() === "") continue;
+        const rowId = cacheIdByRow.get(record.imageId);
+        if (rowId) mark(rowId, record.locale);
+      }
+    }
+    if (libraryIds.length > 0) {
+      const records = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceType: "MediaImage",
+          resourceId: { in: libraryIds },
+          marketId: "",
+          locale: { in: opts.foreignLocales },
+        },
+        select: { resourceId: true, locale: true, value: true },
+      });
+      for (const record of records) {
+        if (!record.value || record.value.trim() === "") continue;
+        mark(record.resourceId, record.locale);
+      }
     }
     return byRow;
   }
