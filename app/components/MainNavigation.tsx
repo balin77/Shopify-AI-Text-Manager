@@ -73,6 +73,10 @@ export function MainNavigation() {
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
   const productCount = productsRouteData?.productCount;
+  // Published shop locales from the app shell loader — drives the language gate
+  // on SEO sections in the mobile drawer (0 = lookup failed / unknown).
+  const shellLocaleCount =
+    ((matches.find((match) => match.id === "routes/app")?.data as any)?.localeCount as number) ?? 0;
   const maxProducts = getMaxProducts();
 
   // Show notifications for newly completed/failed tasks (from context).
@@ -363,17 +367,28 @@ export function MainNavigation() {
   const seoSectionStrings =
     (t.seo as { sections?: Record<string, { label?: string }> }).sections ?? {};
   const seoRubricStrings = (t.seo as { rubrics?: Record<string, string> }).rubrics ?? {};
+  // Language gate, mirroring the desktop SubNavBar (app.seo.tsx): a section that
+  // only says something with a second shop language is greyed out with a 🌐
+  // marker — never 🔒, which would read as "upgrade your plan". `localeCount` 0
+  // means the lookup failed → treat as multi-language and gate nothing.
+  const singleLocale = shellLocaleCount > 0 && shellLocaleCount <= 1;
   const seoGroups: MobileNavGroup[] = SEO_RUBRICS.map((r) => ({
     id: r.id,
     label: seoRubricStrings[r.id] || r.id,
     icon: r.icon,
-    entries: r.entries.map((section) => ({
-      id: section.id,
-      label: seoSectionStrings[section.id]?.label || section.id,
-      icon: section.icon,
-      path: section.path,
-      locked: section.planGate ? !meetsPlan(plan, section.planGate) : false,
-    })),
+    entries: r.entries.map((section) => {
+      const planLocked = section.planGate ? !meetsPlan(plan, section.planGate) : false;
+      const languageLocked = !!section.requiresMultipleLocales && singleLocale;
+      return {
+        id: section.id,
+        label: seoSectionStrings[section.id]?.label || section.id,
+        icon: section.icon,
+        path: section.path,
+        locked: planLocked || languageLocked,
+        // Plan gate wins the marker: an upgrade unlocks the section outright.
+        lockIcon: !planLocked && languageLocked ? "🌐" : undefined,
+      };
+    }),
   }));
 
   return (

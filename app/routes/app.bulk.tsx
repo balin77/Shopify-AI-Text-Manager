@@ -26,6 +26,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { PlanAccessGate } from "../components/PlanAccessGate";
+import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { getFormString, getFormJSON } from "../utils/form-data.utils";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
@@ -1319,6 +1320,16 @@ export default function BulkEditor() {
     [data.locales],
   );
 
+  // Set when the shop has no foreign locale to translate INTO: the translate
+  // action is then greyed out with this as its tooltip. `data.locales` is the
+  // published set, so this covers "one language" and "secondary not published".
+  // An EMPTY list means the loader's locale lookup failed (it catches to []),
+  // not "one language" — never gate on that (CLAUDE.md single-language rules).
+  const singleLocaleHint =
+    data.locales.length > 0 && foreignLocales.length === 0
+      ? t.common?.requiresSecondLanguage
+      : undefined;
+
   /** AI-translatable columns: base FIELD columns only (Phase-4 scope) —
    * handle is deliberately excluded (bulk-generating URL slugs is a guided
    * single-editor concern); metafield/option/alt columns are Phase 4b. */
@@ -1866,10 +1877,19 @@ export default function BulkEditor() {
                         onApply={handlePriceAction}
                       />
                     )}
-                    {data.aiTranslateAllowed && foreignLocales.length > 0 && aiColumns.length > 0 && (
-                      <Button onClick={() => setTranslateModalOpen(true)} loading={translateBusy}>
-                        {b.translateMissing.button}
-                      </Button>
+                    {/* Single-language shop: the button stays visible but
+                        greyed out with the reason (CLAUDE.md single-language
+                        rules) — hiding it reads as "the feature is missing". */}
+                    {data.aiTranslateAllowed && aiColumns.length > 0 && (
+                      <DisabledActionTooltip hint={singleLocaleHint}>
+                        <Button
+                          onClick={() => setTranslateModalOpen(true)}
+                          loading={translateBusy}
+                          disabled={!!singleLocaleHint}
+                        >
+                          {b.translateMissing.button}
+                        </Button>
+                      </DisabledActionTooltip>
                     )}
                     <Button onClick={handleExport} loading={exportFetcher.state !== "idle"}>
                       {b.csv.exportButton}

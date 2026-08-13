@@ -170,12 +170,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themeAppEmbeds: themeAppEmbedRows > 0,
     };
 
+    // Published locale count for the navigation's language gate (a section like
+    // the hreflang audit is greyed out on a single-language shop, mobile drawer
+    // included — the drawer is reachable from every page, so the count has to
+    // live in the shell loader, not in a section route).
+    //
+    // Served from the 60s shop-locales cache the content loaders use anyway.
+    // NOT wrapped in a catch: the cache swallows every failure itself and
+    // resolves with `[]` — the one error it does propagate is the 401 Response
+    // it re-throws for re-authentication, which must reach this loader's own
+    // error path instead of being silently turned into a number. An empty list
+    // therefore yields 0, which means "unknown" (a shop always has at least its
+    // primary locale) and the nav reads it as multi-language, so a lookup
+    // hiccup can never grey out a section the merchant can actually use.
+    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+    const localeCount = (await getCachedShopLocales(admin, session.shop)).filter(
+      (l) => l.published !== false,
+    ).length;
+
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
       seoLimits,
+      localeCount,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
       extensionSetupHint,
@@ -203,6 +222,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings: null,
       seoTitleSuffix: "",
       seoLimits: null as Record<string, number> | null,
+      // 0 = unknown → the nav's language gate stays off (see the success path).
+      localeCount: 0,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,

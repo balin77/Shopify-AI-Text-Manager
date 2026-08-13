@@ -33,8 +33,14 @@ export interface MobileNavEntry {
   label: string;
   icon?: string;
   path: string;
-  /** Shows a 🔒 and dims the row; the row still navigates (upsell page). */
+  /** Shows `lockIcon` and dims the row; the row still navigates (upsell page). */
   locked?: boolean;
+  /**
+   * Marker for a locked row. Defaults to 🔒 (plan gate). Pass something else
+   * when the row is unavailable for another reason — e.g. 🌐 for a section that
+   * needs a second shop language — so a padlock never implies "upgrade".
+   */
+  lockIcon?: string;
   /** Small trailing number (product count). */
   count?: number;
   /** Renders `count` in the critical tone (plan limit reached). */
@@ -169,7 +175,7 @@ export function MobileMenu({ activeTab, contentGroups = [], seoGroups = [] }: Mo
         )}
         {entry.locked && (
           <span style={{ fontSize: "12px" }} aria-hidden="true">
-            🔒
+            {entry.lockIcon ?? "🔒"}
           </span>
         )}
       </button>
@@ -220,7 +226,7 @@ export function MobileMenu({ activeTab, contentGroups = [], seoGroups = [] }: Mo
           </span>
           {only.locked && (
             <span style={{ fontSize: "12px" }} aria-hidden="true">
-              🔒
+              {only.lockIcon ?? "🔒"}
             </span>
           )}
         </button>
