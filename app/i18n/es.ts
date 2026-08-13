@@ -2703,25 +2703,41 @@ export const es: Translation = {
       invalid: "No es un importe válido.",
     },
     translateMissing: {
-      button: "Traducir faltantes",
-      title: "Generar traducciones faltantes",
-      intro: "Traduce con IA todas las celdas vacías de la columna elegida en el conjunto filtrado actual. La vista previa es el modo predeterminado — nada se guarda sin revisión.",
-      columnLabel: "Columna",
-      targetLocaleLabel: "Idioma de destino",
-      modeLabel: "Resultado",
-      modePreview: "Vista previa — las sugerencias quedan sin guardar en la tabla",
-      modeSave: "Traducir y guardar — los resultados se escriben directamente",
-      start: "Traducir",
-      cancel: "Cancelar",
-      marketHintGlobal: "La traducción con IA escribe traducciones globales (\"Todos los mercados\").",
-      marketHintMarket: "La traducción con IA escribe traducciones para el mercado \"{market}\".",
-      running: "Traducción con IA iniciada — sigue el progreso en la pestaña Tareas.",
-      applied: "{count} sugerencias de traducción añadidas a la tabla — revisa y guarda.",
-      appliedWithOffPage: "{count} sugerencias de traducción añadidas, {offPage} de ellas en otras páginas — visibles allí al paginar. Revisa y guarda.",
-      truncated: "Solo se procesaron las primeras {limit} de {total} filas coincidentes — acota el filtro y vuelve a iniciar para traducir el resto.",
-      savedResult: "{count} traducción(es) guardada(s), {failed} fallida(s).",
-      noneMissing: "No se encontraron celdas vacías en la selección actual.",
-      failed: "La traducción con IA falló.",
+      button: "Traducciones faltantes",
+      title: "Añadir traducciones faltantes",
+      back: "Volver al editor masivo",
+      intro:
+        "Muestra todos los elementos del filtro actual a los que les falta al menos una traducción. Solo se añaden los valores que faltan: las traducciones existentes no se tocan.",
+      languagesLabel: "Idiomas de destino:",
+      languageActiveHint: "Activo: haz clic para excluir este idioma de la ejecución.",
+      languageInactiveHint: "Desactivado: haz clic para volver a incluir este idioma.",
+      singleTarget: "Idioma de destino: {language}",
+      noLanguages: "Ningún idioma de destino activo: selecciona al menos uno arriba.",
+      globalHint: "Las traducciones se escriben de forma global (todos los mercados).",
+      selectAll: "Seleccionar todo",
+      itemSummary: "{fields} campos · {units} traducciones",
+      warnHandle:
+        "Un handle de URL traducido cambia la URL de la tienda en ese idioma. Muchas tiendas mantienen a propósito el mismo handle en todos los idiomas, por eso no viene preseleccionado.",
+      expand: "Mostrar campos",
+      collapse: "Ocultar campos",
+      pageInfo: "{from}–{to} de {total} elementos",
+      summary: "{units} traducciones seleccionadas",
+      capNotice:
+        "Cada ejecución abarca como máximo {max} traducciones: quedan {rest} para la siguiente.",
+      scanTruncated:
+        "Solo se tienen en cuenta los primeros {scanned} de {total} elementos del filtro actual. Ajusta el filtro para abarcar el resto.",
+      startHint:
+        "Las traducciones se guardan directamente. Como solo se rellenan campos vacíos, nada puede sobrescribirse: el resultado se puede revisar y modificar después en el editor masivo.",
+      start: "Traducir y guardar",
+      running: "Traducción con IA iniciada: sigue el progreso en la pestaña Tareas.",
+      savedResult: "{saved} traducción(es) guardada(s), {failed} fallida(s).",
+      skippedHandles:
+        "{count} handle(s) de URL omitido(s): la traducción era idéntica al idioma principal o no produjo un slug válido.",
+      runTruncated:
+        "Se procesaron como máximo {max} traducciones: quedan {rest} pendientes. Vuelve a iniciar la ejecución para el resto.",
+      noneMissing: "No falta ninguna traducción en la selección actual.",
+      empty: "No falta ninguna traducción en el filtro actual.",
+      failed: "La traducción con IA ha fallado.",
     },
     // Fase 6 — exportación/importación CSV (Plan §8.1/§8.2)
     csv: {
@@ -3160,6 +3176,17 @@ export const es: Translation = {
         "Ctrl+Clic para habilitar/deshabilitar",
         "Los idiomas deshabilitados aparecen en rojo",
         "El idioma principal no se puede deshabilitar",
+      ],
+    },
+
+    translateMissingLanguages: {
+      title: "Elegir idiomas de destino",
+      summary: "Cada botón de idioma es un destino de traducción: un clic lo excluye de la ejecución.",
+      details: "Haz clic (o Ctrl+clic, como en el editor de contenido) en un botón de idioma para desactivarlo o volver a activarlo en esta ejecución. Los idiomas desactivados se muestran en rojo y desaparecen de la lista de abajo. Se puede traducir a varios idiomas a la vez. El idioma principal no aparece: es la fuente de cada traducción, nunca un destino.",
+      tips: [
+        "Un clic o Ctrl+clic activa/desactiva un idioma",
+        "Los idiomas desactivados aparecen en rojo",
+        "El idioma principal es la fuente y no se ofrece",
       ],
     },
 

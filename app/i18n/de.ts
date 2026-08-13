@@ -2704,24 +2704,40 @@ export const de = {
       invalid: "Kein gültiger Betrag.",
     },
     translateMissing: {
-      button: "Fehlende übersetzen",
-      title: "Fehlende Übersetzungen erzeugen",
-      intro: "Übersetzt alle leeren Zellen der gewählten Spalte in der aktuellen Filtermenge per KI. Standard ist die Vorschau — nichts wird ohne Prüfung gespeichert.",
-      columnLabel: "Spalte",
-      targetLocaleLabel: "Zielsprache",
-      modeLabel: "Ergebnis",
-      modePreview: "Vorschau — Vorschläge landen ungespeichert in der Tabelle",
-      modeSave: "Übersetzen & speichern — Ergebnisse werden direkt gespeichert",
-      start: "Übersetzen",
-      cancel: "Abbrechen",
-      marketHintGlobal: "KI-Übersetzen schreibt globale Übersetzungen (\"Alle Märkte\").",
-      marketHintMarket: "KI-Übersetzen schreibt Übersetzungen für den Markt „{market}\".",
+      button: "Fehlende Übersetzungen",
+      title: "Fehlende Übersetzungen ergänzen",
+      back: "Zurück zum Bulk-Editor",
+      intro:
+        "Listet alle Elemente der aktuellen Filtermenge auf, denen mindestens eine Übersetzung fehlt. Es werden ausschliesslich fehlende Werte ergänzt — bestehende Übersetzungen bleiben unangetastet.",
+      languagesLabel: "Zielsprachen:",
+      languageActiveHint: "Aktiv — klicken, um diese Sprache aus dem Lauf zu nehmen.",
+      languageInactiveHint: "Deaktiviert — klicken, um diese Sprache wieder aufzunehmen.",
+      singleTarget: "Zielsprache: {language}",
+      noLanguages: "Keine Zielsprache aktiv — mindestens eine Sprache oben auswählen.",
+      globalHint: "Übersetzungen werden global geschrieben (alle Märkte).",
+      selectAll: "Alle auswählen",
+      itemSummary: "{fields} Felder · {units} Übersetzungen",
+      warnHandle:
+        "Ein übersetzter URL-Handle ändert die Storefront-URL dieser Sprache. Viele Shops verwenden bewusst denselben Handle in allen Sprachen — deshalb ist er nicht vorausgewählt.",
+      expand: "Felder anzeigen",
+      collapse: "Felder ausblenden",
+      pageInfo: "{from}–{to} von {total} Elementen",
+      summary: "{units} Übersetzungen ausgewählt",
+      capNotice:
+        "Pro Lauf werden maximal {max} Übersetzungen ausgeführt — {rest} bleiben für den nächsten Lauf übrig.",
+      scanTruncated:
+        "Es werden die ersten {scanned} von {total} Elementen des aktuellen Filters berücksichtigt. Filter enger ziehen, um den Rest zu erfassen.",
+      startHint:
+        "Die Übersetzungen werden direkt gespeichert. Da nur leere Felder gefüllt werden, kann dabei nichts überschrieben werden — das Ergebnis lässt sich danach im Bulk-Editor prüfen und ändern.",
+      start: "Übersetzen & speichern",
       running: "KI-Übersetzung gestartet — Fortschritt im Tab \"Aufgaben\".",
-      applied: "{count} Übersetzungsvorschläge in die Tabelle übernommen — bitte prüfen und speichern.",
-      appliedWithOffPage: "{count} Übersetzungsvorschläge übernommen, davon {offPage} auf anderen Seiten — dort sichtbar beim Blättern. Bitte prüfen und speichern.",
-      truncated: "Nur die ersten {limit} von {total} passenden Zeilen wurden bearbeitet — Filter enger ziehen und erneut starten, um den Rest zu übersetzen.",
-      savedResult: "{count} Übersetzung(en) gespeichert, {failed} fehlgeschlagen.",
-      noneMissing: "Keine leeren Zellen in der aktuellen Auswahl gefunden.",
+      savedResult: "{saved} Übersetzung(en) gespeichert, {failed} fehlgeschlagen.",
+      skippedHandles:
+        "{count} URL-Handle(s) übersprungen — die Übersetzung war identisch mit der Primärsprache oder ergab keinen gültigen Slug.",
+      runTruncated:
+        "Es wurden maximal {max} Übersetzungen ausgeführt — {rest} weitere sind offen. Starte den Lauf erneut für den Rest.",
+      noneMissing: "In der aktuellen Auswahl fehlt keine Übersetzung.",
+      empty: "Im aktuellen Filter fehlen keine Übersetzungen.",
       failed: "KI-Übersetzung fehlgeschlagen.",
     },
     // Phase 6 — CSV-Export/-Import (Plan §8.1/§8.2)
@@ -3161,6 +3177,17 @@ export const de = {
         "Strg+Klick zum Aktivieren/Deaktivieren",
         "Deaktivierte Sprachen werden rot angezeigt",
         "Hauptsprache kann nicht deaktiviert werden",
+      ],
+    },
+
+    translateMissingLanguages: {
+      title: "Zielsprachen wählen",
+      summary: "Jeder Sprach-Button ist ein Übersetzungsziel — ein Klick nimmt die Sprache aus dem Lauf.",
+      details: "Klicke (oder Strg+Klick, wie im Inhalts-Editor) auf einen Sprach-Button, um diese Sprache für diesen Lauf aus- oder wieder einzuschalten. Deaktivierte Sprachen werden rot dargestellt und in der Liste darunter ausgeblendet. Es kann in mehrere Sprachen gleichzeitig übersetzt werden. Die Hauptsprache erscheint nicht: Sie ist die Quelle jeder Übersetzung, nie ein Ziel.",
+      tips: [
+        "Klick oder Strg+Klick schaltet eine Sprache ein/aus",
+        "Deaktivierte Sprachen werden rot angezeigt",
+        "Die Hauptsprache ist die Quelle und wird nicht angeboten",
       ],
     },
 
