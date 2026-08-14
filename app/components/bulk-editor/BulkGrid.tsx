@@ -21,8 +21,8 @@
  */
 
 import { useRef } from "react";
-import { Text, Tooltip } from "@shopify/polaris";
-import { SearchIcon } from "@shopify/polaris-icons";
+import { Button, Text, Tooltip } from "@shopify/polaris";
+import { EditIcon, SearchIcon } from "@shopify/polaris-icons";
 import {
   resolveCellValue,
   type BulkRow,
@@ -187,6 +187,10 @@ export function BulkGrid({
       const min = c.minWidth + columnGutter[index];
       return `minmax(${min}px, ${c.maxWidth ? `${c.maxWidth + columnGutter[index]}px` : "1fr"})`;
     }),
+    // Trailing "open in editor" column — 0 wide unless the device has no
+    // hover, where the image cell's overlay affordance cannot be discovered.
+    // A CSS variable, because the media query cannot reach this inline style.
+    "var(--cp-bulk-edit-col)",
   ].join(" ");
 
   const stickyClass = (index: number): string => {
@@ -280,6 +284,16 @@ export function BulkGrid({
            editor's touch overrides use (AIEditableField.css). */
         @media (hover: none) and (pointer: coarse) {
           .cp-bulk-cell-actions { opacity: 1; }
+        }
+        /* Trailing edit column: the image cell reveals its affordance on
+           hover, which a touch device never does — so those get an explicit
+           edit button at the end of every row instead. Collapsed to zero
+           width (and removed from the a11y tree) everywhere else. */
+        .cp-bulk-grid { --cp-bulk-edit-col: 0px; }
+        .cp-bulk-edit-cell { display: none; }
+        @media (hover: none) and (pointer: coarse) {
+          .cp-bulk-grid { --cp-bulk-edit-col: 44px; }
+          .cp-bulk-edit-cell { display: flex; align-items: center; justify-content: center; }
         }
         /* Field colours, matching the single editor (Plan §2): applied to the
            cell WRAPPER (the input itself is transparent). Same hexes as
@@ -487,6 +501,7 @@ export function BulkGrid({
               </div>
             );
           })}
+          <div role="columnheader" className="cp-bulk-th cp-bulk-edit-cell" />
         </div>
         {rows.map((row, rowIndex) => {
           const rowFailure = rowLevelFailures.get(row.id);
@@ -570,6 +585,15 @@ export function BulkGrid({
                   </div>
                 );
               })}
+              <div role="cell" className="cp-bulk-cell cp-bulk-edit-cell">
+                <Button
+                  variant="tertiary"
+                  size="micro"
+                  icon={EditIcon}
+                  accessibilityLabel={openInEditorLabel}
+                  onClick={() => onOpenInEditor(row)}
+                />
+              </div>
             </div>
           );
         })}
