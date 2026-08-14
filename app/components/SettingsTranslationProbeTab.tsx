@@ -97,6 +97,20 @@ interface ImageAltDiag {
     hasAltKey: boolean;
     error?: string;
   }>;
+  fileLink?: Array<{
+    kind: string;
+    ownerLabel: string;
+    sourceImageId: string;
+    sourceUrl: string;
+    sourceBasename: string;
+    arithmetic: { triedId: string; resolved: boolean; typename: string; url: string; urlMatch: boolean; error?: string };
+    byFilename: {
+      query: string;
+      hits: Array<{ id: string; typename: string; url: string; alt: string | null }>;
+      exactMatches: number;
+      error?: string;
+    };
+  }>;
   verdict: string;
 }
 
@@ -195,6 +209,45 @@ function formatMarkdown(report: ProbeReport): string {
       );
     }
     lines.push(``);
+
+    if (iad.fileLink?.length) {
+      lines.push(`### Can a CollectionImage/ArticleImage be traced to a MediaImage?`);
+      lines.push(``);
+      lines.push(
+        `A MediaImage IS translatable and the bulk editor already writes it, so a link would mean those alt texts need no new write path.`,
+      );
+      lines.push(``);
+      lines.push(`| subject | source image GID | filename | A) same id → MediaImage | B) found in Files |`);
+      lines.push(`|---|---|---|---|---|`);
+      for (const l of iad.fileLink) {
+        const esc = (v: string) => v.replace(/\|/g, "\\|");
+        const arith = l.arithmetic.error
+          ? `_${esc(l.arithmetic.error)}_`
+          : l.arithmetic.urlMatch
+            ? `**same picture** (\`${esc(l.arithmetic.typename)}\`)`
+            : l.arithmetic.resolved
+              ? `resolves to \`${esc(l.arithmetic.typename)}\` but a **different** picture`
+              : "does not resolve";
+        const files = l.byFilename.error
+          ? `_${esc(l.byFilename.error)}_`
+          : `${l.byFilename.exactMatches} exact / ${l.byFilename.hits.length} hit(s)`;
+        lines.push(
+          `| ${esc(l.kind)} — ${esc(l.ownerLabel)} | ${l.sourceImageId ? `\`${esc(l.sourceImageId)}\`` : "(none)"} | ${esc(l.sourceBasename) || "—"} | ${arith} | ${files} |`,
+        );
+      }
+      lines.push(``);
+      for (const l of iad.fileLink) {
+        if (!l.sourceUrl) continue;
+        lines.push(`- \`${l.kind}\` source URL: ${l.sourceUrl}`);
+        if (l.arithmetic.triedId) lines.push(`  - tried: \`${l.arithmetic.triedId}\` → ${l.arithmetic.url || "(no url)"}`);
+        if (l.byFilename.query) lines.push(`  - files query: \`${l.byFilename.query}\``);
+        for (const hit of l.byFilename.hits) {
+          lines.push(`    - \`${hit.id}\` [${hit.typename}] alt=${hit.alt === null ? "(null)" : `"${hit.alt}"`} — ${hit.url || "(no url)"}`);
+        }
+      }
+      lines.push(``);
+    }
+
     lines.push(`---`);
     lines.push(``);
   }

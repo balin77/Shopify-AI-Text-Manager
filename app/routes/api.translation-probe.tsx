@@ -160,7 +160,65 @@ interface ImageAltDiag {
   enumSupport: Array<{ resourceType: string; supported: boolean; sampleCount: number; error?: string }>;
   /** Sample subjects and what their translatable content looks like. */
   subjects: ImageAltSubject[];
+  /** Can a CollectionImage/ArticleImage be traced back to a MediaImage? */
+  fileLink: ImageFileLink[];
   verdict: string;
+}
+
+/**
+ * Empirical answer to "can we get from a CollectionImage/ArticleImage GID to
+ * the MediaImage that actually holds the file?".
+ *
+ * It matters because a MediaImage IS translatable and the bulk editor already
+ * writes it. If a collection's featured image turns out to BE a file in the
+ * Files library, its alt text needs no new write path at all — only the link.
+ *
+ * Two independent hypotheses, deliberately tested separately:
+ *
+ *  A) ARITHMETIC — is the numeric tail of `gid://shopify/CollectionImage/123`
+ *     the same record as `gid://shopify/MediaImage/123`? Expected: no (they
+ *     are different types from different id spaces), but "expected" is not
+ *     "measured", and a single `node()` lookup settles it. A resolved node
+ *     only counts if its URL is the SAME picture — otherwise the number
+ *     merely collides with an unrelated file.
+ *
+ *  B) THE FILE ITSELF — does the image's filename appear in `files()`? If it
+ *     appears exactly once and that file's URL is the same picture, the
+ *     mapping is exact rather than a heuristic. Several hits, or a different
+ *     URL, means it is guesswork and must not be built on.
+ *
+ * `urlMatch` compares the BASENAME, not the full URL: Shopify serves the same
+ * file under different CDN path segments depending on where it is attached
+ * (…/collections/… vs …/files/…), so comparing whole URLs would report a
+ * mismatch for a genuine match. The full URLs are reported too, so the bucket
+ * difference stays visible instead of being silently normalised away.
+ */
+interface ImageFileLink {
+  kind: "collectionImage" | "articleImage";
+  ownerLabel: string;
+  /** The legacy image GID, "" when the object has none (or has no image). */
+  sourceImageId: string;
+  sourceUrl: string;
+  sourceBasename: string;
+  /** A) node(gid://shopify/MediaImage/<same number>). */
+  arithmetic: {
+    /** The GID we constructed, "" when the source GID carries no number. */
+    triedId: string;
+    resolved: boolean;
+    /** __typename of whatever came back — a non-MediaImage is a red flag. */
+    typename: string;
+    url: string;
+    urlMatch: boolean;
+    error?: string;
+  };
+  /** B) files(query: "filename:…"). */
+  byFilename: {
+    query: string;
+    hits: Array<{ id: string; typename: string; url: string; alt: string | null }>;
+    /** Hits whose basename equals the source basename. */
+    exactMatches: number;
+    error?: string;
+  };
 }
 
 interface ImageAltSubject {
@@ -308,6 +366,29 @@ const IMAGE_ALT_ARTICLES_VIA_BLOGS_QUERY = (withId: boolean) => `#graphql
     blogs(first: 5) {
       nodes {
         articles(first: 10) { nodes { id title image { ${withId ? "id " : ""}url altText } } }
+      }
+    }
+  }
+`;
+
+/** A) Is `gid://shopify/MediaImage/<n>` — same n as the legacy image GID —
+ * a real object, and is it the same picture? */
+const MEDIA_IMAGE_BY_ID_QUERY = `#graphql
+  query mediaImageById($id: ID!) {
+    node(id: $id) {
+      __typename
+      ... on MediaImage { id alt image { url } }
+    }
+  }
+`;
+
+/** B) Does the file exist in the Files library under this filename? */
+const FILES_BY_FILENAME_QUERY = `#graphql
+  query filesByFilename($query: String!) {
+    files(first: 10, query: $query) {
+      nodes {
+        __typename
+        ... on MediaImage { id alt image { url } }
       }
     }
   }
@@ -827,9 +908,13 @@ async function probeImageAltTranslatability(
   };
 
   /** Runs a query and returns its data, or null (after recording why). */
-  const run = async <T,>(label: string, query: string): Promise<T | null> => {
+  const run = async <T,>(
+    label: string,
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<T | null> => {
     try {
-      const response = await admin.graphql(query);
+      const response = await admin.graphql(query, variables ? { variables } : undefined);
       const data = (await response.json()) as { data?: T; errors?: Array<{ message: string }> };
       if (data.errors?.length) {
         noteFailure(label, data.errors.map((e) => e.message).join(" | "));
@@ -845,7 +930,7 @@ async function probeImageAltTranslatability(
   interface ImageNode {
     id: string;
     title: string;
-    image?: { id?: string | null; altText?: string | null } | null;
+    image?: { id?: string | null; url?: string | null; altText?: string | null } | null;
   }
 
   let sampleProductMedia: { id: string; label: string } | null = null;
@@ -968,12 +1053,116 @@ async function probeImageAltTranslatability(
     },
   );
 
-  return { enumSupport, subjects, verdict: buildImageAltVerdict(enumSupport, subjects) };
+  const fileLink: ImageFileLink[] = [
+    await probeImageFileLink(admin, run, "collectionImage", sampleCollection),
+    await probeImageFileLink(admin, run, "articleImage", sampleArticle),
+  ];
+
+  return { enumSupport, subjects, fileLink, verdict: buildImageAltVerdict(enumSupport, subjects, fileLink) };
+}
+
+/** Last path segment of a CDN URL, query string stripped and percent-decoded.
+ * Shopify serves the same file under different path segments depending on what
+ * it is attached to, so the basename is the only stable part. */
+function cdnBasename(url: string): string {
+  if (!url) return "";
+  const withoutQuery = url.split("?")[0];
+  const last = withoutQuery.slice(withoutQuery.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+/** Tests both routes from a legacy image GID to a MediaImage — see ImageFileLink. */
+async function probeImageFileLink(
+  admin: { graphql: (query: string, opts?: Record<string, unknown>) => Promise<Response> },
+  run: <T>(label: string, query: string, variables?: Record<string, unknown>) => Promise<T | null>,
+  kind: ImageFileLink["kind"],
+  owner: { title: string; image?: { id?: string | null; url?: string | null } | null } | null,
+): Promise<ImageFileLink> {
+  const sourceImageId = owner?.image?.id ?? "";
+  const sourceUrl = owner?.image?.url ?? "";
+  const sourceBasename = cdnBasename(sourceUrl);
+  const link: ImageFileLink = {
+    kind,
+    ownerLabel: owner?.title ?? "(no such object in this shop)",
+    sourceImageId,
+    sourceUrl,
+    sourceBasename,
+    arithmetic: { triedId: "", resolved: false, typename: "", url: "", urlMatch: false },
+    byFilename: { query: "", hits: [], exactMatches: 0 },
+  };
+  if (!owner?.image) {
+    link.arithmetic.error = "the object has no image";
+    link.byFilename.error = "the object has no image";
+    return link;
+  }
+
+  // A) same number, different type.
+  const numeric = sourceImageId.match(/\/(\d+)(?:\?|$)/)?.[1] ?? "";
+  if (!numeric) {
+    link.arithmetic.error = sourceImageId
+      ? "the image GID carries no numeric id"
+      : "the image has no addressable GID at all";
+  } else {
+    const triedId = `gid://shopify/MediaImage/${numeric}`;
+    link.arithmetic.triedId = triedId;
+    const data = await run<{ node?: { __typename?: string; image?: { url?: string | null } | null } | null }>(
+      `${kind} → MediaImage by same id`,
+      MEDIA_IMAGE_BY_ID_QUERY,
+      { id: triedId },
+    );
+    if (data) {
+      const node = data.node ?? null;
+      link.arithmetic.resolved = !!node;
+      link.arithmetic.typename = node?.__typename ?? "";
+      link.arithmetic.url = node?.image?.url ?? "";
+      // Resolving is not enough: an unrelated file whose id happens to collide
+      // would look like a hit. Only the same picture counts.
+      link.arithmetic.urlMatch =
+        !!link.arithmetic.url && cdnBasename(link.arithmetic.url) === sourceBasename;
+    } else {
+      link.arithmetic.error = "query failed — see the errors above";
+    }
+  }
+
+  // B) the file itself.
+  if (!sourceBasename) {
+    link.byFilename.error = "the image URL has no filename";
+    return link;
+  }
+  const query = `filename:${sourceBasename}`;
+  link.byFilename.query = query;
+  const files = await run<{
+    files?: { nodes?: Array<{ __typename?: string; id?: string; alt?: string | null; image?: { url?: string | null } | null }> };
+  }>(`${kind} → files by filename`, FILES_BY_FILENAME_QUERY, { query });
+  if (!files) {
+    link.byFilename.error = "query failed — see the errors above";
+    return link;
+  }
+  for (const node of files.files?.nodes ?? []) {
+    link.byFilename.hits.push({
+      id: node.id ?? "",
+      typename: node.__typename ?? "",
+      url: node.image?.url ?? "",
+      alt: node.alt ?? null,
+    });
+  }
+  link.byFilename.exactMatches = link.byFilename.hits.filter(
+    (h) => cdnBasename(h.url) === sourceBasename,
+  ).length;
+  return link;
 }
 
 /** Plain-language reading of the numbers above — the sentence that actually
  * answers the planning question. */
-function buildImageAltVerdict(enumSupport: ImageAltDiag["enumSupport"], subjects: ImageAltSubject[]): string {
+function buildImageAltVerdict(
+  enumSupport: ImageAltDiag["enumSupport"],
+  subjects: ImageAltSubject[],
+  fileLink: ImageFileLink[],
+): string {
   const parts: string[] = [];
   const mediaImageEnum = enumSupport.find((e) => e.resourceType === "MEDIA_IMAGE");
   const productMedia = subjects.find((s) => s.kind === "productMedia");
@@ -1007,6 +1196,43 @@ function buildImageAltVerdict(enumSupport: ImageAltDiag["enumSupport"], subjects
     } else {
       parts.push(
         `${name} featured image is NOT translatable: ${subject.error ?? `keys are [${subject.translatableKeys.join(", ")}]`}.`,
+      );
+    }
+  }
+  // The follow-up question: even if those images are not translatable in their
+  // own right, can they be traced to a MediaImage that IS?
+  for (const link of fileLink) {
+    const name = link.kind === "collectionImage" ? "Collection" : "Article";
+    if (!link.sourceUrl) {
+      parts.push(`${name} image → MediaImage: no sample in this shop — inconclusive.`);
+      continue;
+    }
+    if (link.arithmetic.urlMatch) {
+      parts.push(
+        `${name} image → MediaImage: the SAME numeric id resolves to the same picture (${link.arithmetic.triedId}) — the id spaces line up after all.`,
+      );
+    } else if (link.arithmetic.resolved) {
+      parts.push(
+        `${name} image → MediaImage: ${link.arithmetic.triedId} resolves to a ${link.arithmetic.typename || "node"} but a DIFFERENT picture — an id collision, not a mapping. Do not derive one GID from the other.`,
+      );
+    } else {
+      parts.push(
+        `${name} image → MediaImage: the same numeric id does not resolve (${link.arithmetic.error ?? "no node"}) — the GIDs cannot be converted into each other.`,
+      );
+    }
+    if (link.byFilename.error) {
+      parts.push(`${name} image → Files lookup failed: ${link.byFilename.error}`);
+    } else if (link.byFilename.exactMatches === 1) {
+      parts.push(
+        `${name} image IS in the Files library, exactly once, as ${link.byFilename.hits.find((h) => h.url)?.id ?? "(a MediaImage)"} — the file is an EXACT link, so its alt text needs no new write path, only the association.`,
+      );
+    } else if (link.byFilename.exactMatches > 1) {
+      parts.push(
+        `${name} image matches ${link.byFilename.exactMatches} files by filename — ambiguous, so a filename mapping would be guesswork.`,
+      );
+    } else {
+      parts.push(
+        `${name} image is NOT in the Files library under its own filename (${link.byFilename.hits.length} unrelated hit(s)) — it is stored outside Files and has no MediaImage to translate.`,
       );
     }
   }
