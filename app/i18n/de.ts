@@ -2693,7 +2693,7 @@ export const de = {
     queuedRunning: "Für diesen Shop läuft bereits ein Massen-Speichern.",
     errorGeneric: "Speichern fehlgeschlagen. Bitte erneut versuchen.",
     // Phase 4 — Sprachen und Märkte
-    languageLabel: "Sprache",
+    languageBarLabel: "Sprache der Ansicht",
     marketLabel: "Markt",
     allMarkets: "Alle Märkte",
     primaryLocaleSuffix: "(Primär)",
@@ -2709,7 +2709,14 @@ export const de = {
     },
     cellActions: {
       noActiveLanguage: "Keine Zielsprache aktiv — mit Strg/Cmd+Klick auf einen Sprachbutton wieder einschalten.",
+      noLanguagesAvailable: "Keine weitere Shop-Sprache vorhanden.",
+      viewedLanguageOff: "Diese Sprache ist ausgeschaltet — mit Strg/Cmd+Klick auf ihren Button wieder einschalten.",
+      handleCopyBlocked: "Ein URL-Handle kann nicht 1:1 übertragen werden — identische Slugs über Sprachen hinweg führen zu Routing-Konflikten. Bitte stattdessen übersetzen.",
+      emptySource: "In der Hauptsprache ist kein Text vorhanden, mit dem gearbeitet werden könnte.",
+      someLocalesFailed: "Nicht übersetzt",
+      sessionExpired: "Die Sitzung ist abgelaufen — bitte die Seite neu laden und erneut anmelden.",
       menu: "Aktionen für dieses Feld",
+      busy: "Wird ausgeführt…",
     },
     languageBar: {
       enabledHint: "Klicken zum Wechseln. Strg/Cmd+Klick schaltet die Sprache für die Zellaktionen aus.",

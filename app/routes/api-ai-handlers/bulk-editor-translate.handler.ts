@@ -43,6 +43,7 @@ import { GroupedFieldTranslationService } from "../../../src/services/grouped-fi
 import {
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  aiFieldKey,
   BULK_FILTER_IDS,
   LIST_DISPLAY_SEPARATOR,
   METAFIELD_TYPE_MULTI_LINE,
@@ -326,12 +327,6 @@ export function buildJobs(
 function shopifyTargetsPerLocale(column: ColumnDescriptor, source: string): number {
   if (!isListValuesColumn(column)) return 1;
   return Math.max(1, source.split(LIST_DISPLAY_SEPARATOR.trim()).length);
-}
-
-/** Key the AI prompt sees: the canonical field name ("description", "title"),
- * or the metaobject field key (which is the shop's own descriptive name). */
-function aiFieldKey(column: ColumnDescriptor): string {
-  return column.kind === "mofield" ? column.moFieldKey ?? column.id : canonicalFieldNameForColumn(column);
 }
 
 /** The BASE product field that must run through the shop-wide

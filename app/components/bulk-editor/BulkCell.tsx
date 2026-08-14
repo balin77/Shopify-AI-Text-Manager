@@ -16,6 +16,7 @@ import {
   useState,
   type ClipboardEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { ActionList, Button, Icon, InlineStack, Popover, Select, Spinner, Text, Tooltip } from "@shopify/polaris";
 import { MenuVerticalIcon } from "@shopify/polaris-icons";
@@ -94,9 +95,13 @@ export interface BulkCellActions {
    * cannot show a hover tooltip, so `disabled` + `helpText` is the form).
    */
   fanOutDisabledReason?: string;
+  /** Why COPY alone cannot run (a URL handle: an identical slug across
+   * locales is rejected by the write path). Same disabled+helpText form. */
+  copyDisabledReason?: string;
   busy?: boolean;
   labels: {
     menu: string;
+    busy: string;
     improve: string;
     translateAll: string;
     copyAll: string;
@@ -195,10 +200,33 @@ export function BulkCell({
   const hasMenu =
     !!actions && (!!actions.onImprove || !!actions.onTranslateAll || !!actions.onCopyAll || !!actions.fanOutDisabledReason);
   if (!actions || !hasMenu) return cell;
+  return <BulkCellWithActions actions={actions}>{cell}</BulkCellWithActions>;
+}
+
+/**
+ * Wraps a cell's control and its action menu, and owns the menu's open state
+ * so the CELL can open it from the keyboard.
+ *
+ * That is not a nicety: CellTextArea consumes Tab and Shift-Tab for grid
+ * navigation, and focusing a cell promotes it straight into that textarea — so
+ * the three-dot button is never in anyone's tab order, and the three actions
+ * would have no keyboard path at all. Shift+F10 and the ContextMenu key are
+ * the platform gestures for "open this element's menu"; the events bubble up
+ * from the textarea, which does not touch either key.
+ */
+function BulkCellWithActions({ actions, children }: { actions: BulkCellActions; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="cp-bulk-cell-with-actions">
-      {cell}
-      <BulkCellMenu actions={actions} />
+    <div
+      className="cp-bulk-cell-with-actions"
+      onKeyDown={(event) => {
+        if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
+        event.preventDefault();
+        setOpen(true);
+      }}
+    >
+      {children}
+      <BulkCellMenu actions={actions} open={open} onOpenChange={setOpen} />
     </div>
   );
 }
@@ -208,63 +236,76 @@ export function BulkCell({
  * hovered or focused (CSS in BulkGrid), so a 250-row grid does not turn into a
  * wall of icons.
  */
-function BulkCellMenu({ actions }: { actions: BulkCellActions }) {
-  const [open, setOpen] = useState(false);
-  const disabled = actions.fanOutDisabledReason;
+function BulkCellMenu({
+  actions,
+  open,
+  onOpenChange,
+}: {
+  actions: BulkCellActions;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const setOpen = onOpenChange;
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const fanOutDisabled = actions.fanOutDisabledReason;
+  // While an AI call for this cell runs, every entry is disabled: a second run
+  // would spend a second provider call and overwrite the first one's result.
+  const busyDisabled = actions.busy ? actions.labels.busy : undefined;
   const items: { content: string; onAction?: () => void; disabled?: boolean; helpText?: string }[] = [];
-  if (actions.onImprove) {
-    items.push({
-      content: `✨ ${actions.labels.improve}`,
-      onAction: () => {
-        setOpen(false);
-        actions.onImprove?.();
-      },
-    });
+
+  /** Closing from an item handler bypasses Polaris' own focus restore (it only
+   * runs for Escape/focus-out), which would drop focus to <body>. */
+  const runAndClose = (action?: () => void) => () => {
+    setOpen(false);
+    buttonRef.current?.focus();
+    action?.();
+  };
+  const entry = (content: string, reason: string | undefined, action?: () => void) =>
+    reason ? { content, disabled: true, helpText: reason } : { content, onAction: runAndClose(action) };
+
+  if (actions.onImprove || busyDisabled) {
+    items.push(entry(`✨ ${actions.labels.improve}`, busyDisabled, actions.onImprove));
   }
-  if (actions.onTranslateAll || disabled) {
-    items.push({
-      content: `🌍 ${actions.labels.translateAll}`,
-      ...(disabled
-        ? { disabled: true, helpText: disabled }
-        : {
-            onAction: () => {
-              setOpen(false);
-              actions.onTranslateAll?.();
-            },
-          }),
-    });
+  if (actions.onTranslateAll || fanOutDisabled || busyDisabled) {
+    items.push(
+      entry(`🌍 ${actions.labels.translateAll}`, busyDisabled ?? fanOutDisabled, actions.onTranslateAll),
+    );
   }
-  if (actions.onCopyAll || disabled) {
-    items.push({
-      content: `📋 ${actions.labels.copyAll}`,
-      ...(disabled
-        ? { disabled: true, helpText: disabled }
-        : {
-            onAction: () => {
-              setOpen(false);
-              actions.onCopyAll?.();
-            },
-          }),
-    });
+  if (actions.onCopyAll || fanOutDisabled || actions.copyDisabledReason || busyDisabled) {
+    items.push(
+      entry(
+        `📋 ${actions.labels.copyAll}`,
+        busyDisabled ?? fanOutDisabled ?? actions.copyDisabledReason,
+        actions.onCopyAll,
+      ),
+    );
   }
 
   return (
-    <span className="cp-bulk-cell-actions">
+    // Keeps the dots visible while their own menu is open: the popover content
+    // is portalled out of the cell, so neither :hover nor :focus-within holds
+    // once the pointer or focus moves into the list.
+    <span className={`cp-bulk-cell-actions${open ? " cp-bulk-cell-actions-open" : ""}`}>
       <Popover
         active={open}
         onClose={() => setOpen(false)}
         preferredAlignment="right"
         activator={
           <button
+            ref={buttonRef}
             type="button"
             className="cp-bulk-cell-menu-btn"
             aria-label={actions.labels.menu}
             aria-haspopup="menu"
             aria-expanded={open}
-            onClick={() => setOpen((prev) => !prev)}
+            aria-busy={actions.busy ? true : undefined}
+            onClick={() => setOpen(!open)}
           >
             {actions.busy ? (
-              <Spinner size="small" accessibilityLabel={actions.labels.menu} />
+              // hasFocusableParent keeps Polaris from rendering a role="status"
+              // live region inside the button — without it every busy flip
+              // re-announces the button on a screen reader.
+              <Spinner size="small" hasFocusableParent accessibilityLabel={actions.labels.busy} />
             ) : (
               <Icon source={MenuVerticalIcon} />
             )}

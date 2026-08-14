@@ -19,6 +19,13 @@ import {
   richTextPreview,
   BULK_COLUMNS_BY_TYPE,
   BULK_ROW_TYPES,
+  BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
+  aiFieldKey,
+  isListShapedColumn,
+  columnCanHaveCellActions,
+  METAFIELD_TYPE_LIST_SINGLE_LINE,
+  METAFIELD_TYPE_SINGLE_LINE,
+  buildMetafieldColumn,
   IMG_ALT_COLUMN_ID,
   type BulkRow,
   type BulkRowType,
@@ -761,5 +768,81 @@ describe("computeDiff with dynamic product columns", () => {
     };
     const diff = computeDiff([productRow], phase2Columns, edits);
     expect(diff.map((d) => d.columnId).sort()).toEqual([IMG_ALT_COLUMN_ID, optionColumnId(1, "name")]);
+  });
+});
+
+/**
+ * The grid's per-cell actions and the bulkEditorTranslate task talk to
+ * /api/ai, which validates the content type before dispatching. These lock
+ * the vocabulary and the two helpers both paths share.
+ */
+describe("AI-facing column helpers", () => {
+  const NO_CAPS: ProductColumnCaps = { metafields: false, imageAlt: false, options: false };
+
+  it("maps every row type to a content type /api/ai accepts", () => {
+    // VALID_CONTENT_TYPES = keys of CONTENT_CONFIGS + templates + metaobjects.
+    // "articles" is a PLAN content type and 400s here — the AI layer serves
+    // articles out of the blogs config.
+    const valid = new Set(["products", "collections", "blogs", "pages", "policies", "templates", "metaobjects"]);
+    for (const rowType of BULK_ROW_TYPES) {
+      expect(valid.has(BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[rowType])).toBe(true);
+    }
+    expect(BULK_ROW_TYPE_TO_AI_CONTENT_TYPE.article).toBe("blogs");
+  });
+
+  it("aiFieldKey resolves the canonical field name, and the shop's own key for metaobject fields", () => {
+    const columns = buildColumnsForType("product", [], NO_CAPS);
+    const description = columns.find((c) => c.id === "field.descriptionHtml")!;
+    expect(aiFieldKey(description)).toBe("description");
+    const seoDescription = columns.find((c) => c.id === "field.seoDescription")!;
+    expect(aiFieldKey(seoDescription)).toBe("metaDescription");
+    const moField: ColumnDescriptor = {
+      id: "mo.author.bio",
+      kind: "mofield",
+      label: "Bio",
+      group: "base",
+      editable: true,
+      translatable: true,
+      inputType: "textarea",
+      minWidth: 200,
+      moFieldKey: "bio",
+    };
+    expect(aiFieldKey(moField)).toBe("bio");
+  });
+
+  it("recognises the '|'-joined list cells that must never go to the AI as one blob", () => {
+    const listMf = buildMetafieldColumn({
+      namespace: "custom",
+      key: "materials",
+      type: METAFIELD_TYPE_LIST_SINGLE_LINE,
+    });
+    const plainMf = buildMetafieldColumn({
+      namespace: "custom",
+      key: "care",
+      type: METAFIELD_TYPE_SINGLE_LINE,
+    });
+    expect(isListShapedColumn(listMf)).toBe(true);
+    expect(isListShapedColumn(plainMf)).toBe(false);
+
+    const optionColumns = buildColumnsForType("product", [], {
+      ...NO_CAPS,
+      options: true,
+    });
+    const values = optionColumns.find((c) => c.kind === "option" && c.optionField === "values")!;
+    const name = optionColumns.find((c) => c.kind === "option" && c.optionField === "name")!;
+    expect(isListShapedColumn(values)).toBe(true);
+    expect(isListShapedColumn(name)).toBe(false);
+  });
+
+  it("reserves the action gutter from the descriptor alone, never per row", () => {
+    const columns = buildColumnsForType("product", [], NO_CAPS);
+    const title = columns.find((c) => c.id === "field.title")!;
+    const status = columns.find((c) => c.id === "field.status")!;
+    expect(columnCanHaveCellActions(title)).toBe(true);
+    // Select/money/number cells have no menu — their tracks stay untouched.
+    expect(columnCanHaveCellActions(status)).toBe(false);
+    for (const column of columns.filter((c) => !c.editable)) {
+      expect(columnCanHaveCellActions(column)).toBe(false);
+    }
   });
 });

@@ -73,6 +73,20 @@ export const BULK_ROW_TYPE_TO_CONTENT_TYPE: Record<BulkRowType, string> = {
   image: "products",
 };
 
+/**
+ * The content type `/api/ai` accepts — NOT the same vocabulary as the plan
+ * gate above. `VALID_CONTENT_TYPES` is `Object.keys(CONTENT_CONFIGS)` plus
+ * "templates"/"metaobjects"; "articles" is a PLAN content type only (the AI
+ * layer serves articles out of the blogs config, exactly like
+ * content-rubrics.ts maps the "blogs" rubric to planContentType "articles").
+ * Posting "articles" to /api/ai 400s before any handler runs, which silently
+ * broke every AI action on article rows.
+ */
+export const BULK_ROW_TYPE_TO_AI_CONTENT_TYPE: Record<BulkRowType, string> = {
+  ...BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  article: "blogs",
+};
+
 // ─── Column descriptors (Plan §1.2) ────────────────────────────────────────
 
 export type ColumnKind = "field" | "metafield" | "option" | "variant" | "image" | "readonly" | "mofield";
@@ -157,6 +171,46 @@ export function canonicalFieldNameForColumn(column: ColumnDescriptor): string {
  * column — "field.title" → "title". */
 export function fieldNameOfColumn(column: ColumnDescriptor): string {
   return column.id.startsWith("field.") ? column.id.slice("field.".length) : column.id;
+}
+
+/**
+ * The key an AI prompt sees for a column: the canonical field name
+ * ("description", "title"), or the metaobject field key — which is the shop's
+ * own descriptive name and reads far better in a prompt than "mo.<type>.<key>".
+ * THE one definition; both the bulkEditorTranslate task and the grid's
+ * per-cell actions call it, so the two cannot drift apart.
+ */
+export function aiFieldKey(column: ColumnDescriptor): string {
+  return column.kind === "mofield" ? (column.moFieldKey ?? column.id) : canonicalFieldNameForColumn(column);
+}
+
+/**
+ * Cells whose VALUE is a "|"-joined list of independent entries: option values
+ * and list.single_line_text_field metafields. They must never be handed to the
+ * AI as one blob — the model drops the separator or the entry count and the
+ * write then either hard-fails (options: `apply.server.ts` checks the count)
+ * or silently collapses an N-entry list into one (`parseListMetafieldInput`
+ * splits on "|"). Translate them entry by entry and rejoin.
+ */
+export function isListShapedColumn(column: ColumnDescriptor): boolean {
+  if (column.kind === "option") return column.optionField === "values";
+  return column.metafieldType === METAFIELD_TYPE_LIST_SINGLE_LINE;
+}
+
+/**
+ * Whether a column can EVER offer the per-cell action menu, judged from the
+ * descriptor alone. The grid reserves its action gutter on this, deliberately
+ * NOT on whether the currently loaded rows happen to have an actionable cell:
+ * editability is per row (a product without a second option, an image without
+ * a mediaId), so probing the rows would make the track width jump on every
+ * page turn, filter and search.
+ */
+export function columnCanHaveCellActions(column: ColumnDescriptor): boolean {
+  if (!column.editable) return false;
+  if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
+    return false;
+  }
+  return column.kind === "field" || column.translatable;
 }
 
 const IMAGE_COLUMN: ColumnDescriptor = {

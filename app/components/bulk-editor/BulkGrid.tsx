@@ -25,6 +25,7 @@ import { Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon, SearchIcon } from "@shopify/polaris-icons";
 import {
   resolveCellValue,
+  columnCanHaveCellActions,
   type BulkRow,
   type BulkRowType,
   type BulkSort,
@@ -175,10 +176,15 @@ export function BulkGrid({
   // A column whose cells carry the action menu gives up CELL_ACTIONS_GUTTER of
   // its content width to it — so its minimum has to GROW by exactly that,
   // otherwise the reservation would squeeze the narrow columns (an option name
-  // at 160px would render its text in 134). Probed against the rendered rows:
-  // read-only, money and status columns have no menu and stay untouched.
+  // at 160px would render its text in 134).
+  //
+  // Judged from the DESCRIPTOR, never from the loaded rows: editability is
+  // per row (a product without a second option, an image without a mediaId),
+  // so probing the rows would make the track width — and with it every 1fr
+  // track — jump on page turns, filters and searches. Read-only, money and
+  // status columns have no menu and stay untouched either way.
   const columnGutter = displayColumns.map((col) =>
-    cellActions && rows.some((row) => !!cellActions(row, col)) ? CELL_ACTIONS_GUTTER : 0,
+    cellActions && columnCanHaveCellActions(col) ? CELL_ACTIONS_GUTTER : 0,
   );
 
   const gridTemplateColumns = [
@@ -208,7 +214,16 @@ export function BulkGrid({
   };
 
   return (
-    <div ref={containerRef} style={{ overflowX: "auto", width: "100%" }} className="cp-bulk-scroll">
+    <div
+      ref={containerRef}
+      style={{ overflowX: "auto", width: "100%" }}
+      className="cp-bulk-scroll"
+      /* Marks this as the scroll container Polaris overlays should track.
+         Without it PositionedOverlay falls back to the document and never
+         hears this scroller, so an open cell menu stays put while its
+         activator scrolls away underneath it. */
+      data-polaris-scrollable="true"
+    >
       <style>{`
         .cp-bulk-grid {
           display: grid;
@@ -306,11 +321,16 @@ export function BulkGrid({
         }
         .cp-bulk-cell:hover .cp-bulk-cell-actions,
         .cp-bulk-cell-with-actions:focus-within .cp-bulk-cell-actions,
-        .cp-bulk-cell-actions:focus-within { opacity: 1; }
-        /* Touch devices have no hover, so a hover-revealed control is simply
-           unreachable there — the menu stays visible. Same query the content
-           editor's touch overrides use (AIEditableField.css). */
-        @media (hover: none) and (pointer: coarse) {
+        .cp-bulk-cell-actions:focus-within,
+        .cp-bulk-cell-actions-open { opacity: 1; }
+        /* A finger produces neither hover nor focus, so a hover-revealed
+           control is unreachable — the menu stays visible.
+
+           any-pointer, NOT (hover:none) and (pointer:coarse): a Windows
+           touchscreen laptop and an iPad with a trackpad both report
+           hover:hover / pointer:fine for their PRIMARY input, so the narrow
+           query left exactly those devices with an invisible 20px control. */
+        @media (any-pointer: coarse) {
           .cp-bulk-cell-actions { opacity: 1; }
         }
         /* Trailing edit column: the image cell reveals its affordance on
@@ -326,11 +346,21 @@ export function BulkGrid({
         .cp-bulk-grid { --cp-bulk-edit-col: 0px; }
         .cp-bulk-edit-cell { padding: 0; overflow: hidden; }
         .cp-bulk-edit-btn { display: none; }
-        @media (hover: none) and (pointer: coarse) {
+        @media (any-pointer: coarse) {
           .cp-bulk-grid { --cp-bulk-edit-col: 44px; }
           .cp-bulk-edit-cell { padding: 4px 6px; align-items: center; justify-content: center; }
           .cp-bulk-edit-btn { display: inline-flex; }
         }
+        /* Sticky image + title pin 72 + 244 = 316px. On a phone that is most
+           of the viewport, leaving a ~50px slit to scroll every other column
+           through — so below 700px nothing pins and the grid scrolls whole. */
+        @media (max-width: 700px) {
+          .cp-bulk-sticky { position: static; }
+          .cp-bulk-sticky-1 { box-shadow: none; }
+        }
+        /* Headers must consume the same gutter their cells reserve, or a
+           heading wraps at a different width than the values below it. */
+        .cp-bulk-th-with-actions { padding-right: ${CELL_ACTIONS_GUTTER}px; }
         /* Field colours, matching the single editor (Plan §2): applied to the
            cell WRAPPER (the input itself is transparent). Same hexes as
            AIEditableField.css so "Inhalt" and the bulk grid read identically.
@@ -528,7 +558,9 @@ export function BulkGrid({
                 key={col.id}
                 role="columnheader"
                 aria-sort={ariaSort(col)}
-                className={`cp-bulk-th${stickyClass(i + 1)}`}
+                className={`cp-bulk-th${stickyClass(i + 1)}${
+                  columnGutter[i] > 0 ? " cp-bulk-th-with-actions" : ""
+                }`}
               >
                 {col.sortKey ? (
                   <button
@@ -548,7 +580,10 @@ export function BulkGrid({
               </div>
             );
           })}
-          <div role="columnheader" className="cp-bulk-th cp-bulk-edit-cell" />
+          <div role="columnheader" className="cp-bulk-th cp-bulk-edit-cell">
+            {/* Visible as a real column on touch devices, so it needs a name. */}
+            <span className="cp-bulk-visually-hidden">{openInEditorLabel}</span>
+          </div>
         </div>
         {rows.map((row, rowIndex) => {
           const rowFailure = rowLevelFailures.get(row.id);

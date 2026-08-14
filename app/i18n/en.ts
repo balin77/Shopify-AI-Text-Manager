@@ -2693,7 +2693,7 @@ export const en: Translation = {
     queuedRunning: "A bulk save is already running for this store.",
     errorGeneric: "Save failed. Please try again.",
     // Phase 4 — languages and markets
-    languageLabel: "Language",
+    languageBarLabel: "Language of the view",
     marketLabel: "Market",
     allMarkets: "All markets",
     primaryLocaleSuffix: "(Primary)",
@@ -2709,7 +2709,14 @@ export const en: Translation = {
     },
     cellActions: {
       noActiveLanguage: "No target language active — Ctrl/Cmd+click a language button to switch one back on.",
+      noLanguagesAvailable: "No other shop language available.",
+      viewedLanguageOff: "This language is switched off — Ctrl/Cmd+click its button to switch it back on.",
+      handleCopyBlocked: "A URL handle cannot be copied verbatim — identical slugs across languages cause routing conflicts. Use \"Translate\" instead.",
+      emptySource: "There is no text in the primary language to work from.",
+      someLocalesFailed: "Not translated",
+      sessionExpired: "The session has expired — reload the page and sign in again.",
       menu: "Actions for this field",
+      busy: "Working…",
     },
     languageBar: {
       enabledHint: "Click to switch. Ctrl/Cmd+click switches the language off for the cell actions.",

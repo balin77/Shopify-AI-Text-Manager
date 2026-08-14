@@ -42,7 +42,7 @@ import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { bulkColumnHeading } from "../services/bulk-editor/labels.shared";
 import {
   BULK_FILTER_IDS,
-  BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   type BulkFilterId,
   type BulkRowType,
   type ColumnDescriptor,
@@ -355,7 +355,7 @@ export default function BulkTranslateMissingPage() {
     startFetcher.submit(
       {
         action: "bulkEditorTranslate",
-        contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[data.type],
+        contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[data.type],
         rowType: data.type,
         moType: data.moType,
         locales: data.activeLocales.join(","),

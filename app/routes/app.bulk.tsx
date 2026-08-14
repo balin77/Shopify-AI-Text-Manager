@@ -49,10 +49,14 @@ import {
   parseMoney,
   formatMoneyForDisplay,
   applyPriceAction,
-  BULK_ROW_TYPE_TO_CONTENT_TYPE,
+  BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
   BULK_COLUMNS_BY_TYPE,
   BULK_FILTER_IDS,
   canonicalFieldNameForColumn,
+  aiFieldKey,
+  isListShapedColumn,
+  columnCanHaveCellActions,
+  LIST_DISPLAY_SEPARATOR,
   IMAGE_ROW_ALT_COLUMN_ID,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
@@ -573,6 +577,12 @@ export default function BulkEditor() {
    * grid-interactions.shared.ts head comment). Lives in a ref: pushing must
    * not re-render the grid. */
   const undoStackRef = useRef<EditMapSnapshot[]>([]);
+  /** Always the CURRENT edit map, also inside an async handler that closed
+   * over an older render — the undo snapshot of a cell action needs it. */
+  const editsRef = useRef<Record<string, string>>({});
+  /** Bumped whenever the edit map is thrown away (discard, type switch): a
+   * cell action started before the bump drops its late response. */
+  const cellActionEpochRef = useRef(0);
 
   /** True when a foreign locale is selected — the grid then edits the
    * translation layer (Plan §1.3: language is a dimension, not a 2nd editor). */
@@ -671,6 +681,9 @@ export default function BulkEditor() {
     undoStackRef.current = [];
     pasteInverseRef.current = null;
     setPasteBanner(null);
+    // Same reason as in handleDiscard: a cell action started on the previous
+    // type must not land an edit keyed by a foreign GID in this type's map.
+    cellActionEpochRef.current += 1;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, data.moType]);
 
@@ -1002,7 +1015,7 @@ export default function BulkEditor() {
       bulkFetcher.submit(
         {
           action: "seoBulkMeta",
-          contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[type],
+          contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[type],
           diff: JSON.stringify(diffToSave),
         },
         { method: "post", action: "/api/ai" },
@@ -1028,6 +1041,11 @@ export default function BulkEditor() {
   };
 
   const handleDiscard = () => {
+    // Any cell action still in flight belongs to the edit set being thrown
+    // away: without this its response would write the translations back into
+    // the emptied map AND push a snapshot of the discarded edits, so one
+    // Ctrl+Z would resurrect everything the merchant just discarded.
+    cellActionEpochRef.current += 1;
     setEdits({});
     setLastFailures([]);
     setLastSavedCount(null);
@@ -1327,11 +1345,19 @@ export default function BulkEditor() {
   };
 
   /** Every action writes into the EDIT MAP, never to Shopify: the merchant
-   * reviews the result in the grid and saves it through the normal pipeline. */
-  const applyCellEdits = (entries: { key: string; value: string }[]) => {
-    if (entries.length === 0) return;
+   * reviews the result in the grid and saves it through the normal pipeline.
+   *
+   * `epoch` is the value cellActionEpochRef held when the action STARTED. A
+   * discard or a type switch bumps it, which is how a late AI response knows
+   * its edit map no longer exists and drops itself. */
+  const applyCellEdits = (entries: { key: string; value: string }[], epoch: number) => {
+    if (entries.length === 0 || epoch !== cellActionEpochRef.current) return;
+    // editsRef, not the `edits` of the render this handler closed over: a
+    // fan-out awaits several AI calls, and anything the merchant typed while
+    // it ran must be IN the undo snapshot — otherwise one Ctrl+Z silently
+    // discards those keystrokes along with the translations.
     undoStackRef.current = pushSnapshot(undoStackRef.current, {
-      edits,
+      edits: editsRef.current,
       tag: `cellAction|${++priceActionCounterRef.current}`,
     });
     setEdits((prev) => {
@@ -1341,7 +1367,10 @@ export default function BulkEditor() {
     });
   };
 
-  /** POST to /api/ai and return the parsed payload, or null on failure. */
+  /** POST to /api/ai and return the parsed payload, or null on failure.
+   * Mirrors the single editor's guard (useUnifiedContentEditor): a session
+   * timeout or a proxy error answers with an HTML page, and calling .json()
+   * on it surfaces `Unexpected token '<'` instead of a usable message. */
   const postAi = async (body: Record<string, string>): Promise<Record<string, unknown> | null> => {
     try {
       const response = await fetch("/api/ai", {
@@ -1349,6 +1378,11 @@ export default function BulkEditor() {
         body: new URLSearchParams(body),
         headers: { Accept: "application/json" },
       });
+      if (!response.headers.get("content-type")?.includes("application/json")) {
+        await response.text().catch(() => "");
+        setCellActionError(response.status === 401 ? b.cellActions.sessionExpired : b.errorGeneric);
+        return null;
+      }
       const payload = (await response.json()) as Record<string, unknown>;
       if (!payload.success) {
         setCellActionError(typeof payload.error === "string" ? payload.error : b.errorGeneric);
@@ -1361,6 +1395,10 @@ export default function BulkEditor() {
     }
   };
 
+  // Kept current on every render; async cell actions read it instead of the
+  // `edits` their closure captured.
+  editsRef.current = edits;
+
   /** The row's PRIMARY value for a column — the source every translate/copy
    * action starts from, regardless of which language is on screen. */
   const primarySourceValue = (row: BulkRow, column: ColumnDescriptor): string => {
@@ -1370,13 +1408,18 @@ export default function BulkEditor() {
 
   const handleCellImprove = async (row: BulkRow, column: ColumnDescriptor) => {
     const cellKey = `${row.id}|${column.id}`;
+    // The menu items are disabled while busy, but a double-activation can
+    // still slip between the click and the re-render — and a second run means
+    // a second provider call and a second (stale) undo snapshot.
+    if (busyCells.has(cellKey)) return;
+    const epoch = cellActionEpochRef.current;
     setCellActionError(null);
     setCellBusy(cellKey, true);
     const payload = await postAi({
       action: "generateAIText",
-      contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[row.type],
+      contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[row.type],
       itemId: row.id,
-      fieldType: canonicalFieldNameForColumn(column),
+      fieldType: aiFieldKey(column),
       currentValue: valueFor(row, column),
       contextTitle: row.title,
       mainLanguage: localeNameByCode.get(locale || primaryLocaleCode) ?? "",
@@ -1384,7 +1427,10 @@ export default function BulkEditor() {
     setCellBusy(cellKey, false);
     const generated = payload?.generatedContent;
     if (typeof generated === "string" && generated.trim() !== "") {
-      applyCellEdits([{ key: makeEditKey(row.id, locale, isForeign ? marketId : "", column.id), value: generated }]);
+      applyCellEdits(
+        [{ key: makeEditKey(row.id, locale, isForeign ? marketId : "", column.id), value: generated }],
+        epoch,
+      );
     }
   };
 
@@ -1394,46 +1440,103 @@ export default function BulkEditor() {
    * screen — the same narrowing the content editor does, where the button
    * turns from "translate to all" into "translate from the primary language".
    */
-  const fanOutTargets = (): string[] => (isForeign ? [locale] : enabledLocales);
+  const fanOutTargets = (): string[] =>
+    // A foreign view fills the language on screen — unless that language is
+    // itself switched off. The bar lets a plain click switch TO a red locale
+    // (viewing it is legitimate); writing into it from an action the red
+    // button says is off would not be.
+    isForeign ? (enabledLocales.includes(locale) ? [locale] : []) : enabledLocales;
 
-  const handleCellTranslateAll = async (row: BulkRow, column: ColumnDescriptor) => {
-    const cellKey = `${row.id}|${column.id}`;
-    const source = primarySourceValue(row, column);
-    if (source.trim() === "") return;
-    setCellActionError(null);
-    setCellBusy(cellKey, true);
-    const entries: { key: string; value: string }[] = [];
-    for (const target of fanOutTargets()) {
+  /**
+   * Translates one cell into one locale. Option-values and list metafields are
+   * "|"-joined lists of independent entries, so they go entry by entry and are
+   * rejoined — handing the model the whole blob loses the separator or the
+   * entry count, which either hard-fails the save (options carry a count
+   * check) or silently collapses an N-entry list into one.
+   */
+  const translateCellValue = async (
+    row: BulkRow,
+    column: ColumnDescriptor,
+    source: string,
+    target: string,
+  ): Promise<string | null> => {
+    const request = async (text: string): Promise<string | null> => {
       const payload = await postAi({
         action: "translateField",
-        contentType: BULK_ROW_TYPE_TO_CONTENT_TYPE[row.type],
+        contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[row.type],
         itemId: row.id,
-        fieldType: canonicalFieldNameForColumn(column),
-        sourceText: source,
+        fieldType: aiFieldKey(column),
+        sourceText: text,
         targetLocale: target,
         primaryLocale: primaryLocaleCode,
       });
       const translated = payload?.translatedValue;
-      if (typeof translated === "string" && translated.trim() !== "") {
-        // In a foreign view the edit lands in the layer on screen (market
-        // included); fanning out from the primary view writes GLOBAL
-        // translations, because a market override is a per-cell decision.
-        entries.push({ key: makeEditKey(row.id, target, isForeign ? marketId : "", column.id), value: translated });
+      return typeof translated === "string" && translated.trim() !== "" ? translated : null;
+    };
+
+    if (!isListShapedColumn(column)) return request(source);
+
+    const parts = source.split(LIST_DISPLAY_SEPARATOR.trim()).map((part) => part.trim());
+    const out: string[] = [];
+    for (const part of parts) {
+      if (part === "") return null;
+      const translated = await request(part);
+      // One failed entry fails the whole cell: a partially translated list
+      // would be written as the complete list.
+      if (translated === null) return null;
+      out.push(translated.trim());
+    }
+    return out.join(LIST_DISPLAY_SEPARATOR);
+  };
+
+  const handleCellTranslateAll = async (row: BulkRow, column: ColumnDescriptor) => {
+    const cellKey = `${row.id}|${column.id}`;
+    if (busyCells.has(cellKey)) return;
+    const source = primarySourceValue(row, column);
+    if (source.trim() === "") {
+      // The content editor says so explicitly in the same situation; a silent
+      // return is indistinguishable from a broken button.
+      setCellActionError(b.cellActions.emptySource);
+      return;
+    }
+    const epoch = cellActionEpochRef.current;
+    setCellActionError(null);
+    setCellBusy(cellKey, true);
+    const entries: { key: string; value: string }[] = [];
+    const failed: string[] = [];
+    for (const target of fanOutTargets()) {
+      const translated = await translateCellValue(row, column, source, target);
+      if (translated === null) {
+        failed.push(localeNameByCode.get(target) ?? target);
+        continue;
       }
+      // In a foreign view the edit lands in the layer on screen (market
+      // included); fanning out from the primary view writes GLOBAL
+      // translations, because a market override is a per-cell decision.
+      entries.push({ key: makeEditKey(row.id, target, isForeign ? marketId : "", column.id), value: translated });
     }
     setCellBusy(cellKey, false);
-    applyCellEdits(entries);
+    applyCellEdits(entries, epoch);
+    // postAi already reported the LAST error; without this the merchant cannot
+    // tell WHICH languages of a multi-locale fan-out are missing.
+    if (failed.length > 0 && epoch === cellActionEpochRef.current) {
+      setCellActionError(`${b.cellActions.someLocalesFailed}: ${failed.join(", ")}`);
+    }
   };
 
   const handleCellCopyAll = (row: BulkRow, column: ColumnDescriptor) => {
     const source = primarySourceValue(row, column);
-    if (source.trim() === "") return;
+    if (source.trim() === "") {
+      setCellActionError(b.cellActions.emptySource);
+      return;
+    }
     setCellActionError(null);
     applyCellEdits(
       fanOutTargets().map((target) => ({
         key: makeEditKey(row.id, target, isForeign ? marketId : "", column.id),
         value: source,
       })),
+      cellActionEpochRef.current,
     );
   };
 
@@ -1455,18 +1558,32 @@ export default function BulkEditor() {
     // A translatable column always OFFERS the two fan-out entries; when they
     // cannot run they stay visible and disabled with the reason (CLAUDE.md:
     // hiding them reads as "the feature is missing"). singleLocaleHint is
-    // undefined when the locale lookup merely failed — never gate on that.
+    // undefined when the locale lookup merely failed — never gate on that, and
+    // do not then tell the merchant to use a language bar that is not on
+    // screen either.
+    const noLanguageReason = isForeign
+      ? b.cellActions.viewedLanguageOff
+      : shouldRenderBulkLanguageBar(data.locales.length)
+        ? b.cellActions.noActiveLanguage
+        : b.cellActions.noLanguagesAvailable;
     const fanOutDisabledReason = canFanOut
       ? undefined
       : column.translatable
-        ? (singleLocaleHint ?? b.cellActions.noActiveLanguage)
+        ? (singleLocaleHint ?? noLanguageReason)
         : undefined;
+    // Copying a handle verbatim is guaranteed to fail the save: apply.server
+    // rejects a handle translation identical to the primary handle, because
+    // duplicate slugs across locales break Shopify's routing. Translating one
+    // is fine — that is what produces a DIFFERENT slug.
+    const copyDisabledReason =
+      column.id === "field.handle" ? b.cellActions.handleCopyBlocked : undefined;
     if (!canImprove && !canFanOut && !fanOutDisabledReason) return undefined;
     return {
       ...(canImprove ? { onImprove: () => void handleCellImprove(row, column) } : {}),
       ...(canFanOut ? { onTranslateAll: () => void handleCellTranslateAll(row, column) } : {}),
-      ...(canFanOut ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
+      ...(canFanOut && !copyDisabledReason ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
       ...(fanOutDisabledReason ? { fanOutDisabledReason } : {}),
+      ...(copyDisabledReason ? { copyDisabledReason } : {}),
       busy: busyCells.has(`${row.id}|${column.id}`),
       // The content editor's own labels (t.products.*), not a second set:
       // the two surfaces offer the same three actions and must not drift
@@ -1474,6 +1591,7 @@ export default function BulkEditor() {
       // languages"), a foreign view fills the language on screen.
       labels: {
         menu: b.cellActions.menu,
+        busy: b.cellActions.busy,
         improve: t.products.aiImprove,
         translateAll: isForeign ? t.products.translateFromPrimary : t.products.translate,
         copyAll: isForeign ? t.products.copy : t.products.copyToAllLocales,
@@ -1854,6 +1972,7 @@ export default function BulkEditor() {
                         onToggle={handleToggleLocale}
                         appLocale={uiLocale}
                         strings={{
+                          groupLabel: b.languageBarLabel,
                           primarySuffix: b.primaryLocaleSuffix,
                           enabledHint: b.languageBar.enabledHint,
                           disabledHint: b.languageBar.disabledHint,

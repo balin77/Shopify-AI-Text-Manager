@@ -29,6 +29,9 @@ export interface BulkLanguageBarProps {
   /** App UI language — localizes the language NAMES. */
   appLocale: string;
   strings: {
+    /** Accessible name of the button group — a bare run of language names
+     * is unidentifiable to a screen reader (the Select it replaced had one). */
+    groupLabel: string;
     /** Marker after the primary language's name. Carries its own brackets
      * ("(Primary)") — do not add another pair. */
     primarySuffix: string;
@@ -60,7 +63,8 @@ export function BulkLanguageBar({
   if (!shouldRenderBulkLanguageBar(locales.length)) return null;
 
   return (
-    <InlineStack gap="100" blockAlign="center" wrap>
+    <div role="group" aria-label={strings.groupLabel}>
+      <InlineStack gap="100" blockAlign="center" wrap>
       {locales.map((locale) => {
         // The grid addresses the primary locale as "" — the same sentinel the
         // edit-map keys and the URL use.
@@ -78,30 +82,58 @@ export function BulkLanguageBar({
             dismissOnMouseOut
             preferredPosition="below"
           >
-            <Button
-              size="slim"
-              variant={isCurrent ? "primary" : undefined}
-              tone={isEnabled ? undefined : "critical"}
-              onPointerDown={(event: React.PointerEvent) => {
-                if (!(event.ctrlKey || event.metaKey) || locale.primary) return;
-                ctrlPressed.current[locale.locale] = true;
+            <span
+              // On macOS a Ctrl+click is a SECONDARY click: it fires
+              // pointerdown and contextmenu, but no click — so the guard flag
+              // set below would never be cleared and would swallow the next
+              // plain click. Clearing it here (and on any non-modifier
+              // pointerdown) closes that and the press-then-drag-off case.
+              onContextMenu={(event: React.MouseEvent) => {
+                if (locale.primary) return;
+                event.preventDefault();
+                ctrlPressed.current[locale.locale] = false;
+              }}
+              // Keyboard equivalent of the Ctrl+click toggle — onPointerDown
+              // never fires for Space/Enter, so without this a keyboard user
+              // could never switch a language off (or back on).
+              onKeyDown={(event: React.KeyboardEvent) => {
+                if (locale.primary || !(event.ctrlKey || event.metaKey)) return;
+                if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 onToggle(locale.locale);
               }}
-              onClick={() => {
-                if (ctrlPressed.current[locale.locale]) {
-                  ctrlPressed.current[locale.locale] = false;
-                  return;
-                }
-                onSelect(value);
-              }}
             >
-              {label}
-            </Button>
+              <Button
+                size="slim"
+                variant={isCurrent ? "primary" : undefined}
+                tone={isEnabled ? undefined : "critical"}
+                // "Which language am I viewing" was conveyed by colour alone.
+                pressed={isCurrent}
+                onPointerDown={(event: React.PointerEvent) => {
+                  if (!(event.ctrlKey || event.metaKey) || locale.primary) {
+                    ctrlPressed.current[locale.locale] = false;
+                    return;
+                  }
+                  ctrlPressed.current[locale.locale] = true;
+                  event.preventDefault();
+                  onToggle(locale.locale);
+                }}
+                onClick={() => {
+                  if (ctrlPressed.current[locale.locale]) {
+                    ctrlPressed.current[locale.locale] = false;
+                    return;
+                  }
+                  onSelect(value);
+                }}
+              >
+                {label}
+              </Button>
+            </span>
           </Tooltip>
         );
       })}
-      <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
-    </InlineStack>
+        <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
+      </InlineStack>
+    </div>
   );
 }

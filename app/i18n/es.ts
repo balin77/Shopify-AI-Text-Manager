@@ -2692,7 +2692,7 @@ export const es: Translation = {
     queuedRunning: "Ya hay un guardado masivo en curso para esta tienda.",
     errorGeneric: "No se pudo guardar. Inténtalo de nuevo.",
     // Fase 4 — idiomas y mercados
-    languageLabel: "Idioma",
+    languageBarLabel: "Idioma de la vista",
     marketLabel: "Mercado",
     allMarkets: "Todos los mercados",
     primaryLocaleSuffix: "(Principal)",
@@ -2708,7 +2708,14 @@ export const es: Translation = {
     },
     cellActions: {
       noActiveLanguage: "Ningún idioma de destino activo: Ctrl/Cmd+clic en un botón de idioma para reactivarlo.",
+      noLanguagesAvailable: "No hay otro idioma de la tienda disponible.",
+      viewedLanguageOff: "Este idioma está desactivado: Ctrl/Cmd+clic en su botón para reactivarlo.",
+      handleCopyBlocked: "Un handle de URL no se puede copiar tal cual: slugs idénticos entre idiomas provocan conflictos de rutas. Usa \"Traducir\" en su lugar.",
+      emptySource: "No hay texto en el idioma principal con el que trabajar.",
+      someLocalesFailed: "Sin traducir",
+      sessionExpired: "La sesión ha caducado: recarga la página e inicia sesión de nuevo.",
       menu: "Acciones para este campo",
+      busy: "Procesando…",
     },
     languageBar: {
       enabledHint: "Haz clic para cambiar. Ctrl/Cmd+clic desactiva el idioma para las acciones de celda.",
