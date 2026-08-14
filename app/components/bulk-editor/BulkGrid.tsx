@@ -333,24 +333,18 @@ export function BulkGrid({
         @media (any-pointer: coarse) {
           .cp-bulk-cell-actions { opacity: 1; }
         }
-        /* Trailing edit column: the image cell reveals its affordance on
-           hover, which a touch device never does — so those get an explicit
-           edit button at the end of every row instead. Everywhere else the
-           TRACK collapses to zero and the BUTTON is what disappears.
+        /* Trailing edit column: an explicit "open in editor" button at the end
+           of every row, on every device. It started as a touch-only stand-in
+           for the image cell's hover overlay (a finger never triggers hover),
+           but the overlay is undiscoverable with a mouse too — so the column
+           is permanent and the overlay is the shortcut, not the other way
+           round.
 
-           The cell element itself must never be display:none. Rows are
-           display:contents, so every cell is a direct grid item placed by
-           auto-flow; a cell that stops generating a box leaves its track
-           unfilled, and the next row's first cell slides into that gap —
-           every following cell then sits one track off, cumulatively. */
-        .cp-bulk-grid { --cp-bulk-edit-col: 0px; }
-        .cp-bulk-edit-cell { padding: 0; overflow: hidden; }
-        .cp-bulk-edit-btn { display: none; }
-        @media (any-pointer: coarse) {
-          .cp-bulk-grid { --cp-bulk-edit-col: 44px; }
-          .cp-bulk-edit-cell { padding: 4px 6px; align-items: center; justify-content: center; }
-          .cp-bulk-edit-btn { display: inline-flex; }
-        }
+           Kept as a CSS variable rather than a literal so the width stays in
+           ONE place: the grid template is an inline style, which no media
+           query or stylesheet rule can reach. */
+        .cp-bulk-grid { --cp-bulk-edit-col: 44px; }
+        .cp-bulk-edit-cell { align-items: center; justify-content: center; }
         /* Sticky image + title pin 72 + 244 = 316px. On a phone that is most
            of the viewport, leaving a ~50px slit to scroll every other column
            through — so below 700px nothing pins and the grid scrolls whole. */
@@ -581,7 +575,8 @@ export function BulkGrid({
             );
           })}
           <div role="columnheader" className="cp-bulk-th cp-bulk-edit-cell">
-            {/* Visible as a real column on touch devices, so it needs a name. */}
+            {/* A real, always-visible column, so it needs a name — but a
+                visible heading would cost width the icon does not need. */}
             <span className="cp-bulk-visually-hidden">{openInEditorLabel}</span>
           </div>
         </div>
@@ -668,17 +663,18 @@ export function BulkGrid({
                 );
               })}
               <div role="cell" className="cp-bulk-cell cp-bulk-edit-cell">
-                {/* The wrapper, not the cell, is what the media query hides —
-                    see the CSS note on .cp-bulk-edit-cell. */}
-                <span className="cp-bulk-edit-btn">
+                <Tooltip content={openInEditorLabel} dismissOnMouseOut>
                   <Button
                     variant="tertiary"
-                    size="micro"
+                    // Not "micro": this is the row's primary jump-out and a
+                    // touch target, so it gets a usable hit area inside the
+                    // 44px track.
+                    size="slim"
                     icon={EditIcon}
                     accessibilityLabel={openInEditorLabel}
                     onClick={() => onOpenInEditor(row)}
                   />
-                </span>
+                </Tooltip>
               </div>
             </div>
           );
