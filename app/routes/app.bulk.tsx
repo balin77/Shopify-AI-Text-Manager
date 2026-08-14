@@ -2266,13 +2266,6 @@ export default function BulkEditor() {
                       sort={sort}
                       onSortToggle={handleSortToggle}
                       openInEditorLabel={b.openInEditor}
-                      showImagesLabel={b.showProductImages}
-                      onShowImages={(row) =>
-                        // Jump into the Images row type showing only this
-                        // product's pictures. Page 1 and no leftover filters:
-                        // the whole point is to see ALL of them.
-                        navigateGrid({ type: "image", owner: row.id, page: "1" })
-                      }
                       cellActions={cellActionsFor}
                       onPreviewImage={setPreviewRow}
                       previewImageLabel={b.imagePreview.open}
