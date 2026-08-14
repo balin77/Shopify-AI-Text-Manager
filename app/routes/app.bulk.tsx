@@ -501,8 +501,16 @@ const LEGACY_COLUMNS_STORAGE_KEY = "contentpilot:bulkMeta:columns";
 const DEFAULT_COLUMNS: Record<BulkRowType, string[]> = {
   product: ["image", "field.title", "field.productType", "field.handle", "field.seoTitle", "field.seoDescription"],
   variant: ["image", "productTitle", "variantTitle", "var.sku", "var.price", "var.compareAtPrice", "var.barcode"],
-  collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
-  article: ["image", "field.title", "field.summary", "field.handle", "field.seoTitle", "field.seoDescription"],
+  collection: ["image", "field.title", "field.handle", "field.seoTitle", "field.seoDescription", "img.featuredAlt"],
+  article: [
+    "image",
+    "field.title",
+    "field.summary",
+    "field.handle",
+    "field.seoTitle",
+    "field.seoDescription",
+    "img.featuredAlt",
+  ],
   page: ["field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
   blog: ["field.title", "field.handle", "field.seoTitle", "field.seoDescription"],
   policy: ["policyTitle", "field.body"],
@@ -2317,7 +2325,21 @@ export default function BulkEditor() {
               open={previewRow !== null}
               onClose={() => setPreviewRow(null)}
               title={previewRow?.imageUsage || previewRow?.productTitle || previewRow?.title || b.imagePreview.title}
-              secondaryActions={[{ content: b.imagePreview.close, onAction: () => setPreviewRow(null) }]}
+              secondaryActions={[
+                ...(previewRow?.type === "product"
+                  ? [
+                      {
+                        content: b.showProductImages,
+                        onAction: () => {
+                          const id = previewRow.id;
+                          setPreviewRow(null);
+                          navigateGrid({ type: "image", owner: id, page: "1" });
+                        },
+                      },
+                    ]
+                  : []),
+                { content: b.imagePreview.close, onAction: () => setPreviewRow(null) },
+              ]}
               {...(previewRow && (previewRow.type !== "image" || previewRow.productId)
                 ? {
                     primaryAction: {
