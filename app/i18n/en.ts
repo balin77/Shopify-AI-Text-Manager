@@ -2727,6 +2727,8 @@ export const en: Translation = {
       title: "Image",
       close: "Close",
       noAlt: "No alt text set.",
+      altLabel: "Alt text",
+      primaryLanguage: "Primary language",
     },
     mediaLibrary: {
       neverSynced:

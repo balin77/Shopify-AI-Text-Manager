@@ -236,14 +236,19 @@ function BulkCellWithActions({ actions, children }: { actions: BulkCellActions; 
  * hovered or focused (CSS in BulkGrid), so a 250-row grid does not turn into a
  * wall of icons.
  */
-function BulkCellMenu({
+export function BulkCellMenu({
   actions,
   open,
   onOpenChange,
+  positioned = true,
 }: {
   actions: BulkCellActions;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Inside a grid cell the menu is absolutely positioned in the reserved
+   * gutter. Elsewhere (the image preview modal) it is an ordinary inline
+   * control that must not be pulled out of flow. Defaults to the grid case. */
+  positioned?: boolean;
 }) {
   const setOpen = onOpenChange;
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -285,7 +290,7 @@ function BulkCellMenu({
     // Keeps the dots visible while their own menu is open: the popover content
     // is portalled out of the cell, so neither :hover nor :focus-within holds
     // once the pointer or focus moves into the list.
-    <span className={`cp-bulk-cell-actions${open ? " cp-bulk-cell-actions-open" : ""}`}>
+    <span className={`${positioned ? "cp-bulk-cell-actions" : "cp-bulk-cell-actions-inline"}${open ? " cp-bulk-cell-actions-open" : ""}`}>
       <Popover
         active={open}
         onClose={() => setOpen(false)}

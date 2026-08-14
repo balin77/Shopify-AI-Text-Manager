@@ -21,7 +21,7 @@
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Card, BlockStack, InlineStack, Text, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
+import { Card, BlockStack, InlineStack, Text, TextField, Button, Select, Banner, Modal, Tooltip } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -69,6 +69,7 @@ import {
   VAR_PRICE_COLUMN_ID,
   VAR_COMPARE_AT_COLUMN_ID,
   type BulkRowType,
+  type CellReadOnlyReason,
   type BulkRow,
   type BulkSort,
   type BulkFilterId,
@@ -116,7 +117,7 @@ import type { BulkCsvExportPayload } from "./app.bulk.export";
 import type { CsvImportActionResult } from "./app.bulk.import";
 import type { CsvImportPreview } from "../services/bulk-editor/csv-import.server";
 import { BulkLanguageBar, shouldRenderBulkLanguageBar } from "../components/bulk-editor/BulkLanguageBar";
-import type { BulkCellActions } from "../components/bulk-editor/BulkCell";
+import { BulkCellMenu, type BulkCellActions } from "../components/bulk-editor/BulkCell";
 import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
@@ -857,6 +858,20 @@ export default function BulkEditor() {
   const editKeyFor = (row: BulkRow, column: ColumnDescriptor) =>
     makeEditKey(row.id, locale, isForeign ? marketId : "", column.id);
 
+  /** Localized "why is this cell read-only" text per reason — the grid and the
+   * image preview modal show the same explanation. */
+  const readOnlyTooltips: Record<CellReadOnlyReason, string> = {
+    column: b.readOnlyTooltip,
+    richText: b.readOnlyReasons.richText,
+    linkedOption: b.readOnlyReasons.linkedOption,
+    missingOption: b.readOnlyReasons.missingOption,
+    legacyOptionValues: b.readOnlyReasons.legacyOptionValues,
+    missingImage: b.readOnlyReasons.missingImage,
+    missingMediaId: b.readOnlyReasons.missingMediaId,
+    wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
+    listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
+  };
+
   const setEdit = (row: BulkRow, column: ColumnDescriptor, value: string) => {
     const key = editKeyFor(row, column);
     // Undo history (§8.4): snapshot BEFORE the change, coalesced on the edit
@@ -1413,19 +1428,37 @@ export default function BulkEditor() {
     // a second provider call and a second (stale) undo snapshot.
     if (busyCells.has(cellKey)) return;
     const epoch = cellActionEpochRef.current;
+    const mainLanguage = localeNameByCode.get(locale || primaryLocaleCode) ?? "";
     setCellActionError(null);
     setCellBusy(cellKey, true);
-    const payload = await postAi({
-      action: "generateAIText",
-      contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[row.type],
-      itemId: row.id,
-      fieldType: aiFieldKey(column),
-      currentValue: valueFor(row, column),
-      contextTitle: row.title,
-      mainLanguage: localeNameByCode.get(locale || primaryLocaleCode) ?? "",
-    });
+    // An alt text is written from the PICTURE, not from a text field: the
+    // dedicated generateAltText action looks at the image itself and applies
+    // the shop's alt-text instructions and length limit. generateAIText would
+    // try to resolve the row id as a product and could only guess from the
+    // title anyway — an image row's id is a MediaImage GID.
+    const isAltCell = row.type === "image";
+    const payload = await postAi(
+      isAltCell
+        ? {
+            action: "generateAltText",
+            contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[row.type],
+            imageIndex: "0",
+            imageUrl: row.imageUrl ?? "",
+            productTitle: row.productTitle || row.imageUsage || row.title || "",
+            mainLanguage,
+          }
+        : {
+            action: "generateAIText",
+            contentType: BULK_ROW_TYPE_TO_AI_CONTENT_TYPE[row.type],
+            itemId: row.id,
+            fieldType: aiFieldKey(column),
+            currentValue: valueFor(row, column),
+            contextTitle: row.title,
+            mainLanguage,
+          },
+    );
     setCellBusy(cellKey, false);
-    const generated = payload?.generatedContent;
+    const generated = isAltCell ? payload?.altText : payload?.generatedContent;
     if (typeof generated === "string" && generated.trim() !== "") {
       applyCellEdits(
         [{ key: makeEditKey(row.id, locale, isForeign ? marketId : "", column.id), value: generated }],
@@ -1551,7 +1584,11 @@ export default function BulkEditor() {
     if (column.inputType === "select" || column.inputType === "money" || column.inputType === "number") {
       return undefined;
     }
-    const canImprove = column.kind === "field" && row.type !== "image";
+    // Improve is FIELD columns only — a metafield or option key would produce
+    // a generic, weak prompt. The image row's alt cell is the exception: it
+    // has its own image-aware generator (see handleCellImprove).
+    const canImprove =
+      column.kind === "field" && (row.type !== "image" || (column.id === IMAGE_ROW_ALT_COLUMN_ID && !!row.imageUrl));
     // Primary view: fan out into every active language. Foreign view: fill the
     // language on screen from the primary value — the editor's own narrowing.
     const canFanOut = column.translatable && fanOutTargets().length > 0;
@@ -2126,17 +2163,7 @@ export default function BulkEditor() {
                       columnHeading={columnHeading}
                       statusOptions={b.statusOptions}
                       handleWarning={b.handleWarning}
-                      readOnlyTooltips={{
-                        column: b.readOnlyTooltip,
-                        richText: b.readOnlyReasons.richText,
-                        linkedOption: b.readOnlyReasons.linkedOption,
-                        missingOption: b.readOnlyReasons.missingOption,
-                        legacyOptionValues: b.readOnlyReasons.legacyOptionValues,
-                        missingImage: b.readOnlyReasons.missingImage,
-                        missingMediaId: b.readOnlyReasons.missingMediaId,
-                        wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
-                        listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
-                      }}
+                      readOnlyTooltips={readOnlyTooltips}
                       sortButtonLabel={b.sortButtonLabel}
                       caption={b.types[type]}
                       onResetCell={resetCell}
@@ -2197,14 +2224,41 @@ export default function BulkEditor() {
                       style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
                     />
                   )}
-                  {/* The alt text is what this grid is about. Image rows carry
-                      it as their own (translatable) cell — every other type
-                      only has the thumbnail's alt for context. */}
-                  <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-                    {(previewRow?.type === "image"
-                      ? valueFor(previewRow, ALT_PREVIEW_COLUMN)
-                      : (previewRow?.imageAlt ?? "")) || b.imagePreview.noAlt}
-                  </Text>
+                  {/* The alt text is what this grid is about, so it is EDITED
+                      here rather than only shown: image rows carry it as their
+                      own translatable cell, and the modal writes through the
+                      very same edit map the grid does — in whichever language
+                      is currently selected, market layer included. Every other
+                      row type only has the thumbnail's alt for context, and no
+                      write path of its own (a product's main-image alt is the
+                      "img.alt" COLUMN; the alt of a collection or article
+                      image is not translatable at all). */}
+                  {previewRow?.type === "image" ? (
+                    <PreviewAltEditor
+                      key={previewRow.id}
+                      value={valueFor(previewRow, ALT_PREVIEW_COLUMN)}
+                      label={b.imagePreview.altLabel}
+                      // In a foreign view the primary value (or the global
+                      // translation under a market override) shows as the
+                      // ghost — the same hint the grid cell gives.
+                      placeholder={ghostFor(previewRow, ALT_PREVIEW_COLUMN) || b.imagePreview.noAlt}
+                      readOnly={!resolveCellValue(previewRow, ALT_PREVIEW_COLUMN).editable}
+                      readOnlyReason={
+                        readOnlyTooltips[
+                          resolveCellValue(previewRow, ALT_PREVIEW_COLUMN).readOnlyReason ?? "column"
+                        ]
+                      }
+                      languageLabel={
+                        isForeign ? (localeNameByCode.get(locale) ?? locale) : b.imagePreview.primaryLanguage
+                      }
+                      onChange={(next) => setEdit(previewRow, ALT_PREVIEW_COLUMN, next)}
+                      actions={cellActionsFor(previewRow, ALT_PREVIEW_COLUMN)}
+                    />
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                      {(previewRow?.imageAlt ?? "") || b.imagePreview.noAlt}
+                    </Text>
+                  )}
                 </BlockStack>
               </Modal.Section>
             </Modal>
@@ -2268,6 +2322,62 @@ export default function BulkEditor() {
           </BlockStack>
         )}
       </PlanAccessGate>
+    </div>
+  );
+}
+
+/**
+ * The alt text inside the image preview modal — the one place a merchant can
+ * see the picture large while writing the text that describes it.
+ *
+ * It is not a second write path: onChange goes into the grid's edit map under
+ * the currently selected language and market, exactly like typing in the alt
+ * COLUMN would, so the ordinary diff/save pipeline carries it. The three-dot
+ * menu is the grid's own BulkCellMenu with the same three actions.
+ */
+function PreviewAltEditor({
+  value,
+  label,
+  placeholder,
+  readOnly,
+  readOnlyReason,
+  languageLabel,
+  onChange,
+  actions,
+}: {
+  value: string;
+  label: string;
+  placeholder: string;
+  readOnly: boolean;
+  readOnlyReason: string;
+  languageLabel: string;
+  onChange: (value: string) => void;
+  actions?: BulkCellActions;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  return (
+    <div style={{ width: "100%" }}>
+      <InlineStack gap="200" blockAlign="center" align="space-between">
+        <Text as="span" variant="bodySm" tone="subdued">
+          {`${label} — ${languageLabel}`}
+        </Text>
+        {actions ? <BulkCellMenu actions={actions} open={menuOpen} onOpenChange={setMenuOpen} positioned={false} /> : null}
+      </InlineStack>
+      {readOnly ? (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {value || readOnlyReason}
+        </Text>
+      ) : (
+        <TextField
+          label={`${label} — ${languageLabel}`}
+          labelHidden
+          value={value}
+          placeholder={placeholder}
+          onChange={onChange}
+          multiline={2}
+          autoComplete="off"
+        />
+      )}
     </div>
   );
 }

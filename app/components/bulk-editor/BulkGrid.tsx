@@ -161,10 +161,10 @@ export function BulkGrid({
     const target = cells[current + (direction === "next" ? 1 : -1)];
     target?.focus();
   };
-  // Image column is ALWAYS the leftmost cell and doubles as the
-  // "open in editor" affordance via a hover overlay (see BulkImageCell) —
-  // consistent across every content type, so pages get the same left-side
-  // editor hook (rendered as a placeholder since page rows have no imageUrl).
+  // Image column is ALWAYS the leftmost cell; its hover overlay (a magnifier,
+  // see BulkImageCell) opens the PREVIEW — the jump into the full editor is
+  // the trailing edit column's job, not the thumbnail's. Rendered as a
+  // placeholder for types without an image, so every type keeps the column.
   const displayColumns = columns.filter((c) => c.id !== "image");
   // Sticky pinning: image at left:0, title (canonically the first data
   // column) at left:72px — but only when title actually renders directly
@@ -195,9 +195,9 @@ export function BulkGrid({
       const min = c.minWidth + columnGutter[index];
       return `minmax(${min}px, ${c.maxWidth ? `${c.maxWidth + columnGutter[index]}px` : "1fr"})`;
     }),
-    // Trailing "open in editor" column — 0 wide unless the device has no
-    // hover, where the image cell's overlay affordance cannot be discovered.
-    // A CSS variable, because the media query cannot reach this inline style.
+    // Trailing "open in editor" column. A CSS variable rather than a literal
+    // so the width lives in the stylesheet with the rest of the column's
+    // rules — no media query or class can reach an inline style.
     "var(--cp-bulk-edit-col)",
   ].join(" ");
 
@@ -323,6 +323,9 @@ export function BulkGrid({
         .cp-bulk-cell-with-actions:focus-within .cp-bulk-cell-actions,
         .cp-bulk-cell-actions:focus-within,
         .cp-bulk-cell-actions-open { opacity: 1; }
+        /* Same menu, outside a grid cell (the image preview modal): no gutter
+           to sit in, so it stays in flow and is always visible. */
+        .cp-bulk-cell-actions-inline { display: inline-flex; opacity: 1; }
         /* A finger produces neither hover nor focus, so a hover-revealed
            control is unreachable — the menu stays visible.
 

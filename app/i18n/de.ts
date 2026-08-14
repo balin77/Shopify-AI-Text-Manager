@@ -2727,6 +2727,8 @@ export const de = {
       title: "Bild",
       close: "Schliessen",
       noAlt: "Kein Alt-Text hinterlegt.",
+      altLabel: "Alt-Text",
+      primaryLanguage: "Hauptsprache",
     },
     mediaLibrary: {
       neverSynced:
