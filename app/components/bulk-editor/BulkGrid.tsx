@@ -35,9 +35,11 @@ import { BulkCell, type BulkCellActions, type BulkCellStatusOptions, type CellNa
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
-/** Width the action menu is given inside a cell — a Polaris micro icon button
- * plus its inset. Columns that carry a menu reserve exactly this much. */
-const CELL_ACTIONS_GUTTER = 26;
+/** The menu trigger's icon box, and the gutter a cell reserves for it (icon +
+ * the 2px inset on each side). Columns that carry a menu grow their minimum by
+ * exactly the gutter — see the grid template. */
+const CELL_ACTIONS_ICON = 20;
+const CELL_ACTIONS_GUTTER = CELL_ACTIONS_ICON + 4;
 
 const IMAGE_COLUMN_WIDTH = 72;
 
@@ -276,6 +278,32 @@ export function BulkGrid({
           opacity: 0;
           transition: opacity 100ms ease-in-out;
         }
+        /* Hand-rolled trigger (like .cp-bulk-img-btn and .cp-bulk-sort-btn):
+           a Polaris Button carries ~8px of horizontal padding, which pushed
+           the icon out of the reserved gutter and into the text while leaving
+           its own padding empty on the right. */
+        .cp-bulk-cell-menu-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: ${CELL_ACTIONS_ICON}px;
+          height: ${CELL_ACTIONS_ICON}px;
+          padding: 0;
+          margin: 0;
+          border: none;
+          border-radius: 4px;
+          background: transparent;
+          color: var(--p-color-icon-secondary, #6d7175);
+          cursor: pointer;
+        }
+        .cp-bulk-cell-menu-btn:hover {
+          background: var(--p-color-bg-surface-hover, #f1f1f1);
+          color: var(--p-color-icon, #4a4a4a);
+        }
+        .cp-bulk-cell-menu-btn:focus-visible {
+          outline: 2px solid var(--p-color-border-focus, #005ab4);
+          outline-offset: 1px;
+        }
         .cp-bulk-cell:hover .cp-bulk-cell-actions,
         .cp-bulk-cell-with-actions:focus-within .cp-bulk-cell-actions,
         .cp-bulk-cell-actions:focus-within { opacity: 1; }
@@ -322,10 +350,21 @@ export function BulkGrid({
           border-radius: 2px;
         }
         /* Only the text control stretches to fill the cell — image and
-           Select keep their intrinsic sizing. */
+           Select keep their intrinsic sizing. The action-menu wrapper sits
+           BETWEEN the cell and the control, so it has to carry the stretch
+           through: without this the control loses its flex:1, its
+           min-height:100% resolves against a shrink-wrapped parent and the
+           whole grid's row heights fall apart. */
         .cp-bulk-cell > .cp-bulk-textarea,
-        .cp-bulk-cell > .cp-bulk-cell-static {
+        .cp-bulk-cell > .cp-bulk-cell-static,
+        .cp-bulk-cell-with-actions > .cp-bulk-textarea,
+        .cp-bulk-cell-with-actions > .cp-bulk-cell-static {
           flex: 1 1 auto;
+        }
+        .cp-bulk-cell > .cp-bulk-cell-with-actions {
+          flex: 1 1 auto;
+          display: flex;
+          flex-direction: column;
         }
         /* Image cell: capped at 64 px tall so a row with long text doesn't
            inflate the image along with it. */

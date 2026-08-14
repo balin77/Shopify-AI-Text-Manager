@@ -17,7 +17,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
 } from "react";
-import { ActionList, Button, InlineStack, Popover, Select, Text, Tooltip } from "@shopify/polaris";
+import { ActionList, Button, Icon, InlineStack, Popover, Select, Spinner, Text, Tooltip } from "@shopify/polaris";
 import { MenuVerticalIcon } from "@shopify/polaris-icons";
 import type { ColumnDescriptor } from "../../services/bulk-editor/columns.shared";
 
@@ -255,14 +255,20 @@ function BulkCellMenu({ actions }: { actions: BulkCellActions }) {
         onClose={() => setOpen(false)}
         preferredAlignment="right"
         activator={
-          <Button
-            variant="tertiary"
-            size="micro"
-            icon={MenuVerticalIcon}
-            loading={actions.busy}
-            accessibilityLabel={actions.labels.menu}
+          <button
+            type="button"
+            className="cp-bulk-cell-menu-btn"
+            aria-label={actions.labels.menu}
+            aria-haspopup="menu"
+            aria-expanded={open}
             onClick={() => setOpen((prev) => !prev)}
-          />
+          >
+            {actions.busy ? (
+              <Spinner size="small" accessibilityLabel={actions.labels.menu} />
+            ) : (
+              <Icon source={MenuVerticalIcon} />
+            )}
+          </button>
         }
       >
         <ActionList actionRole="menuitem" items={items} />
