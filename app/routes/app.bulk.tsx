@@ -58,6 +58,7 @@ import {
   columnCanHaveCellActions,
   LIST_DISPLAY_SEPARATOR,
   IMAGE_ROW_ALT_COLUMN_ID,
+  IMG_ALT_COLUMN_ID,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
   FILTER_IDS_BY_SET,
@@ -179,9 +180,21 @@ interface LoaderData {
   currencyCode: string;
 }
 
-/** The alt column of the IMAGE row type — the preview modal shows its value
- * (the grid's own resolution, so a foreign view shows the translation). */
+/** The alt column of the IMAGE row type — the preview modal edits its value
+ * (through the grid's own resolution, so a foreign view edits the
+ * translation). */
 const ALT_PREVIEW_COLUMN = BULK_COLUMNS_BY_TYPE.image.find((c) => c.id === IMAGE_ROW_ALT_COLUMN_ID)!;
+
+/**
+ * The two columns whose value describes a PICTURE: the image row's own
+ * translatable alt (`field.altText`) and a product's main-image alt
+ * (`img.alt`, primary language only — an alt translation rides on the
+ * MediaImage resource, which the product row cannot address). Both are
+ * generated from the image itself rather than from surrounding text.
+ */
+function isAltTextColumn(column: ColumnDescriptor): boolean {
+  return column.id === IMAGE_ROW_ALT_COLUMN_ID || column.id === IMG_ALT_COLUMN_ID;
+}
 
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
 
@@ -858,6 +871,27 @@ export default function BulkEditor() {
   const editKeyFor = (row: BulkRow, column: ColumnDescriptor) =>
     makeEditKey(row.id, locale, isForeign ? marketId : "", column.id);
 
+  /**
+   * Which column the preview modal edits for the row it is showing.
+   *
+   * Only two row types have an alt text the bulk editor can WRITE: an image
+   * row (its own translatable `field.altText`) and a product row (`img.alt` —
+   * the main image, primary language only, and only when the shop's plan
+   * enables the product-image cache). A collection's or article's featured
+   * image is neither: its CollectionImage/ArticleImage GID exposes no
+   * translatable key at all and the bulk write path cannot address it. Those
+   * pictures are editable as their OWN row under "Images", where they come
+   * out of the media library with a real write path — so the modal keeps
+   * showing their alt as context instead of offering an edit that could not
+   * be saved.
+   */
+  const previewAltColumn: ColumnDescriptor | undefined = useMemo(() => {
+    if (!previewRow) return undefined;
+    if (previewRow.type === "image") return ALT_PREVIEW_COLUMN;
+    if (previewRow.type !== "product") return undefined;
+    return allColumns.find((c) => c.id === IMG_ALT_COLUMN_ID);
+  }, [previewRow, allColumns]);
+
   /** Localized "why is this cell read-only" text per reason — the grid and the
    * image preview modal show the same explanation. */
   const readOnlyTooltips: Record<CellReadOnlyReason, string> = {
@@ -1436,7 +1470,7 @@ export default function BulkEditor() {
     // the shop's alt-text instructions and length limit. generateAIText would
     // try to resolve the row id as a product and could only guess from the
     // title anyway — an image row's id is a MediaImage GID.
-    const isAltCell = row.type === "image";
+    const isAltCell = isAltTextColumn(column);
     const payload = await postAi(
       isAltCell
         ? {
@@ -1588,7 +1622,8 @@ export default function BulkEditor() {
     // a generic, weak prompt. The image row's alt cell is the exception: it
     // has its own image-aware generator (see handleCellImprove).
     const canImprove =
-      column.kind === "field" && (row.type !== "image" || (column.id === IMAGE_ROW_ALT_COLUMN_ID && !!row.imageUrl));
+      (column.kind === "field" && (row.type !== "image" || column.id === IMAGE_ROW_ALT_COLUMN_ID)) ||
+      column.id === IMG_ALT_COLUMN_ID;
     // Primary view: fan out into every active language. Foreign view: fill the
     // language on screen from the primary value — the editor's own narrowing.
     const canFanOut = column.translatable && fanOutTargets().length > 0;
@@ -1614,9 +1649,12 @@ export default function BulkEditor() {
     // is fine — that is what produces a DIFFERENT slug.
     const copyDisabledReason =
       column.id === "field.handle" ? b.cellActions.handleCopyBlocked : undefined;
-    if (!canImprove && !canFanOut && !fanOutDisabledReason) return undefined;
+    // Both alt-text columns generate FROM the image, so without one there is
+    // nothing to improve.
+    const improvable = canImprove && (!isAltTextColumn(column) || !!row.imageUrl);
+    if (!improvable && !canFanOut && !fanOutDisabledReason) return undefined;
     return {
-      ...(canImprove ? { onImprove: () => void handleCellImprove(row, column) } : {}),
+      ...(improvable ? { onImprove: () => void handleCellImprove(row, column) } : {}),
       ...(canFanOut ? { onTranslateAll: () => void handleCellTranslateAll(row, column) } : {}),
       ...(canFanOut && !copyDisabledReason ? { onCopyAll: () => handleCellCopyAll(row, column) } : {}),
       ...(fanOutDisabledReason ? { fanOutDisabledReason } : {}),
@@ -2225,34 +2263,41 @@ export default function BulkEditor() {
                     />
                   )}
                   {/* The alt text is what this grid is about, so it is EDITED
-                      here rather than only shown: image rows carry it as their
-                      own translatable cell, and the modal writes through the
-                      very same edit map the grid does — in whichever language
-                      is currently selected, market layer included. Every other
-                      row type only has the thumbnail's alt for context, and no
-                      write path of its own (a product's main-image alt is the
-                      "img.alt" COLUMN; the alt of a collection or article
-                      image is not translatable at all). */}
-                  {previewRow?.type === "image" ? (
+                      here rather than only shown — through the very same edit
+                      map the grid uses, so the ordinary diff/save pipeline
+                      carries it. Which column that is depends on the row; see
+                      previewAltColumn. Rows without a writable one keep the
+                      alt as read-only context. */}
+                  {previewRow && previewAltColumn ? (
                     <PreviewAltEditor
-                      key={previewRow.id}
-                      value={valueFor(previewRow, ALT_PREVIEW_COLUMN)}
+                      key={`${previewRow.id}|${previewAltColumn.id}`}
+                      value={valueFor(previewRow, previewAltColumn)}
                       label={b.imagePreview.altLabel}
                       // In a foreign view the primary value (or the global
                       // translation under a market override) shows as the
                       // ghost — the same hint the grid cell gives.
-                      placeholder={ghostFor(previewRow, ALT_PREVIEW_COLUMN) || b.imagePreview.noAlt}
-                      readOnly={!resolveCellValue(previewRow, ALT_PREVIEW_COLUMN).editable}
+                      placeholder={ghostFor(previewRow, previewAltColumn) || b.imagePreview.noAlt}
+                      // A foreign view cannot edit a non-translatable column —
+                      // the grid greys those out too (Plan §6.4), and img.alt
+                      // is primary-only.
+                      readOnly={
+                        !resolveCellValue(previewRow, previewAltColumn).editable ||
+                        (isForeign && !previewAltColumn.translatable)
+                      }
                       readOnlyReason={
-                        readOnlyTooltips[
-                          resolveCellValue(previewRow, ALT_PREVIEW_COLUMN).readOnlyReason ?? "column"
-                        ]
+                        isForeign && !previewAltColumn.translatable
+                          ? b.notTranslatableTooltip
+                          : readOnlyTooltips[
+                              resolveCellValue(previewRow, previewAltColumn).readOnlyReason ?? "column"
+                            ]
                       }
                       languageLabel={
-                        isForeign ? (localeNameByCode.get(locale) ?? locale) : b.imagePreview.primaryLanguage
+                        isForeign && previewAltColumn.translatable
+                          ? (localeNameByCode.get(locale) ?? locale)
+                          : b.imagePreview.primaryLanguage
                       }
-                      onChange={(next) => setEdit(previewRow, ALT_PREVIEW_COLUMN, next)}
-                      actions={cellActionsFor(previewRow, ALT_PREVIEW_COLUMN)}
+                      onChange={(next) => setEdit(previewRow, previewAltColumn, next)}
+                      actions={cellActionsFor(previewRow, previewAltColumn)}
                     />
                   ) : (
                     <Text as="p" variant="bodySm" tone="subdued" alignment="center">
