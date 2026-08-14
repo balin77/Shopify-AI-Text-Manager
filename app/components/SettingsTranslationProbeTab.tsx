@@ -111,6 +111,20 @@ interface ImageAltDiag {
       error?: string;
     };
   }>;
+  ownerLinkage?: {
+    cachedImages: number;
+    groups: Array<{
+      kind: string;
+      sampled: number;
+      withImage: number;
+      unique: number;
+      ambiguous: number;
+      none: number;
+      altDiverges: number;
+      examples: Array<{ title: string; basename: string; matches: number; objectAlt: string; fileAlt: string | null }>;
+    }>;
+    verdict: string;
+  };
   verdict: string;
 }
 
@@ -246,6 +260,39 @@ function formatMarkdown(report: ProbeReport): string {
         }
       }
       lines.push(``);
+    }
+
+    const ol = iad.ownerLinkage;
+    if (ol) {
+      lines.push(`### Could collection/article images be ATTRIBUTED in the media library?`);
+      lines.push(``);
+      lines.push(`**Verdict:** ${ol.verdict}`);
+      lines.push(``);
+      lines.push(
+        `The only possible link is the filename (a collection's picture is a CollectionImage, not a MediaImage, and \`files()\` has no "used by" facet). Matched from the owner side against the local media cache — what an implementation would do without extra Shopify calls.`,
+      );
+      lines.push(``);
+      lines.push(`| sample | with image | exactly 1 match | ambiguous | not in library | of the unique: alt differs |`);
+      lines.push(`|---|---:|---:|---:|---:|---:|`);
+      for (const g of ol.groups) {
+        lines.push(
+          `| ${g.kind} (${g.sampled} sampled) | ${g.withImage} | ${g.unique} | ${g.ambiguous} | ${g.none} | ${g.altDiverges} |`,
+        );
+      }
+      lines.push(``);
+      for (const g of ol.groups) {
+        if (g.examples.length === 0) continue;
+        lines.push(`\`${g.kind}\` examples:`);
+        for (const e of g.examples) {
+          const esc = (v: string) => v.replace(/\|/g, "\\|");
+          lines.push(
+            `  - ${esc(e.title)} — \`${esc(e.basename)}\` → ${e.matches} match(es); object alt=${
+              e.objectAlt ? `"${esc(e.objectAlt.slice(0, 40))}"` : "**(empty)**"
+            }, file alt=${e.fileAlt === null ? "—" : e.fileAlt ? `"${esc(e.fileAlt.slice(0, 40))}"` : "**(empty)**"}`,
+          );
+        }
+        lines.push(``);
+      }
     }
 
     lines.push(`---`);

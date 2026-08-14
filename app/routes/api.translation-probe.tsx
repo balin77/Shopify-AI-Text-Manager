@@ -162,7 +162,66 @@ interface ImageAltDiag {
   subjects: ImageAltSubject[];
   /** Can a CollectionImage/ArticleImage be traced back to a MediaImage? */
   fileLink: ImageFileLink[];
+  /** Would a filename-based owner index actually work, measured over a sample? */
+  ownerLinkage?: ImageOwnerLinkageDiag;
   verdict: string;
+}
+
+/**
+ * Measures whether collection/article images could be ATTRIBUTED to their
+ * owner in the media library ("where is this picture used?"), which today
+ * reports `unknown` for both.
+ *
+ * The link can only be the FILENAME: a collection's picture is a
+ * CollectionImage, not a MediaImage, and Shopify's `files()` has no
+ * "used by" facet. So this walks from the authoritative side — every sampled
+ * collection/article knows its own image URL — and looks the basename up in
+ * the local MediaLibraryImage cache, which is what a real implementation
+ * would use (no extra Shopify calls per image).
+ *
+ * Three things decide whether that is buildable, and all three are counted
+ * rather than argued about:
+ *
+ *  1. `unique`  — exactly ONE cache row carries that filename. Only these
+ *     could ever be attributed; anything else must stay `unknown`, the same
+ *     posture usage.server.ts already takes for ambiguous owners.
+ *  2. `ambiguous` / `none` — a filename shared by several files, or a picture
+ *     that is not in the Files library at all (the sampled ARTICLE was
+ *     exactly this: served from /articles/, absent from Files).
+ *  3. `altDiverges` — of the unique matches, how many have a file alt text
+ *     that differs from the object's own. Every one of those is a case where
+ *     labelling the file "belongs to collection X" would invite an edit that
+ *     silently does not reach the storefront, because the two alts are
+ *     separate records.
+ *
+ * A cache that was never synced makes the whole measurement meaningless, so
+ * its size is reported alongside — 0 matches out of an empty cache says
+ * nothing about linkability.
+ */
+interface ImageOwnerLinkageDiag {
+  /** Rows in MediaLibraryImage for this shop. 0 ⇒ the numbers below are void. */
+  cachedImages: number;
+  groups: ImageOwnerLinkageGroup[];
+  verdict: string;
+}
+
+interface ImageOwnerLinkageGroup {
+  kind: "collection" | "article";
+  sampled: number;
+  withImage: number;
+  unique: number;
+  ambiguous: number;
+  none: number;
+  /** Of the `unique` ones: file alt ≠ object alt (both non-empty or one empty). */
+  altDiverges: number;
+  /** A few concrete rows, so the aggregate can be sanity-checked. */
+  examples: Array<{
+    title: string;
+    basename: string;
+    matches: number;
+    objectAlt: string;
+    fileAlt: string | null;
+  }>;
 }
 
 /**
@@ -839,7 +898,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   // ── Image alt-text diagnosis (read-only) ─────────────────────────────────
-  report.imageAltDiag = await probeImageAltTranslatability(admin);
+  report.imageAltDiag = await probeImageAltTranslatability(admin, session.shop);
 
   logger.info("[TRANSLATION-PROBE] Done", {
     context: "TranslationProbe",
@@ -861,6 +920,7 @@ export async function action({ request }: ActionFunctionArgs) {
  */
 async function probeImageAltTranslatability(
   admin: { graphql: (query: string, opts?: Record<string, unknown>) => Promise<Response> },
+  shop: string,
 ): Promise<ImageAltDiag> {
   const enumSupport: ImageAltDiag["enumSupport"] = [];
   const subjects: ImageAltSubject[] = [];
@@ -955,7 +1015,9 @@ async function probeImageAltTranslatability(
     label: string,
     build: (withId: boolean) => string,
     extract: (data: unknown) => ImageNode[],
-  ): Promise<{ node: ImageNode | null; imageIdSelectable: boolean }> => {
+    // `nodes` is the WHOLE page — the linkage measurement needs a sample, not
+    // the one best specimen.
+  ): Promise<{ node: ImageNode | null; nodes: ImageNode[]; imageIdSelectable: boolean }> => {
     // Prefer a sample whose image HAS an alt text: on an image without one,
     // "no translatable keys" would be ambiguous between "not translatable at
     // all" and "nothing set that could be translated".
@@ -966,12 +1028,16 @@ async function probeImageAltTranslatability(
       null;
 
     const withId = await run<unknown>(`${label} (image.id)`, build(true));
-    if (withId) return { node: best(extract(withId)), imageIdSelectable: true };
+    if (withId) {
+      const nodes = extract(withId);
+      return { node: best(nodes), nodes, imageIdSelectable: true };
+    }
     // `image { id }` was rejected — retry without it so we still learn whether
     // the object has an image at all.
     const withoutId = await run<unknown>(`${label} (no image.id)`, build(false));
-    if (!withoutId) return { node: null, imageIdSelectable: false };
-    return { node: best(extract(withoutId)), imageIdSelectable: false };
+    if (!withoutId) return { node: null, nodes: [], imageIdSelectable: false };
+    const nodes = extract(withoutId);
+    return { node: best(nodes), nodes, imageIdSelectable: false };
   };
 
   const collectionPick = await pickWithImage("collections", IMAGE_ALT_COLLECTIONS_QUERY, (data) => {
@@ -1058,7 +1124,93 @@ async function probeImageAltTranslatability(
     await probeImageFileLink(admin, run, "articleImage", sampleArticle),
   ];
 
-  return { enumSupport, subjects, fileLink, verdict: buildImageAltVerdict(enumSupport, subjects, fileLink) };
+  const ownerLinkage = await probeImageOwnerLinkage(shop, collectionPick.nodes, articlePick.nodes);
+
+  return {
+    enumSupport,
+    subjects,
+    fileLink,
+    ownerLinkage,
+    verdict: buildImageAltVerdict(enumSupport, subjects, fileLink),
+  };
+}
+
+/** See {@link ImageOwnerLinkageDiag}. Reads the local media cache only — the
+ * point is to measure what an implementation could do WITHOUT extra Shopify
+ * calls per image. */
+async function probeImageOwnerLinkage(
+  shop: string,
+  collections: Array<{ title: string; image?: { url?: string | null; altText?: string | null } | null }>,
+  articles: Array<{ title: string; image?: { url?: string | null; altText?: string | null } | null }>,
+): Promise<ImageOwnerLinkageDiag> {
+  const cachedImages = await db.mediaLibraryImage.count({ where: { shop } }).catch(() => 0);
+
+  const measure = async (
+    kind: ImageOwnerLinkageGroup["kind"],
+    objects: Array<{ title: string; image?: { url?: string | null; altText?: string | null } | null }>,
+  ): Promise<ImageOwnerLinkageGroup> => {
+    const group: ImageOwnerLinkageGroup = {
+      kind,
+      sampled: objects.length,
+      withImage: 0,
+      unique: 0,
+      ambiguous: 0,
+      none: 0,
+      altDiverges: 0,
+      examples: [],
+    };
+    for (const object of objects) {
+      const basename = cdnBasename(object.image?.url ?? "");
+      if (!basename) continue;
+      group.withImage += 1;
+      const hits = await db.mediaLibraryImage
+        .findMany({ where: { shop, filename: basename }, select: { altText: true }, take: 5 })
+        .catch(() => [] as { altText: string | null }[]);
+      const objectAlt = object.image?.altText ?? "";
+      let fileAlt: string | null = null;
+      if (hits.length === 1) {
+        group.unique += 1;
+        fileAlt = hits[0].altText ?? "";
+        // The trap this whole section exists to quantify: same picture, two
+        // alt-text records. Editing the file would not move the object's.
+        if ((fileAlt ?? "").trim() !== objectAlt.trim()) group.altDiverges += 1;
+      } else if (hits.length > 1) {
+        group.ambiguous += 1;
+      } else {
+        group.none += 1;
+      }
+      if (group.examples.length < 5) {
+        group.examples.push({ title: object.title, basename, matches: hits.length, objectAlt, fileAlt });
+      }
+    }
+    return group;
+  };
+
+  const groups = [await measure("collection", collections), await measure("article", articles)];
+  return { cachedImages, groups, verdict: buildOwnerLinkageVerdict(cachedImages, groups) };
+}
+
+function buildOwnerLinkageVerdict(cachedImages: number, groups: ImageOwnerLinkageGroup[]): string {
+  if (cachedImages === 0) {
+    return "The media-library cache is EMPTY for this shop — run the media sync first, otherwise every number below is zero for the wrong reason.";
+  }
+  const parts = [`Media cache holds ${cachedImages} image(s).`];
+  for (const group of groups) {
+    if (group.withImage === 0) {
+      parts.push(`${group.kind}: no sampled object has an image — inconclusive.`);
+      continue;
+    }
+    const pct = Math.round((group.unique / group.withImage) * 100);
+    parts.push(
+      `${group.kind}: ${group.unique}/${group.withImage} (${pct}%) resolve to exactly one cached file` +
+        `${group.ambiguous ? `, ${group.ambiguous} ambiguous` : ""}` +
+        `${group.none ? `, ${group.none} not in the library` : ""}.` +
+        (group.unique > 0
+          ? ` Of the unique ones, ${group.altDiverges} carry a DIFFERENT alt text than the object — attributing those would invite an edit that never reaches the storefront.`
+          : ""),
+    );
+  }
+  return parts.join(" ");
 }
 
 /** Last path segment of a CDN URL, query string stripped and percent-decoded.
