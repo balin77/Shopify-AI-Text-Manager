@@ -2639,6 +2639,7 @@ export const en: Translation = {
       missingMediaId: "This image is missing its Shopify media id — resync this product first.",
       wrongMetaobjectType: "This column belongs to another metaobject type.",
       listSeparatorInValue: "A list value contains the \"|\" separator — edit it in the single-item editor.",
+      altTextInImages: "The alt text of every product image — including translations — is edited under \"Images\".",
     },
     metaobjectTypeLabel: "Metaobject type",
     searchLabel: "Search",
@@ -2677,6 +2678,7 @@ export const en: Translation = {
     onlyChanged: "Only changed",
     sortButtonLabel: "Sort by",
     readOnlyTooltip: "This column can't be edited here.",
+    showProductImages: "Show this product's images",
     handleWarning: "Changing the handle changes this item's storefront URL. Existing links keep working only if you add a redirect.",
     openInEditor: "Open in editor",
     noRows: "No items found for this type.",
@@ -2731,6 +2733,11 @@ export const en: Translation = {
       altLabel: "Alt text",
       primaryLanguage: "Primary language",
     },
+    ownerFilter: {
+        showing: "Showing only the images of \u201c{name}\u201d.",
+        showingUnknown: "Showing only the images of one object.",
+        clear: "Show all images",
+      },
     mediaLibrary: {
       neverSynced:
         "Images outside the product catalogue (files, theme, metaobjects) have not been synced yet — that is why they are missing from this list.",

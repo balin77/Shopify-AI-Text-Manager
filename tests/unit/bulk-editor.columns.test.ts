@@ -436,9 +436,11 @@ describe("isValidBulkDiffEntry", () => {
     ).toBe(false);
   });
 
-  it("accepts option and img.alt columns on product rows only", () => {
+  it("accepts option columns on product rows only, and never the read-only img.alt", () => {
     expect(isValidBulkDiffEntry({ ...base, columnId: optionColumnId(1, "name") }, allowed, enabledColumns)).toBe(true);
-    expect(isValidBulkDiffEntry({ ...base, columnId: IMG_ALT_COLUMN_ID }, allowed, enabledColumns)).toBe(true);
+    // img.alt shows the main image's alt for context and links into the Images
+    // row type — an edit for it must not survive validation at any entrance.
+    expect(isValidBulkDiffEntry({ ...base, columnId: IMG_ALT_COLUMN_ID }, allowed, enabledColumns)).toBe(false);
     expect(
       isValidBulkDiffEntry(
         { ...base, rowId: "gid://shopify/Page/1", rowType: "page", columnId: optionColumnId(1, "name") },
@@ -640,10 +642,14 @@ describe("resolveCellValue (Plan §12 column resolution)", () => {
     expect(values.readOnlyReason).toBe("legacyOptionValues");
   });
 
-  it("resolves img.alt: editable with mediaId, read-only without, read-only without image", () => {
+  it("resolves img.alt: always read-only, with the reason naming why", () => {
+    // Read-only on purpose: it covers only the MAIN image and its translation
+    // rides on the MediaImage, which a product row cannot address. The reason
+    // is what renders the "show this product's images" jump.
     expect(resolveCellValue(productRow, col(IMG_ALT_COLUMN_ID))).toEqual({
       value: "A linen shirt",
-      editable: true,
+      editable: false,
+      readOnlyReason: "altTextInImages",
     });
     const noMedia = resolveCellValue(
       { ...productRow, mainImage: { mediaId: null, alt: "x" } },
@@ -764,14 +770,16 @@ describe("computeDiff with dynamic product columns", () => {
     expect(computeDiff([productRow], phase2Columns, edits)).toEqual([]);
   });
 
-  it("diffs option and img.alt cells against their resolved baselines", () => {
+  it("diffs option cells against their resolved baselines, and drops read-only img.alt", () => {
     const edits = {
       [key10(optionColumnId(1, "values"))]: "S | M", // unchanged
       [key10(optionColumnId(1, "name"))]: "Größe",
+      // A stale edit for the now read-only column (a CSV import, or a map
+      // written before the column changed) must not reach the write path.
       [key10(IMG_ALT_COLUMN_ID)]: "A crisp linen shirt",
     };
     const diff = computeDiff([productRow], phase2Columns, edits);
-    expect(diff.map((d) => d.columnId).sort()).toEqual([IMG_ALT_COLUMN_ID, optionColumnId(1, "name")]);
+    expect(diff.map((d) => d.columnId).sort()).toEqual([optionColumnId(1, "name")]);
   });
 });
 

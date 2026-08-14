@@ -5,6 +5,7 @@ import {
   metafieldColumnId,
   optionColumnId,
   IMG_ALT_COLUMN_ID,
+  IMAGE_ROW_ALT_COLUMN_ID,
   BULK_COLUMNS_BY_TYPE,
   type BulkDiffEntry,
   type BulkRowType,
@@ -189,6 +190,10 @@ function mockDb() {
   };
 }
 
+/** The MediaImage gid the productImage mock resolves to — the row id an
+ * IMAGE row uses. */
+const MEDIA_ID = "gid://shopify/MediaImage/5";
+
 function entry(columnId: string, value: string): BulkDiffEntry {
   return { rowId: PRODUCT_ID, rowType: "product", locale: "", marketId: "", columnId, value };
 }
@@ -209,7 +214,7 @@ beforeEach(() => {
 });
 
 describe("applyBulkDiff — target-group order (Plan §4.4)", () => {
-  it("persists base → metafields → options → image alt, in that order, in one row pass", async () => {
+  it("persists base → metafields → options, in that order, in one row pass", async () => {
     const { admin, calls } = mockAdmin();
     const db = mockDb();
     const columnsByType = columnsFor([MATERIAL_SPEC]);
@@ -218,7 +223,6 @@ describe("applyBulkDiff — target-group order (Plan §4.4)", () => {
       { db: db as never, shop: SHOP, admin: admin as never, columnsByType },
       [
         // Deliberately shuffled — the ORDER of diff entries must not matter.
-        entry(IMG_ALT_COLUMN_ID, "new alt"),
         entry(optionColumnId(1, "name"), "Größe"),
         entry(metafieldColumnId("custom", "material"), "Linen"),
         entry("field.title", "New title"),
@@ -235,7 +239,24 @@ describe("applyBulkDiff — target-group order (Plan §4.4)", () => {
       if (c.query.includes("productUpdateMedia(")) return "productUpdateMedia";
       return "other";
     });
-    expect(order).toEqual(["productUpdate", "metafieldsSet", "productOptionUpdate", "productUpdateMedia"]);
+    expect(order).toEqual(["productUpdate", "metafieldsSet", "productOptionUpdate"]);
+  });
+
+  it("rejects an img.alt cell — the column is read-only, alt texts are edited on image rows", async () => {
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
+      [entry(IMG_ALT_COLUMN_ID, "new alt")],
+    );
+
+    // Per CELL, and nothing written: a read-only column must never reach
+    // Shopify or the DB, whichever entrance built the diff.
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].columnId).toBe(IMG_ALT_COLUMN_ID);
+    expect(calls.some((c) => c.query.includes("productUpdateMedia("))).toBe(false);
+    expect(db.productImage.update).not.toHaveBeenCalled();
   });
 
   it("mirrors the alt-text with altTextModifiedAt so the webhook-triggered resync preserves it (§4.3/§10.3)", async () => {
@@ -243,9 +264,20 @@ describe("applyBulkDiff — target-group order (Plan §4.4)", () => {
     const db = mockDb();
     const before = Date.now();
 
+    // The IMAGE row type is the live alt-text path (one row per picture); it
+    // shares writeMediaAltText with what the product column used to do.
     const result = await applyBulkDiff(
       { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]) },
-      [entry(IMG_ALT_COLUMN_ID, "fresh alt")],
+      [
+        {
+          rowId: MEDIA_ID,
+          rowType: "image",
+          locale: "",
+          marketId: "",
+          columnId: IMAGE_ROW_ALT_COLUMN_ID,
+          value: "fresh alt",
+        },
+      ],
     );
 
     expect(result.failures).toEqual([]);

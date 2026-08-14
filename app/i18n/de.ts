@@ -2639,6 +2639,7 @@ export const de = {
       missingMediaId: "Für dieses Bild fehlt die Shopify-Media-ID — Produkt zuerst neu synchronisieren.",
       wrongMetaobjectType: "Diese Spalte gehört zu einem anderen Metaobjekt-Typ.",
       listSeparatorInValue: "Ein Listenwert enthält das Trennzeichen \"|\" — bitte im Einzeleditor bearbeiten.",
+      altTextInImages: "Der Alt-Text aller Produktbilder — inklusive Übersetzungen — wird unter \"Bilder\" bearbeitet.",
     },
     metaobjectTypeLabel: "Metaobjekt-Typ",
     searchLabel: "Suche",
@@ -2677,6 +2678,7 @@ export const de = {
     onlyChanged: "Nur geänderte",
     sortButtonLabel: "Sortieren nach",
     readOnlyTooltip: "Diese Spalte ist hier nicht bearbeitbar.",
+    showProductImages: "Bilder dieses Produkts anzeigen",
     handleWarning: "Eine Änderung des Handles ändert die Storefront-URL dieses Inhalts. Bestehende Links funktionieren nur weiter, wenn du eine Weiterleitung anlegst.",
     openInEditor: "Im Editor öffnen",
     noRows: "Keine Inhalte für diesen Typ gefunden.",
@@ -2731,6 +2733,11 @@ export const de = {
       altLabel: "Alt-Text",
       primaryLanguage: "Hauptsprache",
     },
+    ownerFilter: {
+        showing: "Es werden nur die Bilder von \u201e{name}\u201c angezeigt.",
+        showingUnknown: "Es werden nur die Bilder eines Objekts angezeigt.",
+        clear: "Alle Bilder anzeigen",
+      },
     mediaLibrary: {
       neverSynced:
         "Bilder ausserhalb des Produktkatalogs (Dateien, Theme, Metaobjekte) sind noch nicht abgeglichen — sie fehlen deshalb in dieser Liste.",

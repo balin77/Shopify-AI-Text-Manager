@@ -103,6 +103,7 @@ import { debugLog } from "../utils/debug";
 // Server-only I/O — referenced exclusively from loader/action, which Remix
 // strips from the client build.
 import { loadBulkRows, getShopCurrencyCode } from "../services/bulk-editor/load.server";
+import { isValidShopifyGID } from "../utils/validation";
 import { applyBulkDiff } from "../services/bulk-editor/apply.server";
 import { findInvalidLocaleOrMarket } from "../services/bulk-editor/translations.server";
 import {
@@ -152,6 +153,9 @@ interface LoaderData {
   /** Image view: the shop never ran a media-library sync, so every image
    * outside the product catalogue is missing from the list. */
   mediaLibraryNeverSynced: boolean;
+  /** Active per-object image filter (image rows only): the GID plus a human
+   * label, so the toolbar can name what is being shown and offer a way out. */
+  ownerFilter: { id: string; label: string } | null;
   /** Shop-specific metafield columns (Plan §4.1) — plain specs; the client
    * builds the descriptors via buildColumnsForType. */
   metafieldColumns: MetafieldColumnSpec[];
@@ -204,6 +208,37 @@ function isAltTextColumn(column: ColumnDescriptor): boolean {
 
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
 
+/**
+ * Human name for an image-owner GID, for the "showing only the images of X"
+ * chip. Resolved from the local caches — the label has to be right even when
+ * the object owns ZERO images (a product whose media were never synced), which
+ * is exactly the case where reading it off the rows would show nothing.
+ * Unknown ids degrade to "" and the chip falls back to generic wording.
+ */
+async function resolveOwnerLabel(
+  db: Awaited<typeof import("../db.server")>["db"],
+  shop: string,
+  ownerId: string,
+): Promise<string> {
+  const kind = ownerId.split("/")[3] ?? "";
+  try {
+    switch (kind) {
+      case "Product":
+        return (await db.product.findUnique({ where: { shop_id: { shop, id: ownerId } }, select: { title: true } }))?.title ?? "";
+      case "Collection":
+        return (await db.collection.findUnique({ where: { shop_id: { shop, id: ownerId } }, select: { title: true } }))?.title ?? "";
+      case "Article":
+        return (await db.article.findUnique({ where: { shop_id: { shop, id: ownerId } }, select: { title: true } }))?.title ?? "";
+      case "Page":
+        return (await db.page.findUnique({ where: { shop_id: { shop, id: ownerId } }, select: { title: true } }))?.title ?? "";
+      default:
+        return "";
+    }
+  } catch {
+    return "";
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -226,6 +261,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       marketId: "",
       translationFilterApproximate: false,
       mediaLibraryNeverSynced: false,
+      ownerFilter: null,
       metafieldColumns: [],
       metaobjectColumns: [],
       metaobjectTypes: [],
@@ -256,6 +292,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .split(",")
     .filter((f): f is BulkFilterId => (BULK_FILTER_IDS as string[]).includes(f));
   const sort = parseSortParam(type, url.searchParams.get("sort"));
+  // Image rows only: show just the pictures of ONE object. Validated as a GID
+  // so a hand-crafted param can only ever narrow the result, never reshape the
+  // query (the loader passes it straight into a `where`).
+  const rawOwner = url.searchParams.get("owner") || "";
+  const ownerId = type === "image" && isValidShopifyGID(rawOwner) ? rawOwner : "";
 
   // Language + market dimension (Phase 4). Both cached/degrading loaders:
   // locales via the 60-s shop-locales cache, markets ACTIVE-gated inside
@@ -323,6 +364,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       skip: (page - 1) * pageSize,
       take: pageSize,
       productCells: { metafieldSpecs: metafieldColumns, caps: productCaps },
+      ...(ownerId ? { ownerId } : {}),
       // Blog rows are live-fetched (Phase 5, Plan §7) — the loader needs the
       // admin client; other types ignore it.
       admin,
@@ -351,6 +393,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     marketId,
     translationFilterApproximate,
     mediaLibraryNeverSynced: mediaLibraryNeverSynced ?? false,
+    ownerFilter: ownerId ? { id: ownerId, label: await resolveOwnerLabel(db, shop, ownerId) } : null,
     metafieldColumns,
     metaobjectColumns,
     metaobjectTypes,
@@ -914,6 +957,7 @@ export default function BulkEditor() {
     missingMediaId: b.readOnlyReasons.missingMediaId,
     wrongMetaobjectType: b.readOnlyReasons.wrongMetaobjectType,
     listSeparatorInValue: b.readOnlyReasons.listSeparatorInValue,
+    altTextInImages: b.readOnlyReasons.altTextInImages,
   };
 
   const setEdit = (row: BulkRow, column: ColumnDescriptor, value: string) => {
@@ -1013,6 +1057,10 @@ export default function BulkEditor() {
       sort: "",
       f: filters.filter((f) => validIds.includes(f)).join(","),
       moType: "",
+      // navigateGrid MERGES with the current params, so an owner filter would
+      // ride along into a type that ignores it and silently come back alive on
+      // the way to Images.
+      owner: "",
     });
   };
   /** Metaobject definition-type filter (Phase 5) — resets the page like any
@@ -1979,6 +2027,21 @@ export default function BulkEditor() {
                     {cellActionError}
                   </Banner>
                 )}
+                {data.ownerFilter && (
+                  <Banner
+                    tone="info"
+                    action={{
+                      content: b.ownerFilter.clear,
+                      // Drop only the owner param — type, language and market
+                      // stay where the merchant left them.
+                      onAction: () => navigateGrid({ owner: "", page: "1" }),
+                    }}
+                  >
+                    {data.ownerFilter.label
+                      ? b.ownerFilter.showing.replace("{name}", data.ownerFilter.label)
+                      : b.ownerFilter.showingUnknown}
+                  </Banner>
+                )}
                 {data.mediaLibraryNeverSynced && (
                   <Banner
                     tone="info"
@@ -2195,6 +2258,13 @@ export default function BulkEditor() {
                       sort={sort}
                       onSortToggle={handleSortToggle}
                       openInEditorLabel={b.openInEditor}
+                      showImagesLabel={b.showProductImages}
+                      onShowImages={(row) =>
+                        // Jump into the Images row type showing only this
+                        // product's pictures. Page 1 and no leftover filters:
+                        // the whole point is to see ALL of them.
+                        navigateGrid({ type: "image", owner: row.id, page: "1" })
+                      }
                       cellActions={cellActionsFor}
                       onPreviewImage={setPreviewRow}
                       previewImageLabel={b.imagePreview.open}

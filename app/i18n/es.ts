@@ -2638,6 +2638,7 @@ export const es: Translation = {
       missingMediaId: "A esta imagen le falta el ID de medios de Shopify — resincroniza este producto primero.",
       wrongMetaobjectType: "Esta columna pertenece a otro tipo de metaobjeto.",
       listSeparatorInValue: "Un valor de la lista contiene el separador \"|\" — edítalo en el editor individual.",
+      altTextInImages: "El texto alternativo de todas las imágenes del producto — traducciones incluidas — se edita en \"Imágenes\".",
     },
     metaobjectTypeLabel: "Tipo de metaobjeto",
     searchLabel: "Buscar",
@@ -2676,6 +2677,7 @@ export const es: Translation = {
     onlyChanged: "Solo modificadas",
     sortButtonLabel: "Ordenar por",
     readOnlyTooltip: "Esta columna no se puede editar aquí.",
+    showProductImages: "Ver las imágenes de este producto",
     handleWarning: "Cambiar el handle cambia la URL de este elemento en la tienda. Los enlaces existentes solo seguirán funcionando si añades una redirección.",
     openInEditor: "Abrir en el editor",
     noRows: "No se encontraron elementos de este tipo.",
@@ -2730,6 +2732,11 @@ export const es: Translation = {
       altLabel: "Texto alternativo",
       primaryLanguage: "Idioma principal",
     },
+    ownerFilter: {
+        showing: "Solo se muestran las imágenes de \u201c{name}\u201d.",
+        showingUnknown: "Solo se muestran las imágenes de un objeto.",
+        clear: "Ver todas las imágenes",
+      },
     mediaLibrary: {
       neverSynced:
         "Las imágenes fuera del catálogo de productos (archivos, tema, metaobjetos) aún no se han sincronizado, por eso faltan en esta lista.",

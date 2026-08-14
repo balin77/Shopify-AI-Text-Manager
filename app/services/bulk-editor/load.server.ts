@@ -80,6 +80,11 @@ export interface LoadBulkRowsOptions {
    * schema-homogeneous per type). "" / absent = no restriction (used by the
    * CSV import, which resolves rows by id). */
   moType?: string;
+  /** Image rows only: restrict to the pictures belonging to ONE object (a
+   * product, collection, article … — any Shopify GID). Both segments honour
+   * it: product media match on their product, library images on the usage
+   * owner the media sync resolved. Absent = every image. */
+  ownerId?: string;
   /** Published, non-primary shop locales. On the PRIMARY view they drive the
    * "missing translation" (blue) field colour: a primary field not translated
    * into every one of these locales is flagged (BulkRow.untranslatedColumnIds).
@@ -973,6 +978,10 @@ async function loadProductMediaRows(
   const and: Prisma.ProductImageWhereInput[] = [{ mediaId: { not: null } }];
 
   if (opts.ids) and.push({ mediaId: { in: opts.ids } });
+  // Owner filter. A non-product owner (a collection, an article) simply has no
+  // product media, so an impossible condition is exactly right here — the
+  // library segment then supplies whatever that object owns.
+  if (opts.ownerId) and.push({ productId: opts.ownerId });
 
   const search = opts.search.trim();
   if (search) {
@@ -1151,6 +1160,7 @@ async function loadLibraryImageRows(
     // write path picks the store by gid, not by segment) — filtering it out
     // here would cost an exact `total`, which the export and scan sweeps need.
     excludeProductMedia: true,
+    ...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
     missingAltOnly: opts.filters.includes("missingAltText"),
     ...(excludeMediaIds ? { excludeMediaIds } : {}),
     ...(sortField && opts.sort ? { sort: { field: sortField, direction: opts.sort.direction } } : {}),

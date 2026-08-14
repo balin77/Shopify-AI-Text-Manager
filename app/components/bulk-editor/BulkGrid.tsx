@@ -82,6 +82,10 @@ interface BulkGridProps {
   onSortToggle: (column: ColumnDescriptor) => void;
   openInEditorLabel: string;
   onOpenInEditor: (row: BulkRow) => void;
+  /** Jump from a product's read-only main-image alt into the Images row type,
+   * filtered to that product. */
+  showImagesLabel: string;
+  onShowImages: (row: BulkRow) => void;
   /** Click on the image cell — opens the preview modal. */
   onPreviewImage: (row: BulkRow) => void;
   previewImageLabel: string;
@@ -122,6 +126,8 @@ export function BulkGrid({
   onSortToggle,
   openInEditorLabel,
   onOpenInEditor,
+  showImagesLabel,
+  onShowImages,
   onPreviewImage,
   previewImageLabel,
   cellActions,
@@ -648,9 +654,19 @@ export function BulkGrid({
                           ? ghostFor(row, col)
                           : undefined
                       }
-                      showOpenInEditor={resolved.readOnlyReason === "richText"}
-                      openInEditorLabel={openInEditorLabel}
-                      onOpenInEditor={() => onOpenInEditor(row)}
+                      // Two read-only cells offer a jump instead of an input:
+                      // a rich-text metafield into the single editor, and the
+                      // product main-image alt into the Images row type
+                      // filtered to this product.
+                      showOpenInEditor={
+                        resolved.readOnlyReason === "richText" || resolved.readOnlyReason === "altTextInImages"
+                      }
+                      openInEditorLabel={
+                        resolved.readOnlyReason === "altTextInImages" ? showImagesLabel : openInEditorLabel
+                      }
+                      onOpenInEditor={() =>
+                        resolved.readOnlyReason === "altTextInImages" ? onShowImages(row) : onOpenInEditor(row)
+                      }
                       isDirty={dirty}
                       error={error}
                       errorId={error ? `cp-bulk-err-${type}-${rowIndex}-${i}` : undefined}

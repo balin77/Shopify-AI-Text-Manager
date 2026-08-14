@@ -41,6 +41,8 @@ export interface LoadMediaLibraryOptions {
   excludeProductMedia: boolean;
   /** nur Bilder ohne primären Alt-Text. */
   missingAltOnly?: boolean;
+  /** Nur Bilder EINES Besitzers (GID eines Produkts, einer Kollektion …). */
+  ownerId?: string;
   /** Nur diese MediaImage-GIDs (CSV-Import löst Zeilen über ihre id auf). */
   mediaIds?: string[];
   /**
@@ -104,6 +106,11 @@ export async function loadMediaLibraryImages(
   if (opts.missingAltOnly) {
     and.push({ OR: [{ altText: null }, { altText: "" }] });
   }
+
+  // Nur die Bilder EINES Objekts (Produkt, Kollektion, …). usageOwnerId wird
+  // beim Media-Sync aufgelöst und ist "" wenn unbekannt oder mehrdeutig — ein
+  // Filter darauf liefert dann korrekterweise nichts.
+  if (opts.ownerId) and.push({ usageOwnerId: opts.ownerId });
 
   if (opts.mediaIds) and.push({ id: { in: opts.mediaIds } });
   if (opts.excludeMediaIds && opts.excludeMediaIds.length > 0) {

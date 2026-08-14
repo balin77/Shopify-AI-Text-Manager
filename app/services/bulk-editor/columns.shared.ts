@@ -700,10 +700,13 @@ export function buildImgAltColumn(): ColumnDescriptor {
     kind: "image",
     label: "imgAlt",
     group: "images",
-    editable: true,
-    // Alt-text translations ride on the MediaImage resource, not the product —
-    // Phase 4 decides how to surface them; until then the column is
-    // primary-only.
+    // READ-ONLY on purpose. It only ever covered the MAIN image, and its
+    // translation rides on the MediaImage resource, which a product row cannot
+    // address — so it was editable in the primary language and greyed out in
+    // every other one, for one image out of many. The Images row type has a
+    // row per picture with a full, translatable write path; this cell shows
+    // the value for context and links there (see onShowImages).
+    editable: false,
     translatable: false,
     inputType: "text",
     minWidth: 200,
@@ -1136,7 +1139,8 @@ export type CellReadOnlyReason =
   | "missingImage" // product has no image at all
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
-  | "listSeparatorInValue"; // a list entry contains "|" — editing would shatter it (Finding 11)
+  | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
+  | "altTextInImages"; // product main-image alt — edit it under the Images row type
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
@@ -1200,10 +1204,13 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       }
       if (column.id === IMG_ALT_COLUMN_ID) {
         if (!row.mainImage) return { value: "", editable: false, readOnlyReason: "missingImage" };
+        // Read-only either way (see buildImgAltColumn); a missing mediaId is
+        // still worth naming separately, since it means the product needs a
+        // resync before the Images row type can show the picture at all.
         if (!row.mainImage.mediaId) {
           return { value: row.mainImage.alt, editable: false, readOnlyReason: "missingMediaId" };
         }
-        return { value: row.mainImage.alt, editable: true };
+        return { value: row.mainImage.alt, editable: false, readOnlyReason: "altTextInImages" };
       }
       return { value: "", editable: false, readOnlyReason: "column" };
     }
