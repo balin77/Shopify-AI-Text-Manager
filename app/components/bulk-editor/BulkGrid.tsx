@@ -35,6 +35,10 @@ import { BulkCell, type BulkCellActions, type BulkCellStatusOptions, type CellNa
 
 /** Fixed image-column width — must be a constant so the sticky title column
  * can sit at left:72px. */
+/** Width the action menu is given inside a cell — a Polaris micro icon button
+ * plus its inset. Columns that carry a menu reserve exactly this much. */
+const CELL_ACTIONS_GUTTER = 26;
+
 const IMAGE_COLUMN_WIDTH = 72;
 
 /** Field-colour state, mirroring the single editor: "untranslated" (yellow —
@@ -238,8 +242,17 @@ export function BulkGrid({
         .cp-bulk-th.cp-bulk-sticky { z-index: 4; }
         /* Per-cell action menu: present in the DOM (so keyboard users can tab
            to it) but invisible until the cell is hovered or holds focus —
-           250 rows of always-visible icons would be a wall of noise. */
-        .cp-bulk-cell-with-actions { position: relative; }
+           250 rows of always-visible icons would be a wall of noise.
+
+           The cell RESERVES the gutter the menu sits in, permanently: an
+           overlay would let the value run underneath the dots, and revealing
+           the space only on hover would make the text jump in a 250-row grid.
+           The reservation is scoped to cells that actually have a menu, so
+           read-only, money and status columns keep their full width. */
+        .cp-bulk-cell-with-actions {
+          position: relative;
+          padding-right: ${CELL_ACTIONS_GUTTER}px;
+        }
         .cp-bulk-cell-actions {
           position: absolute;
           top: 2px;
