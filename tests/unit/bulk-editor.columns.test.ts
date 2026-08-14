@@ -23,6 +23,7 @@ import {
   FEATURED_IMAGE_ALT_COLUMN_ID,
   isFeaturedImageAltColumn,
   columnAllowedForType,
+  estimateCalls,
   aiFieldKey,
   isListShapedColumn,
   columnCanHaveCellActions,
@@ -898,6 +899,28 @@ describe("featured-image alt column", () => {
       editable: false,
       readOnlyReason: "missingImage",
     });
+  });
+
+  it("is charged its real Shopify cost, never the row's shared one", () => {
+    const column = columnOf("collection")!;
+    const columns = BULK_COLUMNS_BY_TYPE.collection;
+    const entry = (locale: string) => ({
+      rowId: "gid://shopify/Collection/1",
+      rowType: "collection" as const,
+      columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+      value: "Trois vases",
+      locale,
+      marketId: "",
+    });
+    // One foreign cell = image-id lookup + digest + register. Counting it as
+    // part of the row's own translationsRegister under-reported the real cost
+    // ~3x, and this guard must never let through a save it should refuse.
+    const foreign = estimateCalls([entry("fr")], columns);
+    expect(foreign).toBeGreaterThanOrEqual(3);
+    // A primary change additionally pays for the §6.6 invalidation.
+    const primary = estimateCalls([{ ...entry(""), value: "Drei Vasen" }], columns);
+    expect(primary).toBeGreaterThanOrEqual(3);
+    expect(column.translatable).toBe(true);
   });
 
   it("survives the diff round-trip as an ordinary translatable cell", () => {

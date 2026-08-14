@@ -91,6 +91,23 @@ export function translationKeysByColumnId(type: BulkRowType): Map<string, string
   return map;
 }
 
+/**
+ * The subset of {@link translationKeysByColumnId} whose translations really do
+ * live on the ROW's own `translatableResource`. Today that means "everything
+ * except the featured-image alt", whose key is a DB key for a translation
+ * Shopify stores on the image resource — so it must not be used to reason
+ * about the row's own translatable content.
+ */
+export function rowOwnTranslationKeys(type: BulkRowType): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const column of BULK_COLUMNS_BY_TYPE[type]) {
+    if (isFeaturedImageAltColumn(column)) continue;
+    const key = translationKeyForColumn(column, type);
+    if (key) map.set(column.id, key);
+  }
+  return map;
+}
+
 /** ContentTranslation.resourceType value per bulk row type — matches the
  * strings every existing writer uses ("Product", "Collection", "Article",
  * "Page"; Phase 5: "Blog" per app.blog.tsx, "ShopPolicy" per the policies

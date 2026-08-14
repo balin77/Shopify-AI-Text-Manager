@@ -253,6 +253,13 @@ const FEATURED_IMAGE_ALT_COLUMN: ColumnDescriptor = {
   minWidth: 220,
 };
 
+/**
+ * Shopify calls ONE featured-image alt translation costs: resolve the image
+ * GID from the parent, fetch its digest, then register (or remove) — none of
+ * them shared with the row's own translationsRegister.
+ */
+const FEATURED_ALT_TRANSLATION_CALLS = 3;
+
 /** The featured-image alt is a THIRD translation shape (Shopify target and DB
  * mirror have different ids), so every site that branches on it asks here
  * rather than pattern-matching the column id. */
@@ -1498,14 +1505,24 @@ export function estimateCalls(
       // register/remove call, and an option-VALUES cell is one call per value.
       // Counting them as part of the row's single call would let a save that
       // fans out into hundreds of calls slip past MAX_TASK_CALLS.
-      const ownEntries = entries.filter(([columnId]) => {
+      const isSubEntry = (columnId: string): boolean => {
         const column = columnById.get(columnId);
-        return !column || (column.kind !== "metafield" && column.kind !== "option");
-      });
-      const subEntries = entries.filter(([columnId]) => {
+        return !!column && (column.kind === "metafield" || column.kind === "option");
+      };
+      // The featured-image alt rides on NEITHER: it costs its own image-id
+      // lookup, its own digest fetch and its own register/remove — three
+      // calls, none of them shared with the row. Counting it as an own-resource
+      // cell under-reported a 2000-unit run by ~3x, which is exactly the
+      // direction this guard must never err in.
+      const featuredAltEntries = entries.filter(([columnId]) => {
         const column = columnById.get(columnId);
-        return column && (column.kind === "metafield" || column.kind === "option");
+        return !!column && isFeaturedImageAltColumn(column);
       });
+      const ownEntries = entries.filter(
+        ([columnId]) => !isSubEntry(columnId) && !featuredAltEntries.some(([id]) => id === columnId),
+      );
+      const subEntries = entries.filter(([columnId]) => isSubEntry(columnId));
+      calls += featuredAltEntries.length * FEATURED_ALT_TRANSLATION_CALLS;
       const hasWrites = ownEntries.some(([, v]) => v !== "");
       const hasClears = ownEntries.some(([, v]) => v === "");
       calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
@@ -1551,6 +1568,13 @@ export function estimateCalls(
       // (shopPolicyUpdate), metaobject (metaobjectUpdate) and image rows
       // (productUpdateMedia) — 1 call each.
       calls += 1;
+      // A PRIMARY featured-alt change additionally invalidates its stale
+      // translations, which costs the image-id lookup plus one
+      // translationsRemove (§6.6). Charged unconditionally: whether any
+      // translation exists is only knowable server-side, and the guard errs high.
+      if (entries.some(([columnId]) => { const c = columnById.get(columnId); return !!c && isFeaturedImageAltColumn(c); })) {
+        calls += 2;
+      }
       continue;
     }
     let base = 0;

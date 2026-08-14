@@ -142,6 +142,10 @@ interface PersistDeps {
   /** §6.3 re-fetch bookkeeping: each resource gets at most ONE digest
    * re-fetch per run — after that a still-missing digest is a cell error. */
   digestRefetched: Set<string>;
+  /** parentId → its featured image's GID (null = the object has none). The
+   * GID is cached nowhere and cannot be derived from the parent, so it is
+   * resolved once per row instead of once per (row, locale, market) group. */
+  featuredImageIds: Map<string, string | null>;
   /** Published, non-primary shop locales — the target set for the primary-save
    * stale-foreign-translation invalidation (Plan §6.6 / Phase 4b). Loaded once
    * per run; empty when the lookup failed (invalidation then safely no-ops). */
@@ -1432,7 +1436,7 @@ async function invalidateStaleFeaturedImageAltTranslations(
       select: { locale: true },
     });
     if (existing.length === 0) return;
-    const imageResourceId = await fetchFeaturedImageId(gateway, rowType, parentId);
+    const imageResourceId = await fetchFeaturedImageId(deps, rowType, parentId);
     if (!imageResourceId) return;
     const locales = [...new Set(existing.map((row) => row.locale))];
     const { confirmedPairs } = await removeAndVerifyAcrossLocales(gateway, imageResourceId, ["alt"], locales, "");
@@ -1940,23 +1944,6 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
 }
 
 /**
- * Foreign-locale writes for SUB-RESOURCE cells (Plan §4.1/§4.2 columns whose
- * translation lives on their own Shopify resource):
- *
- *   metafield cell     → the Metafield gid,       key "value"
- *   option name cell   → the ProductOption gid,   key "name"
- *   option values cell → ONE ProductOptionValue gid per entry, key "name"
- *
- * Same three invariants as the row path: digest rule (§6.3), echo-verified
- * register/remove, DB mirror only for CONFIRMED keys. The resourceType strings
- * mirror the single-item editor's (sub-resources.action.ts), so both editors
- * read and write the same ContentTranslation rows.
- *
- * A values cell fans out to several resources but stays ONE cell for the
- * merchant: any failing entry fails the whole cell (with the entry named), so
- * the grid never shows a green cell over a half-written list.
- */
-/**
  * Featured-image alt translation of a collection / article.
  *
  * The only translation in this editor whose Shopify target and DB mirror have
@@ -1988,7 +1975,7 @@ async function writeFeaturedImageAltTranslation(
 
   let imageResourceId: string;
   try {
-    const resolved = await fetchFeaturedImageId(gateway, group.rowType, group.rowId);
+    const resolved = await fetchFeaturedImageId(deps, group.rowType, group.rowId);
     if (!resolved) {
       return "This collection/article has no featured image on Shopify — there is nothing to translate.";
     }
@@ -2066,10 +2053,16 @@ async function writeFeaturedImageAltTranslation(
  * only route to the image's GID (it is cached nowhere, and cannot be derived
  * from the parent id). */
 async function fetchFeaturedImageId(
-  gateway: PersistDeps["gateway"],
+  deps: PersistDeps,
   rowType: BulkRowType,
   parentId: string,
 ): Promise<string | null> {
+  // A foreign group is per (row, locale, market), so translating ONE
+  // collection's alt into five languages would otherwise issue five identical
+  // lookups — plus a sixth from the §6.6 invalidation.
+  const cached = deps.featuredImageIds.get(parentId);
+  if (cached !== undefined) return cached;
+  const { gateway } = deps;
   const field = rowType === "article" ? "article" : "collection";
   const response = await gateway.graphql(
     `#graphql
@@ -2083,9 +2076,28 @@ async function fetchFeaturedImageId(
     errors?: Array<{ message: string }>;
   };
   if (payload.errors?.length) throw new Error(payload.errors[0].message);
-  return payload.data?.[field]?.image?.id ?? null;
+  const imageId = payload.data?.[field]?.image?.id ?? null;
+  deps.featuredImageIds.set(parentId, imageId);
+  return imageId;
 }
 
+/**
+ * Foreign-locale writes for SUB-RESOURCE cells (Plan §4.1/§4.2 columns whose
+ * translation lives on their own Shopify resource):
+ *
+ *   metafield cell     → the Metafield gid,       key "value"
+ *   option name cell   → the ProductOption gid,   key "name"
+ *   option values cell → ONE ProductOptionValue gid per entry, key "name"
+ *
+ * Same three invariants as the row path: digest rule (§6.3), echo-verified
+ * register/remove, DB mirror only for CONFIRMED keys. The resourceType strings
+ * mirror the single-item editor's (sub-resources.action.ts), so both editors
+ * read and write the same ContentTranslation rows.
+ *
+ * A values cell fans out to several resources but stays ONE cell for the
+ * merchant: any failing entry fails the whole cell (with the entry named), so
+ * the grid never shows a green cell over a half-written list.
+ */
 async function persistSubResourceTranslations(
   group: BulkDiffRowGroup,
   cells: { columnId: string; column: ColumnDescriptor; value: string }[],
@@ -2588,6 +2600,11 @@ export async function applyBulkDiff(
     for (const [columnId, value] of Object.entries(group.cells)) {
       if (value === "") continue;
       const column = columns.find((c) => c.id === columnId);
+      // The featured-image alt's key is a DB key — its digest lives on the
+      // IMAGE resource, not on this row. Collecting it here would batch a
+      // translatableResource(collection) query for a key that can never exist
+      // there; the write path fetches the image's digest itself.
+      if (column && isFeaturedImageAltColumn(column)) continue;
       const key = column ? translationKeyForColumn(column, group.rowType) : null;
       if (key) {
         foreignKeys.add(key);
@@ -2655,6 +2672,7 @@ export async function applyBulkDiff(
     columnsByType,
     digests,
     digestRefetched: new Set(),
+    featuredImageIds: new Map(),
     foreignLocales,
     subResourceCaches,
   };

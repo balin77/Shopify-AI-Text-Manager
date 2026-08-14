@@ -14,6 +14,7 @@ import { isDefaultTitleOption } from "../../utils/shopify-product.utils";
 import { debugLog } from "../../utils/debug";
 import {
   translationKeysByColumnId,
+  rowOwnTranslationKeys,
   isSubResourceColumn,
   subResourceCacheFromRow,
   subResourceTargetsForColumn,
@@ -196,7 +197,14 @@ async function buildWhere(
   // a stray row under some other key must not make a resource count as
   // "translated" for the grid's purposes.
   if (opts.filters.includes("missingTranslation") && opts.locale !== "") {
-    const columnKeys = [...new Set(translationKeysByColumnId(opts.type).values())];
+    // Deliberately WITHOUT the featured-image alt: its key is in the same map
+    // (the loader needs it to read foreign values), but this coarse anti-join
+    // treats "has a row under any of these keys" as "translated". An alt text
+    // translated in the single editor would then drop the whole collection out
+    // of the merchant's untranslated worklist while title, body and SEO are
+    // still empty. The per-CELL blue marker (attachMissingTranslationFlags)
+    // does count it — that one is exact.
+    const columnKeys = [...new Set(rowOwnTranslationKeys(opts.type).values())];
     const translated = await db.contentTranslation.findMany({
       where: {
         shop,
