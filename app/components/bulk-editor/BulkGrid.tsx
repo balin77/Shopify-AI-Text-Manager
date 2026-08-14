@@ -275,6 +275,12 @@ export function BulkGrid({
         .cp-bulk-cell:hover .cp-bulk-cell-actions,
         .cp-bulk-cell-with-actions:focus-within .cp-bulk-cell-actions,
         .cp-bulk-cell-actions:focus-within { opacity: 1; }
+        /* Touch devices have no hover, so a hover-revealed control is simply
+           unreachable there — the menu stays visible. Same query the content
+           editor's touch overrides use (AIEditableField.css). */
+        @media (hover: none) and (pointer: coarse) {
+          .cp-bulk-cell-actions { opacity: 1; }
+        }
         /* Field colours, matching the single editor (Plan §2): applied to the
            cell WRAPPER (the input itself is transparent). Same hexes as
            AIEditableField.css so "Inhalt" and the bulk grid read identically.
