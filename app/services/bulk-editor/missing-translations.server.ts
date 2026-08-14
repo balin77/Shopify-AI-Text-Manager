@@ -30,6 +30,7 @@ import {
   primaryValueForColumn,
   LIST_DISPLAY_SEPARATOR,
   METAFIELD_TYPE_SINGLE_LINE,
+  isFeaturedImageAltColumn,
   METAFIELD_TYPE_MULTI_LINE,
   type BulkFilterId,
   type BulkRow,
@@ -89,6 +90,11 @@ export function translateCandidateColumns(
       );
     }
     if (column.kind === "option") return type === "product";
+    // The featured-image alt writes through applyBulkDiff like everything else
+    // here (its own third shape: Shopify target = the image GID, DB mirror =
+    // the parent row), so it is a legitimate candidate — but only on the two
+    // row types that HAVE a featured image.
+    if (isFeaturedImageAltColumn(column)) return type === "collection" || type === "article";
     return false;
   });
 }
@@ -103,6 +109,7 @@ export function candidateTranslationKey(column: ColumnDescriptor, type: BulkRowT
  * option-VALUES column yields the joined list, exactly as the grid cell shows
  * it (the write splits it back apart, positionally). */
 export function candidateSourceValue(row: BulkRow, column: ColumnDescriptor): string {
+  if (isFeaturedImageAltColumn(column)) return row.imageAlt ?? "";
   if (column.kind === "mofield") return row.moFields?.[column.id] ?? "";
   if (column.kind === "metafield") return row.metafields?.[column.id]?.value ?? "";
   if (column.kind === "option") {

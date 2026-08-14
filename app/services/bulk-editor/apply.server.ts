@@ -64,6 +64,7 @@ import {
   LIST_DISPLAY_SEPARATOR,
   IMAGE_ROW_ALT_COLUMN_ID,
   IMG_ALT_COLUMN_ID,
+  isFeaturedImageAltColumn,
   VAR_SKU_COLUMN_ID,
   VAR_PRICE_COLUMN_ID,
   VAR_COMPARE_AT_COLUMN_ID,
@@ -1230,6 +1231,13 @@ function fieldsOfGroup(group: BulkDiffRowGroup, columns: ColumnDescriptor[]): Pa
     // Per-type column guard — the route validator checks this too, but this
     // path is also reached from the /api/ai task runner, so reject here as
     // well before either Shopify or the DB can complain inconsistently.
+    // The featured-image alt is the one editable non-`field` column on these
+    // row types; it maps to the Prisma column `imageAltText`, which the mirror
+    // loop below then picks up like any other field.
+    if (column && column.editable && isFeaturedImageAltColumn(column)) {
+      fields.imageAltText = group.cells[columnId];
+      continue;
+    }
     if (!column || !column.editable || column.kind !== "field") {
       throw new Error(`Column "${columnId}" is not editable on ${group.rowType}.`);
     }
@@ -1295,6 +1303,9 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.descriptionHtml !== undefined ? { descriptionHtml: fields.descriptionHtml } : {}),
         ...(seo ? { seo } : {}),
+        // Featured-image alt: collectionUpdate carries it inline, the same
+        // call the single editor makes (shopify-content.service updateContent).
+        ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
       await db.collection.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
@@ -1321,6 +1332,8 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         ...(fields.summary !== undefined ? { summary: fields.summary } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
+        // See the collection branch — same inline alt write.
+        ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
       await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
       break;
@@ -1382,6 +1395,68 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
     id,
     translatableKeysForColumnIds(deps, type, Object.keys(fields).map((name) => `field.${name}`)),
   );
+  // The featured-image alt is NOT a `field.` column, and its translation lives
+  // on a different resource than its DB row — the generic pass above cannot
+  // reach either half (§6.6 still applies: a changed primary makes the
+  // existing translations stale).
+  if (fields.imageAltText !== undefined && (type === "collection" || type === "article")) {
+    await invalidateStaleFeaturedImageAltTranslations(deps, type, id);
+  }
+}
+
+/**
+ * §6.6 for the featured-image alt. Same echo rule as everywhere else: the local
+ * row only goes when Shopify confirms the removal, so a silent no-op can never
+ * orphan the storefront from the DB.
+ */
+async function invalidateStaleFeaturedImageAltTranslations(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  parentId: string,
+): Promise<void> {
+  const { db, shop, gateway, foreignLocales } = deps;
+  if (foreignLocales.length === 0) return;
+  const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+  try {
+    // Only touch Shopify when there is actually something to invalidate — the
+    // common case is a shop that never translated this alt text.
+    const existing = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceId: parentId,
+        resourceType,
+        key: "image_alt_text",
+        marketId: "",
+        locale: { in: foreignLocales },
+      },
+      select: { locale: true },
+    });
+    if (existing.length === 0) return;
+    const imageResourceId = await fetchFeaturedImageId(gateway, rowType, parentId);
+    if (!imageResourceId) return;
+    const locales = [...new Set(existing.map((row) => row.locale))];
+    const { confirmedPairs } = await removeAndVerifyAcrossLocales(gateway, imageResourceId, ["alt"], locales, "");
+    const confirmed = locales.filter((locale) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}alt`));
+    if (confirmed.length === 0) return;
+    await db.contentTranslation.deleteMany({
+      where: {
+        shop,
+        resourceId: parentId,
+        resourceType,
+        key: "image_alt_text",
+        marketId: "",
+        locale: { in: confirmed },
+      },
+    });
+  } catch (err: unknown) {
+    // Never fail the primary save over the cleanup — the same posture the
+    // generic invalidation takes.
+    logger.warn("[bulk-editor] featured image alt invalidation failed", {
+      context: "BulkEditor",
+      parentId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 // ─── Metaobject rows: metaobjectUpdate with echo verification (Phase 5) ────
@@ -1581,8 +1656,19 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   /** Cells whose translation does NOT live on this row's translatableResource
    * (metafields, product options) — written below against their own GIDs. */
   const subResourceCells: { columnId: string; column: ColumnDescriptor; value: string }[] = [];
+  /** The featured-image alt: Shopify target is the image's OWN GID, the DB
+   * mirror stays on this row — a third shape, handled separately below. */
+  const featuredAltCells: { columnId: string; value: string }[] = [];
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
+    if (column && isFeaturedImageAltColumn(column)) {
+      if (!column.translatable) {
+        failures.push(failureOf(group, `Column "${columnId}" is not translatable.`, columnId));
+        continue;
+      }
+      featuredAltCells.push({ columnId, value });
+      continue;
+    }
     if (column && isSubResourceColumn(column)) {
       // The `translatable` gate still applies here — diverting BEFORE checking
       // it would let a read-only rich_text metafield through on this path
@@ -1607,6 +1693,11 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
 
   if (subResourceCells.length > 0) {
     failures.push(...(await persistSubResourceTranslations(group, subResourceCells, deps)));
+  }
+  for (const cell of featuredAltCells) {
+    const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
+    if (error) failures.push(failureOf(group, error, cell.columnId));
+    else markTranslationSaved(group.rowId);
   }
 
   // Duplicate-slug guard (same rule as updateContent in the single editor):
@@ -1865,6 +1956,136 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
  * merchant: any failing entry fails the whole cell (with the entry named), so
  * the grid never shows a green cell over a half-written list.
  */
+/**
+ * Featured-image alt translation of a collection / article.
+ *
+ * The only translation in this editor whose Shopify target and DB mirror have
+ * DIFFERENT ids: Shopify stores it as key `alt` on the image's own
+ * `CollectionImage`/`ArticleImage` GID, while the row lives in
+ * `ContentTranslation` on the PARENT with key `image_alt_text` — the exact
+ * shape `saveImageAltTextTranslation` in the single editor writes, so the two
+ * editors read each other's rows.
+ *
+ * The image GID is not cached anywhere, so it is resolved from the parent per
+ * row. Constructing it from the parent's numeric id is impossible: the probe
+ * confirmed `gid://shopify/MediaImage/<same number>` resolves to nothing, and
+ * the file's MediaImage carries a SEPARATE (empty) alt.
+ *
+ * Same echo rules as every other path here: no digest ⇒ cell error and NO DB
+ * write; a removal that Shopify does not confirm keeps the local row.
+ *
+ * Returns an error message, or null on success.
+ */
+async function writeFeaturedImageAltTranslation(
+  group: BulkDiffRowGroup,
+  value: string,
+  deps: PersistDeps,
+): Promise<string | null> {
+  const { db, shop, gateway } = deps;
+  const { locale, marketId } = group;
+  const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType];
+  const dbKey = "image_alt_text";
+
+  let imageResourceId: string;
+  try {
+    const resolved = await fetchFeaturedImageId(gateway, group.rowType, group.rowId);
+    if (!resolved) {
+      return "This collection/article has no featured image on Shopify — there is nothing to translate.";
+    }
+    imageResourceId = resolved;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+
+  if (value === "") {
+    try {
+      const { confirmedKeys, userErrors } = await removeAndVerify(gateway, imageResourceId, ["alt"], locale, marketId);
+      if (!confirmedKeys.has("alt")) {
+        return (
+          userErrors[0]?.message ??
+          "Shopify did not confirm the translation removal — the local value was kept."
+        );
+      }
+      await db.contentTranslation.deleteMany({
+        where: { shop, resourceId: group.rowId, resourceType, key: dbKey, locale, marketId },
+      });
+      return null;
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  let digest = deps.digests.get(imageResourceId)?.get("alt");
+  if (!digest && !deps.digestRefetched.has(imageResourceId)) {
+    deps.digestRefetched.add(imageResourceId);
+    try {
+      const fresh = await fetchDigestsForResource(gateway, imageResourceId);
+      deps.digests.set(imageResourceId, fresh);
+      digest = fresh.get("alt");
+    } catch {
+      // fall through to the cell error below
+    }
+  }
+  if (!digest) {
+    // The image exists but exposes no `alt` digest — almost always because the
+    // PRIMARY alt text is empty: translatableContent only lists keys that have
+    // a value (CLAUDE.md). Say so, instead of "not translatable".
+    return "Shopify offers no translatable alt text for this image — set the alt text in the primary language first.";
+  }
+
+  try {
+    const { confirmedKeys, userErrors } = await registerAndVerify(gateway, imageResourceId, [
+      {
+        key: "alt",
+        value,
+        locale,
+        translatableContentDigest: digest,
+        ...(marketId ? { marketId } : {}),
+      },
+    ]);
+    if (!confirmedKeys.has("alt")) {
+      return (
+        userErrors[0]?.message ??
+        "Shopify reported no error but did not store this translation — nothing was saved."
+      );
+    }
+    await db.contentTranslation.upsert({
+      where: {
+        shop_resourceId_key_locale_marketId: { shop, resourceId: group.rowId, key: dbKey, locale, marketId },
+      },
+      update: { value, digest, resourceType },
+      create: { shop, resourceId: group.rowId, resourceType, key: dbKey, value, locale, marketId, digest },
+    });
+    return null;
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/** `collection(id){image{id}}` / `article(id){image{id}}` — the parent is the
+ * only route to the image's GID (it is cached nowhere, and cannot be derived
+ * from the parent id). */
+async function fetchFeaturedImageId(
+  gateway: PersistDeps["gateway"],
+  rowType: BulkRowType,
+  parentId: string,
+): Promise<string | null> {
+  const field = rowType === "article" ? "article" : "collection";
+  const response = await gateway.graphql(
+    `#graphql
+      query bulkFeaturedImageId($id: ID!) {
+        ${field}(id: $id) { image { id } }
+      }`,
+    { variables: { id: parentId } },
+  );
+  const payload = (await response.json()) as {
+    data?: Record<string, { image?: { id?: string | null } | null } | null>;
+    errors?: Array<{ message: string }>;
+  };
+  if (payload.errors?.length) throw new Error(payload.errors[0].message);
+  return payload.data?.[field]?.image?.id ?? null;
+}
+
 async function persistSubResourceTranslations(
   group: BulkDiffRowGroup,
   cells: { columnId: string; column: ColumnDescriptor; value: string }[],

@@ -2586,6 +2586,7 @@ export const de = {
       // Dynamische Metafeld-Spalten zeigen den Shopify-Namen (namespace.key)
       // unübersetzt — nur die App-eigenen Spalten haben i18n-Labels.
       imgAlt: "Alt-Text (Hauptbild)",
+      featuredImgAlt: "Alt-Text (Beitragsbild)",
       optionName: "Option {position}: Name",
       optionValues: "Option {position}: Werte",
       // Varianten-Zeilen (Phase 3): Geld-Spalten bekommen die Shop-Währung

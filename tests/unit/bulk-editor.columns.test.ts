@@ -20,6 +20,9 @@ import {
   BULK_COLUMNS_BY_TYPE,
   BULK_ROW_TYPES,
   BULK_ROW_TYPE_TO_AI_CONTENT_TYPE,
+  FEATURED_IMAGE_ALT_COLUMN_ID,
+  isFeaturedImageAltColumn,
+  columnAllowedForType,
   aiFieldKey,
   isListShapedColumn,
   columnCanHaveCellActions,
@@ -844,5 +847,92 @@ describe("AI-facing column helpers", () => {
     for (const column of columns.filter((c) => !c.editable)) {
       expect(columnCanHaveCellActions(column)).toBe(false);
     }
+  });
+});
+
+/**
+ * The featured-image alt of collections/articles — the one column whose
+ * Shopify target and DB mirror have different ids (probe-verified 2026-08:
+ * translatableResource on the CollectionImage/ArticleImage GID offers `alt`,
+ * while the single editor mirrors under the PARENT with key image_alt_text).
+ */
+describe("featured-image alt column", () => {
+  const columnOf = (type: BulkRowType) =>
+    BULK_COLUMNS_BY_TYPE[type].find((c) => c.id === FEATURED_IMAGE_ALT_COLUMN_ID);
+
+  it("exists on collections and articles, and nowhere else", () => {
+    expect(columnOf("collection")).toBeDefined();
+    expect(columnOf("article")).toBeDefined();
+    for (const type of BULK_ROW_TYPES) {
+      if (type === "collection" || type === "article") continue;
+      expect(columnOf(type)).toBeUndefined();
+    }
+  });
+
+  it("is editable and translatable, and only allowed on its own row types", () => {
+    const column = columnOf("collection")!;
+    expect(column.editable).toBe(true);
+    expect(column.translatable).toBe(true);
+    expect(isFeaturedImageAltColumn(column)).toBe(true);
+    expect(columnAllowedForType("collection", column)).toBe(true);
+    expect(columnAllowedForType("article", column)).toBe(true);
+    expect(columnAllowedForType("product", column)).toBe(false);
+    expect(columnAllowedForType("page", column)).toBe(false);
+  });
+
+  it("reads the row's alt text, and is read-only without a picture", () => {
+    const column = columnOf("collection")!;
+    const withImage = {
+      id: "gid://shopify/Collection/1",
+      type: "collection",
+      title: "Vases",
+      imageUrl: "https://cdn.shopify.com/s/files/1/x/collections/vase.png?v=1",
+      imageAlt: "Three vases",
+    } as unknown as BulkRow;
+    expect(resolveCellValue(withImage, column)).toEqual({ value: "Three vases", editable: true });
+
+    // No picture ⇒ nothing to describe, and no image resource to translate on.
+    const withoutImage = { id: "gid://shopify/Collection/2", type: "collection", title: "Empty" } as unknown as BulkRow;
+    expect(resolveCellValue(withoutImage, column)).toEqual({
+      value: "",
+      editable: false,
+      readOnlyReason: "missingImage",
+    });
+  });
+
+  it("survives the diff round-trip as an ordinary translatable cell", () => {
+    const column = columnOf("article")!;
+    const row = {
+      id: "gid://shopify/Article/9",
+      type: "article",
+      title: "Post",
+      imageUrl: "https://cdn.shopify.com/s/files/1/x/articles/pic.webp?v=1",
+      imageAlt: "Red organizer",
+      foreignValues: { "fr||img.featuredAlt": "" },
+    } as unknown as BulkRow;
+    const key = makeEditKey(row.id, "fr", "", FEATURED_IMAGE_ALT_COLUMN_ID);
+    const diff = computeDiff([row], [column], { [key]: "Organiseur rouge" });
+    expect(diff).toEqual([
+      {
+        rowId: row.id,
+        rowType: "article",
+        columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+        value: "Organiseur rouge",
+        locale: "fr",
+        marketId: "",
+      },
+    ]);
+    expect(
+      isValidBulkDiffEntry(diff[0], ["article"], BULK_COLUMNS_BY_TYPE as Record<BulkRowType, ColumnDescriptor[]>),
+    ).toBe(true);
+    // A market override on a translatable column stays valid; the primary
+    // layer must remain global.
+    expect(
+      isValidBulkDiffEntry(
+        { ...diff[0], locale: "", marketId: "gid://shopify/Market/1" },
+        ["article"],
+        BULK_COLUMNS_BY_TYPE as Record<BulkRowType, ColumnDescriptor[]>,
+      ),
+    ).toBe(false);
   });
 });

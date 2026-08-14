@@ -2586,6 +2586,7 @@ export const en: Translation = {
       // Dynamic metafield columns show the Shopify name (namespace.key)
       // untranslated — only the app's own columns carry i18n labels.
       imgAlt: "Alt text (main image)",
+      featuredImgAlt: "Alt text (featured image)",
       optionName: "Option {position}: name",
       optionValues: "Option {position}: values",
       // Variant rows (Phase 3): money columns get the shop currency appended

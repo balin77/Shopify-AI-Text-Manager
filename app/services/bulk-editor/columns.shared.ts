@@ -224,6 +224,42 @@ const IMAGE_COLUMN: ColumnDescriptor = {
   minWidth: 72,
 };
 
+/**
+ * Alt text of a collection's / article's FEATURED image.
+ *
+ * Translatable, unlike the product row's `img.alt`: verified live against the
+ * API (Settings → Translation Probe), `translatableResource` on the image's
+ * own `CollectionImage`/`ArticleImage` GID offers the key `alt`. The two sides
+ * of the write deliberately do NOT share an id — Shopify stores the
+ * translation on the IMAGE resource, while the DB mirror sits on the PARENT
+ * row (`ContentTranslation.key = "image_alt_text"`), which is exactly what the
+ * single editor writes, so both editors read each other's rows.
+ *
+ * NOT the same picture as the media library's `MediaImage` of the same file:
+ * the probe found the collection's file in Files with an EMPTY alt while the
+ * CollectionImage alt was set. Two records — writing the file would not move
+ * this value.
+ */
+export const FEATURED_IMAGE_ALT_COLUMN_ID = "img.featuredAlt";
+
+const FEATURED_IMAGE_ALT_COLUMN: ColumnDescriptor = {
+  id: FEATURED_IMAGE_ALT_COLUMN_ID,
+  kind: "image",
+  label: "featuredImgAlt",
+  group: "images",
+  editable: true,
+  translatable: true,
+  inputType: "text",
+  minWidth: 220,
+};
+
+/** The featured-image alt is a THIRD translation shape (Shopify target and DB
+ * mirror have different ids), so every site that branches on it asks here
+ * rather than pattern-matching the column id. */
+export function isFeaturedImageAltColumn(column: ColumnDescriptor): boolean {
+  return column.id === FEATURED_IMAGE_ALT_COLUMN_ID;
+}
+
 const BLOG_TITLE_COLUMN: ColumnDescriptor = {
   id: "blogTitle",
   kind: "readonly",
@@ -455,7 +491,15 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     VAR_BARCODE_COLUMN,
     VARIANT_POSITION_COLUMN,
   ],
-  collection: [IMAGE_COLUMN, COL_TITLE, COL_DESCRIPTION_HTML, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
+  collection: [
+    IMAGE_COLUMN,
+    COL_TITLE,
+    COL_DESCRIPTION_HTML,
+    COL_HANDLE,
+    COL_SEO_TITLE,
+    COL_SEO_DESCRIPTION,
+    FEATURED_IMAGE_ALT_COLUMN,
+  ],
   article: [
     IMAGE_COLUMN,
     BLOG_TITLE_COLUMN,
@@ -465,6 +509,7 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
+    FEATURED_IMAGE_ALT_COLUMN,
   ],
   page: [IMAGE_COLUMN, COL_TITLE, COL_BODY, COL_HANDLE, COL_SEO_TITLE, COL_SEO_DESCRIPTION],
   // Blog CONTAINERS (Plan §7): no body — Shopify's translatable keys for BLOG
@@ -1139,6 +1184,13 @@ export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): Resolv
       return { value, editable: true };
     }
     case "image": {
+      if (column.id === FEATURED_IMAGE_ALT_COLUMN_ID) {
+        // No picture ⇒ nothing to describe. Shopify's collectionUpdate/
+        // articleUpdate would accept the alt text and drop it, and there would
+        // be no image resource to hang the translation on either.
+        if (!row.imageUrl) return { value: "", editable: false, readOnlyReason: "missingImage" };
+        return { value: row.imageAlt ?? "", editable: true };
+      }
       if (column.id === IMG_ALT_COLUMN_ID) {
         if (!row.mainImage) return { value: "", editable: false, readOnlyReason: "missingImage" };
         if (!row.mainImage.mediaId) {

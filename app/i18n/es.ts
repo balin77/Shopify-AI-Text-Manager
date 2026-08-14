@@ -2585,6 +2585,7 @@ export const es: Translation = {
       // Las columnas de metacampos dinámicos muestran el nombre de Shopify
       // (namespace.key) sin traducir — solo las columnas propias llevan i18n.
       imgAlt: "Texto alternativo (imagen principal)",
+      featuredImgAlt: "Texto alternativo (imagen destacada)",
       optionName: "Opción {position}: nombre",
       optionValues: "Opción {position}: valores",
       // Filas de variantes (fase 3): las columnas monetarias reciben la

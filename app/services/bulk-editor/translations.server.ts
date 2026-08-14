@@ -41,6 +41,7 @@ export { canonicalFieldNameForColumn } from "./columns.shared";
 import {
   DIGEST_BATCH_CHUNK,
   canonicalFieldNameForColumn,
+  isFeaturedImageAltColumn,
   metafieldColumnId,
   BULK_COLUMNS_BY_TYPE,
   type BulkRow,
@@ -63,6 +64,12 @@ import {
 export function translationKeyForColumn(column: ColumnDescriptor, rowType?: BulkRowType): string | null {
   if (!column.translatable) return null;
   if (column.kind === "mofield") return column.moFieldKey ?? null;
+  // The DB key, NOT the Shopify key: a collection's/article's featured-image
+  // alt is stored on Shopify as `alt` on the image's own GID, but mirrored on
+  // the PARENT row as "image_alt_text" — the key the single editor writes.
+  // Callers that need the Shopify side go through the write path, which
+  // resolves the image resource itself.
+  if (isFeaturedImageAltColumn(column)) return "image_alt_text";
   if (column.kind !== "field") return null;
   const field = canonicalFieldNameForColumn(column);
   // A MediaImage has exactly ONE translatable key ("alt") — verified against
