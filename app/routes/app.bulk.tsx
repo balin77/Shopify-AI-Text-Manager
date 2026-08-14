@@ -59,6 +59,8 @@ import {
   LIST_DISPLAY_SEPARATOR,
   IMAGE_ROW_ALT_COLUMN_ID,
   IMG_ALT_COLUMN_ID,
+  FEATURED_IMAGE_ALT_COLUMN_ID,
+  isFeaturedImageAltColumn,
   BULK_PAGE_SIZES,
   BULK_DEFAULT_PAGE_SIZE,
   FILTER_IDS_BY_SET,
@@ -193,7 +195,11 @@ const ALT_PREVIEW_COLUMN = BULK_COLUMNS_BY_TYPE.image.find((c) => c.id === IMAGE
  * generated from the image itself rather than from surrounding text.
  */
 function isAltTextColumn(column: ColumnDescriptor): boolean {
-  return column.id === IMAGE_ROW_ALT_COLUMN_ID || column.id === IMG_ALT_COLUMN_ID;
+  return (
+    column.id === IMAGE_ROW_ALT_COLUMN_ID ||
+    column.id === IMG_ALT_COLUMN_ID ||
+    isFeaturedImageAltColumn(column)
+  );
 }
 
 const NO_PRODUCT_CAPS: ProductColumnCaps = { metafields: false, options: false, imageAlt: false };
@@ -888,8 +894,12 @@ export default function BulkEditor() {
   const previewAltColumn: ColumnDescriptor | undefined = useMemo(() => {
     if (!previewRow) return undefined;
     if (previewRow.type === "image") return ALT_PREVIEW_COLUMN;
-    if (previewRow.type !== "product") return undefined;
-    return allColumns.find((c) => c.id === IMG_ALT_COLUMN_ID);
+    // A product edits its MAIN image's alt (primary language only — an alt
+    // translation rides on the MediaImage, which a product row cannot
+    // address); a collection/article edits its FEATURED image's alt, which is
+    // translatable on the image's own resource.
+    const columnId = previewRow.type === "product" ? IMG_ALT_COLUMN_ID : FEATURED_IMAGE_ALT_COLUMN_ID;
+    return allColumns.find((c) => c.id === columnId);
   }, [previewRow, allColumns]);
 
   /** Localized "why is this cell read-only" text per reason — the grid and the
@@ -1623,7 +1633,7 @@ export default function BulkEditor() {
     // has its own image-aware generator (see handleCellImprove).
     const canImprove =
       (column.kind === "field" && (row.type !== "image" || column.id === IMAGE_ROW_ALT_COLUMN_ID)) ||
-      column.id === IMG_ALT_COLUMN_ID;
+      isAltTextColumn(column);
     // Primary view: fan out into every active language. Foreign view: fill the
     // language on screen from the primary value — the editor's own narrowing.
     const canFanOut = column.translatable && fanOutTargets().length > 0;
