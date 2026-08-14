@@ -170,11 +170,23 @@ export function BulkGrid({
   const titleSticky =
     displayColumns[0]?.id === "field.title" || displayColumns[0]?.id === "productTitle";
 
+  // A column whose cells carry the action menu gives up CELL_ACTIONS_GUTTER of
+  // its content width to it — so its minimum has to GROW by exactly that,
+  // otherwise the reservation would squeeze the narrow columns (an option name
+  // at 160px would render its text in 134). Probed against the rendered rows:
+  // read-only, money and status columns have no menu and stay untouched.
+  const columnGutter = displayColumns.map((col) =>
+    cellActions && rows.some((row) => !!cellActions(row, col)) ? CELL_ACTIONS_GUTTER : 0,
+  );
+
   const gridTemplateColumns = [
     `${IMAGE_COLUMN_WIDTH}px`,
     // Columns without a maxWidth share the remaining width equally (1fr);
     // a capped one stays at its own size instead of stretching.
-    ...displayColumns.map((c) => `minmax(${c.minWidth}px, ${c.maxWidth ? `${c.maxWidth}px` : "1fr"})`),
+    ...displayColumns.map((c, index) => {
+      const min = c.minWidth + columnGutter[index];
+      return `minmax(${min}px, ${c.maxWidth ? `${c.maxWidth + columnGutter[index]}px` : "1fr"})`;
+    }),
   ].join(" ");
 
   const stickyClass = (index: number): string => {

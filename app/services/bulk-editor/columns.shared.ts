@@ -330,11 +330,11 @@ function fieldColumn(
 // translatable mirrors Shopify's translatable keys for these resources
 // (title/body_html/handle/meta_title/meta_description/product_type/summary_html);
 // status is a Shopify enum and never translatable.
-const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", minWidth: 180, sortKey: "title" });
+const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", minWidth: 220, sortKey: "title" });
 const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true, inputType: "textarea", minWidth: 280 });
-const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 180, sortKey: "productType" });
+const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 200, sortKey: "productType" });
 const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
-const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 180, sortKey: "handle" });
+const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 220, sortKey: "handle" });
 const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
 const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
 const COL_BODY = fieldColumn("body", { translatable: true, inputType: "textarea", minWidth: 280 });
@@ -575,7 +575,7 @@ export function buildOptionColumns(): ColumnDescriptor[] {
         // through the sub-resource write path (translations.server.ts).
         translatable: true,
         inputType: field === "values" ? "textarea" : "text",
-        minWidth: field === "values" ? 220 : 160,
+        minWidth: field === "values" ? 240 : 200,
         optionPosition: position,
         optionField: field,
       });
