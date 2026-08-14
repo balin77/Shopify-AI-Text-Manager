@@ -315,13 +315,21 @@ export function BulkGrid({
         }
         /* Trailing edit column: the image cell reveals its affordance on
            hover, which a touch device never does — so those get an explicit
-           edit button at the end of every row instead. Collapsed to zero
-           width (and removed from the a11y tree) everywhere else. */
+           edit button at the end of every row instead. Everywhere else the
+           TRACK collapses to zero and the BUTTON is what disappears.
+
+           The cell element itself must never be display:none. Rows are
+           display:contents, so every cell is a direct grid item placed by
+           auto-flow; a cell that stops generating a box leaves its track
+           unfilled, and the next row's first cell slides into that gap —
+           every following cell then sits one track off, cumulatively. */
         .cp-bulk-grid { --cp-bulk-edit-col: 0px; }
-        .cp-bulk-edit-cell { display: none; }
+        .cp-bulk-edit-cell { padding: 0; overflow: hidden; }
+        .cp-bulk-edit-btn { display: none; }
         @media (hover: none) and (pointer: coarse) {
           .cp-bulk-grid { --cp-bulk-edit-col: 44px; }
-          .cp-bulk-edit-cell { display: flex; align-items: center; justify-content: center; }
+          .cp-bulk-edit-cell { padding: 4px 6px; align-items: center; justify-content: center; }
+          .cp-bulk-edit-btn { display: inline-flex; }
         }
         /* Field colours, matching the single editor (Plan §2): applied to the
            cell WRAPPER (the input itself is transparent). Same hexes as
@@ -625,13 +633,17 @@ export function BulkGrid({
                 );
               })}
               <div role="cell" className="cp-bulk-cell cp-bulk-edit-cell">
-                <Button
-                  variant="tertiary"
-                  size="micro"
-                  icon={EditIcon}
-                  accessibilityLabel={openInEditorLabel}
-                  onClick={() => onOpenInEditor(row)}
-                />
+                {/* The wrapper, not the cell, is what the media query hides —
+                    see the CSS note on .cp-bulk-edit-cell. */}
+                <span className="cp-bulk-edit-btn">
+                  <Button
+                    variant="tertiary"
+                    size="micro"
+                    icon={EditIcon}
+                    accessibilityLabel={openInEditorLabel}
+                    onClick={() => onOpenInEditor(row)}
+                  />
+                </span>
               </div>
             </div>
           );
