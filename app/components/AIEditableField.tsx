@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TextField, Button, InlineStack } from "@shopify/polaris";
 import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
@@ -34,6 +34,13 @@ interface AIEditableFieldProps {
   isFallbackValue?: boolean;
   /** If true, the field is read-only (disabled). Used when primary locale template editing is not enabled. */
   readOnly?: boolean;
+  /**
+   * Identity of what this field currently edits (item + locale). The component
+   * is reused across items/locales instead of remounted, so an open AI
+   * instruction box would otherwise survive the switch and apply the text
+   * written for one target to another. Changing this closes the box.
+   */
+  aiPromptScopeKey?: string;
   /** If true, show required indicator (red asterisk) */
   requiredIndicator?: boolean;
   /** Suffix appended by Shopify (e.g. " – Shop Name"). Displayed inside the field non-editable, and counted in char limit. */
@@ -80,6 +87,7 @@ export function AIEditableField({
   isFallbackValue = false,
   readOnly = false,
   requiredIndicator = false,
+  aiPromptScopeKey,
   seoSuffix,
   error,
   onGenerateAI,
@@ -100,6 +108,11 @@ export function AIEditableField({
   // The generate button no longer fires straight away: it opens the instruction
   // box first, which then calls onGenerateAI (with or without an instruction).
   const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
+  // Drop an open box (and the text in it) when the field switches target —
+  // another gallery image (fieldKey), another item or locale (scope key).
+  useEffect(() => {
+    setInstructionPromptOpen(false);
+  }, [fieldKey, aiPromptScopeKey]);
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {

@@ -38,6 +38,13 @@ interface AIEditableHTMLFieldProps {
   /** If true, show required indicator (red asterisk) */
   requiredIndicator?: boolean;
   /**
+   * Identity of what this field currently edits (item + locale). The component
+   * is reused across items/locales instead of remounted, so an open AI
+   * instruction box would otherwise survive the switch and apply the text
+   * written for one target to another. Changing this closes the box.
+   */
+  aiPromptScopeKey?: string;
+  /**
    * Runs the generation. The argument is the merchant's ad-hoc instruction from
    * the AIInstructionPrompt box — `undefined` when the box was submitted empty,
    * which must behave exactly like the old one-click generation.
@@ -75,6 +82,7 @@ export function AIEditableHTMLField({
   isFallbackValue = false,
   readOnly = false,
   requiredIndicator = false,
+  aiPromptScopeKey,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -108,6 +116,11 @@ export function AIEditableHTMLField({
   // The generate button no longer fires straight away: it opens the instruction
   // box first, which then calls onGenerateAI (with or without an instruction).
   const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
+  // Drop an open box (and the text in it) when the field switches target —
+  // another item or locale. See aiPromptScopeKey.
+  useEffect(() => {
+    setInstructionPromptOpen(false);
+  }, [fieldKey, aiPromptScopeKey]);
 
   // Cleanup typing timer on unmount
   useEffect(() => {

@@ -51,14 +51,22 @@ export function AIInstructionPrompt({ onSubmit, onCancel, isLoading = false }: A
         borderRadius: "8px",
       }}
       onKeyDown={(e) => {
-        // Enter submits (Shift+Enter keeps a line break), Escape closes —
-        // the box is a mini dialog, not a content field.
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          if (!isLoading) submit();
-        } else if (e.key === "Escape") {
+        // Escape closes from anywhere in the box.
+        if (e.key === "Escape") {
           e.preventDefault();
           onCancel();
+          return;
+        }
+        // Enter submits (Shift+Enter keeps a line break) — but ONLY from the
+        // text input. Handling it on the whole container would swallow Enter on
+        // the focused Cancel button and generate instead of closing.
+        const target = e.target as HTMLElement;
+        if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) return;
+        // An IME's candidate-confirming Enter must not submit a half-composed
+        // instruction.
+        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          if (!isLoading) submit();
         }
       }}
     >

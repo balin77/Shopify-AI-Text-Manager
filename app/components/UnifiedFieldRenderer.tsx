@@ -348,6 +348,7 @@ export function UnifiedFieldRenderer(
         isFallbackValue={isFallbackValue}
         readOnly={readOnly}
         requiredIndicator={requiredIndicator}
+        aiPromptScopeKey={`${selectedItem?.id ?? ""}|${currentLanguage}`}
         hasFieldMissingTranslations={fieldHasMissingTranslations}
         onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
@@ -384,6 +385,7 @@ export function UnifiedFieldRenderer(
       isFallbackValue={isFallbackValue}
       readOnly={effectiveReadOnly}
       requiredIndicator={requiredIndicator}
+      aiPromptScopeKey={`${selectedItem?.id ?? ""}|${currentLanguage}`}
       error={fieldError}
       hasFieldMissingTranslations={fieldHasMissingTranslations}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}
