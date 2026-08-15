@@ -231,10 +231,15 @@ export class IndexNowAutoSubmitService {
 
   /** Shops that have queued URLs AND an enabled config that is due again. */
   private async findDueShops(now: Date): Promise<Array<{ shop: string; hostCheckedAt: Date | null }>> {
+    // Biggest backlog first, NOT alphabetically: the cap is a safety bound, and
+    // an alphabetical slice would permanently starve every shop past it — the
+    // exact starvation class the llms sweep documents. Ordering by pending
+    // count means the cap, if it ever bites, drops the shops with the least to
+    // send. Fairness among the survivors is then the config query's job.
     const pending = await db.seoIndexNowQueue.groupBy({
       by: ["shop"],
       _count: { _all: true },
-      orderBy: { shop: "asc" },
+      orderBy: { _count: { shop: "desc" } },
       take: MAX_CANDIDATE_SHOPS,
     });
     if (pending.length === 0) return [];

@@ -122,22 +122,32 @@ export function articleUrl(host: string, blogHandle: string, articleHandle: stri
 }
 
 /**
- * Which product statuses are worth telling a search engine about incrementally.
+ * Is this product change worth telling a search engine about?
  *
- * ACTIVE   → the URL is live and indexable: re-crawl it.
- * DRAFT /
- * ARCHIVED → the URL is GONE (404). IndexNow is explicitly meant to carry
- *            removals too, so an unpublish must be reported — otherwise the
- *            engine keeps a dead URL until its own re-crawl notices.
- * UNLISTED → live but served `noindex,nofollow` and absent from sitemap.xml.
- *            The merchant deliberately kept it out of search; asking an engine
- *            to crawl it would publish a link they chose not to publish.
+ * A URL is only worth submitting if it is live NOW, or if it WAS live the last
+ * time we saw it — in which case it just turned into a 404 and reporting
+ * removals is half of what IndexNow is for.
  *
- * The BULK path is stricter (ACTIVE only): "submit my catalog" is about the
- * indexable catalog, not about a sweep of every dead handle we ever cached.
+ * current UNLISTED → never. Live, but served `noindex,nofollow` and absent
+ *                    from sitemap.xml: the merchant deliberately kept it out of
+ *                    search, so asking an engine to crawl it would publish a
+ *                    link they chose not to publish.
+ * current ACTIVE   → yes, re-crawl it.
+ * otherwise        → only if `previous` was ACTIVE. A product CREATED as a
+ *                    draft was never reachable, so its URL is a 404 that no
+ *                    engine ever knew about; submitting it would be noise.
+ *
+ * `previous` is the cached status from BEFORE the sync overwrote it (and, on
+ * delete, the last state we hold). The BULK path stays ACTIVE-only: "submit my
+ * catalog" is about the indexable catalog, not a sweep of dead handles.
  */
-export function shouldEnqueueProductStatus(status: string | null | undefined): boolean {
-  return status !== "UNLISTED";
+export function shouldEnqueueProductChange(
+  previous: string | null | undefined,
+  current: string | null | undefined,
+): boolean {
+  if (current === "UNLISTED") return false;
+  if (current === "ACTIVE") return true;
+  return previous === "ACTIVE";
 }
 
 export interface IndexNowSubmitBody {
@@ -592,22 +602,38 @@ export type SubmitAllOutcome =
   | { status: "disabled" }
   | { status: "cooldown"; retryAfterMs: number };
 
-export async function submitAll(
+/**
+ * Cheap pre-check with the same rules `submitAll` enforces. The route calls it
+ * BEFORE the paginated blog/page lookups so a cooldown-blocked click doesn't
+ * pay for up to 40 GraphQL round-trips whose result is then thrown away.
+ */
+export async function canSubmitAll(
   db: PrismaClient,
   shop: string,
-  options: CollectOptions & { now?: Date } = {},
-): Promise<SubmitAllOutcome> {
+  now: Date = new Date(),
+): Promise<{ status: "ok" } | { status: "disabled" } | { status: "cooldown"; retryAfterMs: number }> {
   const config = await getEnabledConfig(db, shop);
   if (!config) return { status: "disabled" };
-
-  const now = options.now ?? new Date();
   if (config.lastFullSubmitAt && SUBMIT_ALL_COOLDOWN_MS > 0) {
     const elapsed = now.getTime() - config.lastFullSubmitAt.getTime();
     if (elapsed < SUBMIT_ALL_COOLDOWN_MS) {
       return { status: "cooldown", retryAfterMs: SUBMIT_ALL_COOLDOWN_MS - elapsed };
     }
   }
+  return { status: "ok" };
+}
 
+export async function submitAll(
+  db: PrismaClient,
+  shop: string,
+  options: CollectOptions & { now?: Date } = {},
+): Promise<SubmitAllOutcome> {
+  const now = options.now ?? new Date();
+  const allowed = await canSubmitAll(db, shop, now);
+  if (allowed.status !== "ok") return allowed;
+
+  // Re-read: canSubmitAll already proved it exists and is enabled.
+  const config = (await getEnabledConfig(db, shop))!;
   const urls = await collectStoreUrls(db, shop, config.host, options);
   const result = await submitUrls(config.host, config.key, config.keyLocation, urls);
 

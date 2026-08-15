@@ -122,7 +122,20 @@ async function probeKeyFile(keyLocation: string, expectedKey: string, declaredHo
     });
 
     if (res.status >= 300 && res.status < 400 && location) {
-      current = new URL(location, current).toString();
+      try {
+        current = new URL(location, current).toString();
+      } catch {
+        // A malformed Location header must produce a REPORT, not a 500 — the
+        // whole point of this route is to explain what went wrong.
+        return {
+          reachable: false,
+          finalStatus: res.status,
+          hops,
+          bodyMatchesKey: null,
+          body: null,
+          error: `Unparseable redirect target: ${location}`,
+        };
+      }
       continue;
     }
 
@@ -264,21 +277,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const config = await getIndexNowConfig(db, session.shop);
   const primaryDomain = await fetchPrimaryDomain(admin, session.shop);
 
-  if (!config) {
+  // Not configured, or configured but switched off: the key-file proxy 404s
+  // for a disabled config, so probing anyway would report "key file not
+  // reachable, check your app proxy" — pointing at a problem that isn't there —
+  // and would still fire a live submission for a feature the merchant turned
+  // off. Report the actual state instead.
+  if (!config || !config.enabled) {
     return json({
       report: {
         generatedAt: new Date().toISOString(),
         shop: session.shop,
-        configured: false,
+        configured: !!config,
         enabled: false,
-        host: "",
+        host: config?.host ?? "",
         primaryDomain,
-        hostIsPrimaryDomain: false,
-        keyLocation: "",
+        hostIsPrimaryDomain: config ? config.host === primaryDomain : false,
+        keyLocation: config?.keyLocation ?? "",
         keyPath: KEY_PROXY_PATH,
         keyFile: { reachable: false, finalStatus: null, hops: [], bodyMatchesKey: null, body: null },
         submitTest: { url: "", status: null, kind: "networkError" as const, responseBody: null },
-        verdict: ["ℹ️ IndexNow is not enabled yet — enable it in SEO → IndexNow, then run this probe."],
+        verdict: [
+          config
+            ? "ℹ️ IndexNow is switched off for this shop — the key file is not served while disabled. Enable it in SEO → IndexNow, then run this probe."
+            : "ℹ️ IndexNow is not enabled yet — enable it in SEO → IndexNow, then run this probe.",
+        ],
       } satisfies IndexNowProbeReport,
     });
   }

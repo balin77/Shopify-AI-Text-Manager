@@ -39,6 +39,7 @@ import {
   drainQueue,
   getQueueCount,
   firstFailureKind,
+  canSubmitAll,
   URL_COLLECT_CAP,
   type SubmitStatusKind,
 } from "../services/seo/index-now.service";
@@ -213,6 +214,19 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "deprovisioned" });
   }
   if (actionType === "submitAll") {
+    // Guard BEFORE the paginated lookups below — they are the expensive part
+    // and a cooldown-blocked click would discard all of it.
+    const allowed = await canSubmitAll(db, session.shop);
+    if (allowed.status === "disabled") {
+      return json<ActionResult>({ ok: false, error: "disabled" }, { status: 409 });
+    }
+    if (allowed.status === "cooldown") {
+      return json<ActionResult>({
+        ok: true,
+        kind: "cooldown",
+        retryAfterMinutes: Math.max(1, Math.ceil(allowed.retryAfterMs / 60000)),
+      });
+    }
     const [blogHandles, unpublishedPageIds] = await Promise.all([
       fetchBlogHandles(admin),
       fetchUnpublishedPageIds(admin),

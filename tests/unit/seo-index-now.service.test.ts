@@ -9,7 +9,7 @@ import {
   chunkUrls,
   describeSubmitStatus,
   firstFailureKind,
-  shouldEnqueueProductStatus,
+  shouldEnqueueProductChange,
   submitUrls,
   collectStoreUrls,
   drainQueue,
@@ -67,14 +67,30 @@ describe("URL builders", () => {
   });
 });
 
-describe("shouldEnqueueProductStatus", () => {
-  it("reports removals (DRAFT/ARCHIVED) but never UNLISTED", () => {
-    expect(shouldEnqueueProductStatus("ACTIVE")).toBe(true);
-    // The URL just became a 404 — IndexNow is meant to carry that.
-    expect(shouldEnqueueProductStatus("DRAFT")).toBe(true);
-    expect(shouldEnqueueProductStatus("ARCHIVED")).toBe(true);
-    // Live but noindex + absent from sitemap.xml: deliberately not published.
-    expect(shouldEnqueueProductStatus("UNLISTED")).toBe(false);
+describe("shouldEnqueueProductChange", () => {
+  it("submits anything that is live now", () => {
+    expect(shouldEnqueueProductChange("DRAFT", "ACTIVE")).toBe(true);
+    expect(shouldEnqueueProductChange(null, "ACTIVE")).toBe(true);
+  });
+
+  it("reports an unpublish — the URL that was live just became a 404", () => {
+    expect(shouldEnqueueProductChange("ACTIVE", "DRAFT")).toBe(true);
+    expect(shouldEnqueueProductChange("ACTIVE", "ARCHIVED")).toBe(true);
+    // Delete: there is no "after".
+    expect(shouldEnqueueProductChange("ACTIVE", null)).toBe(true);
+  });
+
+  it("stays silent about a product that was never live", () => {
+    // Created as a draft: an engine never knew this URL, so submitting the
+    // 404 is pure noise.
+    expect(shouldEnqueueProductChange(null, "DRAFT")).toBe(false);
+    expect(shouldEnqueueProductChange("DRAFT", "ARCHIVED")).toBe(false);
+    expect(shouldEnqueueProductChange("DRAFT", null)).toBe(false);
+  });
+
+  it("never submits UNLISTED — live, but deliberately kept out of search", () => {
+    expect(shouldEnqueueProductChange("ACTIVE", "UNLISTED")).toBe(false);
+    expect(shouldEnqueueProductChange(null, "UNLISTED")).toBe(false);
   });
 });
 
