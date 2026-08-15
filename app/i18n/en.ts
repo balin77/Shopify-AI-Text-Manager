@@ -1322,6 +1322,7 @@ export const en: Translation = {
     keywordMakePrimary: "Make primary",
     keywordRemove: "Remove",
     keywordLimitHint: "Maximum of {max} keywords per item.",
+    keywordLocaleScopeHint: "Keywords for {language} — every language tracks its own.",
     keywordOpError: "Could not update keywords. Please reload and try again.",
     keywordAggregateStuffing: "Combined keyword density is above 5% — risk of keyword stuffing.",
     keywordStuffingWarning: "The generated text still over-uses a tracked keyword after one retry — review it before accepting.",

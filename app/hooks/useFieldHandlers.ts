@@ -418,6 +418,10 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
       contextTitle,
       contextDescription,
       mainLanguage,
+      // Which locale's tracked keywords the prompt should use ("" = primary,
+      // the SeoKeyword convention). `mainLanguage` is a display name and can't
+      // serve — without this, French copy got the German target keyword.
+      keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
       sendImageToAI: sendImageToAI.toString(),
       ...(imageUrl && { imageUrl }),
       ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
@@ -489,6 +493,9 @@ const handleFormatAI = (fieldKey: string) => {
       contextTitle,
       contextDescription,
       mainLanguage,
+      // Same locale contract as generation — the format pass must preserve THIS
+      // language's keywords, not the primary language's.
+      keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
       sendImageToAI: sendImageToAI.toString(),
       ...(imageUrl && { imageUrl }),
     },

@@ -1321,6 +1321,7 @@ export const es: Translation = {
     keywordMakePrimary: "Hacer principal",
     keywordRemove: "Quitar",
     keywordLimitHint: "Máximo de {max} palabras clave por elemento.",
+    keywordLocaleScopeHint: "Palabras clave para {language}: cada idioma tiene las suyas.",
     keywordOpError: "No se pudieron actualizar las palabras clave. Recarga la página e inténtalo de nuevo.",
     keywordAggregateStuffing: "La densidad combinada de palabras clave supera el 5 % — riesgo de keyword stuffing.",
     keywordStuffingWarning: "El texto generado sigue usando en exceso una palabra clave rastreada tras un reintento — revísalo antes de aceptarlo.",

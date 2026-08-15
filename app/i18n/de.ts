@@ -1319,6 +1319,7 @@ export const de = {
     keywordMakePrimary: "Als Primary",
     keywordRemove: "Entfernen",
     keywordLimitHint: "Maximal {max} Keywords pro Eintrag.",
+    keywordLocaleScopeHint: "Keywords für {language} — jede Sprache hat ihre eigenen.",
     keywordOpError: "Keywords konnten nicht aktualisiert werden. Bitte Seite neu laden und erneut versuchen.",
     keywordAggregateStuffing: "Gemeinsame Keyword-Dichte über 5 % — Gefahr von Keyword-Stuffing.",
     keywordStuffingWarning: "Der generierte Text verwendet ein getracktes Keyword auch nach einem Neuversuch zu häufig — bitte vor dem Übernehmen prüfen.",

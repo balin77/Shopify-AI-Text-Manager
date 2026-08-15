@@ -11,34 +11,15 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
-import { analyzeOnPage, getItemKeywords } from "~/services/seo/keywords.service";
+import {
+  findStuffedKeyword,
+  keywordPreservationLine,
+  keywordRequirementLines,
+  loadTrackedKeywords,
+  resolveKeywordLocale,
+  stuffingRetryWarning,
+} from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
-
-/**
- * Post-generation stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). Field-type
- * aware, because one global density threshold can't work: a 5-word SEO title
- * containing a 2-word keyword is ~40 % density by definition.
- *   - long content: density > 3 % for any tracked keyword
- *   - short fields: the same keyword occurring more than once
- * Returns the first offending keyword, or null when the output is clean.
- */
-function findStuffedKeyword(
-  generated: string,
-  keywords: string[],
-  isLongContent: boolean,
-): string | null {
-  for (const keyword of keywords) {
-    if (!keyword) continue;
-    // analyzeOnPage is pure; feeding the generated text as body gives us
-    // occurrence + density counting with the same word-boundary rules the
-    // keywords tab uses.
-    const analysis = analyzeOnPage({ keyword, bodyHtml: generated });
-    if (isLongContent ? analysis.densityPct > 3 : analysis.occurrences > 1) {
-      return keyword;
-    }
-  }
-  return null;
-}
 
 export async function handleFormatField(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, contentType, itemId } = ctx;
@@ -59,11 +40,17 @@ export async function handleFormatField(ctx: AIActionContext): Promise<DataRespo
   const sourceText = sanitizePromptInput(rawSourceText, { fieldType: "general", allowNewlines: true });
   const formatInstruction = sanitizePromptInput(rawFormatInstruction, { fieldType: "general", allowNewlines: true });
 
+  // Same preserve-don't-add rule as handleFormatAIText: an ad-hoc format pass
+  // must not silently drop a keyword the text already ranks for.
+  const keywordLine = keywordPreservationLine(
+    await loadTrackedKeywords(db, session.shop, itemId, resolveKeywordLocale(formData), fieldType),
+  );
+
   // Build the prompt
   const prompt = `${formatInstruction}
 
 Text to format:
-${sourceText}
+${sourceText}${keywordLine}
 
 Return only the formatted text, without explanations.`;
 
@@ -172,28 +159,21 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   // track one primary + several secondary keywords per locale; generation
   // weaves them into the prompt. `itemId` here is the same Shopify GID the
   // keywords feature stores as `resourceId` (both come straight from the
-  // content editor's `selectedItem.id`, e.g. db.product.id), and locale "" is
-  // the primary-locale keyword set, so this lookup matches keys 1:1 with no
-  // normalization needed.
+  // content editor's `selectedItem.id`, e.g. db.product.id), so this lookup
+  // matches keys 1:1 with no normalization needed.
   //
-  // Locale dimension (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 5b): `mainLanguage`
-  // here is a human-readable display name (e.g. "German"), not a Shopify
-  // locale code, and this handler always generates content in the PRIMARY
-  // language — locale "" therefore stays correct. If a future translation-
-  // generation flow starts passing an explicit target locale/language code
-  // through `ctx`/formData, the lookup below should switch to that locale's
-  // keyword set instead of hardcoding "".
-  const trackedKeywordRows = ["title", "seoTitle", "metaDescription", "description"].includes(fieldType)
-    ? await getItemKeywords(db, session.shop, itemId, "")
-    : [];
-  const sanitizedTrackedKeyword = (() => {
-    const primary = trackedKeywordRows.find((r) => r.role === "primary");
-    return primary ? sanitizePromptInput(primary.keyword, { fieldType: "general" }) : null;
-  })();
-  const sanitizedSecondaryKeywords = trackedKeywordRows
-    .filter((r) => r.role === "secondary")
-    .map((r) => sanitizePromptInput(r.keyword, { fieldType: "general" }))
-    .filter(Boolean);
+  // Locale dimension: `mainLanguage` is a human-readable display name (e.g.
+  // "German"), NOT a locale code — it can't drive the lookup. The client sends
+  // the editor's current locale as `keywordLocale` (already collapsed to "" for
+  // the primary locale), so generating French copy pulls the French keyword set
+  // instead of the primary one. Field gating lives in the helper.
+  const trackedKeywords = await loadTrackedKeywords(
+    db,
+    session.shop,
+    itemId,
+    resolveKeywordLocale(formData),
+    fieldType,
+  );
 
   // Build field-type-aware prompt
   let prompt = `Create an improved ${genFieldLabel} for the following content.`;
@@ -217,27 +197,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
     prompt += `\n- Length: ${charLimit}`;
   }
 
-  if (sanitizedTrackedKeyword) {
-    prompt += `\n- Naturally include the target keyword "${sanitizedTrackedKeyword}" (do not stuff it).`;
-  }
-  if (sanitizedSecondaryKeywords.length) {
-    prompt += `\n- If it fits naturally, you may also mention: ${sanitizedSecondaryKeywords.map((s) => `"${s}"`).join(", ")}. Only use those that flow with the sentence; skip any that would sound forced or repetitive. Never use more than one per sentence.`;
-  }
-  // Search-intent context (PLAN_KEYWORDS_EXPANSION.md §7.2): when the primary
-  // keyword has been classified, tell the model what the searcher is after —
-  // a small but measurable quality lift, especially for meta descriptions.
-  {
-    const primaryIntent = trackedKeywordRows.find((r) => r.role === "primary")?.intent;
-    const INTENT_HINTS: Record<string, string> = {
-      informational: "the searcher wants to learn — lead with the answer/benefit, not the sale",
-      commercial: "the searcher is comparing options — emphasize differentiators and proof",
-      transactional: "the searcher is ready to buy — emphasize purchase, benefit, availability",
-      navigational: "the searcher looks for a specific brand/page — be precise and recognizable",
-    };
-    if (primaryIntent && INTENT_HINTS[primaryIntent]) {
-      prompt += `\n- Search intent of the target keyword: ${primaryIntent} — ${INTENT_HINTS[primaryIntent]}.`;
-    }
-  }
+  prompt += keywordRequirementLines(trackedKeywords, genField?.type === "slug");
 
   if (genField?.type === "slug") {
     prompt += `\n- Use only lowercase letters (a-z), digits (0-9), and hyphens (-)`;
@@ -325,10 +285,9 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
     // Stuffing guard (§3.2): hard-enforced in the handler, not just the
     // prompt. One retry with an explicit warning; if the retry still stuffs,
     // accept the output and surface a warning flag to the client.
-    const allTrackedKeywords = [
-      ...(sanitizedTrackedKeyword ? [sanitizedTrackedKeyword] : []),
-      ...sanitizedSecondaryKeywords,
-    ];
+    // A slug spells the keyword hyphenated, so density/occurrence counting over
+    // it is meaningless — skip the guard rather than measure the wrong thing.
+    const allTrackedKeywords = genField?.type === "slug" ? [] : trackedKeywords.all;
     let keywordStuffingWarning = false;
     if (allTrackedKeywords.length > 0) {
       const stuffed = findStuffedKeyword(generatedContent, allTrackedKeywords, isGenLongContent);
@@ -338,13 +297,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
           fieldType,
           keyword: stuffed,
         });
-        const retryPrompt =
-          prompt +
-          `\n\nWARNING: A previous attempt stuffed the keyword "${stuffed}". Rewrite with ${
-            isGenLongContent
-              ? "lower keyword density (well below 3%) — mention each keyword only where it truly fits"
-              : "each keyword mentioned at most once"
-          }.`;
+        const retryPrompt = prompt + stuffingRetryWarning(stuffed, isGenLongContent);
         generatedContent = await generate(appendUserInstruction(retryPrompt, userInstruction));
         keywordStuffingWarning =
           findStuffedKeyword(generatedContent, allTrackedKeywords, isGenLongContent) !== null;
@@ -425,6 +378,21 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
   // Only description/body fields and blog summary (type "html") get HTML formatting
   const supportsHtmlFormatting = field?.type === "html";
 
+  // Tracked keywords (same locale contract as generation). Formatting must not
+  // INTRODUCE keywords — its contract is "keep the content" — but it must stop
+  // silently dropping one that is already in the text, which used to cost the
+  // item its on-page score on every reformat. Slugs are excluded: their own
+  // prompt already says "keep the original keywords" and a hyphenated slug
+  // can't be matched against the keyword phrase anyway.
+  const formatTrackedKeywords = await loadTrackedKeywords(
+    db,
+    session.shop,
+    itemId,
+    resolveKeywordLocale(formData),
+    fieldType,
+  );
+  const keywordLine = field?.type === "slug" ? "" : keywordPreservationLine(formatTrackedKeywords);
+
   // Build field-type-aware prompt
   let prompt = "";
   let isLongContent = false;
@@ -488,6 +456,7 @@ Do NOT:
         prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
       }
     }
+    prompt += keywordLine;
     prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language. Output the result in ${mainLanguage}.`;
   } else {
     // Text fields (title, seoTitle, metaDescription, etc.) - light formatting only, no HTML
@@ -519,6 +488,7 @@ Do NOT:
         prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
       }
     }
+    prompt += keywordLine;
     prompt += `\n\nReturn ONLY the formatted ${fieldLabel} as plain text (no HTML). Keep the original language. Output the result in ${mainLanguage}.`;
   }
 

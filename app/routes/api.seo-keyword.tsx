@@ -7,9 +7,10 @@
  *
  * Since the keywords expansion (PLAN_KEYWORDS_EXPANSION.md Phase 1) an item
  * tracks up to MAX_KEYWORDS_PER_ITEM keywords (1 primary + secondaries) per
- * locale; this endpoint always operates on the PRIMARY locale ("") — the only
- * locale the sidebar edits. Every mutation answers with the fresh keyword
- * list so the client can render without a follow-up load.
+ * locale. The sidebar edits whichever locale the editor is currently on, so
+ * every request carries a `locale` ("" = the shop's primary locale, the
+ * SeoKeyword convention). Every mutation answers with the fresh keyword list
+ * for THAT locale so the client can render without a follow-up load.
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
@@ -26,6 +27,7 @@ import {
   type KeywordRole,
 } from "../services/seo/keywords.service";
 import { getFormString } from "../utils/form-data.utils";
+import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import type { DataResponse } from "~/types/data-response";
 
 const RESOURCE_TYPES: KeywordResourceType[] = ["Product", "Collection", "Article", "Page"];
@@ -36,8 +38,12 @@ export interface SidebarKeyword {
   role: KeywordRole;
 }
 
-async function loadSidebarKeywords(shop: string, resourceId: string): Promise<SidebarKeyword[]> {
-  const rows = await getItemKeywords(db, shop, resourceId, "");
+async function loadSidebarKeywords(
+  shop: string,
+  resourceId: string,
+  locale: string,
+): Promise<SidebarKeyword[]> {
+  const rows = await getItemKeywords(db, shop, resourceId, locale);
   return rows.map((r) => ({ id: r.id, keyword: r.keyword, role: r.role }));
 }
 
@@ -47,11 +53,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const resourceId = url.searchParams.get("resourceId") || "";
+  // Reads are NOT validated against the shop's published locales on purpose:
+  // getCachedShopLocales resolves with [] when the lookup fails, and rejecting
+  // on that would empty the merchant's keyword list exactly when Shopify is
+  // having a bad minute. The query is shop-scoped either way, so an unknown
+  // locale simply returns no rows. Writes below do validate (fail closed).
+  const locale = url.searchParams.get("locale") || "";
   if (!resourceId) {
     return json({ keywords: [] as SidebarKeyword[] });
   }
 
-  return json({ keywords: await loadSidebarKeywords(shop, resourceId) });
+  return json({ keywords: await loadSidebarKeywords(shop, resourceId, locale) });
 };
 
 type ActionResult =
@@ -62,7 +74,7 @@ type ActionResult =
   | { ok: false; error: "cannibalization"; existingItemTitle: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
   const form = await request.formData();
@@ -71,6 +83,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   if (!resourceId) {
     return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
   }
+
+  // The locale the sidebar is on ("" = primary). Only CREATION validates it
+  // against the shop's published locales (below); remove/makePrimary must keep
+  // working after a locale is unpublished — otherwise the merchant would be
+  // locked out of deleting the very rows that locale left behind.
+  const localeInput = getFormString(form, "locale");
 
   if (op === "add") {
     const resourceType = getFormString(form, "resourceType") as KeywordResourceType;
@@ -84,13 +102,43 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     ) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
+    // Validate the locale against the shop's own locales. "" (primary) is
+    // always accepted without a lookup.
+    //
+    // Two deliberate differences from the sibling write path in
+    // app.seo.keywords.tsx:
+    //
+    //  - `published` is NOT required. That page's locale picker lists published
+    //    secondaries only, so the stricter rule can never reject its own UI.
+    //    This endpoint follows the CONTENT EDITOR, which offers every shop
+    //    locale (loader-factory hands `getCachedShopLocales` through
+    //    unfiltered) — requiring `published` here would let a merchant open the
+    //    keywords panel on an unpublished locale and get a generic "could not
+    //    update" on every add. A keyword is merchant-side tracking metadata; it
+    //    is never served to the storefront, so publication state is irrelevant.
+    //
+    //  - An EMPTY list is treated as "lookup failed", not "no secondaries".
+    //    getCachedShopLocales swallows non-401 errors and resolves with []
+    //    (CLAUDE.md: never gate on a failed lookup), so gating on it would
+    //    block keyword creation for the length of any Shopify hiccup.
+    let locale = "";
+    if (localeInput) {
+      const shopLocales = await getCachedShopLocales(admin, shop);
+      const knownSecondary =
+        shopLocales.length === 0 ||
+        shopLocales.some((l: any) => !l.primary && l.locale === localeInput);
+      if (!knownSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      locale = localeInput;
+    }
     // Cross-item cannibalization guard (plan §7.1), bypassed after the
     // merchant confirmed via "add anyway".
     const acceptCannibalization = getFormString(form, "acceptCannibalization") === "true";
     if (role === "primary" && !acceptCannibalization) {
       const elsewhere = await findPrimaryElsewhere(db, shop, {
         keyword,
-        locale: "",
+        locale,
         resourceType,
         excludeResourceId: resourceId,
       });
@@ -117,7 +165,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       resourceType,
       resourceId,
       keyword,
-      locale: "",
+      locale,
       role,
       // The sidebar only sends role=primary when the item has no primary yet;
       // hitting an existing one anyway (concurrent tab) is surfaced, not
@@ -127,7 +175,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     if (!result.ok) {
       return json<ActionResult>({ ok: false, error: result.reason }, { status: 409 });
     }
-    return json<ActionResult>({ ok: true, keywords: await loadSidebarKeywords(shop, resourceId) });
+    return json<ActionResult>({ ok: true, keywords: await loadSidebarKeywords(shop, resourceId, locale) });
   }
 
   if (op === "remove" || op === "makePrimary") {
@@ -137,7 +185,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     }
     if (op === "remove") await removeAssignment(db, shop, id);
     else await promoteAssignment(db, shop, id);
-    return json<ActionResult>({ ok: true, keywords: await loadSidebarKeywords(shop, resourceId) });
+    // Both helpers resolve the row's own locale internally; localeInput only
+    // selects which list to hand back for re-render.
+    return json<ActionResult>({
+      ok: true,
+      keywords: await loadSidebarKeywords(shop, resourceId, localeInput),
+    });
   }
 
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
