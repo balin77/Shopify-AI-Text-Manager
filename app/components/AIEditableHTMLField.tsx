@@ -318,13 +318,15 @@ export function AIEditableHTMLField({
         />
       )}
 
-      <div className="ai-field-footer" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
+      {/* Wrapping vs. horizontal scrolling of the action row is decided in
+          AIEditableField.css (mobile scrolls) — no inline flex-wrap here. */}
+      <div className="ai-field-footer" style={{ display: "flex", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
         <div className="ai-field-footer-left" style={{ flex: "0 0 auto" }}>
           <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
             {value.replace(/<[^>]*>/g, "").length} {t.products?.characters}
           </span>
         </div>
-        <div className="ai-field-footer-right" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
+        <div className="ai-field-footer-right" style={{ display: "flex", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
           {onGenerateAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
               <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={(disableGeneration && !value) || isLoading}>

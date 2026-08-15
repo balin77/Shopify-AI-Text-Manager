@@ -73,6 +73,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-top: 0.5rem;
   min-height: 28px;
 }
@@ -145,10 +147,43 @@
     order: 1;
   }
 
+  /* The AI action row (✨ improve, 🎨 format, 🌍 translate, 📋 copy) stays a
+     single line and scrolls sideways instead of stacking into three rows —
+     same pattern as the language buttons (.mobile-language-scroll) and the
+     HTML formatting toolbar. */
   .ai-field-footer-right {
     width: 100%;
     order: 2;
     margin-left: 0 !important;
+    flex-wrap: nowrap !important;
+    /* flex-end would push the overflow off the unreachable start edge */
+    justify-content: flex-start !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .ai-field-footer-right::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Every direct child (bare Button or DisabledActionTooltip wrapper) keeps
+     its natural width so the row scrolls instead of squeezing. */
+  .ai-field-footer-right > * {
+    flex: 0 0 auto !important;
+  }
+
+  /* Beat responsive.css's global `button { width: 100% }` for ALL field types,
+     not just .ai-editable-html-field, and keep labels on one line. */
+  .ai-field-footer-right button,
+  .ai-field-footer-right .Polaris-Button,
+  .ai-field-footer-right [role="button"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 44px !important;
+    max-width: none !important;
+    white-space: nowrap !important;
   }
 
   /* Override ButtonGroup vertical stacking on mobile */
@@ -161,15 +196,10 @@
     width: auto !important;
   }
 
-  /* Individual buttons in footer - CRITICAL: Override width: 100% from responsive.css */
-  .ai-editable-html-field .ai-field-footer-right button,
-  .ai-editable-html-field .ai-field-footer-right .Polaris-Button,
-  .ai-editable-html-field .ai-field-footer-right [role="button"] {
-    flex: 0 1 auto !important;
-    min-width: 44px !important;
-    width: auto !important;
-    max-width: fit-content !important;
-  }
+  /* (The former .ai-editable-html-field-scoped footer-button overrides are
+     gone — the unscoped .ai-field-footer-right rules above do the same job for
+     every field type, and their `flex: 0 1 auto` would have let the HTML
+     field's buttons shrink instead of scroll.) */
 
   /* Force horizontal layout for header buttons on mobile */
   .ai-editable-html-field > .Polaris-InlineStack {
@@ -207,7 +237,9 @@
     margin: 0 !important;
   }
 
-  .ai-editable-html-field .ai-field-footer-right > * {
+  /* Unscoped on purpose: the gap already spaces the action row, and the stray
+     4px would show up as dead scroll width in every field type's footer. */
+  .ai-field-footer-right > * {
     margin: 0 !important;
   }
 }
