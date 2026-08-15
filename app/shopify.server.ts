@@ -179,6 +179,7 @@ import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
+import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -215,6 +216,12 @@ const enhancedAuthenticate = {
     // reasoning). This is the only path that keeps llms.txt fresh for a shop
     // nobody opens — the in-session refresh needs someone working in the app.
     LlmsAutoRefreshService.getInstance().start();
+
+    // Bootstrap the IndexNow auto-submit sweep (same idempotent-start
+    // reasoning). Without it the webhook-fed URL queue only ever drained when
+    // a merchant opened the section and clicked — "instant" indexing that
+    // waited for a human.
+    IndexNowAutoSubmitService.getInstance().start();
 
     return { admin, session };
   }

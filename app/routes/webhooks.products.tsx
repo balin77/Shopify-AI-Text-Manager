@@ -41,31 +41,79 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return json({ received: true }, { status: 200 });
 };
 
+/** What the cache held BEFORE the sync overwrote it (null when IndexNow is off). */
+type IndexNowSnapshot = { handle: string | null; status: string | null } | null;
+
 /**
- * SEO tab Phase 8: best-effort IndexNow enqueue for a product's storefront URL.
- * Best-effort — never let it break the webhook. `getEnabledConfig` does a
- * single (PK-indexed) query that both gates ("is IndexNow on for this shop")
- * and feeds `enqueueResource`, so shops without IndexNow skip the handle
- * lookup entirely and enabled shops don't load the config row twice.
+ * SEO tab Phase 8: read the product's PREVIOUS cached state, if this shop has
+ * IndexNow enabled. Must run BEFORE the sync, because "was this product live
+ * until now?" is exactly what decides whether an unpublish is worth reporting —
+ * and the sync overwrites that. Returns null (and skips the read entirely) for
+ * every shop without IndexNow, so the common case costs one PK-indexed query.
  */
-async function enqueueProductForIndexNow(db: any, shop: string, productId: string): Promise<void> {
+async function loadIndexNowSnapshot(db: any, shop: string, productId: string): Promise<IndexNowSnapshot> {
   try {
-    const { getEnabledConfig, enqueueResource } = await import("../services/seo/index-now.service");
+    const { getEnabledConfig } = await import("../services/seo/index-now.service");
+    if (!(await getEnabledConfig(db, shop))) return null;
+    const prev = await db.product.findUnique({
+      where: { id: productId },
+      select: { handle: true, status: true },
+    });
+    return { handle: prev?.handle ?? null, status: prev?.status ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort IndexNow enqueue for a product's storefront URL — never let it
+ * break the webhook. The URL is built on the config's primary-domain host, not
+ * on the myshopify domain. `before` is the pre-sync snapshot; a product that
+ * was live and no longer is gets its (now dead) URL reported, while one that
+ * was never live is skipped — see shouldEnqueueProductChange.
+ */
+async function enqueueProductForIndexNow(
+  db: any,
+  shop: string,
+  productId: string,
+  before: IndexNowSnapshot,
+): Promise<void> {
+  try {
+    const { getEnabledConfig, enqueueResource, shouldEnqueueProductChange } =
+      await import("../services/seo/index-now.service");
     const config = await getEnabledConfig(db, shop);
     if (!config) return;
     const prod = await db.product.findUnique({
       where: { id: productId },
       select: { handle: true, status: true },
     });
-    // ACTIVE only — mirrors `collectStoreUrls` in index-now.service.ts, which
-    // gates the bulk "submit the whole catalog" path the same way. Without this
-    // the incremental path contradicted the bulk one: a DRAFT product, or an
-    // UNLISTED one (served `noindex,nofollow` and absent from sitemap.xml),
-    // would still be pushed to Bing/Yandex on every products/update webhook —
-    // asking an engine to crawl a URL it is simultaneously told not to index,
-    // and publishing a link the merchant chose to keep unlisted.
-    if (prod?.handle && prod.status === "ACTIVE") {
-      await enqueueResource(db, shop, shop, "product", prod.handle, config);
+    if (prod?.handle && shouldEnqueueProductChange(before?.status, prod.status)) {
+      await enqueueResource(db, shop, "product", prod.handle, config);
+    }
+    // A renamed handle leaves the OLD URL behind as a 404/redirect — report it
+    // too, but only if that URL was ever live.
+    if (before?.handle && before.handle !== prod?.handle && before.status === "ACTIVE") {
+      await enqueueResource(db, shop, "product", before.handle, config);
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * Delete path: the product row is about to disappear, so the cached state IS
+ * the "before" and there is no "after".
+ */
+async function enqueueDeletedProductForIndexNow(db: any, shop: string, productId: string): Promise<void> {
+  try {
+    const { getEnabledConfig, enqueueResource, shouldEnqueueProductChange } =
+      await import("../services/seo/index-now.service");
+    const config = await getEnabledConfig(db, shop);
+    if (!config) return;
+    const prod = await db.product.findUnique({
+      where: { id: productId },
+      select: { handle: true, status: true },
+    });
+    if (prod?.handle && shouldEnqueueProductChange(prod.status, null)) {
+      await enqueueResource(db, shop, "product", prod.handle, config);
     }
   } catch { /* ignore */ }
 }
@@ -91,14 +139,17 @@ async function processWebhookAsync(
     const syncService = new ProductSyncService(admin, shop);
 
     if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
+      // Snapshot first: the sync is what erases the previous status/handle,
+      // and both decide what IndexNow should hear about.
+      const before = await loadIndexNowSnapshot(db, shop, productId);
       await syncService.syncProduct(productId);
-      await enqueueProductForIndexNow(db, shop, productId);
+      await enqueueProductForIndexNow(db, shop, productId, before);
     } else if (topic === "PRODUCTS_DELETE") {
       // IndexNow is meant to be told about removed URLs too, so we must
       // enqueue BEFORE deleteProduct wipes the cache row: Shopify's
       // products/delete payload carries only the numeric id, not the handle,
       // so the handle has to come from our own cache while it still exists.
-      await enqueueProductForIndexNow(db, shop, productId);
+      await enqueueDeletedProductForIndexNow(db, shop, productId);
       await syncService.deleteProduct(productId);
     }
 

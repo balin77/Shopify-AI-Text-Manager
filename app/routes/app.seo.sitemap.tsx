@@ -36,6 +36,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
+import { fetchPrimaryDomain } from "../utils/shop-domain.server";
 import type { Plan } from "../config/plans";
 import {
   analyze,
@@ -78,22 +79,6 @@ const TYPE_ICON: Record<SitemapExclusionResourceType, string> = {
   page: "📄",
   article: "📝",
 };
-
-const SHOP_DOMAIN_QUERY = `#graphql
-  query seoSitemapShopDomain {
-    shop { primaryDomain { host } }
-  }
-`;
-
-async function fetchPrimaryDomain(admin: any, fallbackShop: string): Promise<string> {
-  try {
-    const res = await admin.graphql(SHOP_DOMAIN_QUERY);
-    const j: any = await res.json();
-    return j?.data?.shop?.primaryDomain?.host || fallbackShop;
-  } catch {
-    return fallbackShop;
-  }
-}
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });

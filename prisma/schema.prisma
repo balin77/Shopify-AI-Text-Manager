@@ -1205,13 +1205,38 @@ model GoogleSearchConsoleConnection {
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
 model SeoIndexNowConfig {
-  shop            String    @id
-  key             String // public IndexNow token (plaintext by design)
-  keyLocation     String // URL where the key file is served (app-proxy on the shop host)
-  enabled         Boolean   @default(true)
+  shop        String @id
+  key         String // public IndexNow token (plaintext by design)
+  keyLocation String // URL where the key file is served (app-proxy on `host`)
+  // Storefront host every submission uses for `host`, `urlList` AND
+  // `keyLocation` — the shop's PRIMARY domain, not `*.myshopify.com`. Shopify
+  // 301s the myshopify host to the primary domain, which would make both the
+  // submitted URLs and the ownership check land on a different host than the
+  // one declared. Persisted (not resolved per call) so webhooks can build URLs
+  // from the config row they already loaded; `syncIndexNowHost` refreshes it
+  // whenever the merchant opens the section, so adding a custom domain later
+  // fixes itself WITHOUT minting a new key.
+  host        String
+  // Last time `host` was checked against the shop's actual primary domain.
+  // null = never verified (the migration backfill, or a provision whose lookup
+  // failed) — the background sweep refreshes those first, so a shop that never
+  // reopens the section still stops submitting myshopify URLs.
+  hostCheckedAt DateTime?
+  enabled       Boolean   @default(true)
+  // Last successful submission of ANY kind (queue drain or full catalog).
   lastSubmittedAt DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  // Last successful FULL-catalog submit — separate from lastSubmittedAt so the
+  // "submit everything" cooldown isn't reset by every queue drain.
+  lastFullSubmitAt DateTime?
+  // Stamped by the background sweep on EVERY path (success, skip, error) so an
+  // ineligible shop can't win the "due" query forever — same guard the
+  // llms/GSC sweeps document. NOT a lock.
+  lastAutoRunAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Drives the sweep's due-query (index-now-auto-submit.service.ts).
+  @@index([enabled, lastAutoRunAt])
 }
 
 // SEO tab Phase 8: debounced queue of changed storefront URLs to submit to
