@@ -1149,7 +1149,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
-                        translateOptionNameButton: t.products?.translateOptionName,
                         translateFieldButton: t.products?.translateFieldButton,
                         linkedOptionHint: t.products?.linkedOptionHint,
                         linkedOptionHintBefore: t.products?.linkedOptionHintBefore,

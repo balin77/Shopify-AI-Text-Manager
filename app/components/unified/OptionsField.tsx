@@ -106,10 +106,9 @@ interface OptionsFieldProps {
     optionNameLabel?: string;
     valuesLabel?: string;
     valueLabel?: string;
-    /** Header button, unlinked option: translates name AND values. */
+    /** Header button: translates the option name AND its values in one call.
+     *  Not shown for metaobject-linked options — see the header comment. */
     translateButton?: string;
-    /** Header button, metaobject-linked option: only the name is translatable. */
-    translateOptionNameButton?: string;
     translateFieldButton?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
@@ -220,10 +219,12 @@ export function OptionsField({
                             <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
                           )}
                         </div>
-                        {/* Translate Entire Option Button — on same line as Option header.
-                            A metaobject-linked option only has its NAME to translate
-                            (the values live in the metaobjects), so it says so. */}
-                        {onTranslate && (
+                        {/* Translate Entire Option Button — on same line as Option
+                            header. NOT for a metaobject-linked option: its values live
+                            in the metaobjects, so `buildSourceData` reduces it to the
+                            name alone — the very same single request the Translate
+                            button under the name field already sends. */}
+                        {onTranslate && !option.isLinked && (
                           <DisabledActionTooltip hint={singleLocaleHint}>
                             <Button
                               size="slim"
@@ -231,9 +232,7 @@ export function OptionsField({
                               loading={translatingFieldIds.has(entireFieldId)}
                               disabled={!!singleLocaleHint}
                             >
-                              🌍 {option.isLinked
-                                ? (t.translateOptionNameButton || "Translate name")
-                                : (t.translateButton || "Translate option")}
+                              🌍 {t.translateButton || "Translate option"}
                             </Button>
                           </DisabledActionTooltip>
                         )}
@@ -477,15 +476,17 @@ export function OptionsField({
                             <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
                           )}
                         </div>
-                        <Button
-                          size="slim"
-                          onClick={() => onTranslate(option.id)}
-                          loading={translatingFieldIds.has(entireFieldId)}
-                        >
-                          🌍 {option.isLinked
-                            ? (t.translateOptionNameButton || "Translate name")
-                            : (t.translateButton || "Translate option")}
-                        </Button>
+                        {/* Same as in the primary view: redundant for a linked
+                            option, whose name field carries the identical action. */}
+                        {!option.isLinked && (
+                          <Button
+                            size="slim"
+                            onClick={() => onTranslate(option.id)}
+                            loading={translatingFieldIds.has(entireFieldId)}
+                          >
+                            🌍 {t.translateButton || "Translate option"}
+                          </Button>
+                        )}
                       </div>
 
                       {/* Original values as reference */}
