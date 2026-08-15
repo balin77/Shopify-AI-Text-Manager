@@ -147,6 +147,11 @@ export function SeoSidebar({
   // primary add because the keyword is primary on another item — stash the
   // rejected payload so "add anyway" can re-submit with the bypass flag.
   const [cannibalizationWarning, setCannibalizationWarning] = useState<string | null>(null);
+  // Failed-mutation error code, held in state rather than read off
+  // keywordOpFetcher.data — the fetcher keeps its last response across an item
+  // or language switch, which would leave a red error under the next scope's
+  // freshly loaded list.
+  const [keywordOpError, setKeywordOpError] = useState<string | null>(null);
   const pendingAddRef = useRef<{ keyword: string; role: KeywordRole } | null>(null);
   // The (item, locale) a mutation was submitted FOR — a late response must not
   // overwrite the list after the merchant already switched item OR language
@@ -160,8 +165,10 @@ export function SeoSidebar({
   // the badges below are ready the moment the merchant expands the section.
   useEffect(() => {
     // Item/locale switch invalidates any pending cannibalization prompt — "add
-    // anyway" must never fire the stashed payload against the NEW scope.
+    // anyway" must never fire the stashed payload against the NEW scope — and
+    // any error text left over from the previous scope's mutation.
     setCannibalizationWarning(null);
+    setKeywordOpError(null);
     pendingAddRef.current = null;
     if (!resourceId || !resourceType) {
       setKeywords([]);
@@ -198,12 +205,16 @@ export function SeoSidebar({
       setKeywords(keywordOpFetcher.data.keywords);
       setKeywordInput("");
       setCannibalizationWarning(null);
+      setKeywordOpError(null);
       pendingAddRef.current = null;
       return;
     }
-    if (!keywordOpFetcher.data.ok && keywordOpFetcher.data.error === "cannibalization") {
+    if (keywordOpFetcher.data.error === "cannibalization") {
       setCannibalizationWarning(keywordOpFetcher.data.existingItemTitle ?? "");
+      setKeywordOpError(null);
+      return;
     }
+    setKeywordOpError(keywordOpFetcher.data.error ?? "unknown");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keywordOpFetcher.state, keywordOpFetcher.data]);
 
@@ -720,11 +731,9 @@ export function SeoSidebar({
                     </InlineStack>
                   </BlockStack>
                 ) : (
-                  keywordOpFetcher.data &&
-                  !keywordOpFetcher.data.ok &&
-                  keywordOpFetcher.data.error !== "cannibalization" && (
+                  keywordOpError && (
                     <Text as="p" variant="bodySm" tone="critical">
-                      {keywordOpFetcher.data.error === "tooMany"
+                      {keywordOpError === "tooMany"
                         ? (t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
                             "{max}",
                             String(MAX_KEYWORDS_PER_ITEM),

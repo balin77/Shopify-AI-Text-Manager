@@ -50,8 +50,8 @@ export async function handleFormatField(ctx: AIActionContext): Promise<DataRespo
   const prompt = `${formatInstruction}
 
 Text to format:
-${sourceText}
-${keywordLine}
+${sourceText}${keywordLine}
+
 Return only the formatted text, without explanations.`;
 
   // Create task entry with prompt

@@ -102,16 +102,32 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     ) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    // Same fail-closed rule as the sibling write path in app.seo.keywords.tsx,
-    // so a keyword can never be created under a locale the storefront doesn't
-    // serve. "" (primary) is always accepted without a lookup.
+    // Validate the locale against the shop's own locales. "" (primary) is
+    // always accepted without a lookup.
+    //
+    // Two deliberate differences from the sibling write path in
+    // app.seo.keywords.tsx:
+    //
+    //  - `published` is NOT required. That page's locale picker lists published
+    //    secondaries only, so the stricter rule can never reject its own UI.
+    //    This endpoint follows the CONTENT EDITOR, which offers every shop
+    //    locale (loader-factory hands `getCachedShopLocales` through
+    //    unfiltered) — requiring `published` here would let a merchant open the
+    //    keywords panel on an unpublished locale and get a generic "could not
+    //    update" on every add. A keyword is merchant-side tracking metadata; it
+    //    is never served to the storefront, so publication state is irrelevant.
+    //
+    //  - An EMPTY list is treated as "lookup failed", not "no secondaries".
+    //    getCachedShopLocales swallows non-401 errors and resolves with []
+    //    (CLAUDE.md: never gate on a failed lookup), so gating on it would
+    //    block keyword creation for the length of any Shopify hiccup.
     let locale = "";
     if (localeInput) {
       const shopLocales = await getCachedShopLocales(admin, shop);
-      const isPublishedSecondary = shopLocales.some(
-        (l: any) => !l.primary && l.published && l.locale === localeInput,
-      );
-      if (!isPublishedSecondary) {
+      const knownSecondary =
+        shopLocales.length === 0 ||
+        shopLocales.some((l: any) => !l.primary && l.locale === localeInput);
+      if (!knownSecondary) {
         return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
       }
       locale = localeInput;
