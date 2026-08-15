@@ -144,7 +144,7 @@ export interface FieldHandlerProps {
 export interface FieldHandlers {
   handleSave: () => void;
   handleDiscard: () => void;
-  handleGenerateAI: (fieldKey: string) => void;
+  handleGenerateAI: (fieldKey: string, userInstruction?: string) => void;
   handleFormatAI: (fieldKey: string) => void;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
@@ -380,7 +380,12 @@ const handleDiscard = () => {
   setEditableValues(newValues);
 };
 
-const handleGenerateAI = (fieldKey: string) => {
+/**
+ * @param userInstruction Ad-hoc instruction the merchant typed into the
+ *   AIInstructionPrompt box before submitting. Undefined/empty keeps the
+ *   previous behaviour (no extra form field, unchanged server prompt).
+ */
+const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
   if (!selectedItemId || !selectedItem) return;
 
   const requestItemId = selectedItemId;
@@ -415,6 +420,7 @@ const handleGenerateAI = (fieldKey: string) => {
       mainLanguage,
       sendImageToAI: sendImageToAI.toString(),
       ...(imageUrl && { imageUrl }),
+      ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
     },
     fieldKey,
     (result) => {

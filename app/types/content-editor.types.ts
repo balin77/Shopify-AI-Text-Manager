@@ -252,7 +252,8 @@ export interface FieldRenderProps {
   isTranslated?: boolean;
   isLoading?: boolean;
   sourceTextAvailable?: boolean;
-  onGenerateAI?: () => void;
+  /** Receives the merchant's ad-hoc instruction from the AIInstructionPrompt box (undefined = generate as before). */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -396,7 +397,7 @@ export interface EditorState {
 export interface EditorHandlers {
   handleSave: () => void;
   handleDiscard: () => void;
-  handleGenerateAI: (fieldKey: string) => void;
+  handleGenerateAI: (fieldKey: string, userInstruction?: string) => void;
   handleFormatAI: (fieldKey: string) => void;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
@@ -420,7 +421,7 @@ export interface EditorHandlers {
   handleClearAllForLocaleConfirm: () => void;
   handleTranslateAllForLocale: () => void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
-  handleGenerateAltText: (imageIndex: number) => void;
+  handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
   handleGenerateAllAltTexts: () => void;
   handleCopyAltText: (imageIndex: number) => void;
   handleCopyAltTextToAllLocales: (imageIndex: number) => void;

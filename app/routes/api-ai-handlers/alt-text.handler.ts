@@ -3,6 +3,7 @@ import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isPrismaError, isAuthError } from "./shared";
 import type { TranslatableContentItem } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
@@ -97,6 +98,10 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
     }
 
     prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
+
+    // Ad-hoc instruction from the prompt box on the alt-text field — appended
+    // last and outranking every rule above. No-op when the box was empty.
+    prompt = withUserInstruction(prompt, formData);
 
     const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI);
 

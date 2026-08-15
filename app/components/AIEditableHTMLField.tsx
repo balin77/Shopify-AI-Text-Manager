@@ -1,5 +1,6 @@
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { Text, Button, InlineStack, Banner } from "@shopify/polaris";
+import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
@@ -36,7 +37,12 @@ interface AIEditableHTMLFieldProps {
   readOnly?: boolean;
   /** If true, show required indicator (red asterisk) */
   requiredIndicator?: boolean;
-  onGenerateAI?: () => void;
+  /**
+   * Runs the generation. The argument is the merchant's ad-hoc instruction from
+   * the AIInstructionPrompt box — `undefined` when the box was submitted empty,
+   * which must behave exactly like the old one-click generation.
+   */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -98,6 +104,10 @@ export function AIEditableHTMLField({
   // Set in a single-language shop: translate / copy-to-all-locales have no
   // target, so those buttons are greyed out with this as their tooltip.
   const singleLocaleHint = useSingleLocaleHint();
+
+  // The generate button no longer fires straight away: it opens the instruction
+  // box first, which then calls onGenerateAI (with or without an instruction).
+  const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
 
   // Cleanup typing timer on unmount
   useEffect(() => {
@@ -303,6 +313,17 @@ export function AIEditableHTMLField({
         />
       )}
 
+      {instructionPromptOpen && onGenerateAI && (
+        <AIInstructionPrompt
+          isLoading={isLoading}
+          onSubmit={(userInstruction) => {
+            setInstructionPromptOpen(false);
+            onGenerateAI(userInstruction);
+          }}
+          onCancel={() => setInstructionPromptOpen(false)}
+        />
+      )}
+
       {suggestion && onAcceptSuggestion && onRejectSuggestion && (
         <AISuggestionBanner
           fieldType={fieldType}
@@ -329,7 +350,13 @@ export function AIEditableHTMLField({
         <div className="ai-field-footer-right" style={{ display: "flex", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
           {onGenerateAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={(disableGeneration && !value) || isLoading}>
+              <Button
+                size="slim"
+                onClick={() => setInstructionPromptOpen((open) => !open)}
+                pressed={instructionPromptOpen}
+                loading={isLoading}
+                disabled={(disableGeneration && !value) || isLoading}
+              >
                 ✨ {disableGeneration || value
                   ? (t.products?.aiImprove || "Improve with AI")
                   : (t.products?.aiGenerateShort || "Generate with AI")}

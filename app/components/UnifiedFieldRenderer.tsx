@@ -41,7 +41,8 @@ export interface FieldRendererProps {
   selectedMarketId?: string;
   /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
   fieldError?: string;
-  onGenerateAI?: () => void;
+  /** Receives the merchant's ad-hoc instruction from the AIInstructionPrompt box (undefined = generate as before). */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;

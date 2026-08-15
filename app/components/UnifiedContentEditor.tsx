@@ -1057,7 +1057,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           readOnly={isFieldReadOnly}
                           embedTechnical={isEmbedTechnical}
                           selectedMarketId={state.selectedMarketId}
-                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
+                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
                           onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
                           onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
                           onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}

@@ -19,6 +19,7 @@ import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
+import { withUserInstruction } from "../utils/ai-user-instruction.server";
 import { getFullErrorMessage } from "../utils/error-handler";
 import { getInstructionWithDefault, getWritingStyleInstructions, getCharacterLimitRequirement } from "~/utils/ai-instructions.utils";
 import { resolveSeoContext } from "../routes/api-ai-handlers/shared";
@@ -287,6 +288,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
+        // Merchant's per-request instruction — last word, outranks everything above.
+        prompt = withUserInstruction(prompt, formData);
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
 
@@ -354,6 +357,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Do NOT wrap the output in markdown code fences (\`\`\`). Output in ${mainLanguage}.`;
+        // Merchant's per-request instruction — last word, outranks everything above.
+        prompt = withUserInstruction(prompt, formData);
         generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }

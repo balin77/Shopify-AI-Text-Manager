@@ -3,6 +3,7 @@ import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { getFormString } from "~/utils/form-data.utils";
+import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import type { TemplatesActionContext } from "./shared";
 import type { DataResponse } from "~/types/data-response";
@@ -52,7 +53,7 @@ export async function handleGenerateAIText(ctx: TemplatesActionContext): Promise
       task.id
     );
 
-    const prompt = `Improve the following template field content.
+    let prompt = `Improve the following template field content.
 
 Field: ${fieldType}
 Current value: ${currentValue}
@@ -60,6 +61,9 @@ Context: ${firstGroup.groupName}
 Language: ${mainLanguage}
 
 IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no options, no formatting, no labels. Just output the single best improved version of the content in ${mainLanguage}.`;
+
+    // Merchant's per-request instruction — last word, outranks everything above.
+    prompt = withUserInstruction(prompt, formData);
 
     const generatedContent = await aiService["askAI"](prompt);
 

@@ -4,6 +4,7 @@ import { errorMessage, createAIService, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
+import { readUserInstruction, appendUserInstruction } from "~/utils/ai-user-instruction.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -143,6 +144,10 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
   const sendImageToAI = formData.get("sendImageToAI") === "true";
   const imageUrl = getFormString(formData, "imageUrl") || undefined;
+  // Ad-hoc instruction the merchant typed into the prompt box before firing the
+  // generation. Null when the box was submitted empty — then the prompt below
+  // is byte-identical to what it was before this feature existed.
+  const userInstruction = readUserInstruction(formData);
 
   // Load AI instructions for format guidelines
   const genAiInstructions = await db.aIInstructions.findUnique({
@@ -271,6 +276,11 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 
   prompt += `\n\nIMPORTANT: Return ONLY the ${genFieldLabel}, nothing else. Output in ${mainLanguage}.`;
 
+  // The merchant's per-request instruction is appended LAST and declared to
+  // outrank everything above it (including the length constraint). Kept out of
+  // `prompt` itself so the stuffing retry below can re-append it after its own
+  // warning and stay the last word.
+
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel4 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
   const task = await db.task.create({
@@ -310,7 +320,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
       isGenLongContent
         ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend)
         : aiService.generateProductTitle(p, imageUrlToSend);
-    let generatedContent = await generate(prompt);
+    let generatedContent = await generate(appendUserInstruction(prompt, userInstruction));
 
     // Stuffing guard (§3.2): hard-enforced in the handler, not just the
     // prompt. One retry with an explicit warning; if the retry still stuffs,
@@ -335,7 +345,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
               ? "lower keyword density (well below 3%) — mention each keyword only where it truly fits"
               : "each keyword mentioned at most once"
           }.`;
-        generatedContent = await generate(retryPrompt);
+        generatedContent = await generate(appendUserInstruction(retryPrompt, userInstruction));
         keywordStuffingWarning =
           findStuffedKeyword(generatedContent, allTrackedKeywords, isGenLongContent) !== null;
       }

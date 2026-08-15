@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { TextField, Button, InlineStack } from "@shopify/polaris";
+import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
@@ -38,7 +40,12 @@ interface AIEditableFieldProps {
   seoSuffix?: string;
   /** Error message shown below the field (e.g. when AI translation fails due to text being too long) */
   error?: string;
-  onGenerateAI?: () => void;
+  /**
+   * Runs the generation. The argument is the merchant's ad-hoc instruction from
+   * the AIInstructionPrompt box — `undefined` when the box was submitted empty,
+   * which must behave exactly like the old one-click generation.
+   */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -90,6 +97,9 @@ export function AIEditableField({
   // Set in a single-language shop: translating / copying to "all locales" has no
   // target, so those buttons are greyed out with this as their tooltip.
   const singleLocaleHint = useSingleLocaleHint();
+  // The generate button no longer fires straight away: it opens the instruction
+  // box first, which then calls onGenerateAI (with or without an instruction).
+  const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
 
   // Determine background color class based on translation state
   const getBackgroundClass = () => {
@@ -169,6 +179,17 @@ export function AIEditableField({
         />
       </div>
 
+      {instructionPromptOpen && onGenerateAI && (
+        <AIInstructionPrompt
+          isLoading={isLoading}
+          onSubmit={(userInstruction) => {
+            setInstructionPromptOpen(false);
+            onGenerateAI(userInstruction);
+          }}
+          onCancel={() => setInstructionPromptOpen(false)}
+        />
+      )}
+
       {suggestion && onAcceptSuggestion && onRejectSuggestion && (
         <AISuggestionBanner
           fieldType={fieldType}
@@ -189,7 +210,8 @@ export function AIEditableField({
           {onGenerateAI && (
             <Button
               size="slim"
-              onClick={onGenerateAI}
+              onClick={() => setInstructionPromptOpen((open) => !open)}
+              pressed={instructionPromptOpen}
               loading={isLoading}
               disabled={(disableGeneration && !value) || isLoading}
             >
