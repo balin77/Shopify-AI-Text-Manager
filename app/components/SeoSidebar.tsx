@@ -80,6 +80,16 @@ interface SeoSidebarProps {
    */
   resourceId?: string;
   resourceType?: KeywordResourceType;
+  /**
+   * Locale the keyword panel reads and writes, following the SeoKeyword
+   * convention ("" = the shop's primary locale). Keywords are per (item,
+   * locale): a French page ranks for French terms, so the panel must follow
+   * the editor's language instead of always showing the primary set. Defaults
+   * to "" so callers that only ever edit the primary locale need not pass it.
+   */
+  keywordLocale?: string;
+  /** Display name of `keywordLocale`, for the scope hint. Optional. */
+  keywordLocaleName?: string;
 }
 
 export function SeoSidebar({
@@ -96,6 +106,8 @@ export function SeoSidebar({
   structuredDataPreviewMode = false,
   resourceId,
   resourceType,
+  keywordLocale = "",
+  keywordLocaleName,
 }: SeoSidebarProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -136,17 +148,19 @@ export function SeoSidebar({
   // rejected payload so "add anyway" can re-submit with the bypass flag.
   const [cannibalizationWarning, setCannibalizationWarning] = useState<string | null>(null);
   const pendingAddRef = useRef<{ keyword: string; role: KeywordRole } | null>(null);
-  // The resourceId a mutation was submitted FOR — a late response must not
-  // overwrite the list after the merchant already switched to another item
-  // (the response carries no row identity of its own).
+  // The (item, locale) a mutation was submitted FOR — a late response must not
+  // overwrite the list after the merchant already switched item OR language
+  // (the response carries no row identity of its own, and since keywords are
+  // per-locale a stale answer would show another language's set).
+  const keywordScope = `${resourceId ?? ""}::${keywordLocale}`;
   const keywordOpTargetRef = useRef<string | null>(null);
 
-  // Reload the tracked keywords whenever the selected item changes. Fetching
-  // eagerly (not gated on showKeywordSection) means the badges below are
-  // ready the moment the merchant expands the section.
+  // Reload the tracked keywords whenever the selected item OR the editor's
+  // language changes. Fetching eagerly (not gated on showKeywordSection) means
+  // the badges below are ready the moment the merchant expands the section.
   useEffect(() => {
-    // Item switch invalidates any pending cannibalization prompt — "add
-    // anyway" must never fire the stashed payload against the NEW item.
+    // Item/locale switch invalidates any pending cannibalization prompt — "add
+    // anyway" must never fire the stashed payload against the NEW scope.
     setCannibalizationWarning(null);
     pendingAddRef.current = null;
     if (!resourceId || !resourceType) {
@@ -154,11 +168,18 @@ export function SeoSidebar({
       setKeywordInput("");
       return;
     }
-    keywordLoadFetcher.load(`/api/seo-keyword?resourceId=${encodeURIComponent(resourceId)}`);
+    // Clear first: without this the previous language's keywords stay on
+    // screen until the fetch lands, and a merchant who types during that window
+    // would file them under the wrong locale.
+    setKeywords([]);
+    setKeywordInput("");
+    keywordLoadFetcher.load(
+      `/api/seo-keyword?resourceId=${encodeURIComponent(resourceId)}&locale=${encodeURIComponent(keywordLocale)}`,
+    );
     // keywordLoadFetcher is intentionally omitted — Remix fetchers are stable,
     // but including it would re-trigger the effect on every fetcher state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resourceId, resourceType]);
+  }, [resourceId, resourceType, keywordLocale]);
 
   useEffect(() => {
     if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
@@ -172,7 +193,7 @@ export function SeoSidebar({
   // merchant may have switched while the request was in flight).
   useEffect(() => {
     if (keywordOpFetcher.state !== "idle" || !keywordOpFetcher.data) return;
-    if (keywordOpTargetRef.current !== resourceId) return;
+    if (keywordOpTargetRef.current !== keywordScope) return;
     if (keywordOpFetcher.data.ok && keywordOpFetcher.data.keywords) {
       setKeywords(keywordOpFetcher.data.keywords);
       setKeywordInput("");
@@ -200,7 +221,7 @@ export function SeoSidebar({
         : "primary";
     pendingAddRef.current = { keyword, role };
     setCannibalizationWarning(null);
-    keywordOpTargetRef.current = resourceId;
+    keywordOpTargetRef.current = keywordScope;
     keywordOpFetcher.submit(
       {
         op: "add",
@@ -208,6 +229,7 @@ export function SeoSidebar({
         resourceType,
         keyword,
         role,
+        locale: keywordLocale,
         ...(acceptCannibalization ? { acceptCannibalization: "true" } : {}),
       },
       { method: "post", action: "/api/seo-keyword" },
@@ -216,18 +238,18 @@ export function SeoSidebar({
 
   const handleRemoveKeyword = (id: string) => {
     if (!resourceId) return;
-    keywordOpTargetRef.current = resourceId;
+    keywordOpTargetRef.current = keywordScope;
     keywordOpFetcher.submit(
-      { op: "remove", id, resourceId },
+      { op: "remove", id, resourceId, locale: keywordLocale },
       { method: "post", action: "/api/seo-keyword" },
     );
   };
 
   const handleMakePrimary = (id: string) => {
     if (!resourceId) return;
-    keywordOpTargetRef.current = resourceId;
+    keywordOpTargetRef.current = keywordScope;
     keywordOpFetcher.submit(
-      { op: "makePrimary", id, resourceId },
+      { op: "makePrimary", id, resourceId, locale: keywordLocale },
       { method: "post", action: "/api/seo-keyword" },
     );
   };
@@ -601,6 +623,16 @@ export function SeoSidebar({
         {/* Keywords tab */}
         {currentTab === "keywords" && keywordTrackingEnabled && (
               <BlockStack gap="200">
+                {/* Scope hint — only on a secondary locale, where "which
+                    language do these belong to?" is a real question. */}
+                {keywordLocale !== "" && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(
+                      t.seo?.keywordLocaleScopeHint ||
+                      "Keywords for {language} — every language tracks its own."
+                    ).replace("{language}", keywordLocaleName || keywordLocale)}
+                  </Text>
+                )}
                 {/* Tracked keywords (1 primary + secondaries, max 5) */}
                 {keywords.map((entry) => (
                   <InlineStack key={entry.id} gap="200" blockAlign="center" wrap={false}>

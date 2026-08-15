@@ -10,7 +10,22 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
+import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
+
+/**
+ * Alt-text requirement line for the item's primary keyword. The shipped default
+ * `productAltTextInstructions` has always said "Include the main keyword" — but
+ * no keyword was ever passed, so the model had to guess one. Alt text is short
+ * and accessibility-first, so only the PRIMARY keyword is offered and only
+ * "if it genuinely describes the image": stuffing an alt attribute is both an
+ * SEO and an accessibility regression.
+ */
+function altTextKeywordLine(primary: string | null): string {
+  return primary
+    ? `\n- Include the target keyword "${primary}" if it genuinely describes what is visible (never at the cost of accuracy)`
+    : "";
+}
 
 // Reject a malformed productId before it reaches a DB lookup or Shopify
 // mutation. productId is optional in several flows, so an empty value passes
@@ -40,6 +55,15 @@ export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataR
   const aiInstructions = await db.aIInstructions.findUnique({
     where: { shop: session.shop },
   });
+
+  // Alt text has no editor field key of its own, so the unfiltered loader is
+  // used; the locale follows the same client-sent contract as generation.
+  const trackedKeywords = await loadTrackedKeywordsUnfiltered(
+    db,
+    session.shop,
+    itemId,
+    resolveKeywordLocale(formData),
+  );
 
   // Create task entry with prompt
   const task = await db.task.create({
@@ -86,6 +110,7 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
     prompt += `\n- Describe what's visible in the image`;
     prompt += `\n- Include product name or key feature`;
     prompt += `\n- Accessible and helpful for screen readers`;
+    prompt += altTextKeywordLine(trackedKeywords.primary);
 
     const altTextFormat = getInstructionWithDefault(aiInstructions, "productAltTextFormat");
     if (altTextFormat) {
@@ -172,6 +197,18 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
   const sharedFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
   const sharedInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
   const charLimit = getCharacterLimitRequirement("productAltText", { limits: ctx.seoLimits });
+  // Resolved ONCE for the whole batch: every image belongs to the same product,
+  // so the tracked keywords are identical — no reason to re-query per image.
+  const keywordLine = altTextKeywordLine(
+    (
+      await loadTrackedKeywordsUnfiltered(
+        db,
+        session.shop,
+        productId,
+        resolveKeywordLocale(formData),
+      )
+    ).primary,
+  );
 
   const bulkTask = await db.task.create({
     data: {
@@ -205,6 +242,7 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
     charLimit,
     format: sharedFormat,
     instructions: sharedInstructions,
+    keywordLine,
   }).catch((err) => {
     logger.error("[API-AI] Bulk alt-text generation crashed", {
       context: "AI",
@@ -227,10 +265,12 @@ interface BulkAltTextRunArgs {
   charLimit: string | null;
   format: string;
   instructions: string;
+  /** Pre-rendered target-keyword requirement, "" when the product tracks none. */
+  keywordLine: string;
 }
 
 async function runBulkAltTextGeneration(taskId: string, args: BulkAltTextRunArgs): Promise<void> {
-  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions } = args;
+  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions, keywordLine } = args;
   const totalImages = imagesData.length;
   const aiService = createAIService(settings, shop, taskId);
   const generatedAltTexts: Record<number, string> = {};
@@ -250,6 +290,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
       prompt += `\n- Describe what's visible in the image`;
       prompt += `\n- Include product name or key feature`;
       prompt += `\n- Accessible and helpful for screen readers`;
+      prompt += keywordLine;
 
       if (format) prompt += `\n\nFormat Example:\n${format}`;
       if (instructions) prompt += `\n\nGuidelines:\n${instructions}`;

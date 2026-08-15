@@ -517,13 +517,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       }
     }
 
-    // Target-keyword tracking is per-item (locale ""), not per-translation, so
-    // it's only offered while editing the primary locale — matches the pattern
-    // used elsewhere in this file (e.g. handleClearAllClick vs ...ForLocaleClick).
-    const keywordResourceType =
-      !isBlogContainer && state.currentLanguage === primaryLocale
-        ? getKeywordResourceType(config.contentType)
-        : undefined;
+    // Target-keyword tracking is per (item, locale): a French page ranks for
+    // French terms, so the panel follows the editor's language instead of
+    // disappearing on every locale but the primary — which is what it used to
+    // do, leaving no way to enter foreign-language keywords at all. `""` is the
+    // SeoKeyword convention for the primary locale.
+    const keywordResourceType = !isBlogContainer
+      ? getKeywordResourceType(config.contentType)
+      : undefined;
+    const keywordLocale = state.currentLanguage === primaryLocale ? "" : state.currentLanguage;
 
     return (
       <SeoSidebar
@@ -540,6 +542,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         structuredDataPreviewMode
         resourceId={keywordResourceType ? item.id : undefined}
         resourceType={keywordResourceType}
+        keywordLocale={keywordLocale}
+        keywordLocaleName={
+          shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
+        }
       />
     );
   };
