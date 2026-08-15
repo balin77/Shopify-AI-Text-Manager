@@ -8,12 +8,15 @@
  * Host: the shop's PRIMARY domain (resolved live here, persisted on the config
  * row) so the submitted URLs and the keyLocation share the host IndexNow
  * verifies — see the service header for why the myshopify domain is wrong.
- * The loader re-syncs it on every visit, so adding a custom domain later fixes
- * itself without minting a new key.
+ * The loader re-syncs it on every visit and the background sweep re-checks it
+ * daily, so adding a custom domain later fixes itself without minting a new
+ * key. Only a RESOLVED domain is ever persisted: writing the myshopify
+ * fallback after a failed lookup would undo a correct host.
  *
  * The two live Admin queries in `submitAll` (blog handles, page publish state)
- * are per-explicit-merchant-action, bounded by the plan caps, and each degrades
- * to "don't filter / skip articles" on error — never to a wrong URL list.
+ * run per explicit merchant action, are paginated to the same cap the URL
+ * collector uses, and each degrades to "don't filter / skip those articles" on
+ * error — never to a wrong URL list.
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
@@ -24,7 +27,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
-import { fetchPrimaryDomain } from "../utils/shop-domain.server";
+import { resolvePrimaryDomain } from "../utils/shop-domain.server";
 import { logger } from "../utils/logger.server";
 import type { Plan } from "../config/plans";
 import {
@@ -36,6 +39,7 @@ import {
   drainQueue,
   getQueueCount,
   firstFailureKind,
+  URL_COLLECT_CAP,
   type SubmitStatusKind,
 } from "../services/seo/index-now.service";
 import type { DataResponse } from "~/types/data-response";
@@ -49,37 +53,68 @@ async function loadPlan(db: any, shop: string): Promise<Plan> {
 }
 
 const BLOG_HANDLES_QUERY = `#graphql
-  query indexNowBlogHandles {
-    blogs(first: 250) {
-      edges { node { id handle } }
+  query indexNowBlogHandles($cursor: String) {
+    blogs(first: 250, after: $cursor) {
+      edges { cursor node { id handle } }
+      pageInfo { hasNextPage }
     }
   }
 `;
 
 const PAGE_PUBLISH_QUERY = `#graphql
-  query indexNowPagePublishState {
-    pages(first: 250) {
-      edges { node { id isPublished } }
+  query indexNowPagePublishState($cursor: String) {
+    pages(first: 250, after: $cursor) {
+      edges { cursor node { id isPublished } }
+      pageInfo { hasNextPage }
     }
   }
 `;
 
 /**
+ * Both lookups feed `collectStoreUrls`, which reads up to URL_COLLECT_CAP rows
+ * per type — so a single un-paginated page of 250 would silently stop applying
+ * past that point (unpublished pages submitted as 404s, articles of later blogs
+ * dropped). Bounded by the same cap the collector uses.
+ */
+const GRAPHQL_PAGE_SIZE = 250;
+const MAX_QUERY_ROUNDS = Math.ceil(URL_COLLECT_CAP / GRAPHQL_PAGE_SIZE);
+
+/** Walk a `first`/`after` connection to the end (or to the collector's cap). */
+async function paginate(
+  admin: any,
+  query: string,
+  connection: "blogs" | "pages",
+  onNode: (node: any) => void,
+): Promise<void> {
+  let cursor: string | null = null;
+  for (let round = 0; round < MAX_QUERY_ROUNDS; round++) {
+    const res = await admin.graphql(query, { variables: { cursor } });
+    const body: any = await res.json();
+    if (body?.errors?.length) throw new Error(body.errors[0]?.message || "GraphQL error");
+    const conn = body?.data?.[connection];
+    const edges = conn?.edges ?? [];
+    for (const edge of edges) if (edge?.node) onNode(edge.node);
+    if (!conn?.pageInfo?.hasNextPage || edges.length === 0) return;
+    cursor = edges[edges.length - 1]?.cursor ?? null;
+    if (!cursor) return;
+  }
+  logger.warn(`[IndexNow] Stopped paginating ${connection} at the collect cap`);
+}
+
+/**
  * Blog GID → handle. Blogs have no DB cache and an article URL needs the real
- * blog handle; on any failure we return an empty map and `collectStoreUrls`
- * skips articles rather than submitting a guessed (possibly 404) URL.
+ * blog handle; on failure we keep whatever was collected so far and
+ * `collectStoreUrls` skips the remaining articles rather than submitting a
+ * guessed (possibly 404) URL.
  */
 async function fetchBlogHandles(admin: any): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
-    const res = await admin.graphql(BLOG_HANDLES_QUERY);
-    const body: any = await res.json();
-    for (const edge of body?.data?.blogs?.edges ?? []) {
-      const node = edge?.node;
-      if (node?.id && node?.handle) map.set(node.id, node.handle);
-    }
+    await paginate(admin, BLOG_HANDLES_QUERY, "blogs", (node) => {
+      if (node.id && node.handle) map.set(node.id, node.handle);
+    });
   } catch (err) {
-    logger.warn("[IndexNow] Could not resolve blog handles - skipping articles", {
+    logger.warn("[IndexNow] Could not resolve all blog handles - skipping those articles", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -89,21 +124,18 @@ async function fetchBlogHandles(admin: any): Promise<Map<string, string>> {
 /**
  * Page GIDs that are NOT published to the online store (their URL is a 404).
  * The page cache carries no publish flag, so this is the one place that can
- * know. On error we return an empty set — unfiltered, i.e. exactly the old
- * behaviour, never a wrongly dropped page.
+ * know. A partial result is safe: it only ever DROPS pages we positively know
+ * are unpublished, so a failure degrades to the previous "submit everything"
+ * behaviour, never to a wrongly dropped page.
  */
 async function fetchUnpublishedPageIds(admin: any): Promise<Set<string>> {
   const ids = new Set<string>();
   try {
-    const res = await admin.graphql(PAGE_PUBLISH_QUERY);
-    const body: any = await res.json();
-    if (body?.errors?.length) throw new Error(body.errors[0]?.message || "GraphQL error");
-    for (const edge of body?.data?.pages?.edges ?? []) {
-      const node = edge?.node;
-      if (node?.id && node.isPublished === false) ids.add(node.id);
-    }
+    await paginate(admin, PAGE_PUBLISH_QUERY, "pages", (node) => {
+      if (node.id && node.isPublished === false) ids.add(node.id);
+    });
   } catch (err) {
-    logger.warn("[IndexNow] Could not resolve page publish state - submitting all pages", {
+    logger.warn("[IndexNow] Could not resolve page publish state - submitting those pages", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -129,9 +161,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   let config = await getIndexNowConfig(db, session.shop);
   if (config) {
-    // Picks up a primary domain the merchant connected after enabling.
-    const primaryDomain = await fetchPrimaryDomain(admin, session.shop);
-    config = await syncIndexNowHost(db, session.shop, primaryDomain);
+    // Picks up a primary domain the merchant connected after enabling. Only
+    // written when the lookup actually SUCCEEDED — persisting the myshopify
+    // fallback on a transient API error would undo a correct host.
+    const primaryDomain = await resolvePrimaryDomain(admin);
+    if (primaryDomain) config = await syncIndexNowHost(db, session.shop, primaryDomain);
   }
   const queueCount = config ? await getQueueCount(db, session.shop) : 0;
 
@@ -166,8 +200,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   const actionType = getFormString(form, "actionType");
 
   if (actionType === "provision") {
-    const primaryDomain = await fetchPrimaryDomain(admin, session.shop);
-    await provisionIndexNow(db, session.shop, primaryDomain);
+    // A failed lookup still lets the merchant enable the feature: the row is
+    // seeded with the myshopify host but left UNVERIFIED, so the sweep (and the
+    // next section visit) replaces it with the real primary domain.
+    const primaryDomain = await resolvePrimaryDomain(admin);
+    await provisionIndexNow(db, session.shop, primaryDomain ?? session.shop, primaryDomain !== null);
     return json<ActionResult>({ ok: true, kind: "provisioned" });
   }
   if (actionType === "deprovision") {
@@ -182,7 +219,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     ]);
     const outcome = await submitAll(db, session.shop, { blogHandles, unpublishedPageIds });
     if (outcome.status === "disabled") return json<ActionResult>({ ok: false, error: "disabled" }, { status: 409 });
-    if (outcome.status === "empty") return json<ActionResult>({ ok: true, kind: "empty" });
     if (outcome.status === "cooldown") {
       return json<ActionResult>({
         ok: true,

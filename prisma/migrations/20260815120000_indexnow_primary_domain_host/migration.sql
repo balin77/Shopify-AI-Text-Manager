@@ -10,6 +10,11 @@ ALTER TABLE "SeoIndexNowConfig" ADD COLUMN "host" TEXT;
 UPDATE "SeoIndexNowConfig" SET "host" = "shop" WHERE "host" IS NULL;
 ALTER TABLE "SeoIndexNowConfig" ALTER COLUMN "host" SET NOT NULL;
 
+-- Left NULL by the backfill on purpose: "never verified against the real
+-- primary domain", which is what makes the background sweep pick these rows up
+-- first instead of trusting the backfilled myshopify host forever.
+ALTER TABLE "SeoIndexNowConfig" ADD COLUMN "hostCheckedAt" TIMESTAMP(3);
+
 -- Full-catalog submits get their own stamp: the shared lastSubmittedAt is
 -- bumped by every queue drain (incl. the background sweep), which would keep
 -- the "submit everything" cooldown permanently expired.

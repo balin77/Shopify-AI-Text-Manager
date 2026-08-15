@@ -162,9 +162,14 @@ describe("submitUrls", () => {
 describe("drainQueue", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  // drainQueue issues TWO kinds of deleteMany: the TTL prune (where.createdAt)
+  // and the "these rows were accepted" delete (where.id). Tests care about the
+  // latter, so they are kept apart here.
   const makeDb = (rows: Array<{ id: string; url: string }>, extra: Record<string, any> = {}) => {
-    const deleteMany = vi.fn(async (_args: any) => ({ count: rows.length }));
+    const deleteMany = vi.fn(async (_args: any) => ({ count: 0 }));
     const updateMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const rowDeletes = () => deleteMany.mock.calls.filter((c: any[]) => c[0]?.where?.id);
+    const ttlPrunes = () => deleteMany.mock.calls.filter((c: any[]) => c[0]?.where?.createdAt);
     return {
       db: {
         seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, ...extra }), updateMany },
@@ -172,27 +177,30 @@ describe("drainQueue", () => {
       } as any,
       deleteMany,
       updateMany,
+      rowDeletes,
+      ttlPrunes,
     };
   };
 
   it("keeps the rows and does not stamp when the chunk fails", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500 })));
-    const { db, deleteMany, updateMany } = makeDb([{ id: "q1", url: "https://shop.example/products/a" }]);
+    const { db, rowDeletes, ttlPrunes, updateMany } = makeDb([{ id: "q1", url: "https://shop.example/products/a" }]);
     const outcome = await drainQueue(db, "s.myshopify.com");
     expect(outcome.status).toBe("submitted");
     if (outcome.status !== "submitted") throw new Error("unreachable");
     expect(outcome.result.failed).toBe(1);
-    expect(deleteMany).not.toHaveBeenCalled();
+    expect(rowDeletes()).toHaveLength(0);
+    expect(ttlPrunes()).toHaveLength(1);
     expect(updateMany).not.toHaveBeenCalled();
   });
 
   it("clears the queue and stamps lastSubmittedAt on success", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200 })));
-    const { db, deleteMany, updateMany } = makeDb([{ id: "q1", url: "https://shop.example/products/a" }]);
+    const { db, rowDeletes, updateMany } = makeDb([{ id: "q1", url: "https://shop.example/products/a" }]);
     const outcome = await drainQueue(db, "s.myshopify.com");
     if (outcome.status !== "submitted") throw new Error("unreachable");
     expect(outcome.result.failed).toBe(0);
-    expect(deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["q1"] } } });
+    expect(rowDeletes()[0][0]).toEqual({ where: { id: { in: ["q1"] } } });
     expect(updateMany).toHaveBeenCalled();
   });
 
@@ -209,7 +217,7 @@ describe("drainQueue", () => {
       id: `q${i}`,
       url: `https://shop.example/products/p${i}`,
     }));
-    const { db, deleteMany } = makeDb(rows);
+    const { db, rowDeletes } = makeDb(rows);
 
     const outcome = await drainQueue(db, "s.myshopify.com");
     if (outcome.status !== "submitted") throw new Error("unreachable");
@@ -217,7 +225,7 @@ describe("drainQueue", () => {
     expect(outcome.result.submitted).toBe(INDEXNOW_MAX_URLS_PER_REQUEST);
     expect(outcome.result.failed).toBe(1);
 
-    const deletedIds: string[] = deleteMany.mock.calls[0][0].where.id.in;
+    const deletedIds: string[] = rowDeletes()[0][0].where.id.in;
     expect(deletedIds).toHaveLength(INDEXNOW_MAX_URLS_PER_REQUEST);
     expect(deletedIds).not.toContain(`q${INDEXNOW_MAX_URLS_PER_REQUEST}`);
   });
@@ -226,7 +234,7 @@ describe("drainQueue", () => {
     const findMany = vi.fn();
     const db = {
       seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, enabled: false }) },
-      seoIndexNowQueue: { findMany },
+      seoIndexNowQueue: { findMany, deleteMany: vi.fn(async (_args: any) => ({ count: 0 })) },
     } as any;
     expect(await drainQueue(db, "s.myshopify.com")).toEqual({ status: "disabled" });
     expect(findMany).not.toHaveBeenCalled();
@@ -235,7 +243,7 @@ describe("drainQueue", () => {
   it("reports an empty queue instead of pretending to submit", async () => {
     const db = {
       seoIndexNowConfig: { findUnique: async () => CONFIG },
-      seoIndexNowQueue: { findMany: async () => [] },
+      seoIndexNowQueue: { findMany: async () => [], deleteMany: vi.fn(async (_args: any) => ({ count: 0 })) },
     } as any;
     expect(await drainQueue(db, "s.myshopify.com")).toEqual({ status: "empty" });
   });
@@ -273,6 +281,15 @@ describe("provisionIndexNow", () => {
     expect(update.mock.calls[0][0].data.enabled).toBe(true);
   });
 
+  it("leaves an existing host alone when the domain lookup failed", async () => {
+    const existing = { ...CONFIG, enabled: false };
+    const update = vi.fn(async ({ data }: any) => ({ ...existing, ...data }));
+    const db = { seoIndexNowConfig: { findUnique: async () => existing, create: vi.fn(), update } } as any;
+    await provisionIndexNow(db, "s.myshopify.com", "s.myshopify.com", false);
+    // Only the toggle — a fallback host must never overwrite a verified one.
+    expect(update.mock.calls[0][0].data).toEqual({ enabled: true });
+  });
+
   it("creates the config on the PRIMARY domain, not the myshopify host", async () => {
     const create = vi.fn(async ({ data }: any) => data);
     const db = { seoIndexNowConfig: { findUnique: async () => null, create } } as any;
@@ -308,24 +325,51 @@ describe("setIndexNowEnabled", () => {
 });
 
 describe("syncIndexNowHost", () => {
+  const NOW = new Date("2026-08-15T12:00:00Z");
+
   it("rewrites host + keyLocation when the primary domain changed, keeping the key", async () => {
-    const update = vi.fn(async ({ data }: any) => ({ ...CONFIG, ...data }));
+    const stale = {
+      ...CONFIG,
+      host: "s.myshopify.com",
+      keyLocation: "https://s.myshopify.com/apps/contentpilot/indexnow-key",
+    };
+    const update = vi.fn(async ({ data }: any) => ({ ...stale, ...data }));
+    const deleteMany = vi.fn(async (_args: any) => ({ count: 0 }));
     const db = {
-      seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, host: "s.myshopify.com", keyLocation: "https://s.myshopify.com/apps/contentpilot/indexnow-key" }), update },
+      seoIndexNowConfig: { findUnique: async () => stale, update },
+      seoIndexNowQueue: { deleteMany },
     } as any;
-    const updated = await syncIndexNowHost(db, "s.myshopify.com", "shop.example");
+    const updated = await syncIndexNowHost(db, "s.myshopify.com", "shop.example", NOW);
     expect(update.mock.calls[0][0].data).toEqual({
       host: "shop.example",
       keyLocation: "https://shop.example/apps/contentpilot/indexnow-key",
+      hostCheckedAt: NOW,
     });
     expect(updated?.key).toBe("K");
   });
 
-  it("does not write when the host already matches", async () => {
-    const update = vi.fn();
-    const db = { seoIndexNowConfig: { findUnique: async () => CONFIG, update } } as any;
-    await syncIndexNowHost(db, "s.myshopify.com", "shop.example");
-    expect(update).not.toHaveBeenCalled();
+  it("drops URLs queued on the OLD host — they would 422 and wedge the queue", async () => {
+    const stale = { ...CONFIG, host: "s.myshopify.com", keyLocation: "https://s.myshopify.com/k" };
+    const deleteMany = vi.fn(async (_args: any) => ({ count: 4 }));
+    const db = {
+      seoIndexNowConfig: { findUnique: async () => stale, update: vi.fn(async ({ data }: any) => ({ ...stale, ...data })) },
+      seoIndexNowQueue: { deleteMany },
+    } as any;
+    await syncIndexNowHost(db, "s.myshopify.com", "shop.example", NOW);
+    expect(deleteMany).toHaveBeenCalledWith({ where: { shop: "s.myshopify.com" } });
+  });
+
+  it("only stamps the check timestamp when the host already matches", async () => {
+    const update = vi.fn(async ({ data }: any) => ({ ...CONFIG, ...data }));
+    const deleteMany = vi.fn();
+    const db = {
+      seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, hostCheckedAt: null }), update },
+      seoIndexNowQueue: { deleteMany },
+    } as any;
+    await syncIndexNowHost(db, "s.myshopify.com", "shop.example", NOW);
+    expect(update.mock.calls[0][0].data).toEqual({ hostCheckedAt: NOW });
+    // An unchanged host must never cost the shop its pending URLs.
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -459,6 +503,16 @@ describe("submitAll", () => {
     if (outcome.status !== "cooldown") throw new Error("unreachable");
     expect(outcome.retryAfterMs).toBeLessThanOrEqual(SUBMIT_ALL_COOLDOWN_MS);
     expect(outcome.retryAfterMs).toBeGreaterThan(0);
+  });
+
+  it("does not stamp the cooldown when the submit failed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403 })));
+    const updateMany = vi.fn(async (_args: any) => ({ count: 1 }));
+    const db = emptyCatalogDb(CONFIG, updateMany);
+    const outcome = await submitAll(db, "s.myshopify.com");
+    expect(outcome.status).toBe("submitted");
+    // Nothing went out, so nothing may block the retry.
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it("submits again once the cooldown expired, stamping both timestamps", async () => {

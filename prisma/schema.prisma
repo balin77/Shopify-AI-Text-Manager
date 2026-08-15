@@ -1207,7 +1207,12 @@ model SeoIndexNowConfig {
   // whenever the merchant opens the section, so adding a custom domain later
   // fixes itself WITHOUT minting a new key.
   host        String
-  enabled     Boolean @default(true)
+  // Last time `host` was checked against the shop's actual primary domain.
+  // null = never verified (the migration backfill, or a provision whose lookup
+  // failed) — the background sweep refreshes those first, so a shop that never
+  // reopens the section still stops submitting myshopify URLs.
+  hostCheckedAt DateTime?
+  enabled       Boolean   @default(true)
   // Last successful submission of ANY kind (queue drain or full catalog).
   lastSubmittedAt DateTime?
   // Last successful FULL-catalog submit — separate from lastSubmittedAt so the

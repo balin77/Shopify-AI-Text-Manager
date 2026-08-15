@@ -10,8 +10,14 @@
  * because the verification fetch ends up on a different host than the one
  * declared.
  *
- * Degrades to the `*.myshopify.com` fallback on any error: that host always
- * resolves, so a failed lookup keeps the caller working instead of throwing.
+ * Two entry points on purpose:
+ *   - `resolvePrimaryDomain` returns `null` when the lookup FAILED, so a caller
+ *     that PERSISTS the result can tell "the shop really is on its myshopify
+ *     domain" apart from "the Admin API hiccuped". Storing the fallback would
+ *     overwrite a correct primary domain with the redirecting one on any
+ *     transient error — the exact bug the primary-domain work fixes.
+ *   - `fetchPrimaryDomain` applies the fallback for read-only callers (audits,
+ *     crawls) that just need a host to talk to.
  */
 
 const SHOP_PRIMARY_DOMAIN_QUERY = `#graphql
@@ -30,15 +36,26 @@ interface GraphqlCapableAdmin {
   graphql: (query: string, options?: any) => Promise<{ json: () => Promise<any> }>;
 }
 
+/** The primary domain, or `null` when it could not be determined. */
+export async function resolvePrimaryDomain(admin: GraphqlCapableAdmin): Promise<string | null> {
+  try {
+    const res = await admin.graphql(SHOP_PRIMARY_DOMAIN_QUERY);
+    const body = (await res.json()) as {
+      data?: { shop?: { primaryDomain?: { host?: string } } };
+      errors?: Array<{ message?: string }>;
+    };
+    // A throttled/partial response is HTTP 200 with an `errors` array — without
+    // this check it would look like "no primary domain" and yield the fallback.
+    if (body?.errors?.length) return null;
+    return body?.data?.shop?.primaryDomain?.host || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchPrimaryDomain(
   admin: GraphqlCapableAdmin,
   fallbackShop: string,
 ): Promise<string> {
-  try {
-    const res = await admin.graphql(SHOP_PRIMARY_DOMAIN_QUERY);
-    const body = (await res.json()) as { data?: { shop?: { primaryDomain?: { host?: string } } } };
-    return body?.data?.shop?.primaryDomain?.host || fallbackShop;
-  } catch {
-    return fallbackShop;
-  }
+  return (await resolvePrimaryDomain(admin)) ?? fallbackShop;
 }

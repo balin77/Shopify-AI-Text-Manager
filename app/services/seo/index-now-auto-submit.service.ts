@@ -36,8 +36,10 @@
 import { db } from "../../db.server";
 import { logger } from "../../utils/logger.server";
 import { meetsPlan } from "../../utils/planUtils";
+import { createAdminClientFromShop } from "../../utils/admin-client.server";
+import { resolvePrimaryDomain } from "../../utils/shop-domain.server";
 import type { Plan } from "../../config/plans";
-import { drainQueue, firstFailureKind } from "./index-now.service";
+import { drainQueue, firstFailureKind, syncIndexNowHost } from "./index-now.service";
 
 /** Disable the whole sweep without a redeploy. */
 const SWEEP_DISABLED = process.env.INDEXNOW_AUTO_SUBMIT_DISABLED === "true";
@@ -62,6 +64,12 @@ const MAX_SHOPS_PER_TICK = Math.max(
 
 /** Upper bound on the candidate scan, so one pathological tick can't read every shop. */
 const MAX_CANDIDATE_SHOPS = 500;
+
+/** How stale a verified host may get before the sweep re-resolves it. Default 24h. */
+const HOST_RECHECK_MS = parseInt(
+  process.env.INDEXNOW_HOST_RECHECK_MS || String(24 * 60 * 60 * 1000),
+  10,
+);
 
 export interface IndexNowAutoSubmitTickStats {
   candidates: number;
@@ -150,13 +158,14 @@ export class IndexNowAutoSubmitService {
     const plans = await this.loadPlans(shops);
     logger.info(`[IndexNowAutoSubmit] Tick: ${shops.length} shop(s) with pending URLs`);
 
-    for (const shop of shops) {
+    for (const { shop, hostCheckedAt } of shops) {
       try {
         if (!meetsPlan(plans.get(shop) ?? "free", "pro")) {
           stats.skippedPlan++;
           continue;
         }
-        const outcome = await drainQueue(db, shop);
+        await this.refreshHostIfStale(shop, hostCheckedAt, now);
+        const outcome = await drainQueue(db, shop, now);
         if (outcome.status === "submitted") {
           stats.drained++;
           stats.submitted += outcome.result.submitted;
@@ -188,8 +197,40 @@ export class IndexNowAutoSubmitService {
     return stats;
   }
 
+  /**
+   * Re-resolve the primary domain when it has not been verified for a day (or
+   * never — every row the migration backfilled).
+   *
+   * Without this, only the section's loader ever corrected the host, so a shop
+   * that connected a custom domain and never reopened the page would keep
+   * auto-submitting `*.myshopify.com` URLs unattended: precisely the failure
+   * this whole change exists to remove. Costs at most one Admin call per shop
+   * per day, and only for shops that actually have URLs to send.
+   *
+   * A failed lookup is a no-op — `resolvePrimaryDomain` returns null rather
+   * than the myshopify fallback, so a hiccup can never overwrite a good host.
+   */
+  private async refreshHostIfStale(
+    shop: string,
+    hostCheckedAt: Date | null,
+    now: Date,
+  ): Promise<void> {
+    if (hostCheckedAt && now.getTime() - hostCheckedAt.getTime() < HOST_RECHECK_MS) return;
+    try {
+      const admin = await createAdminClientFromShop(shop);
+      const primaryDomain = await resolvePrimaryDomain(admin as never);
+      if (primaryDomain) await syncIndexNowHost(db, shop, primaryDomain, now);
+    } catch (err) {
+      // Uninstalled shop / expired session: leave the host as is and let the
+      // drain proceed. Nothing here may abort the sweep for other shops.
+      logger.warn(`[IndexNowAutoSubmit] Could not refresh host for ${shop}`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   /** Shops that have queued URLs AND an enabled config that is due again. */
-  private async findDueShops(now: Date): Promise<string[]> {
+  private async findDueShops(now: Date): Promise<Array<{ shop: string; hostCheckedAt: Date | null }>> {
     const pending = await db.seoIndexNowQueue.groupBy({
       by: ["shop"],
       _count: { _all: true },
@@ -205,16 +246,16 @@ export class IndexNowAutoSubmitService {
         enabled: true,
         OR: [{ lastAutoRunAt: null }, { lastAutoRunAt: { lt: cutoff } }],
       },
-      select: { shop: true },
+      select: { shop: true, hostCheckedAt: true },
       orderBy: { lastAutoRunAt: { sort: "asc", nulls: "first" } },
       take: MAX_SHOPS_PER_TICK,
     });
-    return configs.map((c) => c.shop);
+    return configs;
   }
 
-  private async loadPlans(shops: string[]): Promise<Map<string, Plan>> {
+  private async loadPlans(shops: Array<{ shop: string }>): Promise<Map<string, Plan>> {
     const rows = await db.aISettings.findMany({
-      where: { shop: { in: shops } },
+      where: { shop: { in: shops.map((s) => s.shop) } },
       select: { shop: true, subscriptionPlan: true },
     });
     return new Map(rows.map((r) => [r.shop, (r.subscriptionPlan || "free") as Plan]));

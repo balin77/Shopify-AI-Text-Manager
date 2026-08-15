@@ -15,12 +15,21 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDrainQueue } = vi.hoisted(() => ({ mockDrainQueue: vi.fn() }));
+const { mockDrainQueue, mockSyncHost, mockResolveDomain, mockCreateAdmin } = vi.hoisted(() => ({
+  mockDrainQueue: vi.fn(),
+  mockSyncHost: vi.fn(),
+  mockResolveDomain: vi.fn(),
+  mockCreateAdmin: vi.fn(),
+}));
 
 vi.mock("~/services/seo/index-now.service", () => ({
   drainQueue: mockDrainQueue,
+  syncIndexNowHost: mockSyncHost,
   firstFailureKind: () => null,
 }));
+
+vi.mock("~/utils/shop-domain.server", () => ({ resolvePrimaryDomain: mockResolveDomain }));
+vi.mock("~/utils/admin-client.server", () => ({ createAdminClientFromShop: mockCreateAdmin }));
 
 vi.mock("~/utils/logger.server", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -30,6 +39,7 @@ interface ConfigRow {
   shop: string;
   enabled: boolean;
   lastAutoRunAt: Date | null;
+  hostCheckedAt?: Date | null;
 }
 
 let pendingShops: string[] = [];
@@ -52,7 +62,7 @@ vi.mock("~/db.server", () => ({
           .filter((c) => c.lastAutoRunAt === null || (cutoff ? c.lastAutoRunAt < cutoff : true))
           .sort((a, b) => (a.lastAutoRunAt?.getTime() ?? -1) - (b.lastAutoRunAt?.getTime() ?? -1))
           .slice(0, take)
-          .map((c) => ({ shop: c.shop }));
+          .map((c) => ({ shop: c.shop, hostCheckedAt: c.hostCheckedAt ?? null }));
       }),
       updateMany: vi.fn(async ({ where }: any) => {
         stamped.push(where.shop);
@@ -80,6 +90,11 @@ beforeEach(() => {
   plans.clear();
   stamped.length = 0;
   mockDrainQueue.mockReset();
+  mockSyncHost.mockReset();
+  mockResolveDomain.mockReset();
+  mockResolveDomain.mockResolvedValue("shop.example");
+  mockCreateAdmin.mockReset();
+  mockCreateAdmin.mockResolvedValue({ graphql: vi.fn() });
   mockDrainQueue.mockResolvedValue({
     status: "submitted",
     result: { submitted: 1, chunks: 1, failed: 0, results: [] },
@@ -151,5 +166,57 @@ describe("IndexNowAutoSubmitService.tick", () => {
     const stats = await IndexNowAutoSubmitService.getInstance().tick(NOW);
     expect(stats.errored).toBe(1);
     expect(stamped).toEqual(["boom.myshopify.com"]);
+  });
+
+  it("re-resolves the host for a shop whose domain was never verified", async () => {
+    pendingShops = ["a.myshopify.com"];
+    // hostCheckedAt null = the migration backfill: host is still the myshopify
+    // domain nobody ever checked. Without this refresh such a shop would
+    // auto-submit redirecting URLs forever, since only the section loader used
+    // to correct the host.
+    configs = [{ shop: "a.myshopify.com", enabled: true, lastAutoRunAt: null, hostCheckedAt: null }];
+    plans.set("a.myshopify.com", "pro");
+
+    await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    expect(mockSyncHost).toHaveBeenCalledTimes(1);
+    expect(mockSyncHost.mock.calls[0][2]).toBe("shop.example");
+  });
+
+  it("does not re-resolve a host verified within the recheck window", async () => {
+    pendingShops = ["a.myshopify.com"];
+    configs = [{
+      shop: "a.myshopify.com",
+      enabled: true,
+      lastAutoRunAt: OLD,
+      hostCheckedAt: new Date(NOW.getTime() - 60_000),
+    }];
+    plans.set("a.myshopify.com", "pro");
+
+    await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    expect(mockCreateAdmin).not.toHaveBeenCalled();
+    expect(mockSyncHost).not.toHaveBeenCalled();
+  });
+
+  it("never persists a host when the domain lookup failed", async () => {
+    pendingShops = ["a.myshopify.com"];
+    configs = [{ shop: "a.myshopify.com", enabled: true, lastAutoRunAt: null, hostCheckedAt: null }];
+    plans.set("a.myshopify.com", "pro");
+    mockResolveDomain.mockResolvedValue(null);
+
+    await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    expect(mockSyncHost).not.toHaveBeenCalled();
+    // The drain still runs — a lookup hiccup must not stall the queue.
+    expect(mockDrainQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps sweeping when the host refresh throws (uninstalled shop)", async () => {
+    pendingShops = ["a.myshopify.com"];
+    configs = [{ shop: "a.myshopify.com", enabled: true, lastAutoRunAt: null, hostCheckedAt: null }];
+    plans.set("a.myshopify.com", "pro");
+    mockCreateAdmin.mockRejectedValue(new Error("no session"));
+
+    const stats = await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    expect(stats.errored).toBe(0);
+    expect(mockDrainQueue).toHaveBeenCalledTimes(1);
   });
 });

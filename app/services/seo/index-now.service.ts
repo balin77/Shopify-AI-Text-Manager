@@ -61,6 +61,22 @@ export const SUBMIT_ALL_COOLDOWN_MS = Math.max(
   parseInt(process.env.INDEXNOW_SUBMIT_ALL_COOLDOWN_MS || String(60 * 60 * 1000), 10),
 );
 
+/** Queued URLs older than this are dropped instead of retried forever. Default 7 days. */
+const QUEUE_TTL_MS = parseInt(
+  process.env.INDEXNOW_QUEUE_TTL_MS || String(7 * 24 * 60 * 60 * 1000),
+  10,
+);
+
+/**
+ * Upper bound on one drain, so a shop whose submissions are being rejected
+ * cannot turn every sweep tick into an unbounded read. Two full chunks: the
+ * remainder is picked up by the next tick, oldest first.
+ */
+const MAX_URLS_PER_DRAIN = INDEXNOW_MAX_URLS_PER_REQUEST * 2;
+
+/** Don't rewrite `hostCheckedAt` more often than this when nothing changed. */
+const HOST_STAMP_MIN_AGE_MS = 60 * 60 * 1000;
+
 export type IndexNowResourceType = "product" | "collection" | "page" | "article";
 
 export function generateIndexNowKey(): string {
@@ -205,19 +221,41 @@ export async function provisionIndexNow(
   db: PrismaClient,
   shop: string,
   host: string,
+  /**
+   * Whether `host` is a RESOLVED primary domain rather than the myshopify
+   * fallback. When false the host is only used to seed a brand-new row and
+   * `hostCheckedAt` stays null, so an existing (correct) host is never
+   * overwritten and the sweep re-resolves it.
+   */
+  hostVerified = true,
 ): Promise<{ key: string; keyLocation: string; host: string }> {
   const resolvedHost = normalizeHost(host);
   const existing = await getIndexNowConfig(db, shop);
   if (existing) {
     const updated = await db.seoIndexNowConfig.update({
       where: { shop },
-      data: { enabled: true, host: resolvedHost, keyLocation: keyLocationFor(resolvedHost) },
+      data: hostVerified
+        ? {
+            enabled: true,
+            host: resolvedHost,
+            keyLocation: keyLocationFor(resolvedHost),
+            hostCheckedAt: new Date(),
+          }
+        : { enabled: true },
     });
     return { key: updated.key, keyLocation: updated.keyLocation, host: updated.host };
   }
   const key = generateIndexNowKey();
   const keyLocation = keyLocationFor(resolvedHost);
-  await db.seoIndexNowConfig.create({ data: { shop, key, keyLocation, host: resolvedHost } });
+  await db.seoIndexNowConfig.create({
+    data: {
+      shop,
+      key,
+      keyLocation,
+      host: resolvedHost,
+      hostCheckedAt: hostVerified ? new Date() : null,
+    },
+  });
   return { key, keyLocation, host: resolvedHost };
 }
 
@@ -242,25 +280,58 @@ export async function setIndexNowEnabled(
 
 /**
  * Keep `host`/`keyLocation` in sync with the shop's current primary domain.
- * Called from the section's loader, so a domain change is picked up the next
- * time the merchant looks at the page — key untouched.
+ * Called from the section's loader and from the background sweep, so a domain
+ * change is picked up without the merchant doing anything — key untouched.
+ *
+ * `host` must be a domain that was actually RESOLVED. Never pass a fallback:
+ * persisting the myshopify host on a transient Admin API failure would undo a
+ * correct primary domain (that is why `resolvePrimaryDomain` returns null).
+ *
+ * Queued URLs are absolute and were built on the OLD host, so a host change
+ * drops them: submitting them under the new declared host is a 422 for the
+ * whole chunk, and because a failed chunk is kept for retry that one stale row
+ * would wedge the queue permanently — taking every correct URL in its chunk
+ * with it. The resources themselves are re-enqueued on their next change, and
+ * "submit all URLs" covers the catalog immediately.
  */
 export async function syncIndexNowHost(
   db: PrismaClient,
   shop: string,
   host: string,
+  now: Date = new Date(),
 ): Promise<IndexNowConfig> {
   const resolvedHost = normalizeHost(host);
   const config = await getIndexNowConfig(db, shop);
   if (!config) return null;
+
   if (config.host === resolvedHost && config.keyLocation === keyLocationFor(resolvedHost)) {
+    // Same host — only record that we verified it, so the sweep can back off.
+    // Throttled: the loader calls this on every visit to the section, and a
+    // write per page view for a timestamp nobody reads at that resolution is
+    // pure noise.
+    const age = config.hostCheckedAt ? now.getTime() - config.hostCheckedAt.getTime() : Infinity;
+    if (age >= HOST_STAMP_MIN_AGE_MS) {
+      return db.seoIndexNowConfig.update({ where: { shop }, data: { hostCheckedAt: now } });
+    }
     return config;
   }
+
   logger.info(`[IndexNow] Host changed for ${shop}: ${config.host} → ${resolvedHost}`);
-  return db.seoIndexNowConfig.update({
-    where: { shop },
-    data: { host: resolvedHost, keyLocation: keyLocationFor(resolvedHost) },
-  });
+  const [updated, dropped] = await Promise.all([
+    db.seoIndexNowConfig.update({
+      where: { shop },
+      data: {
+        host: resolvedHost,
+        keyLocation: keyLocationFor(resolvedHost),
+        hostCheckedAt: now,
+      },
+    }),
+    db.seoIndexNowQueue.deleteMany({ where: { shop } }),
+  ]);
+  if (dropped.count > 0) {
+    logger.info(`[IndexNow] Dropped ${dropped.count} queued URL(s) on the previous host for ${shop}`);
+  }
+  return updated;
 }
 
 // ── Submit ───────────────────────────────────────────────────────────────────
@@ -386,11 +457,32 @@ export type DrainOutcome =
  * keep every row, so the URLs that DID reach IndexNow were submitted again on
  * the next run. Rows of a failed chunk survive and are retried.
  */
-export async function drainQueue(db: PrismaClient, shop: string): Promise<DrainOutcome> {
+export async function drainQueue(
+  db: PrismaClient,
+  shop: string,
+  now: Date = new Date(),
+): Promise<DrainOutcome> {
   const config = await getEnabledConfig(db, shop);
   if (!config) return { status: "disabled" };
 
-  const rows = await db.seoIndexNowQueue.findMany({ where: { shop }, select: { id: true, url: true } });
+  // A URL that could not be submitted for QUEUE_TTL_MS describes a change
+  // nobody is waiting for any more. Without this, a shop whose key is rejected
+  // (403) accumulates every change forever AND resubmits the whole pile on
+  // every sweep. The cause is what the IndexNow probe in Settings surfaces;
+  // this only bounds the damage while it goes unfixed.
+  const expired = await db.seoIndexNowQueue.deleteMany({
+    where: { shop, createdAt: { lt: new Date(now.getTime() - QUEUE_TTL_MS) } },
+  });
+  if (expired.count > 0) {
+    logger.warn(`[IndexNow] Dropped ${expired.count} queued URL(s) older than the retry window for ${shop}`);
+  }
+
+  const rows = await db.seoIndexNowQueue.findMany({
+    where: { shop },
+    select: { id: true, url: true },
+    orderBy: { createdAt: "asc" }, // oldest first, so a capped drain makes progress
+    take: MAX_URLS_PER_DRAIN,
+  });
   if (rows.length === 0) return { status: "empty" };
 
   const rowChunks = chunkUrls(rows);
@@ -491,10 +583,13 @@ export async function collectStoreUrls(
   return urls;
 }
 
+/**
+ * No "empty" case: the homepage is always part of the list, so a full submit
+ * always has something to send even on a brand-new shop.
+ */
 export type SubmitAllOutcome =
   | { status: "submitted"; result: SubmitResult }
   | { status: "disabled" }
-  | { status: "empty" }
   | { status: "cooldown"; retryAfterMs: number };
 
 export async function submitAll(
@@ -514,14 +609,15 @@ export async function submitAll(
   }
 
   const urls = await collectStoreUrls(db, shop, config.host, options);
-  if (urls.length === 0) return { status: "empty" };
-
   const result = await submitUrls(config.host, config.key, config.keyLocation, urls);
+
   if (result.submitted > 0) {
-    await db.seoIndexNowConfig.updateMany({
-      where: { shop },
-      data: { lastSubmittedAt: now, lastFullSubmitAt: now },
-    });
+    // `lastFullSubmitAt` drives the cooldown, so it may only be stamped when the
+    // catalog ACTUALLY went out in full. Stamping it after a partial failure
+    // would lock the merchant out for an hour from the retry they need.
+    const data: { lastSubmittedAt: Date; lastFullSubmitAt?: Date } = { lastSubmittedAt: now };
+    if (result.failed === 0) data.lastFullSubmitAt = now;
+    await db.seoIndexNowConfig.updateMany({ where: { shop }, data });
   }
   return { status: "submitted", result };
 }
