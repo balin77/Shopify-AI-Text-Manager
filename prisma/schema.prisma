@@ -74,6 +74,16 @@ model AISettings {
   // through the in-app path skip the sweep entirely.
   llmsTxtLastAutoRunAt DateTime?
 
+  // "Übersetzungen mitführen" on SEO → interne Verlinkung. Accepting a
+  // suggestion only wraps an existing word in an <a>, so the wording is
+  // unchanged and the primary save's stale-translation purge would throw away
+  // hand-written translations for nothing. On (the default), the accept skips
+  // that purge and writes the same link into every translation with its
+  // localized URL; off restores the plain-save behaviour. Persisted per shop so
+  // a merchant who deliberately turns it off does not get it back on the next
+  // page load — see app/services/seo/internal-links-translate.server.ts.
+  seoLinksCarryTranslations Boolean @default(true)
+
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
   // is decoupled from Shopify and read from here instead. resolveDevPlanMode()

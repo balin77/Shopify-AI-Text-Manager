@@ -143,9 +143,17 @@ const EXAMPLE_ROWS: SuggestionRow[] = [
   },
 ];
 
-async function loadPlan(db: any, shop: string): Promise<Plan> {
-  const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
-  return (settings?.subscriptionPlan || "free") as Plan;
+async function loadPlan(db: any, shop: string): Promise<{ plan: Plan; carryTranslations: boolean }> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true, seoLinksCarryTranslations: true },
+  });
+  return {
+    plan: (settings?.subscriptionPlan || "free") as Plan,
+    // A shop that has never touched the switch has no row (or a NULL from an
+    // older client) — both mean "on", the default the feature ships with.
+    carryTranslations: settings?.seoLinksCarryTranslations ?? true,
+  };
 }
 
 /** id -> {title, handle} across all four resource types, batched. */
@@ -181,7 +189,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { db } = await import("../db.server");
   const shop = session.shop;
 
-  const plan = await loadPlan(db, shop);
+  const { plan, carryTranslations } = await loadPlan(db, shop);
   if (!meetsPlan(plan, "pro")) {
     return json({
       gated: true,
@@ -189,6 +197,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       lastRun: null as string | null,
       primaryLocale: "",
       hasForeignLocales: false,
+      carryTranslations,
       view: "open" as View,
       fromFilter: "all",
       toFilter: "all",
@@ -274,6 +283,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     lastRun: lastTask?.completedAt ? lastTask.completedAt.toISOString() : null,
     primaryLocale,
     hasForeignLocales,
+    carryTranslations,
     view,
     fromFilter: fromFilter ?? "all",
     toFilter: toFilter ?? "all",
@@ -346,9 +356,13 @@ export default function SeoInternalLinks() {
   const [bulkRunning, setBulkRunning] = useState<"accept" | "reject" | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState<"accept" | "reject" | null>(null);
 
-  // On by default: losing hand-written translations to a formatting-level edit
-  // is the surprising outcome, so it is the one the merchant has to opt INTO.
-  const [carryTranslations, setCarryTranslations] = useState(true);
+  // Persisted per shop (AISettings.seoLinksCarryTranslations), defaulting to on:
+  // losing hand-written translations to a formatting-level edit is the
+  // surprising outcome, so it is the one the merchant has to opt INTO. Seeded
+  // from the loader and NOT re-synced from it afterwards — the local value is
+  // what the merchant just clicked, and a revalidation mid-toggle must not
+  // flip the box back under their cursor.
+  const [carryTranslations, setCarryTranslations] = useState(data.carryTranslations);
   const carryActive = data.hasForeignLocales && carryTranslations;
 
   useEffect(() => {
@@ -445,8 +459,31 @@ export default function SeoInternalLinks() {
 
   /** Every accept carries the toggle. Sent as an explicit flag rather than
    *  relying on a server default, so the endpoint's behaviour always matches
-   *  what the checkbox on screen says. */
+   *  what the checkbox on screen says — the stored preference only decides how
+   *  the box comes up, never what an in-flight accept does. */
   const acceptFields = () => ({ carryTranslations: carryActive ? "1" : "0" });
+
+  /**
+   * Flip the box now, store the preference in the background. The checkbox is
+   * not a form field of the accepts (those send their own flag), so the write
+   * is allowed to lag; only a REJECTED write matters, and then the box goes
+   * back so it never shows a setting the shop does not actually have.
+   */
+  const changeCarryTranslations = async (checked: boolean) => {
+    setCarryTranslations(checked);
+    try {
+      const result = await post({
+        actionType: "setCarryTranslations",
+        carryTranslations: checked ? "1" : "0",
+      });
+      if (result?.success) return;
+      setCarryTranslations(!checked);
+      reportError(result?.error || c.actionError);
+    } catch {
+      setCarryTranslations(!checked);
+      reportError(c.actionError);
+    }
+  };
 
   const submitRowAction = async (row: SuggestionRow, actionType: "reject" | "restore") => {
     setBusy(row.id, true);
@@ -716,7 +753,7 @@ export default function SeoInternalLinks() {
               label={c.carryTranslationsLabel}
               helpText={c.carryTranslationsHelp}
               checked={carryTranslations}
-              onChange={setCarryTranslations}
+              onChange={changeCarryTranslations}
               disabled={bulkBusy}
             />
           )}

@@ -16,13 +16,15 @@
  *   restore        move a rejected suggestion back to the open list
  *   acceptAll      apply the whole listed set, capped per request
  *   rejectAll      dismiss the whole listed set in one statement
+ *   setCarryTranslations  persist the page's toggle for this shop
  *
  * Applying goes through `handleUnifiedContentActions` — the same entry point
  * the editor routes use. This route does NOT write content itself (CLAUDE.md
  * architecture invariant: one write path), it only calls that handler in-process
  * instead of over HTTP.
  *
- * `carryTranslations` (the page's toggle, on by default) changes what an accept
+ * `carryTranslations` (the page's toggle, on by default, remembered per shop in
+ * AISettings.seoLinksCarryTranslations) changes what an accept
  * does to the source item's FOREIGN content. Off, an accept is a plain primary
  * save: the handler purges the translations of the field it changed, which for
  * a link insertion throws away translations the merchant wrote for text that
@@ -293,6 +295,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
   if (!meetsPlan((settings?.subscriptionPlan || "free") as Plan, "pro")) {
     return json({ success: false, error: "This feature requires the Pro plan" }, { status: 403 });
+  }
+
+  // ── Preference (no suggestionId — it acts on the shop) ─────────────────────
+  if (actionType === "setCarryTranslations") {
+    // Stores how the page's checkbox comes up next time. Deliberately separate
+    // from the flag an accept sends: an accept always states what it wants, so
+    // a preference write that raced with it cannot change what was applied.
+    await db.aISettings.upsert({
+      where: { shop },
+      update: { seoLinksCarryTranslations: carryTranslations },
+      create: { shop, seoLinksCarryTranslations: carryTranslations },
+    });
+    return json({ success: true });
   }
 
   // ── Bulk actions (no suggestionId — they act on the listed set) ────────────
