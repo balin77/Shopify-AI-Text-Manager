@@ -2565,6 +2565,7 @@ export const de = {
       provisioned: "IndexNow aktiviert.",
       deprovisioned: "IndexNow deaktiviert.",
       errorGeneric: "Aktion fehlgeschlagen.",
+      errorKeyRedirect: "Die Weiterleitung für die Schlüssel-Datei konnte nicht angelegt werden. Prüfe unter Onlineshop → Navigation → URL-Weiterleitungen, ob bereits eine Weiterleitung auf diesen Pfad existiert.",
       errorKeyInvalid: "Die Suchmaschine hat den Schlüssel abgelehnt (403). Prüfe die Schlüssel-Datei — sie muss unter derselben Domain erreichbar sein, unter der gemeldet wird.",
       errorHostMismatch: "Die Suchmaschine hat die URLs abgelehnt (422): Sie liegen außerhalb des Bereichs, den die Schlüssel-Datei abdeckt. Gemessen: eine Schlüssel-Datei unter einem Unterpfad verifiziert nur diesen Unterpfad — die Datei muss im Wurzelverzeichnis der Domain liegen.",
       errorRateLimited: "Zu viele Meldungen in kurzer Zeit (429). Bitte später erneut versuchen.",

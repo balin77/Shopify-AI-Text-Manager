@@ -24,10 +24,12 @@
  * key under `/apps/contentpilot/…`, a `/products/…` URL counts as unrelated.
  * That is a SCOPE rule, not a host rule — do not re-diagnose it as a domain
  * problem (the host bug was real, separate, and is already fixed), and do not
- * expect a different status code to appear. The key has to be reachable at the
- * ROOT of the storefront domain; on Shopify the remaining lever is a URL
- * redirect from `/<key>.txt`, and the probe verifies the whole chain end to end
- * once one exists.
+ * expect a different status code to appear.
+ *
+ * So `keyLocation` names a ROOT path, `https://<host>/<key>.txt`, and a Shopify
+ * URL redirect maps that path onto the app proxy — one host end to end, no
+ * cdn.shopify.com hop. The redirect lifecycle lives in
+ * index-now-key-file.server.ts; the probe walks the resulting chain hop by hop.
  *
  * ── Host: the PRIMARY domain, never *.myshopify.com ─────────────────────────
  * `host`, every entry of `urlList` and `keyLocation` share the shop's primary
@@ -101,8 +103,15 @@ function normalizeHost(host: string): string {
   return host.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-export function keyLocationFor(host: string): string {
-  return `https://${normalizeHost(host)}${KEY_PROXY_PATH}`;
+/**
+ * Where IndexNow is told to fetch the key: the storefront ROOT path
+ * `https://<host>/<key>.txt`, NOT the app-proxy path — a key under a sub-path
+ * only verifies that sub-path (measured; see the header). A Shopify URL
+ * redirect maps this path onto `KEY_PROXY_PATH`, which does the serving; see
+ * index-now-key-file.server.ts.
+ */
+export function keyLocationFor(host: string, key: string): string {
+  return `https://${normalizeHost(host)}/${key}.txt`;
 }
 
 export function homepageUrl(host: string): string {
@@ -261,7 +270,7 @@ export async function provisionIndexNow(
         ? {
             enabled: true,
             host: resolvedHost,
-            keyLocation: keyLocationFor(resolvedHost),
+            keyLocation: keyLocationFor(resolvedHost, existing.key),
             hostCheckedAt: new Date(),
           }
         : { enabled: true },
@@ -269,7 +278,7 @@ export async function provisionIndexNow(
     return { key: updated.key, keyLocation: updated.keyLocation, host: updated.host };
   }
   const key = generateIndexNowKey();
-  const keyLocation = keyLocationFor(resolvedHost);
+  const keyLocation = keyLocationFor(resolvedHost, key);
   await db.seoIndexNowConfig.create({
     data: {
       shop,
@@ -327,7 +336,7 @@ export async function syncIndexNowHost(
   const config = await getIndexNowConfig(db, shop);
   if (!config) return null;
 
-  if (config.host === resolvedHost && config.keyLocation === keyLocationFor(resolvedHost)) {
+  if (config.host === resolvedHost && config.keyLocation === keyLocationFor(resolvedHost, config.key)) {
     // Same host — only record that we verified it, so the sweep can back off.
     // Throttled: the loader calls this on every visit to the section, and a
     // write per page view for a timestamp nobody reads at that resolution is
@@ -339,20 +348,29 @@ export async function syncIndexNowHost(
     return config;
   }
 
-  logger.info(`[IndexNow] Host changed for ${shop}: ${config.host} → ${resolvedHost}`);
-  const [updated, dropped] = await Promise.all([
-    db.seoIndexNowConfig.update({
-      where: { shop },
-      data: {
-        host: resolvedHost,
-        keyLocation: keyLocationFor(resolvedHost),
-        hostCheckedAt: now,
-      },
-    }),
-    db.seoIndexNowQueue.deleteMany({ where: { shop } }),
-  ]);
-  if (dropped.count > 0) {
-    logger.info(`[IndexNow] Dropped ${dropped.count} queued URL(s) on the previous host for ${shop}`);
+  // Only a HOST change invalidates the queue. A keyLocation-only rewrite (e.g.
+  // the migration from the app-proxy path to the root `/<key>.txt` path) leaves
+  // every queued URL perfectly valid, and dropping them there would throw away
+  // pending work for nothing.
+  const hostChanged = config.host !== resolvedHost;
+  logger.info(
+    hostChanged
+      ? `[IndexNow] Host changed for ${shop}: ${config.host} → ${resolvedHost}`
+      : `[IndexNow] Key location rewritten for ${shop}`,
+  );
+  const updated = await db.seoIndexNowConfig.update({
+    where: { shop },
+    data: {
+      host: resolvedHost,
+      keyLocation: keyLocationFor(resolvedHost, config.key),
+      hostCheckedAt: now,
+    },
+  });
+  if (hostChanged) {
+    const dropped = await db.seoIndexNowQueue.deleteMany({ where: { shop } });
+    if (dropped.count > 0) {
+      logger.info(`[IndexNow] Dropped ${dropped.count} queued URL(s) on the previous host for ${shop}`);
+    }
   }
   return updated;
 }

@@ -1,0 +1,18 @@
+-- IndexNow: serve the key from the storefront ROOT via a URL redirect.
+--
+-- Measured on a live shop: a keyLocation under a sub-path (the app proxy,
+-- `/apps/contentpilot/indexnow-key`) is fetched fine — 200, no redirect,
+-- content matches — but every submission is rejected with
+-- `422 InvalidRequestParameters: "One or more URLs are not related to your site
+-- verified through the keylocation parameter."` A non-root key verifies only
+-- its own sub-path, so `/products/…` counts as unrelated.
+--
+-- Shopify allows no file at the storefront root, but it does allow a URL
+-- redirect `/<key>.txt` → `/apps/contentpilot/indexnow-key`, which keeps the
+-- whole chain on one host. This column holds that redirect's GID so it can be
+-- updated and removed rather than orphaned in the merchant's admin.
+--
+-- Left NULL for existing rows: their keyLocation still points at the proxy
+-- path. The section loader and the background sweep create the redirect and
+-- rewrite the keyLocation on the next pass.
+ALTER TABLE "SeoIndexNowConfig" ADD COLUMN "keyRedirectId" TEXT;

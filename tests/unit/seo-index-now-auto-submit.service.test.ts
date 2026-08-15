@@ -15,11 +15,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDrainQueue, mockSyncHost, mockResolveDomain, mockCreateAdmin } = vi.hoisted(() => ({
+const { mockDrainQueue, mockSyncHost, mockResolveDomain, mockCreateAdmin, mockEnsureRedirect } = vi.hoisted(() => ({
   mockDrainQueue: vi.fn(),
   mockSyncHost: vi.fn(),
   mockResolveDomain: vi.fn(),
   mockCreateAdmin: vi.fn(),
+  mockEnsureRedirect: vi.fn(),
 }));
 
 vi.mock("~/services/seo/index-now.service", () => ({
@@ -29,6 +30,7 @@ vi.mock("~/services/seo/index-now.service", () => ({
 }));
 
 vi.mock("~/utils/shop-domain.server", () => ({ resolvePrimaryDomain: mockResolveDomain }));
+vi.mock("~/services/seo/index-now-key-file.server", () => ({ ensureKeyRedirect: mockEnsureRedirect }));
 vi.mock("~/utils/admin-client.server", () => ({ createAdminClientFromShop: mockCreateAdmin }));
 
 vi.mock("~/utils/logger.server", () => ({
@@ -40,6 +42,7 @@ interface ConfigRow {
   enabled: boolean;
   lastAutoRunAt: Date | null;
   hostCheckedAt?: Date | null;
+  keyRedirectId?: string | null;
 }
 
 let pendingShops: string[] = [];
@@ -62,8 +65,13 @@ vi.mock("~/db.server", () => ({
           .filter((c) => c.lastAutoRunAt === null || (cutoff ? c.lastAutoRunAt < cutoff : true))
           .sort((a, b) => (a.lastAutoRunAt?.getTime() ?? -1) - (b.lastAutoRunAt?.getTime() ?? -1))
           .slice(0, take)
-          .map((c) => ({ shop: c.shop, hostCheckedAt: c.hostCheckedAt ?? null }));
+          .map((c) => ({
+            shop: c.shop,
+            hostCheckedAt: c.hostCheckedAt ?? null,
+            keyRedirectId: c.keyRedirectId ?? null,
+          }));
       }),
+      findUnique: vi.fn(async ({ where }: any) => ({ shop: where.shop, key: "K", keyRedirectId: null })),
       updateMany: vi.fn(async ({ where }: any) => {
         stamped.push(where.shop);
         return { count: 1 };
@@ -95,6 +103,8 @@ beforeEach(() => {
   mockResolveDomain.mockResolvedValue("shop.example");
   mockCreateAdmin.mockReset();
   mockCreateAdmin.mockResolvedValue({ graphql: vi.fn() });
+  mockEnsureRedirect.mockReset();
+  mockEnsureRedirect.mockResolvedValue({ ok: true, redirectId: "gid://1" });
   mockDrainQueue.mockResolvedValue({
     status: "submitted",
     result: { submitted: 1, chunks: 1, failed: 0, results: [] },
@@ -189,12 +199,33 @@ describe("IndexNowAutoSubmitService.tick", () => {
       enabled: true,
       lastAutoRunAt: OLD,
       hostCheckedAt: new Date(NOW.getTime() - 60_000),
+      keyRedirectId: "gid://1",
     }];
     plans.set("a.myshopify.com", "pro");
 
     await IndexNowAutoSubmitService.getInstance().tick(NOW);
     expect(mockCreateAdmin).not.toHaveBeenCalled();
     expect(mockSyncHost).not.toHaveBeenCalled();
+  });
+
+  it("creates a missing key redirect even when the host is fresh", async () => {
+    // Without the root redirect the key is not reachable where keyLocation
+    // says it is, so every URL this tick submits would be rejected for being
+    // outside the verified scope.
+    pendingShops = ["a.myshopify.com"];
+    configs = [{
+      shop: "a.myshopify.com",
+      enabled: true,
+      lastAutoRunAt: OLD,
+      hostCheckedAt: new Date(NOW.getTime() - 60_000),
+      keyRedirectId: null,
+    }];
+    plans.set("a.myshopify.com", "pro");
+
+    await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    expect(mockEnsureRedirect).toHaveBeenCalledTimes(1);
+    expect(mockSyncHost).not.toHaveBeenCalled();
+    expect(mockDrainQueue).toHaveBeenCalledTimes(1);
   });
 
   it("never persists a host when the domain lookup failed", async () => {

@@ -43,6 +43,7 @@ import {
   URL_COLLECT_CAP,
   type SubmitStatusKind,
 } from "../services/seo/index-now.service";
+import { ensureKeyRedirect, removeKeyRedirect } from "../services/seo/index-now-key-file.server";
 import type { DataResponse } from "~/types/data-response";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
@@ -167,6 +168,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // fallback on a transient API error would undo a correct host.
     const primaryDomain = await resolvePrimaryDomain(admin);
     if (primaryDomain) config = await syncIndexNowHost(db, session.shop, primaryDomain);
+
+    // Self-repair for every row that predates the root-key redirect (and for a
+    // redirect a merchant deleted in their admin): the section is the one place
+    // that reliably has an admin client, and without the redirect the key file
+    // is not reachable at the root path `keyLocation` names.
+    if (config?.enabled && !config.keyRedirectId) {
+      const ensured = await ensureKeyRedirect(admin, db, session.shop, config);
+      if (ensured.ok) config = await getIndexNowConfig(db, session.shop);
+    }
   }
   const queueCount = config ? await getQueueCount(db, session.shop) : 0;
 
@@ -206,10 +216,26 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     // next section visit) replaces it with the real primary domain.
     const primaryDomain = await resolvePrimaryDomain(admin);
     await provisionIndexNow(db, session.shop, primaryDomain ?? session.shop, primaryDomain !== null);
+    // The key file only counts as "at the root" once this redirect exists —
+    // without it every submission is rejected for being outside the verified
+    // scope. Reported to the merchant so a failure isn't silent.
+    const config = await getIndexNowConfig(db, session.shop);
+    const ensured = config
+      ? await ensureKeyRedirect(admin, db, session.shop, config)
+      : { ok: false, redirectId: null };
+    if (!ensured.ok) {
+      return json<ActionResult>({ ok: false, error: "keyRedirect" }, { status: 502 });
+    }
     return json<ActionResult>({ ok: true, kind: "provisioned" });
   }
   if (actionType === "deprovision") {
-    // Keeps key + host, drops the pending queue — see setIndexNowEnabled.
+    // Keeps key + host, drops the pending queue — see setIndexNowEnabled. The
+    // redirect goes too: leaving it behind would keep a redirect in the
+    // merchant's admin for a feature they just switched off. Best-effort — a
+    // failed delete keeps the stored id so it can be retried, and never blocks
+    // the merchant from disabling.
+    const config = await getIndexNowConfig(db, session.shop);
+    await removeKeyRedirect(admin, db, session.shop, config?.keyRedirectId ?? null);
     await setIndexNowEnabled(db, session.shop, false);
     return json<ActionResult>({ ok: true, kind: "deprovisioned" });
   }
@@ -292,7 +318,12 @@ export default function SeoIndexNow() {
 
   const msg = (() => {
     if (busy || !fetcher.data) return null;
-    if (!fetcher.data.ok) return { tone: "critical" as const, text: n.errorGeneric };
+    if (!fetcher.data.ok) {
+      return {
+        tone: "critical" as const,
+        text: fetcher.data.error === "keyRedirect" ? n.errorKeyRedirect : n.errorGeneric,
+      };
+    }
     if (fetcher.data.kind === "submitted") {
       const { submitted, failed, failureKind } = fetcher.data;
       if (failed > 0) {

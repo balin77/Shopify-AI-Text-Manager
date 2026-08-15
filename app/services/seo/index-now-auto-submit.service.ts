@@ -40,6 +40,7 @@ import { createAdminClientFromShop } from "../../utils/admin-client.server";
 import { resolvePrimaryDomain } from "../../utils/shop-domain.server";
 import type { Plan } from "../../config/plans";
 import { drainQueue, firstFailureKind, syncIndexNowHost } from "./index-now.service";
+import { ensureKeyRedirect } from "./index-now-key-file.server";
 
 /** Disable the whole sweep without a redeploy. */
 const SWEEP_DISABLED = process.env.INDEXNOW_AUTO_SUBMIT_DISABLED === "true";
@@ -158,13 +159,13 @@ export class IndexNowAutoSubmitService {
     const plans = await this.loadPlans(shops);
     logger.info(`[IndexNowAutoSubmit] Tick: ${shops.length} shop(s) with pending URLs`);
 
-    for (const { shop, hostCheckedAt } of shops) {
+    for (const { shop, hostCheckedAt, keyRedirectId } of shops) {
       try {
         if (!meetsPlan(plans.get(shop) ?? "free", "pro")) {
           stats.skippedPlan++;
           continue;
         }
-        await this.refreshHostIfStale(shop, hostCheckedAt, now);
+        await this.repairShopIfNeeded(shop, hostCheckedAt, keyRedirectId, now);
         const outcome = await drainQueue(db, shop, now);
         if (outcome.status === "submitted") {
           stats.drained++;
@@ -210,27 +211,41 @@ export class IndexNowAutoSubmitService {
    * A failed lookup is a no-op — `resolvePrimaryDomain` returns null rather
    * than the myshopify fallback, so a hiccup can never overwrite a good host.
    */
-  private async refreshHostIfStale(
+  private async repairShopIfNeeded(
     shop: string,
     hostCheckedAt: Date | null,
+    keyRedirectId: string | null,
     now: Date,
   ): Promise<void> {
-    if (hostCheckedAt && now.getTime() - hostCheckedAt.getTime() < HOST_RECHECK_MS) return;
+    const hostStale = !hostCheckedAt || now.getTime() - hostCheckedAt.getTime() >= HOST_RECHECK_MS;
+    // A missing redirect means the key is not reachable at the root path
+    // keyLocation names, so every submission this tick is about to make would be
+    // rejected for being outside the verified scope. Worth one Admin call.
+    const redirectMissing = !keyRedirectId;
+    if (!hostStale && !redirectMissing) return;
     try {
       const admin = await createAdminClientFromShop(shop);
-      const primaryDomain = await resolvePrimaryDomain(admin as never);
-      if (primaryDomain) await syncIndexNowHost(db, shop, primaryDomain, now);
+      if (hostStale) {
+        const primaryDomain = await resolvePrimaryDomain(admin as never);
+        if (primaryDomain) await syncIndexNowHost(db, shop, primaryDomain, now);
+      }
+      if (redirectMissing) {
+        const config = await db.seoIndexNowConfig.findUnique({ where: { shop } });
+        if (config) await ensureKeyRedirect(admin as never, db, shop, config);
+      }
     } catch (err) {
       // Uninstalled shop / expired session: leave the host as is and let the
       // drain proceed. Nothing here may abort the sweep for other shops.
-      logger.warn(`[IndexNowAutoSubmit] Could not refresh host for ${shop}`, {
+      logger.warn(`[IndexNowAutoSubmit] Could not repair host/key redirect for ${shop}`, {
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
   /** Shops that have queued URLs AND an enabled config that is due again. */
-  private async findDueShops(now: Date): Promise<Array<{ shop: string; hostCheckedAt: Date | null }>> {
+  private async findDueShops(
+    now: Date,
+  ): Promise<Array<{ shop: string; hostCheckedAt: Date | null; keyRedirectId: string | null }>> {
     // Biggest backlog first, NOT alphabetically: the cap is a safety bound, and
     // an alphabetical slice would permanently starve every shop past it — the
     // exact starvation class the llms sweep documents. Ordering by pending
@@ -251,7 +266,7 @@ export class IndexNowAutoSubmitService {
         enabled: true,
         OR: [{ lastAutoRunAt: null }, { lastAutoRunAt: { lt: cutoff } }],
       },
-      select: { shop: true, hostCheckedAt: true },
+      select: { shop: true, hostCheckedAt: true, keyRedirectId: true },
       orderBy: { lastAutoRunAt: { sort: "asc", nulls: "first" } },
       take: MAX_SHOPS_PER_TICK,
     });

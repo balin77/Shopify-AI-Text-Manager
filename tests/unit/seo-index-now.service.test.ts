@@ -29,7 +29,7 @@ import {
 const CONFIG = {
   shop: "s.myshopify.com",
   key: "K",
-  keyLocation: "https://shop.example/apps/contentpilot/indexnow-key",
+  keyLocation: "https://shop.example/K.txt",
   host: "shop.example",
   enabled: true,
   lastSubmittedAt: null,
@@ -47,11 +47,11 @@ describe("generateIndexNowKey", () => {
 });
 
 describe("URL builders", () => {
-  it("keyLocationFor uses the app-proxy path on the given host", () => {
-    expect(keyLocationFor("shop.example")).toBe("https://shop.example/apps/contentpilot/indexnow-key");
+  it("keyLocationFor names the ROOT path — a sub-path key only verifies itself (measured 422)", () => {
+    expect(keyLocationFor("shop.example", "abc123")).toBe("https://shop.example/abc123.txt");
   });
   it("normalizes a host that arrives with scheme or trailing slash", () => {
-    expect(keyLocationFor("https://shop.example/")).toBe("https://shop.example/apps/contentpilot/indexnow-key");
+    expect(keyLocationFor("https://shop.example/", "abc123")).toBe("https://shop.example/abc123.txt");
     expect(storefrontUrl("https://shop.example/", "product", "p")).toBe("https://shop.example/products/p");
   });
   it("storefrontUrl builds per-type paths", () => {
@@ -311,7 +311,7 @@ describe("provisionIndexNow", () => {
     const db = { seoIndexNowConfig: { findUnique: async () => null, create } } as any;
     const r = await provisionIndexNow(db, "s.myshopify.com", "shop.example");
     expect(r.host).toBe("shop.example");
-    expect(r.keyLocation).toBe("https://shop.example/apps/contentpilot/indexnow-key");
+    expect(r.keyLocation).toMatch(/^https:\/\/shop\.example\/[0-9a-f]{32}\.txt$/);
     expect(create.mock.calls[0][0].data.host).toBe("shop.example");
   });
 });
@@ -358,7 +358,7 @@ describe("syncIndexNowHost", () => {
     const updated = await syncIndexNowHost(db, "s.myshopify.com", "shop.example", NOW);
     expect(update.mock.calls[0][0].data).toEqual({
       host: "shop.example",
-      keyLocation: "https://shop.example/apps/contentpilot/indexnow-key",
+      keyLocation: "https://shop.example/K.txt",
       hostCheckedAt: NOW,
     });
     expect(updated?.key).toBe("K");

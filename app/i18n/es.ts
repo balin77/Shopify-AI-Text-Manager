@@ -2564,6 +2564,7 @@ export const es: Translation = {
       provisioned: "IndexNow activado.",
       deprovisioned: "IndexNow desactivado.",
       errorGeneric: "La acción falló.",
+      errorKeyRedirect: "No se pudo crear la redirección del archivo de clave. Revisa Tienda online → Navegación → Redirecciones de URL por si ya existe una para esa ruta.",
       errorKeyInvalid: "El motor de búsqueda rechazó la clave (403). Revisa el archivo de clave: debe ser accesible en el mismo dominio con el que se envían las URLs.",
       errorHostMismatch: "El motor de búsqueda rechazó las URLs (422): quedan fuera del alcance que cubre el archivo de clave. Medido: un archivo de clave en una subruta solo verifica esa subruta; tiene que estar en la raíz del dominio.",
       errorRateLimited: "Demasiados envíos en poco tiempo (429). Inténtalo de nuevo más tarde.",
