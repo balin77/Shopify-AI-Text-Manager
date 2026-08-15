@@ -621,7 +621,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // `sidebar-panel-open` only bites below 1100px, where it swaps the item
         // list + editor for the sidebar column (see UnifiedContentEditor.css).
         // Above that the class is inert and the normal three-column layout wins.
-        className={`unified-content-editor-layout${sidebarPanelOpen ? " sidebar-panel-open" : ""}`}
+        // Gated on `hasSidebar` too: the panel state is context-owned, so an
+        // item that disappears (route change, resync clearing the selection)
+        // would otherwise hide the editor for a frame while the sidebar column
+        // is already unrendered — a blank content area until the effect below
+        // resets `open` after paint.
+        className={`unified-content-editor-layout${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is

@@ -17,7 +17,16 @@
  * sidebar" and "is it open".
  */
 
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+
+/**
+ * The width below which the sidebar column is hidden and the panel takes over.
+ * MUST match the media queries in content-editor-global.css (the hiding rule),
+ * responsive.css (the nav toggle) and UnifiedContentEditor.css (the panel
+ * layout). Used here only to DROP the open state when the viewport grows past
+ * it — the layout itself stays CSS-driven.
+ */
+const PANEL_BREAKPOINT = "(max-width: 1100px)";
 
 interface SidebarPanelContextValue {
   /** A sidebar exists for the currently selected item. */
@@ -55,6 +64,21 @@ export function SidebarPanelProvider({ children }: { children: ReactNode }) {
 
   const toggle = useCallback(() => setOpen((prev) => !prev), []);
   const close = useCallback(() => setOpen(false), []);
+
+  // Wide enough for the real sidebar → drop the panel state. Above the
+  // breakpoint neither the nav toggle nor the in-panel back button is visible,
+  // so a stale `open` would silently re-enter panel mode on the way back down
+  // (tablet rotated portrait → landscape → portrait). A matchMedia listener
+  // fires only when the breakpoint is actually crossed, not on every resize
+  // pixel, and setting `false` twice bails out of re-rendering.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const query = window.matchMedia(PANEL_BREAKPOINT);
+    const sync = () => { if (!query.matches) setOpen(false); };
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
 
   const value = useMemo(
     () => ({ available, open, setAvailable, toggle, close }),

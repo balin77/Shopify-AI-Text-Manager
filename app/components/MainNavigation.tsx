@@ -809,11 +809,14 @@ export function MainNavigation() {
                   onClick={sidebarPanel.toggle}
                   pressed={sidebarPanel.open}
                   size="slim"
-                  accessibilityLabel={
+                  // The accessible name has to START with the visible label,
+                  // otherwise voice control can't activate the button by what
+                  // it says (WCAG 2.5.3).
+                  accessibilityLabel={`${t.seo?.title || "SEO Score"} — ${
                     sidebarPanel.open
                       ? (t.seo?.hidePanel || "Back to content")
                       : (t.seo?.showPanel || "Show SEO score")
-                  }
+                  }`}
                 >
                   {t.seo?.title || "SEO Score"}
                 </Button>
