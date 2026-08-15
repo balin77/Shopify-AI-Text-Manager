@@ -507,6 +507,16 @@ const handleFormatAI = (fieldKey: string) => {
         ...prev,
         [fieldKey]: result.generatedContent as string,
       }));
+      // Formatting may now work a missing target keyword in, so it can overshoot
+      // the same way generation can — and warns the same way.
+      if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
+        showInfoBox(
+          (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
+            "The formatted text still over-uses a tracked keyword — review it before accepting.",
+          "warning",
+          t.common?.warning || "Warning"
+        );
+      }
     }
   );
 };

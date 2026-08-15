@@ -4,6 +4,8 @@ import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
+import { ActionTooltip } from "./ActionTooltip";
+import { aiActionTooltip } from "../utils/ai-action-tooltip";
 import { useI18n } from "../contexts/I18nContext";
 import { useSingleLocaleHint } from "../contexts/LocaleAvailabilityContext";
 import "../styles/AIEditableField.css";
@@ -221,27 +223,37 @@ export function AIEditableField({
       <div className="ai-field-footer">
         <div className="ai-field-footer-right">
           {onGenerateAI && (
-            <Button
-              size="slim"
-              onClick={() => setInstructionPromptOpen((open) => !open)}
-              pressed={instructionPromptOpen}
-              loading={isLoading}
+            <ActionTooltip
+              content={aiActionTooltip(t, "generate", { hasValue: !!value, disableGeneration })}
               disabled={(disableGeneration && !value) || isLoading}
             >
-              ✨ {disableGeneration || value
-                ? (t.products?.aiImprove || "Improve with AI")
-                : (t.products?.aiGenerateShort || "Generate with AI")}
-            </Button>
+              <Button
+                size="slim"
+                onClick={() => setInstructionPromptOpen((open) => !open)}
+                pressed={instructionPromptOpen}
+                loading={isLoading}
+                disabled={(disableGeneration && !value) || isLoading}
+              >
+                ✨ {disableGeneration || value
+                  ? (t.products?.aiImprove || "Improve with AI")
+                  : (t.products?.aiGenerateShort || "Generate with AI")}
+              </Button>
+            </ActionTooltip>
           )}
           {onFormatAI && (
-            <Button
-              size="slim"
-              onClick={onFormatAI}
-              loading={isLoading}
+            <ActionTooltip
+              content={aiActionTooltip(t, "format", { hasValue: !!value, disableGeneration })}
               disabled={!value || isLoading}
             >
-              🎨 {t.products?.formatWithAI || "Format"}
-            </Button>
+              <Button
+                size="slim"
+                onClick={onFormatAI}
+                loading={isLoading}
+                disabled={!value || isLoading}
+              >
+                🎨 {t.products?.formatWithAI || "Format"}
+              </Button>
+            </ActionTooltip>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
             <DisabledActionTooltip hint={singleLocaleHint}>

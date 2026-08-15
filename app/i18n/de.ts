@@ -55,6 +55,15 @@ export const de = {
     aiGenerate: "Mit KI generieren / verbessern",
     aiGenerateShort: "Mit KI generieren",
     aiImprove: "Mit KI verbessern",
+    aiGenerateTooltip:
+      "Schreibt einen neuen Text aus Titel und Beschreibung des Eintrags. Hält das Zeichenlimit ein und baut Ihr Ziel-Keyword ein. Sie können vorher eine eigene Anweisung mitgeben.",
+    aiImproveTooltip:
+      "Formuliert diesen Text frei neu, mit Titel und Beschreibung des Eintrags als Kontext. Hält das Zeichenlimit ein und baut Ihr Ziel-Keyword ein. Sie können vorher eine eigene Anweisung mitgeben.",
+    aiImproveEmptyTooltip:
+      "Theme-Texte lassen sich nur verbessern, nicht neu schreiben — hier steht noch nichts.",
+    formatWithAITooltip:
+      "Überarbeitet den vorhandenen Text: Struktur, Zeichensetzung, Groß-/Kleinschreibung. Inhalt und Sprache bleiben; kürzt auf das Zeichenlimit und arbeitet ein fehlendes Ziel-Keyword ein.",
+    formatWithAIEmptyTooltip: "Es gibt noch keinen Text zum Formatieren.",
     aiInstructionTitle: "Anweisung an die KI (optional)",
     aiInstructionPlaceholder: "z. B. Die Wollqualität hervorheben und sachlich formulieren",
     aiInstructionHelp: "Leer lassen, um wie gewohnt zu generieren. Was hier steht, hat Vorrang vor allen anderen KI-Regeln und -Einstellungen.",
@@ -2946,7 +2955,7 @@ export const de = {
         "Keywords gelten pro Sprache: Sprache im Editor wechseln heißt, den Satz dieser Sprache bearbeiten",
       ],
       details:
-        "Hinterlegte Keywords sind nicht nur Dokumentation — die KI nutzt sie. Beim Generieren von Titel, SEO-Titel, Meta-Description, Beschreibung, URL-Slug oder Alt-Text geht das Primary-Keyword als Anforderung in den Prompt, die Secondaries als Angebot und die klassifizierte Suchintention als Kontext. Danach wird das Ergebnis auf Stuffing geprüft: Bei zu hoher Dichte wird einmal automatisch neu generiert, und wenn auch der zweite Versuch überzieht, bekommen Sie eine Warnung statt eines still schlechten Textes. Die Formatieren-Funktion ist bewusst zurückhaltender — sie erhält Keywords, die bereits im Text stehen, fügt aber nie neue hinzu.",
+        "Hinterlegte Keywords sind nicht nur Dokumentation — die KI nutzt sie. Beim Generieren von Titel, SEO-Titel, Meta-Description, Beschreibung, URL-Slug oder Alt-Text geht das Primary-Keyword als Anforderung in den Prompt, die Secondaries als Angebot und die klassifizierte Suchintention als Kontext. Danach wird das Ergebnis auf Stuffing geprüft: Bei zu hoher Dichte wird einmal automatisch neu generiert, und wenn auch der zweite Versuch überzieht, bekommen Sie eine Warnung statt eines still schlechten Textes. Die Formatieren-Funktion geht behutsamer vor: Sie erhält vorhandene Keywords und arbeitet ein fehlendes Primary-Keyword durch Umformulieren eines Satzes ein, fügt aber nie die Secondaries hinzu.",
     },
     seoSidebarJsonLd: {
       title: "Strukturierte Daten (JSON-LD)",

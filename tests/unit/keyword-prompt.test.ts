@@ -162,22 +162,45 @@ describe("keywordRequirementLines", () => {
 });
 
 describe("keywordPreservationLine", () => {
-  it("tells a formatting pass to keep — never add — the tracked keywords", () => {
-    const out = keywordPreservationLine({
-      primary: "blue shoes",
-      secondaries: ["sneakers"],
-      primaryIntent: null,
-      all: ["blue shoes", "sneakers"],
-    });
+  const kw = {
+    primary: "blue shoes",
+    secondaries: ["sneakers"],
+    primaryIntent: null,
+    all: ["blue shoes", "sneakers"],
+  };
+
+  it("defaults to keep — never add — the tracked keywords", () => {
+    const out = keywordPreservationLine(kw);
     expect(out).toContain('"blue shoes"');
     expect(out).toContain('"sneakers"');
     expect(out).toContain("Do NOT add keywords");
   });
 
+  it("lets the field-level format pass work a MISSING primary in", () => {
+    const out = keywordPreservationLine(kw, { mayAddPrimary: true });
+    expect(out).toContain('If the target keyword "blue shoes" does not appear');
+    expect(out).toContain("work it in ONCE");
+    expect(out).not.toContain("Do NOT add keywords");
+  });
+
+  it("never offers the secondaries for insertion, even with mayAddPrimary", () => {
+    const out = keywordPreservationLine(kw, { mayAddPrimary: true });
+    expect(out).toContain("Do not add any of the other keywords");
+  });
+
+  it("falls back to preserve-only when there is no primary to add", () => {
+    const out = keywordPreservationLine(
+      { primary: null, secondaries: ["sneakers"], primaryIntent: null, all: ["sneakers"] },
+      { mayAddPrimary: true },
+    );
+    expect(out).toContain("Do NOT add keywords");
+    expect(out).not.toContain("work it in ONCE");
+  });
+
   it("is empty when nothing is tracked", () => {
-    expect(
-      keywordPreservationLine({ primary: null, secondaries: [], primaryIntent: null, all: [] }),
-    ).toBe("");
+    const empty = { primary: null, secondaries: [], primaryIntent: null, all: [] };
+    expect(keywordPreservationLine(empty)).toBe("");
+    expect(keywordPreservationLine(empty, { mayAddPrimary: true })).toBe("");
   });
 });
 

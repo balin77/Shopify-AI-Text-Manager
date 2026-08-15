@@ -146,16 +146,33 @@ export function keywordRequirementLines(kw: TrackedKeywords, isSlug = false): st
 }
 
 /**
- * Requirement line for a REFORMATTING prompt. The format/improve path must not
- * inject keywords that aren't in the text — its whole contract is "keep the
- * content, improve the presentation". What it CAN do is stop dropping a keyword
- * that is already there, which is exactly how a formatting pass used to quietly
- * cost an item its on-page score.
+ * Requirement line for a REFORMATTING prompt.
+ *
+ * The baseline is preserve-don't-add: a formatting pass must not invent
+ * keywords, but it must stop DROPPING one that is already there — which is
+ * exactly how a reformat used to quietly cost an item its on-page score.
+ *
+ * `mayAddPrimary` additionally lets the pass work a MISSING primary keyword in.
+ * The field-level format action opts into this (a text that doesn't contain its
+ * own target keyword is the single most common thing a merchant wants fixed);
+ * the generic `formatField` entrance does not, because it has no field
+ * definition and therefore no idea what it is rewriting. Secondaries are never
+ * added either way — offering four optional phrases to a pass that is supposed
+ * to keep the content is how "format" turns into "rewrite".
  */
-export function keywordPreservationLine(kw: TrackedKeywords): string {
+export function keywordPreservationLine(
+  kw: TrackedKeywords,
+  opts: { mayAddPrimary?: boolean } = {},
+): string {
   if (kw.all.length === 0) return "";
   const list = kw.all.map((s) => `"${s}"`).join(", ");
-  return `\n\nTracked keywords for this item: ${list}. Keep every one of them that already appears in the text — do not drop, split or reword them. Do NOT add keywords that are not already present.`;
+  let out = `\n\nTracked keywords for this item: ${list}. Keep every one of them that already appears in the text — do not drop, split or reword them.`;
+  if (opts.mayAddPrimary && kw.primary) {
+    out += ` If the target keyword "${kw.primary}" does not appear yet, work it in ONCE by rewording an existing sentence — never by appending a new one, and never at the cost of the meaning. Do not add any of the other keywords.`;
+  } else {
+    out += ` Do NOT add keywords that are not already present.`;
+  }
+  return out;
 }
 
 /**

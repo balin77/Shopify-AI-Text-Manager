@@ -57,6 +57,15 @@ export const es: Translation = {
     aiGenerate: "Generar / mejorar con IA",
     aiGenerateShort: "Generar con IA",
     aiImprove: "Mejorar con IA",
+    aiGenerateTooltip:
+      "Escribe un texto nuevo a partir del título y la descripción del elemento. Respeta el límite de caracteres e incorpora tu palabra clave objetivo. Puedes añadir antes tu propia instrucción.",
+    aiImproveTooltip:
+      "Reescribe este texto con libertad, usando el título y la descripción del elemento como contexto. Respeta el límite de caracteres e incorpora tu palabra clave objetivo. Puedes añadir antes tu propia instrucción.",
+    aiImproveEmptyTooltip:
+      "Los textos del tema solo se pueden mejorar, no escribir desde cero: aquí todavía no hay nada.",
+    formatWithAITooltip:
+      "Retoca el texto existente: estructura, puntuación, mayúsculas. El contenido y el idioma se mantienen; ajusta al límite de caracteres e incorpora la palabra clave objetivo si falta.",
+    formatWithAIEmptyTooltip: "Todavía no hay texto que formatear.",
     aiInstructionTitle: "Instrucciones para la IA (opcional)",
     aiInstructionPlaceholder: "p. ej. Destaca la calidad de la lana y mantén un tono objetivo",
     aiInstructionHelp: "Déjalo vacío para generar como siempre. Lo que escribas aquí tiene prioridad sobre todas las demás reglas y ajustes de IA.",
@@ -2945,7 +2954,7 @@ export const es: Translation = {
         "Las palabras clave son por idioma: cambia el idioma del editor y editarás el conjunto de ese idioma",
       ],
       details:
-        "Las palabras clave registradas no son solo documentación: la IA las usa. Al generar título, título SEO, meta descripción, descripción, slug de URL o texto alternativo, la principal entra en el prompt como requisito, las secundarias como oferta y la intención de búsqueda clasificada como contexto. Después se comprueba el resultado: si la densidad es excesiva se regenera una vez automáticamente, y si el segundo intento sigue abusando del término recibes un aviso en lugar de un texto malo en silencio. La función de formato es deliberadamente más prudente: conserva las palabras clave que ya están en el texto, pero nunca añade nuevas.",
+        "Las palabras clave registradas no son solo documentación: la IA las usa. Al generar título, título SEO, meta descripción, descripción, slug de URL o texto alternativo, la principal entra en el prompt como requisito, las secundarias como oferta y la intención de búsqueda clasificada como contexto. Después se comprueba el resultado: si la densidad es excesiva se regenera una vez automáticamente, y si el segundo intento sigue abusando del término recibes un aviso en lugar de un texto malo en silencio. La función de formato actúa con más cautela: conserva las palabras clave que ya están en el texto e incorpora la principal si falta, reformulando una frase existente, pero nunca añade las secundarias.",
     },
     seoSidebarJsonLd: {
       title: "Datos estructurados (JSON-LD)",

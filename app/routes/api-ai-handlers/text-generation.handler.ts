@@ -347,7 +347,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 }
 
 export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResponse> {
-  const { session, db, settings, contentType, itemId } = ctx;
+  const { session, db, settings, seoTitleMaxChars, seoLimits, contentType, itemId } = ctx;
   const formData = ctx.formData;
 
   const fieldType = getFormString(formData, "fieldType");
@@ -383,12 +383,12 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
   // Only description/body fields and blog summary (type "html") get HTML formatting
   const supportsHtmlFormatting = field?.type === "html";
 
-  // Tracked keywords (same locale contract as generation). Formatting must not
-  // INTRODUCE keywords — its contract is "keep the content" — but it must stop
-  // silently dropping one that is already in the text, which used to cost the
-  // item its on-page score on every reformat. Slugs are excluded: their own
-  // prompt already says "keep the original keywords" and a hyphenated slug
-  // can't be matched against the keyword phrase anyway.
+  // Tracked keywords (same locale contract as generation). Formatting keeps the
+  // keywords already in the text and may work a MISSING primary in by rewording
+  // — a text that doesn't contain its own target keyword is the thing merchants
+  // reach for this button to fix. Secondaries are never added. Slugs are
+  // excluded entirely: their own prompt already says "keep the original
+  // keywords" and a hyphenated slug can't be matched against the phrase anyway.
   const formatTrackedKeywords = await loadTrackedKeywords(
     db,
     session.shop,
@@ -396,7 +396,27 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
     resolveKeywordLocale(formData),
     fieldType,
   );
-  const keywordLine = field?.type === "slug" ? "" : keywordPreservationLine(formatTrackedKeywords);
+  const keywordLine =
+    field?.type === "slug"
+      ? ""
+      : keywordPreservationLine(formatTrackedKeywords, { mayAddPrimary: true });
+
+  // Length is enforced exactly as in generation: once as a requirement and once
+  // as the overriding constraint at the very end. Formatting used to have NO
+  // length rule at all, so a pass over a 90-character SEO title happily handed
+  // one back — the merchant's own limit silently did not apply to half the AI
+  // actions in the editor.
+  const formatCharLimit = instructionsKey
+    ? getCharacterLimitRequirement(instructionsKey, { seoTitleMaxChars, limits: seoLimits })
+    : null;
+  const lengthRequirement = formatCharLimit
+    ? `\n\nLength requirement: ${formatCharLimit}. If the text is outside that range, tighten or expand the wording to fit — this is the one case where rewording beyond pure formatting is expected.`
+    : "";
+  // Placed last so it outranks a conflicting length hint in the merchant's own
+  // field instructions, exactly as in the generation prompt.
+  const criticalLength = formatCharLimit
+    ? `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${formatCharLimit}. This overrides any other length or character count instruction in this prompt.`
+    : "";
 
   // Build field-type-aware prompt
   let prompt = "";
@@ -428,6 +448,8 @@ Allowed formatting changes for handles:
         prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
       }
     }
+    prompt += lengthRequirement;
+    prompt += criticalLength;
     prompt += `\n\nReturn ONLY the formatted URL slug. Keep the original keywords.`;
   } else if (supportsHtmlFormatting) {
     // HTML fields: description, body, blog summary - full HTML formatting allowed
@@ -444,6 +466,7 @@ You may:
 - Add paragraph breaks with <p> tags
 - Fix spacing, punctuation, and grammar
 - Slightly rephrase for better flow or clarity (but keep the meaning)
+- Tighten or expand the wording where a length requirement below asks for it
 
 Do NOT:
 - Completely rewrite or replace the content
@@ -461,7 +484,9 @@ Do NOT:
         prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
       }
     }
+    prompt += lengthRequirement;
     prompt += keywordLine;
+    prompt += criticalLength;
     prompt += `\n\nReturn ONLY the formatted HTML ${fieldLabel}. Keep the original language. Output the result in ${mainLanguage}.`;
   } else {
     // Text fields (title, seoTitle, metaDescription, etc.) - light formatting only, no HTML
@@ -475,6 +500,7 @@ You may:
 - Add or improve separators (| or - or –)
 - Fix punctuation, spacing, and grammar
 - Slightly rephrase for better readability or flow
+- Tighten or expand the wording where a length requirement below asks for it
 
 Do NOT:
 - Add any HTML tags
@@ -493,7 +519,9 @@ Do NOT:
         prompt += `\n\nAdditional Instructions:\n${fieldInstructions}`;
       }
     }
+    prompt += lengthRequirement;
     prompt += keywordLine;
+    prompt += criticalLength;
     prompt += `\n\nReturn ONLY the formatted ${fieldLabel} as plain text (no HTML). Keep the original language. Output the result in ${mainLanguage}.`;
   }
 
@@ -531,12 +559,32 @@ Do NOT:
     });
 
     // Use appropriate method based on field type
-    let formattedValue: string;
     const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
-    if (isLongContent) {
-      formattedValue = await aiService.generateProductDescription(currentValue, prompt, imageUrlToSend);
-    } else {
-      formattedValue = await aiService.generateProductTitle(prompt, imageUrlToSend);
+    const runFormat = (p: string) =>
+      isLongContent
+        ? aiService.generateProductDescription(currentValue, p, imageUrlToSend)
+        : aiService.generateProductTitle(p, imageUrlToSend);
+    let formattedValue = await runFormat(prompt);
+
+    // Stuffing guard — the same one generation uses, and now needed here for
+    // the same reason: this pass may WORK IN a missing primary keyword, and a
+    // model asked to insert a phrase is a model that can insert it twice.
+    // Slugs are excluded (their keyword is hyphenated, so counting occurrences
+    // over one measures nothing).
+    const formatKeywords = field?.type === "slug" ? [] : formatTrackedKeywords.all;
+    let keywordStuffingWarning = false;
+    if (formatKeywords.length > 0) {
+      const stuffed = findStuffedKeyword(formattedValue, formatKeywords, isLongContent);
+      if (stuffed) {
+        logger.debug("[API-AI] Keyword stuffing detected while formatting, retrying once", {
+          context: "AI",
+          fieldType,
+          keyword: stuffed,
+        });
+        formattedValue = await runFormat(prompt + stuffingRetryWarning(stuffed, isLongContent));
+        keywordStuffingWarning =
+          findStuffedKeyword(formattedValue, formatKeywords, isLongContent) !== null;
+      }
     }
 
     // Sanitize slugs
@@ -558,7 +606,10 @@ Do NOT:
     return json({
       success: true,
       generatedContent: formattedValue,
-      fieldType
+      fieldType,
+      // Same contract as generation: the retry still over-used a keyword, so
+      // the client warns instead of handing over a silently bad suggestion.
+      keywordStuffingWarning,
     });
   } catch (error: unknown) {
     // Update task to failed

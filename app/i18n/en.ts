@@ -58,6 +58,15 @@ export const en: Translation = {
     aiGenerate: "Generate / improve with AI",
     aiGenerateShort: "Generate with AI",
     aiImprove: "Improve with AI",
+    aiGenerateTooltip:
+      "Writes a new text from the item's title and description. Keeps the character limit and works in your target keyword. You can add your own instruction first.",
+    aiImproveTooltip:
+      "Rewrites this text freely, using the item's title and description as context. Keeps the character limit and works in your target keyword. You can add your own instruction first.",
+    aiImproveEmptyTooltip:
+      "Theme text can only be improved, not written from scratch — there is nothing here yet.",
+    formatWithAITooltip:
+      "Reworks the existing text: structure, punctuation, capitalization. Content and language stay; it trims to the character limit and works in a missing target keyword.",
+    formatWithAIEmptyTooltip: "There is no text to format yet.",
     aiInstructionTitle: "Instructions for the AI (optional)",
     aiInstructionPlaceholder: "e.g. Emphasize the wool quality and keep the tone factual",
     aiInstructionHelp: "Leave empty to generate as usual. What you enter here takes priority over all other AI rules and settings.",
@@ -2945,7 +2954,7 @@ export const en: Translation = {
         "Keywords are per language: switch the editor language and you edit that language's set",
       ],
       details:
-        "Tracked keywords are not just documentation — the AI uses them. When you generate a title, SEO title, meta description, description, URL slug or alt text, the primary keyword goes into the prompt as a requirement, the secondaries as an offer, and the classified search intent as context. Afterwards the result is checked for stuffing: too high a density regenerates once automatically, and if the second attempt still overuses the term you get a warning instead of a silently bad text. The format function is deliberately more cautious — it preserves keywords already in the text but never adds new ones.",
+        "Tracked keywords are not just documentation — the AI uses them. When you generate a title, SEO title, meta description, description, URL slug or alt text, the primary keyword goes into the prompt as a requirement, the secondaries as an offer, and the classified search intent as context. Afterwards the result is checked for stuffing: too high a density regenerates once automatically, and if the second attempt still overuses the term you get a warning instead of a silently bad text. The format function goes about it more carefully: it keeps the keywords already in the text and works a missing primary keyword in by rewording an existing sentence, but it never adds the secondaries.",
     },
     seoSidebarJsonLd: {
       title: "Structured data (JSON-LD)",
