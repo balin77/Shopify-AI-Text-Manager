@@ -31,11 +31,13 @@ export function HtmlFormattingToolbar({ onCommand }: HtmlFormattingToolbarProps)
 
   return (
     <div
+      className="html-formatting-toolbar"
       onMouseDown={(e) => e.preventDefault()}
+      // Wrapping (desktop) vs. horizontal scrolling (mobile) lives in
+      // AIEditableField.css — inline styles would win over the media query.
       style={{
         display: "flex",
         gap: "0.25rem",
-        flexWrap: "wrap",
         padding: "0.5rem 0.75rem",
         background: "#f6f6f7",
         border: "1px solid #c9cccf",

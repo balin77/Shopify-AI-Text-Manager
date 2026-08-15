@@ -409,3 +409,36 @@
   border: none;
   border-top: 1px solid #c9cccf;
 }
+
+/* ==========================================================================
+   HTML formatting toolbar (bold / italic / headings / …)
+   Desktop: buttons wrap onto as many rows as needed.
+   Mobile: single row that scrolls horizontally — same pattern as the language
+   buttons in the content editor (.mobile-language-scroll), so the toolbar
+   stops eating half the screen on small viewports.
+   ========================================================================== */
+.html-formatting-toolbar {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .html-formatting-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 0.375rem 0.5rem;
+    min-height: 0;
+  }
+
+  .html-formatting-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Keep each segmented group at its natural width so the row scrolls
+     instead of squeezing the buttons into unreadable slivers. */
+  .html-formatting-toolbar > * {
+    flex: 0 0 auto;
+  }
+}
