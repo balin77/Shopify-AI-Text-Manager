@@ -136,7 +136,10 @@ export function keywordRequirementLines(kw: TrackedKeywords, isSlug = false): st
       .map((s) => `"${s}"`)
       .join(", ")}. Only use those that flow with the sentence; skip any that would sound forced or repetitive. Never use more than one per sentence.`;
   }
-  if (kw.primaryIntent && INTENT_HINTS[kw.primaryIntent]) {
+  // The intent hints are prose advice ("emphasize purchase, benefit,
+  // availability") — useless to a prompt whose output is restricted to
+  // a-z0-9-, and noise the model may try to act on. Slugs get the keyword only.
+  if (!isSlug && kw.primaryIntent && INTENT_HINTS[kw.primaryIntent]) {
     out += `\n- Search intent of the target keyword: ${kw.primaryIntent} — ${INTENT_HINTS[kw.primaryIntent]}.`;
   }
   return out;

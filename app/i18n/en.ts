@@ -2919,6 +2919,47 @@ export const en: Translation = {
         "If the same primary keyword is used more than once, a warning appears at the top",
       ],
     },
+    // Content editor — the three sidebar tabs
+    seoSidebarScore: {
+      title: "SEO score",
+      summary:
+        "A live score from 0 to 100 for the item you are editing. It reacts as you type — you do not have to save to see the effect of a change.",
+      tips: [
+        "Title 15 points, SEO title 15, description 20, meta description 20, image alt texts 30",
+        "Criteria that do not apply are left out and the rest is scaled up — a blog without a body is not punished for it",
+        "The length limits come from your settings, including the shop-name suffix Shopify appends to the SEO title",
+        "Below the score you get the concrete issues and what to do about them",
+      ],
+      details:
+        "The score is calculated by the same function as the store-wide SEO dashboard, so an item can never be rated differently in the two places. It measures the basics that are always true — is the field filled, is it within a sensible length, do the images have alt text — and deliberately says nothing about content quality: a meta description of exactly 155 characters of nonsense scores full points. Treat it as a checklist you should not fail, not as a ranking prediction.",
+    },
+    seoSidebarKeywords: {
+      title: "Keywords",
+      summary:
+        "The search terms this item should rank for. One primary keyword plus secondaries, up to 5 in total — separately per language.",
+      tips: [
+        "The first keyword becomes the primary; later ones join as secondary and can be promoted",
+        "The badges show where the primary keyword occurs: title, SEO title, meta description, body",
+        "Density: too low means the term barely appears, too high risks keyword stuffing",
+        "A warning appears if the keyword is already primary on another item — the two would compete against each other in Google",
+        "Keywords are per language: switch the editor language and you edit that language's set",
+      ],
+      details:
+        "Tracked keywords are not just documentation — the AI uses them. When you generate a title, SEO title, meta description, description, URL slug or alt text, the primary keyword goes into the prompt as a requirement, the secondaries as an offer, and the classified search intent as context. Afterwards the result is checked for stuffing: too high a density regenerates once automatically, and if the second attempt still overuses the term you get a warning instead of a silently bad text. The format function is deliberately more cautious — it preserves keywords already in the text but never adds new ones.",
+    },
+    seoSidebarJsonLd: {
+      title: "Structured data (JSON-LD)",
+      summary:
+        "A preview of the machine-readable data your storefront reports about this item — the basis for rich results in Google and for answers in AI search.",
+      tips: [
+        "Search engines read this to understand what the page is: product, article, collection",
+        "The validation flags missing or malformed fields before they cost you a rich result",
+        "Copy the <script> tag to test it in the Google Rich Results Test",
+      ],
+      details:
+        "You do not have to paste this into your theme — the app's storefront extension emits it automatically. This is a preview, which is why some warnings are suppressed: variant prices, publication dates and your shop logo are added at output time from live data the editor does not have, so flagging them here would be a false alarm. What you do see are the fields that really are missing on this item.",
+    },
+
     keywordsAssignModal: {
       title: "Assign keywords",
       summary:

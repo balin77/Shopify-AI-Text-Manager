@@ -142,6 +142,13 @@ describe("keywordRequirementLines", () => {
     expect(out).not.toContain('"running shoes"');
   });
 
+  it("keeps the prose intent hint out of a slug prompt", () => {
+    // The output is restricted to a-z0-9- — "emphasize purchase, benefit,
+    // availability" is nothing a slug can act on.
+    expect(keywordRequirementLines(kw, true)).not.toContain("Search intent");
+    expect(keywordRequirementLines(kw, false)).toContain("Search intent");
+  });
+
   it("is empty when nothing is tracked, so callers can append blindly", () => {
     expect(
       keywordRequirementLines({ primary: null, secondaries: [], primaryIntent: null, all: [] }),

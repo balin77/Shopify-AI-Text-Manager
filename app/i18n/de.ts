@@ -2920,6 +2920,47 @@ export const de = {
         "Wird dasselbe primäre Keyword mehrfach vergeben, warnt ein Hinweis oben",
       ],
     },
+    // Content-Editor — die drei Sidebar-Tabs
+    seoSidebarScore: {
+      title: "SEO-Score",
+      summary:
+        "Ein Live-Score von 0 bis 100 für den Eintrag, den Sie gerade bearbeiten. Er reagiert beim Tippen — Sie müssen nicht speichern, um die Wirkung einer Änderung zu sehen.",
+      tips: [
+        "Titel 15 Punkte, SEO-Titel 15, Beschreibung 20, Meta-Description 20, Bild-Alt-Texte 30",
+        "Nicht zutreffende Kriterien fallen raus, der Rest wird hochskaliert — ein Blog ohne Fließtext wird dafür nicht bestraft",
+        "Die Längengrenzen kommen aus Ihren Einstellungen, inklusive des Shop-Namens, den Shopify an den SEO-Titel hängt",
+        "Unter dem Score stehen die konkreten Probleme und was dagegen zu tun ist",
+      ],
+      details:
+        "Der Score wird von derselben Funktion berechnet wie das shopweite SEO-Dashboard — ein Eintrag kann an beiden Stellen also nie unterschiedlich bewertet werden. Gemessen werden die Grundlagen, die immer gelten: Ist das Feld gefüllt, liegt es in einer sinnvollen Länge, haben die Bilder Alt-Texte. Über inhaltliche Qualität sagt er bewusst nichts — eine Meta-Description aus exakt 155 Zeichen Unsinn bekommt die volle Punktzahl. Verstehen Sie ihn als Checkliste, durch die man nicht durchfallen sollte, nicht als Ranking-Prognose.",
+    },
+    seoSidebarKeywords: {
+      title: "Keywords",
+      summary:
+        "Die Suchbegriffe, für die dieser Eintrag ranken soll. Ein Primary-Keyword plus Secondaries, maximal 5 insgesamt — getrennt pro Sprache.",
+      tips: [
+        "Das erste Keyword wird zum Primary; spätere kommen als Secondary dazu und lassen sich hochstufen",
+        "Die Badges zeigen, wo das Primary-Keyword vorkommt: Titel, SEO-Titel, Meta-Description, Fließtext",
+        "Dichte: zu niedrig heißt, der Begriff kommt kaum vor; zu hoch riskiert Keyword-Stuffing",
+        "Eine Warnung erscheint, wenn das Keyword schon auf einem anderen Eintrag Primary ist — die beiden würden sich bei Google gegenseitig Konkurrenz machen",
+        "Keywords gelten pro Sprache: Sprache im Editor wechseln heißt, den Satz dieser Sprache bearbeiten",
+      ],
+      details:
+        "Hinterlegte Keywords sind nicht nur Dokumentation — die KI nutzt sie. Beim Generieren von Titel, SEO-Titel, Meta-Description, Beschreibung, URL-Slug oder Alt-Text geht das Primary-Keyword als Anforderung in den Prompt, die Secondaries als Angebot und die klassifizierte Suchintention als Kontext. Danach wird das Ergebnis auf Stuffing geprüft: Bei zu hoher Dichte wird einmal automatisch neu generiert, und wenn auch der zweite Versuch überzieht, bekommen Sie eine Warnung statt eines still schlechten Textes. Die Formatieren-Funktion ist bewusst zurückhaltender — sie erhält Keywords, die bereits im Text stehen, fügt aber nie neue hinzu.",
+    },
+    seoSidebarJsonLd: {
+      title: "Strukturierte Daten (JSON-LD)",
+      summary:
+        "Eine Vorschau der maschinenlesbaren Daten, die Ihr Storefront zu diesem Eintrag meldet — die Grundlage für Rich Results bei Google und für Antworten in KI-Suchen.",
+      tips: [
+        "Suchmaschinen lesen daraus, was die Seite ist: Produkt, Artikel, Kategorie",
+        "Die Prüfung meldet fehlende oder fehlerhafte Felder, bevor sie ein Rich Result kosten",
+        "Den <script>-Tag kopieren, um ihn im Google Rich Results Test zu prüfen",
+      ],
+      details:
+        "Sie müssen das nicht ins Theme einfügen — die Storefront-Extension der App gibt es automatisch aus. Dies ist eine Vorschau, deshalb sind einige Warnungen unterdrückt: Variantenpreise, Veröffentlichungsdaten und Ihr Shop-Logo werden erst bei der Ausgabe aus Live-Daten ergänzt, die der Editor nicht hat — sie hier zu melden wäre ein Fehlalarm. Was Sie sehen, sind die Felder, die auf diesem Eintrag tatsächlich fehlen.",
+    },
+
     keywordsAssignModal: {
       title: "Keywords zuordnen",
       summary:
