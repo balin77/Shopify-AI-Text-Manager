@@ -126,16 +126,22 @@ export function AIEditableField({
   return (
     <div>
       <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`} style={{ position: "relative" }}>
-        {onClear && value && (
-          <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-            <Button
-              size="slim"
-              onClick={onClear}
-              tone="critical"
-              variant="plain"
-            >
-              {t.common?.clear || "Clear"}
-            </Button>
+        {onClear && (
+          /* The wrapper stays mounted even with no value: responsive.css
+             reserves the label row for it on mobile, and a row that only
+             appeared once the field had content would shove the input down on
+             the first keystroke. */
+          <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+            {value && (
+              <Button
+                size="slim"
+                onClick={onClear}
+                tone="critical"
+                variant="plain"
+              >
+                {t.common?.clear || "Clear"}
+              </Button>
+            )}
           </div>
         )}
         <TextField

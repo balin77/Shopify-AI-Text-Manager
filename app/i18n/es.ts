@@ -82,7 +82,10 @@ export const es: Translation = {
     productMetafields: "Metadatos",
     optionsNotEditableInPrimary: "Las opciones no se pueden editar en el idioma principal. Cambia a un idioma extranjero para añadir traducciones.",
     metafieldsNotEditableInPrimary: "Los valores de metadatos se gestionan en Shopify y no se pueden editar aquí.",
-    translateEntireOption: "Traducir toda la opción",
+    // Cabecera de una opción de producto. Mantener corto — en el móvil el botón
+    // comparte fila con "Opción N" y la etiqueta de metaobjeto.
+    translateEntireOption: "Traducir todo",
+    translateOptionName: "Traducir nombre",
     translateMetafield: "Traducir",
     linkedOptionHint: "Los valores de esta opción son metaobjetos y se pueden traducir en Metaobjetos.",
     linkedOptionHintBefore: "Los valores de esta opción son metaobjetos y se pueden traducir en ",

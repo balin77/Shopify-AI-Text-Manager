@@ -505,6 +505,35 @@ html {
     padding-bottom: var(--p-space-150);
   }
 
+  /* The "Clear" button floats over a field's top-right corner, sharing the
+     label's row. At the touch size buttons get here it renders 32px tall while
+     the label row is only 24px, so it hung 8px INTO the input — visibly stuck
+     to the box. Reserve a row tall enough for it instead of shrinking the tap
+     target. The selector reaches through the field component's own wrapper:
+     Polaris' Labelled root carries no base class, only its LabelWrapper does. */
+  .field-clear-overlay .Polaris-Button {
+    padding: 4px 8px !important;
+  }
+
+  .field-clear-overlay ~ * .Polaris-Labelled__LabelWrapper {
+    min-height: 38px;
+    align-items: flex-start;
+  }
+
+  /* Product option header: "Option N" + the metaobject badge + the translate
+     button share one row. Polaris 13.9 accepts `size="small"` on Badge but
+     ships no CSS for it, so the badge renders at full size and crowds the row —
+     the compact form is implemented here instead, scoped to this header. */
+  .option-header .Polaris-Badge {
+    --pc-badge-horizontal-padding: var(--p-space-150);
+    --pc-badge-vertical-padding: 0;
+  }
+
+  .option-header .Polaris-Badge .Polaris-Text--root {
+    font-size: var(--p-font-size-275);
+    line-height: var(--p-font-line-height-400);
+  }
+
   /* Modal - full screen on mobile */
   .Polaris-Modal-Dialog {
     max-width: 100vw !important;

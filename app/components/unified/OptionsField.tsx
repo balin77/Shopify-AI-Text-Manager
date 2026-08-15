@@ -106,7 +106,10 @@ interface OptionsFieldProps {
     optionNameLabel?: string;
     valuesLabel?: string;
     valueLabel?: string;
+    /** Header button, unlinked option: translates name AND values. */
     translateButton?: string;
+    /** Header button, metaobject-linked option: only the name is translatable. */
+    translateOptionNameButton?: string;
     translateFieldButton?: string;
     originalLabel?: string;
     linkedOptionHint?: string;
@@ -203,16 +206,23 @@ export function OptionsField({
                 <div key={option.id}>
                   <Card>
                     <BlockStack gap="300">
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <Text as="p" variant="bodyMd" fontWeight="semibold">
-                            {t.optionPositionLabel || "Option"} {option.position}
+                      {/* `flexWrap` lets the button drop to its own line on a
+                          phone instead of squeezing "Option 1" into two lines;
+                          the title itself never breaks. */}
+                      <div className="option-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                          <Text as="p" variant="bodyMd" fontWeight="semibold" breakWord={false}>
+                            <span style={{ whiteSpace: "nowrap" }}>
+                              {t.optionPositionLabel || "Option"} {option.position}
+                            </span>
                           </Text>
                           {option.isLinked && (
                             <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
                           )}
                         </div>
-                        {/* Translate Entire Option Button — on same line as Option header */}
+                        {/* Translate Entire Option Button — on same line as Option header.
+                            A metaobject-linked option only has its NAME to translate
+                            (the values live in the metaobjects), so it says so. */}
                         {onTranslate && (
                           <DisabledActionTooltip hint={singleLocaleHint}>
                             <Button
@@ -221,7 +231,9 @@ export function OptionsField({
                               loading={translatingFieldIds.has(entireFieldId)}
                               disabled={!!singleLocaleHint}
                             >
-                              🌍 {t.translateButton || (option.isLinked ? "Translate option name" : "Translate entire option")}
+                              🌍 {option.isLinked
+                                ? (t.translateOptionNameButton || "Translate name")
+                                : (t.translateButton || "Translate all")}
                             </Button>
                           </DisabledActionTooltip>
                         )}
@@ -233,8 +245,8 @@ export function OptionsField({
                           {/* Option Name — editable for metaobjects */}
                           <div>
                             <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                              {currentName && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                              <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                {currentName && (
                                   <Button
                                     size="slim"
                                     onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
@@ -243,8 +255,8 @@ export function OptionsField({
                                   >
                                     {t.clearButton || "Clear"}
                                   </Button>
-                                </div>
-                              )}
+                                )}
+                              </div>
                               <TextField
                                 label={
                                   <span style={{ fontWeight: 600 }}>
@@ -311,8 +323,8 @@ export function OptionsField({
                           {/* Option Name */}
                           <div>
                             <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                              {currentName && (
-                                <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                              <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                {currentName && (
                                   <Button
                                     size="slim"
                                     onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
@@ -321,8 +333,8 @@ export function OptionsField({
                                   >
                                     {t.clearButton || "Clear"}
                                   </Button>
-                                </div>
-                              )}
+                                )}
+                              </div>
                               <TextField
                                 label={
                                   <span style={{ fontWeight: 600 }}>
@@ -378,8 +390,8 @@ export function OptionsField({
                               return (
                                 <div key={valueIndex}>
                                   <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.values[valueIndex]?.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                                    {value && (
-                                      <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                    <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                      {value && (
                                         <Button
                                           size="slim"
                                           onClick={() => handleValueChange(valueIndex, "")}
@@ -388,8 +400,8 @@ export function OptionsField({
                                         >
                                           {t.clearButton || "Clear"}
                                         </Button>
-                                      </div>
-                                    )}
+                                      )}
+                                    </div>
                                     <TextField
                                       label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
                                       value={value}
@@ -452,11 +464,14 @@ export function OptionsField({
                 <div key={option.id}>
                   <Card>
                     <BlockStack gap="300">
-                      {/* Option header with translate button */}
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <Text as="p" variant="bodyMd" fontWeight="semibold">
-                            {t.optionPositionLabel || "Option"} {option.position}
+                      {/* Option header with translate button (same wrapping
+                          rules as the primary-locale header above) */}
+                      <div className="option-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                          <Text as="p" variant="bodyMd" fontWeight="semibold" breakWord={false}>
+                            <span style={{ whiteSpace: "nowrap" }}>
+                              {t.optionPositionLabel || "Option"} {option.position}
+                            </span>
                           </Text>
                           {option.isLinked && (
                             <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
@@ -467,7 +482,9 @@ export function OptionsField({
                           onClick={() => onTranslate(option.id)}
                           loading={translatingFieldIds.has(entireFieldId)}
                         >
-                          🌍 {t.translateButton || "Translate entire option"}
+                          🌍 {option.isLinked
+                            ? (t.translateOptionNameButton || "Translate name")
+                            : (t.translateButton || "Translate all")}
                         </Button>
                       </div>
 
@@ -486,8 +503,8 @@ export function OptionsField({
                       {/* Option Name Translation — always available */}
                       <div>
                         <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(option.id) ? "bg-fallback" : (translation.name ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
-                          {translation.name && (
-                            <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                          <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                            {translation.name && (
                               <Button
                                 size="slim"
                                 onClick={() => onOptionNameChange(option.id, "")}
@@ -496,8 +513,8 @@ export function OptionsField({
                               >
                                 {t.clearButton || "Clear"}
                               </Button>
-                            </div>
-                          )}
+                            )}
+                          </div>
                           <TextField
                             label={
                               <span style={{ fontWeight: 600 }}>
@@ -548,8 +565,8 @@ export function OptionsField({
                             return (
                               <div key={optVal.id || valueIndex}>
                                 <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(optVal.id) ? "bg-fallback" : (translation.values[valueIndex] ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
-                                  {translation.values[valueIndex] && (
-                                    <div style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                  <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
+                                    {translation.values[valueIndex] && (
                                       <Button
                                         size="slim"
                                         onClick={() => onOptionValueChange(option.id, valueIndex, "")}
@@ -558,8 +575,8 @@ export function OptionsField({
                                       >
                                         {t.clearButton || "Clear"}
                                       </Button>
-                                    </div>
-                                  )}
+                                    )}
+                                  </div>
                                   <TextField
                                     label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
                                     value={translation.values[valueIndex] || ""}
