@@ -59,13 +59,13 @@ export const en: Translation = {
     aiGenerateShort: "Generate with AI",
     aiImprove: "Improve with AI",
     aiGenerateTooltip:
-      "Writes a new text from the item's title and description. Keeps the character limit and works in your target keyword. You can add your own instruction first.",
+      "Writes a new text from the item's title and description, respecting the character limit and target keyword configured for this field. You can add your own instruction first.",
     aiImproveTooltip:
-      "Rewrites this text freely, using the item's title and description as context. Keeps the character limit and works in your target keyword. You can add your own instruction first.",
+      "Rewrites this text freely, using the item's title and description as context, and respects the character limit and target keyword configured for this field. You can add your own instruction first.",
     aiImproveEmptyTooltip:
       "Theme text can only be improved, not written from scratch — there is nothing here yet.",
     formatWithAITooltip:
-      "Reworks the existing text: structure, punctuation, capitalization. Content and language stay; it trims to the character limit and works in a missing target keyword.",
+      "Reworks the existing text: structure, punctuation, capitalization. Content and language stay. Where this field has a character limit it trims to fit, and it works in a missing target keyword.",
     formatWithAIEmptyTooltip: "There is no text to format yet.",
     aiInstructionTitle: "Instructions for the AI (optional)",
     aiInstructionPlaceholder: "e.g. Emphasize the wool quality and keep the tone factual",

@@ -2,7 +2,10 @@ import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
-import { getCharacterLimitRequirement } from "~/utils/character-limits";
+import {
+  getCharacterCeilingRequirement,
+  getCharacterLimitRequirement,
+} from "~/utils/character-limits";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { readUserInstruction, appendUserInstruction } from "~/utils/ai-user-instruction.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
@@ -401,21 +404,26 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
       ? ""
       : keywordPreservationLine(formatTrackedKeywords, { mayAddPrimary: true });
 
-  // Length is enforced exactly as in generation: once as a requirement and once
-  // as the overriding constraint at the very end. Formatting used to have NO
-  // length rule at all, so a pass over a 90-character SEO title happily handed
-  // one back — the merchant's own limit silently did not apply to half the AI
-  // actions in the editor.
+  // Formatting used to have NO length rule at all, so a pass over a
+  // 90-character SEO title happily handed one back — the merchant's own limits
+  // silently applied to only half the AI actions in the editor.
+  //
+  // It gets the CEILING, never the full range: generation's "50-70 characters"
+  // is a target to write toward, but as a hard rule over existing text it pads
+  // a short value to reach the minimum (handleMin defaults to 50, so a cosmetic
+  // format of `blue-shoes` would inflate the URL). Fields whose only limit is a
+  // minimum — descriptions, bodies — get no length rule at all; ordering a
+  // formatting pass to produce MORE text is how it starts inventing content.
   const formatCharLimit = instructionsKey
-    ? getCharacterLimitRequirement(instructionsKey, { seoTitleMaxChars, limits: seoLimits })
+    ? getCharacterCeilingRequirement(instructionsKey, { seoTitleMaxChars, limits: seoLimits })
     : null;
   const lengthRequirement = formatCharLimit
-    ? `\n\nLength requirement: ${formatCharLimit}. If the text is outside that range, tighten or expand the wording to fit — this is the one case where rewording beyond pure formatting is expected.`
+    ? `\n\nLength requirement: ${formatCharLimit}. If the text is longer, tighten the wording until it fits — condense, never truncate mid-sentence. If it is already within the limit, do not pad it.`
     : "";
   // Placed last so it outranks a conflicting length hint in the merchant's own
   // field instructions, exactly as in the generation prompt.
   const criticalLength = formatCharLimit
-    ? `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST be ${formatCharLimit}. This overrides any other length or character count instruction in this prompt.`
+    ? `\n\nCRITICAL LENGTH CONSTRAINT: The output MUST NOT exceed ${formatCharLimit}. This overrides any other length or character count instruction in this prompt.`
     : "";
 
   // Build field-type-aware prompt
@@ -466,7 +474,7 @@ You may:
 - Add paragraph breaks with <p> tags
 - Fix spacing, punctuation, and grammar
 - Slightly rephrase for better flow or clarity (but keep the meaning)
-- Tighten or expand the wording where a length requirement below asks for it
+- Shorten the wording where a length requirement below asks for it
 
 Do NOT:
 - Completely rewrite or replace the content
@@ -500,7 +508,7 @@ You may:
 - Add or improve separators (| or - or –)
 - Fix punctuation, spacing, and grammar
 - Slightly rephrase for better readability or flow
-- Tighten or expand the wording where a length requirement below asks for it
+- Shorten the wording where a length requirement below asks for it
 
 Do NOT:
 - Add any HTML tags
@@ -571,7 +579,17 @@ Do NOT:
     // model asked to insert a phrase is a model that can insert it twice.
     // Slugs are excluded (their keyword is hyphenated, so counting occurrences
     // over one measures nothing).
-    const formatKeywords = field?.type === "slug" ? [] : formatTrackedKeywords.all;
+    //
+    // Unlike generation, the input here is text the MERCHANT wrote, so a
+    // keyword that was already over-dense before the call is not this pass's
+    // doing. Measuring it anyway would double the AI calls on every format of
+    // a keyword-heavy description and then fire a retry whose "mention each
+    // keyword at most once" contradicts the preservation line in the same
+    // prompt — the retry could drop the very keywords that line protects. So
+    // the guard polices only what formatting itself pushed over the line.
+    const formatKeywords = (field?.type === "slug" ? [] : formatTrackedKeywords.all).filter(
+      (k) => findStuffedKeyword(currentValue, [k], isLongContent) === null,
+    );
     let keywordStuffingWarning = false;
     if (formatKeywords.length > 0) {
       const stuffed = findStuffedKeyword(formattedValue, formatKeywords, isLongContent);

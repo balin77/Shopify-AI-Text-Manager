@@ -140,6 +140,60 @@ export function getCharacterLimitRequirement(
 }
 
 /**
+ * Upper bound only — the requirement a REFORMATTING pass may be held to.
+ *
+ * `getCharacterLimitRequirement` returns a range ("50-70 characters") or even a
+ * pure minimum ("minimum 150 characters"), which is right when the AI is
+ * writing new copy but dangerous when it is only reworking existing text: a
+ * hard "MUST be 50-70 characters" on the handle `blue-shoes` pads the URL with
+ * filler (handleMin defaults to 50), and "MUST be minimum 150 characters" on a
+ * short description orders the model to fabricate the difference — in the same
+ * prompt that forbids adding new information.
+ *
+ * So formatting gets the ceiling and nothing else. Fields whose only limit is a
+ * MINIMUM (descriptions, bodies) return null and get no length rule at all:
+ * a formatting pass is never the right moment to demand more text.
+ */
+export function getCharacterCeilingRequirement(
+  aiInstructionsKey: string,
+  options?: CharacterLimitOptions,
+): string | null {
+  const opts = options ?? {};
+  const l = resolveSeoLimits(opts.limits ?? null);
+  const seoTitleMax = opts.seoTitleMaxChars ?? l.seoTitleMax;
+
+  const ceilings: Record<string, number> = {
+    productTitle: l.titleMax,
+    collectionTitle: l.titleMax,
+    blogTitle: l.titleMax,
+    pageTitle: l.titleMax,
+
+    productSeoTitle: seoTitleMax,
+    collectionSeoTitle: seoTitleMax,
+    blogSeoTitle: seoTitleMax,
+    pageSeoTitle: seoTitleMax,
+
+    productMetaDesc: l.metaDescMax,
+    collectionMetaDesc: l.metaDescMax,
+    blogMetaDesc: l.metaDescMax,
+    pageMetaDesc: l.metaDescMax,
+
+    productHandle: l.handleMax,
+    collectionHandle: l.handleMax,
+    blogHandle: l.handleMax,
+    pageHandle: l.handleMax,
+
+    productAltText: l.altTextMax,
+
+    // Descriptions and bodies are deliberately absent: their only limit is
+    // `descriptionMin`, and a ceiling must never be invented for them.
+  };
+
+  const max = ceilings[aiInstructionsKey];
+  return max ? `maximum ${max} characters` : null;
+}
+
+/**
  * Compose the final `customInstructions` string passed to the AI translation
  * service. In `"exact"` mode the base instructions pass through unchanged
  * (legal texts must not shrink). In `"seo_optimized"` mode a length-constraint

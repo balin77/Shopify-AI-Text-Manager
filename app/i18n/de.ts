@@ -56,13 +56,13 @@ export const de = {
     aiGenerateShort: "Mit KI generieren",
     aiImprove: "Mit KI verbessern",
     aiGenerateTooltip:
-      "Schreibt einen neuen Text aus Titel und Beschreibung des Eintrags. Hält das Zeichenlimit ein und baut Ihr Ziel-Keyword ein. Sie können vorher eine eigene Anweisung mitgeben.",
+      "Schreibt einen neuen Text aus Titel und Beschreibung des Eintrags — mit dem Zeichenlimit und dem Ziel-Keyword, die für dieses Feld hinterlegt sind. Sie können vorher eine eigene Anweisung mitgeben.",
     aiImproveTooltip:
-      "Formuliert diesen Text frei neu, mit Titel und Beschreibung des Eintrags als Kontext. Hält das Zeichenlimit ein und baut Ihr Ziel-Keyword ein. Sie können vorher eine eigene Anweisung mitgeben.",
+      "Formuliert diesen Text frei neu, mit Titel und Beschreibung des Eintrags als Kontext — mit dem Zeichenlimit und dem Ziel-Keyword, die für dieses Feld hinterlegt sind. Sie können vorher eine eigene Anweisung mitgeben.",
     aiImproveEmptyTooltip:
       "Theme-Texte lassen sich nur verbessern, nicht neu schreiben — hier steht noch nichts.",
     formatWithAITooltip:
-      "Überarbeitet den vorhandenen Text: Struktur, Zeichensetzung, Groß-/Kleinschreibung. Inhalt und Sprache bleiben; kürzt auf das Zeichenlimit und arbeitet ein fehlendes Ziel-Keyword ein.",
+      "Überarbeitet den vorhandenen Text: Struktur, Zeichensetzung, Groß-/Kleinschreibung. Inhalt und Sprache bleiben. Hat das Feld ein Zeichenlimit, wird darauf gekürzt; ein fehlendes Ziel-Keyword wird eingearbeitet.",
     formatWithAIEmptyTooltip: "Es gibt noch keinen Text zum Formatieren.",
     aiInstructionTitle: "Anweisung an die KI (optional)",
     aiInstructionPlaceholder: "z. B. Die Wollqualität hervorheben und sachlich formulieren",

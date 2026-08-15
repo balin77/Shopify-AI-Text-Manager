@@ -58,13 +58,13 @@ export const es: Translation = {
     aiGenerateShort: "Generar con IA",
     aiImprove: "Mejorar con IA",
     aiGenerateTooltip:
-      "Escribe un texto nuevo a partir del título y la descripción del elemento. Respeta el límite de caracteres e incorpora tu palabra clave objetivo. Puedes añadir antes tu propia instrucción.",
+      "Escribe un texto nuevo a partir del título y la descripción del elemento, con el límite de caracteres y la palabra clave objetivo configurados para este campo. Puedes añadir antes tu propia instrucción.",
     aiImproveTooltip:
-      "Reescribe este texto con libertad, usando el título y la descripción del elemento como contexto. Respeta el límite de caracteres e incorpora tu palabra clave objetivo. Puedes añadir antes tu propia instrucción.",
+      "Reescribe este texto con libertad, usando el título y la descripción del elemento como contexto, con el límite de caracteres y la palabra clave objetivo configurados para este campo. Puedes añadir antes tu propia instrucción.",
     aiImproveEmptyTooltip:
       "Los textos del tema solo se pueden mejorar, no escribir desde cero: aquí todavía no hay nada.",
     formatWithAITooltip:
-      "Retoca el texto existente: estructura, puntuación, mayúsculas. El contenido y el idioma se mantienen; ajusta al límite de caracteres e incorpora la palabra clave objetivo si falta.",
+      "Retoca el texto existente: estructura, puntuación, mayúsculas. El contenido y el idioma se mantienen. Si el campo tiene un límite de caracteres, ajusta a él, e incorpora la palabra clave objetivo si falta.",
     formatWithAIEmptyTooltip: "Todavía no hay texto que formatear.",
     aiInstructionTitle: "Instrucciones para la IA (opcional)",
     aiInstructionPlaceholder: "p. ej. Destaca la calidad de la lana y mantén un tono objetivo",
