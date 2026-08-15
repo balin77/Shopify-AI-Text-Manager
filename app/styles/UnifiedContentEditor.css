@@ -252,6 +252,50 @@
   }
 }
 
+/* Sidebar panel mode (see contexts/SidebarPanelContext.tsx).
+   Below 1100px the sidebar column is hidden outright (content-editor-global.css)
+   — too narrow for three columns. Its nav toggle sets `.sidebar-panel-open` on
+   the layout, which hands the whole row over to the sidebar so the SEO score,
+   keywords and image manager stay reachable. Above 1100px the class is inert:
+   the sidebar is visible anyway and nothing should move.
+
+   `!important` throughout because the rules being overridden use it too
+   (the hiding rule) or sit in the element's inline style (width/display).
+   Keep the breakpoint in sync with responsive.css and content-editor-global.css. */
+.sidebar-panel-back {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .sidebar-panel-back {
+    display: block;
+  }
+
+  /* Back to a flex row so the sidebar inherits the layout's bounded height and
+     scrolls internally — as a block child it would size to its content and get
+     clipped by the layout's overflow:hidden, making the bottom unreachable. */
+  .unified-content-editor-layout.sidebar-panel-open {
+    display: flex !important;
+  }
+
+  .unified-content-editor-layout.sidebar-panel-open .unified-item-list-container,
+  .unified-content-editor-layout.sidebar-panel-open .unified-editor-container,
+  .unified-content-editor-layout.sidebar-panel-open .sidebar-resizer {
+    display: none !important;
+  }
+
+  .unified-content-editor-layout.sidebar-panel-open .seo-sidebar-container {
+    display: flex !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    position: relative !important;
+    top: 0 !important;
+  }
+}
+
 /* SEO Sidebar Responsive */
 .seo-sidebar-container {
   position: sticky;

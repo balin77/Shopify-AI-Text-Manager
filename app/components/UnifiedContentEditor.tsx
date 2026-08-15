@@ -35,6 +35,7 @@ import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
@@ -569,6 +570,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     return () => { clearItems(); };
   }, [clearItems]);
 
+  // Below 1100px the sidebar column is hidden by CSS, so its content is only
+  // reachable through the nav toggle. Tell the nav a sidebar exists (and take
+  // the registration back on unmount — the toggle would otherwise survive onto
+  // a page that has no sidebar at all).
+  const hasSidebar = !!selectedItem && !!config.showSeoSidebar;
+  const { open: sidebarPanelOpen, setAvailable: setSidebarPanelAvailable, close: closeSidebarPanel } = useSidebarPanel();
+  useEffect(() => {
+    setSidebarPanelAvailable(hasSidebar);
+  }, [hasSidebar, setSidebarPanelAvailable]);
+  useEffect(() => {
+    return () => { setSidebarPanelAvailable(false); };
+  }, [setSidebarPanelAvailable]);
+
   // Compute which option/value IDs have missing translations in any foreign locale.
   // Used to show blue highlight on primary locale option fields (same pattern as regular fields).
   const optionMissingTranslationIds = (() => {
@@ -604,7 +618,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     <Page fullWidth>
       <div
-        className="unified-content-editor-layout"
+        // `sidebar-panel-open` only bites below 1100px, where it swaps the item
+        // list + editor for the sidebar column (see UnifiedContentEditor.css).
+        // Above that the class is inert and the normal three-column layout wins.
+        className={`unified-content-editor-layout${sidebarPanelOpen ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
@@ -1257,9 +1274,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         )}
 
-        {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
+        {/* Right: Optional Sidebar (Fixed). Hidden below 1100px via CSS — there
+            it is reachable through the nav toggle, which makes this column
+            replace the editor instead (`.sidebar-panel-open`). */}
         {selectedItem && config.showSeoSidebar && (
           <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Way back to the content. `open` can survive a resize past the
+                breakpoint, where the sidebar is shown normally and this row
+                would be meaningless — the class hides it there. */}
+            {sidebarPanelOpen && (
+              <div className="sidebar-panel-back" style={{ marginBottom: 8, flexShrink: 0 }}>
+                <Button icon={ChevronLeftIcon} onClick={closeSidebarPanel} fullWidth textAlign="left">
+                  {t.seo?.hidePanel || "Back to content"}
+                </Button>
+              </div>
+            )}
             {/* Tab-Toggle für Pro/Max Image Manager */}
             {showImageManager && imageManager && (
               <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>

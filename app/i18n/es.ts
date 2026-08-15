@@ -1282,6 +1282,10 @@ export const es: Translation = {
   // SEO Sidebar
   seo: {
     title: "Puntuación SEO",
+    // Solo en pantallas estrechas: allí el conmutador de la columna derecha
+    // sustituye al botón de plan en la navegación.
+    showPanel: "Mostrar puntuación SEO",
+    hidePanel: "Volver al contenido",
     sidebarTabs: {
       score: "Score",
       keywords: "Keywords",

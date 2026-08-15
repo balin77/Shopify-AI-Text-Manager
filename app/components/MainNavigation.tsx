@@ -7,6 +7,7 @@ import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
+import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { MobileMenu, type MobileNavGroup } from "./MobileMenu";
@@ -65,6 +66,9 @@ export function MainNavigation() {
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
+  // Narrow screens hide the editor's right-hand sidebar entirely; when one is
+  // registered its toggle takes the plan button's slot (see below).
+  const sidebarPanel = useSidebarPanel();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const notifiedTaskIds = useRef<Set<string>>(new Set());
@@ -793,10 +797,30 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile */}
+          {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile.
+              Unter 1100px ist die rechte Editor-Sidebar ausgeblendet: dort
+              übernimmt ihr Umschalter diesen Platz (der Plan bleibt über
+              Einstellungen → Plan erreichbar). Rein per CSS-Media-Query, damit
+              beim Drehen/Resizen kein Re-Render nötig ist. */}
           <div style={{ marginLeft: "auto" }}>
+            {sidebarPanel.available && (
+              <div className="sidebar-panel-toggle-slot">
+                <Button
+                  onClick={sidebarPanel.toggle}
+                  pressed={sidebarPanel.open}
+                  size="slim"
+                  accessibilityLabel={
+                    sidebarPanel.open
+                      ? (t.seo?.hidePanel || "Back to content")
+                      : (t.seo?.showPanel || "Show SEO score")
+                  }
+                >
+                  {t.seo?.title || "SEO Score"}
+                </Button>
+              </div>
+            )}
             {/* Desktop: alle Pläne als segmented ButtonGroup */}
-            <div className="desktop-only">
+            <div className={`desktop-only plan-buttons-slot${sidebarPanel.available ? " has-sidebar-toggle" : ""}`}>
               <ButtonGroup variant="segmented">
                 {plans.map((p) => (
                   <Button
@@ -812,7 +836,7 @@ export function MainNavigation() {
               </ButtonGroup>
             </div>
             {/* Mobile: nur aktiver Plan */}
-            <div className="mobile-only">
+            <div className={`mobile-only plan-buttons-slot${sidebarPanel.available ? " has-sidebar-toggle" : ""}`}>
               <Button
                 onClick={handlePlanNavigation}
                 pressed

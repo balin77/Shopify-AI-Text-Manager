@@ -1283,6 +1283,10 @@ export const en: Translation = {
   // SEO Sidebar
   seo: {
     title: "SEO Score",
+    // Narrow screens only: there the right column's toggle replaces the plan
+    // button in the navigation.
+    showPanel: "Show SEO score",
+    hidePanel: "Back to content",
     sidebarTabs: {
       score: "Score",
       keywords: "Keywords",

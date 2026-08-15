@@ -1280,6 +1280,10 @@ export const de = {
   // SEO Sidebar
   seo: {
     title: "SEO-Score",
+    // Nur auf schmalen Bildschirmen: dort ersetzt der Umschalter der rechten
+    // Spalte den Plan-Button in der Navigation.
+    showPanel: "SEO-Score anzeigen",
+    hidePanel: "Zurück zum Inhalt",
     sidebarTabs: {
       score: "Score",
       keywords: "Keywords",

@@ -14,6 +14,7 @@ import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
+import { SidebarPanelProvider } from "../contexts/SidebarPanelContext";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
@@ -406,11 +407,13 @@ export default function App() {
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
+                <SidebarPanelProvider>
                 <AltTextOpsProvider>
                   <ConfirmProvider>
                     <AppContent />
                   </ConfirmProvider>
                 </AltTextOpsProvider>
+                </SidebarPanelProvider>
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>

@@ -170,6 +170,29 @@ html {
   }
 }
 
+/* Editor sidebar panel toggle (see contexts/SidebarPanelContext.tsx).
+   The right-hand sidebar (.seo-sidebar-container) is hidden below 1100px, so in
+   that range its nav toggle takes over the plan button's slot instead. Both
+   halves gate on the SAME 1100px breakpoint as the hiding rule in
+   content-editor-global.css — keep the three in sync or the panel becomes
+   unreachable (toggle gone while the sidebar is still hidden) or pointless
+   (toggle shown next to a visible sidebar). */
+.sidebar-panel-toggle-slot {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .sidebar-panel-toggle-slot {
+    display: block;
+  }
+
+  /* !important beats the `.desktop-only`/`.mobile-only` showing rules, which
+     are plain class selectors of the same specificity. */
+  .plan-buttons-slot.has-sidebar-toggle {
+    display: none !important;
+  }
+}
+
 /* Pulse animations for missing-content / missing-translation locale buttons.
    Same reason as above — UnifiedLanguageBar lives outside UnifiedContentEditor
    on the direct-translations tab, so the keyframes have to be globally loaded
