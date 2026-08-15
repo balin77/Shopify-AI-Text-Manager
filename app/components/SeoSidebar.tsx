@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
+import { HelpTooltip } from "./HelpTooltip";
 import {
   validateJsonLd,
   renderJsonLdScript,
@@ -362,14 +363,30 @@ export function SeoSidebar({
     const key = id === "jsonld" ? "jsonLd" : id;
     return tabLabels?.[key] ?? (id === "jsonld" ? "JSON-LD" : id === "keywords" ? "Keywords" : "Score");
   };
+  // Each tab explains itself through the shared "?" popover (t.help.*), so the
+  // panes stay free of permanent explanatory copy in a sidebar this narrow.
+  const TAB_HELP_KEY: Record<SidebarTab, string> = {
+    score: "seoSidebarScore",
+    keywords: "seoSidebarKeywords",
+    jsonld: "seoSidebarJsonLd",
+  };
 
   return (
     <Card>
       <BlockStack gap="400">
-        {/* Sub-tab bar (Score / Keywords / JSON-LD) */}
-        {availableTabs.length > 1 && (
-          <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginTop: "-0.25rem" }}>
-            {availableTabs.map((id) => {
+        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help.
+            The row renders even with a single tab so the "?" always has a
+            home; the divider is what's conditional, not the row. */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            borderBottom: availableTabs.length > 1 ? "1px solid #e1e3e5" : undefined,
+            marginTop: "-0.25rem",
+          }}
+        >
+          {availableTabs.length > 1 &&
+            availableTabs.map((id) => {
               const isActive = id === currentTab;
               return (
                 <button
@@ -391,8 +408,10 @@ export function SeoSidebar({
                 </button>
               );
             })}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+            <HelpTooltip helpKey={TAB_HELP_KEY[currentTab]} position="below" />
           </div>
-        )}
+        </div>
 
         {currentTab === "score" && (
         <BlockStack gap="400">

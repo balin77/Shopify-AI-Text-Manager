@@ -1555,6 +1555,12 @@ export default function BulkEditor() {
             currentValue: valueFor(row, column),
             contextTitle: row.title,
             mainLanguage,
+            // Tracked keywords are per (item, locale) and `locale` already uses
+            // the same "" = primary convention, so it passes straight through.
+            // Without it a French cell would be written against the primary
+            // language's keyword — and the stuffing guard would measure the
+            // wrong-language phrase.
+            keywordLocale: locale,
           },
     );
     setCellBusy(cellKey, false);

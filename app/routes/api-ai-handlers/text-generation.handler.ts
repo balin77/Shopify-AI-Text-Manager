@@ -47,10 +47,15 @@ export async function handleFormatField(ctx: AIActionContext): Promise<DataRespo
   );
 
   // Build the prompt
-  const prompt = `${formatInstruction}
+  // keywordLine joins the INSTRUCTION, not the content block. Here the source
+  // text is the last thing before the closing rule, so a keyword sentence
+  // appended after it reads as more text to format and can be echoed back into
+  // the field value. With no tracked keywords this is byte-identical to the
+  // prompt before the keywords bridge existed.
+  const prompt = `${formatInstruction}${keywordLine}
 
 Text to format:
-${sourceText}${keywordLine}
+${sourceText}
 
 Return only the formatted text, without explanations.`;
 

@@ -2919,6 +2919,47 @@ export const es: Translation = {
         "Si la misma palabra clave principal se usa más de una vez, aparece un aviso arriba",
       ],
     },
+    // Editor de contenido — las tres pestañas de la barra lateral
+    seoSidebarScore: {
+      title: "Puntuación SEO",
+      summary:
+        "Una puntuación en vivo de 0 a 100 para el elemento que estás editando. Reacciona mientras escribes: no hace falta guardar para ver el efecto de un cambio.",
+      tips: [
+        "Título 15 puntos, título SEO 15, descripción 20, meta descripción 20, textos alternativos 30",
+        "Los criterios que no aplican se excluyen y el resto se reescala: un blog sin cuerpo no se penaliza por ello",
+        "Los límites de longitud vienen de tus ajustes, incluido el nombre de la tienda que Shopify añade al título SEO",
+        "Debajo de la puntuación aparecen los problemas concretos y qué hacer con ellos",
+      ],
+      details:
+        "La puntuación la calcula la misma función que el panel SEO de toda la tienda, así que un elemento nunca puede valorarse de forma distinta en los dos sitios. Mide lo básico que siempre se cumple: si el campo está relleno, si tiene una longitud razonable, si las imágenes tienen texto alternativo. Sobre la calidad del contenido no dice nada a propósito: una meta descripción de exactamente 155 caracteres sin sentido obtiene la puntuación máxima. Tómala como una lista de comprobación que no deberías suspender, no como una predicción de posiciones.",
+    },
+    seoSidebarKeywords: {
+      title: "Palabras clave",
+      summary:
+        "Los términos de búsqueda por los que debe posicionar este elemento. Una palabra clave principal más secundarias, hasta 5 en total, por idioma.",
+      tips: [
+        "La primera palabra clave pasa a ser la principal; las siguientes entran como secundarias y se pueden promover",
+        "Las etiquetas muestran dónde aparece la principal: título, título SEO, meta descripción, cuerpo",
+        "Densidad: demasiado baja significa que apenas aparece; demasiado alta arriesga keyword stuffing",
+        "Aparece un aviso si la palabra clave ya es principal en otro elemento: ambos competirían entre sí en Google",
+        "Las palabras clave son por idioma: cambia el idioma del editor y editarás el conjunto de ese idioma",
+      ],
+      details:
+        "Las palabras clave registradas no son solo documentación: la IA las usa. Al generar título, título SEO, meta descripción, descripción, slug de URL o texto alternativo, la principal entra en el prompt como requisito, las secundarias como oferta y la intención de búsqueda clasificada como contexto. Después se comprueba el resultado: si la densidad es excesiva se regenera una vez automáticamente, y si el segundo intento sigue abusando del término recibes un aviso en lugar de un texto malo en silencio. La función de formato es deliberadamente más prudente: conserva las palabras clave que ya están en el texto, pero nunca añade nuevas.",
+    },
+    seoSidebarJsonLd: {
+      title: "Datos estructurados (JSON-LD)",
+      summary:
+        "Una vista previa de los datos legibles por máquina que tu tienda declara sobre este elemento: la base de los resultados enriquecidos en Google y de las respuestas en las búsquedas con IA.",
+      tips: [
+        "Los buscadores leen esto para entender qué es la página: producto, artículo, colección",
+        "La validación señala campos que faltan o mal formados antes de que te cuesten un resultado enriquecido",
+        "Copia la etiqueta <script> para probarla en el Test de Resultados Enriquecidos de Google",
+      ],
+      details:
+        "No tienes que pegar esto en tu tema: la extensión de tienda de la app lo emite automáticamente. Esto es una vista previa, por eso algunos avisos están silenciados: los precios de variantes, las fechas de publicación y el logotipo de tu tienda se añaden al generar la salida a partir de datos en vivo que el editor no tiene, así que señalarlos aquí sería una falsa alarma. Lo que sí ves son los campos que realmente faltan en este elemento.",
+    },
+
     keywordsAssignModal: {
       title: "Asignar palabras clave",
       summary:
