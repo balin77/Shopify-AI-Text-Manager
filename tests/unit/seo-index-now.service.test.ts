@@ -20,6 +20,7 @@ import {
   provisionIndexNow,
   setIndexNowEnabled,
   syncIndexNowHost,
+  syncKeyLocation,
   INDEXNOW_MAX_URLS_PER_REQUEST,
   SUBMIT_ALL_COOLDOWN_MS,
 } from "~/services/seo/index-now.service";
@@ -386,6 +387,30 @@ describe("syncIndexNowHost", () => {
     expect(update.mock.calls[0][0].data).toEqual({ hostCheckedAt: NOW });
     // An unchanged host must never cost the shop its pending URLs.
     expect(deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("syncKeyLocation", () => {
+  it("rewrites a keyLocation left on the old app-proxy path, without touching hostCheckedAt", async () => {
+    const legacy = {
+      ...CONFIG,
+      keyLocation: "https://shop.example/apps/contentpilot/indexnow-key",
+      hostCheckedAt: new Date("2026-08-15T11:00:00Z"),
+    };
+    const update = vi.fn(async ({ data }: any) => ({ ...legacy, ...data }));
+    const db = { seoIndexNowConfig: { findUnique: async () => legacy, update } } as any;
+
+    await syncKeyLocation(db, "s.myshopify.com");
+    // Only the location — stamping hostCheckedAt here would suppress the real
+    // domain re-check for another 24h.
+    expect(update.mock.calls[0][0].data).toEqual({ keyLocation: "https://shop.example/K.txt" });
+  });
+
+  it("does not write when the key location is already correct", async () => {
+    const update = vi.fn();
+    const db = { seoIndexNowConfig: { findUnique: async () => CONFIG, update } } as any;
+    await syncKeyLocation(db, "s.myshopify.com");
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

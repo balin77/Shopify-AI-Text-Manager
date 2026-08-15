@@ -425,6 +425,7 @@ interface IndexNowProbeReport {
   hostIsPrimaryDomain: boolean;
   keyLocation: string;
   keyPath: string;
+  keyRedirectPresent: boolean;
   keyFile: {
     reachable: boolean;
     finalStatus: number | null;
@@ -452,7 +453,8 @@ function formatIndexNowMarkdown(r: IndexNowProbeReport): string {
   lines.push(`- Configured: ${r.configured ? "yes" : "no"} / enabled: ${r.enabled ? "yes" : "no"}`);
   lines.push(`- Declared host: \`${r.host || "(none)"}\``);
   lines.push(`- Primary domain: \`${r.primaryDomain}\` ${r.hostIsPrimaryDomain ? "(match)" : "(MISMATCH)"}`);
-  lines.push(`- keyLocation: \`${r.keyLocation || "(none)"}\` (path \`${r.keyPath}\`)`);
+  lines.push(`- keyLocation: \`${r.keyLocation || "(none)"}\` (path \`${r.keyPath || "(none)"}\`)`);
+  lines.push(`- Key-file redirect on record: ${r.keyRedirectPresent ? "yes" : "no"}`);
   lines.push(``);
   lines.push(`## Key file fetch`);
   lines.push(``);

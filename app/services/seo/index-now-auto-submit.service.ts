@@ -39,7 +39,7 @@ import { meetsPlan } from "../../utils/planUtils";
 import { createAdminClientFromShop } from "../../utils/admin-client.server";
 import { resolvePrimaryDomain } from "../../utils/shop-domain.server";
 import type { Plan } from "../../config/plans";
-import { drainQueue, firstFailureKind, syncIndexNowHost } from "./index-now.service";
+import { drainQueue, firstFailureKind, syncIndexNowHost, syncKeyLocation } from "./index-now.service";
 import { ensureKeyRedirect } from "./index-now-key-file.server";
 
 /** Disable the whole sweep without a redeploy. */
@@ -217,10 +217,20 @@ export class IndexNowAutoSubmitService {
     keyRedirectId: string | null,
     now: Date,
   ): Promise<void> {
+    // keyLocation can be stale on its own: every row the root-key migration
+    // backfilled still names the old app-proxy path even though its host is
+    // current. Cheap, DB-only, and it must happen whether or not anything else
+    // needs repairing — otherwise those shops submit against a keyLocation that
+    // is rejected for being outside the verified scope.
+    await syncKeyLocation(db, shop);
+
     const hostStale = !hostCheckedAt || now.getTime() - hostCheckedAt.getTime() >= HOST_RECHECK_MS;
-    // A missing redirect means the key is not reachable at the root path
-    // keyLocation names, so every submission this tick is about to make would be
-    // rejected for being outside the verified scope. Worth one Admin call.
+    // A missing redirect means the key is not reachable where keyLocation says
+    // it is, so every submission this tick makes would be rejected. Worth one
+    // Admin call. When the host is due anyway, the redirect is RE-VERIFIED too
+    // (not just created): `ensureKeyRedirect`'s update branch is what catches a
+    // redirect the merchant deleted or repointed in their admin, which the
+    // stored id alone cannot tell us.
     const redirectMissing = !keyRedirectId;
     if (!hostStale && !redirectMissing) return;
     try {
@@ -229,10 +239,8 @@ export class IndexNowAutoSubmitService {
         const primaryDomain = await resolvePrimaryDomain(admin as never);
         if (primaryDomain) await syncIndexNowHost(db, shop, primaryDomain, now);
       }
-      if (redirectMissing) {
-        const config = await db.seoIndexNowConfig.findUnique({ where: { shop } });
-        if (config) await ensureKeyRedirect(admin as never, db, shop, config);
-      }
+      const config = await db.seoIndexNowConfig.findUnique({ where: { shop } });
+      if (config) await ensureKeyRedirect(admin as never, db, shop, config);
     } catch (err) {
       // Uninstalled shop / expired session: leave the host as is and let the
       // drain proceed. Nothing here may abort the sweep for other shops.

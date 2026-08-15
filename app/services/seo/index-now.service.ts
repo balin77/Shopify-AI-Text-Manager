@@ -375,6 +375,26 @@ export async function syncIndexNowHost(
   return updated;
 }
 
+/**
+ * Rewrite `keyLocation` from the STORED host + key, without touching
+ * `hostCheckedAt`.
+ *
+ * Needed because the two are stale for different reasons: every row the
+ * root-key migration backfilled still points at the old app-proxy path even
+ * though its host is perfectly current, and `syncIndexNowHost` only rewrites as
+ * a side effect of a domain check — which is throttled to once a day. Stamping
+ * `hostCheckedAt` here would additionally suppress that real check for another
+ * 24h, so this deliberately leaves it alone.
+ */
+export async function syncKeyLocation(db: PrismaClient, shop: string): Promise<IndexNowConfig> {
+  const config = await getIndexNowConfig(db, shop);
+  if (!config) return null;
+  const expected = keyLocationFor(config.host, config.key);
+  if (config.keyLocation === expected) return config;
+  logger.info(`[IndexNow] Key location rewritten for ${shop}: ${config.keyLocation} → ${expected}`);
+  return db.seoIndexNowConfig.update({ where: { shop }, data: { keyLocation: expected } });
+}
+
 // ── Submit ───────────────────────────────────────────────────────────────────
 
 export interface SubmitChunkResult {

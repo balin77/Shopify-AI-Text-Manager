@@ -15,17 +15,21 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDrainQueue, mockSyncHost, mockResolveDomain, mockCreateAdmin, mockEnsureRedirect } = vi.hoisted(() => ({
+const {
+  mockDrainQueue, mockSyncHost, mockResolveDomain, mockCreateAdmin, mockEnsureRedirect, mockSyncKeyLocation,
+} = vi.hoisted(() => ({
   mockDrainQueue: vi.fn(),
   mockSyncHost: vi.fn(),
   mockResolveDomain: vi.fn(),
   mockCreateAdmin: vi.fn(),
   mockEnsureRedirect: vi.fn(),
+  mockSyncKeyLocation: vi.fn(),
 }));
 
 vi.mock("~/services/seo/index-now.service", () => ({
   drainQueue: mockDrainQueue,
   syncIndexNowHost: mockSyncHost,
+  syncKeyLocation: mockSyncKeyLocation,
   firstFailureKind: () => null,
 }));
 
@@ -105,6 +109,8 @@ beforeEach(() => {
   mockCreateAdmin.mockResolvedValue({ graphql: vi.fn() });
   mockEnsureRedirect.mockReset();
   mockEnsureRedirect.mockResolvedValue({ ok: true, redirectId: "gid://1" });
+  mockSyncKeyLocation.mockReset();
+  mockSyncKeyLocation.mockResolvedValue(null);
   mockDrainQueue.mockResolvedValue({
     status: "submitted",
     result: { submitted: 1, chunks: 1, failed: 0, results: [] },
@@ -190,6 +196,26 @@ describe("IndexNowAutoSubmitService.tick", () => {
     await IndexNowAutoSubmitService.getInstance().tick(NOW);
     expect(mockSyncHost).toHaveBeenCalledTimes(1);
     expect(mockSyncHost.mock.calls[0][2]).toBe("shop.example");
+    // The same pass re-verifies the redirect: a stored id proves nothing about
+    // the redirect still existing in the merchant's admin.
+    expect(mockEnsureRedirect).toHaveBeenCalledTimes(1);
+  });
+
+  it("rewrites a stale key location on every pass, no Admin call needed", async () => {
+    pendingShops = ["a.myshopify.com"];
+    configs = [{
+      shop: "a.myshopify.com",
+      enabled: true,
+      lastAutoRunAt: OLD,
+      hostCheckedAt: new Date(NOW.getTime() - 60_000),
+      keyRedirectId: "gid://1",
+    }];
+    plans.set("a.myshopify.com", "pro");
+
+    await IndexNowAutoSubmitService.getInstance().tick(NOW);
+    // Rows the root-key migration backfilled still name the old proxy path.
+    expect(mockSyncKeyLocation).toHaveBeenCalledWith(expect.anything(), "a.myshopify.com");
+    expect(mockCreateAdmin).not.toHaveBeenCalled();
   });
 
   it("does not re-resolve a host verified within the recheck window", async () => {

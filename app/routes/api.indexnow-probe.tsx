@@ -4,18 +4,20 @@
  * Answers the one question about this feature that cannot be answered from the
  * code: does IndexNow ACCEPT our setup on a real shop?
  *
- * Two things are uncertain by construction and only a live shop can settle them:
+ * It already settled the first round. Serving the key from the app-proxy
+ * sub-path delivered fine (200, no redirect, content matched, host matched) yet
+ * every submission came back `422 … "not related to your site verified through
+ * the keylocation parameter"` — a non-root key verifies only its own sub-path.
+ * Hence the current design: `keyLocation` names the ROOT `/<key>.txt` and a
+ * Shopify URL redirect maps it onto the app proxy.
  *
- *  1. **Key file outside the root.** Shopify does not let an app place a file at
- *     the storefront root, so the key is served from the app proxy
- *     (`/apps/contentpilot/indexnow-key`) and declared via `keyLocation`.
- *     IndexNow permits that — but some readings of the protocol restrict
- *     submissions to the key file's own directory, which would reject every
- *     `/products/...` URL with 403.
- *  2. **Host.** The key file and the submitted URLs must live on the same host.
- *     The service now uses the primary domain for both; this probe re-checks it
- *     end-to-end, INCLUDING whether the key fetch gets redirected to a
- *     different host on the way.
+ * What is still worth measuring, and only a live shop can tell:
+ *
+ *  1. **The redirect hop.** Does the engine follow the 301 from the root path
+ *     to the app proxy, or does it insist on a directly-served key file?
+ *  2. **Host.** Key file and submitted URLs must share a host. The service uses
+ *     the primary domain for both; this re-checks it end to end, INCLUDING
+ *     whether the key fetch gets redirected onto a different host on the way.
  *
  * The probe therefore does exactly what a search engine does: fetch the key
  * file (following redirects by hand so every hop is visible), then POST one
@@ -39,6 +41,7 @@ import {
   describeSubmitStatus,
   KEY_PROXY_PATH,
 } from "../services/seo/index-now.service";
+import { keyFilePath } from "../services/seo/index-now-key-file.server";
 
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 const PROBE_TIMEOUT_MS = 15_000;
@@ -63,7 +66,10 @@ export interface IndexNowProbeReport {
   primaryDomain: string;
   hostIsPrimaryDomain: boolean;
   keyLocation: string;
+  /** Storefront path the key is declared at — the root `/<key>.txt`. */
   keyPath: string;
+  /** Whether the URL redirect that maps keyPath onto the app proxy is on record. */
+  keyRedirectPresent: boolean;
   keyFile: {
     reachable: boolean;
     finalStatus: number | null;
@@ -197,6 +203,13 @@ function buildVerdict(report: Omit<IndexNowProbeReport, "verdict">): string[] {
     );
   }
 
+  if (!report.keyRedirectPresent) {
+    out.push(
+      `⚠️ No key-file redirect is on record for this shop, so "${report.keyPath}" probably 404s. `
+        + `Open the IndexNow section once — the loader creates it.`,
+    );
+  }
+
   const crossHostHop = report.keyFile.hops.find((h) => h.crossHost);
   if (crossHostHop) {
     out.push(
@@ -225,27 +238,31 @@ function buildVerdict(report: Omit<IndexNowProbeReport, "verdict">): string[] {
     case "ok":
       out.push(
         `✅ IndexNow ACCEPTED a submission for ${report.submitTest.url} (HTTP ${report.submitTest.status}). `
-          + `The key at "${report.keyPath}" is valid for URLs outside its own directory — the open `
-          + `question about the non-root key location is settled: our setup works.`,
+          + `The root key file at "${report.keyPath}" — served through the URL redirect onto `
+          + `"${KEY_PROXY_PATH}" — is valid for the whole site. The setup works.`,
       );
       break;
     case "keyInvalid":
       out.push(
-        `❌ IndexNow answered 403 (key not valid). Either the key file is not accepted at all, or the `
-          + `non-root key location "${report.keyPath}" restricts submissions to that directory — in `
-          + `which case the app-proxy approach cannot work and the key must be served via a Shopify `
-          + `URL redirect from the storefront root instead.`,
+        `❌ IndexNow answered 403 (key not valid). The key file itself is being rejected: check that `
+          + `"${report.keyPath}" really returns the bare key (the hop table above shows what it `
+          + `returned) and that the redirect onto "${KEY_PROXY_PATH}" is still in place.`,
       );
       break;
     case "hostMismatch":
       out.push(
-        report.hostIsPrimaryDomain
-          ? `❌ IndexNow answered 422 — and since the host matches, this is the KEY LOCATION SCOPE: a `
-            + `key file at "${report.keyPath}" verifies only that sub-path, so a URL like `
-            + `${report.submitTest.url} counts as unrelated to it. Measured on a live shop; the key `
-            + `has to be reachable at the ROOT of the domain.`
-          : `❌ IndexNow answered 422: the submitted URL does not belong to the declared host `
-            + `"${report.host}".`,
+        !report.hostIsPrimaryDomain
+          ? `❌ IndexNow answered 422: the submitted URL does not belong to the declared host `
+            + `"${report.host}".`
+          : report.keyPath.split("/").length > 2
+            ? `❌ IndexNow answered 422 with a matching host — that is the KEY LOCATION SCOPE: a key `
+              + `under "${report.keyPath}" verifies only that sub-path, so ${report.submitTest.url} `
+              + `counts as unrelated. The key has to sit at the ROOT of the domain.`
+            : `❌ IndexNow answered 422 even though the key is at the root ("${report.keyPath}") and `
+              + `the host matches. That points at the redirect hop: the engine appears not to accept `
+              + `a key file that is only reachable through a 301. Next lever is a key file served `
+              + `directly at the root, which Shopify does not allow an app to place — escalate rather `
+              + `than retrying this configuration.`,
       );
       break;
     case "rateLimited":
@@ -298,7 +315,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         primaryDomain,
         hostIsPrimaryDomain: config ? config.host === primaryDomain : false,
         keyLocation: config?.keyLocation ?? "",
-        keyPath: KEY_PROXY_PATH,
+        keyPath: config ? keyFilePath(config.key) : "",
+        keyRedirectPresent: !!config?.keyRedirectId,
         keyFile: { reachable: false, finalStatus: null, hops: [], bodyMatchesKey: null, body: null },
         submitTest: { url: "", status: null, kind: "networkError" as const, responseBody: null },
         verdict: [
@@ -323,7 +341,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     primaryDomain,
     hostIsPrimaryDomain: config.host === primaryDomain,
     keyLocation: config.keyLocation,
-    keyPath: KEY_PROXY_PATH,
+    keyPath: keyFilePath(config.key),
+    keyRedirectPresent: !!config.keyRedirectId,
     keyFile,
     submitTest,
   };

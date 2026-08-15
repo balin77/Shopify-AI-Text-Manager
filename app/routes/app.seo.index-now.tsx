@@ -35,6 +35,7 @@ import {
   provisionIndexNow,
   setIndexNowEnabled,
   syncIndexNowHost,
+  syncKeyLocation,
   submitAll,
   drainQueue,
   getQueueCount,
@@ -169,11 +170,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const primaryDomain = await resolvePrimaryDomain(admin);
     if (primaryDomain) config = await syncIndexNowHost(db, session.shop, primaryDomain);
 
-    // Self-repair for every row that predates the root-key redirect (and for a
-    // redirect a merchant deleted in their admin): the section is the one place
-    // that reliably has an admin client, and without the redirect the key file
-    // is not reachable at the root path `keyLocation` names.
-    if (config?.enabled && !config.keyRedirectId) {
+    // Repairs a keyLocation left on the old app-proxy path by the root-key
+    // migration, even when the domain lookup above failed.
+    if (config) config = await syncKeyLocation(db, session.shop);
+
+    // Self-repair on EVERY visit, not just when the id is missing: a stored id
+    // proves nothing about the redirect still existing or still pointing at us
+    // — a merchant can delete or repoint it in their admin, and then the key
+    // file 404s at the root path `keyLocation` names. `ensureKeyRedirect`
+    // updates in place, so this is one idempotent mutation per visit.
+    if (config?.enabled) {
       const ensured = await ensureKeyRedirect(admin, db, session.shop, config);
       if (ensured.ok) config = await getIndexNowConfig(db, session.shop);
     }
@@ -224,6 +230,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       ? await ensureKeyRedirect(admin, db, session.shop, config)
       : { ok: false, redirectId: null };
     if (!ensured.ok) {
+      // Leaving it enabled would show the feature as on while every submission
+      // is rejected — the key would not be reachable where keyLocation says.
+      // The key and host survive; only the switch goes back off.
+      await setIndexNowEnabled(db, session.shop, false);
       return json<ActionResult>({ ok: false, error: "keyRedirect" }, { status: 502 });
     }
     return json<ActionResult>({ ok: true, kind: "provisioned" });
