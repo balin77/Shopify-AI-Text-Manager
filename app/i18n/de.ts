@@ -2566,7 +2566,7 @@ export const de = {
       deprovisioned: "IndexNow deaktiviert.",
       errorGeneric: "Aktion fehlgeschlagen.",
       errorKeyInvalid: "Die Suchmaschine hat den Schlüssel abgelehnt (403). Prüfe die Schlüssel-Datei — sie muss unter derselben Domain erreichbar sein, unter der gemeldet wird.",
-      errorHostMismatch: "Die Suchmaschine hat die URLs abgelehnt (422): Sie gehören nicht zu der gemeldeten Domain.",
+      errorHostMismatch: "Die Suchmaschine hat die URLs abgelehnt (422): Sie liegen außerhalb des Bereichs, den die Schlüssel-Datei abdeckt. Gemessen: eine Schlüssel-Datei unter einem Unterpfad verifiziert nur diesen Unterpfad — die Datei muss im Wurzelverzeichnis der Domain liegen.",
       errorRateLimited: "Zu viele Meldungen in kurzer Zeit (429). Bitte später erneut versuchen.",
       errorNetwork: "IndexNow war nicht erreichbar (Zeitüberschreitung oder Netzwerkfehler).",
     },

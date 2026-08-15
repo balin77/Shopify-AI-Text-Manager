@@ -2565,7 +2565,7 @@ export const es: Translation = {
       deprovisioned: "IndexNow desactivado.",
       errorGeneric: "La acción falló.",
       errorKeyInvalid: "El motor de búsqueda rechazó la clave (403). Revisa el archivo de clave: debe ser accesible en el mismo dominio con el que se envían las URLs.",
-      errorHostMismatch: "El motor de búsqueda rechazó las URLs (422): no pertenecen al dominio enviado.",
+      errorHostMismatch: "El motor de búsqueda rechazó las URLs (422): quedan fuera del alcance que cubre el archivo de clave. Medido: un archivo de clave en una subruta solo verifica esa subruta; tiene que estar en la raíz del dominio.",
       errorRateLimited: "Demasiados envíos en poco tiempo (429). Inténtalo de nuevo más tarde.",
       errorNetwork: "No se pudo contactar con IndexNow (tiempo de espera o error de red).",
     },

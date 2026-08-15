@@ -5,16 +5,29 @@
  * so they re-crawl fast. The IndexNow `key` is a PUBLIC token by design — it is
  * served at `keyLocation` for verification — so it is stored in plaintext.
  *
- * Key file hosting: Shopify blocks arbitrary root files, so instead of the
- * Files+redirect dance we serve the key via an **app proxy** on the shop host
- * (`/apps/contentpilot/indexnow-key`) — Shopify HMAC-signs the forwarded
- * request, so the unauthenticated IndexNow fetch reaches our route and returns
- * the key. IndexNow allows a non-root key file as long as its URL is declared
- * as `keyLocation`; whether an engine additionally restricts submissions to the
- * key file's directory is exactly what the Settings → Translation Probe tab's
- * IndexNow probe measures against a live shop (api.indexnow-probe.tsx) — it
- * reports the raw HTTP status, so a 403 ("key not valid") is visible instead of
- * silently counting as "failed".
+ * ── Key file hosting: MEASURED — the app proxy alone is NOT enough ──────────
+ * Shopify blocks arbitrary root files, so the key is served via an **app
+ * proxy** on the shop host (`/apps/contentpilot/indexnow-key`): Shopify
+ * HMAC-signs the forwarded request, so the unauthenticated IndexNow fetch
+ * reaches our route and returns the key. That half demonstrably works — the
+ * IndexNow probe (Settings → Translation Probe, api.indexnow-probe.tsx)
+ * fetched it on a live shop: HTTP 200, no redirect, content matches the key.
+ *
+ * The SUBMISSION is still rejected. Measured 2026-08-15 on a live shop whose
+ * host matched the primary domain in every field:
+ *
+ *   POST /indexnow → 422 InvalidRequestParameters
+ *   "One or more URLs are not related to your site verified through the
+ *    keylocation parameter."
+ *
+ * A non-root `keyLocation` therefore verifies only its OWN sub-path: with the
+ * key under `/apps/contentpilot/…`, a `/products/…` URL counts as unrelated.
+ * That is a SCOPE rule, not a host rule — do not re-diagnose it as a domain
+ * problem (the host bug was real, separate, and is already fixed), and do not
+ * expect a different status code to appear. The key has to be reachable at the
+ * ROOT of the storefront domain; on Shopify the remaining lever is a URL
+ * redirect from `/<key>.txt`, and the probe verifies the whole chain end to end
+ * once one exists.
  *
  * ── Host: the PRIMARY domain, never *.myshopify.com ─────────────────────────
  * `host`, every entry of `urlList` and `keyLocation` share the shop's primary

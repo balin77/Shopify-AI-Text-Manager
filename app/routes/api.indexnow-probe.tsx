@@ -239,8 +239,13 @@ function buildVerdict(report: Omit<IndexNowProbeReport, "verdict">): string[] {
       break;
     case "hostMismatch":
       out.push(
-        `❌ IndexNow answered 422: the submitted URL does not belong to the declared host `
-          + `"${report.host}".`,
+        report.hostIsPrimaryDomain
+          ? `❌ IndexNow answered 422 — and since the host matches, this is the KEY LOCATION SCOPE: a `
+            + `key file at "${report.keyPath}" verifies only that sub-path, so a URL like `
+            + `${report.submitTest.url} counts as unrelated to it. Measured on a live shop; the key `
+            + `has to be reachable at the ROOT of the domain.`
+          : `❌ IndexNow answered 422: the submitted URL does not belong to the declared host `
+            + `"${report.host}".`,
       );
       break;
     case "rateLimited":

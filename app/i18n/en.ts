@@ -2566,7 +2566,7 @@ export const en: Translation = {
       deprovisioned: "IndexNow disabled.",
       errorGeneric: "Action failed.",
       errorKeyInvalid: "The search engine rejected the key (403). Check the key file — it must be reachable on the same domain the URLs are submitted for.",
-      errorHostMismatch: "The search engine rejected the URLs (422): they do not belong to the submitted domain.",
+      errorHostMismatch: "The search engine rejected the URLs (422): they are outside the scope the key file covers. Measured: a key file under a sub-path only verifies that sub-path — it has to sit at the root of the domain.",
       errorRateLimited: "Too many submissions in a short time (429). Please try again later.",
       errorNetwork: "IndexNow could not be reached (timeout or network error).",
     },
