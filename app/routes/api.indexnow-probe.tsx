@@ -11,13 +11,15 @@
  * Hence the current design: `keyLocation` names the ROOT `/<key>.txt` and a
  * Shopify URL redirect maps it onto the app proxy.
  *
- * What is still worth measuring, and only a live shop can tell:
+ * That arrangement then measured **202 Accepted** on the same shop, with the
+ * chain `/<key>.txt` → 301 (same host) → `/apps/contentpilot/indexnow-key` →
+ * 200. So the engine does follow a same-host 301 and a root keyLocation covers
+ * the whole site.
  *
- *  1. **The redirect hop.** Does the engine follow the 301 from the root path
- *     to the app proxy, or does it insist on a directly-served key file?
- *  2. **Host.** Key file and submitted URLs must share a host. The service uses
- *     the primary domain for both; this re-checks it end to end, INCLUDING
- *     whether the key fetch gets redirected onto a different host on the way.
+ * The probe stays as the regression check for everything that can silently
+ * break that chain: a merchant deleting the URL redirect, a changed primary
+ * domain, an app-proxy misconfiguration, or a hop that starts leaving the
+ * declared host (which is what an ownership check objects to).
  *
  * The probe therefore does exactly what a search engine does: fetch the key
  * file (following redirects by hand so every hop is visible), then POST one

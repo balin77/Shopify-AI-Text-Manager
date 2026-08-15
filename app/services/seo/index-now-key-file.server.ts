@@ -19,8 +19,13 @@
  * The whole chain stays on ONE host (no cdn.shopify.com hop, which would leave
  * the declared host and is exactly what an ownership check objects to), the app
  * proxy keeps doing the actual serving, and `keyLocation` finally names a root
- * path. Whether the engine follows the 301 is visible in the IndexNow probe,
- * which walks the chain hop by hop.
+ * path.
+ *
+ * MEASURED on a live shop 2026-08-15: `/<key>.txt` → 301 (same host) →
+ * `/apps/contentpilot/indexnow-key` → 200 with the key, and the submission
+ * answered **202 Accepted**. The engine follows the same-host 301, so this
+ * arrangement is the working one — re-run the IndexNow probe before changing
+ * either half.
  *
  * Uses `write_online_store_navigation`, which the app already declares.
  *

@@ -29,7 +29,15 @@
  * So `keyLocation` names a ROOT path, `https://<host>/<key>.txt`, and a Shopify
  * URL redirect maps that path onto the app proxy — one host end to end, no
  * cdn.shopify.com hop. The redirect lifecycle lives in
- * index-now-key-file.server.ts; the probe walks the resulting chain hop by hop.
+ * index-now-key-file.server.ts.
+ *
+ * CONFIRMED working, same shop, 2026-08-15: the probe walked
+ * `/<key>.txt` → 301 (same host) → `/apps/contentpilot/indexnow-key` → 200 with
+ * the key, and the submission came back **202 Accepted**. So the engine does
+ * follow a same-host 301 for the key file, and a root keyLocation covers the
+ * whole site. Both halves of this arrangement are load-bearing — the root path
+ * AND the redirect staying on one host — so do not "simplify" either without
+ * re-running the probe.
  *
  * ── Host: the PRIMARY domain, never *.myshopify.com ─────────────────────────
  * `host`, every entry of `urlList` and `keyLocation` share the shop's primary
