@@ -409,6 +409,168 @@ function formatMarkdown(report: ProbeReport): string {
   return lines.join("\n");
 }
 
+// ── IndexNow probe ───────────────────────────────────────────────────────────
+// Separate diagnostic sharing this tab (see api.indexnow-probe.tsx): it is the
+// only way to find out whether IndexNow accepts a key file served from the app
+// proxy instead of the storefront root, and whether the key fetch stays on the
+// declared host. Both are unanswerable from the code alone.
+
+interface IndexNowProbeReport {
+  generatedAt: string;
+  shop: string;
+  configured: boolean;
+  enabled: boolean;
+  host: string;
+  primaryDomain: string;
+  hostIsPrimaryDomain: boolean;
+  keyLocation: string;
+  keyPath: string;
+  keyFile: {
+    reachable: boolean;
+    finalStatus: number | null;
+    hops: Array<{ url: string; status: number; location: string | null; crossHost: boolean }>;
+    bodyMatchesKey: boolean | null;
+    body: string | null;
+    error?: string;
+  };
+  submitTest: {
+    url: string;
+    status: number | null;
+    kind: string;
+    responseBody: string | null;
+    error?: string;
+  };
+  verdict: string[];
+}
+
+function formatIndexNowMarkdown(r: IndexNowProbeReport): string {
+  const lines: string[] = [];
+  lines.push(`# IndexNow Probe Report`);
+  lines.push(``);
+  lines.push(`- Generated: ${r.generatedAt}`);
+  lines.push(`- Shop: ${r.shop}`);
+  lines.push(`- Configured: ${r.configured ? "yes" : "no"} / enabled: ${r.enabled ? "yes" : "no"}`);
+  lines.push(`- Declared host: \`${r.host || "(none)"}\``);
+  lines.push(`- Primary domain: \`${r.primaryDomain}\` ${r.hostIsPrimaryDomain ? "(match)" : "(MISMATCH)"}`);
+  lines.push(`- keyLocation: \`${r.keyLocation || "(none)"}\` (path \`${r.keyPath}\`)`);
+  lines.push(``);
+  lines.push(`## Key file fetch`);
+  lines.push(``);
+  lines.push(`- Reachable: ${r.keyFile.reachable ? "yes" : "no"} (final status ${r.keyFile.finalStatus ?? "none"})`);
+  lines.push(`- Content matches key: ${r.keyFile.bodyMatchesKey === null ? "n/a" : r.keyFile.bodyMatchesKey ? "yes" : "NO"}`);
+  if (r.keyFile.error) lines.push(`- Error: ${r.keyFile.error}`);
+  if (r.keyFile.hops.length > 0) {
+    lines.push(``);
+    lines.push(`| # | URL | Status | Location | Cross-host |`);
+    lines.push(`|---|---|---|---|---|`);
+    r.keyFile.hops.forEach((h, i) => {
+      lines.push(`| ${i + 1} | \`${h.url}\` | ${h.status} | ${h.location ? `\`${h.location}\`` : "—"} | ${h.crossHost ? "YES" : "no"} |`);
+    });
+  }
+  lines.push(``);
+  lines.push(`## Live submission test`);
+  lines.push(``);
+  lines.push(`- URL: \`${r.submitTest.url || "(none)"}\``);
+  lines.push(`- Status: ${r.submitTest.status ?? "none"} (${r.submitTest.kind})`);
+  if (r.submitTest.responseBody) lines.push(`- Response body: \`${r.submitTest.responseBody}\``);
+  if (r.submitTest.error) lines.push(`- Error: ${r.submitTest.error}`);
+  lines.push(``);
+  lines.push(`## Verdict`);
+  lines.push(``);
+  for (const v of r.verdict) lines.push(`- ${v}`);
+  return lines.join("\n");
+}
+
+function IndexNowProbeCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<IndexNowProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runProbe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/indexnow-probe", { method: "POST" });
+      const j = (await r.json()) as { report?: IndexNowProbeReport; error?: string };
+      if (!r.ok || !j.report) {
+        throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
+      }
+      setReport(j.report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const markdown = useMemo(() => (report ? formatIndexNowMarkdown(report) : ""), [report]);
+
+  const tone = (() => {
+    if (!report) return "info" as const;
+    if (report.verdict.some((v) => v.startsWith("❌"))) return "critical" as const;
+    if (report.verdict.some((v) => v.startsWith("⚠️"))) return "warning" as const;
+    return "success" as const;
+  })();
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">IndexNow Probe</Text>
+        <Text as="p" tone="subdued">
+          Verifies the two things about IndexNow that only a live shop can answer: whether the key
+          file served from the app proxy (<code>/apps/contentpilot/indexnow-key</code>) is accepted
+          even though it is not at the storefront root, and whether fetching it stays on the domain
+          we declare. Fetches the key file the way a search engine does, then submits the shop
+          homepage to the real IndexNow endpoint and reports the raw status code.
+        </Text>
+        <Banner tone="info">
+          <Text as="p">
+            Requires IndexNow to be enabled in SEO → IndexNow. The only side effect is one
+            submission of your homepage URL — the same call the section makes.
+          </Text>
+        </Banner>
+        <InlineStack gap="200">
+          <Button onClick={runProbe} loading={loading}>
+            {report ? "Re-run IndexNow probe" : "Run IndexNow probe"}
+          </Button>
+        </InlineStack>
+        {error && (
+          <Banner tone="critical">
+            <Text as="p">IndexNow probe failed: {error}</Text>
+          </Banner>
+        )}
+        {report && (
+          <>
+            <Banner tone={tone}>
+              <BlockStack gap="100">
+                {report.verdict.map((v, i) => (
+                  <Text as="p" key={i}>{v}</Text>
+                ))}
+              </BlockStack>
+            </Banner>
+            <textarea
+              readOnly
+              value={markdown}
+              style={{
+                width: "100%",
+                minHeight: "260px",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: "12px",
+                padding: "12px",
+                border: "1px solid #c9cccf",
+                borderRadius: "8px",
+                background: "#fafbfb",
+                resize: "vertical",
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 export function SettingsTranslationProbeTab() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<ProbeReport | null>(null);
@@ -482,6 +644,8 @@ export function SettingsTranslationProbeTab() {
           )}
         </BlockStack>
       </Card>
+
+      <IndexNowProbeCard />
 
       {report?.imageAltDiag && (
         <Card>

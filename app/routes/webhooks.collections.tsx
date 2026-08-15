@@ -57,7 +57,8 @@ async function enqueueCollectionForIndexNow(db: any, shop: string, collectionId:
     const config = await getEnabledConfig(db, shop);
     if (!config) return;
     const coll = await db.collection.findUnique({ where: { id: collectionId }, select: { handle: true } });
-    if (coll?.handle) await enqueueResource(db, shop, shop, "collection", coll.handle, config);
+    // URL built on the config's primary-domain host, not on the myshopify one.
+    if (coll?.handle) await enqueueResource(db, shop, "collection", coll.handle, config);
   } catch { /* ignore */ }
 }
 

@@ -50,22 +50,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
  */
 async function enqueueProductForIndexNow(db: any, shop: string, productId: string): Promise<void> {
   try {
-    const { getEnabledConfig, enqueueResource } = await import("../services/seo/index-now.service");
+    const { getEnabledConfig, enqueueResource, shouldEnqueueProductStatus } =
+      await import("../services/seo/index-now.service");
     const config = await getEnabledConfig(db, shop);
     if (!config) return;
     const prod = await db.product.findUnique({
       where: { id: productId },
       select: { handle: true, status: true },
     });
-    // ACTIVE only — mirrors `collectStoreUrls` in index-now.service.ts, which
-    // gates the bulk "submit the whole catalog" path the same way. Without this
-    // the incremental path contradicted the bulk one: a DRAFT product, or an
-    // UNLISTED one (served `noindex,nofollow` and absent from sitemap.xml),
-    // would still be pushed to Bing/Yandex on every products/update webhook —
-    // asking an engine to crawl a URL it is simultaneously told not to index,
-    // and publishing a link the merchant chose to keep unlisted.
-    if (prod?.handle && prod.status === "ACTIVE") {
-      await enqueueResource(db, shop, shop, "product", prod.handle, config);
+    // UNLISTED products are excluded — they are served `noindex,nofollow` and
+    // absent from sitemap.xml, so asking an engine to crawl them would publish
+    // a link the merchant chose to keep unlisted. DRAFT/ARCHIVED are NOT
+    // excluded: their storefront URL just turned into a 404, and reporting
+    // removals is half of what IndexNow is for. (The BULK path stays
+    // ACTIVE-only — see shouldEnqueueProductStatus.) The URL is built on the
+    // config's primary-domain host, not on the myshopify domain.
+    if (prod?.handle && shouldEnqueueProductStatus(prod.status)) {
+      await enqueueResource(db, shop, "product", prod.handle, config);
     }
   } catch { /* ignore */ }
 }
