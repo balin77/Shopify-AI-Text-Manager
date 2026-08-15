@@ -233,7 +233,7 @@ export function OptionsField({
                             >
                               🌍 {option.isLinked
                                 ? (t.translateOptionNameButton || "Translate name")
-                                : (t.translateButton || "Translate all")}
+                                : (t.translateButton || "Translate option")}
                             </Button>
                           </DisabledActionTooltip>
                         )}
@@ -484,7 +484,7 @@ export function OptionsField({
                         >
                           🌍 {option.isLinked
                             ? (t.translateOptionNameButton || "Translate name")
-                            : (t.translateButton || "Translate all")}
+                            : (t.translateButton || "Translate option")}
                         </Button>
                       </div>
 

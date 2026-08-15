@@ -170,6 +170,30 @@ html {
   }
 }
 
+/* The "Clear" button floats over a field's top-right corner, sharing the
+   label's row. Wherever a button gets inflated to the 44px touch target it
+   overhangs that ~24px row and lands on the input — visibly stuck to the box.
+   Cap it at a still-comfortable 32px (WCAG 2.5.8 asks for 24) and reserve a
+   row that clears it. The selector reaches through the field component's own
+   wrapper: Polaris' Labelled root carries no base class, only its LabelWrapper
+   does; the wrapper is mounted even when the field is empty, so the input does
+   not jump when the button appears.
+
+   The media list mirrors BOTH rules that inflate buttons — the width-based one
+   and the coarse-pointer one, which has no width bound — otherwise a landscape
+   tablet keeps the overlap. */
+@media (max-width: 768px), (hover: none) and (pointer: coarse) {
+  .field-clear-overlay .Polaris-Button {
+    min-height: 32px !important;
+    padding: 4px 8px !important;
+  }
+
+  .field-clear-overlay ~ * .Polaris-Labelled__LabelWrapper {
+    min-height: 34px;
+    align-items: flex-start;
+  }
+}
+
 /* Editor sidebar panel toggle (see contexts/SidebarPanelContext.tsx).
    The right-hand sidebar (.seo-sidebar-container) is hidden below 1100px, so in
    that range its nav toggle takes over the plan button's slot instead. Both
@@ -503,21 +527,6 @@ html {
     font-size: 16px;
     padding-top: var(--p-space-150);
     padding-bottom: var(--p-space-150);
-  }
-
-  /* The "Clear" button floats over a field's top-right corner, sharing the
-     label's row. At the touch size buttons get here it renders 32px tall while
-     the label row is only 24px, so it hung 8px INTO the input — visibly stuck
-     to the box. Reserve a row tall enough for it instead of shrinking the tap
-     target. The selector reaches through the field component's own wrapper:
-     Polaris' Labelled root carries no base class, only its LabelWrapper does. */
-  .field-clear-overlay .Polaris-Button {
-    padding: 4px 8px !important;
-  }
-
-  .field-clear-overlay ~ * .Polaris-Labelled__LabelWrapper {
-    min-height: 38px;
-    align-items: flex-start;
   }
 
   /* Product option header: "Option N" + the metaobject badge + the translate
